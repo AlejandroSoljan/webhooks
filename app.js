@@ -95,6 +95,9 @@ app.post("/webhook", (req, res) => {
               text,
               full: msg
             });
+console.log("mensaje: "+text);
+
+            
           }
 
           // Procesar estados (delivered, read, failed, etc.)
