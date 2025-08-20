@@ -53,77 +53,67 @@ app.get("/webhook", (req, res) => {
 });
 
 // Recepción de eventos (mensajes, status, etc.)
-app.post("/webhook", (req, res) => {
-  // Si configuraste WHATSAPP_APP_SECRET, validamos firma
-  if (process.env.WHATSAPP_APP_SECRET) {
-    if (!isValidSignature(req)) {
-      console.warn("❌ Firma inválida");
-      return res.sendStatus(403);
-    }
-  }
-
+// --- Endpoint mensajes entrantes ---
+app.post("/webhook", async (req, res) => {
   const body = req.body;
 
-  // Estructura estándar de WhatsApp Cloud API
-  if (body.object === "whatsapp_business_account") {
-    try {
-      const entries = body.entry || [];
-      for (const entry of entries) {
-        const changes = entry.changes || [];
-        for (const change of changes) {
-          const value = change.value || {};
-          const messages = value.messages || [];
-          const statuses = value.statuses || []; // entregas/lecturas
+  if (body.object) {
+    const entry = body.entry?.[0];
+    const change = entry?.changes?.[0];
+    const value = change?.value;
+    const message = value?.messages?.[0];
 
-          // Procesar mensajes entrantes
-          for (const msg of messages) {
-            const from = msg.from; // número del usuario en formato internacional
-            const type = msg.type; // text, image, interactive, etc.
+    if (message) {
+      const from = message.from; // número del cliente
+      const type = message.type;
+      let text = "";
 
-            let text = "";
-            if (type === "text" && msg.text) text = msg.text.body;
-            else if (type === "interactive" && msg.interactive?.type === "button_reply") {
-              text = msg.interactive.button_reply.title;
-            } else if (type === "interactive" && msg.interactive?.type === "list_reply") {
-              text = msg.interactive.list_reply.title;
-            }
-
-            // Aquí haces tu lógica: guardar en DB, encolar, responder, etc.
-            console.log("📩 Mensaje entrante:", {
-              wa_id: from,
-              type,
-              text,
-              full: msg
-            });
-console.log("mensaje: "+text);
-
-            
-          }
-
-          // Procesar estados (delivered, read, failed, etc.)
-          for (const st of statuses) {
-            console.log("📦 Status:", {
-              id: st.id,
-              status: st.status,
-              timestamp: st.timestamp,
-              recipient_id: st.recipient_id,
-              full: st
-            });
-          }
-        }
+      if (type === "text") {
+        text = message.text.body;
       }
 
-      // Meta exige 200 rápido
-      return res.sendStatus(200);
-    } catch (e) {
-      console.error("⚠️ Error procesando payload:", e);
-      return res.sendStatus(500);
-    }
-  }
+      console.log("📩 Recibido:", text);
 
-  // Si no es de WhatsApp, 404
-  return res.sendStatus(404);
+      // 🔄 Reenviar mismo mensaje
+      if (text) {
+        await sendMessage(from, text, value.metadata.phone_number_id);
+      }
+    }
+
+    res.sendStatus(200); // Siempre respondemos 200 rápido
+  } else {
+    res.sendStatus(404);
+  }
 });
+
+// --- Función para enviar mensaje usando la API de WhatsApp ---
+async function sendMessage(to, message, phoneNumberId) {
+  const token = process.env.WHATSAPP_TOKEN; // Tu token de acceso (permanent)
+  const url = `https://graph.facebook.com/v22.0/${phoneNumberId}/messages`;
+
+  const payload = {
+    messaging_product: "whatsapp",
+    to: to,
+    type: "text",
+    text: { body: message }
+  };
+
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await resp.json();
+    console.log("📤 Enviado:", data);
+  } catch (err) {
+    console.error("⚠️ Error enviando mensaje:", err);
+  }
+}
 
 // Inicia servidor
 const PORT = process.env.PORT || 3000;
