@@ -49,68 +49,17 @@ function verifyMetaSignature(req) {
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-app.post('/webhook', async (req, res) => {
-   console.log("post");
-  if (!verifyMetaSignature(req)) {
-    return res.sendStatus(401);
-  }
-
-  const entry = req.body?.entry?.[0];
-  const change = entry?.changes?.[0];
-  const value = change?.value;
-  const message = value?.messages?.[0];
-  const from = message?.from; // número del usuario
-  const type = message?.type;
-
-  // Importante: responder rápido al webhook (200) para evitar reintentos
-  res.sendStatus(200);
-
-  if (!from || !type) return;
-
-  // Extraer el texto recibido
-  let userText = '';
-  if (type === 'text') {
-    userText = message.text?.body || '';
-  } else {
-    userText = 'Mensaje recibido.';
-  }
-
+app.post('/webhook', (req, res) => {
   try {
-    // 3) Llamar a OpenAI (Responses API)
-    const systemPrompt = `Eres un asistente útil y breve para WhatsApp. Responde en español neutro y en 1-3 frases.`;
-    const completion = await openai.responses.create({
-      model: 'gpt-5.1-mini', // usa el modelo que prefieras
-      input: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userText }
-      ],
-      // opcional: limita longitud/costo
-      max_output_tokens: 200
-    });
+    console.log('POST recibido:', JSON.stringify(req.body));
+    res.sendStatus(200);           // ✅ responder ya mismo
 
-    const aiText =
-      completion.output_text?.trim() ||
-      completion.output?.[0]?.content?.[0]?.text?.trim() ||
-      '¡Listo!';
+    // ⬇️ procesar asíncrono después (OpenAI, etc.)
+    //procesarMensaje(req.body).catch(console.error);
 
-    // 4) Enviar mensaje de vuelta por WhatsApp
-    const url = `https://graph.facebook.com/${process.env.GRAPH_API_VERSION}/${process.env.PHONE_NUMBER_ID}/messages`;
-
-    await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: from,
-        type: 'text',
-        text: { body: aiText }
-      })
-    });
-  } catch (err) {
-    console.error('Error procesando mensaje:', err);
+  } catch (e) {
+    console.error(e);
+    // ¡No mandes otra respuesta acá, ya enviaste 200!
   }
 });
 
