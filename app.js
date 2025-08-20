@@ -94,7 +94,7 @@ async function sendMessage(to, message, phoneNumberId) {
   const payload = {
      "messaging_product": "whatsapp",
     "to": "543462674128", 
-    "type": "template", "template": { "name": "hello_world", "language": { "code": "en_US" } } }
+    "type": "template", "template": { "name": "hello_world", "language": { "code": "en_US" } } 
   };
 
   try {
