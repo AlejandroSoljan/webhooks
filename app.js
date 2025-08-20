@@ -89,20 +89,19 @@ app.post("/webhook", async (req, res) => {
 // --- Función para enviar mensaje usando la API de WhatsApp ---
 async function sendMessage(to, message, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN; // Tu token de acceso (permanent)
-  const url = `https://graph.facebook.com/v23.0/731664510029283/messages`;
+  const url = `https://graph.facebook.com/v22.0/731664510029283/messages`;
 
   const payload = {
-    messaging_product: "whatsapp",
-    to: to,
-    type: "text",
-    text: { body: message }
+    { "messaging_product": "whatsapp",
+    "to": "543462674128", 
+    "type": "template", "template": { "name": "hello_world", "language": { "code": "en_US" } } }
   };
 
   try {
     const resp = await fetch(url, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${token}`,
+        "Authorization": `Bearer EAARMwGcchbYBPMPnXC0np1FmFPIb9oFUZBFrKChOFVPp06g2AEFEpeMayZCaRX4hJ8A0qwt3IenQNp4u0RL5hUbfsuKcGwqwunbO9D5LFioro4JZCpHrWpj4w3rmZA3fzxgFEPXbzeplQTbxPC74SEc0mXgDm6SBf4M8e5NZAYuQT61beh7k9d5QeSY18cUYcZCZBbMkSAp7QLLvu1knx5B7FZCY9aHSdZArZCTV1nNeZBcJTeDIhPJGnALczWZCEQIU`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify(payload)
