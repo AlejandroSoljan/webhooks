@@ -27,6 +27,8 @@ app.get('/webhook', (req, res) => {
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
+  console.log("get");
+
   if (mode === 'subscribe' && token === process.env.VERIFY_TOKEN) {
     return res.status(200).send(challenge);
   }
@@ -48,6 +50,7 @@ function verifyMetaSignature(req) {
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 app.post('/webhook', async (req, res) => {
+   console.log("post");
   if (!verifyMetaSignature(req)) {
     return res.sendStatus(401);
   }
