@@ -1,12 +1,13 @@
 {
-    "name": "wa-chatgpt-bot",
-    "type": "module",
-    "dependencies": {
-      "express": "^4.19.2",
-      "body-parser": "^1.20.2",
-      "openai": "^4.57.0",
-      "dotenv": "^16.4.5",
-      "node-fetch": "^3.3.2",
-      "raw-body": "^2.5.2"
-    }
+  "name": "whatsapp-webhook-render",
+  "version": "1.0.0",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
   }
+}
