@@ -3,7 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const crypto = require("crypto");
 
-const app = express();
+const app = express(); 
 
 // Render y Meta envían JSON; conservamos el raw body para validar firma
 app.use(express.json({
