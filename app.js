@@ -101,7 +101,7 @@ async function sendMessage(to, message, phoneNumberId) {
     const resp = await fetch(url, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer EAARMwGcchbYBPMPnXC0np1FmFPIb9oFUZBFrKChOFVPp06g2AEFEpeMayZCaRX4hJ8A0qwt3IenQNp4u0RL5hUbfsuKcGwqwunbO9D5LFioro4JZCpHrWpj4w3rmZA3fzxgFEPXbzeplQTbxPC74SEc0mXgDm6SBf4M8e5NZAYuQT61beh7k9d5QeSY18cUYcZCZBbMkSAp7QLLvu1knx5B7FZCY9aHSdZArZCTV1nNeZBcJTeDIhPJGnALczWZCEQIU`,
+        "Authorization": `Bearer EAAOlXEb393oBPHqSwGBZC1ZB9KupccyhqYNwIokm5AMUykNxrwoBNuQSW5vrzzoOrPAkZC3nZCPWiQc0WCgA9UppsJuukc5yolaFUEmCBkAZCypl0nQdkLeSrSLrc3zr230ZA3kOeuRRnIW4YzvR1MKZCBUJjNe9yiraVBNYCN9zgEZAsahPxe8RZBGDWnhbGwEReZAgZDZD`,
         "Content-Type": "application/json"
       },
       body: JSON.stringify(payload)
