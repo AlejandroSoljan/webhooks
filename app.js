@@ -92,9 +92,10 @@ async function sendMessage(to, message, phoneNumberId) {
   const url = `https://graph.facebook.com/v22.0/731664510029283/messages`;
 
   const payload = {
-     "messaging_product": "whatsapp",
-    "to": "543462674128", 
-    "type": "template", "template": { "name": "hello_world", "language": { "code": "en_US" } } 
+    messaging_product: "whatsapp",
+    to: to,
+    type: "text",
+    text: { body: message }
   };
 
   try {
