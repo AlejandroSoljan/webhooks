@@ -89,7 +89,7 @@ app.post("/webhook", async (req, res) => {
 // --- Función para enviar mensaje usando la API de WhatsApp ---
 async function sendMessage(to, message, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN; // Tu token de acceso (permanent)
-  const url = `https://graph.facebook.com/v22.0/731664510029283/messages`;
+  const url = `https://graph.facebook.com/v22.0/764414663425868/messages`;
 
   const payload = {
     messaging_product: "whatsapp",
