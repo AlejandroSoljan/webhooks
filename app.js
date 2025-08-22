@@ -225,7 +225,7 @@ app.post("/webhook", async (req, res) => {
 
        // out = JSON.parse(out);
         
-        await sendText(from, out.response, phoneNumberId);
+        await sendText(from, out, phoneNumberId);
         console.log("📤 OUT →", from);
       }
     }
