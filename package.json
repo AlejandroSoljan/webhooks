@@ -13,7 +13,8 @@
     "express": "^4.19.2",
     "googleapis": "^133.0.0",
     "openai": "^4.58.1",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "mongodb": "^6.8.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.4"
