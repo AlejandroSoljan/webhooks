@@ -77,53 +77,6 @@ function pushMessage(session, role, content, maxTurns = 20) {
   session.updatedAt = Date.now();
 }
 
-/**
- * Chat con historial → fuerza salida JSON:
- * { "response": "texto", "estado": "IN_PROGRESS|COMPLETED", "Pedido"?: {...}, "Bigdata"?: {...} }
- */
-async function chatWithHistoryJSON(
-  waId,
-  userText,
-  model = process.env.OPENAI_MODEL || "gpt-4o-mini"
-) {
-  const session = getSession(waId);
-  pushMessage(session, "user", userText);
-
-  const completion = await openai.chat.completions.create({
-    model,
-    response_format: { type: "json_object" },
-    messages: [
-      ...session.messages,
-      {
-        role: "system",
-        content:
-          "Respondé SOLO con JSON válido (sin ```). Estructura: " +
-          '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED",' +
-          '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string },' +
-          '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } } ' +
-          "Cuando la conversación esté realmente cerrada, devolvé estado=COMPLETED y completá Pedido y Bigdata."
-      }
-    ],
-    temperature: 0.6
-  });
-
-  const content = completion.choices?.[0]?.message?.content || "";
-  const data = safeJsonParse(content) || {};
-
-  const responseText =
-    (typeof data.response === "string" && data.response.trim()) ||
-    (typeof content === "string" ? content.trim() : "") ||
-    "Perdón, no pude generar una respuesta. ¿Podés reformular?";
-
-  const estado =
-    (typeof data.estado === "string" && data.estado.trim().toUpperCase()) || "IN_PROGRESS";
-
-  pushMessage(session, "assistant", responseText);
-
-  // devolvemos todo el JSON para persistencia
-  return { response: responseText, estado, raw: data };
-}
-
 // ========= WhatsApp / Media helpers =========
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
 const TRANSCRIBE_API_URL = (process.env.TRANSCRIBE_API_URL || "https://transcribegpt-569454200011.northamerica-northeast1.run.app").trim().replace(/\/+$/,"");
@@ -132,12 +85,8 @@ const TRANSCRIBE_FORCE_GET = process.env.TRANSCRIBE_FORCE_GET === "true";
 
 // ---- Cache en memoria de binarios (audio e imagen) ----
 const fileCache = new Map(); // id -> { buffer, mime, expiresAt }
-
-function makeId(n = 16) {
-  return crypto.randomBytes(n).toString("hex");
-}
+function makeId(n = 16) { return crypto.randomBytes(n).toString("hex"); }
 function getBaseUrl(req) {
-  // Preferí PUBLIC_BASE_URL: la URL pública de tu app en Render
   let base = (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/,"");
   if (!base) {
     const proto = (req.headers["x-forwarded-proto"] || "https");
@@ -148,34 +97,22 @@ function getBaseUrl(req) {
 }
 function putInCache(buffer, mime) {
   const id = makeId();
-  fileCache.set(id, {
-    buffer,
-    mime: mime || "application/octet-stream",
-    expiresAt: Date.now() + CACHE_TTL_MS
-  });
+  fileCache.set(id, { buffer, mime: mime || "application/octet-stream", expiresAt: Date.now() + CACHE_TTL_MS });
   return id;
 }
 function getFromCache(id) {
   const item = fileCache.get(id);
   if (!item) return null;
-  if (Date.now() > item.expiresAt) {
-    fileCache.delete(id);
-    return null;
-  }
+  if (Date.now() > item.expiresAt) { fileCache.delete(id); return null; }
   return item;
 }
-
-// 🧹 Limpiador periódico de cache (cada 60s)
+// 🧹 Limpiador periódico
 setInterval(() => {
   const now = Date.now();
-  for (const [id, item] of fileCache.entries()) {
-    if (now > item.expiresAt) {
-      fileCache.delete(id);
-    }
-  }
+  for (const [id, item] of fileCache.entries()) if (now > item.expiresAt) fileCache.delete(id);
 }, 60 * 1000);
 
-// Endpoints públicos para servir el binario cacheado
+// Rutas públicas para servir cache
 app.get("/cache/audio/:id", (req, res) => {
   const item = getFromCache(req.params.id);
   if (!item) return res.status(404).send("Not found");
@@ -201,7 +138,6 @@ async function getMediaInfo(mediaId) {
   }
   return resp.json();
 }
-
 async function downloadMediaBuffer(mediaUrl) {
   const token = process.env.WHATSAPP_TOKEN;
   const resp = await fetch(mediaUrl, { headers: { Authorization: `Bearer ${token}` } });
@@ -216,57 +152,35 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
   const body = {
     model: "o4-mini",
     messages: [
-      {
-        role: "system",
-        content: "Muestra solo el texto sin saltos de linea ni caracteres especiales que veas en la imagen"
-      },
-      {
-        role: "user",
-        content: [
-          {
-            type: "image_url",
-            image_url: { url: publicImageUrl }
-          }
-        ]
-      }
+      { role: "system", content: "Muestra solo el texto sin saltos de linea ni caracteres especiales que veas en la imagen" },
+      { role: "user", content: [{ type: "image_url", image_url: { url: publicImageUrl } }] }
     ],
     temperature: 1
   };
-
   const resp = await fetch(url, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json"
-    },
+    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
-
   if (!resp.ok) {
     const errTxt = await resp.text().catch(() => "");
     throw new Error(`OpenAI vision error: ${resp.status} ${errTxt}`);
   }
-
   const data = await resp.json();
-  const text = data?.choices?.[0]?.message?.content?.trim() || "";
-  return text;
+  return data?.choices?.[0]?.message?.content?.trim() || "";
 }
 
 // ---- Transcriptor externo: JSON {audio_url}, luego multipart file, luego GET ----
 async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename = "audio.ogg" }) {
   const base = TRANSCRIBE_API_URL;
 
-  // Seguridad: alertar si audio y transcribe comparten host (mala config)
   try {
     const ah = new URL(publicAudioUrl).host;
     const th = new URL(base).host;
-    if (ah === th) {
-      console.warn("⚠️ CONFIG: PUBLIC_BASE_URL y TRANSCRIBE_API_URL apuntan al MISMO host. " +
-                   "PUBLIC_BASE_URL debe ser tu app en Render; TRANSCRIBE_API_URL, tu servicio en Cloud Run.");
-    }
+    if (ah === th) console.warn("⚠️ CONFIG: PUBLIC_BASE_URL y TRANSCRIBE_API_URL comparten host.");
   } catch {}
 
-  // Multiples paths típicos
+  // Paths típicos
   const paths = ["", "/transcribe", "/api/transcribe", "/v1/transcribe"];
 
   // 1) POST JSON { audio_url }
@@ -287,7 +201,7 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
     }
   }
 
-  // 2) POST multipart con el archivo (file)
+  // 2) POST multipart con archivo
   if (buffer && buffer.length) {
     function buildMultipart(bodyParts) {
       const boundary = "----NodeForm" + crypto.randomBytes(8).toString("hex");
@@ -302,8 +216,7 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
           chunks.push(part.data);
           chunks.push(Buffer.from("\r\n"));
         } else {
-          const headers =
-            `Content-Disposition: form-data; name="${part.name}"\r\n\r\n`;
+          const headers = `Content-Disposition: form-data; name="${part.name}"\r\n\r\n`;
           chunks.push(Buffer.from(headers));
           chunks.push(Buffer.from(String(part.value)));
           chunks.push(Buffer.from("\r\n"));
@@ -312,17 +225,12 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
       chunks.push(Buffer.from(`--${boundary}--\r\n`));
       return { body: Buffer.concat(chunks), boundary };
     }
-
     for (const p of paths) {
       const url = `${base}${p}`;
       const { body, boundary } = buildMultipart([
         { type: "file", name: "file", filename, contentType: mime || "application/octet-stream", data: buffer }
       ]);
-      const r = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
-        body
-      });
+      const r = await fetch(url, { method: "POST", headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` }, body });
       if (r.ok) {
         const j = await r.json().catch(() => ({}));
         console.log("✅ Transcribe OK: POST multipart file", url);
@@ -358,178 +266,205 @@ function getSheetsClient() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const key = (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
   if (!email || !key) throw new Error("Faltan credenciales de Google (email/clave).");
-
-  const auth = new google.auth.JWT(
-    email,
-    null,
-    key,
-    ["https://www.googleapis.com/auth/spreadsheets"]
-  );
+  const auth = new google.auth.JWT(email, null, key, ["https://www.googleapis.com/auth/spreadsheets"]);
   return google.sheets({ version: "v4", auth });
 }
-
+// Aceptar ID o URL en GOOGLE_SHEETS_ID
+function getSpreadsheetIdFromEnv() {
+  const raw = (process.env.GOOGLE_SHEETS_ID || "").trim();
+  if (!raw) throw new Error("Falta GOOGLE_SHEETS_ID.");
+  const m = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  return m ? m[1] : raw;
+}
 async function ensureHeaderIfEmpty({ sheetName, header }) {
-  const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
+  const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
-  const getResp = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${sheetName}!1:1`,
-  });
+  const getResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${sheetName}!1:1` });
   const hasHeader = (getResp.data.values && getResp.data.values.length > 0);
   if (!hasHeader) {
     await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `${sheetName}!A1`,
-      valueInputOption: "RAW",
+      spreadsheetId, range: `${sheetName}!A1`, valueInputOption: "RAW",
       requestBody: { values: [header] }
     });
   }
 }
-
 async function appendRow({ sheetName, values }) {
-  const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
+  const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
   await sheets.spreadsheets.values.append({
-    spreadsheetId,
-    range: `${sheetName}!A:A`,
-    valueInputOption: "USER_ENTERED",
-    insertDataOption: "INSERT_ROWS",
+    spreadsheetId, range: `${sheetName}!A:A`,
+    valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS",
     requestBody: { values: [values] }
   });
 }
 
-// Encabezados y flatten por pestaña
+// ----- Guardado en dos pestañas (Hoja 1 y BigData)
 function headerPedido() {
   return [
-    "wa_id",
-    "response",
-    "Fecha y hora de inicio de conversacion",
-    "Fecha y hora fin de conversacion",
-    "Estado pedido",
-    "Motivo cancelacion",
-    "Pedido pollo",
-    "Pedido papas",
-    "Milanesas comunes",
-    "Milanesas Napolitanas",
-    "Ensaladas",
-    "Bebidas",
-    "Monto",
-    "Nombre",
-    "Entrega",
-    "Domicilio",
-    "Fecha y hora de entrega",
-    "Hora"
+    "wa_id","response","Fecha y hora de inicio de conversacion","Fecha y hora fin de conversacion",
+    "Estado pedido","Motivo cancelacion","Pedido pollo","Pedido papas","Milanesas comunes","Milanesas Napolitanas",
+    "Ensaladas","Bebidas","Monto","Nombre","Entrega","Domicilio","Fecha y hora de entrega","Hora"
   ];
 }
 function flattenPedido({ waId, response, pedido }) {
   const p = pedido || {};
   return [
-    waId || "",
-    response || "",
+    waId || "", response || "",
     p["Fecha y hora de inicio de conversacion"] || "",
     p["Fecha y hora fin de conversacion"] || "",
-    p["Estado pedido"] || "",
-    p["Motivo cancelacion"] || "",
-    p["Pedido pollo"] || "",
-    p["Pedido papas"] || "",
-    p["Milanesas comunes"] || "",
-    p["Milanesas Napolitanas"] || "",
-    p["Ensaladas"] || "",
-    p["Bebidas"] || "",
-    p["Monto"] ?? "",
-    p["Nombre"] || "",
-    p["Entrega"] || "",
-    p["Domicilio"] || "",
-    p["Fecha y hora de entrega"] || "",
-    p["Hora"] || ""
+    p["Estado pedido"] || "", p["Motivo cancelacion"] || "",
+    p["Pedido pollo"] || "", p["Pedido papas"] || "",
+    p["Milanesas comunes"] || "", p["Milanesas Napolitanas"] || "",
+    p["Ensaladas"] || "", p["Bebidas"] || "", p["Monto"] ?? "",
+    p["Nombre"] || "", p["Entrega"] || "", p["Domicilio"] || "",
+    p["Fecha y hora de entrega"] || "", p["Hora"] || ""
   ];
 }
-
 function headerBigdata() {
   return [
-    "wa_id",
-    "Sexo",
-    "Estudios",
-    "Satisfaccion del cliente",
-    "Motivo puntaje satisfaccion",
-    "Cuanto nos conoce el cliente",
-    "Motivo puntaje conocimiento",
-    "Motivo puntaje general",
-    "Perdida oportunidad",
-    "Sugerencias",
-    "Flujo",
-    "Facilidad en el proceso de compras",
-    "Pregunto por bot"
+    "wa_id","Sexo","Estudios","Satisfaccion del cliente","Motivo puntaje satisfaccion",
+    "Cuanto nos conoce el cliente","Motivo puntaje conocimiento","Motivo puntaje general",
+    "Perdida oportunidad","Sugerencias","Flujo","Facilidad en el proceso de compras","Pregunto por bot"
   ];
 }
 function flattenBigdata({ waId, bigdata }) {
   const b = bigdata || {};
   return [
-    waId || "",
-    b["Sexo"] || "",
-    b["Estudios"] || "",
-    b["Satisfaccion del cliente"] ?? "",
-    b["Motivo puntaje satisfaccion"] || "",
-    b["Cuanto nos conoce el cliente"] ?? "",
-    b["Motivo puntaje conocimiento"] || "",
-    b["Motivo puntaje general"] || "",
-    b["Perdida oportunidad"] || "",
-    b["Sugerencias"] || "",
-    b["Flujo"] || "",
-    b["Facilidad en el proceso de compras"] ?? "",
-    b["Pregunto por bot"] || ""
+    waId || "", b["Sexo"] || "", b["Estudios"] || "",
+    b["Satisfaccion del cliente"] ?? "", b["Motivo puntaje satisfaccion"] || "",
+    b["Cuanto nos conoce el cliente"] ?? "", b["Motivo puntaje conocimiento"] || "",
+    b["Motivo puntaje general"] || "", b["Perdida oportunidad"] || "",
+    b["Sugerencias"] || "", b["Flujo"] || "",
+    b["Facilidad en el proceso de compras"] ?? "", b["Pregunto por bot"] || ""
   ];
 }
-
 async function saveCompletedToSheets({ waId, data }) {
-  const spreadsheetId = process.env.GOOGLE_SHEETS_ID;
-  if (!spreadsheetId) throw new Error("Falta GOOGLE_SHEETS_ID (el ID del Sheet).");
-
+  const spreadsheetId = getSpreadsheetIdFromEnv(); // valida
   const response = data?.response || "";
   const pedido = data?.Pedido || {};
   const bigdata = data?.Bigdata || {};
 
-  // Hoja 1 (Pedido)
   const hPedido = headerPedido();
   const vPedido = flattenPedido({ waId, response, pedido });
   await ensureHeaderIfEmpty({ sheetName: "Hoja 1", header: hPedido });
   await appendRow({ sheetName: "Hoja 1", values: vPedido });
 
-  // BigData (Bigdata)
   const hBig = headerBigdata();
   const vBig = flattenBigdata({ waId, bigdata });
   await ensureHeaderIfEmpty({ sheetName: "BigData", header: hBig });
   await appendRow({ sheetName: "BigData", values: vBig });
 }
 
+// ===== Productos desde Google Sheets (pestaña Productos: A nombre, B precio, C venta) =====
+const PRODUCTS_CACHE_TTL_MS = parseInt(process.env.PRODUCTS_CACHE_TTL_MS || "300000", 10); // 5 min
+let productsCache = { at: 0, items: [] };
+
+async function loadProductsFromSheet() {
+  const now = Date.now();
+  if (now - productsCache.at < PRODUCTS_CACHE_TTL_MS && productsCache.items?.length) {
+    return productsCache.items;
+  }
+  const spreadsheetId = getSpreadsheetIdFromEnv();
+  const sheets = getSheetsClient();
+  const range = "Productos!A2:C"; // salteo de encabezados
+  const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const rows = resp.data.values || [];
+
+  const items = rows.map((r) => {
+    const nombre = (r[0] || "").trim();
+    const precioRaw = (r[1] || "").toString().trim();
+    const venta = (r[2] || "").trim();
+    if (!nombre) return null;
+    const precioNum = Number(precioRaw.replace(/[^\d.,-]/g, "").replace(",", "."));
+    const precio = Number.isFinite(precioNum) ? precioNum : precioRaw;
+    return { nombre, precio, venta };
+  }).filter(Boolean);
+
+  productsCache = { at: now, items };
+  return items;
+}
+function buildProductsSystemMessage(items) {
+  if (!items?.length) return "Catálogo actual: (sin datos de productos)";
+  const lines = items.map(it => {
+    const precioFmt = (typeof it.precio === "number") ? `$${it.precio}` : `${it.precio}`;
+    const venta = it.venta ? ` (${it.venta})` : "";
+    return `- ${it.nombre} — ${precioFmt}${venta}`;
+  });
+  return ["Catálogo de productos (nombre — precio (modo de venta)):", ...lines].join("\n");
+}
+
+// ========= Chat con historial (inyecta catálogo) =========
+async function chatWithHistoryJSON(
+  waId,
+  userText,
+  model = process.env.OPENAI_MODEL || "gpt-4o-mini"
+) {
+  const session = getSession(waId);
+  pushMessage(session, "user", userText);
+
+  // Catálogo de productos como system extra
+  let catalogMsg = "Catálogo actual: (sin datos de productos)";
+  try {
+    const products = await loadProductsFromSheet();
+    catalogMsg = buildProductsSystemMessage(products);
+  } catch (e) {
+    console.warn("⚠️ No se pudo cargar Productos del Sheet:", e.message);
+  }
+
+  const completion = await openai.chat.completions.create({
+    model,
+    response_format: { type: "json_object" },
+    messages: [
+      ...session.messages,
+      { role: "system", content: catalogMsg },
+      {
+        role: "system",
+        content:
+          "Respondé SOLO con JSON válido (sin ```). Estructura: " +
+          '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED",' +
+          '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string },' +
+          '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } } ' +
+          "Usá el catálogo provisto para nombres y precios. Si falta un dato, pedilo amablemente."
+      }
+    ],
+    temperature: 0.6
+  });
+
+  const content = completion.choices?.[0]?.message?.content || "";
+  const data = safeJsonParse(content) || {};
+
+  const responseText =
+    (typeof data.response === "string" && data.response.trim()) ||
+    (typeof content === "string" ? content.trim() : "") ||
+    "Perdón, no pude generar una respuesta. ¿Podés reformular?";
+
+  const estado =
+    (typeof data.estado === "string" && data.estado.trim().toUpperCase()) || "IN_PROGRESS";
+
+  pushMessage(session, "assistant", responseText);
+  return { response: responseText, estado, raw: data };
+}
+
 // ========= WhatsApp send / mark =========
 async function sendText(to, body, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
-  const payload = {
-    messaging_product: "whatsapp",
-    to,
-    type: "text",
-    text: { body }
-  };
+  const payload = { messaging_product: "whatsapp", to, type: "text", text: { body } };
 
   const resp = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-
   const data = await resp.json();
   if (!resp.ok) console.error("❌ Error WhatsApp sendText:", resp.status, data);
   else console.log("📤 Enviado:", data);
   return data;
 }
-
 async function markAsRead(messageId, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
   const payload = { messaging_product: "whatsapp", status: "read", message_id: messageId };
-
   const resp = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -563,12 +498,10 @@ app.post("/webhook", async (req, res) => {
       console.warn("❌ Firma inválida");
       return res.sendStatus(403);
     }
-
     const body = req.body;
     if (body.object !== "whatsapp_business_account") {
       return res.sendStatus(404);
     }
-
     // Responder 200 rápido
     res.sendStatus(200);
 
@@ -579,13 +512,13 @@ app.post("/webhook", async (req, res) => {
         if (!msg) continue;
 
         const phoneNumberId = value.metadata?.phone_number_id;
-        const from = msg.from;         // E.164 sin '+'
+        const from = msg.from; // E.164 sin '+'
         const type = msg.type;
         const messageId = msg.id;
 
         if (messageId && phoneNumberId) markAsRead(messageId, phoneNumberId).catch(() => {});
 
-        // ---- Normalizamos la entrada del usuario ----
+        // ---- Normalizar entrada ----
         let userText = "";
 
         if (type === "text") {
@@ -609,23 +542,8 @@ app.post("/webhook", async (req, res) => {
               const baseUrl = getBaseUrl(req);
               const publicUrl = `${baseUrl}/cache/audio/${id}`;
 
-              // Aviso de config si comparten host
               try {
-                const aHost = new URL(publicUrl).host;
-                const tHost = new URL(TRANSCRIBE_API_URL).host;
-                if (aHost === tHost) {
-                  console.warn("⚠️ CONFIG: PUBLIC_BASE_URL y TRANSCRIBE_API_URL apuntan al MISMO host. " +
-                               "PUBLIC_BASE_URL debe ser tu app en Render; TRANSCRIBE_API_URL, tu servicio en Cloud Run.");
-                }
-              } catch {}
-
-              try {
-                const trData = await transcribeAudioExternal({
-                  publicAudioUrl: publicUrl,
-                  buffer,
-                  mime: info.mime_type,
-                  filename: "audio.ogg"
-                });
+                const trData = await transcribeAudioExternal({ publicAudioUrl: publicUrl, buffer, mime: info.mime_type, filename: "audio.ogg" });
                 const transcript = trData.text || trData.transcript || trData.transcription || trData.result || "";
                 userText = transcript
                   ? `Transcripción del audio del usuario: "${transcript}"`
@@ -646,7 +564,7 @@ app.post("/webhook", async (req, res) => {
             if (!mediaId) {
               userText = "Recibí una imagen pero no pude descargarla. ¿Podés describir lo que dice?";
             } else {
-              const info = await getMediaInfo(mediaId); // { url, mime_type }
+              const info = await getMediaInfo(mediaId);
               const buffer = await downloadMediaBuffer(info.url);
               const id = putInCache(buffer, info.mime_type);
               const baseUrl = getBaseUrl(req);
@@ -671,7 +589,7 @@ app.post("/webhook", async (req, res) => {
 
         console.log("📩 IN:", { from, type, preview: (userText || "").slice(0, 120) });
 
-        // ---- Llamamos al modelo con historial y JSON en la salida ----
+        // ---- Modelo con historial + catálogo ----
         let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
         let estado = "IN_PROGRESS";
         let raw = null;
@@ -684,11 +602,11 @@ app.post("/webhook", async (req, res) => {
           console.error("❌ OpenAI error:", e);
         }
 
-        // ---- Enviar respuesta al usuario ----
+        // ---- Responder por WhatsApp ----
         await sendText(from, responseText, phoneNumberId);
         console.log("📤 OUT →", from, "| estado:", estado);
 
-        // ---- Si COMPLETED, guardamos en Sheets y reiniciamos ----
+        // ---- Si COMPLETED, guardar en Sheets y reiniciar ----
         if (estado === "COMPLETED") {
           try {
             await saveCompletedToSheets({ waId: from, data: raw });
@@ -696,7 +614,6 @@ app.post("/webhook", async (req, res) => {
           } catch (e) {
             console.error("⚠️ Error guardando en Google Sheets:", e);
           }
-
           resetSession(from);
           console.log("🔁 Historial reiniciado para", from);
         }
