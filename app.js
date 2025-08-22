@@ -122,39 +122,69 @@ async function chatWithHistoryJSON(
   return { response: responseText, estado };
 }
 
-// ========= WhatsApp Cloud helpers =========
+// ========= WhatsApp / Media helpers =========
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
 const TRANSCRIBE_API_URL = process.env.TRANSCRIBE_API_URL ||
   "https://transcribegpt-569454200011.northamerica-northeast1.run.app";
-const AUDIO_CACHE_TTL_MS = parseInt(process.env.AUDIO_CACHE_TTL_MS || "300000", 10); // 5 min
+const CACHE_TTL_MS = parseInt(process.env.AUDIO_CACHE_TTL_MS || "300000", 10); // 5 min
 
-// ---- Cache en memoria de binarios para exponerlos temporalmente ----
-const audioCache = new Map(); // id -> { buffer, mime, expiresAt }
+// ---- Cache en memoria de binarios (audio e imagen) ----
+const fileCache = new Map(); // id -> { buffer, mime, expiresAt }
+
 function makeId(n = 16) {
   return crypto.randomBytes(n).toString("hex");
 }
 function getBaseUrl(req) {
-  // Preferí configurar PUBLIC_BASE_URL en env (p.ej. https://tuapp.onrender.com)
   if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL.replace(/\/+$/,"");
   const proto = (req.headers["x-forwarded-proto"] || "https");
   const host = req.headers.host;
   return `${proto}://${host}`;
 }
-
-// Endpoint público que sirve el binario cacheado
-app.get("/cache/audio/:id", (req, res) => {
-  const id = req.params.id;
-  const item = audioCache.get(id);
-  if (!item || Date.now() > item.expiresAt) {
-    audioCache.delete(id);
-    return res.status(404).send("Not found");
+function putInCache(buffer, mime) {
+  const id = makeId();
+  fileCache.set(id, {
+    buffer,
+    mime: mime || "application/octet-stream",
+    expiresAt: Date.now() + CACHE_TTL_MS
+  });
+  return id;
+}
+function getFromCache(id) {
+  const item = fileCache.get(id);
+  if (!item) return null;
+  if (Date.now() > item.expiresAt) {
+    fileCache.delete(id);
+    return null;
   }
+  return item;
+}
+
+// 🧹 Limpiador periódico de cache (cada 60s)
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, item] of fileCache.entries()) {
+    if (now > item.expiresAt) {
+      fileCache.delete(id);
+    }
+  }
+}, 60 * 1000);
+
+// Endpoints públicos para servir el binario cacheado
+app.get("/cache/audio/:id", (req, res) => {
+  const item = getFromCache(req.params.id);
+  if (!item) return res.status(404).send("Not found");
+  res.setHeader("Content-Type", item.mime || "application/octet-stream");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(item.buffer);
+});
+app.get("/cache/image/:id", (req, res) => {
+  const item = getFromCache(req.params.id);
+  if (!item) return res.status(404).send("Not found");
   res.setHeader("Content-Type", item.mime || "application/octet-stream");
   res.setHeader("Cache-Control", "no-store");
   res.send(item.buffer);
 });
 
-// Utilidad: info de media (devuelve { url, mime_type })
 async function getMediaInfo(mediaId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`;
@@ -166,7 +196,6 @@ async function getMediaInfo(mediaId) {
   return resp.json();
 }
 
-// Descarga binario protegido de WhatsApp (requiere Authorization)
 async function downloadMediaBuffer(mediaUrl) {
   const token = process.env.WHATSAPP_TOKEN;
   const resp = await fetch(mediaUrl, { headers: { Authorization: `Bearer ${token}` } });
@@ -175,18 +204,49 @@ async function downloadMediaBuffer(mediaUrl) {
   return Buffer.from(arrayBuffer);
 }
 
-// Crea un URL público temporal en este server para el binario
-function putInAudioCache(buffer, mime) {
-  const id = makeId();
-  audioCache.set(id, {
-    buffer,
-    mime: mime || "application/octet-stream",
-    expiresAt: Date.now() + AUDIO_CACHE_TTL_MS
+// ---- OCR de imagen con OpenAI Chat Completions (o4-mini) ----
+async function transcribeImageWithOpenAI(publicImageUrl) {
+  const url = "https://api.openai.com/v1/chat/completions";
+  const body = {
+    model: "o4-mini",
+    messages: [
+      {
+        role: "system", // equivalente a "developer" para la intención
+        content: "Muestra solo el texto sin saltos de linea ni caracteres especiales que veas en la imagen"
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "image_url",
+            image_url: { url: publicImageUrl }
+          }
+        ]
+      }
+    ],
+    temperature: 1
+  };
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
   });
-  return id;
+
+  if (!resp.ok) {
+    const errTxt = await resp.text().catch(() => "");
+    throw new Error(`OpenAI vision error: ${resp.status} ${errTxt}`);
+  }
+
+  const data = await resp.json();
+  const text = data?.choices?.[0]?.message?.content?.trim() || "";
+  return text;
 }
 
-// Enviar texto
+// ========= WhatsApp send / mark =========
 async function sendText(to, body, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
@@ -283,21 +343,17 @@ app.post("/webhook", async (req, res) => {
 
         } else if (type === "audio") {
           try {
-            // 1) Obtener mediaId
             const mediaId = msg.audio?.id;
             if (!mediaId) {
               userText = "Recibí un audio, pero no pude obtenerlo. ¿Podés escribir tu consulta?";
             } else {
-              // 2) Traer URL protegida y MIME desde WhatsApp
               const info = await getMediaInfo(mediaId); // { url, mime_type }
-              // 3) Descargar binario con Authorization
               const buffer = await downloadMediaBuffer(info.url);
-              // 4) Guardarlo temporalmente en memoria y armar URL público
-              const id = putInAudioCache(buffer, info.mime_type);
+              const id = putInCache(buffer, info.mime_type);
               const baseUrl = getBaseUrl(req);
               const publicUrl = `${baseUrl}/cache/audio/${id}`;
 
-              // 5) Llamar a tu API de transcripción con { audio_url: publicUrl }
+              // Tu API de transcripción (Cloud Run)
               const trResp = await fetch(TRANSCRIBE_API_URL, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -310,7 +366,6 @@ app.post("/webhook", async (req, res) => {
                 userText = "No pude transcribir tu audio. ¿Podés escribir tu consulta?";
               } else {
                 const trData = await trResp.json().catch(() => ({}));
-                // Toleramos distintos esquemas de respuesta
                 const transcript = trData.text || trData.transcript || trData.transcription || "";
                 userText = transcript
                   ? `Transcripción del audio del usuario: "${transcript}"`
@@ -323,7 +378,27 @@ app.post("/webhook", async (req, res) => {
           }
 
         } else if (type === "image") {
-          userText = "Recibí una imagen. Contame en texto qué necesitás y te ayudo.";
+          try {
+            const mediaId = msg.image?.id;
+            if (!mediaId) {
+              userText = "Recibí una imagen pero no pude descargarla. ¿Podés describir lo que dice?";
+            } else {
+              const info = await getMediaInfo(mediaId); // { url, mime_type }
+              const buffer = await downloadMediaBuffer(info.url);
+              const id = putInCache(buffer, info.mime_type);
+              const baseUrl = getBaseUrl(req);
+              const publicUrl = `${baseUrl}/cache/image/${id}`;
+
+              // OCR con OpenAI tal como lo pediste
+              const text = await transcribeImageWithOpenAI(publicUrl);
+              userText = text
+                ? `Texto detectado en la imagen: "${text}"`
+                : "No pude detectar texto en la imagen. ¿Podés escribir lo que dice?";
+            }
+          } catch (e) {
+            console.error("⚠️ Imagen/OCR fallback:", e);
+            userText = "No pude procesar la imagen. ¿Podés escribir lo que dice?";
+          }
 
         } else if (type === "document") {
           userText = "Recibí un documento. Pegá el texto relevante o contame tu consulta.";
@@ -332,7 +407,7 @@ app.post("/webhook", async (req, res) => {
           userText = "Hola 👋 ¿Podés escribir tu consulta en texto?";
         }
 
-        console.log("📩 IN:", { from, type, preview: userText.slice(0, 120) });
+        console.log("📩 IN:", { from, type, preview: (userText || "").slice(0, 120) });
 
         // ---- Llamamos al modelo con historial y JSON en la salida ----
         let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
