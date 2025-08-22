@@ -3,13 +3,11 @@ require("dotenv").config();
 
 const express = require("express");
 const crypto = require("crypto");
-const fs = require("fs"); 
+const fs = require("fs");
 const path = require("path");
 const OpenAI = require("openai"); // SDK oficial
 
 const app = express();
-
-instructions = process.env.COMPORTAMIENTO;
 
 // ====== Body / firma ======
 app.use(express.json({
@@ -34,14 +32,53 @@ function isValidSignature(req) {
 // ====== OpenAI ======
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-async function askChatGPT(prompt, {
-  model = process.env.OPENAI_MODEL || "gpt-4o-mini",
-  //instructions = "Sos un asistente claro y amable. Respondé en español."
-  //instructions = comportamiento
-  
-} = {}) {
-  const resp = await openai.responses.create({ model, instructions, input: prompt });
-  return (resp.output_text || "").trim();
+comportamiento = process.env.COMPORTAMIENTO;
+
+// --- Almacén de sesiones en memoria (por wa_id) ---
+const sessions = new Map();
+/**
+ * Obtiene o crea la sesión de chat para un usuario.
+ * Estructura: { messages: [{role, content}, ...], updatedAt }
+ */
+function getSession(waId) {
+  if (!sessions.has(waId)) {
+    sessions.set(waId, {
+      messages: [
+        {
+          role: "system",
+          content: comportamiento
+        }
+      ],
+      updatedAt: Date.now()
+    });
+  }
+  return sessions.get(waId);
+}
+
+// --- Push helper con recorte ---
+function pushMessage(session, role, content, maxTurns = 20) {
+  session.messages.push({ role, content });
+  // recortar: conservamos system + últimos 2*maxTurns (user+assistant)
+  const system = session.messages[0];
+  const tail = session.messages.slice(-2 * maxTurns);
+  session.messages = [system, ...tail];
+  session.updatedAt = Date.now();
+}
+
+// --- Llama al modelo con historial completo ---
+async function chatWithHistory(waId, userText, model = process.env.OPENAI_MODEL || "gpt-4o-mini") {
+  const session = getSession(waId);
+  pushMessage(session, "user", userText);
+
+  const completion = await openai.chat.completions.create({
+    model,
+    messages: session.messages,
+    temperature: 0.6
+  });
+
+  const reply = completion.choices?.[0]?.message?.content?.trim() || "";
+  if (reply) pushMessage(session, "assistant", reply);
+  return reply;
 }
 
 // Transcribe audio con Whisper (whisper-1)
@@ -50,7 +87,7 @@ async function transcribeAudio(filePath) {
     const rs = fs.createReadStream(filePath);
     const tr = await openai.audio.transcriptions.create({
       file: rs,
-      model: "whisper-1",
+      model: "whisper-1"
       // language: "es", // opcional
     });
     return (tr.text || "").trim();
@@ -92,7 +129,7 @@ async function markAsRead(messageId, phoneNumberId) {
 
   const resp = await fetch(url, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${token}", "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
 
@@ -124,7 +161,6 @@ async function downloadMediaToFile(mediaId, preferredName = "media.bin") {
   const arrayBuffer = await resp.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  // Genera nombre con extensión si se puede inferir
   const ext = (() => {
     const m = (info.mime_type || "").toLowerCase();
     if (m.includes("ogg")) return ".ogg";
@@ -158,8 +194,6 @@ app.get("/webhook", (req, res) => {
 
 app.post("/webhook", async (req, res) => {
   try {
-  //  console.log("app secret "+process.env.WHATSAPP_APP_SECRET);
-    // (Opcional) valida firma si configuraste WHATSAPP_APP_SECRET
     if (process.env.WHATSAPP_APP_SECRET) {
       if (!isValidSignature(req)) {
         console.warn("❌ Firma inválida");
@@ -172,7 +206,7 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(404);
     }
 
-    // Responder 200 rápido para evitar reintentos
+    // Respondemos 200 de inmediato
     res.sendStatus(200);
 
     for (const entry of body.entry || []) {
@@ -186,10 +220,7 @@ app.post("/webhook", async (req, res) => {
         const type = msg.type;
         const messageId = msg.id;
 
-        // Marca como leído (opcional pero recomendado)
-        if (messageId && phoneNumberId) {
-          markAsRead(messageId, phoneNumberId).catch(() => {});
-        }
+        if (messageId && phoneNumberId) markAsRead(messageId, phoneNumberId).catch(() => {});
 
         let userText = "";
 
@@ -234,18 +265,21 @@ app.post("/webhook", async (req, res) => {
 
         console.log("📩 IN:", { from, type, userText: userText?.slice(0, 120) });
 
-        // ChatGPT
-        const reply = await askChatGPT(userText);
+        // === Chat con historial por wa_id ===
+        let reply = "";
+        try {
+          reply = await chatWithHistory(from, userText);
+        } catch (e) {
+          console.error("❌ OpenAI error:", e);
+        }
         const out = reply || "Perdón, no pude generar una respuesta. ¿Podés reformular?";
 
-        // WhatsApp reply
         await sendText(from, out, phoneNumberId);
         console.log("📤 OUT →", from);
       }
     }
   } catch (err) {
     console.error("⚠️ Error en webhook:", err);
-    // ya respondimos 200
   }
 });
 
