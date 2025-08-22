@@ -168,4 +168,35 @@ app.post("/webhook", async (req, res) => {
         } else if (type === "interactive") {
           const it = msg.interactive;
           if (it?.type === "button_reply") userText = it.button_reply?.title || "";
-          if (it?.type === "list_repl_
+          if (it?.type === "list_reply")   userText = it.list_reply?.title || "";
+          if (!userText) userText = "Seleccionaste una opción. ¿En qué puedo ayudarte?";
+        } else if (type === "image") {
+          userText = "Recibí una imagen. Contame en texto qué necesitás y te ayudo.";
+        } else if (type === "audio") {
+          userText = "Recibí un audio. ¿Podés escribir tu consulta?";
+        } else {
+          userText = "Hola 👋 ¿Podés escribir tu consulta en texto?";
+        }
+
+        console.log("📩 IN:", { from, type, userText: userText?.slice(0, 120) });
+
+        let reply = "";
+        try {
+          reply = await chatWithHistory(from, userText);
+        } catch (e) {
+          console.error("❌ OpenAI error:", e);
+        }
+        const out = reply || "Perdón, no pude generar una respuesta. ¿Podés reformular?";
+
+        await sendText(from, out, phoneNumberId);
+        console.log("📤 OUT →", from);
+      }
+    }
+  } catch (err) {
+    console.error("⚠️ Error en webhook:", err);
+  }
+});
+
+// ====== Start ======
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 Webhook listening on port ${PORT}`));
