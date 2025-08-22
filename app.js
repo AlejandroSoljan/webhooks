@@ -9,6 +9,8 @@ const OpenAI = require("openai"); // SDK oficial
 
 const app = express();
 
+var comportamiento = process.env.COMPORTAMIENTO;
+
 // ====== Body / firma ======
 app.use(express.json({
   verify: (req, res, buf) => { req.rawBody = buf }
@@ -34,7 +36,9 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 async function askChatGPT(prompt, {
   model = process.env.OPENAI_MODEL || "gpt-4o-mini",
-  instructions = "Sos un asistente claro y amable. Respondé en español."
+  //instructions = "Sos un asistente claro y amable. Respondé en español."
+  instructions = comportamiento;
+  
 } = {}) {
   const resp = await openai.responses.create({ model, instructions, input: prompt });
   return (resp.output_text || "").trim();
