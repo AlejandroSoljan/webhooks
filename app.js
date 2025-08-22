@@ -90,7 +90,7 @@ async function chatWithHistoryJSON(
 
   const completion = await openai.chat.completions.create({
     model,
-    response_format: { type: "json_object" }, // fuerza JSON válido
+    response_format: { type: "json_object" },
     messages: [
       ...session.messages,
       {
@@ -106,7 +106,6 @@ async function chatWithHistoryJSON(
   const content = completion.choices?.[0]?.message?.content || "";
   const data = safeJsonParse(content);
 
-  // Normalización + fallback
   const responseText =
     (data && typeof data.response === "string" && data.response.trim()) ||
     (typeof content === "string" ? content.trim() : "") ||
@@ -116,7 +115,6 @@ async function chatWithHistoryJSON(
     (data && typeof data.estado === "string" && data.estado.trim().toUpperCase()) ||
     "IN_PROGRESS";
 
-  // Guardar en historial lo que se envía al usuario
   pushMessage(session, "assistant", responseText);
 
   return { response: responseText, estado };
@@ -135,10 +133,14 @@ function makeId(n = 16) {
   return crypto.randomBytes(n).toString("hex");
 }
 function getBaseUrl(req) {
-  if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL.replace(/\/+$/,"");
-  const proto = (req.headers["x-forwarded-proto"] || "https");
-  const host = req.headers.host;
-  return `${proto}://${host}`;
+  // Preferí PUBLIC_BASE_URL: la URL pública de tu app en Render
+  let base = (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
+  if (!base) {
+    const proto = (req.headers["x-forwarded-proto"] || "https");
+    const host = req.headers.host;
+    base = `${proto}://${host}`;
+  }
+  return base;
 }
 function putInCache(buffer, mime) {
   const id = makeId();
@@ -211,7 +213,7 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
     model: "o4-mini",
     messages: [
       {
-        role: "system", // equivalente a "developer" para la intención
+        role: "system",
         content: "Muestra solo el texto sin saltos de linea ni caracteres especiales que veas en la imagen"
       },
       {
@@ -249,6 +251,16 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
 // ---- Transcriptor externo con múltiples variantes de ruta/método/parámetro ----
 async function transcribeAudioExternal(publicAudioUrl) {
   const base = TRANSCRIBE_API_URL;
+
+  // Seguridad: alertar si audio y transcribe comparten host (mala config)
+  try {
+    const ah = new URL(publicAudioUrl).host;
+    const th = new URL(base).host;
+    if (ah === th) {
+      console.warn("⚠️ CONFIG: PUBLIC_BASE_URL y TRANSCRIBE_API_URL apuntan al MISMO host. " +
+                   "PUBLIC_BASE_URL debe ser tu app en Render; TRANSCRIBE_API_URL, tu servicio de Cloud Run.");
+    }
+  } catch {}
 
   // Si nos piden forzar GET, vamos directo
   if (TRANSCRIBE_FORCE_GET) {
@@ -421,6 +433,16 @@ app.post("/webhook", async (req, res) => {
               const id = putInCache(buffer, info.mime_type);
               const baseUrl = getBaseUrl(req);
               const publicUrl = `${baseUrl}/cache/audio/${id}`;
+
+              // Aviso de config si comparten host
+              try {
+                const aHost = new URL(publicUrl).host;
+                const tHost = new URL(TRANSCRIBE_API_URL).host;
+                if (aHost === tHost) {
+                  console.warn("⚠️ CONFIG: PUBLIC_BASE_URL y TRANSCRIBE_API_URL apuntan al MISMO host. " +
+                               "PUBLIC_BASE_URL debe ser tu app en Render; TRANSCRIBE_API_URL, tu servicio en Cloud Run.");
+                }
+              } catch {}
 
               try {
                 const trData = await transcribeAudioExternal(publicUrl);
