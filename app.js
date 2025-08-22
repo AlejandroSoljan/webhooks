@@ -186,9 +186,12 @@ app.post("/webhook", async (req, res) => {
         } catch (e) {
           console.error("❌ OpenAI error:", e);
         }
-        const out = reply || "Perdón, no pude generar una respuesta. ¿Podés reformular?";
 
-        await sendText(from, out, phoneNumberId);
+        //const data = JSON.parse(jsonString);
+        
+        const out = JSON.parse(reply) || "Perdón, no pude generar una respuesta. ¿Podés reformular?";
+
+        await sendText(from, out.response, phoneNumberId);
         console.log("📤 OUT →", from);
       }
     }
