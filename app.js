@@ -480,13 +480,14 @@ async function appendMessage(conversationId, {
   await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId) }, upd);
 }
 
-async function completeConversation(conversationId, finalPayload) {
+// === MOD: acepta status arbitrario (por defecto "COMPLETED")
+async function completeConversation(conversationId, finalPayload, status = "COMPLETED") {
   const db = await getDb();
   await db.collection("conversations").updateOne(
     { _id: new ObjectId(conversationId) },
     {
       $set: {
-        status: "COMPLETED",
+        status,
         closedAt: new Date(),
         summary: {
           response: finalPayload?.response || "",
@@ -526,10 +527,11 @@ async function chatWithHistoryJSON(
         role: "system",
         content:
           "Respondé SOLO con JSON válido (sin ```). Estructura: " +
-          '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED",' +
+          '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED",' + // ← MOD
           '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string },' +
           '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } } ' +
-          "Usá el catálogo provisto para nombres y precios. Si falta un dato, pedilo amablemente."
+          "Usá el catálogo provisto para nombres y precios. Si falta un dato, pedilo amablemente. " +
+          "Si la persona cancela, no quiere comprar o no continúa, usá estado=CANCELLED y completá 'Motivo cancelacion' en Pedido."
       }
     ],
     temperature: 0.6
@@ -750,21 +752,26 @@ app.post("/webhook", async (req, res) => {
           }
         }
 
-        // ---- Si COMPLETED, guardar en Sheets, cerrar conversación y reiniciar sesión ----
-        if (estado === "COMPLETED") {
-          try {
-            // Persistencia: marcar conversación como COMPLETED con el JSON final
-            await completeConversation(conv._id, raw);
+        // ---- MOD: Guardar en Sheets y cerrar conversación cuando NO esté en curso
+        const shouldFinalize =
+          (estado && estado !== "IN_PROGRESS") ||
+          ((raw?.Pedido?.["Estado pedido"] || "").toLowerCase().includes("cancel"));
 
-            // Google Sheets
+        if (shouldFinalize) {
+          try {
+            // Persistencia: marcar conversación como finalizada con el estado real
+            await completeConversation(conv._id, raw, estado);
+
+            // Google Sheets (guarda SIEMPRE: completadas y canceladas)
             await saveCompletedToSheets({ waId: from, data: raw });
-            console.log("🧾 Guardado en Google Sheets (Hoja 1 & BigData) para", from);
+            console.log("🧾 Guardado en Google Sheets (Hoja 1 & BigData) para", from, "con estado", estado);
+
+            // Reiniciar historial en memoria
+            resetSession(from);
+            console.log("🔁 Historial reiniciado para", from);
           } catch (e) {
             console.error("⚠️ Error al cerrar conversación / guardar en Google Sheets:", e);
           }
-
-          resetSession(from);
-          console.log("🔁 Historial reiniciado para", from);
         }
       }
     }
