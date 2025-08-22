@@ -127,6 +127,14 @@ app.get("/cache/image/:id", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.send(item.buffer);
 });
+// 👉 Nuevo: servir audios TTS
+app.get("/cache/tts/:id", (req, res) => {
+  const item = getFromCache(req.params.id);
+  if (!item) return res.status(404).send("Not found");
+  res.setHeader("Content-Type", item.mime || "audio/mpeg");
+  res.setHeader("Cache-Control", "no-store");
+  res.send(item.buffer);
+});
 
 async function getMediaInfo(mediaId) {
   const token = process.env.WHATSAPP_TOKEN;
@@ -180,7 +188,6 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
     if (ah === th) console.warn("⚠️ CONFIG: PUBLIC_BASE_URL y TRANSCRIBE_API_URL comparten host.");
   } catch {}
 
-  // Paths típicos
   const paths = ["", "/transcribe", "/api/transcribe", "/v1/transcribe"];
 
   // 1) POST JSON { audio_url }
@@ -259,6 +266,51 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
   }
 
   throw new Error("No hubo variantes válidas para el endpoint de transcripción.");
+}
+
+// ======== TTS (Texto a voz) con OpenAI ========
+async function synthesizeTTS(text) {
+  const model = process.env.TTS_MODEL || "gpt-4o-mini-tts";
+  const voice = process.env.TTS_VOICE || "alloy";
+  const format = (process.env.TTS_FORMAT || "mp3").toLowerCase();
+
+  const resp = await openai.audio.speech.create({
+    model,
+    voice,
+    input: text,
+    format // "mp3", "wav" o "opus"
+  });
+
+  const arrayBuffer = await resp.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  const mime =
+    format === "wav" ? "audio/wav" :
+    format === "opus" ? "audio/ogg" :
+    "audio/mpeg"; // mp3
+
+  return { buffer, mime };
+}
+async function sendAudioLink(to, publicUrl, phoneNumberId) {
+  const token = process.env.WHATSAPP_TOKEN;
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
+  const payload = {
+    messaging_product: "whatsapp",
+    to,
+    type: "audio",
+    audio: { link: publicUrl }
+  };
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await resp.json();
+  if (!resp.ok) console.error("❌ Error WhatsApp sendAudioLink:", resp.status, data);
+  else console.log("📤 Enviado AUDIO:", data);
+  return data;
 }
 
 // ========= Google Sheets helpers =========
@@ -461,6 +513,27 @@ async function sendText(to, body, phoneNumberId) {
   else console.log("📤 Enviado:", data);
   return data;
 }
+async function sendAudioLink(to, publicUrl, phoneNumberId) {
+  const token = process.env.WHATSAPP_TOKEN;
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
+  const payload = {
+    messaging_product: "whatsapp",
+    to,
+    type: "audio",
+    audio: { link: publicUrl }
+  };
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await resp.json();
+  if (!resp.ok) console.error("❌ Error WhatsApp sendAudioLink:", resp.status, data);
+  else console.log("📤 Enviado AUDIO:", data);
+  return data;
+}
 async function markAsRead(messageId, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
@@ -602,9 +675,22 @@ app.post("/webhook", async (req, res) => {
           console.error("❌ OpenAI error:", e);
         }
 
-        // ---- Responder por WhatsApp ----
+        // ---- Responder por texto SIEMPRE
         await sendText(from, responseText, phoneNumberId);
         console.log("📤 OUT →", from, "| estado:", estado);
+
+        // ---- Y si el usuario mandó AUDIO, responder TAMBIÉN con AUDIO (TTS)
+        if (type === "audio" && (process.env.ENABLE_TTS_FOR_AUDIO || "true").toLowerCase() === "true") {
+          try {
+            const { buffer, mime } = await synthesizeTTS(responseText);
+            const ttsId = putInCache(buffer, mime || "audio/mpeg");
+            const baseUrl = getBaseUrl(req);
+            const ttsUrl = `${baseUrl}/cache/tts/${ttsId}`;
+            await sendAudioLink(from, ttsUrl, phoneNumberId);
+          } catch (e) {
+            console.error("⚠️ Error generando/enviando TTS:", e);
+          }
+        }
 
         // ---- Si COMPLETED, guardar en Sheets y reiniciar ----
         if (estado === "COMPLETED") {
