@@ -6,6 +6,10 @@ const crypto = require("crypto");
 const OpenAI = require("openai");
 const { google } = require("googleapis");
 
+// --- MongoDB helpers
+const { ObjectId } = require("mongodb");
+const { getDb } = require("./db");
+
 const app = express();
 
 // ========= Body / firma =========
@@ -46,7 +50,7 @@ function safeJsonParse(raw) {
   }
 }
 
-// ========= Sesiones (historial) =========
+// ========= Sesiones (historial en memoria) =========
 const comportamiento = process.env.COMPORTAMIENTO ||
   "Sos un asistente claro, amable y conciso. Respondé en español.";
 
@@ -81,7 +85,6 @@ function pushMessage(session, role, content, maxTurns = 20) {
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
 const TRANSCRIBE_API_URL = (process.env.TRANSCRIBE_API_URL || "https://transcribegpt-569454200011.northamerica-northeast1.run.app").trim().replace(/\/+$/,"");
 const CACHE_TTL_MS = parseInt(process.env.AUDIO_CACHE_TTL_MS || "300000", 10); // 5 min
-const TRANSCRIBE_FORCE_GET = process.env.TRANSCRIBE_FORCE_GET === "true";
 
 // ---- Cache en memoria de binarios (audio e imagen) ----
 const fileCache = new Map(); // id -> { buffer, mime, expiresAt }
@@ -127,7 +130,6 @@ app.get("/cache/image/:id", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.send(item.buffer);
 });
-// 👉 Nuevo: servir audios TTS
 app.get("/cache/tts/:id", (req, res) => {
   const item = getFromCache(req.params.id);
   if (!item) return res.status(404).send("Not found");
@@ -181,13 +183,6 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
 // ---- Transcriptor externo: JSON {audio_url}, luego multipart file, luego GET ----
 async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename = "audio.ogg" }) {
   const base = TRANSCRIBE_API_URL;
-
-  try {
-    const ah = new URL(publicAudioUrl).host;
-    const th = new URL(base).host;
-    if (ah === th) console.warn("⚠️ CONFIG: PUBLIC_BASE_URL y TRANSCRIBE_API_URL comparten host.");
-  } catch {}
-
   const paths = ["", "/transcribe", "/api/transcribe", "/v1/transcribe"];
 
   // 1) POST JSON { audio_url }
@@ -210,23 +205,19 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
 
   // 2) POST multipart con archivo
   if (buffer && buffer.length) {
-    function buildMultipart(bodyParts) {
+    function buildMultipart(parts) {
       const boundary = "----NodeForm" + crypto.randomBytes(8).toString("hex");
       const chunks = [];
-      for (const part of bodyParts) {
+      for (const part of parts) {
         chunks.push(Buffer.from(`--${boundary}\r\n`));
         if (part.type === "file") {
           const headers =
             `Content-Disposition: form-data; name="${part.name}"; filename="${part.filename}"\r\n` +
             `Content-Type: ${part.contentType || "application/octet-stream"}\r\n\r\n`;
-          chunks.push(Buffer.from(headers));
-          chunks.push(part.data);
-          chunks.push(Buffer.from("\r\n"));
+          chunks.push(Buffer.from(headers), part.data, Buffer.from("\r\n"));
         } else {
           const headers = `Content-Disposition: form-data; name="${part.name}"\r\n\r\n`;
-          chunks.push(Buffer.from(headers));
-          chunks.push(Buffer.from(String(part.value)));
-          chunks.push(Buffer.from("\r\n"));
+          chunks.push(Buffer.from(headers), Buffer.from(String(part.value)), Buffer.from("\r\n"));
         }
       }
       chunks.push(Buffer.from(`--${boundary}--\r\n`));
@@ -445,6 +436,68 @@ function buildProductsSystemMessage(items) {
   return ["Catálogo de productos (nombre — precio (modo de venta)):", ...lines].join("\n");
 }
 
+// ========= Persistencia NoSQL (MongoDB) =========
+async function ensureOpenConversation(waId) {
+  const db = await getDb();
+  let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
+  if (!conv) {
+    const doc = {
+      waId,
+      status: "OPEN", // OPEN | COMPLETED | CANCELLED
+      openedAt: new Date(),
+      closedAt: null,
+      lastUserTs: null,
+      lastAssistantTs: null,
+      turns: 0
+    };
+    const ins = await db.collection("conversations").insertOne(doc);
+    conv = { _id: ins.insertedId, ...doc };
+  }
+  return conv;
+}
+
+async function appendMessage(conversationId, {
+  role,                // "user" | "assistant"
+  content,             // texto plano
+  type = "text",       // text | audio | image | document | interactive
+  meta = {},           // { transcript, ocrText, estado, mediaUrl, ... }
+  ttlDays = null       // si querés TTL por mensaje
+}) {
+  const db = await getDb();
+  const doc = {
+    conversationId: new ObjectId(conversationId),
+    role, content, type, meta,
+    ts: new Date()
+  };
+  if (ttlDays && Number.isFinite(ttlDays)) {
+    doc.expireAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
+  }
+  await db.collection("messages").insertOne(doc);
+
+  const upd = { $inc: { turns: 1 }, $set: {} };
+  if (role === "user") upd.$set.lastUserTs = doc.ts;
+  if (role === "assistant") upd.$set.lastAssistantTs = doc.ts;
+  await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId) }, upd);
+}
+
+async function completeConversation(conversationId, finalPayload) {
+  const db = await getDb();
+  await db.collection("conversations").updateOne(
+    { _id: new ObjectId(conversationId) },
+    {
+      $set: {
+        status: "COMPLETED",
+        closedAt: new Date(),
+        summary: {
+          response: finalPayload?.response || "",
+          Pedido: finalPayload?.Pedido || null,
+          Bigdata: finalPayload?.Bigdata || null
+        }
+      }
+    }
+  );
+}
+
 // ========= Chat con historial (inyecta catálogo) =========
 async function chatWithHistoryJSON(
   waId,
@@ -513,27 +566,6 @@ async function sendText(to, body, phoneNumberId) {
   else console.log("📤 Enviado:", data);
   return data;
 }
-async function sendAudioLink(to, publicUrl, phoneNumberId) {
-  const token = process.env.WHATSAPP_TOKEN;
-  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
-  const payload = {
-    messaging_product: "whatsapp",
-    to,
-    type: "audio",
-    audio: { link: publicUrl }
-  };
-
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-
-  const data = await resp.json();
-  if (!resp.ok) console.error("❌ Error WhatsApp sendAudioLink:", resp.status, data);
-  else console.log("📤 Enviado AUDIO:", data);
-  return data;
-}
 async function markAsRead(messageId, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
@@ -591,8 +623,9 @@ app.post("/webhook", async (req, res) => {
 
         if (messageId && phoneNumberId) markAsRead(messageId, phoneNumberId).catch(() => {});
 
-        // ---- Normalizar entrada ----
+        // ---- Normalizar entrada del usuario ----
         let userText = "";
+        let userMeta = {};
 
         if (type === "text") {
           userText = msg.text?.body || "";
@@ -614,13 +647,17 @@ app.post("/webhook", async (req, res) => {
               const id = putInCache(buffer, info.mime_type);
               const baseUrl = getBaseUrl(req);
               const publicUrl = `${baseUrl}/cache/audio/${id}`;
+              userMeta.mediaUrl = publicUrl;
 
               try {
                 const trData = await transcribeAudioExternal({ publicAudioUrl: publicUrl, buffer, mime: info.mime_type, filename: "audio.ogg" });
                 const transcript = trData.text || trData.transcript || trData.transcription || trData.result || "";
-                userText = transcript
-                  ? `Transcripción del audio del usuario: "${transcript}"`
-                  : "No obtuve texto de la transcripción. ¿Podés escribir tu consulta?";
+                if (transcript) {
+                  userMeta.transcript = transcript;
+                  userText = `Transcripción del audio del usuario: "${transcript}"`;
+                } else {
+                  userText = "No obtuve texto de la transcripción. ¿Podés escribir tu consulta?";
+                }
               } catch (e) {
                 console.error("❌ Transcribe API error:", e.message);
                 userText = "No pude transcribir tu audio. ¿Podés escribir tu consulta?";
@@ -642,11 +679,15 @@ app.post("/webhook", async (req, res) => {
               const id = putInCache(buffer, info.mime_type);
               const baseUrl = getBaseUrl(req);
               const publicUrl = `${baseUrl}/cache/image/${id}`;
+              userMeta.mediaUrl = publicUrl;
 
               const text = await transcribeImageWithOpenAI(publicUrl);
-              userText = text
-                ? `Texto detectado en la imagen: "${text}"`
-                : "No pude detectar texto en la imagen. ¿Podés escribir lo que dice?";
+              if (text) {
+                userMeta.ocrText = text;
+                userText = `Texto detectado en la imagen: "${text}"`;
+              } else {
+                userText = "No pude detectar texto en la imagen. ¿Podés escribir lo que dice?";
+              }
             }
           } catch (e) {
             console.error("⚠️ Imagen/OCR fallback:", e);
@@ -661,6 +702,15 @@ app.post("/webhook", async (req, res) => {
         }
 
         console.log("📩 IN:", { from, type, preview: (userText || "").slice(0, 120) });
+
+        // === Persistencia: asegurar conversación abierta y registrar turno del usuario ===
+        const conv = await ensureOpenConversation(from);
+        await appendMessage(conv._id, {
+          role: "user",
+          content: userText,
+          type,
+          meta: userMeta
+        });
 
         // ---- Modelo con historial + catálogo ----
         let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
@@ -679,6 +729,14 @@ app.post("/webhook", async (req, res) => {
         await sendText(from, responseText, phoneNumberId);
         console.log("📤 OUT →", from, "| estado:", estado);
 
+        // ---- Persistencia: turno del assistant
+        await appendMessage(conv._id, {
+          role: "assistant",
+          content: responseText,
+          type: "text",
+          meta: { estado }
+        });
+
         // ---- Y si el usuario mandó AUDIO, responder TAMBIÉN con AUDIO (TTS)
         if (type === "audio" && (process.env.ENABLE_TTS_FOR_AUDIO || "true").toLowerCase() === "true") {
           try {
@@ -692,14 +750,19 @@ app.post("/webhook", async (req, res) => {
           }
         }
 
-        // ---- Si COMPLETED, guardar en Sheets y reiniciar ----
+        // ---- Si COMPLETED, guardar en Sheets, cerrar conversación y reiniciar sesión ----
         if (estado === "COMPLETED") {
           try {
+            // Persistencia: marcar conversación como COMPLETED con el JSON final
+            await completeConversation(conv._id, raw);
+
+            // Google Sheets
             await saveCompletedToSheets({ waId: from, data: raw });
             console.log("🧾 Guardado en Google Sheets (Hoja 1 & BigData) para", from);
           } catch (e) {
-            console.error("⚠️ Error guardando en Google Sheets:", e);
+            console.error("⚠️ Error al cerrar conversación / guardar en Google Sheets:", e);
           }
+
           resetSession(from);
           console.log("🔁 Historial reiniciado para", from);
         }
