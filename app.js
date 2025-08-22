@@ -154,7 +154,7 @@ app.get("/webhook", (req, res) => {
 
 app.post("/webhook", async (req, res) => {
   try {
-    console.log("app secret "+process.env.WHATSAPP_APP_SECRET);
+  //  console.log("app secret "+process.env.WHATSAPP_APP_SECRET);
     // (Opcional) valida firma si configuraste WHATSAPP_APP_SECRET
     if (process.env.WHATSAPP_APP_SECRET) {
       if (!isValidSignature(req)) {
