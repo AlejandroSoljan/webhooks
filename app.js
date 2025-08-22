@@ -223,7 +223,9 @@ app.post("/webhook", async (req, res) => {
           console.error("❌ OpenAI error:", e);
         }
 
-        await sendText(from, out, phoneNumberId);
+        out = JSON.parse(out);
+        
+        await sendText(from, out.response, phoneNumberId);
         console.log("📤 OUT →", from);
       }
     }
