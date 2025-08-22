@@ -124,8 +124,8 @@ async function chatWithHistoryJSON(
 
 // ========= WhatsApp / Media helpers =========
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
-const TRANSCRIBE_API_URL = process.env.TRANSCRIBE_API_URL ||
-  "https://transcribegpt-569454200011.northamerica-northeast1.run.app";
+const TRANSCRIBE_API_URL = (process.env.TRANSCRIBE_API_URL || "https://transcribegpt-569454200011.northamerica-northeast1.run.app").replace(/\/+$/,"");
+const TRANSCRIBE_FORCE_GET = process.env.TRANSCRIBE_FORCE_GET === "true";
 const CACHE_TTL_MS = parseInt(process.env.AUDIO_CACHE_TTL_MS || "300000", 10); // 5 min
 
 // ---- Cache en memoria de binarios (audio e imagen) ----
@@ -211,7 +211,7 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
     model: "o4-mini",
     messages: [
       {
-        role: "system", // equivalente a "developer" para la intención
+        role: "system",
         content: "Muestra solo el texto sin saltos de linea ni caracteres especiales que veas en la imagen"
       },
       {
@@ -244,6 +244,45 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
   const data = await resp.json();
   const text = data?.choices?.[0]?.message?.content?.trim() || "";
   return text;
+}
+
+// ---- Transcriptor externo con POST y fallback GET ----
+async function transcribeAudioExternal(publicAudioUrl) {
+  const base = TRANSCRIBE_API_URL;
+
+  // Si nos piden forzar GET, vamos directo
+  if (TRANSCRIBE_FORCE_GET) {
+    const g = await fetch(`${base}?audio_url=${encodeURIComponent(publicAudioUrl)}`);
+    if (!g.ok) {
+      const err2 = await g.text().catch(() => "");
+      throw new Error(`Transcribe GET error: ${g.status} ${err2}`);
+    }
+    return g.json().catch(() => ({}));
+  }
+
+  // 1) Intento POST
+  const r = await fetch(base, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ audio_url: publicAudioUrl })
+  });
+  if (r.ok) return r.json().catch(() => ({}));
+
+  // 2) Fallback GET si 405/404
+  if (r.status === 405 || r.status === 404) {
+    const errTxt = await r.text().catch(() => "");
+    console.warn("Transcribe POST no permitido:", r.status, errTxt);
+    const g = await fetch(`${base}?audio_url=${encodeURIComponent(publicAudioUrl)}`);
+    if (!g.ok) {
+      const err2 = await g.text().catch(() => "");
+      throw new Error(`Transcribe GET error: ${g.status} ${err2}`);
+    }
+    return g.json().catch(() => ({}));
+  }
+
+  // 3) Otro error
+  const err = await r.text().catch(() => "");
+  throw new Error(`Transcribe POST error: ${r.status} ${err}`);
 }
 
 // ========= WhatsApp send / mark =========
@@ -353,23 +392,16 @@ app.post("/webhook", async (req, res) => {
               const baseUrl = getBaseUrl(req);
               const publicUrl = `${baseUrl}/cache/audio/${id}`;
 
-              // Tu API de transcripción (Cloud Run)
-              const trResp = await fetch(TRANSCRIBE_API_URL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ audio_url: publicUrl })
-              });
-
-              if (!trResp.ok) {
-                const err = await trResp.text().catch(() => "");
-                console.error("❌ Transcribe API error:", trResp.status, err);
-                userText = "No pude transcribir tu audio. ¿Podés escribir tu consulta?";
-              } else {
-                const trData = await trResp.json().catch(() => ({}));
-                const transcript = trData.text || trData.transcript || trData.transcription || "";
+              // Transcripción con POST y fallback GET
+              try {
+                const trData = await transcribeAudioExternal(publicUrl);
+                const transcript = trData.text || trData.transcript || trData.transcription || trData.result || "";
                 userText = transcript
                   ? `Transcripción del audio del usuario: "${transcript}"`
                   : "No obtuve texto de la transcripción. ¿Podés escribir tu consulta?";
+              } catch (e) {
+                console.error("❌ Transcribe API error (POST/GET):", e.message);
+                userText = "No pude transcribir tu audio. ¿Podés escribir tu consulta?";
               }
             }
           } catch (e) {
@@ -389,7 +421,6 @@ app.post("/webhook", async (req, res) => {
               const baseUrl = getBaseUrl(req);
               const publicUrl = `${baseUrl}/cache/image/${id}`;
 
-              // OCR con OpenAI tal como lo pediste
               const text = await transcribeImageWithOpenAI(publicUrl);
               userText = text
                 ? `Texto detectado en la imagen: "${text}"`
