@@ -124,9 +124,9 @@ async function chatWithHistoryJSON(
 
 // ========= WhatsApp / Media helpers =========
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
-const TRANSCRIBE_API_URL = (process.env.TRANSCRIBE_API_URL || "https://transcribegpt-569454200011.northamerica-northeast1.run.app").replace(/\/+$/,"");
-const TRANSCRIBE_FORCE_GET = process.env.TRANSCRIBE_FORCE_GET === "true";
+const TRANSCRIBE_API_URL = (process.env.TRANSCRIBE_API_URL || "https://transcribegpt-569454200011.northamerica-northeast1.run.app").trim().replace(/\/+$/,"");
 const CACHE_TTL_MS = parseInt(process.env.AUDIO_CACHE_TTL_MS || "300000", 10); // 5 min
+const TRANSCRIBE_FORCE_GET = process.env.TRANSCRIBE_FORCE_GET === "true";
 
 // ---- Cache en memoria de binarios (audio e imagen) ----
 const fileCache = new Map(); // id -> { buffer, mime, expiresAt }
@@ -211,7 +211,7 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
     model: "o4-mini",
     messages: [
       {
-        role: "system",
+        role: "system", // equivalente a "developer" para la intención
         content: "Muestra solo el texto sin saltos de linea ni caracteres especiales que veas en la imagen"
       },
       {
@@ -246,7 +246,7 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
   return text;
 }
 
-// ---- Transcriptor externo con POST y fallback GET ----
+// ---- Transcriptor externo con múltiples variantes de ruta/método/parámetro ----
 async function transcribeAudioExternal(publicAudioUrl) {
   const base = TRANSCRIBE_API_URL;
 
@@ -260,29 +260,59 @@ async function transcribeAudioExternal(publicAudioUrl) {
     return g.json().catch(() => ({}));
   }
 
-  // 1) Intento POST
-  const r = await fetch(base, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ audio_url: publicAudioUrl })
-  });
-  if (r.ok) return r.json().catch(() => ({}));
+  // Variantes de paths
+  const paths = ["", "/transcribe", "/api/transcribe", "/v1/transcribe"];
 
-  // 2) Fallback GET si 405/404
-  if (r.status === 405 || r.status === 404) {
-    const errTxt = await r.text().catch(() => "");
-    console.warn("Transcribe POST no permitido:", r.status, errTxt);
-    const g = await fetch(`${base}?audio_url=${encodeURIComponent(publicAudioUrl)}`);
-    if (!g.ok) {
-      const err2 = await g.text().catch(() => "");
-      throw new Error(`Transcribe GET error: ${g.status} ${err2}`);
+  // Variantes de POST bodies
+  const bodies = [
+    { kind: "POST_JSON_audio_url", method: "POST", header: { "Content-Type": "application/json" }, body: (u)=>JSON.stringify({ audio_url: u }) },
+    { kind: "POST_JSON_url",       method: "POST", header: { "Content-Type": "application/json" }, body: (u)=>JSON.stringify({ url: u }) }
+  ];
+  // Variantes GET
+  const queries = [
+    { kind: "GET_QS_audio_url", mk: (u)=>`?audio_url=${encodeURIComponent(u)}` },
+    { kind: "GET_QS_url",       mk: (u)=>`?url=${encodeURIComponent(u)}` }
+  ];
+
+  // 1) Intentos POST
+  for (const p of paths) {
+    for (const b of bodies) {
+      const url = `${base}${p}`;
+      const r = await fetch(url, { method: b.method, headers: b.header, body: b.body(publicAudioUrl) });
+      if (r.ok) {
+        const j = await r.json().catch(()=>({}));
+        console.log("✅ Transcribe OK:", b.kind, url);
+        return j;
+      } else if (r.status === 405 || r.status === 404) {
+        const errTxt = await r.text().catch(()=> "");
+        console.warn("Transcribe POST no permitido:", r.status, b.kind, url, errTxt);
+      } else {
+        const errTxt = await r.text().catch(()=> "");
+        console.warn("Transcribe POST fallo:", r.status, b.kind, url, errTxt);
+      }
     }
-    return g.json().catch(() => ({}));
   }
 
-  // 3) Otro error
-  const err = await r.text().catch(() => "");
-  throw new Error(`Transcribe POST error: ${r.status} ${err}`);
+  // 2) Intentos GET
+  for (const p of paths) {
+    for (const q of queries) {
+      const url = `${base}${p}${q.mk(publicAudioUrl)}`;
+      const g = await fetch(url);
+      if (g.ok) {
+        const j2 = await g.json().catch(()=>({}));
+        console.log("✅ Transcribe OK:", "GET", url);
+        return j2;
+      } else if (g.status === 405 || g.status === 404) {
+        const err2 = await g.text().catch(()=> "");
+        console.warn("Transcribe GET no permitido:", g.status, url, err2);
+      } else {
+        const err2 = await g.text().catch(()=> "");
+        console.warn("Transcribe GET fallo:", g.status, url, err2);
+      }
+    }
+  }
+
+  throw new Error("No hubo variantes válidas para el endpoint de transcripción.");
 }
 
 // ========= WhatsApp send / mark =========
@@ -392,7 +422,6 @@ app.post("/webhook", async (req, res) => {
               const baseUrl = getBaseUrl(req);
               const publicUrl = `${baseUrl}/cache/audio/${id}`;
 
-              // Transcripción con POST y fallback GET
               try {
                 const trData = await transcribeAudioExternal(publicUrl);
                 const transcript = trData.text || trData.transcript || trData.transcription || trData.result || "";
@@ -400,7 +429,7 @@ app.post("/webhook", async (req, res) => {
                   ? `Transcripción del audio del usuario: "${transcript}"`
                   : "No obtuve texto de la transcripción. ¿Podés escribir tu consulta?";
               } catch (e) {
-                console.error("❌ Transcribe API error (POST/GET):", e.message);
+                console.error("❌ Transcribe API error (todas las variantes):", e.message);
                 userText = "No pude transcribir tu audio. ¿Podés escribir tu consulta?";
               }
             }
