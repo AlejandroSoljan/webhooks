@@ -49,8 +49,9 @@ function safeJsonParse(raw) {
 const comportamiento = process.env.COMPORTAMIENTO ||
   "Sos un asistente claro, amable y conciso. Respondé en español.";
 
-const sessions = new Map();
-/** Obtiene/crea sesión por waId */
+const sessions = new Map(); // waId -> { messages, updatedAt }
+
+/** Crea/obtiene sesión por waId */
 function getSession(waId) {
   if (!sessions.has(waId)) {
     sessions.set(waId, {
@@ -59,6 +60,11 @@ function getSession(waId) {
     });
   }
   return sessions.get(waId);
+}
+
+/** Reinicia (borra) la sesión del usuario */
+function resetSession(waId) {
+  sessions.delete(waId);
 }
 
 /** Agrega mensaje y recorta historial (últimos 20 turnos) */
@@ -70,8 +76,15 @@ function pushMessage(session, role, content, maxTurns = 20) {
   session.updatedAt = Date.now();
 }
 
-/** Chat con historial → siempre devuelve { reply, meta } desde JSON del modelo */
-async function chatWithHistoryJSON(waId, userText, model = process.env.OPENAI_MODEL || "gpt-4o-mini") {
+/**
+ * Chat con historial → fuerza salida JSON:
+ * { "response": "texto", "estado": "IN_PROGRESS|COMPLETED" }
+ */
+async function chatWithHistoryJSON(
+  waId,
+  userText,
+  model = process.env.OPENAI_MODEL || "gpt-4o-mini"
+) {
   const session = getSession(waId);
   pushMessage(session, "user", userText);
 
@@ -84,7 +97,7 @@ async function chatWithHistoryJSON(waId, userText, model = process.env.OPENAI_MO
         role: "system",
         content:
           "Respondé SOLO con JSON válido (sin ```). Estructura exacta: " +
-          '{ "reply": "texto para WhatsApp", "meta": { "intent": "string", "confidence": 0.0 } }'
+          '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED" }'
       }
     ],
     temperature: 0.6
@@ -92,15 +105,21 @@ async function chatWithHistoryJSON(waId, userText, model = process.env.OPENAI_MO
 
   const content = completion.choices?.[0]?.message?.content || "";
   const data = safeJsonParse(content);
-console.log("respuesta gpt: " + data.reply)
-  if (data && typeof data.reply === "string") {
-    pushMessage(session, "assistant", data.reply);
-    return { reply: data.reply, meta: data.meta || {} };
-  }
 
-  const fallback = (content || "").trim() || "Perdón, no pude generar una respuesta. ¿Podés reformular?";
-  pushMessage(session, "assistant", fallback);
-  return { reply: fallback, meta: {} };
+  // Normalización + fallback
+  const responseText =
+    (data && typeof data.response === "string" && data.response.trim()) ||
+    (typeof content === "string" ? content.trim() : "") ||
+    "Perdón, no pude generar una respuesta. ¿Podés reformular?";
+
+  const estado =
+    (data && typeof data.estado === "string" && data.estado.trim().toUpperCase()) ||
+    "IN_PROGRESS";
+
+  // Guardar en historial lo que se envía al usuario
+  pushMessage(session, "assistant", responseText);
+
+  return { response: responseText, estado };
 }
 
 // ========= WhatsApp Cloud helpers =========
@@ -123,11 +142,8 @@ async function sendText(to, body, phoneNumberId) {
   });
 
   const data = await resp.json();
-  if (!resp.ok) {
-    console.error("❌ Error WhatsApp sendText:", resp.status, data);
-  } else {
-    console.log("📤 Enviado:", data);
-  }
+  if (!resp.ok) console.error("❌ Error WhatsApp sendText:", resp.status, data);
+  else console.log("📤 Enviado:", data);
   return data;
 }
 
@@ -151,7 +167,7 @@ async function markAsRead(messageId, phoneNumberId) {
 app.get("/", (_req, res) => res.status(200).send("WhatsApp Webhook up ✅"));
 
 app.get("/webhook", (req, res) => {
-  const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+  const VERIFY_TOKEN = process.env.verify_token || process.env.VERIFY_TOKEN;
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
@@ -191,42 +207,45 @@ app.post("/webhook", async (req, res) => {
 
         if (messageId && phoneNumberId) markAsRead(messageId, phoneNumberId).catch(() => {});
 
+        // ---- Normalizamos la entrada del usuario ----
         let userText = "";
-
         if (type === "text") {
           userText = msg.text?.body || "";
-
         } else if (type === "interactive") {
           const it = msg.interactive;
           if (it?.type === "button_reply") userText = it.button_reply?.title || "";
           if (it?.type === "list_reply")   userText = it.list_reply?.title || "";
           if (!userText) userText = "Seleccionaste una opción. ¿En qué puedo ayudarte?";
-
         } else if (type === "image") {
           userText = "Recibí una imagen. Contame en texto qué necesitás y te ayudo.";
-
         } else if (type === "audio") {
           userText = "Recibí un audio. ¿Podés escribir tu consulta?";
-
         } else {
           userText = "Hola 👋 ¿Podés escribir tu consulta en texto?";
         }
 
         console.log("📩 IN:", { from, type, preview: userText.slice(0, 120) });
 
-        // === Chat con historial + salida JSON ===
-        let out = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
+        // ---- Llamamos al modelo con historial y JSON en la salida ----
+        let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
+        let estado = "IN_PROGRESS";
         try {
-          const { reply } = await chatWithHistoryJSON(from, userText);
-          out = reply || out;
+          const out = await chatWithHistoryJSON(from, userText);
+          responseText = out.response || responseText;
+          estado = (out.estado || "IN_PROGRESS").toUpperCase();
         } catch (e) {
           console.error("❌ OpenAI error:", e);
         }
 
-       // out = JSON.parse(out);
-        
-        await sendText(from, out, phoneNumberId);
-        console.log("📤 OUT →", from);
+        // ---- Enviar respuesta al usuario ----
+        await sendText(from, responseText, phoneNumberId);
+        console.log("📤 OUT →", from, "| estado:", estado);
+
+        // ---- Si COMPLETED, reiniciar historial del contacto ----
+        if (estado === "COMPLETED") {
+          resetSession(from);
+          console.log("🔁 Historial reiniciado para", from);
+        }
       }
     }
   } catch (err) {
