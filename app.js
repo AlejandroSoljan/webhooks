@@ -92,7 +92,7 @@ async function chatWithHistoryJSON(waId, userText, model = process.env.OPENAI_MO
 
   const content = completion.choices?.[0]?.message?.content || "";
   const data = safeJsonParse(content);
-
+console.log("respuesta gpt: " + data.reply)
   if (data && typeof data.reply === "string") {
     pushMessage(session, "assistant", data.reply);
     return { reply: data.reply, meta: data.meta || {} };
@@ -223,7 +223,7 @@ app.post("/webhook", async (req, res) => {
           console.error("❌ OpenAI error:", e);
         }
 
-        out = JSON.parse(out);
+       // out = JSON.parse(out);
         
         await sendText(from, out.response, phoneNumberId);
         console.log("📤 OUT →", from);
