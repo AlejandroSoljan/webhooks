@@ -367,7 +367,7 @@ async function saveCompletedToSheets({ waId, data }) {
   await appendRow({ sheetName: "BigData", values: vBig });
 }
 
-// ===== Comportamiento completo: texto + catálogo (desde Google Sheets) =====
+// ===== Comportamiento completo: texto + catálogo (incluye Observaciones en D) =====
 const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
 let comportamientoCache = { at: 0, text: null };
 
@@ -393,12 +393,12 @@ async function loadFullComportamientoFromSheet() {
     console.warn("⚠️ No se pudo leer Comportamiento_API:", e.message);
   }
 
-  // 2) Catálogo de productos (Productos!A2:C)
+  // 2) Catálogo de productos con Observaciones (Productos!A2:D)
   let catalogText = "";
   try {
     const resp = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Productos!A2:C"
+      range: "Productos!A2:D" // A: nombre | B: precio | C: modo de venta | D: observaciones
     });
     const rows = resp.data.values || [];
     if (rows.length) {
@@ -406,18 +406,33 @@ async function loadFullComportamientoFromSheet() {
         const nombre = (r[0] || "").trim();
         const precioRaw = (r[1] || "").trim();
         const venta = (r[2] || "").trim();
+        const obs = (r[3] || "").trim();
         if (!nombre) return null;
+
         const precio = precioRaw ? ` — $${precioRaw}` : ""; // si B está vacío, no mostramos precio
         const ventaTxt = venta ? ` (${venta})` : "";
-        return `- ${nombre}${precio}${ventaTxt}`;
+        const obsTxt = obs ? ` | Obs: ${obs}` : "";
+
+        return `- ${nombre}${precio}${ventaTxt}${obsTxt}`;
       }).filter(Boolean);
-      catalogText = "Catálogo de productos (nombre — precio (modo de venta)):\n" + lines.join("\n");
+
+      catalogText =
+        "Catálogo de productos (nombre — precio (modo de venta) | Obs: observaciones):\n" +
+        lines.join("\n");
     }
   } catch (e) {
     console.warn("⚠️ No se pudo leer Productos:", e.message);
   }
 
-  const fullText = [baseText, "", catalogText].join("\n").trim();
+  // 3) Reglas explícitas para usar Observaciones como guía de venta
+  const reglasVenta =
+    "Instrucciones de venta:\n" +
+    "- Usá las Observaciones para decidir cómo ofrecer, sugerir complementos, aplicar restricciones o proponer sustituciones.\n" +
+    "- Si una observación indica limitaciones (stock, horarios, porciones, preparación), respetalas al proponer.\n" +
+    "- Si sugiere bundles/combos/recomendaciones, ofrecé esas opciones con precio estimado.\n" +
+    "- Si falta un dato (p.ej. sabor, tamaño, cantidad), pedilo brevemente.\n";
+
+  const fullText = [baseText, "", reglasVenta, "", catalogText].join("\n").trim();
   comportamientoCache = { at: now, text: fullText };
   return fullText;
 }
@@ -488,7 +503,7 @@ async function completeConversation(conversationId, finalPayload, status = "COMP
 // ========= Sesiones (historial en memoria) =========
 const sessions = new Map(); // waId -> { messages, updatedAt }
 
-/** Crea/obtiene sesión por waId leyendo comportamiento+catálogo desde Sheets */
+/** Crea/obtiene sesión por waId leyendo comportamiento+catálogo desde Sheets (incluye Observaciones) */
 async function getSession(waId) {
   if (!sessions.has(waId)) {
     const comportamiento = await loadFullComportamientoFromSheet();
@@ -514,13 +529,13 @@ function pushMessage(session, role, content, maxTurns = 20) {
   session.updatedAt = Date.now();
 }
 
-// ========= Chat con historial (prompt incluye catálogo) =========
+// ========= Chat con historial (prompt incluye catálogo + observaciones) =========
 async function chatWithHistoryJSON(
   waId,
   userText,
   model = process.env.OPENAI_MODEL || "gpt-4o-mini"
 ) {
-  const session = await getSession(waId); // ← ahora es async
+  const session = await getSession(waId); // ← async
   pushMessage(session, "user", userText);
 
   const completion = await openai.chat.completions.create({
@@ -535,6 +550,7 @@ async function chatWithHistoryJSON(
           '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED",' +
           '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string },' +
           '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } } ' +
+          "Usá SIEMPRE las Observaciones del catálogo para decidir qué ofrecer (complementos, restricciones, sustituciones, combos y timing). " +
           "Si la persona cancela, usá estado=CANCELLED y completá 'Motivo cancelacion' en Pedido. No uses bloques de código; solo JSON plano."
       }
     ],
@@ -718,7 +734,7 @@ app.post("/webhook", async (req, res) => {
           meta: userMeta
         });
 
-        // ---- Modelo con historial (comportamiento ya incluye catálogo) ----
+        // ---- Modelo con historial (comportamiento ya incluye catálogo + observaciones) ----
         let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
         let estado = "IN_PROGRESS";
         let raw = null;
