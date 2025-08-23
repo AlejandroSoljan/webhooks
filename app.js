@@ -50,37 +50,6 @@ function safeJsonParse(raw) {
   }
 }
 
-// ========= Sesiones (historial en memoria) =========
-const comportamiento = process.env.COMPORTAMIENTO ||
-  "Sos un asistente claro, amable y conciso. Respondé en español.";
-
-const sessions = new Map(); // waId -> { messages, updatedAt }
-
-/** Crea/obtiene sesión por waId */
-function getSession(waId) {
-  if (!sessions.has(waId)) {
-    sessions.set(waId, {
-      messages: [{ role: "system", content: comportamiento }],
-      updatedAt: Date.now()
-    });
-  }
-  return sessions.get(waId);
-}
-
-/** Reinicia (borra) la sesión del usuario */
-function resetSession(waId) {
-  sessions.delete(waId);
-}
-
-/** Agrega mensaje y recorta historial (últimos 20 turnos) */
-function pushMessage(session, role, content, maxTurns = 20) {
-  session.messages.push({ role, content });
-  const system = session.messages[0];
-  const tail = session.messages.slice(-2 * maxTurns);
-  session.messages = [system, ...tail];
-  session.updatedAt = Date.now();
-}
-
 // ========= WhatsApp / Media helpers =========
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
 const TRANSCRIBE_API_URL = (process.env.TRANSCRIBE_API_URL || "https://transcribegpt-569454200011.northamerica-northeast1.run.app").trim().replace(/\/+$/,"");
@@ -398,42 +367,59 @@ async function saveCompletedToSheets({ waId, data }) {
   await appendRow({ sheetName: "BigData", values: vBig });
 }
 
-// ===== Productos desde Google Sheets (pestaña Productos: A nombre, B precio, C venta) =====
-const PRODUCTS_CACHE_TTL_MS = parseInt(process.env.PRODUCTS_CACHE_TTL_MS || "300000", 10); // 5 min
-let productsCache = { at: 0, items: [] };
+// ===== Comportamiento completo: texto + catálogo (desde Google Sheets) =====
+const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
+let comportamientoCache = { at: 0, text: null };
 
-async function loadProductsFromSheet() {
+async function loadFullComportamientoFromSheet() {
   const now = Date.now();
-  if (now - productsCache.at < PRODUCTS_CACHE_TTL_MS && productsCache.items?.length) {
-    return productsCache.items;
+  if (now - comportamientoCache.at < COMPORTAMIENTO_CACHE_TTL_MS && comportamientoCache.text) {
+    return comportamientoCache.text;
   }
+
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
-  const range = "Productos!A2:C"; // salteo de encabezados
-  const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  const rows = resp.data.values || [];
 
-  const items = rows.map((r) => {
-    const nombre = (r[0] || "").trim();
-    const precioRaw = (r[1] || "").toString().trim();
-    const venta = (r[2] || "").trim();
-    if (!nombre) return null;
-    const precioNum = Number(precioRaw.replace(/[^\d.,-]/g, "").replace(",", "."));
-    const precio = Number.isFinite(precioNum) ? precioNum : precioRaw;
-    return { nombre, precio, venta };
-  }).filter(Boolean);
+  // 1) Texto base (A1 en Comportamiento_API)
+  let baseText = "Sos un asistente claro, amable y conciso. Respondé en español.";
+  try {
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: "Comportamiento_API!A1"
+    });
+    const val = resp.data.values?.[0]?.[0];
+    if (val) baseText = val;
+  } catch (e) {
+    console.warn("⚠️ No se pudo leer Comportamiento_API:", e.message);
+  }
 
-  productsCache = { at: now, items };
-  return items;
-}
-function buildProductsSystemMessage(items) {
-  if (!items?.length) return "Catálogo actual: (sin datos de productos)";
-  const lines = items.map(it => {
-    const precioFmt = (typeof it.precio === "number") ? `$${it.precio}` : `${it.precio}`;
-    const venta = it.venta ? ` (${it.venta})` : "";
-    return `- ${it.nombre} — ${precioFmt}${venta}`;
-  });
-  return ["Catálogo de productos (nombre — precio (modo de venta)):", ...lines].join("\n");
+  // 2) Catálogo de productos (Productos!A2:C)
+  let catalogText = "";
+  try {
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: "Productos!A2:C"
+    });
+    const rows = resp.data.values || [];
+    if (rows.length) {
+      const lines = rows.map(r => {
+        const nombre = (r[0] || "").trim();
+        const precioRaw = (r[1] || "").trim();
+        const venta = (r[2] || "").trim();
+        if (!nombre) return null;
+        const precio = precioRaw ? ` — $${precioRaw}` : ""; // si B está vacío, no mostramos precio
+        const ventaTxt = venta ? ` (${venta})` : "";
+        return `- ${nombre}${precio}${ventaTxt}`;
+      }).filter(Boolean);
+      catalogText = "Catálogo de productos (nombre — precio (modo de venta)):\n" + lines.join("\n");
+    }
+  } catch (e) {
+    console.warn("⚠️ No se pudo leer Productos:", e.message);
+  }
+
+  const fullText = [baseText, "", catalogText].join("\n").trim();
+  comportamientoCache = { at: now, text: fullText };
+  return fullText;
 }
 
 // ========= Persistencia NoSQL (MongoDB) =========
@@ -480,7 +466,7 @@ async function appendMessage(conversationId, {
   await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId) }, upd);
 }
 
-// === MOD: acepta status arbitrario (por defecto "COMPLETED")
+// === Acepta status arbitrario (por defecto "COMPLETED")
 async function completeConversation(conversationId, finalPayload, status = "COMPLETED") {
   const db = await getDb();
   await db.collection("conversations").updateOne(
@@ -499,39 +485,57 @@ async function completeConversation(conversationId, finalPayload, status = "COMP
   );
 }
 
-// ========= Chat con historial (inyecta catálogo) =========
+// ========= Sesiones (historial en memoria) =========
+const sessions = new Map(); // waId -> { messages, updatedAt }
+
+/** Crea/obtiene sesión por waId leyendo comportamiento+catálogo desde Sheets */
+async function getSession(waId) {
+  if (!sessions.has(waId)) {
+    const comportamiento = await loadFullComportamientoFromSheet();
+    sessions.set(waId, {
+      messages: [{ role: "system", content: comportamiento }],
+      updatedAt: Date.now()
+    });
+  }
+  return sessions.get(waId);
+}
+
+/** Reinicia (borra) la sesión del usuario */
+function resetSession(waId) {
+  sessions.delete(waId);
+}
+
+/** Agrega mensaje y recorta historial (últimos 20 turnos) */
+function pushMessage(session, role, content, maxTurns = 20) {
+  session.messages.push({ role, content });
+  const system = session.messages[0];
+  const tail = session.messages.slice(-2 * maxTurns);
+  session.messages = [system, ...tail];
+  session.updatedAt = Date.now();
+}
+
+// ========= Chat con historial (prompt incluye catálogo) =========
 async function chatWithHistoryJSON(
   waId,
   userText,
   model = process.env.OPENAI_MODEL || "gpt-4o-mini"
 ) {
-  const session = getSession(waId);
+  const session = await getSession(waId); // ← ahora es async
   pushMessage(session, "user", userText);
-
-  // Catálogo de productos como system extra
-  let catalogMsg = "Catálogo actual: (sin datos de productos)";
-  try {
-    const products = await loadProductsFromSheet();
-    catalogMsg = buildProductsSystemMessage(products);
-  } catch (e) {
-    console.warn("⚠️ No se pudo cargar Productos del Sheet:", e.message);
-  }
 
   const completion = await openai.chat.completions.create({
     model,
     response_format: { type: "json_object" },
     messages: [
       ...session.messages,
-      { role: "system", content: catalogMsg },
       {
         role: "system",
         content:
           "Respondé SOLO con JSON válido (sin ```). Estructura: " +
-          '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED",' + // ← MOD
+          '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED",' +
           '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string },' +
           '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } } ' +
-          "Usá el catálogo provisto para nombres y precios. Si falta un dato, pedilo amablemente. " +
-          "Si la persona cancela, no quiere comprar o no continúa, usá estado=CANCELLED y completá 'Motivo cancelacion' en Pedido."
+          "Si la persona cancela, usá estado=CANCELLED y completá 'Motivo cancelacion' en Pedido. No uses bloques de código; solo JSON plano."
       }
     ],
     temperature: 0.6
@@ -612,8 +616,8 @@ app.post("/webhook", async (req, res) => {
     // Responder 200 rápido
     res.sendStatus(200);
 
-    for (const entry of body.entry || []) {
-      for (const change of entry.changes || []) {
+    for (const entry of (body.entry || [])) {
+      for (const change of (entry.changes || [])) {
         const value = change.value || {};
         const msg = value.messages?.[0];
         if (!msg) continue;
@@ -714,7 +718,7 @@ app.post("/webhook", async (req, res) => {
           meta: userMeta
         });
 
-        // ---- Modelo con historial + catálogo ----
+        // ---- Modelo con historial (comportamiento ya incluye catálogo) ----
         let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
         let estado = "IN_PROGRESS";
         let raw = null;
@@ -739,7 +743,7 @@ app.post("/webhook", async (req, res) => {
           meta: { estado }
         });
 
-        // ---- Y si el usuario mandó AUDIO, responder TAMBIÉN con AUDIO (TTS)
+        // ---- Si el usuario envió AUDIO, responder TAMBIÉN con AUDIO (TTS)
         if (type === "audio" && (process.env.ENABLE_TTS_FOR_AUDIO || "true").toLowerCase() === "true") {
           try {
             const { buffer, mime } = await synthesizeTTS(responseText);
@@ -752,7 +756,7 @@ app.post("/webhook", async (req, res) => {
           }
         }
 
-        // ---- MOD: Guardar en Sheets y cerrar conversación cuando NO esté en curso
+        // ---- Guardar en Sheets y cerrar conversación cuando NO esté en curso
         const shouldFinalize =
           (estado && estado !== "IN_PROGRESS") ||
           ((raw?.Pedido?.["Estado pedido"] || "").toLowerCase().includes("cancel"));
