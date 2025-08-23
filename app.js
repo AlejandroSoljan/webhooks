@@ -367,9 +367,22 @@ async function saveCompletedToSheets({ waId, data }) {
   await appendRow({ sheetName: "BigData", values: vBig });
 }
 
-// ===== Comportamiento completo: texto + catálogo (incluye Observaciones en D) =====
+// ===== Comportamiento completo: texto + catálogo (multi-filas + filtro col E = S/N) =====
 const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
 let comportamientoCache = { at: 0, text: null };
+
+function looksActive(v) {
+  if (!v) return false; // vacío => inactivo
+  const s = String(v).trim().toUpperCase();
+  return s === "S"; // Activo solo si = "S"
+}
+
+function fmtPrecio(precioRaw) {
+  const s = (precioRaw || "").toString().trim();
+  if (!s) return "";
+  const num = Number(s.replace(/[^\d.,-]/g, "").replace(",", "."));
+  return Number.isFinite(num) ? ` — $${num}` : ` — $${s}`;
+}
 
 async function loadFullComportamientoFromSheet() {
   const now = Date.now();
@@ -380,25 +393,26 @@ async function loadFullComportamientoFromSheet() {
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
 
-  // 1) Texto base (A1 en Comportamiento_API)
+  // 1) Texto base (concatenar varias filas A1:A)
   let baseText = "Sos un asistente claro, amable y conciso. Respondé en español.";
   try {
     const resp = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Comportamiento_API!A1"
+      range: "Comportamiento_API!A1:A100"
     });
-    const val = resp.data.values?.[0]?.[0];
-    if (val) baseText = val;
+    const rows = resp.data.values || [];
+    const parts = rows.map(r => (r && r[0] ? String(r[0]).trim() : "")).filter(Boolean);
+    if (parts.length) baseText = parts.join("\n");
   } catch (e) {
     console.warn("⚠️ No se pudo leer Comportamiento_API:", e.message);
   }
 
-  // 2) Catálogo de productos con Observaciones (Productos!A2:D)
+  // 2) Catálogo de productos (Productos!A2:E) con Observaciones y filtro E=S
   let catalogText = "";
   try {
     const resp = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Productos!A2:D" // A: nombre | B: precio | C: modo de venta | D: observaciones
+      range: "Productos!A2:E"
     });
     const rows = resp.data.values || [];
     if (rows.length) {
@@ -407,30 +421,33 @@ async function loadFullComportamientoFromSheet() {
         const precioRaw = (r[1] || "").trim();
         const venta = (r[2] || "").trim();
         const obs = (r[3] || "").trim();
+        const activo = r[4]; // columna E
+
         if (!nombre) return null;
+        if (!looksActive(activo)) return null;
 
-        const precio = precioRaw ? ` — $${precioRaw}` : ""; // si B está vacío, no mostramos precio
-        const ventaTxt = venta ? ` (${venta})` : "";
-        const obsTxt = obs ? ` | Obs: ${obs}` : "";
+        const precioTxt = fmtPrecio(precioRaw);
+        const ventaTxt  = venta ? ` (${venta})` : "";
+        const obsTxt    = obs ? ` | Obs: ${obs}` : "";
 
-        return `- ${nombre}${precio}${ventaTxt}${obsTxt}`;
+        return `- ${nombre}${precioTxt}${ventaTxt}${obsTxt}`;
       }).filter(Boolean);
 
-      catalogText =
-        "Catálogo de productos (nombre — precio (modo de venta) | Obs: observaciones):\n" +
-        lines.join("\n");
+      catalogText = lines.length
+        ? "Catálogo de productos (nombre — precio (modo de venta) | Obs: observaciones):\n" + lines.join("\n")
+        : "Catálogo de productos: (ninguno activo)";
     }
   } catch (e) {
     console.warn("⚠️ No se pudo leer Productos:", e.message);
   }
 
-  // 3) Reglas explícitas para usar Observaciones como guía de venta
+  // 3) Reglas de uso de observaciones
   const reglasVenta =
     "Instrucciones de venta:\n" +
     "- Usá las Observaciones para decidir cómo ofrecer, sugerir complementos, aplicar restricciones o proponer sustituciones.\n" +
-    "- Si una observación indica limitaciones (stock, horarios, porciones, preparación), respetalas al proponer.\n" +
-    "- Si sugiere bundles/combos/recomendaciones, ofrecé esas opciones con precio estimado.\n" +
-    "- Si falta un dato (p.ej. sabor, tamaño, cantidad), pedilo brevemente.\n";
+    "- Respetá limitaciones (stock/horarios/porciones/preparación) indicadas en Observaciones.\n" +
+    "- Si sugiere bundles o combos, ofrecé esas opciones con precio estimado.\n" +
+    "- Si falta un dato (sabor/tamaño/cantidad), pedilo brevemente.\n";
 
   const fullText = [baseText, "", reglasVenta, "", catalogText].join("\n").trim();
   comportamientoCache = { at: now, text: fullText };
@@ -503,7 +520,7 @@ async function completeConversation(conversationId, finalPayload, status = "COMP
 // ========= Sesiones (historial en memoria) =========
 const sessions = new Map(); // waId -> { messages, updatedAt }
 
-/** Crea/obtiene sesión por waId leyendo comportamiento+catálogo desde Sheets (incluye Observaciones) */
+/** Crea/obtiene sesión por waId leyendo comportamiento+catálogo desde Sheets (incluye Observaciones y filtro E=S) */
 async function getSession(waId) {
   if (!sessions.has(waId)) {
     const comportamiento = await loadFullComportamientoFromSheet();
@@ -734,7 +751,7 @@ app.post("/webhook", async (req, res) => {
           meta: userMeta
         });
 
-        // ---- Modelo con historial (comportamiento ya incluye catálogo + observaciones) ----
+        // ---- Modelo con historial (comportamiento ya incluye catálogo + observaciones + filtro E=S) ----
         let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
         let estado = "IN_PROGRESS";
         let raw = null;
