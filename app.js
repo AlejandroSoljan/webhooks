@@ -59,7 +59,7 @@ const CACHE_TTL_MS = parseInt(process.env.AUDIO_CACHE_TTL_MS || "300000", 10); /
 const fileCache = new Map(); // id -> { buffer, mime, expiresAt }
 function makeId(n = 16) { return crypto.randomBytes(n).toString("hex"); }
 function getBaseUrl(req) {
-  let base = (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/,"");
+  let base = (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
   if (!base) {
     const proto = (req.headers["x-forwarded-proto"] || "https");
     const host = req.headers.host;
@@ -394,15 +394,22 @@ async function loadFullComportamientoFromSheet({ force = false } = {}) {
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
 
-  // 1) Texto base (concatenar varias filas A1:A)
+  // 1) Texto base: concatenar columnas A y B por fila
   let baseText = "Sos un asistente claro, amable y conciso. Respondé en español.";
   try {
     const resp = await sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: "Comportamiento_API!A1:A100"
+      range: "Comportamiento_API!A1:B100"
     });
     const rows = resp.data.values || [];
-    const parts = rows.map(r => (r && r[0] ? String(r[0]).trim() : "")).filter(Boolean);
+    const parts = rows
+      .map(r => {
+        const a = (r[0] || "").trim();
+        const b = (r[1] || "").trim();
+        const line = [a, b].filter(Boolean).join(" ").trim();
+        return line;
+      })
+      .filter(Boolean);
     if (parts.length) baseText = parts.join("\n");
   } catch (e) {
     console.warn("⚠️ No se pudo leer Comportamiento_API:", e.message);
