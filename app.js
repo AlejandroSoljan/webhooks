@@ -367,7 +367,7 @@ async function saveCompletedToSheets({ waId, data }) {
   await appendRow({ sheetName: "BigData", values: vBig });
 }
 
-// ===== Comportamiento completo: texto + catálogo (multi-filas + filtro col E = S/N) =====
+// ===== Comportamiento completo: texto + catálogo (multi-filas + filtro col E S/N) =====
 const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
 let comportamientoCache = { at: 0, text: null };
 
@@ -384,9 +384,10 @@ function fmtPrecio(precioRaw) {
   return Number.isFinite(num) ? ` — $${num}` : ` — $${s}`;
 }
 
-async function loadFullComportamientoFromSheet() {
+// Permite forzar lectura fresca cuando inicia una conversación o en cada turno
+async function loadFullComportamientoFromSheet({ force = false } = {}) {
   const now = Date.now();
-  if (now - comportamientoCache.at < COMPORTAMIENTO_CACHE_TTL_MS && comportamientoCache.text) {
+  if (!force && (now - comportamientoCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && comportamientoCache.text) {
     return comportamientoCache.text;
   }
 
@@ -523,7 +524,8 @@ const sessions = new Map(); // waId -> { messages, updatedAt }
 /** Crea/obtiene sesión por waId leyendo comportamiento+catálogo desde Sheets (incluye Observaciones y filtro E=S) */
 async function getSession(waId) {
   if (!sessions.has(waId)) {
-    const comportamiento = await loadFullComportamientoFromSheet();
+    // fuerza lectura fresca del Sheet en cada conversación nueva
+    const comportamiento = await loadFullComportamientoFromSheet({ force: true });
     sessions.set(waId, {
       messages: [{ role: "system", content: comportamiento }],
       updatedAt: Date.now()
@@ -552,9 +554,21 @@ async function chatWithHistoryJSON(
   userText,
   model = process.env.OPENAI_MODEL || "gpt-4o-mini"
 ) {
-  const session = await getSession(waId); // ← async
+  // Obtener/crear sesión
+  const session = await getSession(waId);
+
+  // 🔄 Refrescar comportamiento+catálogo ANTES de cada turno (ultra-fresco)
+  try {
+    const comportamiento = await loadFullComportamientoFromSheet({ force: true });
+    session.messages[0] = { role: "system", content: comportamiento };
+  } catch (e) {
+    console.warn("⚠️ No se pudo refrescar comportamiento/catalogo:", e.message);
+  }
+
+  // Agregar el mensaje del usuario
   pushMessage(session, "user", userText);
 
+  // Llamar al modelo
   const completion = await openai.chat.completions.create({
     model,
     response_format: { type: "json_object" },
@@ -751,7 +765,7 @@ app.post("/webhook", async (req, res) => {
           meta: userMeta
         });
 
-        // ---- Modelo con historial (comportamiento ya incluye catálogo + observaciones + filtro E=S) ----
+        // ---- Modelo con historial (con comportamiento+catálogo refrescados por turno) ----
         let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
         let estado = "IN_PROGRESS";
         let raw = null;
