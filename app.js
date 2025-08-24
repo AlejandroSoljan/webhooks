@@ -5,14 +5,11 @@ const express = require("express");
 const crypto = require("crypto");
 const OpenAI = require("openai");
 const { google } = require("googleapis");
-
-// --- MongoDB helpers
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
-
 const app = express();
 
-// ========= Body / firma =========
+// ============ Body / Firma ============
 app.use(express.json({
   verify: (req, res, buf) => { req.rawBody = buf; }
 }));
@@ -21,7 +18,6 @@ function isValidSignature(req) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   const signature = req.get("X-Hub-Signature-256");
   if (!appSecret || !signature) return false;
-
   const hmac = crypto.createHmac("sha256", appSecret);
   hmac.update(req.rawBody);
   const expected = "sha256=" + hmac.digest("hex");
@@ -32,81 +28,68 @@ function isValidSignature(req) {
   }
 }
 
-// ========= OpenAI =========
+// ============ Config OpenAI ============
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-// ====== Config de modelo / temperatura ======
-const CHAT_MODEL =
-  process.env.OPENAI_CHAT_MODEL ||
-  process.env.OPENAI_MODEL ||
-  "gpt-4o-mini";
+const CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini";
 const CHAT_TEMPERATURE = Number.isFinite(parseFloat(process.env.OPENAI_TEMPERATURE))
-  ? parseFloat(process.env.OPENAI_TEMPERATURE)
-  : 0.2;
+  ? parseFloat(process.env.OPENAI_TEMPERATURE) : 0.2;
 
-// ========= Helpers JSON robustos =========
+// ============ Util: timeouts duros ============
+async function withTimeout(promise, ms, label = "op") {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    // Nota: openai SDK no acepta signal, pero el Race corta nuestro await.
+    return await Promise.race([
+      promise,
+      new Promise((_, rej) => setTimeout(() => rej(new Error(`${label}_timeout_${ms}ms`)), ms))
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ============ JSON helpers robustos ============
 function coerceJsonString(raw) {
   if (raw == null) return null;
   let s = String(raw);
-
-  // quita BOM y caracteres de control (excepto \n \t \r)
   s = s.replace(/^\uFEFF/, "")
        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]+/g, " ")
        .trim();
-
-  // quita fences ``` y etiquetas de código
   if (s.startsWith("```")) {
     s = s.replace(/^```(\w+)?/i, "").replace(/```$/i, "").trim();
   }
-
-  // normaliza comillas tipográficas a comillas normales
   s = s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
-
-  // si ya luce como JSON puro, retornalo
   if (s.startsWith("{") && s.endsWith("}")) return s;
-
-  // intenta extraer el primer bloque { ... }
-  const first = s.indexOf("{");
-  const last  = s.lastIndexOf("}");
-  if (first !== -1 && last !== -1 && last > first) {
-    return s.slice(first, last + 1).trim();
-  }
-
-  // nada útil
+  const first = s.indexOf("{"), last = s.lastIndexOf("}");
+  if (first !== -1 && last !== -1 && last > first) return s.slice(first, last + 1).trim();
   return s;
 }
 
 async function safeJsonParseStrictOrFix(raw, { openai, model = "gpt-4o-mini" } = {}) {
-  // 1) limpieza/coección
   let s = coerceJsonString(raw);
   if (!s) return null;
-
-  // 2) primer intento
   try {
     return JSON.parse(s);
-  } catch (_) {
-    // continúa
-  }
-
-  // 3) reintento con “arreglador” (una sola vez, barato)
+  } catch (_) {}
   try {
-    const fix = await openai.chat.completions.create({
-      model,
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: "Devuelve EXCLUSIVAMENTE un JSON válido, sin comentarios ni markdown." },
-        { role: "user", content: `Convertí lo siguiente a JSON estricto (si falta llaves, completalas):\n\n${raw}` }
-      ]
-    });
+    const fix = await withTimeout(
+      openai.chat.completions.create({
+        model, temperature: 0, response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: "Devuelve EXCLUSIVAMENTE un JSON válido, sin markdown ni comentarios." },
+          { role: "user", content: `Convertí a JSON estricto (si falta llaves, completalas):\n\n${raw}` }
+        ]
+      }),
+      7000,
+      "openai_jsonfix"
+    );
     const fixed = fix.choices?.[0]?.message?.content || "";
     const fixedClean = coerceJsonString(fixed);
     return JSON.parse(fixedClean);
   } catch (e2) {
-    // último intento: trata otra vez el string coaccionado
-    try {
-      return JSON.parse(s);
-    } catch (e3) {
+    try { return JSON.parse(s); }
+    catch (e3) {
       const preview = (String(raw || "")).slice(0, 400);
       console.error("❌ No se pudo parsear JSON luego de fix:", e3.message, "\nRaw preview:", preview);
       return null;
@@ -114,12 +97,11 @@ async function safeJsonParseStrictOrFix(raw, { openai, model = "gpt-4o-mini" } =
   }
 }
 
-// ========= WhatsApp / Media helpers =========
+// ============ WhatsApp / Media ============
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
 const TRANSCRIBE_API_URL = (process.env.TRANSCRIBE_API_URL || "https://transcribegpt-569454200011.northamerica-northeast1.run.app").trim().replace(/\/+$/,"");
 const CACHE_TTL_MS = parseInt(process.env.AUDIO_CACHE_TTL_MS || "300000", 10); // 5 min
 
-// ---- Cache en memoria de binarios (audio e imagen) ----
 const fileCache = new Map(); // id -> { buffer, mime, expiresAt }
 function makeId(n = 16) { return crypto.randomBytes(n).toString("hex"); }
 function getBaseUrl(req) {
@@ -142,13 +124,11 @@ function getFromCache(id) {
   if (Date.now() > item.expiresAt) { fileCache.delete(id); return null; }
   return item;
 }
-// 🧹 Limpiador periódico
 setInterval(() => {
   const now = Date.now();
   for (const [id, item] of fileCache.entries()) if (now > item.expiresAt) fileCache.delete(id);
 }, 60 * 1000);
 
-// Rutas públicas para servir cache
 app.get("/cache/audio/:id", (req, res) => {
   const item = getFromCache(req.params.id);
   if (!item) return res.status(404).send("Not found");
@@ -189,7 +169,7 @@ async function downloadMediaBuffer(mediaUrl) {
   return Buffer.from(arrayBuffer);
 }
 
-// ---- OCR de imagen con OpenAI Chat Completions (o4-mini) ----
+// ============ OCR imagen (OpenAI) ============
 async function transcribeImageWithOpenAI(publicImageUrl) {
   const url = "https://api.openai.com/v1/chat/completions";
   const body = {
@@ -200,11 +180,15 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
     ],
     temperature: 1
   };
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
+  const resp = await withTimeout(
+    fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }),
+    12000,
+    "openai_vision_fetch"
+  );
   if (!resp.ok) {
     const errTxt = await resp.text().catch(() => "");
     throw new Error(`OpenAI vision error: ${resp.status} ${errTxt}`);
@@ -213,7 +197,7 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
   return data?.choices?.[0]?.message?.content?.trim() || "";
 }
 
-// ---- Transcriptor externo: JSON {audio_url}, luego multipart file, luego GET ----
+// ============ Transcriptor externo ============
 async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename = "audio.ogg" }) {
   const base = TRANSCRIBE_API_URL;
   const paths = ["", "/transcribe", "/api/transcribe", "/v1/transcribe"];
@@ -221,22 +205,16 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
   // 1) POST JSON { audio_url }
   for (const p of paths) {
     const url = `${base}${p}`;
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ audio_url: publicAudioUrl })
-    });
-    if (r.ok) {
-      const j = await r.json().catch(() => ({}));
-      console.log("✅ Transcribe OK: POST JSON audio_url", url);
-      return j;
-    } else {
-      const txt = await r.text().catch(() => "");
-      console.warn("Transcribe POST JSON fallo:", r.status, url, txt);
-    }
+    const r = await withTimeout(
+      fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audio_url: publicAudioUrl }) }),
+      10000,
+      "transcribe_post_json"
+    );
+    if (r.ok) return await r.json().catch(() => ({}));
+    else console.warn("Transcribe POST JSON fallo:", r.status, url, await r.text().catch(() => ""));
   }
 
-  // 2) POST multipart con archivo
+  // 2) POST multipart file
   if (buffer && buffer.length) {
     function buildMultipart(parts) {
       const boundary = "----NodeForm" + crypto.randomBytes(8).toString("hex");
@@ -261,83 +239,74 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
       const { body, boundary } = buildMultipart([
         { type: "file", name: "file", filename, contentType: mime || "application/octet-stream", data: buffer }
       ]);
-      const r = await fetch(url, { method: "POST", headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` }, body });
-      if (r.ok) {
-        const j = await r.json().catch(() => ({}));
-        console.log("✅ Transcribe OK: POST multipart file", url);
-        return j;
-      } else {
-        const txt = await r.text().catch(() => "");
-        console.warn("Transcribe POST multipart fallo:", r.status, url, txt);
-      }
+      const r = await withTimeout(
+        fetch(url, { method: "POST", headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` }, body }),
+        12000,
+        "transcribe_post_file"
+      );
+      if (r.ok) return await r.json().catch(() => ({}));
+      else console.warn("Transcribe POST file fallo:", r.status, url, await r.text().catch(() => ""));
     }
   } else {
-    console.warn("⚠️ No hay buffer de audio para multipart; se omite variante file.");
+    console.warn("⚠️ No hay buffer de audio para multipart.");
   }
 
   // 3) GET ?audio_url=
   for (const p of paths) {
     const url = `${base}${p}?audio_url=${encodeURIComponent(publicAudioUrl)}`;
-    const g = await fetch(url);
-    if (g.ok) {
-      const j2 = await g.json().catch(() => ({}));
-      console.log("✅ Transcribe OK: GET", url);
-      return j2;
-    } else {
-      const txt = await g.text().catch(() => "");
-      console.warn("Transcribe GET fallo:", g.status, url, txt);
-    }
+    const g = await withTimeout(fetch(url), 8000, "transcribe_get");
+    if (g.ok) return await g.json().catch(() => ({}));
+    else console.warn("Transcribe GET fallo:", g.status, url, await g.text().catch(() => ""));
   }
 
   throw new Error("No hubo variantes válidas para el endpoint de transcripción.");
 }
 
-// ======== TTS (Texto a voz) con OpenAI ========
+// ============ TTS (OpenAI) ============
 async function synthesizeTTS(text) {
   const model = process.env.TTS_MODEL || "gpt-4o-mini-tts";
   const voice = process.env.TTS_VOICE || "alloy";
   const format = (process.env.TTS_FORMAT || "mp3").toLowerCase();
 
-  const resp = await openai.audio.speech.create({
-    model,
-    voice,
-    input: text,
-    format // "mp3", "wav" o "opus"
-  });
-
+  const resp = await withTimeout(
+    openai.audio.speech.create({ model, voice, input: text, format }),
+    12000,
+    "openai_tts"
+  );
   const arrayBuffer = await resp.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
-
-  const mime =
-    format === "wav" ? "audio/wav" :
-    format === "opus" ? "audio/ogg" :
-    "audio/mpeg"; // mp3
-
+  const mime = format === "wav" ? "audio/wav" : format === "opus" ? "audio/ogg" : "audio/mpeg";
   return { buffer, mime };
 }
+
 async function sendAudioLink(to, publicUrl, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
+  if (!phoneNumberId) {
+    console.warn("⚠️ No hay phoneNumberId para enviar audio.");
+    return { ok: false, error: "missing_phone_number_id" };
+  }
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
-  const payload = {
-    messaging_product: "whatsapp",
-    to,
-    type: "audio",
-    audio: { link: publicUrl }
-  };
-
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-
-  const data = await resp.json();
-  if (!resp.ok) console.error("❌ Error WhatsApp sendAudioLink:", resp.status, data);
-  else console.log("📤 Enviado AUDIO:", data);
-  return data;
+  const payload = { messaging_product: "whatsapp", to, type: "audio", audio: { link: publicUrl } };
+  try {
+    const resp = await withTimeout(
+      fetch(url, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+      8000,
+      "wa_send_audio"
+    );
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      console.error("❌ Error WhatsApp sendAudioLink:", resp.status, data);
+      return { ok: false, data };
+    }
+    console.log("📤 Enviado AUDIO:", data);
+    return { ok: true, data };
+  } catch (e) {
+    console.error("❌ sendAudioLink lanzó:", e);
+    return { ok: false, error: e?.message };
+  }
 }
 
-// ========= Google Sheets helpers =========
+// ============ Google Sheets ============
 function getSheetsClient() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const key = (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
@@ -345,7 +314,6 @@ function getSheetsClient() {
   const auth = new google.auth.JWT(email, null, key, ["https://www.googleapis.com/auth/spreadsheets"]);
   return google.sheets({ version: "v4", auth });
 }
-// Aceptar ID o URL en GOOGLE_SHEETS_ID
 function getSpreadsheetIdFromEnv() {
   const raw = (process.env.GOOGLE_SHEETS_ID || "").trim();
   if (!raw) throw new Error("Falta GOOGLE_SHEETS_ID.");
@@ -355,26 +323,37 @@ function getSpreadsheetIdFromEnv() {
 async function ensureHeaderIfEmpty({ sheetName, header }) {
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
-  const getResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${sheetName}!1:1` });
+  const getResp = await withTimeout(
+    sheets.spreadsheets.values.get({ spreadsheetId, range: `${sheetName}!1:1` }),
+    8000,
+    "sheets_get_header"
+  );
   const hasHeader = (getResp.data.values && getResp.data.values.length > 0);
   if (!hasHeader) {
-    await sheets.spreadsheets.values.update({
-      spreadsheetId, range: `${sheetName}!A1`, valueInputOption: "RAW",
-      requestBody: { values: [header] }
-    });
+    await withTimeout(
+      sheets.spreadsheets.values.update({
+        spreadsheetId, range: `${sheetName}!A1`, valueInputOption: "RAW",
+        requestBody: { values: [header] }
+      }),
+      8000,
+      "sheets_put_header"
+    );
   }
 }
 async function appendRow({ sheetName, values }) {
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
-  await sheets.spreadsheets.values.append({
-    spreadsheetId, range: `${sheetName}!A:A`,
-    valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS",
-    requestBody: { values: [values] }
-  });
+  await withTimeout(
+    sheets.spreadsheets.values.append({
+      spreadsheetId, range: `${sheetName}!A:A`,
+      valueInputOption: "USER_ENTERED", insertDataOption: "INSERT_ROWS",
+      requestBody: { values: [values] }
+    }),
+    10000,
+    "sheets_append"
+  );
 }
 
-// ----- Guardado en dos pestañas (Hoja 1 y BigData)
 function headerPedido() {
   return [
     "wa_id","response","Fecha y hora de inicio de conversacion","Fecha y hora fin de conversacion",
@@ -430,14 +409,12 @@ async function saveCompletedToSheets({ waId, data }) {
   await appendRow({ sheetName: "BigData", values: vBig });
 }
 
-// ===== Productos desde Google Sheets (A nombre, B precio, C venta, D obs, E activo= S/N) =====
-const PRODUCTS_CACHE_TTL_MS = parseInt(process.env.PRODUCTS_CACHE_TTL_MS || "300000", 10); // 5 min
+// ============ Productos (Sheet A nombre, B precio, C venta, D obs, E activo=S/N) ============
+const PRODUCTS_CACHE_TTL_MS = parseInt(process.env.PRODUCTS_CACHE_TTL_MS || "300000", 10);
 let productsCache = { at: 0, items: [] };
 
-function looksActive(v) {
-  if (!v) return false;
-  return String(v).trim().toUpperCase() === "S";
-}
+function looksActive(v) { return String(v || "").trim().toUpperCase() === "S"; }
+
 async function loadProductsFromSheet() {
   const now = Date.now();
   if (now - productsCache.at < PRODUCTS_CACHE_TTL_MS && productsCache.items?.length) {
@@ -445,10 +422,12 @@ async function loadProductsFromSheet() {
   }
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
-  const range = "Productos!A2:E"; // A nombre, B precio, C venta, D obs, E activo
-  const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const resp = await withTimeout(
+    sheets.spreadsheets.values.get({ spreadsheetId, range: "Productos!A2:E" }),
+    8000,
+    "sheets_get_products"
+  );
   const rows = resp.data.values || [];
-
   const items = rows.map((r) => {
     const nombre = (r[0] || "").trim();
     const precioRaw = (r[1] || "").trim();
@@ -457,10 +436,8 @@ async function loadProductsFromSheet() {
     const activo = r[4];
     if (!nombre) return null;
     if (!looksActive(activo)) return null;
-
     const maybeNum = Number(precioRaw.replace(/[^\d.,-]/g, "").replace(",", "."));
-    const precio = Number.isFinite(maybeNum) ? maybeNum : precioRaw;
-
+    const precio = Number.isFinite(maybeNum) ? maybeNum : (precioRaw || "");
     return { nombre, precio, venta, obs };
   }).filter(Boolean);
 
@@ -470,7 +447,7 @@ async function loadProductsFromSheet() {
 function buildCatalogText(items) {
   if (!items?.length) return "Catálogo de productos: (ninguno activo)";
   const lines = items.map(it => {
-    const precioTxt = (typeof it.precio === "number") ? ` — $${it.precio}` : (it.precio ? ` — $${it.precio}` : "");
+    const precioTxt = it.precio !== "" ? (typeof it.precio === "number" ? ` — $${it.precio}` : ` — $${it.precio}`) : "";
     const ventaTxt  = it.venta ? ` (${it.venta})` : "";
     const obsTxt    = it.obs ? ` | Obs: ${it.obs}` : "";
     return `- ${it.nombre}${precioTxt}${ventaTxt}${obsTxt}`;
@@ -478,7 +455,7 @@ function buildCatalogText(items) {
   return "Catálogo de productos (nombre — precio (modo de venta) | Obs: observaciones):\n" + lines.join("\n");
 }
 
-// ===== Comportamiento (ENV o Sheet) + Catálogo (siempre Sheet) =====
+// ============ Comportamiento (ENV o Sheet) + Catálogo ============
 const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); // "env" | "sheet"
 const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000;
 let behaviorCache = { at: 0, text: null };
@@ -490,10 +467,11 @@ async function loadBehaviorTextFromEnv() {
 async function loadBehaviorTextFromSheet() {
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
-  const resp = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: "Comportamiento_API!A1:B100"
-  });
+  const resp = await withTimeout(
+    sheets.spreadsheets.values.get({ spreadsheetId, range: "Comportamiento_API!A1:B100" }),
+    8000,
+    "sheets_get_behavior"
+  );
   const rows = resp.data.values || [];
   const parts = rows
     .map(r => {
@@ -512,12 +490,10 @@ async function buildSystemPrompt({ force = false } = {}) {
     return behaviorCache.text;
   }
 
-  // 1) Comportamiento desde ENV o desde Sheet
   const baseText = (BEHAVIOR_SOURCE === "env")
     ? await loadBehaviorTextFromEnv()
     : await loadBehaviorTextFromSheet();
 
-  // 2) Catálogo SIEMPRE desde Sheet
   let catalogText = "";
   try {
     const products = await loadProductsFromSheet();
@@ -527,7 +503,6 @@ async function buildSystemPrompt({ force = false } = {}) {
     catalogText = "Catálogo de productos: (error al leer)";
   }
 
-  // 3) Reglas de uso de observaciones (OBLIGATORIAS)
   const reglasVenta =
     "Instrucciones de venta (OBLIGATORIAS):\n" +
     "- Usá las Observaciones para decidir qué ofrecer, sugerir complementos, aplicar restricciones o proponer sustituciones.\n" +
@@ -535,17 +510,15 @@ async function buildSystemPrompt({ force = false } = {}) {
     "- Si sugerís bundles o combos, ofrecé esas opciones con precio estimado cuando corresponda.\n" +
     "- Si falta un dato (sabor/tamaño/cantidad), pedilo brevemente.\n";
 
-  // 4) Esquema JSON OBLIGATORIO dentro del mismo system
   const jsonSchema =
     "FORMATO DE RESPUESTA (OBLIGATORIO - SOLO JSON, sin ```):\n" +
     '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED", ' +
     '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
     '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
 
-  // 5) ÚNICO system message final
   const fullText = [
     "[COMPORTAMIENTO]\n" + baseText,
-   // "[REGLAS]\n" + reglasVenta,
+  //  "[REGLAS]\n" + reglasVenta,
     "[CATALOGO]\n" + catalogText,
     "[SALIDA]\n" + jsonSchema,
     "RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
@@ -555,79 +528,12 @@ async function buildSystemPrompt({ force = false } = {}) {
   return fullText;
 }
 
-// ========= Persistencia NoSQL (MongoDB) =========
-async function ensureOpenConversation(waId) {
-  const db = await getDb();
-  let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
-  if (!conv) {
-    const doc = {
-      waId,
-      status: "OPEN", // OPEN | COMPLETED | CANCELLED
-      openedAt: new Date(),
-      closedAt: null,
-      lastUserTs: null,
-      lastAssistantTs: null,
-      turns: 0
-    };
-    const ins = await db.collection("conversations").insertOne(doc);
-    conv = { _id: ins.insertedId, ...doc };
-  }
-  return conv;
-}
-
-async function appendMessage(conversationId, {
-  role,
-  content,
-  type = "text",
-  meta = {},
-  ttlDays = null
-}) {
-  const db = await getDb();
-  const doc = {
-    conversationId: new ObjectId(conversationId),
-    role, content, type, meta,
-    ts: new Date()
-  };
-  if (ttlDays && Number.isFinite(ttlDays)) {
-    doc.expireAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
-  }
-  await db.collection("messages").insertOne(doc);
-
-  const upd = { $inc: { turns: 1 }, $set: {} };
-  if (role === "user") upd.$set.lastUserTs = doc.ts;
-  if (role === "assistant") upd.$set.lastAssistantTs = doc.ts;
-  await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId) }, upd);
-}
-
-// === Acepta status arbitrario (por defecto "COMPLETED")
-async function completeConversation(conversationId, finalPayload, status = "COMPLETED") {
-  const db = await getDb();
-  await db.collection("conversations").updateOne(
-    { _id: new ObjectId(conversationId) },
-    {
-      $set: {
-        status,
-        closedAt: new Date(),
-        summary: {
-          response: finalPayload?.response || "",
-          Pedido: finalPayload?.Pedido || null,
-          Bigdata: finalPayload?.Bigdata || null
-        }
-      }
-    }
-  );
-}
-
-// ========= Sesiones (historial en memoria) =========
+// ============ Sesiones (memoria) ============
 const sessions = new Map(); // waId -> { messages, updatedAt }
-
 async function getSession(waId) {
   if (!sessions.has(waId)) {
-    const systemText = await buildSystemPrompt({ force: true }); // al iniciar conversación
-    sessions.set(waId, {
-      messages: [{ role: "system", content: systemText }],
-      updatedAt: Date.now()
-    });
+    const systemText = await buildSystemPrompt({ force: true });
+    sessions.set(waId, { messages: [{ role: "system", content: systemText }], updatedAt: Date.now() });
   }
   return sessions.get(waId);
 }
@@ -640,16 +546,65 @@ function pushMessage(session, role, content, maxTurns = 20) {
   session.updatedAt = Date.now();
 }
 
-// ========= Chat con historial (system refrescado + parser robusto) =========
-async function chatWithHistoryJSON(
-  waId,
-  userText,
-  model = CHAT_MODEL,
-  temperature = CHAT_TEMPERATURE
-) {
-  const session = await getSession(waId);
+// ============ Persistencia Mongo ============
+async function ensureOpenConversation(waId) {
+  const db = await getDb();
+  let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
+  if (!conv) {
+    const doc = {
+      waId, status: "OPEN", finalized: false,
+      openedAt: new Date(), closedAt: null,
+      lastUserTs: null, lastAssistantTs: null, turns: 0
+    };
+    const ins = await db.collection("conversations").insertOne(doc);
+    conv = { _id: ins.insertedId, ...doc };
+  }
+  return conv;
+}
+async function appendMessage(conversationId, { role, content, type = "text", meta = {}, ttlDays = null }) {
+  const db = await getDb();
+  const doc = { conversationId: new ObjectId(conversationId), role, content, type, meta, ts: new Date() };
+  if (ttlDays && Number.isFinite(ttlDays)) doc.expireAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
+  await db.collection("messages").insertOne(doc);
+  const upd = { $inc: { turns: 1 }, $set: {} };
+  if (role === "user") upd.$set.lastUserTs = doc.ts;
+  if (role === "assistant") upd.$set.lastAssistantTs = doc.ts;
+  await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId) }, upd);
+}
+async function finalizeConversationOnce(conversationId, finalPayload, estado) {
+  const db = await getDb();
+  const res = await db.collection("conversations").findOneAndUpdate(
+    { _id: new ObjectId(conversationId), finalized: { $ne: true } },
+    {
+      $set: {
+        status: estado || "COMPLETED",
+        finalized: true,
+        closedAt: new Date(),
+        summary: {
+          response: finalPayload?.response || "",
+          Pedido: finalPayload?.Pedido || null,
+          Bigdata: finalPayload?.Bigdata || null
+        }
+      }
+    },
+    { returnDocument: "after" }
+  );
 
-  // 🔄 Refrescar system (comportamiento + catálogo) ANTES de cada turno
+  const updated = !!res?.value?.finalized;
+  if (!updated) return { didFinalize: false };
+
+  try {
+    await saveCompletedToSheets({ waId: res.value.waId, data: finalPayload || {} });
+    return { didFinalize: true };
+  } catch (e) {
+    console.error("⚠️ Error guardando en Sheets tras finalizar:", e);
+    return { didFinalize: true, sheetsError: e?.message };
+  }
+}
+
+// ============ Chat con historial ============
+async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperature = CHAT_TEMPERATURE) {
+  const session = await getSession(waId);
   try {
     const systemText = await buildSystemPrompt({ force: true });
     session.messages[0] = { role: "system", content: systemText };
@@ -659,61 +614,97 @@ async function chatWithHistoryJSON(
 
   pushMessage(session, "user", userText);
 
-  const completion = await openai.chat.completions.create({
-    model,
-    response_format: { type: "json_object" },
-    temperature,
-    top_p: 1,
-    messages: [ ...session.messages ]
-  });
+  const completion = await withTimeout(
+    openai.chat.completions.create({
+      model,
+      response_format: { type: "json_object" },
+      temperature,
+      top_p: 1,
+      messages: [ ...session.messages ]
+    }),
+    12000,
+    "openai_chat"
+  );
 
   const content = completion.choices?.[0]?.message?.content || "";
-  const data = await safeJsonParseStrictOrFix(content, { openai, model }) || null;
+  const data = await safeJsonParseStrictOrFix(content, { openai, model }).catch(() => null) || null;
 
-  const responseText =
-    (data && typeof data.response === "string" && data.response.trim()) ||
-    (typeof content === "string" ? content.trim() : "") ||
-    "Perdón, no pude generar una respuesta. ¿Podés reformular?";
-
-  const estado =
-    (data && typeof data.estado === "string" && data.estado.trim().toUpperCase()) || "IN_PROGRESS";
+  let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
+  let estado = "IN_PROGRESS";
+  if (data && typeof data === "object") {
+    responseText = (typeof data.response === "string" && data.response.trim()) || responseText;
+    estado = (typeof data.estado === "string" && data.estado.trim().toUpperCase()) || "IN_PROGRESS";
+  } else if (content && content.trim()) {
+    responseText = content.trim();
+  }
 
   pushMessage(session, "assistant", responseText);
   return { response: responseText, estado, raw: data || {} };
 }
 
-// ========= WhatsApp send / mark =========
+// ============ WhatsApp Send ============
 async function sendText(to, body, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
+  if (!token) {
+    console.error("❌ WHATSAPP_TOKEN vacío; no puedo enviar.");
+    return { ok: false, error: "missing_token" };
+  }
+  if (!phoneNumberId) {
+    console.warn("⚠️ No hay phoneNumberId; no puedo enviar.");
+    return { ok: false, error: "missing_phone_number_id" };
+  }
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
   const payload = { messaging_product: "whatsapp", to, type: "text", text: { body } };
 
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const data = await resp.json();
-  if (!resp.ok) console.error("❌ Error WhatsApp sendText:", resp.status, data);
-  else console.log("📤 Enviado:", data);
-  return data;
+  const MAX_TRIES = 3;
+  let lastErr = null;
+
+  for (let i = 1; i <= MAX_TRIES; i++) {
+    try {
+      const resp = await withTimeout(
+        fetch(url, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        }),
+        8000,
+        "wa_send_text"
+      );
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        console.error(`❌ WhatsApp sendText intento ${i}/${MAX_TRIES}:`, resp.status, data);
+        lastErr = new Error(`sendText status ${resp.status}`);
+      } else {
+        console.log("📤 Enviado:", data);
+        return { ok: true, data };
+      }
+    } catch (e) {
+      console.error(`❌ WhatsApp sendText intento ${i}/${MAX_TRIES} lanzó:`, e);
+      lastErr = e;
+    }
+    await new Promise(r => setTimeout(r, 500 * i));
+  }
+  return { ok: false, error: lastErr?.message || "sendText_failed" };
 }
+
 async function markAsRead(messageId, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
+  if (!token || !phoneNumberId || !messageId) return;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
   const payload = { messaging_product: "whatsapp", status: "read", message_id: messageId };
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  if (!resp.ok) {
-    const data = await resp.json().catch(() => ({}));
-    console.warn("⚠️ markAsRead falló:", resp.status, data);
+  try {
+    const resp = await withTimeout(
+      fetch(url, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+      5000,
+      "wa_mark_read"
+    );
+    if (!resp.ok) console.warn("⚠️ markAsRead falló:", resp.status, await resp.text().catch(() => ""));
+  } catch (e) {
+    console.warn("⚠️ markAsRead lanzó:", e?.message);
   }
 }
 
-// ========= Rutas =========
+// ============ Rutas ============
 app.get("/", (_req, res) => res.status(200).send("WhatsApp Webhook up ✅"));
 
 app.get("/webhook", (req, res) => {
@@ -739,169 +730,175 @@ app.post("/webhook", async (req, res) => {
     if (body.object !== "whatsapp_business_account") {
       return res.sendStatus(404);
     }
-    // Responder 200 rápido
+
+    // Respondemos 200 ASAP para evitar reintentos de Meta
     res.sendStatus(200);
 
     for (const entry of (body.entry || [])) {
       for (const change of (entry.changes || [])) {
         const value = change.value || {};
-        const msg = value.messages?.[0];
-        if (!msg) continue;
+        const messages = Array.isArray(value.messages) ? value.messages : [];
 
-        const phoneNumberId = value.metadata?.phone_number_id;
-        const from = msg.from; // E.164 sin '+'
-        const type = msg.type;
-        const messageId = msg.id;
+        if (!messages.length) {
+          console.log("ℹ️ Cambio sin messages; se ignora (prob. statuses).");
+          continue;
+        }
 
-        if (messageId && phoneNumberId) markAsRead(messageId, phoneNumberId).catch(() => {});
+        for (const msg of messages) {
+          const phoneNumberId = value.metadata?.phone_number_id;
+          const from = msg.from;
+          const type = msg.type;
+          const messageId = msg.id;
 
-        // ---- Normalizar entrada del usuario ----
-        let userText = "";
-        let userMeta = {};
+          console.log("➡️ procesando msg:", { from, type, messageId, phoneNumberId });
+          if (messageId && phoneNumberId) markAsRead(messageId, phoneNumberId).catch(() => {});
 
-        if (type === "text") {
-          userText = msg.text?.body || "";
+          // Normalizar entrada
+          let userText = "";
+          let userMeta = {};
 
-        } else if (type === "interactive") {
-          const it = msg.interactive;
-          if (it?.type === "button_reply") userText = it.button_reply?.title || "";
-          if (it?.type === "list_reply")   userText = it.list_reply?.title || "";
-          if (!userText) userText = "Seleccionaste una opción. ¿En qué puedo ayudarte?";
-
-        } else if (type === "audio") {
-          try {
-            const mediaId = msg.audio?.id;
-            if (!mediaId) {
-              userText = "Recibí un audio, pero no pude obtenerlo. ¿Podés escribir tu consulta?";
-            } else {
-              const info = await getMediaInfo(mediaId); // { url, mime_type }
-              const buffer = await downloadMediaBuffer(info.url);
-              const id = putInCache(buffer, info.mime_type);
-              const baseUrl = getBaseUrl(req);
-              const publicUrl = `${baseUrl}/cache/audio/${id}`;
-              userMeta.mediaUrl = publicUrl;
-
-              try {
-                const trData = await transcribeAudioExternal({ publicAudioUrl: publicUrl, buffer, mime: info.mime_type, filename: "audio.ogg" });
-                const transcript = trData.text || trData.transcript || trData.transcription || trData.result || "";
-                if (transcript) {
-                  userMeta.transcript = transcript;
-                  userText = `Transcripción del audio del usuario: "${transcript}"`;
-                } else {
-                  userText = "No obtuve texto de la transcripción. ¿Podés escribir tu consulta?";
-                }
-              } catch (e) {
-                console.error("❌ Transcribe API error:", e.message);
-                userText = "No pude transcribir tu audio. ¿Podés escribir tu consulta?";
-              }
-            }
-          } catch (e) {
-            console.error("⚠️ Audio/transcripción fallback:", e);
-            userText = "Tu audio no se pudo procesar. ¿Podés escribir tu consulta?";
-          }
-
-        } else if (type === "image") {
-          try {
-            const mediaId = msg.image?.id;
-            if (!mediaId) {
-              userText = "Recibí una imagen pero no pude descargarla. ¿Podés describir lo que dice?";
-            } else {
-              const info = await getMediaInfo(mediaId);
-              const buffer = await downloadMediaBuffer(info.url);
-              const id = putInCache(buffer, info.mime_type);
-              const baseUrl = getBaseUrl(req);
-              const publicUrl = `${baseUrl}/cache/image/${id}`;
-              userMeta.mediaUrl = publicUrl;
-
-              const text = await transcribeImageWithOpenAI(publicUrl);
-              if (text) {
-                userMeta.ocrText = text;
-                userText = `Texto detectado en la imagen: "${text}"`;
+          if (type === "text") {
+            userText = msg.text?.body || "";
+          } else if (type === "interactive") {
+            const it = msg.interactive;
+            if (it?.type === "button_reply") userText = it.button_reply?.title || "";
+            if (it?.type === "list_reply")   userText = it.list_reply?.title || "";
+            if (!userText) userText = "Seleccionaste una opción. ¿En qué puedo ayudarte?";
+          } else if (type === "audio") {
+            try {
+              const mediaId = msg.audio?.id;
+              if (!mediaId) {
+                userText = "Recibí un audio, pero no pude obtenerlo. ¿Podés escribir tu consulta?";
               } else {
-                userText = "No pude detectar texto en la imagen. ¿Podés escribir lo que dice?";
+                const info = await getMediaInfo(mediaId);
+                const buffer = await downloadMediaBuffer(info.url);
+                const id = putInCache(buffer, info.mime_type);
+                const baseUrl = getBaseUrl(req);
+                const publicUrl = `${baseUrl}/cache/audio/${id}`;
+                userMeta.mediaUrl = publicUrl;
+
+                try {
+                  const trData = await transcribeAudioExternal({ publicAudioUrl: publicUrl, buffer, mime: info.mime_type, filename: "audio.ogg" });
+                  const transcript = trData.text || trData.transcript || trData.transcription || trData.result || "";
+                  if (transcript) {
+                    userMeta.transcript = transcript;
+                    userText = `Transcripción del audio del usuario: "${transcript}"`;
+                  } else {
+                    userText = "No obtuve texto de la transcripción. ¿Podés escribir tu consulta?";
+                  }
+                } catch (e) {
+                  console.error("❌ Transcribe API error:", e.message);
+                  userText = "No pude transcribir tu audio. ¿Podés escribir tu consulta?";
+                }
               }
+            } catch (e) {
+              console.error("⚠️ Audio/transcripción fallback:", e);
+              userText = "Tu audio no se pudo procesar. ¿Podés escribir tu consulta?";
             }
-          } catch (e) {
-            console.error("⚠️ Imagen/OCR fallback:", e);
-            userText = "No pude procesar la imagen. ¿Podés escribir lo que dice?";
+          } else if (type === "image") {
+            try {
+              const mediaId = msg.image?.id;
+              if (!mediaId) {
+                userText = "Recibí una imagen pero no pude descargarla. ¿Podés describir lo que dice?";
+              } else {
+                const info = await getMediaInfo(mediaId);
+                const buffer = await downloadMediaBuffer(info.url);
+                const id = putInCache(buffer, info.mime_type);
+                const baseUrl = getBaseUrl(req);
+                const publicUrl = `${baseUrl}/cache/image/${id}`;
+                userMeta.mediaUrl = publicUrl;
+
+                const text = await transcribeImageWithOpenAI(publicUrl);
+                if (text) {
+                  userMeta.ocrText = text;
+                  userText = `Texto detectado en la imagen: "${text}"`;
+                } else {
+                  userText = "No pude detectar texto en la imagen. ¿Podés escribir lo que dice?";
+                }
+              }
+            } catch (e) {
+              console.error("⚠️ Imagen/OCR fallback:", e);
+              userText = "No pude procesar la imagen. ¿Podés escribir lo que dice?";
+            }
+          } else if (type === "document") {
+            userText = "Recibí un documento. Pegá el texto relevante o contame tu consulta.";
+          } else {
+            userText = "Hola 👋 ¿Podés escribir tu consulta en texto?";
           }
 
-        } else if (type === "document") {
-          userText = "Recibí un documento. Pegá el texto relevante o contame tu consulta.";
+          console.log("📩 IN:", { from, type, preview: (userText || "").slice(0, 120) });
 
-        } else {
-          userText = "Hola 👋 ¿Podés escribir tu consulta en texto?";
-        }
+          // Persistencia
+          const conv = await ensureOpenConversation(from);
+          await appendMessage(conv._id, { role: "user", content: userText, type, meta: userMeta });
 
-        console.log("📩 IN:", { from, type, preview: (userText || "").slice(0, 120) });
+          // Modelo + parser robusto
+          let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
+          let estado = "IN_PROGRESS";
+          let raw = null;
 
-        // === Persistencia: asegurar conversación abierta y registrar turno del usuario ===
-        const conv = await ensureOpenConversation(from);
-        await appendMessage(conv._id, {
-          role: "user",
-          content: userText,
-          type,
-          meta: userMeta
-        });
-
-        // ---- Modelo con historial (system refrescado por turno) + parser robusto ----
-        let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
-        let estado = "IN_PROGRESS";
-        let raw = null;
-        try {
-          const out = await chatWithHistoryJSON(from, userText);
-          responseText = out.response || responseText;
-          estado = (out.estado || "IN_PROGRESS").toUpperCase();
-          raw = out.raw || null;
-        } catch (e) {
-          console.error("❌ OpenAI error:", e);
-        }
-
-        // ---- Responder por texto SIEMPRE
-        await sendText(from, responseText, phoneNumberId);
-        console.log("📤 OUT →", from, "| estado:", estado);
-
-        // ---- Persistencia: turno del assistant
-        await appendMessage(conv._id, {
-          role: "assistant",
-          content: responseText,
-          type: "text",
-          meta: { estado }
-        });
-
-        // ---- Si el usuario envió AUDIO, responder TAMBIÉN con AUDIO (TTS)
-        if (type === "audio" && (process.env.ENABLE_TTS_FOR_AUDIO || "true").toLowerCase() === "true") {
           try {
-            const { buffer, mime } = await synthesizeTTS(responseText);
-            const ttsId = putInCache(buffer, mime || "audio/mpeg");
-            const baseUrl = getBaseUrl(req);
-            const ttsUrl = `${baseUrl}/cache/tts/${ttsId}`;
-            await sendAudioLink(from, ttsUrl, phoneNumberId);
+            const out = await chatWithHistoryJSON(from, userText, CHAT_MODEL, CHAT_TEMPERATURE);
+            responseText = out.response || responseText;
+            estado = (out.estado || "IN_PROGRESS").toUpperCase();
+            raw = out.raw || null;
+            console.log("✅ modelo respondió, estado:", estado);
           } catch (e) {
-            console.error("⚠️ Error generando/enviando TTS:", e);
+            console.error("❌ OpenAI error:", e);
           }
-        }
 
-        // ---- Guardar en Sheets y cerrar conversación cuando NO esté en curso
-        const shouldFinalize =
-          (estado && estado !== "IN_PROGRESS") ||
-          ((raw?.Pedido?.["Estado pedido"] || "").toLowerCase().includes("cancel"));
-
-        if (shouldFinalize) {
+          // Envío con retry
+          let sendOk = false;
           try {
-            // Persistencia: marcar conversación como finalizada con el estado real
-            await completeConversation(conv._id, raw, estado);
-
-            // Google Sheets (guarda SIEMPRE: completadas y canceladas)
-            await saveCompletedToSheets({ waId: from, data: raw });
-            console.log("🧾 Guardado en Google Sheets (Hoja 1 & BigData) para", from, "con estado", estado);
-
-            // Reiniciar historial en memoria
-            resetSession(from);
-            console.log("🔁 Historial reiniciado para", from);
+            const r = await sendText(from, responseText, phoneNumberId);
+            sendOk = !!r?.ok;
           } catch (e) {
-            console.error("⚠️ Error al cerrar conversación / guardar en Google Sheets:", e);
+            console.error("❌ Error enviando respuesta de texto:", e);
           }
+          if (!sendOk) {
+            try { await sendText(from, "Tuve un problema al enviar la respuesta, ¿podés repetir tu consulta brevemente?", phoneNumberId); }
+            catch {}
+          }
+          console.log("📤 OUT →", from, "| estado:", estado);
+
+          await appendMessage(conv._id, { role: "assistant", content: responseText, type: "text", meta: { estado } });
+
+          // TTS si el usuario mandó audio
+          if (type === "audio" && (process.env.ENABLE_TTS_FOR_AUDIO || "true").toLowerCase() === "true") {
+            try {
+              const { buffer, mime } = await synthesizeTTS(responseText);
+              const ttsId = putInCache(buffer, mime || "audio/mpeg");
+              const baseUrl = getBaseUrl(req);
+              const ttsUrl = `${baseUrl}/cache/tts/${ttsId}`;
+              await sendAudioLink(from, ttsUrl, phoneNumberId);
+            } catch (e) { console.error("⚠️ Error generando/enviando TTS:", e); }
+          }
+
+          // Cierre idempotente
+          const shouldFinalize =
+            (estado && estado !== "IN_PROGRESS") ||
+            ((raw?.Pedido?.["Estado pedido"] || "").toLowerCase().includes("cancel"));
+
+          if (shouldFinalize) {
+            try {
+              const result = await finalizeConversationOnce(conv._id, raw, estado);
+              if (result.didFinalize) {
+                resetSession(from);
+                console.log("🔁 Historial reiniciado para", from, "| estado:", estado);
+                if (result.sheetsError) {
+                  console.warn("⚠️ Sheets guardado con error (finalizado igual):", result.sheetsError);
+                } else {
+                  console.log("🧾 Guardado en Google Sheets (idempotente) para", from, "estado", estado);
+                }
+              } else {
+                console.log("ℹ️ Ya estaba finalizada; no se guarda en Sheets de nuevo.");
+              }
+            } catch (e) {
+              console.error("⚠️ Error al finalizar conversación:", e);
+            }
+          }
+
+          console.log("🏁 turno terminado");
         }
       }
     }
@@ -910,6 +907,6 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// ========= Start =========
+// ============ Start ============
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Webhook listening on port ${PORT}`));
