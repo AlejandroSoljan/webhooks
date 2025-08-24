@@ -504,7 +504,7 @@ async function buildSystemPrompt({ force = false } = {}) {
   // 5) ÚNICO system message final
   const fullText = [
     "[COMPORTAMIENTO]\n" + baseText,
-    "[REGLAS]\n" + reglasVenta,
+    //"[REGLAS]\n" + reglasVenta,
     "[CATALOGO]\n" + catalogText,
     "[SALIDA]\n" + jsonSchema,
     "RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
