@@ -593,7 +593,7 @@ async function chatWithHistoryJSON(
   const completion = await openai.chat.completions.create({
     model,                                 // si podés: "gpt-4o"
     response_format: { type: "json_object" },
-    temperature: 0,                      // más obediente
+    temperature: 0.0,                      // más obediente
     top_p: 1,
     messages: [
       ...session.messages
