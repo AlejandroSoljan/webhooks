@@ -11,7 +11,7 @@ if (!MONGODB_DBNAME) {
   throw new Error("Falta MONGODB_DBNAME en .env");
 }
 
-let client;
+let client; 
 let db;
 let connectingPromise;
 
