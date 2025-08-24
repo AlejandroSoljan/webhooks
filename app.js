@@ -33,7 +33,7 @@ function isValidSignature(req) {
 }
 
 // ========= OpenAI =========
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.envOPENAI_API_KEY || process.env.OPENAI_API_KEY }); // robustez
 
 // ====== Config de modelo / temperatura ======
 const CHAT_MODEL =
@@ -44,28 +44,49 @@ const CHAT_TEMPERATURE = Number.isFinite(parseFloat(process.env.OPENAI_TEMPERATU
   ? parseFloat(process.env.OPENAI_TEMPERATURE)
   : 0.2;
 
+// --- Helpers de timeout/retry ---
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+async function withTimeout(promise, ms, label="op"){
+  let to;
+  const timeout = new Promise((_,rej)=>{
+    to = setTimeout(()=>rej(new Error(`${label}_timeout_${ms}ms`)), ms);
+  });
+  try {
+    const res = await Promise.race([promise, timeout]);
+    clearTimeout(to);
+    return res;
+  } finally {
+    clearTimeout(to);
+  }
+}
+
+async function retry(fn, { retries=2, baseDelay=400 } = {}){
+  let lastErr;
+  for (let i=0;i<=retries;i++){
+    try { return await fn(i); }
+    catch(e){ lastErr = e; if (i<retries) await sleep(baseDelay * Math.pow(2,i)); }
+  }
+  throw lastErr;
+}
+
 // ========= Helpers JSON robustos =========
 function coerceJsonString(raw) {
   if (raw == null) return null;
   let s = String(raw);
 
-  // quita BOM y caracteres de control (excepto \n \t \r)
   s = s.replace(/^\uFEFF/, "")
        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]+/g, " ")
        .trim();
 
-  // quita fences ``` y etiquetas de código
   if (s.startsWith("```")) {
     s = s.replace(/^```(\w+)?/i, "").replace(/```$/i, "").trim();
   }
 
-  // normaliza comillas tipográficas a comillas normales
   s = s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
 
-  // si ya luce como JSON puro, retornalo
   if (s.startsWith("{") && s.endsWith("}")) return s;
 
-  // intenta extraer el primer bloque { ... }
   const first = s.indexOf("{");
   const last  = s.lastIndexOf("}");
   if (first !== -1 && last !== -1 && last > first) {
@@ -76,16 +97,13 @@ function coerceJsonString(raw) {
 }
 
 async function safeJsonParseStrictOrFix(raw, { openai, model = "gpt-4o-mini" } = {}) {
-  // 1) limpieza/coección
   let s = coerceJsonString(raw);
   if (!s) return null;
 
-  // 2) primer intento
   try {
     return JSON.parse(s);
   } catch (_) {}
 
-  // 3) reintento con “arreglador” (una sola vez)
   try {
     const fix = await openai.chat.completions.create({
       model,
@@ -138,7 +156,6 @@ function getFromCache(id) {
   if (Date.now() > item.expiresAt) { fileCache.delete(id); return null; }
   return item;
 }
-// 🧹 Limpiador periódico
 setInterval(() => {
   const now = Date.now();
   for (const [id, item] of fileCache.entries()) if (now > item.expiresAt) fileCache.delete(id);
@@ -196,11 +213,17 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
     ],
     temperature: 1
   };
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
+
+  const resp = await withTimeout(
+    fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }),
+    Number(process.env.OCR_TIMEOUT_MS || 8000),
+    "openai_ocr"
+  );
+
   if (!resp.ok) {
     const errTxt = await resp.text().catch(() => "");
     throw new Error(`OpenAI vision error: ${resp.status} ${errTxt}`);
@@ -209,7 +232,7 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
   return data?.choices?.[0]?.message?.content?.trim() || "";
 }
 
-// ---- Transcriptor externo: JSON {audio_url}, luego multipart file, luego GET ----
+// ---- Transcriptor externo con variantes + timeout ----
 async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename = "audio.ogg" }) {
   const base = TRANSCRIBE_API_URL;
   const paths = ["", "/transcribe", "/api/transcribe", "/v1/transcribe"];
@@ -217,11 +240,15 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
   // 1) POST JSON { audio_url }
   for (const p of paths) {
     const url = `${base}${p}`;
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ audio_url: publicAudioUrl })
-    });
+    const r = await withTimeout(
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audio_url: publicAudioUrl })
+      }),
+      Number(process.env.TRANSCRIBE_TIMEOUT_MS || 8000),
+      "transcribe"
+    );
     if (r.ok) {
       const j = await r.json().catch(() => ({}));
       console.log("✅ Transcribe OK: POST JSON audio_url", url);
@@ -257,7 +284,11 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
       const { body, boundary } = buildMultipart([
         { type: "file", name: "file", filename, contentType: mime || "application/octet-stream", data: buffer }
       ]);
-      const r = await fetch(url, { method: "POST", headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` }, body });
+      const r = await withTimeout(
+        fetch(url, { method: "POST", headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` }, body }),
+        Number(process.env.TRANSCRIBE_TIMEOUT_MS || 8000),
+        "transcribe"
+      );
       if (r.ok) {
         const j = await r.json().catch(() => ({}));
         console.log("✅ Transcribe OK: POST multipart file", url);
@@ -274,7 +305,7 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
   // 3) GET ?audio_url=
   for (const p of paths) {
     const url = `${base}${p}?audio_url=${encodeURIComponent(publicAudioUrl)}`;
-    const g = await fetch(url);
+    const g = await withTimeout(fetch(url), Number(process.env.TRANSCRIBE_TIMEOUT_MS || 8000), "transcribe");
     if (g.ok) {
       const j2 = await g.json().catch(() => ({}));
       console.log("✅ Transcribe OK: GET", url);
@@ -341,7 +372,6 @@ function getSheetsClient() {
   const auth = new google.auth.JWT(email, null, key, ["https://www.googleapis.com/auth/spreadsheets"]);
   return google.sheets({ version: "v4", auth });
 }
-// Aceptar ID o URL en GOOGLE_SHEETS_ID
 function getSpreadsheetIdFromEnv() {
   const raw = (process.env.GOOGLE_SHEETS_ID || "").trim();
   if (!raw) throw new Error("Falta GOOGLE_SHEETS_ID.");
@@ -441,7 +471,7 @@ async function loadProductsFromSheet() {
   }
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
-  const range = "Productos!A2:E"; // A nombre, B precio, C venta, D obs, E activo
+  const range = "Productos!A2:E";
   const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
   const rows = resp.data.values || [];
 
@@ -508,12 +538,10 @@ async function buildSystemPrompt({ force = false } = {}) {
     return behaviorCache.text;
   }
 
-  // 1) Comportamiento desde ENV o desde Sheet
   const baseText = (BEHAVIOR_SOURCE === "env")
     ? await loadBehaviorTextFromEnv()
     : await loadBehaviorTextFromSheet();
 
-  // 2) Catálogo SIEMPRE desde Sheet
   let catalogText = "";
   try {
     const products = await loadProductsFromSheet();
@@ -523,7 +551,6 @@ async function buildSystemPrompt({ force = false } = {}) {
     catalogText = "Catálogo de productos: (error al leer)";
   }
 
-  // 3) Reglas de uso de observaciones (OBLIGATORIAS)
   const reglasVenta =
     "Instrucciones de venta (OBLIGATORIAS):\n" +
     "- Usá las Observaciones para decidir qué ofrecer, sugerir complementos, aplicar restricciones o proponer sustituciones.\n" +
@@ -531,17 +558,15 @@ async function buildSystemPrompt({ force = false } = {}) {
     "- Si sugerís bundles o combos, ofrecé esas opciones con precio estimado cuando corresponda.\n" +
     "- Si falta un dato (sabor/tamaño/cantidad), pedilo brevemente.\n";
 
-  // 4) Esquema JSON OBLIGATORIO dentro del mismo system
   const jsonSchema =
     "FORMATO DE RESPUESTA (OBLIGATORIO - SOLO JSON, sin ```):\n" +
     '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED", ' +
     '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
     '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
 
-  // 5) ÚNICO system message final
   const fullText = [
     "[COMPORTAMIENTO]\n" + baseText,
-    //"[REGLAS]\n" + reglasVenta,
+    "[REGLAS]\n" + reglasVenta,
     "[CATALOGO]\n" + catalogText,
     "[SALIDA]\n" + jsonSchema,
     "RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
@@ -559,7 +584,7 @@ async function ensureOpenConversation(waId) {
     const doc = {
       waId,
       status: "OPEN", // OPEN | COMPLETED | CANCELLED
-      finalized: false, // ← clave para idempotencia
+      finalized: false, // idempotencia
       openedAt: new Date(),
       closedAt: null,
       lastUserTs: null,
@@ -596,8 +621,6 @@ async function appendMessage(conversationId, {
   await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId) }, upd);
 }
 
-// === Cierre idempotente + guardado en Google Sheets ===
-// Solo el PRIMER llamado que logre cambiar finalized:false -> true hará el guardado.
 async function finalizeConversationOnce(conversationId, finalPayload, estado) {
   const db = await getDb();
   const res = await db.collection("conversations").findOneAndUpdate(
@@ -618,19 +641,13 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
   );
 
   const updated = !!res?.value?.finalized;
-  if (!updated) {
-    return { didFinalize: false };
-  }
+  if (!updated) return { didFinalize: false };
 
   try {
-    await saveCompletedToSheets({
-      waId: res.value.waId,
-      data: finalPayload || {}
-    });
+    await saveCompletedToSheets({ waId: res.value.waId, data: finalPayload || {} });
     return { didFinalize: true };
   } catch (e) {
     console.error("⚠️ Error guardando en Sheets tras finalizar:", e);
-    // ya está finalizada; no reintentamos para evitar duplicados
     return { didFinalize: true, sheetsError: e?.message };
   }
 }
@@ -640,7 +657,7 @@ const sessions = new Map(); // waId -> { messages, updatedAt }
 
 async function getSession(waId) {
   if (!sessions.has(waId)) {
-    const systemText = await buildSystemPrompt({ force: true }); // al iniciar conversación
+    const systemText = await buildSystemPrompt({ force: true });
     sessions.set(waId, {
       messages: [{ role: "system", content: systemText }],
       updatedAt: Date.now()
@@ -666,7 +683,7 @@ async function chatWithHistoryJSON(
 ) {
   const session = await getSession(waId);
 
-  // 🔄 Refrescar system (comportamiento + catálogo) ANTES de cada turno
+  // refrescar system por turno
   try {
     const systemText = await buildSystemPrompt({ force: true });
     session.messages[0] = { role: "system", content: systemText };
@@ -676,15 +693,33 @@ async function chatWithHistoryJSON(
 
   pushMessage(session, "user", userText);
 
-  const completion = await openai.chat.completions.create({
-    model,
-    response_format: { type: "json_object" },
-    temperature,
-    top_p: 1,
-    messages: [ ...session.messages ]
-  });
+  let completion;
+  try {
+    completion = await retry(
+      async () => withTimeout(
+        openai.chat.completions.create({
+          model,
+          response_format: { type: "json_object" },
+          temperature,
+          top_p: 1,
+          messages: [ ...session.messages ]
+        }),
+        Number(process.env.OPENAI_TIMEOUT_MS || 12000),
+        "openai_chat"
+      ),
+      { retries: Number(process.env.OPENAI_RETRIES || 2), baseDelay: 500 }
+    );
+  } catch (e) {
+    console.error("❌ OpenAI error:", e);
+    const fallback = {
+      response: "Estoy con demoras técnicas para responder. ¿Podés repetir tu consulta en un mensaje más corto o darme un dato más?",
+      estado: "IN_PROGRESS"
+    };
+    pushMessage(session, "assistant", fallback.response);
+    return { response: fallback.response, estado: fallback.estado, raw: fallback };
+  }
 
-  const content = completion.choices?.[0]?.message?.content || "";
+  const content = completion?.choices?.[0]?.message?.content || "";
   const data = await safeJsonParseStrictOrFix(content, { openai, model }) || null;
 
   const responseText =
@@ -730,6 +765,21 @@ async function markAsRead(messageId, phoneNumberId) {
   }
 }
 
+// --- Cola por usuario (mutex simple) ---
+const queues = new Map(); // waId -> Promise
+
+function enqueueUserTask(waId, taskFn){
+  const prev = queues.get(waId) || Promise.resolve();
+  const next = prev.then(() => taskFn()).catch(e => {
+    console.error("⚠️ Error en tarea de cola:", e);
+  });
+  const cleaned = next.finally(() => {
+    if (queues.get(waId) === cleaned) queues.delete(waId);
+  });
+  queues.set(waId, cleaned);
+  return cleaned;
+}
+
 // ========= Rutas =========
 app.get("/", (_req, res) => res.status(200).send("WhatsApp Webhook up ✅"));
 
@@ -765,165 +815,192 @@ app.post("/webhook", async (req, res) => {
         const messages = value.messages || [];
         if (!messages.length) continue;
 
-        // Procesar uno por uno para evitar pérdidas y manejar estados por mensaje
         for (const msg of messages) {
           const phoneNumberId = value.metadata?.phone_number_id;
           const from = msg.from; // E.164 sin '+'
-          const type = msg.type;
-          const messageId = msg.id;
 
-          if (messageId && phoneNumberId) markAsRead(messageId, phoneNumberId).catch(() => {});
+          await enqueueUserTask(from, async () => {
+            console.log(`▶️ start task ${from} msg:${msg.id}`);
 
-          // ---- Normalizar entrada del usuario ----
-          let userText = "";
-          let userMeta = {};
+            const type = msg.type;
+            const messageId = msg.id;
 
-          if (type === "text") {
-            userText = msg.text?.body || "";
+            if (messageId && phoneNumberId) markAsRead(messageId, phoneNumberId).catch(() => {});
 
-          } else if (type === "interactive") {
-            const it = msg.interactive;
-            if (it?.type === "button_reply") userText = it.button_reply?.title || "";
-            if (it?.type === "list_reply")   userText = it.list_reply?.title || "";
-            if (!userText) userText = "Seleccionaste una opción. ¿En qué puedo ayudarte?";
+            // ---- Normalizar entrada del usuario ----
+            let userText = "";
+            let userMeta = {};
 
-          } else if (type === "audio") {
-            try {
-              const mediaId = msg.audio?.id;
-              if (!mediaId) {
-                userText = "Recibí un audio, pero no pude obtenerlo. ¿Podés escribir tu consulta?";
-              } else {
-                const info = await getMediaInfo(mediaId); // { url, mime_type }
-                const buffer = await downloadMediaBuffer(info.url);
-                const id = putInCache(buffer, info.mime_type);
-                const baseUrl = getBaseUrl(req);
-                const publicUrl = `${baseUrl}/cache/audio/${id}`;
-                userMeta.mediaUrl = publicUrl;
+            if (type === "text") {
+              userText = msg.text?.body || "";
 
-                try {
-                  const trData = await transcribeAudioExternal({ publicAudioUrl: publicUrl, buffer, mime: info.mime_type, filename: "audio.ogg" });
-                  const transcript = trData.text || trData.transcript || trData.transcription || trData.result || "";
-                  if (transcript) {
-                    userMeta.transcript = transcript;
-                    userText = `Transcripción del audio del usuario: "${transcript}"`;
-                  } else {
-                    userText = "No obtuve texto de la transcripción. ¿Podés escribir tu consulta?";
+            } else if (type === "interactive") {
+              const it = msg.interactive;
+              if (it?.type === "button_reply") userText = it.button_reply?.title || "";
+              if (it?.type === "list_reply")   userText = it.list_reply?.title || "";
+              if (!userText) userText = "Seleccionaste una opción. ¿En qué puedo ayudarte?";
+
+            } else if (type === "audio") {
+              try {
+                const mediaId = msg.audio?.id;
+                if (!mediaId) {
+                  userText = "Recibí un audio, pero no pude obtenerlo. ¿Podés escribir tu consulta?";
+                } else {
+                  const info = await getMediaInfo(mediaId); // { url, mime_type }
+                  const buffer = await downloadMediaBuffer(info.url);
+                  const id = putInCache(buffer, info.mime_type);
+                  const baseUrl = getBaseUrl(req);
+                  const publicUrl = `${baseUrl}/cache/audio/${id}`;
+                  userMeta.mediaUrl = publicUrl;
+
+                  try {
+                    const trData = await transcribeAudioExternal({ publicAudioUrl: publicUrl, buffer, mime: info.mime_type, filename: "audio.ogg" });
+                    const transcript = trData.text || trData.transcript || trData.transcription || trData.result || "";
+                    if (transcript) {
+                      userMeta.transcript = transcript;
+                      userText = `Transcripción del audio del usuario: "${transcript}"`;
+                    } else {
+                      userText = "No obtuve texto de la transcripción. ¿Podés escribir tu consulta?";
+                    }
+                  } catch (e) {
+                    console.error("❌ Transcribe API error:", e.message);
+                    userText = "No pude transcribir tu audio. ¿Podés escribir tu consulta?";
                   }
-                } catch (e) {
-                  console.error("❌ Transcribe API error:", e.message);
-                  userText = "No pude transcribir tu audio. ¿Podés escribir tu consulta?";
                 }
+              } catch (e) {
+                console.error("⚠️ Audio/transcripción fallback:", e);
+                userText = "Tu audio no se pudo procesar. ¿Podés escribir tu consulta?";
               }
-            } catch (e) {
-              console.error("⚠️ Audio/transcripción fallback:", e);
-              userText = "Tu audio no se pudo procesar. ¿Podés escribir tu consulta?";
+
+            } else if (type === "image") {
+              try {
+                const mediaId = msg.image?.id;
+                if (!mediaId) {
+                  userText = "Recibí una imagen pero no pude descargarla. ¿Podés describir lo que dice?";
+                } else {
+                  const info = await getMediaInfo(mediaId);
+                  const buffer = await downloadMediaBuffer(info.url);
+                  const id = putInCache(buffer, info.mime_type);
+                  const baseUrl = getBaseUrl(req);
+                  const publicUrl = `${baseUrl}/cache/image/${id}`;
+                  userMeta.mediaUrl = publicUrl;
+
+                  const text = await transcribeImageWithOpenAI(publicUrl);
+                  if (text) {
+                    userMeta.ocrText = text;
+                    userText = `Texto detectado en la imagen: "${text}"`;
+                  } else {
+                    userText = "No pude detectar texto en la imagen. ¿Podés escribir lo que dice?";
+                  }
+                }
+              } catch (e) {
+                console.error("⚠️ Imagen/OCR fallback:", e);
+                userText = "No pude procesar la imagen. ¿Podés escribir lo que dice?";
+              }
+
+            } else if (type === "document") {
+              userText = "Recibí un documento. Pegá el texto relevante o contame tu consulta.";
+
+            } else {
+              userText = "Hola 👋 ¿Podés escribir tu consulta en texto?";
             }
 
-          } else if (type === "image") {
+            console.log("📩 IN:", { from, type, preview: (userText || "").slice(0, 120) });
+
+            // === Persistencia: asegurar conversación abierta y registrar turno del usuario ===
+            const conv = await ensureOpenConversation(from);
+            await appendMessage(conv._id, {
+              role: "user",
+              content: userText,
+              type,
+              meta: userMeta
+            });
+
+            // ---- Modelo con historial (system refrescado por turno) + parser robusto ----
+            let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
+            let estado = "IN_PROGRESS";
+            let raw = null;
             try {
-              const mediaId = msg.image?.id;
-              if (!mediaId) {
-                userText = "Recibí una imagen pero no pude descargarla. ¿Podés describir lo que dice?";
-              } else {
-                const info = await getMediaInfo(mediaId);
-                const buffer = await downloadMediaBuffer(info.url);
-                const id = putInCache(buffer, info.mime_type);
+              const out = await chatWithHistoryJSON(from, userText);
+              responseText = out.response || responseText;
+              estado = (out.estado || "IN_PROGRESS").toUpperCase();
+              raw = out.raw || null;
+              console.log("✅ modelo respondió, estado:", estado);
+            } catch (e) {
+              console.error("❌ OpenAI error final:", e);
+            }
+
+            // ---- Envío a WhatsApp con reintento
+            let whatsappSent = false;
+            try {
+              await sendText(from, responseText, phoneNumberId);
+              whatsappSent = true;
+            } catch(e){
+              console.error("❌ sendText falló, reintento:", e.message);
+              try {
+                await sendText(from, "Tuve un problema para responder. ¿Podés repetir en un mensaje corto?", phoneNumberId);
+                whatsappSent = true;
+              } catch(e2){
+                console.error("❌ sendText reintento falló:", e2.message);
+              }
+            }
+            if (!whatsappSent) {
+              await appendMessage(conv._id, {
+                role: "assistant",
+                content: "[ERROR] No se pudo enviar respuesta a WhatsApp.",
+                type: "text",
+                meta: { error: "whatsapp_send_failed" }
+              });
+            }
+            console.log("📤 OUT →", from, "| estado:", estado);
+
+            // ---- Persistencia: turno del assistant
+            await appendMessage(conv._id, {
+              role: "assistant",
+              content: responseText,
+              type: "text",
+              meta: { estado }
+            });
+
+            // ---- Si el usuario envió AUDIO, responder TAMBIÉN con AUDIO (TTS)
+            if (type === "audio" && (process.env.ENABLE_TTS_FOR_AUDIO || "true").toLowerCase() === "true") {
+              try {
+                const { buffer, mime } = await synthesizeTTS(responseText);
+                const ttsId = putInCache(buffer, mime || "audio/mpeg");
                 const baseUrl = getBaseUrl(req);
-                const publicUrl = `${baseUrl}/cache/image/${id}`;
-                userMeta.mediaUrl = publicUrl;
-
-                const text = await transcribeImageWithOpenAI(publicUrl);
-                if (text) {
-                  userMeta.ocrText = text;
-                  userText = `Texto detectado en la imagen: "${text}"`;
-                } else {
-                  userText = "No pude detectar texto en la imagen. ¿Podés escribir lo que dice?";
-                }
+                const ttsUrl = `${baseUrl}/cache/tts/${ttsId}`;
+                await sendAudioLink(from, ttsUrl, phoneNumberId);
+              } catch (e) {
+                console.error("⚠️ Error generando/enviando TTS:", e);
               }
-            } catch (e) {
-              console.error("⚠️ Imagen/OCR fallback:", e);
-              userText = "No pude procesar la imagen. ¿Podés escribir lo que dice?";
             }
 
-          } else if (type === "document") {
-            userText = "Recibí un documento. Pegá el texto relevante o contame tu consulta.";
+            // ---- Guardar en Sheets y cerrar conversación cuando NO esté en curso (idempotente)
+            const shouldFinalize =
+              (estado && estado !== "IN_PROGRESS") ||
+              ((raw?.Pedido?.["Estado pedido"] || "").toLowerCase().includes("cancel"));
 
-          } else {
-            userText = "Hola 👋 ¿Podés escribir tu consulta en texto?";
-          }
-
-          console.log("📩 IN:", { from, type, preview: (userText || "").slice(0, 120) });
-
-          // === Persistencia: asegurar conversación abierta y registrar turno del usuario ===
-          const conv = await ensureOpenConversation(from);
-          await appendMessage(conv._id, {
-            role: "user",
-            content: userText,
-            type,
-            meta: userMeta
-          });
-
-          // ---- Modelo con historial (system refrescado por turno) + parser robusto ----
-          let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
-          let estado = "IN_PROGRESS";
-          let raw = null;
-          try {
-            const out = await chatWithHistoryJSON(from, userText);
-            responseText = out.response || responseText;
-            estado = (out.estado || "IN_PROGRESS").toUpperCase();
-            raw = out.raw || null;
-          } catch (e) {
-            console.error("❌ OpenAI error:", e);
-          }
-
-          // ---- Responder por texto SIEMPRE
-          await sendText(from, responseText, phoneNumberId);
-          console.log("📤 OUT →", from, "| estado:", estado);
-
-          // ---- Persistencia: turno del assistant
-          await appendMessage(conv._id, {
-            role: "assistant",
-            content: responseText,
-            type: "text",
-            meta: { estado }
-          });
-
-          // ---- Si el usuario envió AUDIO, responder TAMBIÉN con AUDIO (TTS)
-          if (type === "audio" && (process.env.ENABLE_TTS_FOR_AUDIO || "true").toLowerCase() === "true") {
-            try {
-              const { buffer, mime } = await synthesizeTTS(responseText);
-              const ttsId = putInCache(buffer, mime || "audio/mpeg");
-              const baseUrl = getBaseUrl(req);
-              const ttsUrl = `${baseUrl}/cache/tts/${ttsId}`;
-              await sendAudioLink(from, ttsUrl, phoneNumberId);
-            } catch (e) {
-              console.error("⚠️ Error generando/enviando TTS:", e);
-            }
-          }
-
-          // ---- Guardar en Sheets y cerrar conversación cuando NO esté en curso (idempotente)
-          const shouldFinalize =
-            (estado && estado !== "IN_PROGRESS") ||
-            ((raw?.Pedido?.["Estado pedido"] || "").toLowerCase().includes("cancel"));
-
-          if (shouldFinalize) {
-            try {
-              const result = await finalizeConversationOnce(conv._id, raw, estado);
-              if (result.didFinalize) {
-                resetSession(from); // limpia historial en memoria
-                console.log("🔁 Historial reiniciado para", from, "| estado:", estado);
-                if (result.sheetsError) {
-                  console.warn("⚠️ Sheets guardado con error (pero finalizado igual):", result.sheetsError);
+            if (shouldFinalize) {
+              try {
+                const result = await finalizeConversationOnce(conv._id, raw, estado);
+                if (result.didFinalize) {
+                  resetSession(from); // limpia historial en memoria
+                  console.log("🔁 Historial reiniciado para", from, "| estado:", estado);
+                  if (result.sheetsError) {
+                    console.warn("⚠️ Sheets guardado con error (pero finalizado igual):", result.sheetsError);
+                  } else {
+                    console.log("🧾 Guardado en Google Sheets (idempotente) para", from, "estado", estado);
+                  }
                 } else {
-                  console.log("🧾 Guardado en Google Sheets (idempotente) para", from, "estado", estado);
+                  console.log("ℹ️ Ya estaba finalizada; no se guarda en Sheets de nuevo.");
                 }
-              } else {
-                console.log("ℹ️ Ya estaba finalizada; no se guarda en Sheets de nuevo.");
+              } catch (e) {
+                console.error("⚠️ Error al finalizar conversación:", e);
               }
-            } catch (e) {
-              console.error("⚠️ Error al finalizar conversación:", e);
             }
-          }
+
+            console.log(`⏹ end task ${from} msg:${msg.id}`);
+          });
         }
       }
     }
