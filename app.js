@@ -44,18 +44,73 @@ const CHAT_TEMPERATURE = Number.isFinite(parseFloat(process.env.OPENAI_TEMPERATU
   ? parseFloat(process.env.OPENAI_TEMPERATURE)
   : 0.2;
 
-// Helper: parseo seguro de JSON (limpia fences si aparecieran)
-function safeJsonParse(raw) {
+// ========= Helpers JSON robustos =========
+function coerceJsonString(raw) {
   if (raw == null) return null;
-  let txt = String(raw).trim();
-  if (txt.startsWith("```")) {
-    txt = txt.replace(/^```json/i, "").replace(/^```/, "").replace(/```$/, "").trim();
+  let s = String(raw);
+
+  // quita BOM y caracteres de control (excepto \n \t \r)
+  s = s.replace(/^\uFEFF/, "")
+       .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]+/g, " ")
+       .trim();
+
+  // quita fences ``` y etiquetas de código
+  if (s.startsWith("```")) {
+    s = s.replace(/^```(\w+)?/i, "").replace(/```$/i, "").trim();
   }
+
+  // normaliza comillas tipográficas a comillas normales
+  s = s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+
+  // si ya luce como JSON puro, retornalo
+  if (s.startsWith("{") && s.endsWith("}")) return s;
+
+  // intenta extraer el primer bloque { ... }
+  const first = s.indexOf("{");
+  const last  = s.lastIndexOf("}");
+  if (first !== -1 && last !== -1 && last > first) {
+    return s.slice(first, last + 1).trim();
+  }
+
+  // nada útil
+  return s;
+}
+
+async function safeJsonParseStrictOrFix(raw, { openai, model = "gpt-4o-mini" } = {}) {
+  // 1) limpieza/coección
+  let s = coerceJsonString(raw);
+  if (!s) return null;
+
+  // 2) primer intento
   try {
-    return JSON.parse(txt);
-  } catch (e) {
-    console.error("❌ No se pudo parsear JSON:", e.message, "\nRaw:", raw);
-    return null;
+    return JSON.parse(s);
+  } catch (_) {
+    // continúa
+  }
+
+  // 3) reintento con “arreglador” (una sola vez, barato)
+  try {
+    const fix = await openai.chat.completions.create({
+      model,
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: "Devuelve EXCLUSIVAMENTE un JSON válido, sin comentarios ni markdown." },
+        { role: "user", content: `Convertí lo siguiente a JSON estricto (si falta llaves, completalas):\n\n${raw}` }
+      ]
+    });
+    const fixed = fix.choices?.[0]?.message?.content || "";
+    const fixedClean = coerceJsonString(fixed);
+    return JSON.parse(fixedClean);
+  } catch (e2) {
+    // último intento: trata otra vez el string coaccionado
+    try {
+      return JSON.parse(s);
+    } catch (e3) {
+      const preview = (String(raw || "")).slice(0, 400);
+      console.error("❌ No se pudo parsear JSON luego de fix:", e3.message, "\nRaw preview:", preview);
+      return null;
+    }
   }
 }
 
@@ -360,7 +415,6 @@ function flattenBigdata({ waId, bigdata }) {
   ];
 }
 async function saveCompletedToSheets({ waId, data }) {
-  const spreadsheetId = getSpreadsheetIdFromEnv(); // valida
   const response = data?.response || "";
   const pedido = data?.Pedido || {};
   const bigdata = data?.Bigdata || {};
@@ -384,23 +438,13 @@ function looksActive(v) {
   if (!v) return false;
   return String(v).trim().toUpperCase() === "S";
 }
-function fmtPrecio(precioRaw) {
-  const s = (precioRaw || "").toString().trim();
-  if (!s) return "";
-  const num = Number(s.replace(/[^\d.,-]/g, "").replace(",", "."));
-  return Number.isFinite(num) ? ` — $${num}` : ` — $${s}`;
-}
-
-function getSheetsClientOrThrow() {
-  return getSheetsClient();
-}
 async function loadProductsFromSheet() {
   const now = Date.now();
   if (now - productsCache.at < PRODUCTS_CACHE_TTL_MS && productsCache.items?.length) {
     return productsCache.items;
   }
   const spreadsheetId = getSpreadsheetIdFromEnv();
-  const sheets = getSheetsClientOrThrow();
+  const sheets = getSheetsClient();
   const range = "Productos!A2:E"; // A nombre, B precio, C venta, D obs, E activo
   const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
   const rows = resp.data.values || [];
@@ -414,7 +458,6 @@ async function loadProductsFromSheet() {
     if (!nombre) return null;
     if (!looksActive(activo)) return null;
 
-    // precioNum solo si parsea; caso contrario dejamos el string original
     const maybeNum = Number(precioRaw.replace(/[^\d.,-]/g, "").replace(",", "."));
     const precio = Number.isFinite(maybeNum) ? maybeNum : precioRaw;
 
@@ -424,7 +467,6 @@ async function loadProductsFromSheet() {
   productsCache = { at: now, items };
   return items;
 }
-
 function buildCatalogText(items) {
   if (!items?.length) return "Catálogo de productos: (ninguno activo)";
   const lines = items.map(it => {
@@ -436,19 +478,18 @@ function buildCatalogText(items) {
   return "Catálogo de productos (nombre — precio (modo de venta) | Obs: observaciones):\n" + lines.join("\n");
 }
 
-// ===== Comportamiento (desde ENV o Sheet) + Catálogo siempre desde Sheet =====
+// ===== Comportamiento (ENV o Sheet) + Catálogo (siempre Sheet) =====
 const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); // "env" | "sheet"
-const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000; // cache del system final
+const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000;
 let behaviorCache = { at: 0, text: null };
 
 async function loadBehaviorTextFromEnv() {
   const txt = (process.env.COMPORTAMIENTO || "Sos un asistente claro, amable y conciso. Respondé en español.").trim();
   return txt;
 }
-
 async function loadBehaviorTextFromSheet() {
   const spreadsheetId = getSpreadsheetIdFromEnv();
-  const sheets = getSheetsClientOrThrow();
+  const sheets = getSheetsClient();
   const resp = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: "Comportamiento_API!A1:B100"
@@ -491,7 +532,7 @@ async function buildSystemPrompt({ force = false } = {}) {
     "Instrucciones de venta (OBLIGATORIAS):\n" +
     "- Usá las Observaciones para decidir qué ofrecer, sugerir complementos, aplicar restricciones o proponer sustituciones.\n" +
     "- Respetá limitaciones (stock/horarios/porciones/preparación) indicadas en Observaciones.\n" +
-    "- Si sugiere bundles o combos, ofrecé esas opciones con precio estimado.\n" +
+    "- Si sugerís bundles o combos, ofrecé esas opciones con precio estimado cuando corresponda.\n" +
     "- Si falta un dato (sabor/tamaño/cantidad), pedilo brevemente.\n";
 
   // 4) Esquema JSON OBLIGATORIO dentro del mismo system
@@ -504,7 +545,7 @@ async function buildSystemPrompt({ force = false } = {}) {
   // 5) ÚNICO system message final
   const fullText = [
     "[COMPORTAMIENTO]\n" + baseText,
-    //"[REGLAS]\n" + reglasVenta,
+   // "[REGLAS]\n" + reglasVenta,
     "[CATALOGO]\n" + catalogText,
     "[SALIDA]\n" + jsonSchema,
     "RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
@@ -599,17 +640,16 @@ function pushMessage(session, role, content, maxTurns = 20) {
   session.updatedAt = Date.now();
 }
 
-// ========= Chat con historial (un único system construido dinámicamente) =========
+// ========= Chat con historial (system refrescado + parser robusto) =========
 async function chatWithHistoryJSON(
   waId,
   userText,
   model = CHAT_MODEL,
   temperature = CHAT_TEMPERATURE
 ) {
-  // Obtener/crear sesión
   const session = await getSession(waId);
 
-  // 🔄 Refrescar system (comportamiento según flag + catálogo) ANTES de cada turno
+  // 🔄 Refrescar system (comportamiento + catálogo) ANTES de cada turno
   try {
     const systemText = await buildSystemPrompt({ force: true });
     session.messages[0] = { role: "system", content: systemText };
@@ -617,10 +657,8 @@ async function chatWithHistoryJSON(
     console.warn("⚠️ No se pudo refrescar system:", e.message);
   }
 
-  // Agregar el mensaje del usuario
   pushMessage(session, "user", userText);
 
-  // Llamar al modelo: un solo system en messages
   const completion = await openai.chat.completions.create({
     model,
     response_format: { type: "json_object" },
@@ -630,18 +668,18 @@ async function chatWithHistoryJSON(
   });
 
   const content = completion.choices?.[0]?.message?.content || "";
-  const data = safeJsonParse(content) || {};
+  const data = await safeJsonParseStrictOrFix(content, { openai, model }) || null;
 
   const responseText =
-    (typeof data.response === "string" && data.response.trim()) ||
+    (data && typeof data.response === "string" && data.response.trim()) ||
     (typeof content === "string" ? content.trim() : "") ||
     "Perdón, no pude generar una respuesta. ¿Podés reformular?";
 
   const estado =
-    (typeof data.estado === "string" && data.estado.trim().toUpperCase()) || "IN_PROGRESS";
+    (data && typeof data.estado === "string" && data.estado.trim().toUpperCase()) || "IN_PROGRESS";
 
   pushMessage(session, "assistant", responseText);
-  return { response: responseText, estado, raw: data };
+  return { response: responseText, estado, raw: data || {} };
 }
 
 // ========= WhatsApp send / mark =========
@@ -806,7 +844,7 @@ app.post("/webhook", async (req, res) => {
           meta: userMeta
         });
 
-        // ---- Modelo con historial (system refrescado por turno) ----
+        // ---- Modelo con historial (system refrescado por turno) + parser robusto ----
         let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
         let estado = "IN_PROGRESS";
         let raw = null;
