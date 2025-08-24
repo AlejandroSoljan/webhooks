@@ -621,8 +621,11 @@ async function appendMessage(conversationId, {
   await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId) }, upd);
 }
 
+// REEMPLAZA la función finalizeConversationOnce por esta versión
 async function finalizeConversationOnce(conversationId, finalPayload, estado) {
   const db = await getDb();
+
+  // Intento de marcar como finalizada si aún no lo está
   const res = await db.collection("conversations").findOneAndUpdate(
     { _id: new ObjectId(conversationId), finalized: { $ne: true } },
     {
@@ -635,22 +638,52 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
           Pedido: finalPayload?.Pedido || null,
           Bigdata: finalPayload?.Bigdata || null
         }
-      }
+      },
+      $setOnInsert: { sheetsSaved: false }
     },
     { returnDocument: "after" }
   );
 
-  const updated = !!res?.value?.finalized;
-  if (!updated) return { didFinalize: false };
-
-  try {
-    await saveCompletedToSheets({ waId: res.value.waId, data: finalPayload || {} });
-    return { didFinalize: true };
-  } catch (e) {
-    console.error("⚠️ Error guardando en Sheets tras finalizar:", e);
-    return { didFinalize: true, sheetsError: e?.message };
+  if (res?.value) {
+    // Caso A: ESTA llamada fue la que finalizó. Guardamos en Sheets ahora.
+    try {
+      await saveCompletedToSheets({ waId: res.value.waId, data: finalPayload || {} });
+      await db.collection("conversations").updateOne(
+        { _id: res.value._id },
+        { $set: { sheetsSaved: true } }
+      );
+      console.log("🧾 Guardado en Google Sheets (finalización propia) para", res.value.waId);
+      return { didFinalize: true };
+    } catch (e) {
+      console.error("⚠️ Error guardando en Sheets tras finalizar:", e);
+      return { didFinalize: true, sheetsError: e?.message };
+    }
   }
+
+  // Caso B: ya estaba finalizada por otra corrida/turno.
+  // Intento de “repair”: si no tiene sheetsSaved=true, guardo ahora una única vez.
+  const conv = await db.collection("conversations").findOne({ _id: new ObjectId(conversationId) });
+  if (conv && conv.finalized === true && conv.sheetsSaved !== true) {
+    try {
+      // Usamos el resumen almacenado si no nos pasaron payload decente
+      const payload = finalPayload && Object.keys(finalPayload).length ? finalPayload : (conv.summary || {});
+      await saveCompletedToSheets({ waId: conv.waId, data: payload || {} });
+      await db.collection("conversations").updateOne(
+        { _id: conv._id },
+        { $set: { sheetsSaved: true } }
+      );
+      console.log("🧩 Repair Sheets OK para", conv.waId);
+      return { didFinalize: false, repaired: true };
+    } catch (e) {
+      console.error("❌ Repair Sheets falló:", e);
+      return { didFinalize: false, sheetsError: e?.message };
+    }
+  }
+
+  console.log("ℹ️ Ya estaba finalizada; no se guarda en Sheets de nuevo.");
+  return { didFinalize: false };
 }
+
 
 // ========= Sesiones (historial en memoria) =========
 const sessions = new Map(); // waId -> { messages, updatedAt }
