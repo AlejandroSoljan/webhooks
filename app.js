@@ -384,7 +384,7 @@ function fmtPrecio(precioRaw) {
   return Number.isFinite(num) ? ` — $${num}` : ` — $${s}`;
 }
 
-// Permite forzar lectura fresca cuando inicia una conversación o en cada turno
+// Lee comportamiento (A+B), catálogo (A–E, solo E="S") y arma UN solo system con reglas + esquema JSON
 async function loadFullComportamientoFromSheet({ force = false } = {}) {
   const now = Date.now();
   if (!force && (now - comportamientoCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && comportamientoCache.text) {
@@ -394,7 +394,7 @@ async function loadFullComportamientoFromSheet({ force = false } = {}) {
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
 
-  // 1) Texto base: concatenar columnas A y B por fila
+  // 1) Texto base: concatenar columnas A y B por fila (normalizando espacios)
   let baseText = "Sos un asistente claro, amable y conciso. Respondé en español.";
   try {
     const resp = await sheets.spreadsheets.values.get({
@@ -404,8 +404,8 @@ async function loadFullComportamientoFromSheet({ force = false } = {}) {
     const rows = resp.data.values || [];
     const parts = rows
       .map(r => {
-        const a = (r[0] || "").trim();
-        const b = (r[1] || "").trim();
+        const a = (r[0] || "").replace(/\s+/g, " ").trim();
+        const b = (r[1] || "").replace(/\s+/g, " ").trim();
         const line = [a, b].filter(Boolean).join(" ").trim();
         return line;
       })
@@ -449,15 +449,30 @@ async function loadFullComportamientoFromSheet({ force = false } = {}) {
     console.warn("⚠️ No se pudo leer Productos:", e.message);
   }
 
-  // 3) Reglas de uso de observaciones
+  // 3) Reglas de uso de observaciones (OBLIGATORIAS)
   const reglasVenta =
-    "Instrucciones de venta:\n" +
-    "- Usá las Observaciones para decidir cómo ofrecer, sugerir complementos, aplicar restricciones o proponer sustituciones.\n" +
+    "Instrucciones de venta (OBLIGATORIAS):\n" +
+    "- Usá las Observaciones para decidir qué ofrecer, sugerir complementos, aplicar restricciones o proponer sustituciones.\n" +
     "- Respetá limitaciones (stock/horarios/porciones/preparación) indicadas en Observaciones.\n" +
     "- Si sugiere bundles o combos, ofrecé esas opciones con precio estimado.\n" +
     "- Si falta un dato (sabor/tamaño/cantidad), pedilo brevemente.\n";
 
-  const fullText = [baseText, "", reglasVenta, "", catalogText].join("\n").trim();
+  // 4) Esquema JSON OBLIGATORIO dentro del mismo system
+  const jsonSchema =
+    "FORMATO DE RESPUESTA (OBLIGATORIO - SOLO JSON, sin ```):\n" +
+    '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED", ' +
+    '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
+    '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
+
+  // 5) ÚNICO system message
+  const fullText = [
+    "[COMPORTAMIENTO]\n" + baseText,
+    "[REGLAS]\n" + reglasVenta,
+    "[CATALOGO]\n" + (catalogText || "Catálogo de productos: (ninguno activo)"),
+    "[SALIDA]\n" + jsonSchema,
+    "RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
+  ].join("\n\n").trim();
+
   comportamientoCache = { at: now, text: fullText };
   return fullText;
 }
@@ -528,10 +543,9 @@ async function completeConversation(conversationId, finalPayload, status = "COMP
 // ========= Sesiones (historial en memoria) =========
 const sessions = new Map(); // waId -> { messages, updatedAt }
 
-/** Crea/obtiene sesión por waId leyendo comportamiento+catálogo desde Sheets (incluye Observaciones y filtro E=S) */
+/** Crea/obtiene sesión por waId leyendo comportamiento+catálogo desde Sheets */
 async function getSession(waId) {
   if (!sessions.has(waId)) {
-    // fuerza lectura fresca del Sheet en cada conversación nueva
     const comportamiento = await loadFullComportamientoFromSheet({ force: true });
     sessions.set(waId, {
       messages: [{ role: "system", content: comportamiento }],
@@ -555,7 +569,7 @@ function pushMessage(session, role, content, maxTurns = 20) {
   session.updatedAt = Date.now();
 }
 
-// ========= Chat con historial (prompt incluye catálogo + observaciones) =========
+// ========= Chat con historial (un único system del Sheet) =========
 async function chatWithHistoryJSON(
   waId,
   userText,
@@ -564,7 +578,7 @@ async function chatWithHistoryJSON(
   // Obtener/crear sesión
   const session = await getSession(waId);
 
-  // 🔄 Refrescar comportamiento+catálogo ANTES de cada turno (ultra-fresco)
+  // 🔄 Refrescar comportamiento+catálogo ANTES de cada turno
   try {
     const comportamiento = await loadFullComportamientoFromSheet({ force: true });
     session.messages[0] = { role: "system", content: comportamiento };
@@ -575,24 +589,15 @@ async function chatWithHistoryJSON(
   // Agregar el mensaje del usuario
   pushMessage(session, "user", userText);
 
-  // Llamar al modelo
+  // Llamar al modelo (UN solo system en messages)
   const completion = await openai.chat.completions.create({
-    model,
+    model,                                 // si podés: "gpt-4o"
     response_format: { type: "json_object" },
+    temperature: 0.2,                      // más obediente
+    top_p: 1,
     messages: [
-      ...session.messages,
-      {
-        role: "system",
-        content:
-          "Respondé SOLO con JSON válido (sin ```). Estructura: " +
-          '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED",' +
-          '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string },' +
-          '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } } ' +
-          "Usá SIEMPRE las Observaciones del catálogo para decidir qué ofrecer (complementos, restricciones, sustituciones, combos y timing). " +
-          "Si la persona cancela, usá estado=CANCELLED y completá 'Motivo cancelacion' en Pedido. No uses bloques de código; solo JSON plano."
-      }
-    ],
-    temperature: 0.6
+      ...session.messages
+    ]
   });
 
   const content = completion.choices?.[0]?.message?.content || "";
@@ -772,7 +777,7 @@ app.post("/webhook", async (req, res) => {
           meta: userMeta
         });
 
-        // ---- Modelo con historial (con comportamiento+catálogo refrescados por turno) ----
+        // ---- Modelo con historial (con system del Sheet refrescado por turno) ----
         let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
         let estado = "IN_PROGRESS";
         let raw = null;
