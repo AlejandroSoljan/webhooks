@@ -10,7 +10,7 @@ const { google } = require("googleapis");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
 
-const app = express(); 
+const app = express();
 
 // ========= Body / firma =========
 app.use(express.json({
@@ -34,6 +34,15 @@ function isValidSignature(req) {
 
 // ========= OpenAI =========
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// ====== Config de modelo / temperatura ======
+const CHAT_MODEL =
+  process.env.OPENAI_CHAT_MODEL ||
+  process.env.OPENAI_MODEL ||
+  "gpt-4o-mini";
+const CHAT_TEMPERATURE = Number.isFinite(parseFloat(process.env.OPENAI_TEMPERATURE))
+  ? parseFloat(process.env.OPENAI_TEMPERATURE)
+  : 0.2;
 
 // Helper: parseo seguro de JSON (limpia fences si aparecieran)
 function safeJsonParse(raw) {
@@ -367,16 +376,14 @@ async function saveCompletedToSheets({ waId, data }) {
   await appendRow({ sheetName: "BigData", values: vBig });
 }
 
-// ===== Comportamiento completo: texto + catálogo (multi-filas + filtro col E S/N) =====
-const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min
-let comportamientoCache = { at: 0, text: null };
+// ===== Productos desde Google Sheets (A nombre, B precio, C venta, D obs, E activo= S/N) =====
+const PRODUCTS_CACHE_TTL_MS = parseInt(process.env.PRODUCTS_CACHE_TTL_MS || "300000", 10); // 5 min
+let productsCache = { at: 0, items: [] };
 
 function looksActive(v) {
-  if (!v) return false; // vacío => inactivo
-  const s = String(v).trim().toUpperCase();
-  return s === "S"; // Activo solo si = "S"
+  if (!v) return false;
+  return String(v).trim().toUpperCase() === "S";
 }
-
 function fmtPrecio(precioRaw) {
   const s = (precioRaw || "").toString().trim();
   if (!s) return "";
@@ -384,69 +391,99 @@ function fmtPrecio(precioRaw) {
   return Number.isFinite(num) ? ` — $${num}` : ` — $${s}`;
 }
 
-// Lee comportamiento (A+B), catálogo (A–E, solo E="S") y arma UN solo system con reglas + esquema JSON
-async function loadFullComportamientoFromSheet({ force = false } = {}) {
+function getSheetsClientOrThrow() {
+  return getSheetsClient();
+}
+async function loadProductsFromSheet() {
   const now = Date.now();
-  if (!force && (now - comportamientoCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && comportamientoCache.text) {
-    return comportamientoCache.text;
+  if (now - productsCache.at < PRODUCTS_CACHE_TTL_MS && productsCache.items?.length) {
+    return productsCache.items;
   }
-
   const spreadsheetId = getSpreadsheetIdFromEnv();
-  const sheets = getSheetsClient();
+  const sheets = getSheetsClientOrThrow();
+  const range = "Productos!A2:E"; // A nombre, B precio, C venta, D obs, E activo
+  const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const rows = resp.data.values || [];
 
-  // 1) Texto base: concatenar columnas A y B por fila (normalizando espacios)
-  let baseText = "Sos un asistente claro, amable y conciso. Respondé en español.";
-  try {
-    const resp = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: "Comportamiento_API!A1:B100"
-    });
-    const rows = resp.data.values || [];
-    const parts = rows
-      .map(r => {
-        const a = (r[0] || "").replace(/\s+/g, " ").trim();
-        const b = (r[1] || "").replace(/\s+/g, " ").trim();
-        const line = [a, b].filter(Boolean).join(" ").trim();
-        return line;
-      })
-      .filter(Boolean);
-    if (parts.length) baseText = parts.join("\n");
-  } catch (e) {
-    console.warn("⚠️ No se pudo leer Comportamiento_API:", e.message);
+  const items = rows.map((r) => {
+    const nombre = (r[0] || "").trim();
+    const precioRaw = (r[1] || "").trim();
+    const venta = (r[2] || "").trim();
+    const obs = (r[3] || "").trim();
+    const activo = r[4];
+    if (!nombre) return null;
+    if (!looksActive(activo)) return null;
+
+    // precioNum solo si parsea; caso contrario dejamos el string original
+    const maybeNum = Number(precioRaw.replace(/[^\d.,-]/g, "").replace(",", "."));
+    const precio = Number.isFinite(maybeNum) ? maybeNum : precioRaw;
+
+    return { nombre, precio, venta, obs };
+  }).filter(Boolean);
+
+  productsCache = { at: now, items };
+  return items;
+}
+
+function buildCatalogText(items) {
+  if (!items?.length) return "Catálogo de productos: (ninguno activo)";
+  const lines = items.map(it => {
+    const precioTxt = (typeof it.precio === "number") ? ` — $${it.precio}` : (it.precio ? ` — $${it.precio}` : "");
+    const ventaTxt  = it.venta ? ` (${it.venta})` : "";
+    const obsTxt    = it.obs ? ` | Obs: ${it.obs}` : "";
+    return `- ${it.nombre}${precioTxt}${ventaTxt}${obsTxt}`;
+  });
+  return "Catálogo de productos (nombre — precio (modo de venta) | Obs: observaciones):\n" + lines.join("\n");
+}
+
+// ===== Comportamiento (desde ENV o Sheet) + Catálogo siempre desde Sheet =====
+const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); // "env" | "sheet"
+const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000; // cache del system final
+let behaviorCache = { at: 0, text: null };
+
+async function loadBehaviorTextFromEnv() {
+  const txt = (process.env.COMPORTAMIENTO || "Sos un asistente claro, amable y conciso. Respondé en español.").trim();
+  return txt;
+}
+
+async function loadBehaviorTextFromSheet() {
+  const spreadsheetId = getSpreadsheetIdFromEnv();
+  const sheets = getSheetsClientOrThrow();
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "Comportamiento_API!A1:B100"
+  });
+  const rows = resp.data.values || [];
+  const parts = rows
+    .map(r => {
+      const a = (r[0] || "").replace(/\s+/g, " ").trim();
+      const b = (r[1] || "").replace(/\s+/g, " ").trim();
+      const line = [a, b].filter(Boolean).join(" ").trim();
+      return line;
+    })
+    .filter(Boolean);
+  return parts.length ? parts.join("\n") : "Sos un asistente claro, amable y conciso. Respondé en español.";
+}
+
+async function buildSystemPrompt({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && (now - behaviorCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && behaviorCache.text) {
+    return behaviorCache.text;
   }
 
-  // 2) Catálogo de productos (Productos!A2:E) con Observaciones y filtro E=S
+  // 1) Comportamiento desde ENV o desde Sheet
+  const baseText = (BEHAVIOR_SOURCE === "env")
+    ? await loadBehaviorTextFromEnv()
+    : await loadBehaviorTextFromSheet();
+
+  // 2) Catálogo SIEMPRE desde Sheet
   let catalogText = "";
   try {
-    const resp = await sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: "Productos!A2:E"
-    });
-    const rows = resp.data.values || [];
-    if (rows.length) {
-      const lines = rows.map(r => {
-        const nombre = (r[0] || "").trim();
-        const precioRaw = (r[1] || "").trim();
-        const venta = (r[2] || "").trim();
-        const obs = (r[3] || "").trim();
-        const activo = r[4]; // columna E
-
-        if (!nombre) return null;
-        if (!looksActive(activo)) return null;
-
-        const precioTxt = fmtPrecio(precioRaw);
-        const ventaTxt  = venta ? ` (${venta})` : "";
-        const obsTxt    = obs ? ` | Obs: ${obs}` : "";
-
-        return `- ${nombre}${precioTxt}${ventaTxt}${obsTxt}`;
-      }).filter(Boolean);
-
-      catalogText = lines.length
-        ? "Catálogo de productos (nombre — precio (modo de venta) | Obs: observaciones):\n" + lines.join("\n")
-        : "Catálogo de productos: (ninguno activo)";
-    }
+    const products = await loadProductsFromSheet();
+    catalogText = buildCatalogText(products);
   } catch (e) {
     console.warn("⚠️ No se pudo leer Productos:", e.message);
+    catalogText = "Catálogo de productos: (error al leer)";
   }
 
   // 3) Reglas de uso de observaciones (OBLIGATORIAS)
@@ -464,16 +501,16 @@ async function loadFullComportamientoFromSheet({ force = false } = {}) {
     '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
     '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
 
-  // 5) ÚNICO system message
+  // 5) ÚNICO system message final
   const fullText = [
     "[COMPORTAMIENTO]\n" + baseText,
     "[REGLAS]\n" + reglasVenta,
-    "[CATALOGO]\n" + (catalogText || "Catálogo de productos: (ninguno activo)"),
+    "[CATALOGO]\n" + catalogText,
     "[SALIDA]\n" + jsonSchema,
     "RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
   ].join("\n\n").trim();
 
-  comportamientoCache = { at: now, text: fullText };
+  behaviorCache = { at: now, text: fullText };
   return fullText;
 }
 
@@ -498,11 +535,11 @@ async function ensureOpenConversation(waId) {
 }
 
 async function appendMessage(conversationId, {
-  role,                // "user" | "assistant"
-  content,             // texto plano
-  type = "text",       // text | audio | image | document | interactive
-  meta = {},           // { transcript, ocrText, estado, mediaUrl, ... }
-  ttlDays = null       // si querés TTL por mensaje
+  role,
+  content,
+  type = "text",
+  meta = {},
+  ttlDays = null
 }) {
   const db = await getDb();
   const doc = {
@@ -543,24 +580,17 @@ async function completeConversation(conversationId, finalPayload, status = "COMP
 // ========= Sesiones (historial en memoria) =========
 const sessions = new Map(); // waId -> { messages, updatedAt }
 
-/** Crea/obtiene sesión por waId leyendo comportamiento+catálogo desde Sheets */
 async function getSession(waId) {
   if (!sessions.has(waId)) {
-    const comportamiento = await loadFullComportamientoFromSheet({ force: true });
+    const systemText = await buildSystemPrompt({ force: true }); // al iniciar conversación
     sessions.set(waId, {
-      messages: [{ role: "system", content: comportamiento }],
+      messages: [{ role: "system", content: systemText }],
       updatedAt: Date.now()
     });
   }
   return sessions.get(waId);
 }
-
-/** Reinicia (borra) la sesión del usuario */
-function resetSession(waId) {
-  sessions.delete(waId);
-}
-
-/** Agrega mensaje y recorta historial (últimos 20 turnos) */
+function resetSession(waId) { sessions.delete(waId); }
 function pushMessage(session, role, content, maxTurns = 20) {
   session.messages.push({ role, content });
   const system = session.messages[0];
@@ -569,35 +599,34 @@ function pushMessage(session, role, content, maxTurns = 20) {
   session.updatedAt = Date.now();
 }
 
-// ========= Chat con historial (un único system del Sheet) =========
+// ========= Chat con historial (un único system construido dinámicamente) =========
 async function chatWithHistoryJSON(
   waId,
   userText,
-  model = process.env.OPENAI_MODEL || "gpt-4o"
+  model = CHAT_MODEL,
+  temperature = CHAT_TEMPERATURE
 ) {
   // Obtener/crear sesión
   const session = await getSession(waId);
 
-  // 🔄 Refrescar comportamiento+catálogo ANTES de cada turno
+  // 🔄 Refrescar system (comportamiento según flag + catálogo) ANTES de cada turno
   try {
-    const comportamiento = await loadFullComportamientoFromSheet({ force: true });
-    session.messages[0] = { role: "system", content: comportamiento };
+    const systemText = await buildSystemPrompt({ force: true });
+    session.messages[0] = { role: "system", content: systemText };
   } catch (e) {
-    console.warn("⚠️ No se pudo refrescar comportamiento/catalogo:", e.message);
+    console.warn("⚠️ No se pudo refrescar system:", e.message);
   }
 
   // Agregar el mensaje del usuario
   pushMessage(session, "user", userText);
 
-  // Llamar al modelo (UN solo system en messages)
+  // Llamar al modelo: un solo system en messages
   const completion = await openai.chat.completions.create({
-    model,                                 // si podés: "gpt-4o"
+    model,
     response_format: { type: "json_object" },
-    temperature: 0.0,                      // más obediente
+    temperature,
     top_p: 1,
-    messages: [
-      ...session.messages
-    ]
+    messages: [ ...session.messages ]
   });
 
   const content = completion.choices?.[0]?.message?.content || "";
@@ -777,7 +806,7 @@ app.post("/webhook", async (req, res) => {
           meta: userMeta
         });
 
-        // ---- Modelo con historial (con system del Sheet refrescado por turno) ----
+        // ---- Modelo con historial (system refrescado por turno) ----
         let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
         let estado = "IN_PROGRESS";
         let raw = null;
