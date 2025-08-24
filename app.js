@@ -573,7 +573,7 @@ function pushMessage(session, role, content, maxTurns = 20) {
 async function chatWithHistoryJSON(
   waId,
   userText,
-  model = process.env.OPENAI_MODEL || "gpt-4o-mini"
+  model = process.env.OPENAI_MODEL || "gpt-4o"
 ) {
   // Obtener/crear sesión
   const session = await getSession(waId);
@@ -593,7 +593,7 @@ async function chatWithHistoryJSON(
   const completion = await openai.chat.completions.create({
     model,                                 // si podés: "gpt-4o"
     response_format: { type: "json_object" },
-    temperature: 0.2,                      // más obediente
+    temperature: 0,                      // más obediente
     top_p: 1,
     messages: [
       ...session.messages
