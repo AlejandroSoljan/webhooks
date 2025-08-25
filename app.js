@@ -1,4 +1,4 @@
-// server.js (versión unificada + órdenes + panel/gráficos)
+// server.js (órdenes + panel + gráficos + filtros por producto + CSV)
 require("dotenv").config();
 
 const express = require("express");
@@ -40,8 +40,10 @@ function fmtMoney(v) {
   if (v === undefined || v === null) return "";
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(Number(v) || 0);
 }
-function escapeHtml(s) {
-  return String(s || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function csvEscape(v) {
+  const s = String(v ?? "");
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
 }
 
 /* ===================== JSON robusto ===================== */
@@ -449,7 +451,7 @@ async function buildSystemPrompt({ force = false } = {}) {
   return fullText;
 }
 
-/* ===================== MongoDB (en este archivo) ===================== */
+/* ===================== MongoDB ===================== */
 const MONGODB_URI = process.env.MONGODB_URI;
 const MONGODB_DB  = process.env.MONGODB_DB  || "whatsapp_bot";
 let mongoClient;
@@ -852,8 +854,10 @@ function requireAdmin(req, res, next) {
   res.status(401).send("No autorizado. Agregá ?token=TU_TOKEN");
 }
 
-app.get("/admin/orders", requireAdmin, (_req, res) => {
+/* ---------- HTML listado con filtros + CSV ---------- */
+app.get("/admin/orders", requireAdmin, (req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
+  const tokenQs = (req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : "");
   res.end(`<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -873,6 +877,9 @@ th,td{padding:10px;border-bottom:1px solid #eee;text-align:left;vertical-align:t
 .badge.ok{background:#e8fff1;color:#0a7f3b;border:1px solid #b6e6c8}
 .badge.cancel{background:#fff0f0;color:#b20a0a;border:1px solid #f1b3b3}
 small{color:#666}
+.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+label.chk{display:flex;gap:6px;align-items:center}
+.actions{display:flex;gap:8px;align-items:center}
 </style>
 </head>
 <body>
@@ -889,8 +896,19 @@ small{color:#666}
       <label>WA ID <input id="waid" placeholder="549..." /></label>
       <label>Desde <input id="from" type="date" /></label>
       <label>Hasta <input id="to" type="date" /></label>
-      <button id="reload">Cargar</button>
-      <a href="/admin/charts${encodeURIComponent(_req.url.includes("?")?_req.url.slice(_req.url.indexOf("?")):"")}" style="margin-left:auto">Ver gráficos →</a>
+      <div class="filters">
+        <label class="chk"><input type="checkbox" id="f_pollo"/> Pollo</label>
+        <label class="chk"><input type="checkbox" id="f_papas"/> Papas</label>
+        <label class="chk"><input type="checkbox" id="f_milas"/> Milanesas</label>
+        <label class="chk"><input type="checkbox" id="f_milas_napo"/> Milanesas Napolitanas</label>
+        <label class="chk"><input type="checkbox" id="f_ensaladas"/> Ensaladas</label>
+        <label class="chk"><input type="checkbox" id="f_bebidas"/> Bebidas</label>
+      </div>
+      <div class="actions">
+        <button id="reload">Cargar</button>
+        <a id="csv" href="#" download="ordenes.csv">Exportar CSV</a>
+        <a href="/admin/charts${tokenQs ? "?"+tokenQs.slice(1) : ""}" style="margin-left:auto">Ver gráficos →</a>
+      </div>
     </div>
     <div id="summary"><small>Cargando…</small></div>
     <div class="table-wrap">
@@ -905,20 +923,38 @@ small{color:#666}
 <script>
 const qs = new URLSearchParams(location.search);
 const token = qs.get("token")||"";
+
 document.getElementById("reload").onclick = load;
 
-async function load(){
+function buildParams(){
+  const q = new URLSearchParams();
   const estado = document.getElementById("estado").value;
   const waid = document.getElementById("waid").value.trim();
   const from = document.getElementById("from").value;
   const to   = document.getElementById("to").value;
 
-  const q = new URLSearchParams();
   if (token) q.set("token", token);
   if (estado) q.set("estado", estado);
   if (waid) q.set("waId", waid);
   if (from) q.set("from", from);
   if (to) q.set("to", to);
+
+  if (document.getElementById("f_pollo").checked) q.set("fp_pollo","1");
+  if (document.getElementById("f_papas").checked) q.set("fp_papas","1");
+  if (document.getElementById("f_milas").checked) q.set("fp_milas","1");
+  if (document.getElementById("f_milas_napo").checked) q.set("fp_milas_napo","1");
+  if (document.getElementById("f_ensaladas").checked) q.set("fp_ensaladas","1");
+  if (document.getElementById("f_bebidas").checked) q.set("fp_bebidas","1");
+
+  return q;
+}
+
+async function load(){
+  const q = buildParams();
+
+  // link CSV
+  const csvA = document.getElementById("csv");
+  csvA.href = "/admin/orders.csv?"+q.toString();
 
   const r = await fetch("/admin/orders.json?"+q.toString());
   const data = await r.json();
@@ -959,10 +995,21 @@ load();
 </body></html>`);
 });
 
+/* ---------- JSON con filtros por producto ---------- */
 app.get("/admin/orders.json", requireAdmin, async (req, res) => {
   try {
     const db = await getDb();
     const { estado, waId, from, to } = req.query;
+    // filtros por producto (flag=1)
+    const fp = {
+      pollo: req.query.fp_pollo === "1",
+      papas: req.query.fp_papas === "1",
+      milas: req.query.fp_milas === "1",
+      milas_napo: req.query.fp_milas_napo === "1",
+      ensaladas: req.query.fp_ensaladas === "1",
+      bebidas: req.query.fp_bebidas === "1",
+    };
+
     const q = {};
     if (estado) q.estado = String(estado);
     if (waId) q.waId = String(waId);
@@ -971,8 +1018,19 @@ app.get("/admin/orders.json", requireAdmin, async (req, res) => {
       if (from) q.createdAt.$gte = new Date(from + "T00:00:00");
       if (to)   q.createdAt.$lte = new Date(to   + "T23:59:59");
     }
+
+    // construir AND de campos requeridos
+    const and = [];
+    if (fp.pollo) and.push({ ['pedido.'+"Pedido pollo"]: { $exists: true, $ne: "" } });
+    if (fp.papas) and.push({ ['pedido.'+"Pedido papas"]: { $exists: true, $ne: "" } });
+    if (fp.milas) and.push({ ['pedido.'+"Milanesas comunes"]: { $exists: true, $ne: "" } });
+    if (fp.milas_napo) and.push({ ['pedido.'+"Milanesas Napolitanas"]: { $exists: true, $ne: "" } });
+    if (fp.ensaladas) and.push({ ['pedido.'+"Ensaladas"]: { $exists: true, $ne: "" } });
+    if (fp.bebidas) and.push({ ['pedido.'+"Bebidas"]: { $exists: true, $ne: "" } });
+    if (and.length) q.$and = and;
+
     const items = await db.collection("orders")
-      .find(q).sort({ createdAt: -1 }).limit(500).toArray();
+      .find(q).sort({ createdAt: -1 }).limit(2000).toArray();
 
     res.json({ ok: true, count: items.length, items });
   } catch (e) {
@@ -981,7 +1039,79 @@ app.get("/admin/orders.json", requireAdmin, async (req, res) => {
   }
 });
 
-// Métricas para gráficos
+/* ---------- CSV export ---------- */
+app.get("/admin/orders.csv", requireAdmin, async (req, res) => {
+  try {
+    const db = await getDb();
+    const { estado, waId, from, to } = req.query;
+
+    const fp = {
+      pollo: req.query.fp_pollo === "1",
+      papas: req.query.fp_papas === "1",
+      milas: req.query.fp_milas === "1",
+      milas_napo: req.query.fp_milas_napo === "1",
+      ensaladas: req.query.fp_ensaladas === "1",
+      bebidas: req.query.fp_bebidas === "1",
+    };
+
+    const q = {};
+    if (estado) q.estado = String(estado);
+    if (waId) q.waId = String(waId);
+    if (from || to) {
+      q.createdAt = {};
+      if (from) q.createdAt.$gte = new Date(from + "T00:00:00");
+      if (to)   q.createdAt.$lte = new Date(to   + "T23:59:59");
+    }
+    const and = [];
+    if (fp.pollo) and.push({ ['pedido.'+"Pedido pollo"]: { $exists: true, $ne: "" } });
+    if (fp.papas) and.push({ ['pedido.'+"Pedido papas"]: { $exists: true, $ne: "" } });
+    if (fp.milas) and.push({ ['pedido.'+"Milanesas comunes"]: { $exists: true, $ne: "" } });
+    if (fp.milas_napo) and.push({ ['pedido.'+"Milanesas Napolitanas"]: { $exists: true, $ne: "" } });
+    if (fp.ensaladas) and.push({ ['pedido.'+"Ensaladas"]: { $exists: true, $ne: "" } });
+    if (fp.bebidas) and.push({ ['pedido.'+"Bebidas"]: { $exists: true, $ne: "" } });
+    if (and.length) q.$and = and;
+
+    const items = await db.collection("orders").find(q).sort({ createdAt: -1 }).limit(20000).toArray();
+
+    const headers = [
+      "createdAt","waId","estado","Nombre","Entrega","Domicilio",
+      "Pedido pollo","Pedido papas","Milanesas comunes","Milanesas Napolitanas",
+      "Ensaladas","Bebidas","Monto","Respuesta"
+    ];
+    const lines = [headers.join(",")];
+
+    for (const o of items) {
+      const p = o.pedido || {};
+      const row = [
+        csvEscape(new Date(o.createdAt).toISOString()),
+        csvEscape(o.waId || ""),
+        csvEscape(o.estado || ""),
+        csvEscape(p["Nombre"] || ""),
+        csvEscape(p["Entrega"] || ""),
+        csvEscape(p["Domicilio"] || ""),
+        csvEscape(p["Pedido pollo"] || ""),
+        csvEscape(p["Pedido papas"] || ""),
+        csvEscape(p["Milanesas comunes"] || ""),
+        csvEscape(p["Milanesas Napolitanas"] || ""),
+        csvEscape(p["Ensaladas"] || ""),
+        csvEscape(p["Bebidas"] || ""),
+        csvEscape(p["Monto"] ?? ""),
+        csvEscape(o.response || "")
+      ];
+      lines.push(row.join(","));
+    }
+
+    const csv = lines.join("\n");
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="ordenes.csv"');
+    res.send(csv);
+  } catch (e) {
+    console.error("orders.csv error", e);
+    res.status(500).send("Error generando CSV");
+  }
+});
+
+/* ---------- Métricas + Gráficos ---------- */
 app.get("/admin/metrics.json", requireAdmin, async (req, res) => {
   try {
     const db = await getDb();
@@ -1027,7 +1157,6 @@ app.get("/admin/metrics.json", requireAdmin, async (req, res) => {
   }
 });
 
-// Página de gráficos
 app.get("/admin/charts", requireAdmin, (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   const qs = _req.url.includes("?") ? _req.url.slice(_req.url.indexOf("?")) : "";
