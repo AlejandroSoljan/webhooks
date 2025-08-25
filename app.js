@@ -537,21 +537,21 @@ async function insertFinalOrderDocument({ waId, conversationId, responseText, pe
 
 // Finalización idempotente + Sheets + Orden en Mongo
 // === NUEVA versión: cierre idempotente que solo finaliza SI Sheets se guardó bien ===
+// === Cierre idempotente: guarda en Sheets; si OK, guarda en orders; recién entonces finaliza ===
 async function finalizeConversationOnce(conversationId, finalPayload, estado) {
   const db = await getDb();
 
-  // 1) Leemos la conv para ver si ya está finalizada
+  // 1) Leer conv
   const conv = await db.collection("conversations").findOne({ _id: new ObjectId(conversationId) });
   if (!conv) {
     console.warn("⚠️ finalizeConversationOnce: conversación no encontrada:", conversationId);
     return { didFinalize: false, reason: "not_found" };
   }
   if (conv.finalized === true) {
-    // Ya finalizada: no repetimos guardado para evitar duplicados.
     return { didFinalize: false, reason: "already_finalized" };
   }
 
-  // 2) Intentamos guardar en Google Sheets primero (si falla, no finalizamos)
+  // 2) Guardar en Sheets primero
   try {
     await saveCompletedToSheets({
       waId: conv.waId,
@@ -562,7 +562,20 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
     return { didFinalize: false, reason: "sheets_failed", sheetsError: e?.message };
   }
 
-  // 3) Si Sheets OK, recién ahora marcamos finalizada (idempotente)
+  // 3) Guardar/actualizar en orders (si hay Pedido)
+  try {
+    await upsertOrderFromPayload({
+      conversationId: conv._id,
+      waId: conv.waId,
+      estado: estado || "COMPLETED",
+      payload: finalPayload || {}
+    });
+  } catch (e) {
+    // Si fallara orders, dejamos trazabilidad pero igual finalizamos (ya guardamos en Sheets).
+    console.error("⚠️ upsertOrderFromPayload falló (se continúa):", e?.message);
+  }
+
+  // 4) Finalizar conversación (idempotente)
   const updRes = await db.collection("conversations").updateOne(
     { _id: new ObjectId(conversationId), finalized: { $ne: true } },
     {
@@ -583,10 +596,10 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
   if (updRes.modifiedCount === 1) {
     return { didFinalize: true };
   } else {
-    // Otra carrera en milisegundos: alguien finalizó entre el paso 1 y 3
     return { didFinalize: false, reason: "raced_already_finalized" };
   }
 }
+
 
 /* ===================== Sesiones en memoria ===================== */
 const sessions = new Map(); // waId -> { messages, updatedAt }
@@ -863,6 +876,105 @@ function requireAdmin(req, res, next) {
   if (got && got === need) return next();
   res.status(401).send("No autorizado. Agregá ?token=TU_TOKEN");
 }
+//////////////////////////////////////////////
+// ===== Orders (guardar pedido "normalizado" en Mongo) =====
+async function ensureOrdersIndexes() {
+  const db = await getDb();
+  // Un pedido por conversación (idempotencia)
+  await db.collection("orders").createIndex({ conversationId: 1 }, { unique: true });
+  // Consultas típicas
+  await db.collection("orders").createIndex({ waId: 1, createdAt: -1 });
+  await db.collection("orders").createIndex({ status: 1, createdAt: -1 });
+}
+
+function normalizeOrderDoc({ conversationId, waId, estado, payload }) {
+  const Pedido  = payload?.Pedido || {};
+  const Bigdata = payload?.Bigdata || {};
+
+  // Campos aplanados típicos
+  const doc = {
+    conversationId,
+    waId,
+    status: (estado || "COMPLETED").toUpperCase(), // COMPLETED|CANCELLED
+    response: payload?.response || "",
+
+    // Timestamps legibles si vienen en el JSON (no siempre los hay)
+    startedAtText: Pedido["Fecha y hora de inicio de conversacion"] || null,
+    endedAtText:   Pedido["Fecha y hora fin de conversacion"] || null,
+
+    // Datos de pedido (tomados del esquema que venís usando para Sheets)
+    order: {
+      estadoPedido:         Pedido["Estado pedido"] || null,
+      motivoCancelacion:    Pedido["Motivo cancelacion"] || null,
+      pedidoPollo:          Pedido["Pedido pollo"] || null,
+      pedidoPapas:          Pedido["Pedido papas"] || null,
+      milanesasComunes:     Pedido["Milanesas comunes"] || null,
+      milanesasNapolitanas: Pedido["Milanesas Napolitanas"] || null,
+      ensaladas:            Pedido["Ensaladas"] || null,
+      bebidas:              Pedido["Bebidas"] || null,
+      monto:                (typeof Pedido["Monto"] === "number") ? Pedido["Monto"] : Number(Pedido["Monto"]) || null,
+      nombre:               Pedido["Nombre"] || null,
+      entrega:              Pedido["Entrega"] || null,
+      domicilio:            Pedido["Domicilio"] || null,
+      fechaHoraEntrega:     Pedido["Fecha y hora de entrega"] || null,
+      hora:                 Pedido["Hora"] || null
+    },
+
+    // Bigdata (tal como viene)
+    bigdata: {
+      sexo:                         Bigdata["Sexo"] || null,
+      estudios:                     Bigdata["Estudios"] || null,
+      satisfaccionCliente:          Bigdata["Satisfaccion del cliente"] ?? null,
+      motivoPuntajeSatisfaccion:    Bigdata["Motivo puntaje satisfaccion"] || null,
+      cuantoNosConoce:              Bigdata["Cuanto nos conoce el cliente"] ?? null,
+      motivoPuntajeConocimiento:    Bigdata["Motivo puntaje conocimiento"] || null,
+      motivoPuntajeGeneral:         Bigdata["Motivo puntaje general"] || null,
+      perdidaOportunidad:           Bigdata["Perdida oportunidad"] || null,
+      sugerencias:                  Bigdata["Sugerencias"] || null,
+      flujo:                        Bigdata["Flujo"] || null,
+      facilidadCompra:              Bigdata["Facilidad en el proceso de compras"] ?? null,
+      preguntoPorBot:               Bigdata["Pregunto por bot"] || null
+    },
+
+    createdAt: new Date()
+  };
+
+  return doc;
+}
+
+async function upsertOrderFromPayload({ conversationId, waId, estado, payload }) {
+  const db = await getDb();
+
+  // Si no hay bloque Pedido, no persistimos una orden
+  if (!payload?.Pedido) {
+    console.warn("ℹ️ upsertOrderFromPayload: sin payload.Pedido; se omite creación de order.");
+    return { upserted: false, reason: "no_pedido" };
+  }
+
+  const doc = normalizeOrderDoc({ conversationId, waId, estado, payload });
+
+  // Idempotencia por conversationId
+  const res = await db.collection("orders").updateOne(
+    { conversationId: new ObjectId(conversationId) },
+    { $setOnInsert: doc, $set: { status: doc.status, response: doc.response, order: doc.order, bigdata: doc.bigdata } },
+    { upsert: true }
+  );
+
+  const upserted = !!res.upsertedId || res.modifiedCount === 1;
+  if (res.upsertedId) {
+    console.log("🧾 order creada:", res.upsertedId);
+  } else if (res.modifiedCount === 1) {
+    console.log("🧾 order actualizada para conversación:", conversationId.toString());
+  } else {
+    console.log("ℹ️ order ya existía sin cambios:", conversationId.toString());
+  }
+  return { upserted };
+}
+
+
+
+
+
 
 /* ---------- HTML listado con filtros + CSV ---------- */
 app.get("/admin/orders", requireAdmin, (req, res) => {
@@ -1247,6 +1359,12 @@ load();
 </script>
 </body></html>`);
 });
+
+// Crear índices de orders en background
+ensureOrdersIndexes().catch(err => {
+  console.error("⚠️ No se pudieron crear índices de orders:", err);
+});
+
 
 /* ===================== Start ===================== */
 const PORT = process.env.PORT || 3000;
