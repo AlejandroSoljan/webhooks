@@ -10,9 +10,10 @@ const { google } = require("googleapis");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
 
+// --- Node fetch (Node 18+ trae global fetch)
 const app = express();
 
-// ========= Body / firma =========
+/* ======================= Body / firma ======================= */
 app.use(express.json({
   verify: (req, res, buf) => { req.rawBody = buf; }
 }));
@@ -32,10 +33,9 @@ function isValidSignature(req) {
   }
 }
 
-// ========= OpenAI =========
+/* ======================= OpenAI ======================= */
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// ====== Config de modelo / temperatura ======
 const CHAT_MODEL =
   process.env.OPENAI_CHAT_MODEL ||
   process.env.OPENAI_MODEL ||
@@ -44,7 +44,16 @@ const CHAT_TEMPERATURE = Number.isFinite(parseFloat(process.env.OPENAI_TEMPERATU
   ? parseFloat(process.env.OPENAI_TEMPERATURE)
   : 0.2;
 
-// ========= Helpers JSON robustos =========
+function withTimeout(promise, ms, label = "operation") {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label}_timeout_${ms}ms`)), ms)
+    )
+  ]);
+}
+
+/* ======================= Helpers JSON robustos ======================= */
 function coerceJsonString(raw) {
   if (raw == null) return null;
   let s = String(raw);
@@ -76,16 +85,14 @@ function coerceJsonString(raw) {
 }
 
 async function safeJsonParseStrictOrFix(raw, { openai, model = "gpt-4o-mini" } = {}) {
-  // 1) limpieza/coección
   let s = coerceJsonString(raw);
   if (!s) return null;
 
-  // 2) primer intento
   try {
     return JSON.parse(s);
   } catch (_) {}
 
-  // 3) reintento con “arreglador” (una sola vez)
+  // reintento con “arreglador” (una sola vez)
   try {
     const fix = await openai.chat.completions.create({
       model,
@@ -110,12 +117,12 @@ async function safeJsonParseStrictOrFix(raw, { openai, model = "gpt-4o-mini" } =
   }
 }
 
-// ========= WhatsApp / Media helpers =========
+/* ======================= WhatsApp / Media ======================= */
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
 const TRANSCRIBE_API_URL = (process.env.TRANSCRIBE_API_URL || "https://transcribegpt-569454200011.northamerica-northeast1.run.app").trim().replace(/\/+$/,"");
 const CACHE_TTL_MS = parseInt(process.env.AUDIO_CACHE_TTL_MS || "300000", 10); // 5 min
 
-// ---- Cache en memoria de binarios (audio e imagen) ----
+// Cache binaria
 const fileCache = new Map(); // id -> { buffer, mime, expiresAt }
 function makeId(n = 16) { return crypto.randomBytes(n).toString("hex"); }
 function getBaseUrl(req) {
@@ -185,7 +192,7 @@ async function downloadMediaBuffer(mediaUrl) {
   return Buffer.from(arrayBuffer);
 }
 
-// ---- OCR de imagen con OpenAI Chat Completions (o4-mini) ----
+// OCR de imagen
 async function transcribeImageWithOpenAI(publicImageUrl) {
   const url = "https://api.openai.com/v1/chat/completions";
   const body = {
@@ -209,7 +216,7 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
   return data?.choices?.[0]?.message?.content?.trim() || "";
 }
 
-// ---- Transcriptor externo: JSON {audio_url}, luego multipart file, luego GET ----
+// Transcriptor externo (varias variantes)
 async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename = "audio.ogg" }) {
   const base = TRANSCRIBE_API_URL;
   const paths = ["", "/transcribe", "/api/transcribe", "/v1/transcribe"];
@@ -288,7 +295,7 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
   throw new Error("No hubo variantes válidas para el endpoint de transcripción.");
 }
 
-// ======== TTS (Texto a voz) con OpenAI ========
+/* ======================= TTS ======================= */
 async function synthesizeTTS(text) {
   const model = process.env.TTS_MODEL || "gpt-4o-mini-tts";
   const voice = process.env.TTS_VOICE || "alloy";
@@ -333,7 +340,58 @@ async function sendAudioLink(to, publicUrl, phoneNumberId) {
   return data;
 }
 
-// ========= Google Sheets helpers =========
+/* ======================= WhatsApp helpers de envío ======================= */
+function getPhoneNumberId(value) {
+  let id = value?.metadata?.phone_number_id;
+  if (!id && process.env.WHATSAPP_PHONE_NUMBER_ID) {
+    id = process.env.WHATSAPP_PHONE_NUMBER_ID.trim();
+  }
+  return id || null;
+}
+async function sendText(to, body, phoneNumberId) {
+  const token = process.env.WHATSAPP_TOKEN;
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
+  const payload = { messaging_product: "whatsapp", to, type: "text", text: { body } };
+
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const data = await resp.json();
+  if (!resp.ok) console.error("❌ Error WhatsApp sendText:", resp.status, data);
+  else console.log("📤 Enviado:", data);
+  return data;
+}
+async function sendSafeText(to, body, value) {
+  const phoneNumberId = getPhoneNumberId(value);
+  if (!phoneNumberId) {
+    console.error("❌ No hay phone_number_id ni en metadata ni en ENV. No se puede enviar WhatsApp.");
+    return { error: "missing_phone_number_id" };
+  }
+  try {
+    return await sendText(to, body, phoneNumberId);
+  } catch (e) {
+    console.error("❌ Error en sendSafeText:", e);
+    return { error: e.message || "send_failed" };
+  }
+}
+async function markAsRead(messageId, phoneNumberId) {
+  const token = process.env.WHATSAPP_TOKEN;
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
+  const payload = { messaging_product: "whatsapp", status: "read", message_id: messageId };
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    console.warn("⚠️ markAsRead falló:", resp.status, data);
+  }
+}
+
+/* ======================= Google Sheets ======================= */
 function getSheetsClient() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const key = (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
@@ -341,7 +399,6 @@ function getSheetsClient() {
   const auth = new google.auth.JWT(email, null, key, ["https://www.googleapis.com/auth/spreadsheets"]);
   return google.sheets({ version: "v4", auth });
 }
-// Aceptar ID o URL en GOOGLE_SHEETS_ID
 function getSpreadsheetIdFromEnv() {
   const raw = (process.env.GOOGLE_SHEETS_ID || "").trim();
   if (!raw) throw new Error("Falta GOOGLE_SHEETS_ID.");
@@ -370,7 +427,6 @@ async function appendRow({ sheetName, values }) {
   });
 }
 
-// ----- Guardado en dos pestañas (Hoja 1 y BigData)
 function headerPedido() {
   return [
     "wa_id","response","Fecha y hora de inicio de conversacion","Fecha y hora fin de conversacion",
@@ -426,14 +482,13 @@ async function saveCompletedToSheets({ waId, data }) {
   await appendRow({ sheetName: "BigData", values: vBig });
 }
 
-// ===== Productos desde Google Sheets (A nombre, B precio, C venta, D obs, E activo= S/N) =====
-const PRODUCTS_CACHE_TTL_MS = parseInt(process.env.PRODUCTS_CACHE_TTL_MS || "300000", 10); // 5 min
+/* ======================= Productos (Sheet) ======================= */
+// Productos!A nombre, B precio, C venta, D obs, E activo (S/N)
+const PRODUCTS_CACHE_TTL_MS = parseInt(process.env.PRODUCTS_CACHE_TTL_MS || "300000", 10);
 let productsCache = { at: 0, items: [] };
 
-function looksActive(v) {
-  if (!v) return false;
-  return String(v).trim().toUpperCase() === "S";
-}
+function looksActive(v) { return String(v || "").trim().toUpperCase() === "S"; }
+
 async function loadProductsFromSheet() {
   const now = Date.now();
   if (now - productsCache.at < PRODUCTS_CACHE_TTL_MS && productsCache.items?.length) {
@@ -441,7 +496,7 @@ async function loadProductsFromSheet() {
   }
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
-  const range = "Productos!A2:E"; // A nombre, B precio, C venta, D obs, E activo
+  const range = "Productos!A2:E";
   const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
   const rows = resp.data.values || [];
 
@@ -456,7 +511,6 @@ async function loadProductsFromSheet() {
 
     const maybeNum = Number(precioRaw.replace(/[^\d.,-]/g, "").replace(",", "."));
     const precio = Number.isFinite(maybeNum) ? maybeNum : precioRaw;
-
     return { nombre, precio, venta, obs };
   }).filter(Boolean);
 
@@ -474,7 +528,7 @@ function buildCatalogText(items) {
   return "Catálogo de productos (nombre — precio (modo de venta) | Obs: observaciones):\n" + lines.join("\n");
 }
 
-// ===== Comportamiento (ENV o Sheet) + Catálogo (siempre Sheet) =====
+/* ======================= Comportamiento (ENV o Sheet) ======================= */
 const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); // "env" | "sheet"
 const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000;
 let behaviorCache = { at: 0, text: null };
@@ -523,7 +577,7 @@ async function buildSystemPrompt({ force = false } = {}) {
     catalogText = "Catálogo de productos: (error al leer)";
   }
 
-  // 3) Reglas de uso de observaciones (OBLIGATORIAS)
+  // 3) Reglas de uso de observaciones
   const reglasVenta =
     "Instrucciones de venta (OBLIGATORIAS):\n" +
     "- Usá las Observaciones para decidir qué ofrecer, sugerir complementos, aplicar restricciones o proponer sustituciones.\n" +
@@ -531,14 +585,13 @@ async function buildSystemPrompt({ force = false } = {}) {
     "- Si sugerís bundles o combos, ofrecé esas opciones con precio estimado cuando corresponda.\n" +
     "- Si falta un dato (sabor/tamaño/cantidad), pedilo brevemente.\n";
 
-  // 4) Esquema JSON OBLIGATORIO dentro del mismo system
+  // 4) Esquema JSON
   const jsonSchema =
     "FORMATO DE RESPUESTA (OBLIGATORIO - SOLO JSON, sin ```):\n" +
     '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED", ' +
     '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
     '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
 
-  // 5) ÚNICO system message final
   const fullText = [
     "[COMPORTAMIENTO]\n" + baseText,
     "[REGLAS]\n" + reglasVenta,
@@ -551,15 +604,16 @@ async function buildSystemPrompt({ force = false } = {}) {
   return fullText;
 }
 
-// ========= Persistencia NoSQL (MongoDB) =========
-async function ensureOpenConversation(waId) {
+/* ======================= Mongo: conversaciones, mensajes, orders ======================= */
+async function ensureOpenConversation(waId, { contactName = null } = {}) {
   const db = await getDb();
   let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
   if (!conv) {
     const doc = {
       waId,
-      status: "OPEN", // OPEN | COMPLETED | CANCELLED
-      finalized: false, // ← clave para idempotencia
+      status: "OPEN",         // OPEN | COMPLETED | CANCELLED
+      finalized: false,       // idempotencia para Sheets/orden
+      contactName: contactName || null,
       openedAt: new Date(),
       closedAt: null,
       lastUserTs: null,
@@ -568,6 +622,12 @@ async function ensureOpenConversation(waId) {
     };
     const ins = await db.collection("conversations").insertOne(doc);
     conv = { _id: ins.insertedId, ...doc };
+  } else if (contactName && !conv.contactName) {
+    await db.collection("conversations").updateOne(
+      { _id: conv._id },
+      { $set: { contactName } }
+    );
+    conv.contactName = contactName;
   }
   return conv;
 }
@@ -596,99 +656,51 @@ async function appendMessage(conversationId, {
   await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId) }, upd);
 }
 
-// ===== Orders helpers (Mongo)
-async function ensureOrdersIndexes() {
-  const db = await getDb();
-  await db.collection("orders").createIndex({ conversationId: 1 }, { unique: true });
-  await db.collection("orders").createIndex({ waId: 1, createdAt: -1 });
-  await db.collection("orders").createIndex({ status: 1, createdAt: -1 });
-  await db.collection("orders").createIndex({ processed: 1, createdAt: -1 });
-}
+// Normalizar “Pedido” a estructura de order
+function normalizeOrder(waId, contactName, pedido) {
+  const entrega = pedido?.["Entrega"] || "";
+  const domicilio = pedido?.["Domicilio"] || "";
+  const monto = Number(pedido?.["Monto"] ?? 0) || 0;
 
-function normalizeOrderDoc({ conversationId, waId, estado, payload }) {
-  const Pedido  = payload?.Pedido || {};
-  const Bigdata = payload?.Bigdata || {};
+  // Intentar construir items a partir de los campos del pedido
+  const items = [];
+  const mappedFields = [
+    "Pedido pollo",
+    "Pedido papas",
+    "Milanesas comunes",
+    "Milanesas Napolitanas",
+    "Ensaladas",
+    "Bebidas"
+  ];
+  for (const key of mappedFields) {
+    const val = (pedido?.[key] || "").toString().trim();
+    if (val && val.toUpperCase() !== "NO") {
+      items.push({ name: key, selection: val });
+    }
+  }
 
-  const doc = {
-    conversationId: new ObjectId(conversationId),
+  // Otros datos que puedan servir
+  const name = pedido?.["Nombre"] || contactName || "";
+  const fechaEntrega = pedido?.["Fecha y hora de entrega"] || "";
+  const hora = pedido?.["Hora"] || "";
+  const estadoPedido = pedido?.["Estado pedido"] || "";
+
+  return {
     waId,
-    status: (estado || "COMPLETED").toUpperCase(),
-    response: payload?.response || "",
-    startedAtText: Pedido["Fecha y hora de inicio de conversacion"] || null,
-    endedAtText:   Pedido["Fecha y hora fin de conversacion"] || null,
-    order: {
-      nombre:               Pedido["Nombre"] || null,
-      estadoPedido:         Pedido["Estado pedido"] || null,
-      motivoCancelacion:    Pedido["Motivo cancelacion"] || null,
-      pedidoPollo:          Pedido["Pedido pollo"] || null,
-      pedidoPapas:          Pedido["Pedido papas"] || null,
-      milanesasComunes:     Pedido["Milanesas comunes"] || null,
-      milanesasNapolitanas: Pedido["Milanesas Napolitanas"] || null,
-      ensaladas:            Pedido["Ensaladas"] || null,
-      bebidas:              Pedido["Bebidas"] || null,
-      monto:                (typeof Pedido["Monto"] === "number") ? Pedido["Monto"] : Number(Pedido["Monto"]) || null,
-      entrega:              Pedido["Entrega"] || null,
-      domicilio:            Pedido["Domicilio"] || null,
-      fechaHoraEntrega:     Pedido["Fecha y hora de entrega"] || null,
-      hora:                 Pedido["Hora"] || null
-    },
-    bigdata: {
-      sexo:                      Bigdata["Sexo"] || null,
-      estudios:                  Bigdata["Estudios"] || null,
-      satisfaccionCliente:       Bigdata["Satisfaccion del cliente"] ?? null,
-      motivoPuntajeSatisfaccion: Bigdata["Motivo puntaje satisfaccion"] || null,
-      cuantoNosConoce:           Bigdata["Cuanto nos conoce el cliente"] ?? null,
-      motivoPuntajeConocimiento: Bigdata["Motivo puntaje conocimiento"] || null,
-      motivoPuntajeGeneral:      Bigdata["Motivo puntaje general"] || null,
-      perdidaOportunidad:        Bigdata["Perdida oportunidad"] || null,
-      sugerencias:               Bigdata["Sugerencias"] || null,
-      flujo:                     Bigdata["Flujo"] || null,
-      facilidadCompra:           Bigdata["Facilidad en el proceso de compras"] ?? null,
-      preguntoPorBot:            Bigdata["Pregunto por bot"] || null
-    },
-    processed: false,
-    createdAt: new Date()
+    name,
+    entrega,
+    domicilio,
+    items,
+    amount: monto,
+    estadoPedido,
+    fechaEntrega,
+    hora,
+    createdAt: new Date(),
+    processed: false
   };
-
-  return doc;
 }
 
-async function upsertOrderFromPayload({ conversationId, waId, estado, payload }) {
-  const db = await getDb();
-
-  if (!payload?.Pedido) {
-    console.warn("ℹ️ upsertOrderFromPayload: sin payload.Pedido; se omite creación de order.");
-    return { upserted: false, reason: "no_pedido" };
-  }
-
-  const base = normalizeOrderDoc({ conversationId, waId, estado, payload });
-
-  const res = await db.collection("orders").updateOne(
-    { conversationId: new ObjectId(conversationId) },
-    {
-      $setOnInsert: { ...base },
-      $set: {
-        status: base.status,
-        response: base.response,
-        order: base.order,
-        bigdata: base.bigdata
-      }
-    },
-    { upsert: true }
-  );
-
-  const upserted = !!res.upsertedId || res.modifiedCount === 1;
-  if (res.upsertedId) {
-    console.log("🧾 order creada:", res.upsertedId);
-  } else if (res.modifiedCount === 1) {
-    console.log("🧾 order actualizada para conversación:", conversationId.toString());
-  } else {
-    console.log("ℹ️ order ya existía sin cambios:", conversationId.toString());
-  }
-  return { upserted };
-}
-
-// === Cierre idempotente + guardado en Google Sheets ===
+// Cierre idempotente + guardado en Sheets y en orders
 async function finalizeConversationOnce(conversationId, finalPayload, estado) {
   const db = await getDb();
   const res = await db.collection("conversations").findOneAndUpdate(
@@ -708,37 +720,47 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
     { returnDocument: "after" }
   );
 
-  const updated = !!res?.value?.finalized;
-  if (!updated) {
+  const didFinalize = !!res?.value?.finalized;
+  if (!didFinalize) {
     return { didFinalize: false };
   }
 
-  // 👉 Crear/actualizar pedido en Mongo (orders)
+  const conv = res.value;
   try {
-    await upsertOrderFromPayload({
-      conversationId,
-      waId: res.value.waId,
-      estado: res.value.status,
-      payload: finalPayload || {}
-    });
-  } catch (e) {
-    console.error("⚠️ Error upsert order:", e.message);
-  }
-
-  // 👉 Guardar en Google Sheets
-  try {
+    // Guardar en Sheets
     await saveCompletedToSheets({
-      waId: res.value.waId,
+      waId: conv.waId,
       data: finalPayload || {}
     });
-    return { didFinalize: true };
   } catch (e) {
     console.error("⚠️ Error guardando en Sheets tras finalizar:", e);
-    return { didFinalize: true, sheetsError: e?.message };
   }
+
+  // Si hay Pedido, guardamos en orders con normalización
+  try {
+    if (finalPayload?.Pedido) {
+      // si el nombre vino del pedido y no lo teníamos, sincronizamos
+      const pedidoNombre = finalPayload.Pedido["Nombre"];
+      if (pedidoNombre && !conv.contactName) {
+        await db.collection("conversations").updateOne(
+          { _id: conv._id },
+          { $set: { contactName: pedidoNombre } }
+        );
+        conv.contactName = pedidoNombre;
+      }
+
+      const orderDoc = normalizeOrder(conv.waId, conv.contactName, finalPayload.Pedido);
+      orderDoc.conversationId = conv._id;
+      await db.collection("orders").insertOne(orderDoc);
+    }
+  } catch (e) {
+    console.error("⚠️ Error guardando order:", e);
+  }
+
+  return { didFinalize: true };
 }
 
-// ========= Sesiones (historial en memoria) =========
+/* ======================= Sesiones (historial) ======================= */
 const sessions = new Map(); // waId -> { messages, updatedAt }
 
 async function getSession(waId) {
@@ -760,7 +782,7 @@ function pushMessage(session, role, content, maxTurns = 20) {
   session.updatedAt = Date.now();
 }
 
-// ========= Chat con historial (system refrescado + parser robusto) =========
+/* ======================= Chat (historial + parser robusto) ======================= */
 async function chatWithHistoryJSON(
   waId,
   userText,
@@ -769,7 +791,7 @@ async function chatWithHistoryJSON(
 ) {
   const session = await getSession(waId);
 
-  // 🔄 Refrescar system (comportamiento + catálogo) ANTES de cada turno
+  // refrescar system en cada turno
   try {
     const systemText = await buildSystemPrompt({ force: true });
     session.messages[0] = { role: "system", content: systemText };
@@ -779,15 +801,30 @@ async function chatWithHistoryJSON(
 
   pushMessage(session, "user", userText);
 
-  const completion = await openai.chat.completions.create({
-    model,
-    response_format: { type: "json_object" },
-    temperature,
-    top_p: 1,
-    messages: [ ...session.messages ]
-  });
+  let content = "";
+  try {
+    const completion = await withTimeout(
+      openai.chat.completions.create({
+        model,
+        response_format: { type: "json_object" },
+        temperature,
+        top_p: 1,
+        messages: [ ...session.messages ]
+      }),
+      parseInt(process.env.OPENAI_TIMEOUT_MS || "12000", 10),
+      "openai_chat"
+    );
+    content = completion.choices?.[0]?.message?.content || "";
+  } catch (e) {
+    console.error("❌ OpenAI error/timeout:", e.message || e);
+    const fallback = {
+      response: "Perdón, tuve un inconveniente para responder ahora mismo. ¿Podés repetir o reformular tu mensaje?",
+      estado: "IN_PROGRESS"
+    };
+    pushMessage(session, "assistant", fallback.response);
+    return { response: fallback.response, estado: fallback.estado, raw: fallback };
+  }
 
-  const content = completion.choices?.[0]?.message?.content || "";
   const data = await safeJsonParseStrictOrFix(content, { openai, model }) || null;
 
   const responseText =
@@ -802,38 +839,7 @@ async function chatWithHistoryJSON(
   return { response: responseText, estado, raw: data || {} };
 }
 
-// ========= WhatsApp send / mark =========
-async function sendText(to, body, phoneNumberId) {
-  const token = process.env.WHATSAPP_TOKEN;
-  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
-  const payload = { messaging_product: "whatsapp", to, type: "text", text: { body } };
-
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const data = await resp.json();
-  if (!resp.ok) console.error("❌ Error WhatsApp sendText:", resp.status, data);
-  else console.log("📤 Enviado:", data);
-  return data;
-}
-async function markAsRead(messageId, phoneNumberId) {
-  const token = process.env.WHATSAPP_TOKEN;
-  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
-  const payload = { messaging_product: "whatsapp", status: "read", message_id: messageId };
-  const resp = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  if (!resp.ok) {
-    const data = await resp.json().catch(() => ({}));
-    console.warn("⚠️ markAsRead falló:", resp.status, data);
-  }
-}
-
-// ========= Rutas =========
+/* ======================= Rutas básicas ======================= */
 app.get("/", (_req, res) => res.status(200).send("WhatsApp Webhook up ✅"));
 
 app.get("/webhook", (req, res) => {
@@ -849,6 +855,7 @@ app.get("/webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
+/* ======================= Webhook WhatsApp ======================= */
 app.post("/webhook", async (req, res) => {
   try {
     if (process.env.WHATSAPP_APP_SECRET && !isValidSignature(req)) {
@@ -859,39 +866,39 @@ app.post("/webhook", async (req, res) => {
     if (body.object !== "whatsapp_business_account") {
       return res.sendStatus(404);
     }
-    // Respondemos 200 lo antes posible
-    res.sendStatus(200);
+    res.sendStatus(200); // responder rápido
 
     for (const entry of (body.entry || [])) {
       for (const change of (entry.changes || [])) {
         const value = change.value || {};
         const messages = value.messages || [];
+        const contactName = value?.contacts?.[0]?.profile?.name || null;
+
         if (!messages.length) continue;
 
-        // Procesar uno por uno para evitar pérdidas y manejar estados por mensaje
         for (const msg of messages) {
-          const phoneNumberId = value.metadata?.phone_number_id;
           const from = msg.from; // E.164 sin '+'
           const type = msg.type;
           const messageId = msg.id;
 
-          if (messageId && phoneNumberId) markAsRead(messageId, phoneNumberId).catch(() => {});
+          // markAsRead
+          const phoneNumberIdForRead = getPhoneNumberId(value);
+          if (messageId && phoneNumberIdForRead) {
+            markAsRead(messageId, phoneNumberIdForRead).catch(() => {});
+          }
 
-          // ---- Normalizar entrada del usuario ----
+          // normalizar entrada
           let userText = "";
           let userMeta = {};
-
-          if (type === "text") {
-            userText = msg.text?.body || "";
-
-          } else if (type === "interactive") {
-            const it = msg.interactive;
-            if (it?.type === "button_reply") userText = it.button_reply?.title || "";
-            if (it?.type === "list_reply")   userText = it.list_reply?.title || "";
-            if (!userText) userText = "Seleccionaste una opción. ¿En qué puedo ayudarte?";
-
-          } else if (type === "audio") {
-            try {
+          try {
+            if (type === "text") {
+              userText = msg.text?.body || "";
+            } else if (type === "interactive") {
+              const it = msg.interactive;
+              if (it?.type === "button_reply") userText = it.button_reply?.title || "";
+              if (it?.type === "list_reply")   userText = it.list_reply?.title || "";
+              if (!userText) userText = "Seleccionaste una opción. ¿En qué puedo ayudarte?";
+            } else if (type === "audio") {
               const mediaId = msg.audio?.id;
               if (!mediaId) {
                 userText = "Recibí un audio, pero no pude obtenerlo. ¿Podés escribir tu consulta?";
@@ -917,13 +924,7 @@ app.post("/webhook", async (req, res) => {
                   userText = "No pude transcribir tu audio. ¿Podés escribir tu consulta?";
                 }
               }
-            } catch (e) {
-              console.error("⚠️ Audio/transcripción fallback:", e);
-              userText = "Tu audio no se pudo procesar. ¿Podés escribir tu consulta?";
-            }
-
-          } else if (type === "image") {
-            try {
+            } else if (type === "image") {
               const mediaId = msg.image?.id;
               if (!mediaId) {
                 userText = "Recibí una imagen pero no pude descargarla. ¿Podés describir lo que dice?";
@@ -943,22 +944,20 @@ app.post("/webhook", async (req, res) => {
                   userText = "No pude detectar texto en la imagen. ¿Podés escribir lo que dice?";
                 }
               }
-            } catch (e) {
-              console.error("⚠️ Imagen/OCR fallback:", e);
-              userText = "No pude procesar la imagen. ¿Podés escribir lo que dice?";
+            } else if (type === "document") {
+              userText = "Recibí un documento. Pegá el texto relevante o contame tu consulta.";
+            } else {
+              userText = "Hola 👋 ¿Podés escribir tu consulta en texto?";
             }
-
-          } else if (type === "document") {
-            userText = "Recibí un documento. Pegá el texto relevante o contame tu consulta.";
-
-          } else {
+          } catch (e) {
+            console.error("⚠️ Error normalizando entrada:", e);
             userText = "Hola 👋 ¿Podés escribir tu consulta en texto?";
           }
 
           console.log("📩 IN:", { from, type, preview: (userText || "").slice(0, 120) });
 
-          // === Persistencia: asegurar conversación abierta y registrar turno del usuario ===
-          const conv = await ensureOpenConversation(from);
+          // persistencia usuario: aseguro conv abierta y guardo nombre si viene
+          const conv = await ensureOpenConversation(from, { contactName });
           await appendMessage(conv._id, {
             role: "user",
             content: userText,
@@ -966,7 +965,7 @@ app.post("/webhook", async (req, res) => {
             meta: userMeta
           });
 
-          // ---- Modelo con historial (system refrescado por turno) + parser robusto ----
+          // modelo
           let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
           let estado = "IN_PROGRESS";
           let raw = null;
@@ -975,15 +974,16 @@ app.post("/webhook", async (req, res) => {
             responseText = out.response || responseText;
             estado = (out.estado || "IN_PROGRESS").toUpperCase();
             raw = out.raw || null;
+            console.log("✅ modelo respondió, estado:", estado);
           } catch (e) {
             console.error("❌ OpenAI error:", e);
           }
 
-          // ---- Responder por texto SIEMPRE
-          await sendText(from, responseText, phoneNumberId);
-          console.log("📤 OUT →", from, "| estado:", estado);
+          // enviar siempre con fallback a phone_number_id
+          await sendSafeText(from, responseText, value);
+          console.log("OUT →", from, "| estado:", estado);
 
-          // ---- Persistencia: turno del assistant
+          // persistencia assistant
           await appendMessage(conv._id, {
             role: "assistant",
             content: responseText,
@@ -991,20 +991,21 @@ app.post("/webhook", async (req, res) => {
             meta: { estado }
           });
 
-          // ---- Si el usuario envió AUDIO, responder TAMBIÉN con AUDIO (TTS)
+          // TTS si el usuario envió audio
           if (type === "audio" && (process.env.ENABLE_TTS_FOR_AUDIO || "true").toLowerCase() === "true") {
             try {
               const { buffer, mime } = await synthesizeTTS(responseText);
               const ttsId = putInCache(buffer, mime || "audio/mpeg");
               const baseUrl = getBaseUrl(req);
               const ttsUrl = `${baseUrl}/cache/tts/${ttsId}`;
-              await sendAudioLink(from, ttsUrl, phoneNumberId);
+              const phoneId = getPhoneNumberId(value);
+              if (phoneId) await sendAudioLink(from, ttsUrl, phoneId);
             } catch (e) {
               console.error("⚠️ Error generando/enviando TTS:", e);
             }
           }
 
-          // ---- Guardar en Sheets y cerrar conversación cuando NO esté en curso (idempotente)
+          // cierre + Sheets + order (idempotente)
           const shouldFinalize =
             (estado && estado !== "IN_PROGRESS") ||
             ((raw?.Pedido?.["Estado pedido"] || "").toLowerCase().includes("cancel"));
@@ -1015,11 +1016,6 @@ app.post("/webhook", async (req, res) => {
               if (result.didFinalize) {
                 resetSession(from); // limpia historial en memoria
                 console.log("🔁 Historial reiniciado para", from, "| estado:", estado);
-                if (result.sheetsError) {
-                  console.warn("⚠️ Sheets guardado con error (pero finalizado igual):", result.sheetsError);
-                } else {
-                  console.log("🧾 Guardado en Google Sheets (idempotente) para", from, "estado", estado);
-                }
               } else {
                 console.log("ℹ️ Ya estaba finalizada; no se guarda en Sheets de nuevo.");
               }
@@ -1027,6 +1023,8 @@ app.post("/webhook", async (req, res) => {
               console.error("⚠️ Error al finalizar conversación:", e);
             }
           }
+
+          console.log("⏹ end task", from, "msg:" + (messageId || ""));
         }
       }
     }
@@ -1035,55 +1033,56 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// ========= Admin UI =========
-const adminHtml = `
+/* ======================= Admin UI ======================= */
+/**
+ * /admin -> HTML con tabla de conversaciones + acciones
+ * /api/admin/conversations -> JSON de conversaciones
+ * /api/admin/messages/:conversationId -> HTML simple con el hilo
+ * /api/admin/order/:conversationId -> JSON normalizado de la orden (para modal)
+ * /api/admin/order/:conversationId/process -> POST marca orden como procesada
+ */
+
+app.get("/admin", async (req, res) => {
+  // HTML minimal con fetch al endpoint JSON
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end(`
 <!doctype html>
-<html lang="es">
+<html>
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Admin - Conversaciones</title>
-<style>
-  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 20px; color: #222; }
-  h1 { margin: 0 0 16px; }
-  .controls { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap: wrap; }
-  select, input, button { padding:8px; font-size:14px; }
-  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
-  th, td { border: 1px solid #ddd; padding: 8px; font-size: 14px; vertical-align: top; }
-  th { background: #f7f7f7; text-align: left; }
-  tr:hover { background: #fafafa; }
-  .pill { padding: 2px 8px; border-radius: 999px; font-size: 12px; color: #fff; display:inline-block; }
-  .OPEN { background:#0ea5e9; }
-  .COMPLETED { background:#16a34a; }
-  .CANCELLED { background:#ef4444; }
-  .muted { color:#666; font-size:12px; }
-  .btn { padding:6px 10px; font-size:13px; border:1px solid #ddd; border-radius:6px; background:#fff; cursor:pointer; }
-  .btn:hover { background:#f3f4f6; }
-  .btn-proc-true { background:#dcfce7; border-color:#86efac; }
-  .legend { font-size:12px; color:#666; margin-top:8px; }
-</style>
+  <meta charset="utf-8" />
+  <title>Admin - Conversaciones</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; }
+    h1 { margin-top: 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { background: #f6f6f6; text-align: left; }
+    tr:nth-child(even) { background: #fafafa; }
+    .btn { padding: 6px 10px; border: 1px solid #333; background: #fff; cursor: pointer; border-radius: 4px; font-size: 12px; }
+    .btn + .btn { margin-left: 6px; }
+    .muted { color: #666; }
+    .tag { display:inline-block; padding:2px 6px; border-radius: 4px; font-size: 12px; }
+    .tag.OPEN { background: #e7f5ff; color: #1971c2; }
+    .tag.COMPLETED { background: #e6fcf5; color: #2b8a3e; }
+    .tag.CANCELLED { background: #fff0f6; color: #c2255c; }
+    /* modal */
+    .modal-backdrop { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); align-items:center; justify-content:center; }
+    .modal { background:#fff; width: 720px; max-width: calc(100% - 32px); border-radius:8px; overflow:hidden; }
+    .modal header { padding:12px 16px; background:#f6f6f6; display:flex; align-items:center; justify-content:space-between;}
+    .modal header h3{ margin:0; font-size:16px;}
+    .modal .content { padding:16px; max-height:70vh; overflow:auto; }
+    .modal .actions { padding:12px 16px; text-align:right; border-top:1px solid #eee;}
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; font-size: 12px; }
+    .printable { background: #fff; color: #000; }
+    @media print {
+      .no-print { display: none; }
+      .printable { padding: 0; }
+    }
+  </style>
 </head>
 <body>
-  <h1>Conversaciones</h1>
-
-  <div class="controls">
-    <label>Estado:
-      <select id="state">
-        <option value="">Todos</option>
-        <option value="OPEN">OPEN</option>
-        <option value="COMPLETED">COMPLETED</option>
-        <option value="CANCELLED">CANCELLED</option>
-      </select>
-    </label>
-    <label>Teléfono:
-      <input id="waid" placeholder="549..." />
-    </label>
-    <label>Límite:
-      <input id="limit" type="number" min="1" max="500" value="50"/>
-    </label>
-    <button id="btnLoad" class="btn">Cargar</button>
-  </div>
-
+  <h1>Admin - Conversaciones</h1>
+  <div class="muted">Actualiza la página para refrescar.</div>
   <table id="tbl">
     <thead>
       <tr>
@@ -1099,262 +1098,248 @@ const adminHtml = `
     <tbody></tbody>
   </table>
 
-  <div class="legend">
-    <b>Acciones:</b> Mensajes = abre mensajes en nueva pestaña · Pedido = abre ventana imprimible · Procesado = marca/ desmarca el pedido
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal">
+      <header>
+        <h3>Pedido</h3>
+        <button class="btn no-print" onclick="closeModal()">✕</button>
+      </header>
+      <div class="content" id="modalContent"></div>
+      <div class="actions no-print">
+        <button class="btn" onclick="window.print()">Imprimir</button>
+        <button class="btn" onclick="closeModal()">Cerrar</button>
+      </div>
+    </div>
   </div>
 
-<script>
-async function loadConvs() {
-  const state = document.getElementById('state').value;
-  const waid = document.getElementById('waid').value.trim();
-  const limit = document.getElementById('limit').value || 50;
-
-  const params = new URLSearchParams();
-  if (state) params.set('status', state);
-  if (waid)  params.set('waId', waid);
-  params.set('limit', limit);
-
-  const res = await fetch('/admin/api/conversations?' + params.toString());
-  const data = await res.json();
-  const tbody = document.querySelector('#tbl tbody');
-  tbody.innerHTML = '';
-  data.forEach(c => {
-    const tr = document.createElement('tr');
-
-    const procClass = c.orderProcessed ? 'btn-proc-true' : '';
-    const procLabel = c.orderProcessed ? 'Procesado ✅' : 'Procesado';
-
-    tr.innerHTML = \`
-      <td>\${c.waId}</td>
-      <td>\${c.orderName || '-'}</td>
-      <td><span class="pill \${c.status}">\${c.status}</span></td>
-      <td>\${c.openedAt ? new Date(c.openedAt).toLocaleString() : '-'}</td>
-      <td>\${c.closedAt ? new Date(c.closedAt).toLocaleString() : '-'}</td>
-      <td>\${c.turns ?? 0}</td>
-      <td>
-        <button class="btn" data-action="msgs" data-id="\${c._id}">Mensajes</button>
-        <button class="btn" data-action="print" data-id="\${c._id}">Pedido</button>
-        <button class="btn \${procClass}" data-action="proc" data-id="\${c._id}" data-orderid="\${c.orderId || ''}">\${procLabel}</button>
-      </td>
-    \`;
-    tbody.appendChild(tr);
-  });
-
-  tbody.querySelectorAll('button').forEach(b => {
-    b.addEventListener('click', async () => {
-      const id = b.getAttribute('data-id');
-      const action = b.getAttribute('data-action');
-      if (action === 'msgs') {
-        window.open('/admin/messages/' + id, '_blank');
-      } else if (action === 'print') {
-        window.open('/admin/print/order/' + id, 'pedido', 'width=900,height=800');
-      } else if (action === 'proc') {
-        const orderId = b.getAttribute('data-orderid');
-        if (!orderId) {
-          alert('No hay pedido asociado a esta conversación.');
-          return;
-        }
-        const current = b.classList.contains('btn-proc-true');
-        const next = !current;
-        const resp = await fetch('/admin/api/orders/' + orderId + '/process', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ processed: next })
-        });
-        if (resp.ok) {
-          await loadConvs();
-        } else {
-          const j = await resp.json().catch(()=>({}));
-          alert('No se pudo actualizar: ' + (j.error || resp.status));
-        }
+  <script>
+    async function loadConversations() {
+      const r = await fetch('/api/admin/conversations');
+      const data = await r.json();
+      const tb = document.querySelector("#tbl tbody");
+      tb.innerHTML = "";
+      for (const row of data) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = \`
+          <td>\${row.waId}</td>
+          <td>\${row.contactName || ""}</td>
+          <td><span class="tag \${row.status}">\${row.status}</span></td>
+          <td>\${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
+          <td>\${row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
+          <td>\${row.turns ?? 0}</td>
+          <td>
+            <button class="btn" onclick="openMessages('\${row._id}')">Mensajes</button>
+            <button class="btn" onclick="openOrder('\${row._id}')">Pedido</button>
+            <button class="btn" onclick="markProcessed('\${row._id}')">Procesado</button>
+          </td>
+        \`;
+        tb.appendChild(tr);
       }
-    });
-  });
-}
+    }
 
-document.getElementById('btnLoad').addEventListener('click', loadConvs);
-loadConvs();
-</script>
+    function openMessages(id) {
+      window.open('/api/admin/messages/' + id, '_blank');
+    }
+
+    async function openOrder(id) {
+      const r = await fetch('/api/admin/order/' + id);
+      const data = await r.json();
+      const root = document.getElementById('modalContent');
+      root.innerHTML = renderOrder(data);
+      openModal();
+    }
+
+    async function markProcessed(id) {
+      const r = await fetch('/api/admin/order/' + id + '/process', { method: 'POST' });
+      if (r.ok) {
+        alert('Pedido marcado como procesado.');
+      } else {
+        alert('No se pudo marcar como procesado.');
+      }
+    }
+
+    function renderOrder(o) {
+      if (!o || !o.order) return '<div class="mono">No hay pedido para esta conversación.</div>';
+      const ord = o.order;
+      const itemsHtml = (ord.items || []).map(it => \`<li>\${it.name}: <strong>\${it.selection}</strong></li>\`).join('') || '<li>(sin ítems)</li>';
+      const rawHtml = o.rawPedido ? '<pre class="mono">' + JSON.stringify(o.rawPedido, null, 2) + '</pre>' : '';
+      return \`
+        <div class="printable">
+          <h2>Pedido</h2>
+          <p><strong>Cliente:</strong> \${ord.name || ''} <span class="muted">(\${o.waId})</span></p>
+          <p><strong>Entrega:</strong> \${ord.entrega || ''}</p>
+          <p><strong>Domicilio:</strong> \${ord.domicilio || ''}</p>
+          <p><strong>Monto:</strong> \${(ord.amount!=null)?('$'+ord.amount):''}</p>
+          <p><strong>Estado pedido:</strong> \${ord.estadoPedido || ''}</p>
+          <p><strong>Fecha/Hora entrega:</strong> \${ord.fechaEntrega || ''} \${ord.hora || ''}</p>
+          <h3>Ítems</h3>
+          <ul>\${itemsHtml}</ul>
+          <h3>Detalle crudo del Pedido</h3>
+          \${rawHtml}
+        </div>
+      \`;
+    }
+
+    function openModal() {
+      document.getElementById('modalBackdrop').style.display = 'flex';
+    }
+    function closeModal() {
+      document.getElementById('modalBackdrop').style.display = 'none';
+    }
+
+    loadConversations();
+  </script>
 </body>
 </html>
-`;
-
-app.get("/admin", (_req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.send(adminHtml);
+  `);
 });
 
-app.get("/admin/api/conversations", async (req, res) => {
+// JSON de conversaciones para Admin
+app.get("/api/admin/conversations", async (req, res) => {
   try {
     const db = await getDb();
-    const limit = Math.min(parseInt(req.query.limit || "50", 10), 500);
-    const status = (req.query.status || "").toUpperCase();
-    const waId = (req.query.waId || "").trim();
-
-    const q = {};
-    if (status) q.status = status;
-    if (waId) q.waId = waId;
-
     const convs = await db.collection("conversations")
-      .find(q)
-      .sort({ openedAt: -1 })
-      .limit(limit)
-      .project({ waId:1, status:1, openedAt:1, closedAt:1, turns:1 })
+      .find({}, { sort: { openedAt: -1 } })
+      .project({ waId:1, status:1, openedAt:1, closedAt:1, turns:1, contactName:1 })
       .toArray();
 
-    if (!convs.length) return res.json([]);
-
-    const ids = convs.map(c => c._id);
-    const orders = await db.collection("orders")
-      .find({ conversationId: { $in: ids } })
-      .project({ conversationId:1, processed:1, "order.nombre":1 })
-      .toArray();
-
-    const byConv = new Map(orders.map(o => [String(o.conversationId), o]));
-
-    const out = convs.map(c => {
-      const o = byConv.get(String(c._id));
-      return {
-        ...c,
-        _id: c._id.toString(),
-        orderName: o?.order?.nombre || null,
-        orderProcessed: !!o?.processed,
-        orderId: o?._id ? o._id.toString() : null
-      };
-    });
-
+    // normalizar _id a string
+    const out = convs.map(c => ({
+      _id: c._id.toString(),
+      waId: c.waId,
+      contactName: c.contactName || "",
+      status: c.status || "OPEN",
+      openedAt: c.openedAt,
+      closedAt: c.closedAt,
+      turns: c.turns || 0
+    }));
     res.json(out);
   } catch (e) {
-    console.error("admin list error:", e);
-    res.status(500).json({ error: e.message });
+    console.error("⚠️ /api/admin/conversations error:", e);
+    res.status(500).json({ error: "internal" });
   }
 });
 
-app.get("/admin/messages/:id", async (req, res) => {
+// HTML con mensajes
+app.get("/api/admin/messages/:id", async (req, res) => {
   try {
+    const id = req.params.id;
     const db = await getDb();
-    const id = new ObjectId(req.params.id);
-
-    const conv = await db.collection("conversations").findOne({ _id: id });
-    if (!conv) return res.status(404).send("Conversación no encontrada");
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
+    if (!conv) return res.status(404).send("Conversation not found");
 
     const msgs = await db.collection("messages")
-      .find({ conversationId: id })
+      .find({ conversationId: new ObjectId(id) })
       .sort({ ts: 1 })
       .toArray();
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.send(`<!doctype html>
-<html><head><meta charset="utf-8"><title>Mensajes ${conv.waId}</title>
-<style>
- body{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:16px;}
- .muted{color:#666;font-size:12px}
- .pill{padding:2px 8px;border-radius:999px;color:#fff;font-size:12px;display:inline-block}
- .OPEN{background:#0ea5e9}.COMPLETED{background:#16a34a}.CANCELLED{background:#ef4444}
- .msg{white-space:pre-wrap;background:#f9fafb;border:1px solid #eee;padding:8px;border-radius:6px;margin-bottom:8px}
-</style></head>
+    res.end(`
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Mensajes - ${conv.waId}</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; }
+    .msg { margin-bottom: 12px; }
+    .role { font-weight: bold; }
+    .meta { color: #666; font-size: 12px; }
+    pre { background:#f6f6f6; padding:8px; border-radius:4px; overflow:auto; }
+  </style>
+</head>
 <body>
-<h2>Mensajes — ${conv.waId} <span class="pill ${conv.status}">${conv.status}</span></h2>
-<div class="muted">Abierta: ${conv.openedAt ? new Date(conv.openedAt).toLocaleString() : '-'} | Cerrada: ${conv.closedAt ? new Date(conv.closedAt).toLocaleString() : '-'}</div>
-<hr/>
-${msgs.map(m => `<div class="msg"><b>${m.role.toUpperCase()}</b> <span class="muted">${new Date(m.ts).toLocaleString()}</span><br>${(m.content||'')}${
-  m.meta && (m.meta.transcript || m.meta.ocrText || m.meta.estado)
-    ? '<br><small class="muted">' + JSON.stringify(m.meta) + '</small>' : ''}</div>`).join('')}
-</body></html>`);
-  } catch (e) {
-    console.error("admin messages error:", e);
-    res.status(500).send("Error interno");
-  }
-});
-
-app.get("/admin/print/order/:convId", async (req, res) => {
-  try {
-    const db = await getDb();
-    const id = new ObjectId(req.params.convId);
-    const conv = await db.collection("conversations").findOne({ _id: id });
-    if (!conv) return res.status(404).send("Conversación no encontrada");
-
-    const order = await db.collection("orders").findOne({ conversationId: id });
-    const pedido = order?.order || conv?.summary?.Pedido || null;
-
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    if (!pedido) return res.send("<html><body><p>No hay pedido disponible.</p></body></html>");
-
-    const nombre = pedido.nombre || pedido["Nombre"] || "-";
-    const rows = [
-      ["Cliente", nombre],
-      ["Teléfono (wa_id)", conv.waId],
-      ["Estado pedido", pedido.estadoPedido || pedido["Estado pedido"] || "-"],
-      ["Entrega", pedido.entrega || "-"],
-      ["Domicilio", pedido.domicilio || "-"],
-      ["Fecha/Hora entrega", (pedido.fechaHoraEntrega || pedido.hora || "-")],
-      ["Pollo", pedido.pedidoPollo || "-"],
-      ["Papas", pedido.pedidoPapas || "-"],
-      ["Milanesas Comunes", pedido.milanesasComunes || "-"],
-      ["Milanesas Napolitanas", pedido.milanesasNapolitanas || "-"],
-      ["Ensaladas", pedido.ensaladas || "-"],
-      ["Bebidas", pedido.bebidas || "-"],
-      ["Monto", (pedido.monto != null ? ('$' + pedido.monto) : "-")]
-    ];
-
-    res.send(`<!doctype html>
-<html><head><meta charset="utf-8"><title>Pedido ${conv.waId}</title>
-<style>
- body{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin:24px;}
- h1{margin:0 0 8px;}
- table{border-collapse:collapse;width:100%;margin-top:12px;}
- th,td{border:1px solid #ddd;padding:8px;font-size:14px;text-align:left;}
- th{background:#f7f7f7;}
- .actions{margin:12px 0;}
- @media print {.actions{display:none;}}
-</style></head>
-<body>
-  <div class="actions">
-    <button onclick="window.print()">Imprimir</button>
+  <h2>Mensajes - ${conv.contactName ? (conv.contactName + " • ") : ""}${conv.waId}</h2>
+  <div>
+    ${msgs.map(m => `
+      <div class="msg">
+        <div class="role">${m.role.toUpperCase()} <span class="meta">(${new Date(m.ts).toLocaleString()})</span></div>
+        <pre>${(m.content || "").replace(/[<>&]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</pre>
+        ${m.meta && Object.keys(m.meta).length ? `<div class="meta">meta: <code>${JSON.stringify(m.meta)}</code></div>` : ""}
+      </div>
+    `).join("")}
   </div>
-  <h1>Pedido</h1>
-  <div>Conversación: ${conv._id.toString()}</div>
-  <div>Abierta: ${conv.openedAt ? new Date(conv.openedAt).toLocaleString() : '-'}</div>
-  <div>Cerrada: ${conv.closedAt ? new Date(conv.closedAt).toLocaleString() : '-'}</div>
-  <table>
-    <tbody>
-      ${rows.map(([k,v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join("")}
-    </tbody>
-  </table>
-</body></html>`);
+</body>
+</html>
+    `);
   } catch (e) {
-    console.error("admin print error:", e);
-    res.status(500).send("Error interno");
+    console.error("⚠️ /api/admin/messages error:", e);
+    res.status(500).send("internal");
   }
 });
 
-app.post("/admin/api/orders/:orderId/process", async (req, res) => {
+// JSON del pedido normalizado
+app.get("/api/admin/order/:id", async (req, res) => {
   try {
+    const id = req.params.id;
     const db = await getDb();
-    const orderId = new ObjectId(req.params.orderId);
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
+    if (!conv) return res.status(404).json({ error: "not_found" });
 
-    // leer cuerpo (ya tenemos express.json global)
-    const { processed } = req.body || {};
-    const val = !!processed;
+    // Buscar order por conversationId si existe
+    let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) });
+    if (!order && conv.summary?.Pedido) {
+      // normalizar on the fly si no se grabó orders (backfill)
+      order = normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
+    }
 
-    const r = await db.collection("orders").updateOne(
-      { _id: orderId },
-      { $set: { processed: val, processedAt: val ? new Date() : null } }
-    );
-    if (r.matchedCount !== 1) return res.status(404).json({ error: "order_not_found" });
-    return res.json({ ok: true, processed: val });
+    res.json({
+      waId: conv.waId,
+      order: order ? {
+        name: order.name || conv.contactName || "",
+        entrega: order.entrega || "",
+        domicilio: order.domicilio || "",
+        items: order.items || [],
+        amount: order.amount ?? null,
+        estadoPedido: order.estadoPedido || "",
+        fechaEntrega: order.fechaEntrega || "",
+        hora: order.hora || "",
+        processed: !!order.processed
+      } : null,
+      rawPedido: conv.summary?.Pedido || null
+    });
   } catch (e) {
-    console.error("process order error:", e);
-    res.status(500).json({ error: e.message });
+    console.error("⚠️ /api/admin/order error:", e);
+    res.status(500).json({ error: "internal" });
   }
 });
 
-// ========= Start =========
-(async () => {
+// marcar pedido como procesado
+app.post("/api/admin/order/:id/process", async (req, res) => {
   try {
-    await ensureOrdersIndexes().catch(e => console.warn("⚠️ No se pudieron crear índices de orders:", e.message));
-  } catch {}
-})();
+    const id = req.params.id;
+    const db = await getDb();
+    const convId = new ObjectId(id);
 
+    const upd = await db.collection("orders").updateOne(
+      { conversationId: convId },
+      { $set: { processed: true, processedAt: new Date() } }
+    );
+    if (!upd.matchedCount) {
+      // si no hay order, intentamos construirla desde summary y crearla procesada
+      const conv = await db.collection("conversations").findOne({ _id: convId });
+      if (!conv || !conv.summary?.Pedido) return res.status(404).json({ error: "order_not_found" });
+      const orderDoc = normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
+      orderDoc.conversationId = convId;
+      orderDoc.processed = true;
+      orderDoc.processedAt = new Date();
+      await db.collection("orders").insertOne(orderDoc);
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("⚠️ /api/admin/order/:id/process error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+/* ======================= Seguridad global de errores ======================= */
+process.on("unhandledRejection", (reason) => {
+  console.error("🧨 UnhandledRejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("🧨 UncaughtException:", err);
+});
+
+/* ======================= Start ======================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Webhook listening on port ${PORT}`));
