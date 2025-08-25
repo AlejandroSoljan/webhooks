@@ -536,9 +536,34 @@ async function insertFinalOrderDocument({ waId, conversationId, responseText, pe
 }
 
 // Finalización idempotente + Sheets + Orden en Mongo
+// === NUEVA versión: cierre idempotente que solo finaliza SI Sheets se guardó bien ===
 async function finalizeConversationOnce(conversationId, finalPayload, estado) {
   const db = await getDb();
-  const res = await db.collection("conversations").findOneAndUpdate(
+
+  // 1) Leemos la conv para ver si ya está finalizada
+  const conv = await db.collection("conversations").findOne({ _id: new ObjectId(conversationId) });
+  if (!conv) {
+    console.warn("⚠️ finalizeConversationOnce: conversación no encontrada:", conversationId);
+    return { didFinalize: false, reason: "not_found" };
+  }
+  if (conv.finalized === true) {
+    // Ya finalizada: no repetimos guardado para evitar duplicados.
+    return { didFinalize: false, reason: "already_finalized" };
+  }
+
+  // 2) Intentamos guardar en Google Sheets primero (si falla, no finalizamos)
+  try {
+    await saveCompletedToSheets({
+      waId: conv.waId,
+      data: finalPayload || {}
+    });
+  } catch (e) {
+    console.error("❌ Sheets guardado FALLÓ; NO finalizo para reintentar luego:", e?.message);
+    return { didFinalize: false, reason: "sheets_failed", sheetsError: e?.message };
+  }
+
+  // 3) Si Sheets OK, recién ahora marcamos finalizada (idempotente)
+  const updRes = await db.collection("conversations").updateOne(
     { _id: new ObjectId(conversationId), finalized: { $ne: true } },
     {
       $set: {
@@ -549,33 +574,18 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
           response: finalPayload?.response || "",
           Pedido: finalPayload?.Pedido || null,
           Bigdata: finalPayload?.Bigdata || null
-        }
+        },
+        sheetsSaved: true
       }
-    },
-    { returnDocument: "after" }
+    }
   );
 
-  const updated = !!res?.value?.finalized;
-  if (!updated) return { didFinalize: false };
-
-  try {
-    await saveCompletedToSheets({ waId: res.value.waId, data: finalPayload || {} });
-  } catch (e) {
-    console.warn("⚠️ Error guardando en Sheets (continuo):", e.message);
+  if (updRes.modifiedCount === 1) {
+    return { didFinalize: true };
+  } else {
+    // Otra carrera en milisegundos: alguien finalizó entre el paso 1 y 3
+    return { didFinalize: false, reason: "raced_already_finalized" };
   }
-  try {
-    await insertFinalOrderDocument({
-      waId: res.value.waId,
-      conversationId: res.value._id,
-      responseText: finalPayload?.response || "",
-      pedido: finalPayload?.Pedido || {},
-      bigdata: finalPayload?.Bigdata || {},
-      estado: estado || "COMPLETED"
-    });
-  } catch (e) {
-    console.warn("⚠️ Error insertando orden en Mongo:", e.message);
-  }
-  return { didFinalize: true };
 }
 
 /* ===================== Sesiones en memoria ===================== */
