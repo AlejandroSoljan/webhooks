@@ -1042,6 +1042,288 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
+// ====== Helpers HTML / seguridad ======
+//////////////////////////////////////////////////////
+////////////////////////////////////////////////
+function escapeHtml(str = "") {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+function fmtDate(d) {
+  if (!d) return "";
+  const dt = (d instanceof Date) ? d : new Date(d);
+  return dt.toLocaleString("es-AR", { hour12: false });
+}
+
+// Basic Auth muy simple (opcional). Define ADMIN_USER y ADMIN_PASS para activarlo.
+function adminAuth(req, res, next) {
+  const user = process.env.ADMIN_USER;
+  const pass = process.env.ADMIN_PASS;
+  if (!user || !pass) return next(); // sin credenciales => sin auth
+
+  const h = req.headers.authorization || "";
+  if (!h.startsWith("Basic ")) {
+    res.setHeader("WWW-Authenticate", 'Basic realm="Admin"');
+    return res.status(401).send("Auth required");
+  }
+  const [, base64] = h.split(" ");
+  const [u, p] = Buffer.from(base64 || "", "base64").toString().split(":");
+  if (u === user && p === pass) return next();
+  res.setHeader("WWW-Authenticate", 'Basic realm="Admin"');
+  return res.status(401).send("Auth required");
+}
+
+// ====== Admin UI: listado de conversaciones ======
+app.get("/admin", adminAuth, async (req, res) => {
+  try {
+    const db = await getDb();
+
+    const page  = Math.max(1, parseInt(req.query.page || "1", 10));
+    const limit = Math.min(100, Math.max(5, parseInt(req.query.limit || "20", 10)));
+    const skip  = (page - 1) * limit;
+
+    const q = {};
+    if (req.query.waId)   q.waId = String(req.query.waId).trim();
+    if (req.query.status) q.status = String(req.query.status).trim().toUpperCase();
+
+    const [total, rows] = await Promise.all([
+      db.collection("conversations").countDocuments(q),
+      db.collection("conversations")
+        .find(q)
+        .sort({ openedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray()
+    ]);
+
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const css = `
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:20px;color:#222}
+      h1{margin:0 0 16px}
+      form.filter{margin:12px 0;display:flex;gap:8px;flex-wrap:wrap}
+      input,select{padding:6px 8px;border:1px solid #ccc;border-radius:6px}
+      button{padding:6px 10px;border:1px solid #1976d2;background:#1976d2;color:#fff;border-radius:6px;cursor:pointer}
+      table{border-collapse:collapse;width:100%;margin-top:12px}
+      th,td{padding:8px 10px;border-bottom:1px solid #eee;text-align:left;font-size:14px}
+      tr:hover{background:#fafafa}
+      .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
+      .ok{background:#e8f5e9;color:#1b5e20}
+      .warn{background:#fff3e0;color:#e65100}
+      .bad{background:#ffebee;color:#b71c1c}
+      .muted{color:#777}
+      .pager{margin-top:12px;display:flex;gap:8px;align-items:center}
+      a.btn{padding:4px 8px;border:1px solid #ccc;border-radius:6px;text-decoration:none;color:#1976d2}
+      .hint{margin-top:6px;color:#666;font-size:13px}
+      .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+    `;
+
+    const rowsHtml = rows.map(r => {
+      const st = (r.status || "").toUpperCase();
+      const pillClass = st === "COMPLETED" ? "ok" : (st === "CANCELLED" ? "bad" : "warn");
+      const sheet = r.sheetsSaved === true ? "✅" : (r.finalized ? "⚠️" : "—");
+      return `
+        <tr>
+          <td class="mono">${escapeHtml(String(r._id))}</td>
+          <td class="mono">${escapeHtml(r.waId || "")}</td>
+          <td><span class="pill ${pillClass}">${escapeHtml(st || "—")}</span></td>
+          <td>${fmtDate(r.openedAt)}</td>
+          <td>${r.closedAt ? fmtDate(r.closedAt) : '<span class="muted">—</span>'}</td>
+          <td>${Number(r.turns || 0)}</td>
+          <td>${sheet}</td>
+          <td><a class="btn" href="/admin/conv/${escapeHtml(String(r._id))}">ver</a></td>
+        </tr>
+      `;
+    }).join("");
+
+    const qs = new URLSearchParams({
+      waId: req.query.waId || "",
+      status: req.query.status || "",
+      limit: String(limit)
+    });
+    const prevLink = page > 1 ? `/admin?${qs.toString()}&page=${page-1}` : null;
+    const nextLink = page < totalPages ? `/admin?${qs.toString()}&page=${page+1}` : null;
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Admin · Conversaciones</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>${css}</style>
+</head>
+<body>
+  <h1>Conversaciones</h1>
+
+  <form class="filter" method="GET" action="/admin">
+    <input type="text" name="waId" placeholder="Filtro por waId" value="${escapeHtml(req.query.waId || "")}" />
+    <select name="status">
+      <option value="">(todos los estados)</option>
+      ${["OPEN","COMPLETED","CANCELLED"].map(s =>
+        `<option value="${s}" ${req.query.status===s?"selected":""}>${s}</option>`).join("")}
+    </select>
+    <input type="number" min="5" max="100" name="limit" value="${limit}" />
+    <button type="submit">Filtrar</button>
+    <a class="btn" href="/admin">Limpiar</a>
+  </form>
+
+  <div class="hint">Total: ${total} · Página ${page} de ${totalPages}</div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>_id</th>
+        <th>waId</th>
+        <th>estado</th>
+        <th>abierta</th>
+        <th>cerrada</th>
+        <th>turnos</th>
+        <th>Sheets</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rowsHtml || `<tr><td colspan="8" class="muted">Sin resultados</td></tr>`}
+    </tbody>
+  </table>
+
+  <div class="pager">
+    ${prevLink ? `<a class="btn" href="${prevLink}">← Anterior</a>` : ""}
+    ${nextLink ? `<a class="btn" href="${nextLink}">Siguiente →</a>` : ""}
+  </div>
+
+  <div class="hint">Tip: define <code class="mono">ADMIN_USER</code> y <code class="mono">ADMIN_PASS</code> para proteger esta página.</div>
+</body>
+</html>`);
+  } catch (e) {
+    console.error("⚠️ /admin error:", e);
+    res.status(500).send("Error interno");
+  }
+});
+// ====== Admin UI: detalle de conversación + mensajes ======
+app.get("/admin/conv/:id", adminAuth, async (req, res) => {
+  try {
+    const db = await getDb();
+    const id = req.params.id;
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
+    if (!conv) return res.status(404).send("Conversación no encontrada");
+
+    const msgs = await db.collection("messages")
+      .find({ conversationId: new ObjectId(id) })
+      .sort({ ts: 1 })
+      .toArray();
+
+    const css = `
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:20px;color:#222}
+      h1,h2{margin:0 0 12px}
+      a.btn{padding:4px 8px;border:1px solid #ccc;border-radius:6px;text-decoration:none;color:#1976d2}
+      .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+      .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+      .card{border:1px solid #eee;border-radius:10px;padding:12px}
+      .muted{color:#777}
+      .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
+      .ok{background:#e8f5e9;color:#1b5e20}
+      .warn{background:#fff3e0;color:#e65100}
+      .bad{background:#ffebee;color:#b71c1c}
+      pre{white-space:pre-wrap;word-break:break-word;background:#f8f8f8;border:1px solid #eee;border-radius:8px;padding:10px}
+      .msg{border-left:4px solid #ddd;padding:8px 10px;margin:10px 0;border-radius:6px}
+      .role-user{border-left-color:#1976d2;background:#f6fbff}
+      .role-assistant{border-left-color:#2e7d32;background:#f4fff6}
+      .meta{font-size:13px;color:#555}
+      .kv{display:grid;grid-template-columns:200px 1fr;gap:8px;margin:6px 0}
+      .kv div{padding:4px 0;border-bottom:1px dashed #eee}
+    `;
+
+    const pill = (st) => {
+      const s = (st || "").toUpperCase();
+      const cls = s === "COMPLETED" ? "ok" : (s === "CANCELLED" ? "bad" : "warn");
+      return `<span class="pill ${cls}">${escapeHtml(s || "—")}</span>`;
+    };
+
+    const metaKv = (label, val) => `
+      <div class="kv">
+        <div class="muted">${escapeHtml(label)}</div>
+        <div>${val ? escapeHtml(String(val)) : "<span class='muted'>—</span>"}</div>
+      </div>
+    `;
+
+    const summaryJson = JSON.stringify(conv.summary || {}, null, 2);
+
+    const msgsHtml = msgs.map(m => {
+      const roleClass = m.role === "user" ? "role-user" : "role-assistant";
+      const transcript = m?.meta?.transcript;
+      const ocrText    = m?.meta?.ocrText;
+      const estado     = m?.meta?.estado;
+      const mediaUrl   = m?.meta?.mediaUrl;
+
+      const metaBits = [
+        transcript ? metaKv("transcript", transcript) : "",
+        ocrText ? metaKv("ocrText", ocrText) : "",
+        estado ? metaKv("estado", estado) : "",
+        mediaUrl ? metaKv("mediaUrl", mediaUrl) : ""
+      ].join("");
+
+      return `
+        <div class="msg ${roleClass}">
+          <div class="muted">${fmtDate(m.ts)} · ${escapeHtml(m.role)} · tipo: ${escapeHtml(m.type || "text")}</div>
+          <div><pre>${escapeHtml(m.content || "")}</pre></div>
+          ${metaBits ? `<div class="meta">${metaBits}</div>` : ""}
+        </div>
+      `;
+    }).join("");
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Conv ${escapeHtml(String(conv._id))}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>${css}</style>
+</head>
+<body>
+  <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px">
+    <a class="btn" href="/admin">← Volver</a>
+    <h1 style="margin:0">Conversación</h1>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2 style="margin-top:0">Datos</h2>
+      ${metaKv("_id", String(conv._id))}
+      ${metaKv("waId", conv.waId)}
+      ${metaKv("estado", pill(conv.status))}
+      ${metaKv("finalized", conv.finalized ? "true ✅" : "false")}
+      ${metaKv("sheetsSaved", conv.sheetsSaved ? "true ✅" : "false")}
+      ${metaKv("turnos", String(conv.turns || 0))}
+      ${metaKv("abierta", fmtDate(conv.openedAt))}
+      ${metaKv("cerrada", conv.closedAt ? fmtDate(conv.closedAt) : "")}
+    </div>
+
+    <div class="card">
+      <h2 style="margin-top:0">Resumen (summary)</h2>
+      <pre>${escapeHtml(summaryJson)}</pre>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <h2 style="margin-top:0">Mensajes</h2>
+    ${msgsHtml || "<div class='muted'>Sin mensajes</div>"}
+  </div>
+</body>
+</html>`);
+  } catch (e) {
+    console.error("⚠️ /admin/conv error:", e);
+    res.status(500).send("Error interno");
+  }
+});
+
+
+
 // ========= Start =========
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Webhook listening on port ${PORT}`));
