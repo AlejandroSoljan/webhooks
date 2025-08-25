@@ -1,92 +1,81 @@
 // db.js
 const { MongoClient, ServerApiVersion } = require("mongodb");
 
-const MONGODB_URI = process.env.MONGODB_URI;         // ej: mongodb+srv://user:pass@cluster.rqoqjny.mongodb.net/?retryWrites=true&w=majority
-const MONGODB_DBNAME = process.env.MONGODB_DBNAME;   // ej: "mi_base"
-
-if (!MONGODB_URI) {
-  throw new Error("Falta MONGODB_URI en .env");
-}
-if (!MONGODB_DBNAME) {
-  throw new Error("Falta MONGODB_DBNAME en .env");
-}
-
-let client; 
-let db;
-let connectingPromise;
+let _client = null;
+let _db = null;
 
 /**
- * Devuelve un singleton de DB. Reutiliza la conexión entre llamadas.
+ * Extrae el dbName desde la MONGODB_URI (si viene en el path).
+ * Si no viene, usa MONGODB_DBNAME o 'test'.
  */
+function resolveDbNameFromUriOrEnv() {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) throw new Error("Falta MONGODB_URI en variables de entorno.");
+
+  let dbName = null;
+  try {
+    const u = new URL(uri);
+    // pathname viene como '/nombre' o '/' si no hay db
+    const path = (u.pathname || "").trim();
+    if (path && path !== "/") {
+      dbName = decodeURIComponent(path.slice(1));
+    }
+  } catch (e) {
+    // Si la URI no parsea con URL (casos muy viejos), ignoramos y seguimos
+  }
+
+  if (!dbName) {
+    dbName = process.env.MONGODB_DBNAME || "test";
+  }
+  return dbName;
+}
+
 async function getDb() {
-  if (db) return db;
+  if (_db) return _db;
 
-  if (!connectingPromise) {
-    connectingPromise = (async () => {
-      client = new MongoClient(MONGODB_URI, {
-        serverApi: {
-          version: ServerApiVersion.v1,
-          strict: true,
-          deprecationErrors: true
-        },
-        // Opcionales, útiles en entornos serverless:
-        maxPoolSize: parseInt(process.env.MONGO_MAX_POOL || "10", 10),
-        minPoolSize: 0,
-        connectTimeoutMS: parseInt(process.env.MONGO_CONNECT_TIMEOUT_MS || "15000", 10),
-        socketTimeoutMS: parseInt(process.env.MONGO_SOCKET_TIMEOUT_MS || "60000", 10),
-        retryWrites: true,
-        tls: true, // Atlas requiere TLS
-      });
+  const uri = process.env.MONGODB_URI;
+  if (!uri) throw new Error("Falta MONGODB_URI en variables de entorno.");
 
-      await client.connect();
+  const dbName = resolveDbNameFromUriOrEnv();
 
-      // Ping de salud
-      await client.db("admin").command({ ping: 1 });
-
-      db = client.db(MONGODB_DBNAME);
-
-      // (Opcional) crear índices si no existen aún
-      await ensureIndexes(db);
-
-      return db;
-    })().catch((err) => {
-      // si falló, permite reintentar en el próximo getDb
-      connectingPromise = null;
-      throw err;
+  if (!_client) {
+    _client = new MongoClient(uri, {
+      // Recomendado por Atlas
+      serverApi: {
+        version: ServerApiVersion.v1,
+        strict: true,
+        deprecationErrors: true,
+      },
+      // TLS por defecto en mongodb+srv; no hace falta más en Render/Atlas
+      // useUnifiedTopology/useNewUrlParser ya no son necesarios en drivers modernos
     });
   }
 
-  return connectingPromise;
+  if (!_client.topology?.isConnected()) {
+    await _client.connect();
+    // (opcional) ping de cortesía
+    try {
+      await _client.db(dbName).command({ ping: 1 });
+      console.log(`✅ Conectado a MongoDB | db="${dbName}"`);
+    } catch (e) {
+      console.warn("⚠️ Ping a Mongo falló (continuo igual):", e?.message);
+    }
+  }
+
+  _db = _client.db(dbName);
+  return _db;
 }
 
-/**
- * Crea índices útiles para el flujo del bot. Idempotente.
- */
-async function ensureIndexes(db) {
-  // Conversaciones
-  await db.collection("conversations").createIndexes([
-    { key: { waId: 1, status: 1 } },                // búsqueda por usuario y estado
-    { key: { openedAt: -1 } },                      // orden por fecha
-    { key: { closedAt: -1 } },                      // orden por cierre
-  ]);
-
-  // Mensajes
-  await db.collection("messages").createIndexes([
-    { key: { conversationId: 1, ts: 1 } },          // línea de tiempo de la conversación
-    { key: { role: 1, ts: -1 } },                   // análisis por rol
-    { key: { expireAt: 1 }, expireAfterSeconds: 0, name: "ttl_expireAt", sparse: true }, // TTL opcional
-  ]);
-}
-
-/**
- * Cierra la conexión (útil en tests o scripts).
- */
 async function closeDb() {
-  if (client) {
-    await client.close().catch(() => {});
-    client = null;
-    db = null;
-    connectingPromise = null;
+  try {
+    if (_client) {
+      await _client.close();
+      _client = null;
+      _db = null;
+      console.log("🔌 Conexión MongoDB cerrada.");
+    }
+  } catch (e) {
+    console.warn("⚠️ Error cerrando MongoDB:", e?.message);
   }
 }
 
