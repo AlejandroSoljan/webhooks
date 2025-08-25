@@ -1,15 +1,18 @@
-// server.js (órdenes + panel + gráficos + filtros por producto + CSV)
+// server.js
 require("dotenv").config();
 
 const express = require("express");
 const crypto = require("crypto");
 const OpenAI = require("openai");
 const { google } = require("googleapis");
-const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+
+// --- MongoDB helpers
+const { ObjectId } = require("mongodb");
+const { getDb } = require("./db");
 
 const app = express();
 
-/* ===================== Body / firma ===================== */
+// ========= Body / firma =========
 app.use(express.json({
   verify: (req, res, buf) => { req.rawBody = buf; }
 }));
@@ -18,58 +21,66 @@ function isValidSignature(req) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   const signature = req.get("X-Hub-Signature-256");
   if (!appSecret || !signature) return false;
+
   const hmac = crypto.createHmac("sha256", appSecret);
   hmac.update(req.rawBody);
   const expected = "sha256=" + hmac.digest("hex");
-  try { return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected)); }
-  catch { return false; }
+  try {
+    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  } catch {
+    return false;
+  }
 }
 
-/* ===================== OpenAI ===================== */
+// ========= OpenAI =========
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini";
+
+// ====== Config de modelo / temperatura ======
+const CHAT_MODEL =
+  process.env.OPENAI_CHAT_MODEL ||
+  process.env.OPENAI_MODEL ||
+  "gpt-4o-mini";
 const CHAT_TEMPERATURE = Number.isFinite(parseFloat(process.env.OPENAI_TEMPERATURE))
-  ? parseFloat(process.env.OPENAI_TEMPERATURE) : 0.2;
+  ? parseFloat(process.env.OPENAI_TEMPERATURE)
+  : 0.2;
 
-/* ===================== Utils ===================== */
-function fmt(d) {
-  if (!d) return "";
-  return new Date(d).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" });
-}
-function fmtMoney(v) {
-  if (v === undefined || v === null) return "";
-  return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(Number(v) || 0);
-}
-function csvEscape(v) {
-  const s = String(v ?? "");
-  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
-
-/* ===================== JSON robusto ===================== */
+// ========= Helpers JSON robustos =========
 function coerceJsonString(raw) {
   if (raw == null) return null;
   let s = String(raw);
+
   s = s.replace(/^\uFEFF/, "")
        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]+/g, " ")
        .trim();
+
   if (s.startsWith("```")) {
     s = s.replace(/^```(\w+)?/i, "").replace(/```$/i, "").trim();
   }
+
   s = s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+
   if (s.startsWith("{") && s.endsWith("}")) return s;
+
   const first = s.indexOf("{");
   const last  = s.lastIndexOf("}");
-  if (first !== -1 && last !== -1 && last > first) return s.slice(first, last + 1).trim();
+  if (first !== -1 && last !== -1 && last > first) {
+    return s.slice(first, last + 1).trim();
+  }
+
   return s;
 }
-async function safeJsonParseStrictOrFix(raw) {
+
+async function safeJsonParseStrictOrFix(raw, { openai, model = "gpt-4o-mini" } = {}) {
   let s = coerceJsonString(raw);
   if (!s) return null;
-  try { return JSON.parse(s); } catch (_) {}
+
+  try {
+    return JSON.parse(s);
+  } catch (_) {}
+
   try {
     const fix = await openai.chat.completions.create({
-      model: CHAT_MODEL,
+      model,
       temperature: 0,
       response_format: { type: "json_object" },
       messages: [
@@ -81,8 +92,9 @@ async function safeJsonParseStrictOrFix(raw) {
     const fixedClean = coerceJsonString(fixed);
     return JSON.parse(fixedClean);
   } catch (e2) {
-    try { return JSON.parse(s); }
-    catch (e3) {
+    try {
+      return JSON.parse(s);
+    } catch (e3) {
       const preview = (String(raw || "")).slice(0, 400);
       console.error("❌ No se pudo parsear JSON luego de fix:", e3.message, "\nRaw preview:", preview);
       return null;
@@ -90,12 +102,13 @@ async function safeJsonParseStrictOrFix(raw) {
   }
 }
 
-/* ===================== WhatsApp / Media ===================== */
+// ========= WhatsApp / Media helpers =========
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
 const TRANSCRIBE_API_URL = (process.env.TRANSCRIBE_API_URL || "https://transcribegpt-569454200011.northamerica-northeast1.run.app").trim().replace(/\/+$/,"");
 const CACHE_TTL_MS = parseInt(process.env.AUDIO_CACHE_TTL_MS || "300000", 10); // 5 min
 
-const fileCache = new Map();
+// ---- Cache en memoria de binarios (audio e imagen) ----
+const fileCache = new Map(); // id -> { buffer, mime, expiresAt }
 function makeId(n = 16) { return crypto.randomBytes(n).toString("hex"); }
 function getBaseUrl(req) {
   let base = (process.env.PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
@@ -117,11 +130,13 @@ function getFromCache(id) {
   if (Date.now() > item.expiresAt) { fileCache.delete(id); return null; }
   return item;
 }
+// 🧹 Limpiador periódico
 setInterval(() => {
   const now = Date.now();
   for (const [id, item] of fileCache.entries()) if (now > item.expiresAt) fileCache.delete(id);
 }, 60 * 1000);
 
+// Rutas públicas para servir cache
 app.get("/cache/audio/:id", (req, res) => {
   const item = getFromCache(req.params.id);
   if (!item) return res.status(404).send("Not found");
@@ -162,7 +177,7 @@ async function downloadMediaBuffer(mediaUrl) {
   return Buffer.from(arrayBuffer);
 }
 
-// Visión (OCR simple)
+// ---- OCR de imagen con OpenAI Chat Completions (o4-mini) ----
 async function transcribeImageWithOpenAI(publicImageUrl) {
   const url = "https://api.openai.com/v1/chat/completions";
   const body = {
@@ -186,10 +201,12 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
   return data?.choices?.[0]?.message?.content?.trim() || "";
 }
 
-// Transcriptor externo
+// ---- Transcriptor externo: JSON {audio_url}, luego multipart file, luego GET ----
 async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename = "audio.ogg" }) {
   const base = TRANSCRIBE_API_URL;
   const paths = ["", "/transcribe", "/api/transcribe", "/v1/transcribe"];
+
+  // 1) POST JSON { audio_url }
   for (const p of paths) {
     const url = `${base}${p}`;
     const r = await fetch(url, {
@@ -197,8 +214,17 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ audio_url: publicAudioUrl })
     });
-    if (r.ok) return r.json().catch(() => ({}));
+    if (r.ok) {
+      const j = await r.json().catch(() => ({}));
+      console.log("✅ Transcribe OK: POST JSON audio_url", url);
+      return j;
+    } else {
+      const txt = await r.text().catch(() => "");
+      console.warn("Transcribe POST JSON fallo:", r.status, url, txt);
+    }
   }
+
+  // 2) POST multipart con archivo
   if (buffer && buffer.length) {
     function buildMultipart(parts) {
       const boundary = "----NodeForm" + crypto.randomBytes(8).toString("hex");
@@ -224,44 +250,82 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
         { type: "file", name: "file", filename, contentType: mime || "application/octet-stream", data: buffer }
       ]);
       const r = await fetch(url, { method: "POST", headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` }, body });
-      if (r.ok) return r.json().catch(() => ({}));
+      if (r.ok) {
+        const j = await r.json().catch(() => ({}));
+        console.log("✅ Transcribe OK: POST multipart file", url);
+        return j;
+      } else {
+        const txt = await r.text().catch(() => "");
+        console.warn("Transcribe POST multipart fallo:", r.status, url, txt);
+      }
     }
+  } else {
+    console.warn("⚠️ No hay buffer de audio para multipart; se omite variante file.");
   }
+
+  // 3) GET ?audio_url=
   for (const p of paths) {
     const url = `${base}${p}?audio_url=${encodeURIComponent(publicAudioUrl)}`;
     const g = await fetch(url);
-    if (g.ok) return g.json().catch(() => ({}));
+    if (g.ok) {
+      const j2 = await g.json().catch(() => ({}));
+      console.log("✅ Transcribe OK: GET", url);
+      return j2;
+    } else {
+      const txt = await g.text().catch(() => "");
+      console.warn("Transcribe GET fallo:", g.status, url, txt);
+    }
   }
+
   throw new Error("No hubo variantes válidas para el endpoint de transcripción.");
 }
 
-/* ===================== TTS ===================== */
+// ======== TTS (Texto a voz) con OpenAI ========
 async function synthesizeTTS(text) {
   const model = process.env.TTS_MODEL || "gpt-4o-mini-tts";
   const voice = process.env.TTS_VOICE || "alloy";
   const format = (process.env.TTS_FORMAT || "mp3").toLowerCase();
-  const resp = await openai.audio.speech.create({ model, voice, input: text, format });
+
+  const resp = await openai.audio.speech.create({
+    model,
+    voice,
+    input: text,
+    format // "mp3", "wav" o "opus"
+  });
+
   const arrayBuffer = await resp.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
-  const mime = format === "wav" ? "audio/wav" : format === "opus" ? "audio/ogg" : "audio/mpeg";
+
+  const mime =
+    format === "wav" ? "audio/wav" :
+    format === "opus" ? "audio/ogg" :
+    "audio/mpeg"; // mp3
+
   return { buffer, mime };
 }
 async function sendAudioLink(to, publicUrl, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
-  const payload = { messaging_product: "whatsapp", to, type: "audio", audio: { link: publicUrl } };
+  const payload = {
+    messaging_product: "whatsapp",
+    to,
+    type: "audio",
+    audio: { link: publicUrl }
+  };
+
   const resp = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
+
   const data = await resp.json();
   if (!resp.ok) console.error("❌ Error WhatsApp sendAudioLink:", resp.status, data);
   else console.log("📤 Enviado AUDIO:", data);
   return data;
 }
 
-/* ===================== Google Sheets helpers ===================== */
+// ========= Google Sheets helpers =========
 function getSheetsClient() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const key = (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
@@ -296,6 +360,8 @@ async function appendRow({ sheetName, values }) {
     requestBody: { values: [values] }
   });
 }
+
+// ----- Guardado en dos pestañas (Hoja 1 y BigData)
 function headerPedido() {
   return [
     "wa_id","response","Fecha y hora de inicio de conversacion","Fecha y hora fin de conversacion",
@@ -351,27 +417,42 @@ async function saveCompletedToSheets({ waId, data }) {
   await appendRow({ sheetName: "BigData", values: vBig });
 }
 
-/* ===================== Productos + Comportamiento ===================== */
-function looksActive(v) { return String(v || "").trim().toUpperCase() === "S"; }
-async function loadProductsFromSheetFull() {
+// ===== Productos desde Google Sheets (A nombre, B precio, C venta, D obs, E activo= S/N) =====
+const PRODUCTS_CACHE_TTL_MS = parseInt(process.env.PRODUCTS_CACHE_TTL_MS || "300000", 10); // 5 min
+let productsCache = { at: 0, items: [] };
+
+function looksActive(v) {
+  if (!v) return false;
+  return String(v).trim().toUpperCase() === "S";
+}
+async function loadProductsFromSheet() {
+  const now = Date.now();
+  if (now - productsCache.at < PRODUCTS_CACHE_TTL_MS && productsCache.items?.length) {
+    return productsCache.items;
+  }
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
-  const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range: "Productos!A2:E" });
+  const range = "Productos!A2:E"; // A nombre, B precio, C venta, D obs, E activo
+  const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
   const rows = resp.data.values || [];
-  return rows
-    .map(r => {
-      const activo = looksActive(r[4]);
-      if (!activo) return null;
-      const nombre = (r[0] || "").trim();
-      if (!nombre) return null;
-      const precioRaw = (r[1] || "").trim();
-      const venta = (r[2] || "").trim();
-      const obs = (r[3] || "").trim();
-      const maybeNum = Number(precioRaw.replace(/[^\d.,-]/g, "").replace(",", "."));
-      const precio = Number.isFinite(maybeNum) ? maybeNum : precioRaw;
-      return { nombre, precio, venta, obs };
-    })
-    .filter(Boolean);
+
+  const items = rows.map((r) => {
+    const nombre = (r[0] || "").trim();
+    const precioRaw = (r[1] || "").trim();
+    const venta = (r[2] || "").trim();
+    const obs = (r[3] || "").trim();
+    const activo = r[4];
+    if (!nombre) return null;
+    if (!looksActive(activo)) return null;
+
+    const maybeNum = Number(precioRaw.replace(/[^\d.,-]/g, "").replace(",", "."));
+    const precio = Number.isFinite(maybeNum) ? maybeNum : precioRaw;
+
+    return { nombre, precio, venta, obs };
+  }).filter(Boolean);
+
+  productsCache = { at: now, items };
+  return items;
 }
 function buildCatalogText(items) {
   if (!items?.length) return "Catálogo de productos: (ninguno activo)";
@@ -384,29 +465,34 @@ function buildCatalogText(items) {
   return "Catálogo de productos (nombre — precio (modo de venta) | Obs: observaciones):\n" + lines.join("\n");
 }
 
-const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); // env | sheet
+// ===== Comportamiento (ENV o Sheet) + Catálogo (siempre Sheet) =====
+const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); // "env" | "sheet"
 const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000;
 let behaviorCache = { at: 0, text: null };
 
 async function loadBehaviorTextFromEnv() {
-  return (process.env.COMPORTAMIENTO || "Sos un asistente claro, amable y conciso. Respondé en español.").trim();
+  const txt = (process.env.COMPORTAMIENTO || "Sos un asistente claro, amable y conciso. Respondé en español.").trim();
+  return txt;
 }
 async function loadBehaviorTextFromSheet() {
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
   const resp = await sheets.spreadsheets.values.get({
-    spreadsheetId, range: "Comportamiento_API!A1:B100"
+    spreadsheetId,
+    range: "Comportamiento_API!A1:B100"
   });
   const rows = resp.data.values || [];
   const parts = rows
     .map(r => {
       const a = (r[0] || "").replace(/\s+/g, " ").trim();
       const b = (r[1] || "").replace(/\s+/g, " ").trim();
-      return [a, b].filter(Boolean).join(" ").trim();
+      const line = [a, b].filter(Boolean).join(" ").trim();
+      return line;
     })
     .filter(Boolean);
   return parts.length ? parts.join("\n") : "Sos un asistente claro, amable y conciso. Respondé en español.";
 }
+
 async function buildSystemPrompt({ force = false } = {}) {
   const now = Date.now();
   if (!force && (now - behaviorCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && behaviorCache.text) {
@@ -419,7 +505,7 @@ async function buildSystemPrompt({ force = false } = {}) {
 
   let catalogText = "";
   try {
-    const products = await loadProductsFromSheetFull();
+    const products = await loadProductsFromSheet();
     catalogText = buildCatalogText(products);
   } catch (e) {
     console.warn("⚠️ No se pudo leer Productos:", e.message);
@@ -436,7 +522,7 @@ async function buildSystemPrompt({ force = false } = {}) {
   const jsonSchema =
     "FORMATO DE RESPUESTA (OBLIGATORIO - SOLO JSON, sin ```):\n" +
     '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED", ' +
-    '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
+    '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora de fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
     '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
 
   const fullText = [
@@ -451,54 +537,14 @@ async function buildSystemPrompt({ force = false } = {}) {
   return fullText;
 }
 
-/* ===================== MongoDB ===================== */
-const MONGODB_URI = process.env.MONGODB_URI;
-const MONGODB_DB  = process.env.MONGODB_DB  || "whatsapp_bot";
-let mongoClient;
-let mongoDb;
-let didEnsureIndexes = false;
-
-async function getDb() {
-  if (mongoDb) return mongoDb;
-  if (!MONGODB_URI) throw new Error("Falta MONGODB_URI en variables de entorno.");
-  mongoClient = new MongoClient(MONGODB_URI, {
-    serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true },
-    maxPoolSize: 20, connectTimeoutMS: 20000, socketTimeoutMS: 45000
-  });
-  await mongoClient.connect();
-  mongoDb = mongoClient.db(MONGODB_DB);
-  await ensureIndexes();
-  return mongoDb;
-}
-async function ensureIndexes() {
-  if (didEnsureIndexes) return;
-  const db = mongoDb;
-  await db.collection("conversations").createIndexes([
-    { key: { waId: 1, status: 1 } },
-    { key: { openedAt: -1 } },
-    { key: { closedAt: -1 } }
-  ]);
-  await db.collection("messages").createIndexes([
-    { key: { conversationId: 1, ts: 1 } },
-    { key: { expireAt: 1 }, expireAfterSeconds: 0 }
-  ]);
-  await db.collection("orders").createIndexes([
-    { key: { createdAt: -1 } },
-    { key: { estado: 1, createdAt: -1 } },
-    { key: { waId: 1, createdAt: -1 } },
-    { key: { conversationId: 1 } }
-  ]);
-  didEnsureIndexes = true;
-}
-
-/* ===================== Persistencia conversaciones ===================== */
+// ========= Persistencia NoSQL (MongoDB) =========
 async function ensureOpenConversation(waId) {
   const db = await getDb();
   let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
   if (!conv) {
     const doc = {
       waId,
-      status: "OPEN",
+      status: "OPEN", // OPEN | COMPLETED | CANCELLED
       finalized: false,
       openedAt: new Date(),
       closedAt: null,
@@ -511,37 +557,117 @@ async function ensureOpenConversation(waId) {
   }
   return conv;
 }
-async function appendMessage(conversationId, { role, content, type = "text", meta = {}, ttlDays = null }) {
+
+async function appendMessage(conversationId, {
+  role,
+  content,
+  type = "text",
+  meta = {},
+  ttlDays = null
+}) {
   const db = await getDb();
-  const doc = { conversationId: new ObjectId(conversationId), role, content, type, meta, ts: new Date() };
-  if (ttlDays && Number.isFinite(ttlDays)) doc.expireAt = new Date(Date.now() + ttlDays * 86400000);
+  const doc = {
+    conversationId: new ObjectId(conversationId),
+    role, content, type, meta,
+    ts: new Date()
+  };
+  if (ttlDays && Number.isFinite(ttlDays)) {
+    doc.expireAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
+  }
   await db.collection("messages").insertOne(doc);
+
   const upd = { $inc: { turns: 1 }, $set: {} };
   if (role === "user") upd.$set.lastUserTs = doc.ts;
   if (role === "assistant") upd.$set.lastAssistantTs = doc.ts;
   await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId) }, upd);
 }
 
-// Inserción de orden final
-async function insertFinalOrderDocument({ waId, conversationId, responseText, pedido, bigdata, estado }) {
+// ===== Orders (guardar pedido "normalizado" en Mongo) =====
+async function ensureOrdersIndexes() {
   const db = await getDb();
-  const doc = {
-    waId, conversationId, estado,
-    response: responseText || "",
-    pedido: pedido || {},
-    bigdata: bigdata || {},
-    createdAt: new Date()
-  };
-  await db.collection("orders").insertOne(doc);
+  await db.collection("orders").createIndex({ conversationId: 1 }, { unique: true });
+  await db.collection("orders").createIndex({ waId: 1, createdAt: -1 });
+  await db.collection("orders").createIndex({ status: 1, createdAt: -1 });
 }
 
-// Finalización idempotente + Sheets + Orden en Mongo
-// === NUEVA versión: cierre idempotente que solo finaliza SI Sheets se guardó bien ===
+function normalizeOrderDoc({ conversationId, waId, estado, payload }) {
+  const Pedido  = payload?.Pedido || {};
+  const Bigdata = payload?.Bigdata || {};
+
+  const doc = {
+    conversationId,
+    waId,
+    status: (estado || "COMPLETED").toUpperCase(),
+    response: payload?.response || "",
+    startedAtText: Pedido["Fecha y hora de inicio de conversacion"] || null,
+    endedAtText:   Pedido["Fecha y hora fin de conversacion"] || null,
+    order: {
+      estadoPedido:         Pedido["Estado pedido"] || null,
+      motivoCancelacion:    Pedido["Motivo cancelacion"] || null,
+      pedidoPollo:          Pedido["Pedido pollo"] || null,
+      pedidoPapas:          Pedido["Pedido papas"] || null,
+      milanesasComunes:     Pedido["Milanesas comunes"] || null,
+      milanesasNapolitanas: Pedido["Milanesas Napolitanas"] || null,
+      ensaladas:            Pedido["Ensaladas"] || null,
+      bebidas:              Pedido["Bebidas"] || null,
+      monto:                (typeof Pedido["Monto"] === "number") ? Pedido["Monto"] : Number(Pedido["Monto"]) || null,
+      nombre:               Pedido["Nombre"] || null,
+      entrega:              Pedido["Entrega"] || null,
+      domicilio:            Pedido["Domicilio"] || null,
+      fechaHoraEntrega:     Pedido["Fecha y hora de entrega"] || null,
+      hora:                 Pedido["Hora"] || null
+    },
+    bigdata: {
+      sexo:                      Bigdata["Sexo"] || null,
+      estudios:                  Bigdata["Estudios"] || null,
+      satisfaccionCliente:       Bigdata["Satisfaccion del cliente"] ?? null,
+      motivoPuntajeSatisfaccion: Bigdata["Motivo puntaje satisfaccion"] || null,
+      cuantoNosConoce:           Bigdata["Cuanto nos conoce el cliente"] ?? null,
+      motivoPuntajeConocimiento: Bigdata["Motivo puntaje conocimiento"] || null,
+      motivoPuntajeGeneral:      Bigdata["Motivo puntaje general"] || null,
+      perdidaOportunidad:        Bigdata["Perdida oportunidad"] || null,
+      sugerencias:               Bigdata["Sugerencias"] || null,
+      flujo:                     Bigdata["Flujo"] || null,
+      facilidadCompra:           Bigdata["Facilidad en el proceso de compras"] ?? null,
+      preguntoPorBot:            Bigdata["Pregunto por bot"] || null
+    },
+    createdAt: new Date()
+  };
+
+  return doc;
+}
+
+async function upsertOrderFromPayload({ conversationId, waId, estado, payload }) {
+  const db = await getDb();
+
+  if (!payload?.Pedido) {
+    console.warn("ℹ️ upsertOrderFromPayload: sin payload.Pedido; se omite creación de order.");
+    return { upserted: false, reason: "no_pedido" };
+  }
+
+  const doc = normalizeOrderDoc({ conversationId, waId, estado, payload });
+
+  const res = await db.collection("orders").updateOne(
+    { conversationId: new ObjectId(conversationId) },
+    { $setOnInsert: doc, $set: { status: doc.status, response: doc.response, order: doc.order, bigdata: doc.bigdata } },
+    { upsert: true }
+  );
+
+  const upserted = !!res.upsertedId || res.modifiedCount === 1;
+  if (res.upsertedId) {
+    console.log("🧾 order creada:", res.upsertedId);
+  } else if (res.modifiedCount === 1) {
+    console.log("🧾 order actualizada para conversación:", conversationId.toString());
+  } else {
+    console.log("ℹ️ order ya existía sin cambios:", conversationId.toString());
+  }
+  return { upserted };
+}
+
 // === Cierre idempotente: guarda en Sheets; si OK, guarda en orders; recién entonces finaliza ===
 async function finalizeConversationOnce(conversationId, finalPayload, estado) {
   const db = await getDb();
 
-  // 1) Leer conv
   const conv = await db.collection("conversations").findOne({ _id: new ObjectId(conversationId) });
   if (!conv) {
     console.warn("⚠️ finalizeConversationOnce: conversación no encontrada:", conversationId);
@@ -551,7 +677,6 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
     return { didFinalize: false, reason: "already_finalized" };
   }
 
-  // 2) Guardar en Sheets primero
   try {
     await saveCompletedToSheets({
       waId: conv.waId,
@@ -562,7 +687,6 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
     return { didFinalize: false, reason: "sheets_failed", sheetsError: e?.message };
   }
 
-  // 3) Guardar/actualizar en orders (si hay Pedido)
   try {
     await upsertOrderFromPayload({
       conversationId: conv._id,
@@ -571,11 +695,9 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
       payload: finalPayload || {}
     });
   } catch (e) {
-    // Si fallara orders, dejamos trazabilidad pero igual finalizamos (ya guardamos en Sheets).
     console.error("⚠️ upsertOrderFromPayload falló (se continúa):", e?.message);
   }
 
-  // 4) Finalizar conversación (idempotente)
   const updRes = await db.collection("conversations").updateOne(
     { _id: new ObjectId(conversationId), finalized: { $ne: true } },
     {
@@ -600,13 +722,16 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
   }
 }
 
-
-/* ===================== Sesiones en memoria ===================== */
+// ========= Sesiones (historial en memoria) =========
 const sessions = new Map(); // waId -> { messages, updatedAt }
+
 async function getSession(waId) {
   if (!sessions.has(waId)) {
-    const systemText = await buildSystemPrompt({ force: true });
-    sessions.set(waId, { messages: [{ role: "system", content: systemText }], updatedAt: Date.now() });
+    const systemText = await buildSystemPrompt({ force: true }); // al iniciar conversación
+    sessions.set(waId, {
+      messages: [{ role: "system", content: systemText }],
+      updatedAt: Date.now()
+    });
   }
   return sessions.get(waId);
 }
@@ -619,27 +744,40 @@ function pushMessage(session, role, content, maxTurns = 20) {
   session.updatedAt = Date.now();
 }
 
-/* ===================== Chat con historial ===================== */
-async function chatWithHistoryJSON(waId, userText) {
+// ========= Chat con historial (system refrescado + parser robusto) =========
+async function chatWithHistoryJSON(
+  waId,
+  userText,
+  model = CHAT_MODEL,
+  temperature = CHAT_TEMPERATURE
+) {
   const session = await getSession(waId);
+
   try {
-    const sys = await buildSystemPrompt({ force: true });
-    session.messages[0] = { role: "system", content: sys };
+    const systemText = await buildSystemPrompt({ force: true });
+    session.messages[0] = { role: "system", content: systemText };
   } catch (e) {
     console.warn("⚠️ No se pudo refrescar system:", e.message);
   }
+
   pushMessage(session, "user", userText);
 
-  const completion = await openai.chat.completions.create({
-    model: CHAT_MODEL,
+  // timeout básico para evitar quedarnos colgados
+  const timeoutMs = parseInt(process.env.OPENAI_TIMEOUT_MS || "12000", 10);
+  const p = openai.chat.completions.create({
+    model,
     response_format: { type: "json_object" },
-    temperature: CHAT_TEMPERATURE,
+    temperature,
     top_p: 1,
     messages: [ ...session.messages ]
   });
+  const completion = await Promise.race([
+    p,
+    new Promise((_, rej) => setTimeout(() => rej(new Error("openai_chat_timeout_12000ms")), timeoutMs))
+  ]);
 
   const content = completion.choices?.[0]?.message?.content || "";
-  const data = await safeJsonParseStrictOrFix(content) || null;
+  const data = await safeJsonParseStrictOrFix(content, { openai, model }) || null;
 
   const responseText =
     (data && typeof data.response === "string" && data.response.trim()) ||
@@ -653,11 +791,12 @@ async function chatWithHistoryJSON(waId, userText) {
   return { response: responseText, estado, raw: data || {} };
 }
 
-/* ===================== WhatsApp send/mark ===================== */
+// ========= WhatsApp send / mark =========
 async function sendText(to, body, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
   const payload = { messaging_product: "whatsapp", to, type: "text", text: { body } };
+
   const resp = await fetch(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -683,8 +822,9 @@ async function markAsRead(messageId, phoneNumberId) {
   }
 }
 
-/* ===================== Webhook rutas ===================== */
+// ========= Rutas =========
 app.get("/", (_req, res) => res.status(200).send("WhatsApp Webhook up ✅"));
+
 app.get("/webhook", (req, res) => {
   const VERIFY_TOKEN = process.env.verify_token || process.env.VERIFY_TOKEN;
   const mode = req.query["hub.mode"];
@@ -705,9 +845,10 @@ app.post("/webhook", async (req, res) => {
       return res.sendStatus(403);
     }
     const body = req.body;
-    if (body.object !== "whatsapp_business_account") return res.sendStatus(404);
-
-    res.sendStatus(200); // responder ASAP
+    if (body.object !== "whatsapp_business_account") {
+      return res.sendStatus(404);
+    }
+    res.sendStatus(200);
 
     for (const entry of (body.entry || [])) {
       for (const change of (entry.changes || [])) {
@@ -723,7 +864,6 @@ app.post("/webhook", async (req, res) => {
 
           if (messageId && phoneNumberId) markAsRead(messageId, phoneNumberId).catch(() => {});
 
-          // Normalizar entrada
           let userText = "";
           let userMeta = {};
 
@@ -750,9 +890,7 @@ app.post("/webhook", async (req, res) => {
                 userMeta.mediaUrl = publicUrl;
 
                 try {
-                  const trData = await transcribeAudioExternal({
-                    publicAudioUrl: publicUrl, buffer, mime: info.mime_type, filename: "audio.ogg"
-                  });
+                  const trData = await transcribeAudioExternal({ publicAudioUrl: publicUrl, buffer, mime: info.mime_type, filename: "audio.ogg" });
                   const transcript = trData.text || trData.transcript || trData.transcription || trData.result || "";
                   if (transcript) {
                     userMeta.transcript = transcript;
@@ -805,11 +943,14 @@ app.post("/webhook", async (req, res) => {
 
           console.log("IN:", { from, type, preview: (userText || "").slice(0, 120) });
 
-          // Persistencia conversación + mensaje usuario
           const conv = await ensureOpenConversation(from);
-          await appendMessage(conv._id, { role: "user", content: userText, type, meta: userMeta });
+          await appendMessage(conv._id, {
+            role: "user",
+            content: userText,
+            type,
+            meta: userMeta
+          });
 
-          // Llamada a modelo
           let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
           let estado = "IN_PROGRESS";
           let raw = null;
@@ -823,14 +964,16 @@ app.post("/webhook", async (req, res) => {
             console.error("❌ OpenAI error:", e);
           }
 
-          // Respuesta texto
           await sendText(from, responseText, phoneNumberId);
           console.log("OUT →", from, "| estado:", estado);
 
-          // Guardar mensaje assistant
-          await appendMessage(conv._id, { role: "assistant", content: responseText, type: "text", meta: { estado } });
+          await appendMessage(conv._id, {
+            role: "assistant",
+            content: responseText,
+            type: "text",
+            meta: { estado }
+          });
 
-          // TTS si el usuario envió audio
           if (type === "audio" && (process.env.ENABLE_TTS_FOR_AUDIO || "true").toLowerCase() === "true") {
             try {
               const { buffer, mime } = await synthesizeTTS(responseText);
@@ -838,10 +981,11 @@ app.post("/webhook", async (req, res) => {
               const baseUrl = getBaseUrl(req);
               const ttsUrl = `${baseUrl}/cache/tts/${ttsId}`;
               await sendAudioLink(from, ttsUrl, phoneNumberId);
-            } catch (e) { console.error("⚠️ Error generando/enviando TTS:", e); }
+            } catch (e) {
+              console.error("⚠️ Error generando/enviando TTS:", e);
+            }
           }
 
-          // Finalización idempotente (Sheets + Mongo orders) y reset de sesión
           const shouldFinalize =
             (estado && estado !== "IN_PROGRESS") ||
             ((raw?.Pedido?.["Estado pedido"] || "").toLowerCase().includes("cancel"));
@@ -852,8 +996,13 @@ app.post("/webhook", async (req, res) => {
               if (result.didFinalize) {
                 resetSession(from);
                 console.log("🔁 Historial reiniciado para", from, "| estado:", estado);
+                if (result.sheetsError) {
+                  console.warn("⚠️ Sheets guardado con error (pero finalizado igual):", result.sheetsError);
+                } else {
+                  console.log("🧾 Guardado en Google Sheets y orders (idempotente) para", from, "estado", estado);
+                }
               } else {
-                console.log("ℹ️ Ya estaba finalizada; no se guarda en Sheets de nuevo.");
+                console.log("ℹ️ No finalizado (motivo:", result.reason, ").");
               }
             } catch (e) {
               console.error("⚠️ Error al finalizar conversación:", e);
@@ -867,505 +1016,206 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-/* ===================== Panel / Admin ===================== */
-// Guardia simple por token (opcional). Seteá ADMIN_TOKEN para habilitar.
-function requireAdmin(req, res, next) {
-  const need = (process.env.ADMIN_TOKEN || "").trim();
-  if (!need) return next();
-  const got = (req.query.token || "").trim();
-  if (got && got === need) return next();
-  res.status(401).send("No autorizado. Agregá ?token=TU_TOKEN");
-}
-//////////////////////////////////////////////
-// ===== Orders (guardar pedido "normalizado" en Mongo) =====
-async function ensureOrdersIndexes() {
-  const db = await getDb();
-  // Un pedido por conversación (idempotencia)
-  await db.collection("orders").createIndex({ conversationId: 1 }, { unique: true });
-  // Consultas típicas
-  await db.collection("orders").createIndex({ waId: 1, createdAt: -1 });
-  await db.collection("orders").createIndex({ status: 1, createdAt: -1 });
-}
+// ========= Admin (UI simple) =========
 
-function normalizeOrderDoc({ conversationId, waId, estado, payload }) {
-  const Pedido  = payload?.Pedido || {};
-  const Bigdata = payload?.Bigdata || {};
-
-  // Campos aplanados típicos
-  const doc = {
-    conversationId,
-    waId,
-    status: (estado || "COMPLETED").toUpperCase(), // COMPLETED|CANCELLED
-    response: payload?.response || "",
-
-    // Timestamps legibles si vienen en el JSON (no siempre los hay)
-    startedAtText: Pedido["Fecha y hora de inicio de conversacion"] || null,
-    endedAtText:   Pedido["Fecha y hora fin de conversacion"] || null,
-
-    // Datos de pedido (tomados del esquema que venís usando para Sheets)
-    order: {
-      estadoPedido:         Pedido["Estado pedido"] || null,
-      motivoCancelacion:    Pedido["Motivo cancelacion"] || null,
-      pedidoPollo:          Pedido["Pedido pollo"] || null,
-      pedidoPapas:          Pedido["Pedido papas"] || null,
-      milanesasComunes:     Pedido["Milanesas comunes"] || null,
-      milanesasNapolitanas: Pedido["Milanesas Napolitanas"] || null,
-      ensaladas:            Pedido["Ensaladas"] || null,
-      bebidas:              Pedido["Bebidas"] || null,
-      monto:                (typeof Pedido["Monto"] === "number") ? Pedido["Monto"] : Number(Pedido["Monto"]) || null,
-      nombre:               Pedido["Nombre"] || null,
-      entrega:              Pedido["Entrega"] || null,
-      domicilio:            Pedido["Domicilio"] || null,
-      fechaHoraEntrega:     Pedido["Fecha y hora de entrega"] || null,
-      hora:                 Pedido["Hora"] || null
-    },
-
-    // Bigdata (tal como viene)
-    bigdata: {
-      sexo:                         Bigdata["Sexo"] || null,
-      estudios:                     Bigdata["Estudios"] || null,
-      satisfaccionCliente:          Bigdata["Satisfaccion del cliente"] ?? null,
-      motivoPuntajeSatisfaccion:    Bigdata["Motivo puntaje satisfaccion"] || null,
-      cuantoNosConoce:              Bigdata["Cuanto nos conoce el cliente"] ?? null,
-      motivoPuntajeConocimiento:    Bigdata["Motivo puntaje conocimiento"] || null,
-      motivoPuntajeGeneral:         Bigdata["Motivo puntaje general"] || null,
-      perdidaOportunidad:           Bigdata["Perdida oportunidad"] || null,
-      sugerencias:                  Bigdata["Sugerencias"] || null,
-      flujo:                        Bigdata["Flujo"] || null,
-      facilidadCompra:              Bigdata["Facilidad en el proceso de compras"] ?? null,
-      preguntoPorBot:               Bigdata["Pregunto por bot"] || null
-    },
-
-    createdAt: new Date()
-  };
-
-  return doc;
-}
-
-async function upsertOrderFromPayload({ conversationId, waId, estado, payload }) {
-  const db = await getDb();
-
-  // Si no hay bloque Pedido, no persistimos una orden
-  if (!payload?.Pedido) {
-    console.warn("ℹ️ upsertOrderFromPayload: sin payload.Pedido; se omite creación de order.");
-    return { upserted: false, reason: "no_pedido" };
-  }
-
-  const doc = normalizeOrderDoc({ conversationId, waId, estado, payload });
-
-  // Idempotencia por conversationId
-  const res = await db.collection("orders").updateOne(
-    { conversationId: new ObjectId(conversationId) },
-    { $setOnInsert: doc, $set: { status: doc.status, response: doc.response, order: doc.order, bigdata: doc.bigdata } },
-    { upsert: true }
-  );
-
-  const upserted = !!res.upsertedId || res.modifiedCount === 1;
-  if (res.upsertedId) {
-    console.log("🧾 order creada:", res.upsertedId);
-  } else if (res.modifiedCount === 1) {
-    console.log("🧾 order actualizada para conversación:", conversationId.toString());
-  } else {
-    console.log("ℹ️ order ya existía sin cambios:", conversationId.toString());
-  }
-  return { upserted };
-}
-
-
-
-
-
-
-/* ---------- HTML listado con filtros + CSV ---------- */
-app.get("/admin/orders", requireAdmin, (req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  const tokenQs = (req.query.token ? `&token=${encodeURIComponent(req.query.token)}` : "");
-  res.end(`<!DOCTYPE html>
+// HTML embebido (SPA sencilla)
+const adminHtml = `
+<!doctype html>
 <html lang="es">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Órdenes · Admin</title>
-<link rel="preconnect" href="https://cdn.jsdelivr.net" />
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Admin - Conversaciones</title>
 <style>
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,"Noto Sans","Liberation Sans",sans-serif; margin:20px;background:#f7f7f8;color:#111;}
-h1{margin:0 0 12px;}
-.card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 2px 10px rgba(0,0,0,.06);margin-bottom:16px;}
-.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
-input,select,button{padding:8px 10px;border-radius:10px;border:1px solid #ddd;outline:none}
-table{width:100%;border-collapse:collapse}
-th,td{padding:10px;border-bottom:1px solid #eee;text-align:left;vertical-align:top}
-.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
-.badge.ok{background:#e8fff1;color:#0a7f3b;border:1px solid #b6e6c8}
-.badge.cancel{background:#fff0f0;color:#b20a0a;border:1px solid #f1b3b3}
-small{color:#666}
-.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-label.chk{display:flex;gap:6px;align-items:center}
-.actions{display:flex;gap:8px;align-items:center}
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 20px; color: #222; }
+  h1 { margin: 0 0 16px; }
+  .controls { display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap: wrap; }
+  select, input, button { padding:8px; font-size:14px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+  th, td { border: 1px solid #ddd; padding: 8px; font-size: 14px; }
+  th { background: #f7f7f7; text-align: left; }
+  tr:hover { background: #fafafa; }
+  .pill { padding: 2px 8px; border-radius: 999px; font-size: 12px; color: #fff; display:inline-block; }
+  .OPEN { background:#0ea5e9; }
+  .COMPLETED { background:#16a34a; }
+  .CANCELLED { background:#ef4444; }
+  .muted { color:#666; font-size:12px; }
+  .msg { white-space: pre-wrap; background:#f9fafb; border:1px solid #eee; padding:8px; border-radius:6px; }
+  .order { background:#fff7ed; border:1px solid #fed7aa; padding:8px; border-radius:6px; }
 </style>
 </head>
 <body>
-  <h1>Órdenes</h1>
-  <div class="card">
-    <div class="controls">
-      <label>Estado
-        <select id="estado">
-          <option value="">Todos</option>
-          <option value="COMPLETED">COMPLETED</option>
-          <option value="CANCELLED">CANCELLED</option>
-        </select>
-      </label>
-      <label>WA ID <input id="waid" placeholder="549..." /></label>
-      <label>Desde <input id="from" type="date" /></label>
-      <label>Hasta <input id="to" type="date" /></label>
-      <div class="filters">
-        <label class="chk"><input type="checkbox" id="f_pollo"/> Pollo</label>
-        <label class="chk"><input type="checkbox" id="f_papas"/> Papas</label>
-        <label class="chk"><input type="checkbox" id="f_milas"/> Milanesas</label>
-        <label class="chk"><input type="checkbox" id="f_milas_napo"/> Milanesas Napolitanas</label>
-        <label class="chk"><input type="checkbox" id="f_ensaladas"/> Ensaladas</label>
-        <label class="chk"><input type="checkbox" id="f_bebidas"/> Bebidas</label>
-      </div>
-      <div class="actions">
-        <button id="reload">Cargar</button>
-        <a id="csv" href="#" download="ordenes.csv">Exportar CSV</a>
-        <a href="/admin/charts${tokenQs ? "?"+tokenQs.slice(1) : ""}" style="margin-left:auto">Ver gráficos →</a>
-      </div>
-    </div>
-    <div id="summary"><small>Cargando…</small></div>
-    <div class="table-wrap">
-      <table id="tbl">
-        <thead>
-          <tr><th>Fecha</th><th>WA</th><th>Estado</th><th>Nombre / Entrega</th><th>Pedido</th><th>Monto</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </div>
+  <h1>Conversaciones</h1>
+
+  <div class="controls">
+    <label>Estado:
+      <select id="state">
+        <option value="">Todos</option>
+        <option value="OPEN">OPEN</option>
+        <option value="COMPLETED">COMPLETED</option>
+        <option value="CANCELLED">CANCELLED</option>
+      </select>
+    </label>
+    <label>Teléfono:
+      <input id="waid" placeholder="549..." />
+    </label>
+    <label>Límite:
+      <input id="limit" type="number" min="1" max="500" value="50"/>
+    </label>
+    <button id="btnLoad">Cargar</button>
   </div>
+
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>wa_id</th>
+        <th>Estado</th>
+        <th>Abierta</th>
+        <th>Cerrada</th>
+        <th>Turnos</th>
+        <th>Acciones</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <h2 id="detailTitle" style="display:none;margin-top:24px;">Detalle</h2>
+  <div id="detail"></div>
+
 <script>
-const qs = new URLSearchParams(location.search);
-const token = qs.get("token")||"";
+async function loadConvs() {
+  const state = document.getElementById('state').value;
+  const waid = document.getElementById('waid').value.trim();
+  const limit = document.getElementById('limit').value || 50;
 
-document.getElementById("reload").onclick = load;
+  const params = new URLSearchParams();
+  if (state) params.set('status', state);
+  if (waid)  params.set('waId', waid);
+  params.set('limit', limit);
 
-function buildParams(){
-  const q = new URLSearchParams();
-  const estado = document.getElementById("estado").value;
-  const waid = document.getElementById("waid").value.trim();
-  const from = document.getElementById("from").value;
-  const to   = document.getElementById("to").value;
-
-  if (token) q.set("token", token);
-  if (estado) q.set("estado", estado);
-  if (waid) q.set("waId", waid);
-  if (from) q.set("from", from);
-  if (to) q.set("to", to);
-
-  if (document.getElementById("f_pollo").checked) q.set("fp_pollo","1");
-  if (document.getElementById("f_papas").checked) q.set("fp_papas","1");
-  if (document.getElementById("f_milas").checked) q.set("fp_milas","1");
-  if (document.getElementById("f_milas_napo").checked) q.set("fp_milas_napo","1");
-  if (document.getElementById("f_ensaladas").checked) q.set("fp_ensaladas","1");
-  if (document.getElementById("f_bebidas").checked) q.set("fp_bebidas","1");
-
-  return q;
-}
-
-async function load(){
-  const q = buildParams();
-
-  // link CSV
-  const csvA = document.getElementById("csv");
-  csvA.href = "/admin/orders.csv?"+q.toString();
-
-  const r = await fetch("/admin/orders.json?"+q.toString());
-  const data = await r.json();
-  const tbody = document.querySelector("#tbl tbody"); tbody.innerHTML = "";
-  let total = 0;
-
-  for (const o of data.items){
-    const p = o.pedido || {};
-    const monto = Number(p["Monto"]||0)||0;
-    total += monto;
-
-    const tr = document.createElement("tr");
-    const estadoBadge = o.estado==="CANCELLED" ? '<span class="badge cancel">CANCELLED</span>' : '<span class="badge ok">COMPLETED</span>';
-    const pedidoTxt = [
-      p["Pedido pollo"] ? "Pollo: "+p["Pedido pollo"] : "",
-      p["Pedido papas"] ? "Papas: "+p["Pedido papas"] : "",
-      p["Milanesas comunes"] ? "Milanesas: "+p["Milanesas comunes"] : "",
-      p["Milanesas Napolitanas"] ? "Milas Napo: "+p["Milanesas Napolitanas"] : "",
-      p["Ensaladas"] ? "Ensaladas: "+p["Ensaladas"] : "",
-      p["Bebidas"] ? "Bebidas: "+p["Bebidas"] : ""
-    ].filter(Boolean).join(" · ");
-
+  const res = await fetch('/admin/api/conversations?' + params.toString());
+  const data = await res.json();
+  const tbody = document.querySelector('#tbl tbody');
+  tbody.innerHTML = '';
+  data.forEach(c => {
+    const tr = document.createElement('tr');
     tr.innerHTML = \`
-      <td>\${new Date(o.createdAt).toLocaleString("es-AR")}</td>
-      <td>\${o.waId}</td>
-      <td>\${estadoBadge}</td>
-      <td><div><b>\${(p["Nombre"]||"")}</b></div><small>\${(p["Entrega"]||"")}</small></td>
-      <td>\${pedidoTxt || "-"}</td>
-      <td>\${new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(monto)}</td>
+      <td>\${c.waId}</td>
+      <td><span class="pill \${c.status}">\${c.status}</span></td>
+      <td>\${c.openedAt ? new Date(c.openedAt).toLocaleString() : '-'}</td>
+      <td>\${c.closedAt ? new Date(c.closedAt).toLocaleString() : '-'}</td>
+      <td>\${c.turns ?? 0}</td>
+      <td><button data-id="\${c._id}">Ver</button></td>
     \`;
     tbody.appendChild(tr);
-  }
-  document.getElementById("summary").innerHTML =
-    \`<b>\${data.count}</b> órdenes · Total: <b>\${new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(total)}</b>\`;
+  });
+
+  tbody.querySelectorAll('button').forEach(b => {
+    b.addEventListener('click', () => viewConv(b.getAttribute('data-id')));
+  });
 }
-load();
+
+async function viewConv(id) {
+  document.getElementById('detailTitle').style.display = 'block';
+  const res = await fetch('/admin/api/conversations/' + id);
+  const data = await res.json();
+  const d = document.getElementById('detail');
+  const conv = data.conversation;
+  const msgs = data.messages || [];
+  const order = data.order || null;
+
+  let html = '';
+  html += \`<div><b>wa_id:</b> \${conv.waId} &nbsp; <span class="pill \${conv.status}">\${conv.status}</span></div>\`;
+  html += \`<div class="muted">Abierta: \${conv.openedAt ? new Date(conv.openedAt).toLocaleString() : '-'} | Cerrada: \${conv.closedAt ? new Date(conv.closedAt).toLocaleString() : '-'}</div>\`;
+
+  if (order) {
+    html += '<h3>Pedido</h3>';
+    html += '<div class="order"><pre>' + JSON.stringify(order, null, 2) + '</pre></div>';
+  } else if (conv.summary && conv.summary.Pedido) {
+    html += '<h3>Pedido (summary)</h3>';
+    html += '<div class="order"><pre>' + JSON.stringify(conv.summary.Pedido, null, 2) + '</pre></div>';
+  }
+
+  html += '<h3>Mensajes</h3>';
+  html += msgs.map(m => (
+    \`<div class="msg"><b>\${m.role.toUpperCase()}</b> <span class="muted">\${new Date(m.ts).toLocaleString()}</span><br>\${m.content || ''}\${
+      m.meta && (m.meta.transcript || m.meta.ocrText || m.meta.estado)
+        ? '<br><small class="muted">' + JSON.stringify(m.meta) + '</small>' : ''}</div>\`
+  )).join('');
+
+  d.innerHTML = html;
+}
+
+document.getElementById('btnLoad').addEventListener('click', loadConvs);
+loadConvs();
 </script>
-</body></html>`);
-});
+</body>
+</html>
+`;
 
-/* ---------- JSON con filtros por producto ---------- */
-app.get("/admin/orders.json", requireAdmin, async (req, res) => {
+// API admin: lista conversaciones
+app.get("/admin/api/conversations", async (req, res) => {
   try {
     const db = await getDb();
-    const { estado, waId, from, to } = req.query;
-    // filtros por producto (flag=1)
-    const fp = {
-      pollo: req.query.fp_pollo === "1",
-      papas: req.query.fp_papas === "1",
-      milas: req.query.fp_milas === "1",
-      milas_napo: req.query.fp_milas_napo === "1",
-      ensaladas: req.query.fp_ensaladas === "1",
-      bebidas: req.query.fp_bebidas === "1",
-    };
+    const limit = Math.min(parseInt(req.query.limit || "50", 10), 500);
+    const status = (req.query.status || "").toUpperCase();
+    const waId = (req.query.waId || "").trim();
 
     const q = {};
-    if (estado) q.estado = String(estado);
-    if (waId) q.waId = String(waId);
-    if (from || to) {
-      q.createdAt = {};
-      if (from) q.createdAt.$gte = new Date(from + "T00:00:00");
-      if (to)   q.createdAt.$lte = new Date(to   + "T23:59:59");
-    }
+    if (status) q.status = status;
+    if (waId) q.waId = waId;
 
-    // construir AND de campos requeridos
-    const and = [];
-    if (fp.pollo) and.push({ ['pedido.'+"Pedido pollo"]: { $exists: true, $ne: "" } });
-    if (fp.papas) and.push({ ['pedido.'+"Pedido papas"]: { $exists: true, $ne: "" } });
-    if (fp.milas) and.push({ ['pedido.'+"Milanesas comunes"]: { $exists: true, $ne: "" } });
-    if (fp.milas_napo) and.push({ ['pedido.'+"Milanesas Napolitanas"]: { $exists: true, $ne: "" } });
-    if (fp.ensaladas) and.push({ ['pedido.'+"Ensaladas"]: { $exists: true, $ne: "" } });
-    if (fp.bebidas) and.push({ ['pedido.'+"Bebidas"]: { $exists: true, $ne: "" } });
-    if (and.length) q.$and = and;
+    const rows = await db.collection("conversations")
+      .find(q)
+      .sort({ openedAt: -1 })
+      .limit(limit)
+      .project({ waId:1, status:1, openedAt:1, closedAt:1, turns:1 })
+      .toArray();
 
-    const items = await db.collection("orders")
-      .find(q).sort({ createdAt: -1 }).limit(2000).toArray();
-
-    res.json({ ok: true, count: items.length, items });
+    res.json(rows.map(r => ({ ...r, _id: r._id.toString() })));
   } catch (e) {
-    console.error("orders.json error", e);
-    res.status(500).json({ ok: false, error: e.message });
+    console.error("admin list error:", e);
+    res.status(500).json({ error: e.message });
   }
 });
 
-/* ---------- CSV export ---------- */
-app.get("/admin/orders.csv", requireAdmin, async (req, res) => {
+// API admin: detalle conversación + mensajes + order
+app.get("/admin/api/conversations/:id", async (req, res) => {
   try {
     const db = await getDb();
-    const { estado, waId, from, to } = req.query;
+    const id = new ObjectId(req.params.id);
 
-    const fp = {
-      pollo: req.query.fp_pollo === "1",
-      papas: req.query.fp_papas === "1",
-      milas: req.query.fp_milas === "1",
-      milas_napo: req.query.fp_milas_napo === "1",
-      ensaladas: req.query.fp_ensaladas === "1",
-      bebidas: req.query.fp_bebidas === "1",
-    };
+    const conv = await db.collection("conversations").findOne({ _id: id });
+    if (!conv) return res.status(404).json({ error: "not_found" });
 
-    const q = {};
-    if (estado) q.estado = String(estado);
-    if (waId) q.waId = String(waId);
-    if (from || to) {
-      q.createdAt = {};
-      if (from) q.createdAt.$gte = new Date(from + "T00:00:00");
-      if (to)   q.createdAt.$lte = new Date(to   + "T23:59:59");
-    }
-    const and = [];
-    if (fp.pollo) and.push({ ['pedido.'+"Pedido pollo"]: { $exists: true, $ne: "" } });
-    if (fp.papas) and.push({ ['pedido.'+"Pedido papas"]: { $exists: true, $ne: "" } });
-    if (fp.milas) and.push({ ['pedido.'+"Milanesas comunes"]: { $exists: true, $ne: "" } });
-    if (fp.milas_napo) and.push({ ['pedido.'+"Milanesas Napolitanas"]: { $exists: true, $ne: "" } });
-    if (fp.ensaladas) and.push({ ['pedido.'+"Ensaladas"]: { $exists: true, $ne: "" } });
-    if (fp.bebidas) and.push({ ['pedido.'+"Bebidas"]: { $exists: true, $ne: "" } });
-    if (and.length) q.$and = and;
+    const msgs = await db.collection("messages")
+      .find({ conversationId: id })
+      .sort({ ts: 1 })
+      .toArray();
 
-    const items = await db.collection("orders").find(q).sort({ createdAt: -1 }).limit(20000).toArray();
+    const order = await db.collection("orders").findOne({ conversationId: id });
 
-    const headers = [
-      "createdAt","waId","estado","Nombre","Entrega","Domicilio",
-      "Pedido pollo","Pedido papas","Milanesas comunes","Milanesas Napolitanas",
-      "Ensaladas","Bebidas","Monto","Respuesta"
-    ];
-    const lines = [headers.join(",")];
-
-    for (const o of items) {
-      const p = o.pedido || {};
-      const row = [
-        csvEscape(new Date(o.createdAt).toISOString()),
-        csvEscape(o.waId || ""),
-        csvEscape(o.estado || ""),
-        csvEscape(p["Nombre"] || ""),
-        csvEscape(p["Entrega"] || ""),
-        csvEscape(p["Domicilio"] || ""),
-        csvEscape(p["Pedido pollo"] || ""),
-        csvEscape(p["Pedido papas"] || ""),
-        csvEscape(p["Milanesas comunes"] || ""),
-        csvEscape(p["Milanesas Napolitanas"] || ""),
-        csvEscape(p["Ensaladas"] || ""),
-        csvEscape(p["Bebidas"] || ""),
-        csvEscape(p["Monto"] ?? ""),
-        csvEscape(o.response || "")
-      ];
-      lines.push(row.join(","));
-    }
-
-    const csv = lines.join("\n");
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", 'attachment; filename="ordenes.csv"');
-    res.send(csv);
+    res.json({
+      conversation: { ...conv, _id: conv._id.toString() },
+      messages: msgs.map(m => ({ ...m, _id: m._id.toString() })),
+      order: order ? { ...order, _id: order._id.toString() } : null
+    });
   } catch (e) {
-    console.error("orders.csv error", e);
-    res.status(500).send("Error generando CSV");
+    console.error("admin detail error:", e);
+    res.status(500).json({ error: e.message });
   }
 });
 
-/* ---------- Métricas + Gráficos ---------- */
-app.get("/admin/metrics.json", requireAdmin, async (req, res) => {
-  try {
-    const db = await getDb();
-    const { from, to } = req.query;
-    const match = {};
-    if (from || to) {
-      match.createdAt = {};
-      if (from) match.createdAt.$gte = new Date(from + "T00:00:00");
-      if (to)   match.createdAt.$lte = new Date(to   + "T23:59:59");
-    }
-    const pipeline = [
-      { $match: match },
-      {
-        $addFields: {
-          montoNum: {
-            $toDouble: {
-              $ifNull: [
-                { $getField: { field: "Monto", input: "$pedido" } },
-                0
-              ]
-            }
-          }
-        }
-      },
-      {
-        $group: {
-          _id: {
-            y: { $year: "$createdAt" },
-            m: { $month: "$createdAt" },
-            d: { $dayOfMonth: "$createdAt" }
-          },
-          orders: { $sum: 1 },
-          revenue: { $sum: "$montoNum" }
-        }
-      },
-      { $sort: { "_id.y": 1, "_id.m": 1, "_id.d": 1 } }
-    ];
-    const daily = await db.collection("orders").aggregate(pipeline).toArray();
-    res.json({ ok: true, daily });
-  } catch (e) {
-    console.error("metrics.json error", e);
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
-
-app.get("/admin/charts", requireAdmin, (_req, res) => {
+// Página admin
+app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  const qs = _req.url.includes("?") ? _req.url.slice(_req.url.indexOf("?")) : "";
-  res.end(`<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Gráficos · Admin</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-<style>
-body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,"Noto Sans","Liberation Sans",sans-serif; margin:20px;background:#f7f7f8;color:#111;}
-h1{margin:0 0 12px;}
-.card{background:#fff;border-radius:12px;padding:16px;box-shadow:0 2px 10px rgba(0,0,0,.06);margin-bottom:16px;}
-.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
-input,button{padding:8px 10px;border-radius:10px;border:1px solid #ddd;outline:none}
-canvas{max-width:100%;height:300px}
-</style>
-</head>
-<body>
-  <h1>Gráficos</h1>
-  <div class="card">
-    <div class="controls">
-      <label>Desde <input id="from" type="date" /></label>
-      <label>Hasta <input id="to" type="date" /></label>
-      <button id="reload">Actualizar</button>
-      <a href="/admin/orders${qs}" style="margin-left:auto">← Volver a órdenes</a>
-    </div>
-    <div>
-      <h3>Órdenes por día</h3>
-      <canvas id="ordersChart"></canvas>
-    </div>
-    <div style="margin-top:24px">
-      <h3>Facturación por día</h3>
-      <canvas id="revenueChart"></canvas>
-    </div>
-  </div>
-<script>
-const q0 = new URLSearchParams(location.search);
-const token = q0.get("token")||"";
-document.getElementById("reload").onclick = load;
-
-let oChart, rChart;
-
-async function load(){
-  const from = document.getElementById("from").value;
-  const to   = document.getElementById("to").value;
-
-  const q = new URLSearchParams();
-  if (token) q.set("token", token);
-  if (from) q.set("from", from);
-  if (to) q.set("to", to);
-
-  const r = await fetch("/admin/metrics.json?"+q.toString());
-  const data = await r.json();
-  const labels = data.daily.map(d => \`\${d._id.d}/\${d._id.m}\`);
-  const orders = data.daily.map(d => d.orders);
-  const revenue = data.daily.map(d => d.revenue);
-
-  const oc = document.getElementById("ordersChart");
-  const rc = document.getElementById("revenueChart");
-
-  if (oChart) oChart.destroy();
-  if (rChart) rChart.destroy();
-
-  oChart = new Chart(oc, {
-    type: "line",
-    data: { labels, datasets: [{ label: "Órdenes", data: orders }] },
-    options: { responsive: true, scales: { y: { beginAtZero: true } } }
-  });
-  rChart = new Chart(rc, {
-    type: "bar",
-    data: { labels, datasets: [{ label: "Facturación (ARS)", data: revenue }] },
-    options: { responsive: true, scales: { y: { beginAtZero: true } } }
-  });
-}
-load();
-</script>
-</body></html>`);
+  res.send(adminHtml);
 });
 
-// Crear índices de orders en background
+// ========= Start =========
 ensureOrdersIndexes().catch(err => {
   console.error("⚠️ No se pudieron crear índices de orders:", err);
 });
 
-
-/* ===================== Start ===================== */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Webhook listening on port ${PORT}`));
