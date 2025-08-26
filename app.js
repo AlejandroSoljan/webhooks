@@ -1067,15 +1067,16 @@ app.post("/webhook", async (req, res) => {
  */
 
     app.get("/admin", async (req, res) => {
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.end(`<!doctype html>
-<html>
+  try {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!doctype html>
+<html lang="es">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Admin - Conversaciones</title>
   <style>
     body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; }
-    h1 { margin-top: 0; }
     table { border-collapse: collapse; width: 100%; font-size: 14px; }
     th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
     th { background: #f6f6f6; text-align: left; }
@@ -1083,11 +1084,11 @@ app.post("/webhook", async (req, res) => {
     .btn { padding: 6px 10px; border: 1px solid #333; background: #fff; cursor: pointer; border-radius: 4px; font-size: 12px; }
     .btn + .btn { margin-left: 6px; }
     .muted { color: #666; }
-    .tag { display:inline-block; padding:2px 6px; border-radius: 4px; font-size: 12px; }
-    .tag.OPEN { background: #e7f5ff; color: #1971c2; }
-    .tag.COMPLETED { background: #e6fcf5; color: #2b8a3e; }
-    .tag.CANCELLED { background: #fff0f6; color: #c2255c; }
-    .filters { display:flex; flex-wrap: wrap; gap:8px; align-items:center; margin:10px 0; }
+    .tag { display:inline-block; padding:2px 6px; border-radius:4px; font-size:12px; }
+    .tag.OPEN { background:#e7f5ff; color:#1971c2; }
+    .tag.COMPLETED { background:#e6fcf5; color:#2b8a3e; }
+    .tag.CANCELLED { background:#fff0f6; color:#c2255c; }
+    .filters { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:10px 0; }
     .filters input, .filters select { padding:6px 8px; border:1px solid #ccc; border-radius:6px; }
     /* modal */
     .modal-backdrop { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); align-items:center; justify-content:center; }
@@ -1097,8 +1098,8 @@ app.post("/webhook", async (req, res) => {
     .modal .content { padding:16px; max-height:70vh; overflow:auto; }
     .modal .actions { padding:12px 16px; text-align:right; border-top:1px solid #eee; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; font-size: 12px; }
-    .printable { background: #fff; color: #000; }
-    @media print { .no-print { display: none; } .printable { padding: 0; } }
+    .printable { background:#fff; color:#000; }
+    @media print { .no-print{display:none;} .printable{padding:0;} }
   </style>
 </head>
 <body>
@@ -1197,16 +1198,16 @@ app.post("/webhook", async (req, res) => {
             '<td>' + (row.turns ?? 0) + '</td>' +
             '<td id="proc-' + row._id + '">' + processedIcon + '</td>' +
             '<td>' +
-              '<button class="btn" onclick="openMessages(\\'' + row._id + '\\')">Mensajes</button>' +
-              '<button class="btn" onclick="openOrder(\\'' + row._id + '\\')">Pedido</button>' +
-              '<button id="pbtn-' + row._id + '" class="btn" onclick="markProcessed(\\'' + row._id + '\\')"' + pbtnDisabled + '>' + pbtnLabel + '</button>' +
+              '<button class="btn" onclick="openMessages(\'' + row._id + '\')">Mensajes</button>' +
+              '<button class="btn" onclick="openOrder(\'' + row._id + '\')">Pedido</button>' +
+              '<button id="pbtn-' + row._id + '" class="btn" onclick="markProcessed(\'' + row._id + '\')"' + pbtnDisabled + '>' + pbtnLabel + '</button>' +
               '<div class="printmenu">' +
                 '<select id="pm-' + row._id + '" class="btn">' +
                   '<option value="kitchen"' + (row.processed ? '' : ' selected') + '>Cocina</option>' +
                   '<option value="client"' + (row.processed ? ' selected' : '') + '>Cliente</option>' +
                 '</select>' +
-                '<button class="btn" onclick="printTicketOpt(\\'' + row._id + '\\')">Imprimir</button>' +
-                '<button class="btn" title="Imprimir cocina rápido" onclick="quickPrint(\\'' + row._id + '\\')">🍳</button>' +
+                '<button class="btn" onclick="printTicketOpt(\'' + row._id + '\')">Imprimir</button>' +
+                '<button class="btn" title="Imprimir cocina rápido" onclick="quickPrint(\'' + row._id + '\')">🍳</button>' +
               '</div>' +
             '</td>';
           tb.appendChild(tr);
@@ -1229,8 +1230,8 @@ app.post("/webhook", async (req, res) => {
       if (actions) {
         actions.innerHTML =
           '<button class="btn" onclick="window.print()">Imprimir</button>' +
-          '<button class="btn" onclick="window.open(\\'/admin/print/' + id + '?v=kitchen\\', \\'_blank\\')">Cocina</button>' +
-          '<button class="btn" onclick="window.open(\\'/admin/print/' + id + '?v=client\\', \\'_blank\\')">Cliente</button>' +
+          '<button class="btn" onclick="window.open(\'/admin/print/' + id + '?v=kitchen\', \'_blank\')">Cocina</button>' +
+          '<button class="btn" onclick="window.open(\'/admin/print/' + id + '?v=client\', \'_blank\')">Cliente</button>' +
           '<button class="btn" onclick="closeModal()">Cerrar</button>';
       }
       openModal();
@@ -1241,6 +1242,74 @@ app.post("/webhook", async (req, res) => {
       if (btn) { btn.disabled = true; btn.textContent = 'Procesando…'; }
       const r = await fetch('/api/admin/order/' + id + '/process', { method: 'POST' });
       if (r.ok) setRowProcessedUI(id, true);
+      else { alert('No se pudo marcar.'); if (btn) { btn.disabled = false; btn.textContent = 'Procesado'; } }
+    }
+    function setRowProcessedUI(id, processed) {
+      const cell = document.getElementById('proc-' + id);
+      if (cell) cell.textContent = processed ? '✅' : '—';
+      const btn = document.getElementById('pbtn-' + id);
+      if (btn) { btn.textContent = 'Procesada'; btn.disabled = true; }
+      const sel = document.getElementById('pm-' + id);
+      if (sel) sel.value = processed ? 'client' : 'kitchen';
+    }
+
+    function printTicketOpt(id) {
+      const sel = document.getElementById('pm-' + id);
+      const which = sel ? sel.value : 'kitchen';
+      window.open('/admin/print/' + id + '?v=' + encodeURIComponent(which), '_blank');
+    }
+    function quickPrint(id) {
+      window.open('/admin/print/' + id + '?v=kitchen', '_blank');
+    }
+
+    function renderOrder(o) {
+      if (!o || !o.order) return '<div class="mono">No hay pedido para esta conversación.</div>';
+      const ord = o.order;
+      const items = Array.isArray(ord.items) ? ord.items : [];
+      const itemsHtml = items.map(function(it){
+        return '<li>' + (it.name||it.producto||'Item') + (it.selection?': <strong>'+it.selection+'</strong>':'') + '</li>';
+      }).join('') || '<li>(sin ítems)</li>';
+      const rawHtml = o.rawPedido ? '<pre class="mono">' + JSON.stringify(o.rawPedido, null, 2) + '</pre>' : '';
+      return ''
+        + '<div class="printable">'
+        + '  <h2>Pedido</h2>'
+        + '  <p><strong>Cliente:</strong> ' + (ord.name || '') + ' <span class="muted">(' + (o.waId || '') + ')</span></p>'
+        + '  <p><strong>Entrega:</strong> ' + (ord.entrega || '') + '</p>'
+        + '  <p><strong>Domicilio:</strong> ' + (ord.domicilio || '') + '</p>'
+        + '  <p><strong>Monto:</strong> ' + ((ord.amount!=null)?('$'+ord.amount):'') + '</p>'
+        + '  <p><strong>Estado pedido:</strong> ' + (ord.estadoPedido || '') + '</p>'
+        + '  <p><strong>Fecha/Hora entrega:</strong> ' + (ord.fechaEntrega || '') + ' ' + (ord.hora || '') + '</p>'
+        + '  <h3>Ítems</h3>'
+        + '  <ul>' + itemsHtml + '</ul>'
+        + '  <h3>Detalle crudo del Pedido</h3>'
+        +    rawHtml
+        + '</div>';
+    }
+
+    function openModal(){ document.getElementById('modalBackdrop').style.display='flex'; }
+    function closeModal(){ document.getElementById('modalBackdrop').style.display='none'; }
+
+    document.getElementById('btnSearch').addEventListener('click', loadConversations);
+    document.getElementById('btnClear').addEventListener('click', function(){
+      document.getElementById('fProcessed').value='';
+      document.getElementById('fPhone').value='';
+      document.getElementById('fStatus').value='';
+      document.getElementById('fDateField').value='opened';
+      document.getElementById('fFrom').value='';
+      document.getElementById('fTo').value='';
+      loadConversations();
+    });
+    // Inicial
+    loadConversations();
+  </script>
+</body>
+</html>`);
+  } catch (e) {
+    console.error("⚠️ /admin error:", e);
+    res.status(500).send("internal");
+  }
+});
+if (r.ok) setRowProcessedUI(id, true);
       else { alert('No se pudo marcar.'); if (btn) { btn.disabled = false; btn.textContent = 'Procesado'; } }
     }
     function setRowProcessedUI(id, processed) {
