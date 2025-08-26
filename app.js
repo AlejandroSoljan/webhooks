@@ -128,9 +128,9 @@ ${raw}` }
   }
 }
 if (__fixLastErr) throw __fixLastErr;
-const fixedClean = coerceJsonString(fixed);
-    const fixedClean = coerceJsonString(fixed);
-    return JSON.parse(fixedClean);
+const fixedJsonPatched = coerceJsonString(fixed);
+    const fixedJsonPatched = coerceJsonString(fixed);
+    return JSON.parse(fixedJsonPatched);
   } catch (e2) {
     try {
       return JSON.parse(s);
