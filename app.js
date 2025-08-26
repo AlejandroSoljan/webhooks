@@ -151,10 +151,6 @@ function getFromCache(id) {
 // 🧹 Limpiador periódico
 setInterval(() => {
   const now = Date.now();
-  // Usar snapshot si viene atado a la conversación
-  if (conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
-    return conversation.behaviorSnapshot.text;
-  }
   for (const [id, item] of fileCache.entries()) if (now > item.expiresAt) fileCache.delete(id);
 }, 60 * 1000);
 
@@ -498,10 +494,6 @@ function looksActive(v) { return String(v || "").trim().toUpperCase() === "S"; }
 
 async function loadProductsFromSheet() {
   const now = Date.now();
-  // Usar snapshot si viene atado a la conversación
-  if (conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
-    return conversation.behaviorSnapshot.text;
-  }
   if (now - productsCache.at < PRODUCTS_CACHE_TTL_MS && productsCache.items?.length) {
     return productsCache.items;
   }
@@ -543,7 +535,6 @@ function buildCatalogText(items) {
 const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); // "env" | "sheet" | "mongo"
 const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000;
 let behaviorCache = { at: 0, text: null };
-function forceReloadBehavior(){ behaviorCache = { at: 0, text: null }; }
 
 async function loadBehaviorTextFromEnv() {
   const txt = (process.env.COMPORTAMIENTO || "Sos un asistente claro, amable y conciso. Respondé en español.").trim();
@@ -591,12 +582,8 @@ async function saveBehaviorTextToMongo(newText) {
   behaviorCache = { at: 0, text: null };
 }
 
-async function buildSystemPrompt({ force = false, conversation = null } = {}) {
+async function buildSystemPrompt({ force = false } = {}) {
   const now = Date.now();
-  // Usar snapshot si viene atado a la conversación
-  if (conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
-    return conversation.behaviorSnapshot.text;
-  }
   if (!force && (now - behaviorCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && behaviorCache.text) {
     return behaviorCache.text;
   }
@@ -646,55 +633,7 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
 }
 
 /* ======================= Mongo: conversaciones, mensajes, orders ======================= */
-async function ensureOpenConversation(waId, { contactName = null }
-
-
-/* ======================= Cierre de conversación + summary ======================= */
-async function closeConversation(convId, { status, motivo = null } = {}) {
-  const db = await getDb();
-  const conv = await db.collection("conversations").findOne({ _id: convId });
-  if (!conv) return;
-
-  // últimos 5 mensajes de ese waId (ajusta filtro si guardás por conversationId)
-  const msgs = await db.collection("messages")
-    .find({ waId: conv.waId })
-    .sort({ createdAt: -1 })
-    .limit(5)
-    .toArray();
-
-  const behaviorText = conv.behaviorSnapshot && conv.behaviorSnapshot.text ? conv.behaviorSnapshot.text : "";
-  const behaviorHash = behaviorText ? require("crypto").createHash("sha256").update(behaviorText).digest("hex") : null;
-
-  const summary = {
-    closedAt: new Date(),
-    status,
-    motivo,
-    lastMessages: msgs.map(m => ({ text: m.text, ts: m.createdAt })),
-    behaviorHash
-  };
-
-  // Guardar en el documento de la conversación
-  await db.collection("conversations").updateOne(
-    { _id: convId },
-    { $set: { status, finalized: true, updatedAt: new Date(), conversationSummary: summary } }
-  );
-
-  // Guardar también en colección aparte para consulta rápida
-  await db.collection("conversations_summary").insertOne({
-    conversationId: convId,
-    waId: conv.waId,
-    status,
-    motivo,
-    closedAt: summary.closedAt,
-    lastMessages: summary.lastMessages,
-    behaviorHash,
-    behaviorSource: conv.behaviorSnapshot ? conv.behaviorSnapshot.source : null,
-    snapshotBytes: Buffer.byteLength(behaviorText || "", "utf8"),
-    createdAt: new Date()
-  });
-}
-
- = {}) {
+async function ensureOpenConversation(waId, { contactName = null } = {}) {
   const db = await getDb();
   let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
   if (!conv) {
@@ -708,18 +647,9 @@ async function closeConversation(convId, { status, motivo = null } = {}) {
       lastUserTs: null,
       lastAssistantTs: null,
       turns: 0
-    ,
-      behaviorSnapshot: { text: behaviorText, source: BEHAVIOR_SOURCE, savedAt: new Date() }
     };
     const ins = await db.collection("conversations").insertOne(doc);
     conv = { _id: ins.insertedId, ...doc };
-  // Fuerza recarga del comportamiento al iniciar una conversación nueva
-  try {
-    await buildSystemPrompt({ force: true });
-  } catch (e) {
-    console.warn("⚠️ No se pudo recargar comportamiento al iniciar conversación:", e?.message);
-  }
-
   } else if (contactName && !conv.contactName) {
     await db.collection("conversations").updateOne(
       { _id: conv._id },
@@ -738,7 +668,6 @@ async function appendMessage(conversationId, {
   ttlDays = null
 }) {
   const db = await getDb();
-  const behaviorText = await buildSystemPrompt({ force: true });
   const doc = {
     conversationId: new ObjectId(conversationId),
     role, content, type, meta,
