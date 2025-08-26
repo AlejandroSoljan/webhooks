@@ -492,7 +492,7 @@ let productsCache = { at: 0, items: [] };
 
 function looksActive(v) { return String(v || "").trim().toUpperCase() === "S"; }
 
-async function loadProductsFromSheet() {
+async function loadProductsFromMongo({ force }) {
   const now = Date.now();
   if (now - productsCache.at < PRODUCTS_CACHE_TTL_MS && productsCache.items?.length) {
     return productsCache.items;
@@ -520,7 +520,7 @@ async function loadProductsFromSheet() {
   productsCache = { at: now, items };
   return items;
 }
-function buildCatalogText(items) {
+function buildCatalogTextFromMongo(items) {
   if (!items?.length) return "Catálogo de productos: (ninguno activo)";
   const lines = items.map(it => {
     const precioTxt = (typeof it.precio === "number") ? ` — $${it.precio}` : (it.precio ? ` — $${it.precio}` : "");
@@ -582,6 +582,70 @@ async function saveBehaviorTextToMongo(newText) {
   behaviorCache = { at: 0, text: null };
 }
 
+
+/* ======================= Productos desde Mongo ======================= */
+const PRODUCTS_CACHE_TTL_MS = 2 * 60 * 1000;
+let productsCache = { at: 0, items: [] };
+
+function normalizePrice(p) {
+  if (typeof p === "number") return p;
+  if (typeof p !== "string") return null;
+  const n = Number(p.replace(/[^\d.,-]/g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+async function loadProductsFromMongo({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && (now - productsCache.at < PRODUCTS_CACHE_TTL_MS) && productsCache.items?.length) {
+    return productsCache.items;
+  }
+  const db = await getDb();
+  const items = await db.collection("products")
+    .find({})
+    .sort({ name: 1 })
+    .toArray();
+  productsCache = { at: now, items };
+  return items;
+}
+
+async function upsertProduct(prod) {
+  const db = await getDb();
+  const name = String(prod.name || "").trim();
+  if (!name) throw new Error("name requerido");
+  const doc = {
+    name,
+    price: normalizePrice(prod.price),
+    venta: typeof prod.venta === "string" ? prod.venta.trim() : "",
+    obs: typeof prod.obs === "string" ? prod.obs.trim() : "",
+    active: prod.active === false ? false : true,
+    updatedAt: new Date(),
+  };
+  await db.collection("products").updateOne(
+    { name },
+    { $set: doc, $setOnInsert: { createdAt: new Date() } },
+    { upsert: true }
+  );
+  productsCache = { at: 0, items: [] };
+}
+
+async function removeProductByName(name) {
+  const db = await getDb();
+  await db.collection("products").deleteOne({ name: String(name || "").trim() });
+  productsCache = { at: 0, items: [] };
+}
+
+function buildCatalogTextFromMongo(items) {
+  if (!items?.length) return "Catálogo de productos: (ninguno)";
+  const active = items.filter(it => it.active !== false);
+  if (!active.length) return "Catálogo de productos: (ninguno activo)";
+  const lines = active.map(it => {
+    const precioTxt = (typeof it.price === "number") ? ` — $${it.price}` : (it.price ? ` — $${it.price}` : "");
+    const ventaTxt  = it.venta ? ` (${it.venta})` : "";
+    const obsTxt    = it.obs ? ` | Obs: ${it.obs}` : "";
+    return `- ${it.name}${precioTxt}${ventaTxt}${obsTxt}`;
+  });
+  return "Catálogo (nombre — precio (modo de venta) | Obs: observaciones):\n" + lines.join("\n");
+}
 async function buildSystemPrompt({ force = false, conversation = null } = {}) {
   // Usar snapshot si viene atado a la conversación
   if (conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
@@ -603,8 +667,12 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
   // 2) Catálogo SIEMPRE desde Sheet
   let catalogText = "";
   try {
-    const products = await loadProductsFromSheet();
-    catalogText = buildCatalogText(products);
+    const products = await loadProductsFromMongo({ force });
+    catalogText = buildCatalogTextFromMongo(products);
+  } catch (e) {
+    console.warn("⚠️ No se pudo leer Productos Mongo:", e.message);
+    catalogText = "Catálogo de productos: (error al leer)";
+  }
   } catch (e) {
     console.warn("⚠️ No se pudo leer Productos:", e.message);
     catalogText = "Catálogo de productos: (error al leer)";
@@ -1639,3 +1707,146 @@ process.on("uncaughtException", (err) => {
 /* ======================= Start ======================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Webhook listening on port ${PORT}`));
+
+/* ======================= UI y API de Productos ======================= */
+app.get("/producto", async (_req, res) => {
+  try {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Productos</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; max-width: 1000px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { background: #f5f5f5; text-align: left; }
+    input[type="text"], input[type="number"] { width: 100%; box-sizing: border-box; }
+    .row { display:flex; gap:8px; align-items:center; }
+    .muted { color:#666; font-size:12px; }
+    .pill { border:1px solid #ccc; border-radius: 999px; padding:2px 8px; font-size:12px; }
+  </style>
+</head>
+<body>
+  <h1>Productos</h1>
+  <p class="muted">Fuente: <span class="pill">MongoDB (colección <code>products</code>)</span></p>
+  <div class="row">
+    <button id="btnReload">Recargar</button>
+    <button id="btnAdd">Agregar</button>
+  </div>
+  <p></p>
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>Nombre</th><th>Precio</th><th>Modo de venta</th><th>Obs</th><th>Activo</th><th>Acciones</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <template id="row-tpl">
+    <tr>
+      <td><input type="text" class="name" placeholder="Ej: Helado 1/2 kg" /></td>
+      <td><input type="number" class="price" step="0.01" placeholder="0.00" /></td>
+      <td><input type="text" class="venta" placeholder="unidad, kg, combo..." /></td>
+      <td><input type="text" class="obs" placeholder="Observaciones" /></td>
+      <td style="text-align:center;"><input type="checkbox" class="active" checked /></td>
+      <td>
+        <button class="save">Guardar</button>
+        <button class="del">Borrar</button>
+      </td>
+    </tr>
+  </template>
+  <script>
+    async function fetchJSON(url, opts) {
+      const r = await fetch(url, opts);
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return await r.json();
+    }
+    async function load() {
+      const data = await fetchJSON('/api/products');
+      const tb = document.querySelector('#tbl tbody');
+      tb.innerHTML = '';
+      for (const it of data.items) {
+        const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
+        tr.querySelector('.name').value = it.name || '';
+        tr.querySelector('.price').value = (typeof it.price === 'number') ? it.price : (it.price || '');
+        tr.querySelector('.venta').value = it.venta || '';
+        tr.querySelector('.obs').value = it.obs || '';
+        tr.querySelector('.active').checked = it.active !== false;
+        tr.dataset.name = it.name;
+        tr.querySelector('.save').addEventListener('click', async () => {
+          await saveRow(tr);
+        });
+        tr.querySelector('.del').addEventListener('click', async () => {
+          if (confirm('¿Borrar "' + (it.name || '') + '"?')) {
+            await fetchJSON('/api/products/' + encodeURIComponent(it.name), { method: 'DELETE' });
+            await load();
+          }
+        });
+        document.querySelector('#tbl tbody').appendChild(tr);
+      }
+    }
+    async function saveRow(tr) {
+      const payload = {
+        name: tr.querySelector('.name').value.trim(),
+        price: tr.querySelector('.price').value.trim(),
+        venta: tr.querySelector('.venta').value.trim(),
+        obs: tr.querySelector('.obs').value.trim(),
+        active: tr.querySelector('.active').checked
+      };
+      await fetchJSON('/api/products', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      alert('Guardado ✅');
+      await load();
+    }
+    document.getElementById('btnReload').addEventListener('click', load);
+    document.getElementById('btnAdd').addEventListener('click', () => {
+      const tb = document.querySelector('#tbl tbody');
+      const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
+      tr.querySelector('.save').addEventListener('click', async () => { await saveRow(tr); });
+      tr.querySelector('.del').addEventListener('click', () => tr.remove());
+      tb.prepend(tr);
+    });
+    load();
+  </script>
+</body>
+</html>`);
+  } catch (e) {
+    console.error("⚠️ /producto error:", e);
+    res.status(500).send("internal");
+  }
+});
+
+// API de productos
+app.get("/api/products", async (req, res) => {
+  try {
+    const items = await loadProductsFromMongo({ force: true });
+    res.json({ items });
+  } catch (e) {
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+app.post("/api/products", async (req, res) => {
+  try {
+    const body = req.body || {};
+    await upsertProduct(body);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message || "bad_request" });
+  }
+});
+
+app.delete("/api/products/:name", async (req, res) => {
+  try {
+    await removeProductByName(req.params.name);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: "internal" });
+  }
+});
