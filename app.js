@@ -13,9 +13,6 @@ const { getDb } = require("./db");
 // --- Node fetch (Node 18+ trae global fetch)
 const app = express();
 
-
-// Helper: escape regex safely for user input
-function escapeRegExp(s){ return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g,'\\$&'); }
 /* ======================= Body / firma ======================= */
 app.use(express.json({
   verify: (req, res, buf) => { req.rawBody = buf; }
@@ -1086,7 +1083,7 @@ app.get("/admin", async (req, res) => {
 <body>
   <h1>Admin - Conversaciones</h1>
   <div class="muted">Actualiza la página para refrescar.</div>
-  <div id="filtersBar" class="filters no-print" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0;"><label>Procesado <select id="fProcessed"><option value="">Todos</option><option value="false">No procesado</option><option value="true">Procesado</option></select></label><label>Teléfono <input id="fPhone" placeholder="wa_id…"></label><label>Estado <select id="fStatus"><option value="">Todos</option><option value="OPEN">OPEN</option><option value="COMPLETED">COMPLETED</option><option value="CANCELLED">CANCELLED</option></select></label><label>Campo fecha <select id="fDateField"><option value="opened">Apertura</option><option value="closed">Cierre</option></select></label><label>Desde <input type="date" id="fFrom"></label><label>Hasta <input type="date" id="fTo"></label><button class="btn" id="btnSearch">Buscar</button><button class="btn" id="btnClear">Limpiar</button><span style="margin-left:12px">Página <button class="btn" id="btnPrev">◀</button><input id="pageInput" value="1" style="width:46px; text-align:center"><button class="btn" id="btnNext">▶</button> Tamaño <select id="pageSize"><option>25</option><option selected>50</option><option>100</option><option>150</option></select> <span id="pageInfo" class="muted"></span></div><table id="tbl">
+  <table id="tbl">
     <thead>
       <tr>
         <th>wa_id</th>
@@ -1117,19 +1114,8 @@ app.get("/admin", async (req, res) => {
 
   <script>
     async function loadConversations() {
-      var params = new URLSearchParams();
-var elP = document.getElementById('fProcessed'); if (elP && elP.value) params.set('processed', elP.value);
-var elPh = document.getElementById('fPhone'); if (elPh && elPh.value.trim()) params.set('phone', elPh.value.trim());
-var elSt = document.getElementById('fStatus'); if (elSt && elSt.value) params.set('status', elSt.value);
-var elDf = document.getElementById('fDateField'); if (elDf && elDf.value) params.set('date_field', elDf.value);
-var elFrom = document.getElementById('fFrom'); if (elFrom && elFrom.value) params.set('from', elFrom.value);
-var elTo = document.getElementById('fTo'); if (elTo && elTo.value) params.set('to', elTo.value);
-if (window.currentPage) params.set('page', String(window.currentPage));
-if (window.getPageSize) params.set('pageSize', String(window.getPageSize()));
-var url = '/api/admin/conversations2' + (params.toString() ? ('?' + params.toString()) : '');
-const r = await fetch(url);
-      const payload = await r.json();
-      const data = Array.isArray(payload) ? payload : (Array.isArray(payload.items) ? payload.items : []);
+      const r = await fetch('/api/admin/conversations');
+      const data = await r.json();
       const tb = document.querySelector("#tbl tbody");
       tb.innerHTML = "";
       for (const row of data) {
@@ -1157,8 +1143,7 @@ const r = await fetch(url);
 
     async function openOrder(id) {
       const r = await fetch('/api/admin/order/' + id);
-      const payload = await r.json();
-      const data = Array.isArray(payload) ? payload : (Array.isArray(payload.items) ? payload.items : []);
+      const data = await r.json();
       const root = document.getElementById('modalContent');
       root.innerHTML = renderOrder(data);
       openModal();
@@ -1203,7 +1188,102 @@ const r = await fetch(url);
     }
 
     loadConversations();
-  </script>
+ 
+        tb.appendChild(tr);
+      }
+    }
+
+    function openMessages(id) {
+      window.open('/api/admin/messages/' + id, '_blank');
+    }
+
+    async function openOrder(id) {
+      const r = await fetch('/api/admin/order/' + id);
+      const data = await r.json();
+      const root = document.getElementById('modalContent');
+      root.innerHTML = renderOrder(data);
+      openModal();
+    }
+
+    async function markProcessed(id) {
+      const r = await fetch('/api/admin/order/' + id + '/process', { method: 'POST' });
+      if (r.ok) {
+        alert('Pedido marcado como procesado.');
+      } else {
+        alert('No se pudo marcar como procesado.');
+      }
+    }
+
+    function renderOrder(o) {
+      if (!o || !o.order) return '<div class="mono">No hay pedido para esta conversación.</div>';
+      const ord = o.order;
+      const itemsHtml = (ord.items || []).map(it => \`<li>\${it.name}: <strong>\${it.selection}</strong></li>\`).join('') || '<li>(sin ítems)</li>';
+      const rawHtml = o.rawPedido ? '<pre class="mono">' + JSON.stringify(o.rawPedido, null, 2) + '</pre>' : '';
+      return \`
+        <div class="printable">
+          <h2>Pedido</h2>
+          <p><strong>Cliente:</strong> \${ord.name || ''} <span class="muted">(\${o.waId})</span></p>
+          <p><strong>Entrega:</strong> \${ord.entrega || ''}</p>
+          <p><strong>Domicilio:</strong> \${ord.domicilio || ''}</p>
+          <p><strong>Monto:</strong> \${(ord.amount!=null)?('$'+ord.amount):''}</p>
+          <p><strong>Estado pedido:</strong> \${ord.estadoPedido || ''}</p>
+          <p><strong>Fecha/Hora entrega:</strong> \${ord.fechaEntrega || ''} \${ord.hora || ''}</p>
+          <h3>Ítems</h3>
+          <ul>\${itemsHtml}</ul>
+          <h3>Detalle crudo del Pedido</h3>
+          \${rawHtml}
+        </div>
+      \`;
+    }
+
+    function openModal() {
+      document.getElementById('modalBackdrop').style.display = 'flex';
+    }
+    function closeModal() {
+      document.getElementById('modalBackdrop').style.display = 'none';
+    }
+
+    loadConversations();
+  
+
+function printTicketOpt(id){
+  try {
+    var sel = document.getElementById('pm-' + id);
+    var variant = sel && sel.value ? sel.value : 'kitchen';
+    var url = '/admin/print/' + id + '?v=' + encodeURIComponent(variant);
+    fetch(url, { method: 'GET', headers: {'X-Probe':'1'} })
+      .then(function(res){
+        if (res && (res.status===200 || res.status===404 || res.status===500)) {
+          window.open(url, '_blank');
+        } else {
+          return fallbackPrint(id, variant);
+        }
+      })
+      .catch(function(){ fallbackPrint(id, variant); });
+  } catch(e){
+    fallbackPrint(id, 'kitchen');
+  }
+}
+
+async function fallbackPrint(id, variant){
+  if (typeof openOrder === 'function') {
+    await openOrder(id);
+    try { document.documentElement.setAttribute('data-ticket-variant', variant); } catch(e){}
+    setTimeout(function(){ window.print(); }, 250);
+  } else {
+    alert('No hay vista de pedido disponible para imprimir.');
+  }
+}
+
+function quickPrint(id){
+  try {
+    var sel = document.getElementById('pm-' + id);
+    if (sel) sel.value = 'kitchen';
+  } catch(e){}
+  printTicketOpt(id);
+}
+
+</script>
 </body>
 </html>
   `);
@@ -1234,62 +1314,6 @@ app.get("/api/admin/conversations", async (req, res) => {
     res.status(500).json({ error: "internal" });
   }
 });
-// New: conversations v2 with filters & pagination (keeps original route intact)
-app.get("/api/admin/conversations2", async (req, res) => {
-  try {
-    const db = await getDb();
-    const q = {};
-    const processed = typeof req.query.processed === "string" ? req.query.processed : "";
-    if (processed === "true") q.processed = true;
-    else if (processed === "false") q.processed = { $ne: true };
-
-    const phone = (req.query.phone || "").toString().trim();
-    if (phone) {
-      const esc = escapeRegExp(phone);
-      q.waId = { $regex: esc, $options: "i" };
-    }
-
-    const status = (req.query.status || "").toString().trim().toUpperCase();
-    if (status) q.status = status;
-
-    const field = (req.query.date_field === "closed") ? "closedAt" : "openedAt";
-    const from = (req.query.from || "").toString();
-    const to   = (req.query.to   || "").toString();
-    const range = {};
-    if (from) { const d = new Date(from + "T00:00:00.000Z"); if (!isNaN(d)) range.$gte = d; }
-    if (to)   { const d = new Date(to   + "T23:59:59.999Z"); if (!isNaN(d)) range.$lte = d; }
-    if (Object.keys(range).length) q[field] = range;
-
-    const page = Math.max(parseInt((req.query.page||"1"), 10), 1);
-    const pageSize = Math.min(Math.max(parseInt((req.query.pageSize||"50"), 10), 1), 200);
-    const skip = (page - 1) * pageSize;
-
-    const coll = db.collection("conversations");
-    const total = await coll.countDocuments(q);
-    const rows = await coll.find(q)
-      .project({ waId:1, contactName:1, status:1, openedAt:1, closedAt:1, turns:1, processed:1 })
-      .sort({ openedAt: -1 })
-      .skip(skip)
-      .limit(pageSize)
-      .toArray();
-
-    const items = rows.map(c => ({
-      _id: (c._id && c._id.toString) ? c._id.toString() : String(c._id),
-      waId: c.waId || "",
-      contactName: c.contactName || "",
-      status: c.status || "OPEN",
-      openedAt: c.openedAt || null,
-      closedAt: c.closedAt || null,
-      turns: (typeof c.turns === "number") ? c.turns : 0,
-      processed: !!c.processed
-    }));
-    res.json({ items, total, page, pageSize });
-  } catch (e) {
-    console.error("⚠️ /api/admin/conversations2 error:", e && e.message || e);
-    res.status(200).json({ items: [], total: 0, page: 1, pageSize: 50 });
-  }
-});
-
 
 // HTML con mensajes
 app.get("/api/admin/messages/:id", async (req, res) => {
