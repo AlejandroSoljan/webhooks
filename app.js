@@ -870,9 +870,9 @@ async function chatWithHistoryJSON(
   // refrescar system en cada turno
   try {
         const db = await getDb();
-    const conv = await db.collection(\"conversations\").findOne({ waId, status: \"OPEN\" });
+    const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
     const systemText = await buildSystemPrompt({ conversation: conv || null });
-    session.messages[0] = { role: \"system\", content: systemText };
+    session.messages[0] = { role: "system", content: systemText };
 } catch (e) {
     console.warn("⚠️ No se pudo refrescar system:", e.message);
   }
