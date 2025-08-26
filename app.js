@@ -1311,7 +1311,7 @@ app.post("/webhook", async (req, res) => {
 });
 if (r.ok) setRowProcessedUI(id, true);
       else { alert('No se pudo marcar.'); if (btn) { btn.disabled = false; btn.textContent = 'Procesado'; } }
-    }
+    
     function setRowProcessedUI(id, processed) {
       const cell = document.getElementById('proc-' + id);
       if (cell) cell.textContent = processed ? '✅' : '—';
