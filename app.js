@@ -1216,7 +1216,7 @@ const info = document.getElementById('pageInfo');
 if (info) {
   const fromN = (page-1)*limit + 1;
   const toN = Math.min(page*limit, total);
-  info.textContent = total ? ` — Mostrando ${fromN}-${toN} de ${total}` : '';
+  info.textContent = total ? ' — Mostrando ' + fromN + '-' + toN + ' de ' + total : '';
 }
 const pageInput = document.getElementById('pageInput'); if (pageInput) pageInput.value = String(page);
 const prev = document.getElementById('btnPrev'); if (prev) prev.disabled = (page <= 1);
