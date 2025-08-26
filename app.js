@@ -1237,13 +1237,13 @@ app.get("/admin", async (req, res) => {
 // JSON de conversaciones para Admin
 // ===== Admin JSON (stable + filtros + fallback) =====
 // --- helper (dejar una sola vez en el archivo) ---
+// --- helper (una sola vez en todo el archivo) ---
 function escapeRegExp(s) {
-  // Escapa todos los caracteres especiales de regex
-  // Ej: "11+22(33)" -> "11\+22\(33\)"
+  // Escapa caracteres especiales para armar un regex con texto libre
   return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
 }
 
-// --- GET /api/admin/conversations (con filtros y regex seguro) ---
+// --- GET /api/admin/conversations (filtros + salida normalizada) ---
 app.get('/api/admin/conversations', async (req, res) => {
   try {
     const db = await getDb();
@@ -1278,7 +1278,7 @@ app.get('/api/admin/conversations', async (req, res) => {
     }
     if (Object.keys(range).length) q[field] = range;
 
-    // si no hay filtros, q queda vacío → comportamiento anterior (lista todo)
+    // Si no hay filtros, lista todo (comportamiento anterior)
     const list = await db.collection('conversations')
       .find(q)
       .project({ waId:1, contactName:1, status:1, openedAt:1, closedAt:1, turns:1, processed:1 })
@@ -1286,7 +1286,7 @@ app.get('/api/admin/conversations', async (req, res) => {
       .limit(500)
       .toArray();
 
-    // normalizo salida (_id a string) para el frontend
+    // normalizo salida (_id a string) para la UI
     const out = list.map(c => ({
       _id: c._id && c._id.toString ? c._id.toString() : String(c._id),
       waId: c.waId || '',
@@ -1301,10 +1301,9 @@ app.get('/api/admin/conversations', async (req, res) => {
     res.json(out);
   } catch (e) {
     console.error('⚠️ /api/admin/conversations error:', e);
-    // Para que /admin no “muera” si algo falla, devolvemos array vacío
-    res.status(200).json([]);
+    res.status(200).json([]); // no romper /admin ante errores
   }
-});
+}); // <— cierre correcto del handler (no agregues otra llave después)
 
 // Debug: inspeccionar conteo y primer ID
 app.get("/api/admin/conversations/_debug", async (req, res) => {
