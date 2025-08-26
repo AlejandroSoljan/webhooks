@@ -1068,7 +1068,6 @@ app.get("/admin", async (req, res) => {
     .filters { display:flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px; background:#f8f9fa; border:1px solid #eee; border-radius:8px; margin-top:8px; }
     .filters label { font-size:12px; color:#444; }
     .filters input, .filters select { padding:6px 8px; border:1px solid #ccc; border-radius:6px; }
-    /* modal */
     .modal-backdrop { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); align-items:center; justify-content:center; }
     .modal { background:#fff; width: 720px; max-width: calc(100% - 32px); border-radius:8px; overflow:hidden; box-shadow: 0 10px 30px rgba(0,0,0,.2); }
     .modal header { padding:12px 16px; background:#f6f6f6; display:flex; align-items:center; justify-content:space-between;}
@@ -1077,10 +1076,7 @@ app.get("/admin", async (req, res) => {
     .modal .actions { padding:12px 16px; text-align:right; border-top:1px solid #eee; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; font-size: 12px; }
     .printable { background: #fff; color: #000; }
-    @media print {
-      .no-print { display: none; }
-      .printable { padding: 0; }
-    }
+    @media print { .no-print { display: none; } .printable { padding: 0; } }
   </style>
 </head>
 <body>
@@ -1195,9 +1191,7 @@ app.get("/admin", async (req, res) => {
       }
     }
 
-    function openMessages(id) {
-      window.open('/api/admin/messages/' + id, '_blank');
-    }
+    function openMessages(id) { window.open('/api/admin/messages/' + id, '_blank'); }
 
     async function openOrder(id) {
       const r = await fetch('/api/admin/order/' + id);
@@ -1208,8 +1202,8 @@ app.get("/admin", async (req, res) => {
       if (actions) {
         actions.innerHTML =
           '<button class="btn" onclick="window.print()">Imprimir</button>' +
-          '<button class="btn" onclick="window.open(\'/admin/print/' + id + '?which=kitchen\', \'_blank\')">Cocina</button>' +
-          '<button class="btn" onclick="window.open(\'/admin/print/' + id + '?which=client\', \'_blank\')">Cliente</button>' +
+          '<button class="btn" onclick="window.open(\'/admin/print/' + id + '?v=kitchen\', \'_blank\')">Cocina</button>' +
+          '<button class="btn" onclick="window.open(\'/admin/print/' + id + '?v=client\', \'_blank\')">Cliente</button>' +
           '<button class="btn" onclick="closeModal()">Cerrar</button>';
       }
       openModal();
@@ -1231,6 +1225,80 @@ app.get("/admin", async (req, res) => {
       const cell = document.getElementById('proc-' + id);
       if (cell) cell.textContent = processed ? '✅' : '—';
       const btn = document.getElementById('pbtn-' + id);
+      if (btn) { btn.textContent = processed ? 'Procesado ✓' : 'Procesado'; btn.disabled = !!processed; }
+    }
+
+    function printTicketOpt(id) {
+      const sel = document.getElementById('pm-' + id);
+      const v = sel ? sel.value : 'kitchen';
+      window.open('/admin/print/' + id + '?v=' + encodeURIComponent(v), '_blank');
+    }
+    function quickPrint(id) { window.open('/admin/print/' + id + '?v=kitchen', '_blank'); }
+
+    function renderOrder(o) {
+      if (!o || !o.order) return '<div class="mono">No hay pedido para esta conversación.</div>';
+      const ord = o.order;
+      const itemsHtml = (ord.items || []).map(it => '<li>' + (it.name||'') + ': <strong>' + (it.selection||'') + '</strong></li>').join('') || '<li>(sin ítems)</li>';
+      const rawHtml = o.rawPedido ? '<pre class="mono">' + (typeof o.rawPedido === 'string' ? o.rawPedido : JSON.stringify(o.rawPedido, null, 2)) + '</pre>' : '';
+      return ''
+        + '<div class="printable">'
+        + '  <h2>Pedido</h2>'
+        + '  <p><strong>Cliente:</strong> ' + (ord.name || '') + ' <span class="muted">(' + (o.waId || '') + ')</span></p>'
+        + '  <p><strong>Entrega:</strong> ' + (ord.entrega || '') + '</p>'
+        + '  <p><strong>Domicilio:</strong> ' + (ord.domicilio || '') + '</p>'
+        + '  <p><strong>Monto:</strong> ' + ((ord.amount!=null)?('$'+ord.amount):'') + '</p>'
+        + '  <p><strong>Estado pedido:</strong> ' + (ord.estadoPedido || '') + '</p>'
+        + '  <p><strong>Fecha/Hora entrega:</strong> ' + (ord.fechaEntrega || '') + ' ' + (ord.hora || '') + '</p>'
+        + '  <h3>Ítems</h3>'
+        + '  <ul>' + itemsHtml + '</ul>'
+        + '  <h3>Detalle crudo del Pedido</h3>'
+        +    rawHtml
+        + '</div>';
+    }
+
+    function openModal() { document.getElementById('modalBackdrop').style.display = 'flex'; }
+    function closeModal() { document.getElementById('modalBackdrop').style.display = 'none'; }
+
+    function clearFilters() {
+      document.getElementById('fProcessed').value = '';
+      document.getElementById('fPhone').value = '';
+      document.getElementById('fStatus').value = '';
+      document.getElementById('fFrom').value = '';
+      document.getElementById('fTo').value = '';
+      loadConversations();
+    }
+
+    // Bindings
+    document.getElementById('fProcessed').addEventListener('change', loadConversations);
+    document.getElementById('fPhone').addEventListener('input', function(){ clearTimeout(window.__fT); window.__fT = setTimeout(loadConversations, 300); });
+    document.getElementById('fStatus').addEventListener('change', loadConversations);
+    document.getElementById('fFrom').addEventListener('change', loadConversations);
+    document.getElementById('fTo').addEventListener('change', loadConversations);
+    document.getElementById('btnClear').addEventListener('click', clearFilters);
+    document.getElementById('btnRefresh').addEventListener('click', loadConversations);
+
+    // Init
+    loadConversations();
+  </script>
+</body>
+</html>`);
+  } catch (e) {
+    console.error("⚠️ /admin error:", e);
+    res.status(500).send("internal");
+  }
+});
+      if (r.ok) {
+        setRowProcessedUI(id, true);
+      } else {
+        alert('No se pudo marcar como procesado.');
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function setRowProcessedUI(id, processed) {
+      const cell = document.getElementById('proc-' + id);
+      if (cell) cell.textContent = processed ? '✅' : '—';
+      const btn = document.getElementById('pbtn-' + id);
       if (btn) {
         btn.textContent = processed ? 'Procesado ✓' : 'Procesado';
         btn.disabled = !!processed;
@@ -1240,10 +1308,10 @@ app.get("/admin", async (req, res) => {
     function printTicketOpt(id) {
       const sel = document.getElementById('pm-' + id);
       const which = sel ? sel.value : 'kitchen';
-      window.open('/admin/print/' + id + '?which=' + encodeURIComponent(which), '_blank');
+      window.open('/admin/print/' + id + '?v=' + encodeURIComponent(which), '_blank');
     }
     function quickPrint(id) {
-      window.open('/admin/print/' + id + '?which=kitchen', '_blank');
+      window.open('/admin/print/' + id + '?v=kitchen', '_blank');
     }
 
     function renderOrder(o) {
@@ -1297,59 +1365,7 @@ app.get("/admin", async (req, res) => {
     console.error("⚠️ /admin error:", e);
     res.status(500).send("internal");
   }
-});
-      if (r.ok) {
-        alert('Pedido marcado como procesado.');
-      } else {
-        alert('No se pudo marcar como procesado.');
-      }
-    }
-
-    function renderOrder(o) {
-      if (!o || !o.order) return '<div class="mono">No hay pedido para esta conversación.</div>';
-      const ord = o.order;
-      const itemsHtml = (ord.items || []).map(it => \`<li>\${it.name}: <strong>\${it.selection}</strong></li>\`).join('') || '<li>(sin ítems)</li>';
-      const rawHtml = o.rawPedido ? '<pre class="mono">' + JSON.stringify(o.rawPedido, null, 2) + '</pre>' : '';
-      return \`
-        <div class="printable">
-          <h2>Pedido</h2>
-          <p><strong>Cliente:</strong> \${ord.name || ''} <span class="muted">(\${o.waId})</span></p>
-          <p><strong>Entrega:</strong> \${ord.entrega || ''}</p>
-          <p><strong>Domicilio:</strong> \${ord.domicilio || ''}</p>
-          <p><strong>Monto:</strong> \${(ord.amount!=null)?('$'+ord.amount):''}</p>
-          <p><strong>Estado pedido:</strong> \${ord.estadoPedido || ''}</p>
-          <p><strong>Fecha/Hora entrega:</strong> \${ord.fechaEntrega || ''} \${ord.hora || ''}</p>
-          <h3>Ítems</h3>
-          <ul>\${itemsHtml}</ul>
-          <h3>Detalle crudo del Pedido</h3>
-          \${rawHtml}
-        </div>
-      \`;
-    }
-
-    function openModal() {
-      document.getElementById('modalBackdrop').style.display = 'flex';
-    }
-    function closeModal() {
-      document.getElementById('modalBackdrop').style.display = 'none';
-    }
-
-    function printTicketOpt(id) {
-      const sel = document.getElementById('pm-' + id);
-      const v = sel ? sel.value : 'kitchen';
-      window.open('/admin/print/' + id + '?v=' + encodeURIComponent(v), '_blank');
-    }
-
-    loadConversations();
-  </script>
-</body>
-</html>
-  `);
-});
-
-// JSON de conversaciones para Admin
-// ======================= Admin JSON: conversaciones con filtros =======================
-app.get("/api/admin/conversations", async (req, res) => {
+});app.get("/api/admin/conversations", async (req, res) => {
   try {
     const db = await getDb();
     const { processed, phone, status, from, to } = req.query;
