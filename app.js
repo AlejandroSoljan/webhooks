@@ -1,6 +1,9 @@
 // server.js
 require("dotenv").config();
 
+
+// --- escape regex helper ---
+function escapeRegExp(s){return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g,'\\$&');}
 const express = require("express");
 const crypto = require("crypto");
 const OpenAI = require("openai");
@@ -57,24 +60,22 @@ function withTimeout(promise, ms, label = "operation") {
 function coerceJsonString(raw) {
   if (raw == null) return null;
   let s = String(raw);
-
-  // quita BOM y caracteres de control (excepto \n \t \r)
   s = s.replace(/^\uFEFF/, "")
        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]+/g, " ")
        .trim();
-
-  // quita fences ``` y etiquetas de código
   if (s.startsWith("```")) {
     s = s.replace(/^```(\w+)?/i, "").replace(/```$/i, "").trim();
   }
-
-  // normaliza comillas tipográficas a comillas normales
   s = s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
-
-  // si ya luce como JSON puro, retornalo
   if (s.startsWith("{") && s.endsWith("}")) return s;
+  const first = s.indexOf("{");
+  const last  = s.lastIndexOf("}");
+  if (first !== -1 && last !== -1 && last > first) {
+    return s.slice(first, last + 1).trim();
+  }
+  return s;
+}
 
-  // intenta extraer el primer bloque { ... }
   const first = s.indexOf("{");
   const last  = s.lastIndexOf("}");
   if (first !== -1 && last !== -1 && last > first) {
@@ -84,7 +85,7 @@ function coerceJsonString(raw) {
   return s;
 }
 
-async function safeJsonParseStrictOrFix(raw, { openai, model = "gpt-4o-mini" } = {}) {
+// async function safeJsonParseStrictOrFix(raw, { openai, model = "gpt-4o-mini" } = {}) {
   let s = coerceJsonString(raw);
   if (!s) return null;
 
@@ -198,7 +199,7 @@ app.get("/cache/tts/:id", (req, res) => {
   res.send(item.buffer);
 });
 
-async function getMediaInfo(mediaId) {
+// async function getMediaInfo(mediaId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`;
   const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -208,7 +209,7 @@ async function getMediaInfo(mediaId) {
   }
   return resp.json();
 }
-async function downloadMediaBuffer(mediaUrl) {
+// async function downloadMediaBuffer(mediaUrl) {
   const token = process.env.WHATSAPP_TOKEN;
   const resp = await fetch(mediaUrl, { headers: { Authorization: `Bearer ${token}` } });
   if (!resp.ok) throw new Error(`Media download error: ${resp.status}`);
@@ -217,7 +218,7 @@ async function downloadMediaBuffer(mediaUrl) {
 }
 
 // OCR de imagen
-async function transcribeImageWithOpenAI(publicImageUrl) {
+// async function transcribeImageWithOpenAI(publicImageUrl) {
   const url = "https://api.openai.com/v1/chat/completions";
   const body = {
     model: "o4-mini",
@@ -241,7 +242,7 @@ async function transcribeImageWithOpenAI(publicImageUrl) {
 }
 
 // Transcriptor externo (varias variantes)
-async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename = "audio.ogg" }) {
+// async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename = "audio.ogg" }) {
   const base = TRANSCRIBE_API_URL;
   const paths = ["", "/transcribe", "/api/transcribe", "/v1/transcribe"];
 
@@ -320,7 +321,7 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename 
 }
 
 /* ======================= TTS ======================= */
-async function synthesizeTTS(text) {
+// async function synthesizeTTS(text) {
   const model = process.env.TTS_MODEL || "gpt-4o-mini-tts";
   const voice = process.env.TTS_VOICE || "alloy";
   const format = (process.env.TTS_FORMAT || "mp3").toLowerCase();
@@ -342,7 +343,7 @@ async function synthesizeTTS(text) {
 
   return { buffer, mime };
 }
-async function sendAudioLink(to, publicUrl, phoneNumberId) {
+// async function sendAudioLink(to, publicUrl, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
   const payload = {
@@ -372,7 +373,7 @@ function getPhoneNumberId(value) {
   }
   return id || null;
 }
-async function sendText(to, body, phoneNumberId) {
+// async function sendText(to, body, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
   const payload = { messaging_product: "whatsapp", to, type: "text", text: { body } };
@@ -387,7 +388,7 @@ async function sendText(to, body, phoneNumberId) {
   else console.log("📤 Enviado:", data);
   return data;
 }
-async function sendSafeText(to, body, value) {
+// async function sendSafeText(to, body, value) {
   const phoneNumberId = getPhoneNumberId(value);
   if (!phoneNumberId) {
     console.error("❌ No hay phone_number_id ni en metadata ni en ENV. No se puede enviar WhatsApp.");
@@ -400,7 +401,7 @@ async function sendSafeText(to, body, value) {
     return { error: e.message || "send_failed" };
   }
 }
-async function markAsRead(messageId, phoneNumberId) {
+// async function markAsRead(messageId, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
   const payload = { messaging_product: "whatsapp", status: "read", message_id: messageId };
@@ -429,7 +430,7 @@ function getSpreadsheetIdFromEnv() {
   const m = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   return m ? m[1] : raw;
 }
-async function ensureHeaderIfEmpty({ sheetName, header }) {
+// async function ensureHeaderIfEmpty({ sheetName, header }) {
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
   const getResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${sheetName}!1:1` });
@@ -441,7 +442,7 @@ async function ensureHeaderIfEmpty({ sheetName, header }) {
     });
   }
 }
-async function appendRow({ sheetName, values }) {
+// async function appendRow({ sheetName, values }) {
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
   await sheets.spreadsheets.values.append({
@@ -490,7 +491,7 @@ function flattenBigdata({ waId, bigdata }) {
     b["Facilidad en el proceso de compras"] ?? "", b["Pregunto por bot"] || ""
   ];
 }
-async function saveCompletedToSheets({ waId, data }) {
+// async function saveCompletedToSheets({ waId, data }) {
   const response = data?.response || "";
   const pedido = data?.Pedido || {};
   const bigdata = data?.Bigdata || {};
@@ -513,7 +514,7 @@ let productsCache = { at: 0, items: [] };
 
 function looksActive(v) { return String(v || "").trim().toUpperCase() === "S"; }
 
-async function loadProductsFromSheet() {
+// async function loadProductsFromSheet() {
   const now = Date.now();
   if (now - productsCache.at < PRODUCTS_CACHE_TTL_MS && productsCache.items?.length) {
     return productsCache.items;
@@ -557,11 +558,11 @@ const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); 
 const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000;
 let behaviorCache = { at: 0, text: null };
 
-async function loadBehaviorTextFromEnv() {
+// async function loadBehaviorTextFromEnv() {
   const txt = (process.env.COMPORTAMIENTO || "Sos un asistente claro, amable y conciso. Respondé en español.").trim();
   return txt;
 }
-async function loadBehaviorTextFromSheet() {
+// async function loadBehaviorTextFromSheet() {
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
   const resp = await sheets.spreadsheets.values.get({
@@ -580,7 +581,7 @@ async function loadBehaviorTextFromSheet() {
   return parts.length ? parts.join("\n") : "Sos un asistente claro, amable y conciso. Respondé en español.";
 }
 
-async function buildSystemPrompt({ force = false } = {}) {
+// async function buildSystemPrompt({ force = false } = {}) {
   const now = Date.now();
   if (!force && (now - behaviorCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && behaviorCache.text) {
     return behaviorCache.text;
@@ -629,7 +630,7 @@ async function buildSystemPrompt({ force = false } = {}) {
 }
 
 /* ======================= Mongo: conversaciones, mensajes, orders ======================= */
-async function ensureOpenConversation(waId, { contactName = null } = {}) {
+// async function ensureOpenConversation(waId, { contactName = null } = {}) {
   const db = await getDb();
   let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
   if (!conv) {
@@ -656,7 +657,7 @@ async function ensureOpenConversation(waId, { contactName = null } = {}) {
   return conv;
 }
 
-async function appendMessage(conversationId, {
+// async function appendMessage(conversationId, {
   role,
   content,
   type = "text",
@@ -725,7 +726,7 @@ function normalizeOrder(waId, contactName, pedido) {
 }
 
 // Cierre idempotente + guardado en Sheets y en orders
-async function finalizeConversationOnce(conversationId, finalPayload, estado) {
+// async function finalizeConversationOnce(conversationId, finalPayload, estado) {
   const db = await getDb();
   const res = await db.collection("conversations").findOneAndUpdate(
     { _id: new ObjectId(conversationId), finalized: { $ne: true } },
@@ -787,7 +788,7 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
 /* ======================= Sesiones (historial) ======================= */
 const sessions = new Map(); // waId -> { messages, updatedAt }
 
-async function getSession(waId) {
+// async function getSession(waId) {
   if (!sessions.has(waId)) {
     const systemText = await buildSystemPrompt({ force: true }); // al iniciar conversación
     sessions.set(waId, {
@@ -807,7 +808,7 @@ function pushMessage(session, role, content, maxTurns = 20) {
 }
 
 /* ======================= Chat (historial + parser robusto) ======================= */
-async function chatWithHistoryJSON(
+// async function chatWithHistoryJSON(
   waId,
   userText,
   model = CHAT_MODEL,
@@ -1158,7 +1159,7 @@ app.post("/webhook", async (req, res) => {
   </div>
 
   <script>
-    async function loadConversations() {
+    // async function loadConversations() {
       const params = new URLSearchParams();
       const p = (document.getElementById('fProcessed')||{}).value || "";
       const phone = (document.getElementById('fPhone')||{}).value || "";
@@ -1221,7 +1222,7 @@ app.post("/webhook", async (req, res) => {
       window.open('/api/admin/messages/' + id, '_blank');
     }
 
-    async function openOrder(id) {
+    // async function openOrder(id) {
       const r = await fetch('/api/admin/order/' + id);
       const data = await r.json();
       const root = document.getElementById('modalContent');
@@ -1237,7 +1238,7 @@ app.post("/webhook", async (req, res) => {
       openModal();
     }
 
-    async function markProcessed(id) {
+    // async function markProcessed(id) {
       const btn = document.getElementById('pbtn-' + id);
       if (btn) { btn.disabled = true; btn.textContent = 'Procesando…'; }
       const r = await fetch('/api/admin/order/' + id + '/process', { method: 'POST' });
@@ -1311,7 +1312,7 @@ app.post("/webhook", async (req, res) => {
 });
 if (r.ok) setRowProcessedUI(id, true);
       else { alert('No se pudo marcar.'); if (btn) { btn.disabled = false; btn.textContent = 'Procesado'; } }
-    
+    }
     function setRowProcessedUI(id, processed) {
       const cell = document.getElementById('proc-' + id);
       if (cell) cell.textContent = processed ? '✅' : '—';
@@ -1653,6 +1654,3 @@ app.listen(PORT, () => console.log(`🚀 Webhook listening on port ${PORT}`));
 
 
 // --- escape regex helper ---
-function escapeRegExp(s) {
-  return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
-}
