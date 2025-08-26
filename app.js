@@ -568,6 +568,7 @@ async function loadBehaviorTextFromSheet() {
   return parts.length ? parts.join("\n") : "Sos un asistente claro, amable y conciso. Respondé en español.";
 }
 
+
 async function loadBehaviorTextFromMongo() {
   const db = await getDb();
   const doc = await db.collection("settings").findOne({ _id: "behavior" });
@@ -647,23 +648,6 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
 /* ======================= Mongo: conversaciones, mensajes, orders ======================= */
 async function ensureOpenConversation(waId, { contactName = null }
 
-app.get("/conversations/:waId/summary", async (req, res) => {
-  try {
-    const db = await getDb();
-    const waId = req.params.waId;
-    const limit = Math.min(parseInt(req.query.limit || "50", 10) || 50, 200);
-    const before = req.query.before ? new Date(req.query.before) : null; // ISO date
-    const status = req.query.status ? String(req.query.status) : null;   // COMPLETED | CANCELLED | OPEN
-
-    const q = { waId };
-    if (status) q.status = status;
-        const cursor = db.collection("conversations_summary")
-      .find(before ? { ...q, closedAt: { $lt: before } } : q)
-      .sort({ closedAt: -1 })
-      .limit(limit);
-
-    const items = await cursor.toArray();
-    res.json({ waId, count: items.length, items });
 
 /* ======================= Cierre de conversación + summary ======================= */
 async function closeConversation(convId, { status, motivo = null } = {}) {
@@ -993,6 +977,7 @@ app.get("/webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
+
 /* ======================= UI y API para editar comportamiento ======================= */
 app.get("/comportamiento", async (_req, res) => {
   try {
@@ -1080,15 +1065,6 @@ app.post("/api/behavior", async (req, res) => {
     res.status(500).json({ error: "internal" });
   }
 });
-
-/* ======================= Consulta de summaries ======================= */
-
-  } catch (e) {
-    console.error("⚠️ GET /conversations/:waId/summary error:", e);
-    res.status(500).json({ error: "internal" });
-  }
-});
-
 /* ======================= Webhook WhatsApp ======================= */
 app.post("/webhook", async (req, res) => {
   try {
@@ -1625,6 +1601,7 @@ app.post("/api/admin/order/:id/process", async (req, res) => {
     res.status(500).json({ error: "internal" });
   }
 });
+
 
 // Impresión ticket térmico 80mm / 58mm
 app.get("/admin/print/:id", async (req, res) => {
