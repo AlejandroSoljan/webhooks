@@ -54,9 +54,6 @@ function withTimeout(promise, ms, label = "operation") {
 }
 
 /* ======================= Helpers JSON robustos ======================= */
-// Regex escape helper (safe for user-provided phone filters)
-function escapeRegExp(s) { return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'); }
-
 function coerceJsonString(raw) {
   if (raw == null) return null;
   let s = String(raw);
@@ -785,39 +782,6 @@ function pushMessage(session, role, content, maxTurns = 20) {
   session.updatedAt = Date.now();
 }
 
-// OpenAI chat call with retries & backoff (retriable on timeouts / 429 / reset)
-async function openaiChatWithRetries(messages, { model, temperature }) {
-  const maxRetries = parseInt(process.env.OPENAI_RETRY_COUNT || "2", 10);
-  const baseDelay  = parseInt(process.env.OPENAI_RETRY_BASE_MS || "600", 10);
-  let lastErr = null;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await withTimeout(
-        openai.chat.completions.create({
-          model,
-          response_format: { type: "json_object" },
-          temperature,
-          top_p: 1,
-          messages
-        }),
-        parseInt(process.env.OPENAI_TIMEOUT_MS || "12000", 10),
-        "openai_chat"
-      );
-    } catch (e) {
-      lastErr = e;
-      const msg = (e && e.message) ? e.message : String(e);
-      const retriable = /timeout/i.test(msg) || e?.status === 429 || e?.code === "ETIMEDOUT" || e?.code === "ECONNRESET";
-      if (attempt < maxRetries && retriable) {
-        const jitter = Math.floor(Math.random() * 250);
-        const delay = baseDelay * Math.pow(2, attempt) + jitter;
-        await new Promise(r => setTimeout(r, delay));
-        continue;
-      }
-      break;
-    }
-  }
-  throw lastErr || new Error("openai_chat_failed");
-}
 /* ======================= Chat (historial + parser robusto) ======================= */
 async function chatWithHistoryJSON(
   waId,
@@ -839,7 +803,17 @@ async function chatWithHistoryJSON(
 
   let content = "";
   try {
-    const completion = await openaiChatWithRetries([ ...session.messages ], { model, temperature });
+    const completion = await withTimeout(
+      openai.chat.completions.create({
+        model,
+        response_format: { type: "json_object" },
+        temperature,
+        top_p: 1,
+        messages: [ ...session.messages ]
+      }),
+      parseInt(process.env.OPENAI_TIMEOUT_MS || "12000", 10),
+      "openai_chat"
+    );
     content = completion.choices?.[0]?.message?.content || "";
   } catch (e) {
     console.error("❌ OpenAI error/timeout:", e.message || e);
@@ -1086,7 +1060,6 @@ app.get("/admin", async (req, res) => {
     tr:nth-child(even) { background: #fafafa; }
     .btn { padding: 6px 10px; border: 1px solid #333; background: #fff; cursor: pointer; border-radius: 4px; font-size: 12px; }
     .btn + .btn { margin-left: 6px; }
-    .printmenu { display:inline-flex; gap:6px; align-items:center; }
     .muted { color: #666; }
     .tag { display:inline-block; padding:2px 6px; border-radius: 4px; font-size: 12px; }
     .tag.OPEN { background: #e7f5ff; color: #1971c2; }
@@ -1110,15 +1083,7 @@ app.get("/admin", async (req, res) => {
 <body>
   <h1>Admin - Conversaciones</h1>
   <div class="muted">Actualiza la página para refrescar.</div>
-  <div class="no-print" id="filterBar" style="margin:8px 0 12px;">
-  <label>Filtrar: </label>
-  <select id="filterProcessed" class="btn" onchange="loadConversations()">
-    <option value="">Todas</option>
-    <option value="false">No procesadas</option>
-    <option value="true">Procesadas</option>
-  </select>
-</div>
-<table id="tbl">
+  <table id="tbl">
     <thead>
       <tr>
         <th>wa_id</th>
@@ -1127,7 +1092,6 @@ app.get("/admin", async (req, res) => {
         <th>Abierta</th>
         <th>Cerrada</th>
         <th>Turnos</th>
-        <th>Procesado</th>
         <th>Acciones</th>
       </tr>
     </thead>
@@ -1150,78 +1114,28 @@ app.get("/admin", async (req, res) => {
 
   <script>
     async function loadConversations() {
-      
-const params = new URLSearchParams();
-const pSel = document.getElementById('fProcessed') || document.getElementById('filterProcessed');
-const p = pSel ? pSel.value : '';
-const phone = (document.getElementById('fPhone')||{}).value || '';
-const st = (document.getElementById('fStatus')||{}).value || '';
-const df = (document.getElementById('fDateField')||{}).value || 'opened';
-const d1 = (document.getElementById('fFrom')||{}).value || '';
-const d2 = (document.getElementById('fTo')||{}).value || '';
-
-if (p) params.set('processed', p);
-if (phone.trim()) params.set('phone', phone.trim());
-if (st) params.set('status', st);
-if (df) params.set('date_field', df);
-if (d1) params.set('from', d1);
-if (d2) params.set('to', d2);
-
-params.set('page', String(window.currentPage || 1));
-params.set('pageSize', String((window.getPageSize && window.getPageSize()) || 50));
-
-const url = '/api/admin/conversations' + (params.toString() ? ('?' + params.toString()) : '');
-const r = await fetch(url);
-const payload = await r.json();
-const data = Array.isArray(payload) ? payload : (payload.items || []);
-const total = Array.isArray(payload) ? data.length : (payload.total || 0);
-const page = Array.isArray(payload) ? (window.currentPage || 1) : (payload.page || 1);
-const limit = Array.isArray(payload) ? ((window.getPageSize && window.getPageSize()) || 50) : (payload.pageSize || 50);
-
-const tb = document.querySelector("#tbl tbody");
-tb.innerHTML = "";
-if (!Array.isArray(data) || data.length === 0) {
-  tb.innerHTML = '<tr><td colspan="8" class="muted">Sin resultados (probá limpiar filtros)</td></tr>';
-} else {
-  for (const row of data) {
-    const tr = document.createElement('tr');
-    const processedIcon = row.processed ? '✅' : '—';
-    const pbtnDisabled = row.processed ? ' disabled' : '';
-    const pbtnLabel = row.processed ? 'Procesada ✓' : 'Procesado';
-    tr.innerHTML =
-      '<td>' + (row.waId || '') + '</td>' +
-      '<td>' + (row.contactName || '') + '</td>' +
-      '<td><span class="tag ' + (row.status || '') + '">' + (row.status || '') + '</span></td>' +
-      '<td>' + (row.openedAt ? new Date(row.openedAt).toLocaleString() : '') + '</td>' +
-      '<td>' + (row.closedAt ? new Date(row.closedAt).toLocaleString() : '') + '</td>' +
-      '<td>' + (row.turns ?? 0) + '</td>' +
-      '<td id="proc-' + row._id + '">' + processedIcon + '</td>' +
-      '<td>' +
-        '<button class="btn" onclick="openMessages(\\'' + row._id + '\\')">Mensajes</button>' +
-        '<button class="btn" onclick="openOrder(\\'' + row._id + '\\')">Pedido</button>' +
-        '<button id="pbtn-' + row._id + '" class="btn" onclick="markProcessed(\\'' + row._id + '\\')"' + pbtnDisabled + '>' + pbtnLabel + '</button>' +
-        '<div class="printmenu">' +
-          '<select id="pm-' + row._id + '" class="btn">' +
-            '<option value="kitchen"' + (row.processed ? '' : ' selected') + '>Cocina</option>' +
-            '<option value="client"' + (row.processed ? ' selected' : '') + '>Cliente</option>' +
-          '</select>' +
-          '<button class="btn" onclick="printTicketOpt(\\'' + row._id + '\\')">Imprimir</button>' +
-          '<button class="btn" title="Imprimir cocina rápido" onclick="quickPrint(\\'' + row._id + '\\')">🍳</button>' +
-        '</div>' +
-      '</td>';
-    tb.appendChild(tr);
-  }
-}
-const info = document.getElementById('pageInfo');
-if (info) {
-  const fromN = (page-1)*limit + 1;
-  const toN = Math.min(page*limit, total);
-  info.textContent = total ? ' — Mostrando ' + fromN + '-' + toN + ' de ' + total : '';
-}
-const pageInput = document.getElementById('pageInput'); if (pageInput) pageInput.value = String(page);
-const prev = document.getElementById('btnPrev'); if (prev) prev.disabled = (page <= 1);
-const next = document.getElementById('btnNext'); if (next) next.disabled = (page*limit >= total);
-    }
+      const r = await fetch('/api/admin/conversations');
+      const payload = await r.json();
+      const data = Array.isArray(payload) ? payload : (Array.isArray(payload.items) ? payload.items : []);
+      const tb = document.querySelector("#tbl tbody");
+      tb.innerHTML = "";
+      for (const row of data) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = \`
+          <td>\${row.waId}</td>
+          <td>\${row.contactName || ""}</td>
+          <td><span class="tag \${row.status}">\${row.status}</span></td>
+          <td>\${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
+          <td>\${row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
+          <td>\${row.turns ?? 0}</td>
+          <td>
+            <button class="btn" onclick="openMessages('\${row._id}')">Mensajes</button>
+            <button class="btn" onclick="openOrder('\${row._id}')">Pedido</button>
+            <button class="btn" onclick="markProcessed('\${row._id}')">Procesado</button>
+          </td>
+        \`;
+        tb.appendChild(tr);
+      }
     }
 
     function openMessages(id) {
@@ -1230,7 +1144,8 @@ const next = document.getElementById('btnNext'); if (next) next.disabled = (page
 
     async function openOrder(id) {
       const r = await fetch('/api/admin/order/' + id);
-      const data = await r.json();
+      const payload = await r.json();
+      const data = Array.isArray(payload) ? payload : (Array.isArray(payload.items) ? payload.items : []);
       const root = document.getElementById('modalContent');
       root.innerHTML = renderOrder(data);
       openModal();
@@ -1274,12 +1189,6 @@ const next = document.getElementById('btnNext'); if (next) next.disabled = (page
       document.getElementById('modalBackdrop').style.display = 'none';
     }
 
-    function printTicketOpt(id) {
-      const sel = document.getElementById('pm-' + id);
-      const v = sel ? sel.value : 'kitchen';
-      window.open('/admin/print/' + id + '?v=' + encodeURIComponent(v), '_blank');
-    }
-
     loadConversations();
   </script>
 </body>
@@ -1291,55 +1200,25 @@ const next = document.getElementById('btnNext'); if (next) next.disabled = (page
 app.get("/api/admin/conversations", async (req, res) => {
   try {
     const db = await getDb();
-    const q = {};
-    const { processed, phone, status, date_field, from, to } = req.query;
-
-    if (typeof processed === "string") {
-      if (processed === "true") q.processed = true;
-      else if (processed === "false") q.processed = { $ne: true };
-    }
-
-    if (phone && String(phone).trim()) {
-      const esc = escapeRegExp(String(phone).trim());
-      q.waId = { $regex: esc, $options: "i" };
-    }
-
-    if (status && String(status).trim()) {
-      q.status = String(status).trim().toUpperCase();
-    }
-
-    const field = (date_field === "closed") ? "closedAt" : "openedAt";
-    const range = {};
-    if (from) {
-      const d1 = new Date(`${from}T00:00:00.000Z`);
-      if (!isNaN(d1)) range.$gte = d1;
-    }
-    if (to) {
-      const d2 = new Date(`${to}T23:59:59.999Z`);
-      if (!isNaN(d2)) range.$lte = d2;
-    }
-    if (Object.keys(range).length) q[field] = range;
-
     const convs = await db.collection("conversations")
-      .find(q, { sort: { openedAt: -1 } })
-      .project({ waId:1, status:1, openedAt:1, closedAt:1, turns:1, contactName:1, processed:1 })
-      .limit(500)
+      .find({}, { sort: { openedAt: -1 } })
+      .project({ waId:1, status:1, openedAt:1, closedAt:1, turns:1, contactName:1 })
       .toArray();
 
+    // normalizar _id a string
     const out = convs.map(c => ({
-      _id: c._id && c._id.toString ? c._id.toString() : String(c._id),
+      _id: c._id.toString(),
       waId: c.waId,
       contactName: c.contactName || "",
       status: c.status || "OPEN",
       openedAt: c.openedAt,
       closedAt: c.closedAt,
-      turns: typeof c.turns === "number" ? c.turns : 0,
-      processed: !!c.processed
+      turns: c.turns || 0
     }));
     res.json(out);
   } catch (e) {
     console.error("⚠️ /api/admin/conversations error:", e);
-    res.status(200).json([]);
+    res.status(500).json({ error: "internal" });
   }
 });
 
@@ -1448,7 +1327,6 @@ app.post("/api/admin/order/:id/process", async (req, res) => {
       orderDoc.processedAt = new Date();
       await db.collection("orders").insertOne(orderDoc);
     }
-    await db.collection("conversations").updateOne({ _id: convId }, { $set: { processed: true } });
     res.json({ ok: true });
   } catch (e) {
     console.error("⚠️ /api/admin/order/:id/process error:", e);
@@ -1456,86 +1334,6 @@ app.post("/api/admin/order/:id/process", async (req, res) => {
   }
 });
 
-
-// Impresión ticket térmico 80mm / 58mm
-app.get("/admin/print/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const v = String(req.query.v || "kitchen").toLowerCase(); // kitchen | client
-    const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
-    if (!conv) return res.status(404).send("Conversación no encontrada");
-    let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) });
-    if (!order && conv.summary?.Pedido) {
-      order = normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
-    }
-    const negocio = process.env.BUSINESS_NAME || "NEGOCIO";
-    const direccionNegocio = process.env.BUSINESS_ADDRESS || "";
-    const telNegocio = process.env.BUSINESS_PHONE || "";
-
-    const cliente = (order?.name || conv.contactName || "") + " (" + (conv.waId || "") + ")";
-    const domicilio = order?.domicilio || "";
-    const pago = order?.pago || order?.payment || "";
-    const monto = (order?.amount != null) ? Number(order.amount) : null;
-
-    const items = Array.isArray(order?.items) ? order.items : [];
-    function esc(s){ return String(s==null? "": s); }
-
-    const itemLines = items.map(it => {
-      const name = esc(it.name || it.nombre || it.producto || it.title || "Item");
-      const sel = esc(it.selection || it.seleccion || it.detalle || it.toppings || "");
-      return sel ? (name + " - " + sel) : name;
-    }).join("\n");
-
-    const showPrices = (v === "client");
-    const totalHtml = showPrices && (monto != null) ? `<div class="row big"><span>TOTAL</span><span>$${monto.toFixed(2)}</span></div>` : "";
-
-    const html = `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>Ticket</title>
-<style>
-  @page { size: 80mm auto; margin: 0; }
-  body { margin: 0; }
-  .ticket { width: 80mm; padding: 6px 8px; font-family: monospace; font-size: 12px; }
-  .center { text-align: center; }
-  .row { display: flex; justify-content: space-between; }
-  .hr { border-top: 1px dashed #000; margin: 6px 0; }
-  .big { font-size: 14px; font-weight: bold; }
-  @media print { .noprint { display: none; } }
-</style>
-</head>
-<body>
-  <div class="ticket">
-    <div class="center big">${esc(negocio)}</div>
-    ${direccionNegocio ? `<div class="center">${esc(direccionNegocio)}</div>` : ""}
-    ${telNegocio ? `<div class="center">${esc(telNegocio)}</div>` : ""}
-    <div class="hr"></div>
-    <div>Cliente: ${esc(cliente)}</div>
-    ${domicilio ? `<div>Dirección: ${esc(domicilio)}</div>` : ""}
-    ${showPrices && pago ? `<div>Pago: ${esc(pago)}</div>` : ""}
-    <div class="hr"></div>
-    <div>Pedido:</div>
-    <pre>${esc(itemLines)}</pre>
-    <div class="hr"></div>
-    ${totalHtml}
-    <div class="hr"></div>
-    <div>${new Date().toLocaleString()}</div>
-    <div class="center">${showPrices ? "¡Gracias por su compra!" : "TICKET COCINA"}</div>
-    <div class="hr"></div>
-    <button class="noprint" onclick="window.print()">Imprimir</button>
-  </div>
-</body>
-</html>`;
-
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.end(html);
-  } catch (e) {
-    console.error("⚠️ /admin/print error:", e);
-    res.status(500).send("internal");
-  }
-});
 /* ======================= Seguridad global de errores ======================= */
 process.on("unhandledRejection", (reason) => {
   console.error("🧨 UnhandledRejection:", reason);
