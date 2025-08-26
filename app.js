@@ -1065,6 +1065,31 @@ app.post("/api/behavior", async (req, res) => {
     res.status(500).json({ error: "internal" });
   }
 });
+
+/* ======================= Consulta de summaries ======================= */
+app.get("/conversations/:waId/summary", async (req, res) => {
+  try {
+    const db = await getDb();
+    const waId = req.params.waId;
+    const limit = Math.min(parseInt(req.query.limit || "50", 10) || 50, 200);
+    const before = req.query.before ? new Date(req.query.before) : null; // ISO date
+    const status = req.query.status ? String(req.query.status) : null;   // COMPLETED | CANCELLED | OPEN
+
+    const q = { waId };
+    if (status) q.status = status;
+        const cursor = db.collection("conversations_summary")
+      .find(before ? { ...q, closedAt: { $lt: before } } : q)
+      .sort({ closedAt: -1 })
+      .limit(limit);
+
+    const items = await cursor.toArray();
+    res.json({ waId, count: items.length, items });
+  } catch (e) {
+    console.error("⚠️ GET /conversations/:waId/summary error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
 /* ======================= Webhook WhatsApp ======================= */
 app.post("/webhook", async (req, res) => {
   try {
