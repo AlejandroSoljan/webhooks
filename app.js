@@ -129,7 +129,6 @@ ${raw}` }
 }
 if (__fixLastErr) throw __fixLastErr;
 const fixedJsonPatched = coerceJsonString(fixed);
-    const fixedJsonPatched = coerceJsonString(fixed);
     return JSON.parse(fixedJsonPatched);
   } catch (e2) {
     try {
