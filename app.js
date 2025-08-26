@@ -1115,7 +1115,8 @@ app.get("/admin", async (req, res) => {
   <script>
     async function loadConversations() {
       const r = await fetch('/api/admin/conversations');
-      const data = await r.json();
+      const payload = await r.json();
+      const data = Array.isArray(payload) ? payload : (Array.isArray(payload.items) ? payload.items : []);
       const tb = document.querySelector("#tbl tbody");
       tb.innerHTML = "";
       for (const row of data) {
@@ -1143,7 +1144,8 @@ app.get("/admin", async (req, res) => {
 
     async function openOrder(id) {
       const r = await fetch('/api/admin/order/' + id);
-      const data = await r.json();
+      const payload = await r.json();
+      const data = Array.isArray(payload) ? payload : (Array.isArray(payload.items) ? payload.items : []);
       const root = document.getElementById('modalContent');
       root.innerHTML = renderOrder(data);
       openModal();
@@ -1199,7 +1201,8 @@ app.get("/admin", async (req, res) => {
 
     async function openOrder(id) {
       const r = await fetch('/api/admin/order/' + id);
-      const data = await r.json();
+      const payload = await r.json();
+      const data = Array.isArray(payload) ? payload : (Array.isArray(payload.items) ? payload.items : []);
       const root = document.getElementById('modalContent');
       root.innerHTML = renderOrder(data);
       openModal();
