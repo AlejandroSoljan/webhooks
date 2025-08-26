@@ -1,9 +1,6 @@
 // server.js
 require("dotenv").config();
 
-
-// --- escape regex helper ---
-function escapeRegExp(s){return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g,'\\$&');}
 const express = require("express");
 const crypto = require("crypto");
 const OpenAI = require("openai");
@@ -60,22 +57,24 @@ function withTimeout(promise, ms, label = "operation") {
 function coerceJsonString(raw) {
   if (raw == null) return null;
   let s = String(raw);
+
+  // quita BOM y caracteres de control (excepto \n \t \r)
   s = s.replace(/^\uFEFF/, "")
        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]+/g, " ")
        .trim();
+
+  // quita fences ``` y etiquetas de código
   if (s.startsWith("```")) {
     s = s.replace(/^```(\w+)?/i, "").replace(/```$/i, "").trim();
   }
+
+  // normaliza comillas tipográficas a comillas normales
   s = s.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
+
+  // si ya luce como JSON puro, retornalo
   if (s.startsWith("{") && s.endsWith("}")) return s;
-  const first = s.indexOf("{");
-  const last  = s.lastIndexOf("}");
-  if (first !== -1 && last !== -1 && last > first) {
-    return s.slice(first, last + 1).trim();
-  }
-  return s;
-}
 
+  // intenta extraer el primer bloque { ... }
   const first = s.indexOf("{");
   const last  = s.lastIndexOf("}");
   if (first !== -1 && last !== -1 && last > first) {
@@ -85,7 +84,7 @@ function coerceJsonString(raw) {
   return s;
 }
 
-// async function safeJsonParseStrictOrFix(raw, { openai, model = "gpt-4o-mini" } = {}) {
+async function safeJsonParseStrictOrFix(raw, { openai, model = "gpt-4o-mini" } = {}) {
   let s = coerceJsonString(raw);
   if (!s) return null;
 
@@ -95,42 +94,18 @@ function coerceJsonString(raw) {
 
   // reintento con “arreglador” (una sola vez)
   try {
-    let __fixLastErr = null;
-const __fixRetries = parseInt(process.env.OPENAI_RETRY_COUNT || "2", 10);
-const __fixBase = parseInt(process.env.OPENAI_RETRY_BASE_MS || "600", 10);
-let fixed = "";
-for (let __a = 0; __a <= __fixRetries; __a++) {
-  try {
     const fix = await openai.chat.completions.create({
       model,
       temperature: 0,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: "Devuelve EXCLUSIVAMENTE un JSON válido, sin comentarios ni markdown." },
-        { role: "user", content: `Convertí lo siguiente a JSON estricto (si falta llaves, completalas):
-
-${raw}` }
+        { role: "user", content: `Convertí lo siguiente a JSON estricto (si falta llaves, completalas):\n\n${raw}` }
       ]
     });
-    fixed = fix.choices?.[0]?.message?.content || "";
-    __fixLastErr = null;
-    break;
-  } catch (e) {
-    __fixLastErr = e;
-    const msg = e && e.message ? e.message : String(e);
-    const retriable = /timeout/i.test(msg) || e?.code === "ETIMEDOUT" || e?.code === "ECONNRESET" || e?.status === 429;
-    if (__a < __fixRetries && retriable) {
-      const jitter = Math.floor(Math.random() * 250);
-      const delay = __fixBase * Math.pow(2, __a) + jitter;
-      await new Promise(r => setTimeout(r, delay));
-      continue;
-    }
-    break;
-  }
-}
-if (__fixLastErr) throw __fixLastErr;
-const fixedJsonPatched = coerceJsonString(fixed);
-    return JSON.parse(fixedJsonPatched);
+    const fixed = fix.choices?.[0]?.message?.content || "";
+    const fixedClean = coerceJsonString(fixed);
+    return JSON.parse(fixedClean);
   } catch (e2) {
     try {
       return JSON.parse(s);
@@ -199,7 +174,7 @@ app.get("/cache/tts/:id", (req, res) => {
   res.send(item.buffer);
 });
 
-// async function getMediaInfo(mediaId) {
+async function getMediaInfo(mediaId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`;
   const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
@@ -209,7 +184,7 @@ app.get("/cache/tts/:id", (req, res) => {
   }
   return resp.json();
 }
-// async function downloadMediaBuffer(mediaUrl) {
+async function downloadMediaBuffer(mediaUrl) {
   const token = process.env.WHATSAPP_TOKEN;
   const resp = await fetch(mediaUrl, { headers: { Authorization: `Bearer ${token}` } });
   if (!resp.ok) throw new Error(`Media download error: ${resp.status}`);
@@ -218,7 +193,7 @@ app.get("/cache/tts/:id", (req, res) => {
 }
 
 // OCR de imagen
-// async function transcribeImageWithOpenAI(publicImageUrl) {
+async function transcribeImageWithOpenAI(publicImageUrl) {
   const url = "https://api.openai.com/v1/chat/completions";
   const body = {
     model: "o4-mini",
@@ -242,7 +217,7 @@ app.get("/cache/tts/:id", (req, res) => {
 }
 
 // Transcriptor externo (varias variantes)
-// async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename = "audio.ogg" }) {
+async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename = "audio.ogg" }) {
   const base = TRANSCRIBE_API_URL;
   const paths = ["", "/transcribe", "/api/transcribe", "/v1/transcribe"];
 
@@ -321,7 +296,7 @@ app.get("/cache/tts/:id", (req, res) => {
 }
 
 /* ======================= TTS ======================= */
-// async function synthesizeTTS(text) {
+async function synthesizeTTS(text) {
   const model = process.env.TTS_MODEL || "gpt-4o-mini-tts";
   const voice = process.env.TTS_VOICE || "alloy";
   const format = (process.env.TTS_FORMAT || "mp3").toLowerCase();
@@ -343,7 +318,7 @@ app.get("/cache/tts/:id", (req, res) => {
 
   return { buffer, mime };
 }
-// async function sendAudioLink(to, publicUrl, phoneNumberId) {
+async function sendAudioLink(to, publicUrl, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
   const payload = {
@@ -373,7 +348,7 @@ function getPhoneNumberId(value) {
   }
   return id || null;
 }
-// async function sendText(to, body, phoneNumberId) {
+async function sendText(to, body, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
   const payload = { messaging_product: "whatsapp", to, type: "text", text: { body } };
@@ -388,7 +363,7 @@ function getPhoneNumberId(value) {
   else console.log("📤 Enviado:", data);
   return data;
 }
-// async function sendSafeText(to, body, value) {
+async function sendSafeText(to, body, value) {
   const phoneNumberId = getPhoneNumberId(value);
   if (!phoneNumberId) {
     console.error("❌ No hay phone_number_id ni en metadata ni en ENV. No se puede enviar WhatsApp.");
@@ -401,7 +376,7 @@ function getPhoneNumberId(value) {
     return { error: e.message || "send_failed" };
   }
 }
-// async function markAsRead(messageId, phoneNumberId) {
+async function markAsRead(messageId, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
   const payload = { messaging_product: "whatsapp", status: "read", message_id: messageId };
@@ -430,7 +405,7 @@ function getSpreadsheetIdFromEnv() {
   const m = raw.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
   return m ? m[1] : raw;
 }
-// async function ensureHeaderIfEmpty({ sheetName, header }) {
+async function ensureHeaderIfEmpty({ sheetName, header }) {
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
   const getResp = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${sheetName}!1:1` });
@@ -442,7 +417,7 @@ function getSpreadsheetIdFromEnv() {
     });
   }
 }
-// async function appendRow({ sheetName, values }) {
+async function appendRow({ sheetName, values }) {
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
   await sheets.spreadsheets.values.append({
@@ -491,7 +466,7 @@ function flattenBigdata({ waId, bigdata }) {
     b["Facilidad en el proceso de compras"] ?? "", b["Pregunto por bot"] || ""
   ];
 }
-// async function saveCompletedToSheets({ waId, data }) {
+async function saveCompletedToSheets({ waId, data }) {
   const response = data?.response || "";
   const pedido = data?.Pedido || {};
   const bigdata = data?.Bigdata || {};
@@ -514,7 +489,7 @@ let productsCache = { at: 0, items: [] };
 
 function looksActive(v) { return String(v || "").trim().toUpperCase() === "S"; }
 
-// async function loadProductsFromSheet() {
+async function loadProductsFromSheet() {
   const now = Date.now();
   if (now - productsCache.at < PRODUCTS_CACHE_TTL_MS && productsCache.items?.length) {
     return productsCache.items;
@@ -558,11 +533,11 @@ const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); 
 const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000;
 let behaviorCache = { at: 0, text: null };
 
-// async function loadBehaviorTextFromEnv() {
+async function loadBehaviorTextFromEnv() {
   const txt = (process.env.COMPORTAMIENTO || "Sos un asistente claro, amable y conciso. Respondé en español.").trim();
   return txt;
 }
-// async function loadBehaviorTextFromSheet() {
+async function loadBehaviorTextFromSheet() {
   const spreadsheetId = getSpreadsheetIdFromEnv();
   const sheets = getSheetsClient();
   const resp = await sheets.spreadsheets.values.get({
@@ -581,7 +556,7 @@ let behaviorCache = { at: 0, text: null };
   return parts.length ? parts.join("\n") : "Sos un asistente claro, amable y conciso. Respondé en español.";
 }
 
-// async function buildSystemPrompt({ force = false } = {}) {
+async function buildSystemPrompt({ force = false } = {}) {
   const now = Date.now();
   if (!force && (now - behaviorCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && behaviorCache.text) {
     return behaviorCache.text;
@@ -630,7 +605,7 @@ let behaviorCache = { at: 0, text: null };
 }
 
 /* ======================= Mongo: conversaciones, mensajes, orders ======================= */
-// async function ensureOpenConversation(waId, { contactName = null } = {}) {
+async function ensureOpenConversation(waId, { contactName = null } = {}) {
   const db = await getDb();
   let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
   if (!conv) {
@@ -657,7 +632,7 @@ let behaviorCache = { at: 0, text: null };
   return conv;
 }
 
-// async function appendMessage(conversationId, {
+async function appendMessage(conversationId, {
   role,
   content,
   type = "text",
@@ -726,7 +701,7 @@ function normalizeOrder(waId, contactName, pedido) {
 }
 
 // Cierre idempotente + guardado en Sheets y en orders
-// async function finalizeConversationOnce(conversationId, finalPayload, estado) {
+async function finalizeConversationOnce(conversationId, finalPayload, estado) {
   const db = await getDb();
   const res = await db.collection("conversations").findOneAndUpdate(
     { _id: new ObjectId(conversationId), finalized: { $ne: true } },
@@ -788,7 +763,7 @@ function normalizeOrder(waId, contactName, pedido) {
 /* ======================= Sesiones (historial) ======================= */
 const sessions = new Map(); // waId -> { messages, updatedAt }
 
-// async function getSession(waId) {
+async function getSession(waId) {
   if (!sessions.has(waId)) {
     const systemText = await buildSystemPrompt({ force: true }); // al iniciar conversación
     sessions.set(waId, {
@@ -808,7 +783,7 @@ function pushMessage(session, role, content, maxTurns = 20) {
 }
 
 /* ======================= Chat (historial + parser robusto) ======================= */
-// async function chatWithHistoryJSON(
+async function chatWithHistoryJSON(
   waId,
   userText,
   model = CHAT_MODEL,
@@ -1067,78 +1042,67 @@ app.post("/webhook", async (req, res) => {
  * /api/admin/order/:conversationId/process -> POST marca orden como procesada
  */
 
-    app.get("/admin", async (req, res) => {
-  try {
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.end(`<!doctype html>
-<html lang="es">
+app.get("/admin", async (req, res) => {
+  // HTML minimal con fetch al endpoint JSON
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end(`
+<!doctype html>
+<html>
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Admin - Conversaciones</title>
   <style>
     body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; }
+    h1 { margin-top: 0; }
     table { border-collapse: collapse; width: 100%; font-size: 14px; }
-    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
     th { background: #f6f6f6; text-align: left; }
     tr:nth-child(even) { background: #fafafa; }
     .btn { padding: 6px 10px; border: 1px solid #333; background: #fff; cursor: pointer; border-radius: 4px; font-size: 12px; }
     .btn + .btn { margin-left: 6px; }
+    .printmenu { display:inline-flex; gap:6px; align-items:center; }
     .muted { color: #666; }
-    .tag { display:inline-block; padding:2px 6px; border-radius:4px; font-size:12px; }
-    .tag.OPEN { background:#e7f5ff; color:#1971c2; }
-    .tag.COMPLETED { background:#e6fcf5; color:#2b8a3e; }
-    .tag.CANCELLED { background:#fff0f6; color:#c2255c; }
-    .filters { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:10px 0; }
-    .filters input, .filters select { padding:6px 8px; border:1px solid #ccc; border-radius:6px; }
+    .tag { display:inline-block; padding:2px 6px; border-radius: 4px; font-size: 12px; }
+    .tag.OPEN { background: #e7f5ff; color: #1971c2; }
+    .tag.COMPLETED { background: #e6fcf5; color: #2b8a3e; }
+    .tag.CANCELLED { background: #fff0f6; color: #c2255c; }
     /* modal */
     .modal-backdrop { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); align-items:center; justify-content:center; }
     .modal { background:#fff; width: 720px; max-width: calc(100% - 32px); border-radius:8px; overflow:hidden; }
     .modal header { padding:12px 16px; background:#f6f6f6; display:flex; align-items:center; justify-content:space-between;}
     .modal header h3{ margin:0; font-size:16px;}
     .modal .content { padding:16px; max-height:70vh; overflow:auto; }
-    .modal .actions { padding:12px 16px; text-align:right; border-top:1px solid #eee; }
+    .modal .actions { padding:12px 16px; text-align:right; border-top:1px solid #eee;}
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; font-size: 12px; }
-    .printable { background:#fff; color:#000; }
-    @media print { .no-print{display:none;} .printable{padding:0;} }
+    .printable { background: #fff; color: #000; }
+    @media print {
+      .no-print { display: none; }
+      .printable { padding: 0; }
+    }
   </style>
 </head>
 <body>
   <h1>Admin - Conversaciones</h1>
-
-  <div class="filters no-print">
-    <label>Procesado
-      <select id="fProcessed">
-        <option value="">Todos</option>
-        <option value="false">No procesado</option>
-        <option value="true">Procesado</option>
-      </select>
-    </label>
-    <label>Teléfono <input id="fPhone" placeholder="wa_id…" /></label>
-    <label>Estado
-      <select id="fStatus">
-        <option value="">Todos</option>
-        <option value="OPEN">OPEN</option>
-        <option value="COMPLETED">COMPLETED</option>
-        <option value="CANCELLED">CANCELLED</option>
-      </select>
-    </label>
-    <label>Campo fecha
-      <select id="fDateField">
-        <option value="opened">Apertura</option>
-        <option value="closed">Cierre</option>
-      </select>
-    </label>
-    <label>Desde <input type="date" id="fFrom"></label>
-    <label>Hasta <input type="date" id="fTo"></label>
-    <button class="btn" id="btnSearch">Buscar</button>
-    <button class="btn" id="btnClear">Limpiar</button>
-  </div>
-
-  <table id="tbl">
+  <div class="muted">Actualiza la página para refrescar.</div>
+  <div class="no-print" id="filterBar" style="margin:8px 0 12px;">
+  <label>Filtrar: </label>
+  <select id="filterProcessed" class="btn" onchange="loadConversations()">
+    <option value="">Todas</option>
+    <option value="false">No procesadas</option>
+    <option value="true">Procesadas</option>
+  </select>
+</div>
+<table id="tbl">
     <thead>
       <tr>
-        <th>wa_id</th><th>Nombre</th><th>Estado</th><th>Apertura</th><th>Cierre</th><th>Turnos</th><th>Procesado</th><th>Acciones</th>
+        <th>wa_id</th>
+        <th>Nombre</th>
+        <th>Estado</th>
+        <th>Abierta</th>
+        <th>Cerrada</th>
+        <th>Turnos</th>
+        <th>Procesado</th>
+        <th>Acciones</th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -1151,7 +1115,7 @@ app.post("/webhook", async (req, res) => {
         <button class="btn no-print" onclick="closeModal()">✕</button>
       </header>
       <div class="content" id="modalContent"></div>
-      <div class="actions no-print" id="modalActions">
+      <div class="actions no-print">
         <button class="btn" onclick="window.print()">Imprimir</button>
         <button class="btn" onclick="closeModal()">Cerrar</button>
       </div>
@@ -1159,62 +1123,40 @@ app.post("/webhook", async (req, res) => {
   </div>
 
   <script>
-    // async function loadConversations() {
-      const params = new URLSearchParams();
-      const p = (document.getElementById('fProcessed')||{}).value || "";
-      const phone = (document.getElementById('fPhone')||{}).value || "";
-      const st = (document.getElementById('fStatus')||{}).value || "";
-      const df = (document.getElementById('fDateField')||{}).value || "opened";
-      const d1 = (document.getElementById('fFrom')||{}).value || "";
-      const d2 = (document.getElementById('fTo')||{}).value || "";
-      if (p) params.set('processed', p);
-      if (phone.trim()) params.set('phone', phone.trim());
-      if (st) params.set('status', st);
-      if (df) params.set('date_field', df);
-      if (d1) params.set('from', d1);
-      if (d2) params.set('to', d2);
+    async function loadConversations() {
+      
+      const sel = document.getElementById('filterProcessed');
+      const p = sel ? sel.value : '';
+      const url = p ? ('/api/admin/conversations?processed=' + p) : '/api/admin/conversations';
+      const r = await fetch(url);
 
-      const url = '/api/admin/conversations' + (params.toString() ? ('?' + params.toString()) : '');
+      const data = await r.json();
       const tb = document.querySelector("#tbl tbody");
-      try {
-        const r = await fetch(url);
-        if (!r.ok) throw new Error('HTTP '+r.status);
-        const data = await r.json();
-        tb.innerHTML = "";
-        if (!Array.isArray(data) || data.length === 0) {
-          tb.innerHTML = '<tr><td colspan="8" class="muted">Sin resultados (probá limpiar filtros)</td></tr>';
-          return;
-        }
-        for (const row of data) {
-          const tr = document.createElement('tr');
-          const processedIcon = row.processed ? '✅' : '—';
-          const pbtnDisabled = row.processed ? ' disabled' : '';
-          const pbtnLabel = row.processed ? 'Procesada' : 'Procesado';
-          tr.innerHTML =
-            '<td>' + (row.waId || '') + '</td>' +
-            '<td>' + (row.contactName || '') + '</td>' +
-            '<td><span class="tag ' + (row.status || '') + '">' + (row.status || '') + '</span></td>' +
-            '<td>' + (row.openedAt ? new Date(row.openedAt).toLocaleString() : '') + '</td>' +
-            '<td>' + (row.closedAt ? new Date(row.closedAt).toLocaleString() : '') + '</td>' +
-            '<td>' + (row.turns ?? 0) + '</td>' +
-            '<td id="proc-' + row._id + '">' + processedIcon + '</td>' +
-            '<td>' +
-              '<button class="btn" onclick="openMessages(\'' + row._id + '\')">Mensajes</button>' +
-              '<button class="btn" onclick="openOrder(\'' + row._id + '\')">Pedido</button>' +
-              '<button id="pbtn-' + row._id + '" class="btn" onclick="markProcessed(\'' + row._id + '\')"' + pbtnDisabled + '>' + pbtnLabel + '</button>' +
-              '<div class="printmenu">' +
-                '<select id="pm-' + row._id + '" class="btn">' +
-                  '<option value="kitchen"' + (row.processed ? '' : ' selected') + '>Cocina</option>' +
-                  '<option value="client"' + (row.processed ? ' selected' : '') + '>Cliente</option>' +
-                '</select>' +
-                '<button class="btn" onclick="printTicketOpt(\'' + row._id + '\')">Imprimir</button>' +
-                '<button class="btn" title="Imprimir cocina rápido" onclick="quickPrint(\'' + row._id + '\')">🍳</button>' +
-              '</div>' +
-            '</td>';
-          tb.appendChild(tr);
-        }
-      } catch (err) {
-        tb.innerHTML = '<tr><td colspan="8" style="color:#b00020">Error: ' + (err.message||err) + '</td></tr>';
+      tb.innerHTML = "";
+      for (const row of data) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = \`
+          <td>\${row.waId}</td>
+          <td>\${row.contactName || ""}</td>
+          <td><span class="tag \${row.status}">\${row.status}</span></td>
+          <td>\${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
+          <td>\${row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
+          <td>\${row.turns ?? 0}</td>
+          <td>\${row.processed ? '✅' : '—'}</td>
+          <td>
+            <button class="btn" onclick="openMessages('\${row._id}')">Mensajes</button>
+            <button class="btn" onclick="openOrder('\${row._id}')">Pedido</button>
+            <button class="btn" onclick="markProcessed('\${row._id}')">Procesado</button>
+            <div class="printmenu">
+              <select id="pm-\${row._id}" class="btn">
+                <option value="kitchen">Cocina</option>
+                <option value="client">Cliente</option>
+              </select>
+              <button class="btn" onclick="printTicketOpt('\${row._id}')">Imprimir</button>
+            </div>
+          </td>
+        \`;
+        tb.appendChild(tr);
       }
     }
 
@@ -1222,156 +1164,16 @@ app.post("/webhook", async (req, res) => {
       window.open('/api/admin/messages/' + id, '_blank');
     }
 
-    // async function openOrder(id) {
+    async function openOrder(id) {
       const r = await fetch('/api/admin/order/' + id);
       const data = await r.json();
       const root = document.getElementById('modalContent');
       root.innerHTML = renderOrder(data);
-      const actions = document.getElementById('modalActions');
-      if (actions) {
-        actions.innerHTML =
-          '<button class="btn" onclick="window.print()">Imprimir</button>' +
-          '<button class="btn" onclick="window.open(\'/admin/print/' + id + '?v=kitchen\', \'_blank\')">Cocina</button>' +
-          '<button class="btn" onclick="window.open(\'/admin/print/' + id + '?v=client\', \'_blank\')">Cliente</button>' +
-          '<button class="btn" onclick="closeModal()">Cerrar</button>';
-      }
       openModal();
     }
 
-    // async function markProcessed(id) {
-      const btn = document.getElementById('pbtn-' + id);
-      if (btn) { btn.disabled = true; btn.textContent = 'Procesando…'; }
+    async function markProcessed(id) {
       const r = await fetch('/api/admin/order/' + id + '/process', { method: 'POST' });
-      if (r.ok) setRowProcessedUI(id, true);
-      else { alert('No se pudo marcar.'); if (btn) { btn.disabled = false; btn.textContent = 'Procesado'; } }
-    }
-    function setRowProcessedUI(id, processed) {
-      const cell = document.getElementById('proc-' + id);
-      if (cell) cell.textContent = processed ? '✅' : '—';
-      const btn = document.getElementById('pbtn-' + id);
-      if (btn) { btn.textContent = 'Procesada'; btn.disabled = true; }
-      const sel = document.getElementById('pm-' + id);
-      if (sel) sel.value = processed ? 'client' : 'kitchen';
-    }
-
-    function printTicketOpt(id) {
-      const sel = document.getElementById('pm-' + id);
-      const which = sel ? sel.value : 'kitchen';
-      window.open('/admin/print/' + id + '?v=' + encodeURIComponent(which), '_blank');
-    }
-    function quickPrint(id) {
-      window.open('/admin/print/' + id + '?v=kitchen', '_blank');
-    }
-
-    function renderOrder(o) {
-      if (!o || !o.order) return '<div class="mono">No hay pedido para esta conversación.</div>';
-      const ord = o.order;
-      const items = Array.isArray(ord.items) ? ord.items : [];
-      const itemsHtml = items.map(function(it){
-        return '<li>' + (it.name||it.producto||'Item') + (it.selection?': <strong>'+it.selection+'</strong>':'') + '</li>';
-      }).join('') || '<li>(sin ítems)</li>';
-      const rawHtml = o.rawPedido ? '<pre class="mono">' + JSON.stringify(o.rawPedido, null, 2) + '</pre>' : '';
-      return ''
-        + '<div class="printable">'
-        + '  <h2>Pedido</h2>'
-        + '  <p><strong>Cliente:</strong> ' + (ord.name || '') + ' <span class="muted">(' + (o.waId || '') + ')</span></p>'
-        + '  <p><strong>Entrega:</strong> ' + (ord.entrega || '') + '</p>'
-        + '  <p><strong>Domicilio:</strong> ' + (ord.domicilio || '') + '</p>'
-        + '  <p><strong>Monto:</strong> ' + ((ord.amount!=null)?('$'+ord.amount):'') + '</p>'
-        + '  <p><strong>Estado pedido:</strong> ' + (ord.estadoPedido || '') + '</p>'
-        + '  <p><strong>Fecha/Hora entrega:</strong> ' + (ord.fechaEntrega || '') + ' ' + (ord.hora || '') + '</p>'
-        + '  <h3>Ítems</h3>'
-        + '  <ul>' + itemsHtml + '</ul>'
-        + '  <h3>Detalle crudo del Pedido</h3>'
-        +    rawHtml
-        + '</div>';
-    }
-
-    function openModal(){ document.getElementById('modalBackdrop').style.display='flex'; }
-    function closeModal(){ document.getElementById('modalBackdrop').style.display='none'; }
-
-    document.getElementById('btnSearch').addEventListener('click', loadConversations);
-    document.getElementById('btnClear').addEventListener('click', function(){
-      document.getElementById('fProcessed').value='';
-      document.getElementById('fPhone').value='';
-      document.getElementById('fStatus').value='';
-      document.getElementById('fDateField').value='opened';
-      document.getElementById('fFrom').value='';
-      document.getElementById('fTo').value='';
-      loadConversations();
-    });
-    // Inicial
-    loadConversations();
-  </script>
-</body>
-</html>`);
-  } catch (e) {
-    console.error("⚠️ /admin error:", e);
-    res.status(500).send("internal");
-  }
-});
-if (r.ok) setRowProcessedUI(id, true);
-      else { alert('No se pudo marcar.'); if (btn) { btn.disabled = false; btn.textContent = 'Procesado'; } }
-    }
-    function setRowProcessedUI(id, processed) {
-      const cell = document.getElementById('proc-' + id);
-      if (cell) cell.textContent = processed ? '✅' : '—';
-      const btn = document.getElementById('pbtn-' + id);
-      if (btn) { btn.textContent = 'Procesada'; btn.disabled = true; }
-      const sel = document.getElementById('pm-' + id);
-      if (sel) sel.value = processed ? 'client' : 'kitchen';
-    }
-
-    function printTicketOpt(id) {
-      const sel = document.getElementById('pm-' + id);
-      const which = sel ? sel.value : 'kitchen';
-      window.open('/admin/print/' + id + '?v=' + encodeURIComponent(which), '_blank');
-    }
-    function quickPrint(id) {
-      window.open('/admin/print/' + id + '?v=kitchen', '_blank');
-    }
-
-    function renderOrder(o) {
-      if (!o || !o.order) return '<div class="mono">No hay pedido para esta conversación.</div>';
-      const ord = o.order;
-      const items = Array.isArray(ord.items) ? ord.items : [];
-      const itemsHtml = items.map(it => '<li>' + (it.name||it.producto||'Item') + (it.selection?': <strong>'+it.selection+'</strong>':'') + '</li>').join('') || '<li>(sin ítems)</li>';
-      const rawHtml = o.rawPedido ? '<pre class="mono">' + JSON.stringify(o.rawPedido, null, 2) + '</pre>' : '';
-      return ''
-        + '<div class="printable">'
-        + '  <h2>Pedido</h2>'
-        + '  <p><strong>Cliente:</strong> ' + (ord.name || '') + ' <span class="muted">(' + (o.waId || '') + ')</span></p>'
-        + '  <p><strong>Entrega:</strong> ' + (ord.entrega || '') + '</p>'
-        + '  <p><strong>Domicilio:</strong> ' + (ord.domicilio || '') + '</p>'
-        + '  <p><strong>Monto:</strong> ' + ((ord.amount!=null)?('$'+ord.amount):'') + '</p>'
-        + '  <p><strong>Estado pedido:</strong> ' + (ord.estadoPedido || '') + '</p>'
-        + '  <p><strong>Fecha/Hora entrega:</strong> ' + (ord.fechaEntrega || '') + ' ' + (ord.hora || '') + '</p>'
-        + '  <h3>Ítems</h3>'
-        + '  <ul>' + itemsHtml + '</ul>'
-        + '  <h3>Detalle crudo del Pedido</h3>'
-        +    rawHtml
-        + '</div>';
-    }
-
-    function openModal(){ document.getElementById('modalBackdrop').style.display='flex'; }
-    function closeModal(){ document.getElementById('modalBackdrop').style.display='none'; }
-
-    document.getElementById('btnSearch').addEventListener('click', loadConversations);
-    document.getElementById('btnClear').addEventListener('click', () => {
-      document.getElementById('fProcessed').value='';
-      document.getElementById('fPhone').value='';
-      document.getElementById('fStatus').value='';
-      document.getElementById('fDateField').value='opened';
-      document.getElementById('fFrom').value='';
-      document.getElementById('fTo').value='';
-      loadConversations();
-    });
-    // Inicial
-    loadConversations();
-  </script>
-</body>
-</html>`);
-    });
       if (r.ok) {
         alert('Pedido marcado como procesado.');
       } else {
@@ -1408,6 +1210,12 @@ if (r.ok) setRowProcessedUI(id, true);
       document.getElementById('modalBackdrop').style.display = 'none';
     }
 
+    function printTicketOpt(id) {
+      const sel = document.getElementById('pm-' + id);
+      const v = sel ? sel.value : 'kitchen';
+      window.open('/admin/print/' + id + '?v=' + encodeURIComponent(v), '_blank');
+    }
+
     loadConversations();
   </script>
 </body>
@@ -1420,52 +1228,30 @@ app.get("/api/admin/conversations", async (req, res) => {
   try {
     const db = await getDb();
     const q = {};
-    const { processed, phone, status, date_field, from, to } = req.query;
-
-    if (processed === "true") q.processed = true;
-    else if (processed === "false") q.processed = { $ne: true };
-
-    if (phone && String(phone).trim() !== "") {
-      const esc = escapeRegExp(String(phone).trim());
-      q.waId = { $regex: esc, $options: "i" };
+    if (typeof req.query.processed === "string") {
+      if (req.query.processed === "true") q.processed = true;
+      if (req.query.processed === "false") q.processed = { $ne: true };
     }
-
-    if (status && String(status).trim() !== "") {
-      q.status = String(status).trim().toUpperCase();
-    }
-
-    const field = (date_field === "closed") ? "closedAt" : "openedAt";
-    const range = {};
-    if (from) {
-      const d1 = new Date(`${from}T00:00:00.000Z`);
-      if (!isNaN(d1)) range.$gte = d1;
-    }
-    if (to) {
-      const d2 = new Date(`${to}T23:59:59.999Z`);
-      if (!isNaN(d2)) range.$lte = d2;
-    }
-    if (Object.keys(range).length) q[field] = range;
-
     const convs = await db.collection("conversations")
       .find(q, { sort: { openedAt: -1 } })
       .project({ waId:1, status:1, openedAt:1, closedAt:1, turns:1, contactName:1, processed:1 })
       .toArray();
 
+    // normalizar _id a string
     const out = convs.map(c => ({
-      _id: c._id && c._id.toString ? c._id.toString() : String(c._id),
-      waId: c.waId || "",
+      _id: c._id.toString(),
+      waId: c.waId,
       contactName: c.contactName || "",
       status: c.status || "OPEN",
-      openedAt: c.openedAt || null,
-      closedAt: c.closedAt || null,
-      turns: typeof c.turns === "number" ? c.turns : 0,
+      openedAt: c.openedAt,
+      closedAt: c.closedAt,
+      turns: c.turns || 0,
       processed: !!c.processed
     }));
-
     res.json(out);
   } catch (e) {
     console.error("⚠️ /api/admin/conversations error:", e);
-    res.status(200).json([]);
+    res.status(500).json({ error: "internal" });
   }
 });
 
@@ -1574,6 +1360,7 @@ app.post("/api/admin/order/:id/process", async (req, res) => {
       orderDoc.processedAt = new Date();
       await db.collection("orders").insertOne(orderDoc);
     }
+    await db.collection("conversations").updateOne({ _id: convId }, { $set: { processed: true } });
     res.json({ ok: true });
   } catch (e) {
     console.error("⚠️ /api/admin/order/:id/process error:", e);
@@ -1581,65 +1368,86 @@ app.post("/api/admin/order/:id/process", async (req, res) => {
   }
 });
 
-    // Imprimir ticket 80mm (kitchen/client)
-    app.get("/admin/print/:id", async (req, res) => {
-      try {
-        const id = req.params.id;
-        const v = (req.query.v || "kitchen").toString();
-        const db = await getDb();
-        const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
-        if (!conv) return res.status(404).send("Conversation not found");
-        let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) });
-        if (!order && conv.summary?.Pedido) {
-          order = normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
-        }
-        if (!order) return res.status(404).send("Order not found");
-        const isKitchen = v === "kitchen";
 
-        const items = Array.isArray(order.items) ? order.items : [];
-        const itemsHtml = items.map(it => 
-          '<div class="row"><div class="qty">•</div><div class="desc">' + (it.name||it.producto||'Item') + (it.selection?': <strong>'+it.selection+'</strong>':'') + '</div></div>'
-        ).join('') || '<div>(sin ítems)</div>';
+// Impresión ticket térmico 80mm / 58mm
+app.get("/admin/print/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const v = String(req.query.v || "kitchen").toLowerCase(); // kitchen | client
+    const db = await getDb();
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
+    if (!conv) return res.status(404).send("Conversación no encontrada");
+    let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) });
+    if (!order && conv.summary?.Pedido) {
+      order = normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
+    }
+    const negocio = process.env.BUSINESS_NAME || "NEGOCIO";
+    const direccionNegocio = process.env.BUSINESS_ADDRESS || "";
+    const telNegocio = process.env.BUSINESS_PHONE || "";
 
-        res.setHeader("Content-Type", "text/html; charset=utf-8");
-        res.end(`<!doctype html>
-<html><head><meta charset="utf-8"/>
-  <title>Ticket</title>
-  <style>
-    @page { size: 80mm auto; margin: 4mm; }
-    body { font: 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
-    .ticket { width: 72mm; }
-    h1 { font-size: 16px; margin: 0 0 6px; text-align:center; }
-    .row { display:flex; margin: 4px 0; }
-    .qty { width: 10mm; }
-    .desc { flex:1; }
-    .muted { color:#555; }
-    .tot { margin-top:8px; border-top:1px dashed #000; padding-top:6px; }
-    .big { font-size: 14px; }
-    .center { text-align:center; }
-    .right { text-align:right; }
-  </style>
+    const cliente = (order?.name || conv.contactName || "") + " (" + (conv.waId || "") + ")";
+    const domicilio = order?.domicilio || "";
+    const pago = order?.pago || order?.payment || "";
+    const monto = (order?.amount != null) ? Number(order.amount) : null;
+
+    const items = Array.isArray(order?.items) ? order.items : [];
+    function esc(s){ return String(s==null? "": s); }
+
+    const itemLines = items.map(it => {
+      const name = esc(it.name || it.nombre || it.producto || it.title || "Item");
+      const sel = esc(it.selection || it.seleccion || it.detalle || it.toppings || "");
+      return sel ? (name + " - " + sel) : name;
+    }).join("\n");
+
+    const showPrices = (v === "client");
+    const totalHtml = showPrices && (monto != null) ? `<div class="row big"><span>TOTAL</span><span>$${monto.toFixed(2)}</span></div>` : "";
+
+    const html = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Ticket</title>
+<style>
+  @page { size: 80mm auto; margin: 0; }
+  body { margin: 0; }
+  .ticket { width: 80mm; padding: 6px 8px; font-family: monospace; font-size: 12px; }
+  .center { text-align: center; }
+  .row { display: flex; justify-content: space-between; }
+  .hr { border-top: 1px dashed #000; margin: 6px 0; }
+  .big { font-size: 14px; font-weight: bold; }
+  @media print { .noprint { display: none; } }
+</style>
 </head>
-<body onload="window.print()">
+<body>
   <div class="ticket">
-    <h1>${process.env.BUSINESS_NAME || 'Pedido'}</h1>
-    <div class="muted center">${process.env.BUSINESS_ADDRESS || ''} ${process.env.BUSINESS_PHONE || ''}</div>
-    <div class="row"><div class="qty">Cliente</div><div class="desc big"><strong>${order.name || ''}</strong></div></div>
-    <div class="row"><div class="qty">wa</div><div class="desc">${conv.waId || ''}</div></div>
-    ${order.domicilio ? `<div class="row"><div class="qty">Dir</div><div class="desc">${order.domicilio}</div></div>` : ''}
-    ${order.entrega ? `<div class="row"><div class="qty">Entrega</div><div class="desc">${order.entrega}</div></div>` : ''}
-    ${order.fechaEntrega || order.hora ? `<div class="row"><div class="qty">Cuando</div><div class="desc">${order.fechaEntrega || ''} ${order.hora || ''}</div></div>` : ''}
-    <div class="row"><div class="qty"></div><div class="desc"><strong>Ítems</strong></div></div>
-    ${itemsHtml}
-    ${isKitchen ? '' : `<div class="tot right">Total: <strong>$${order.amount ?? order.total ?? ''}</strong></div>`}
+    <div class="center big">${esc(negocio)}</div>
+    ${direccionNegocio ? `<div class="center">${esc(direccionNegocio)}</div>` : ""}
+    ${telNegocio ? `<div class="center">${esc(telNegocio)}</div>` : ""}
+    <div class="hr"></div>
+    <div>Cliente: ${esc(cliente)}</div>
+    ${domicilio ? `<div>Dirección: ${esc(domicilio)}</div>` : ""}
+    ${showPrices && pago ? `<div>Pago: ${esc(pago)}</div>` : ""}
+    <div class="hr"></div>
+    <div>Pedido:</div>
+    <pre>${esc(itemLines)}</pre>
+    <div class="hr"></div>
+    ${totalHtml}
+    <div class="hr"></div>
+    <div>${new Date().toLocaleString()}</div>
+    <div class="center">${showPrices ? "¡Gracias por su compra!" : "TICKET COCINA"}</div>
+    <div class="hr"></div>
+    <button class="noprint" onclick="window.print()">Imprimir</button>
   </div>
-</body></html>`);
-      } catch (e) {
-        console.error("⚠️ /admin/print/:id error:", e);
-        res.status(500).send("internal");
-      }
-    });
+</body>
+</html>`;
 
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(html);
+  } catch (e) {
+    console.error("⚠️ /admin/print error:", e);
+    res.status(500).send("internal");
+  }
+});
 /* ======================= Seguridad global de errores ======================= */
 process.on("unhandledRejection", (reason) => {
   console.error("🧨 UnhandledRejection:", reason);
@@ -1651,6 +1459,3 @@ process.on("uncaughtException", (err) => {
 /* ======================= Start ======================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Webhook listening on port ${PORT}`));
-
-
-// --- escape regex helper ---
