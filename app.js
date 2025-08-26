@@ -485,75 +485,445 @@ async function saveCompletedToSheets({ waId, data }) {
   await appendRow({ sheetName: "BigData", values: vBig });
 }
 
-
-/* ======================= Productos (Mongo) ======================= */
-const PRODUCTS_CACHE_TTL_MS = parseInt(process.env.PRODUCTS_CACHE_TTL_MS || "300000", 10); // 5 min
+/* ======================= Productos (Sheet) ======================= */
+// Productos!A nombre, B precio, C venta, D obs, E activo (S/N)
+const PRODUCTS_CACHE_TTL_MS = parseInt(process.env.PRODUCTS_CACHE_TTL_MS || "300000", 10);
 let productsCache = { at: 0, items: [] };
 
-function normalizeImporte(v) {
-  if (typeof v === "number") return v;
-  if (typeof v !== "string") return null;
-  const n = Number(v.replace(/[^\d.,-]/g, "").replace(",", "."));
-  return Number.isFinite(n) ? n : null;
-}
+function looksActive(v) { return String(v || "").trim().toUpperCase() === "S"; }
 
-async function loadProductsFromMongo({ force = false } = {}) {
+async function loadProductsFromSheet() {
   const now = Date.now();
-  if (!force && (now - productsCache.at < PRODUCTS_CACHE_TTL_MS) && productsCache.items?.length) {
+  if (now - productsCache.at < PRODUCTS_CACHE_TTL_MS && productsCache.items?.length) {
     return productsCache.items;
   }
-  const db = await getDb();
-  const items = await db.collection("products")
-    .find({})
-    .sort({ descripcion: 1 })
-    .toArray();
+  const spreadsheetId = getSpreadsheetIdFromEnv();
+  const sheets = getSheetsClient();
+  const range = "Productos!A2:E";
+  const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
+  const rows = resp.data.values || [];
+
+  const items = rows.map((r) => {
+    const nombre = (r[0] || "").trim();
+    const precioRaw = (r[1] || "").trim();
+    const venta = (r[2] || "").trim();
+    const obs = (r[3] || "").trim();
+    const activo = r[4];
+    if (!nombre) return null;
+    if (!looksActive(activo)) return null;
+
+    const maybeNum = Number(precioRaw.replace(/[^\d.,-]/g, "").replace(",", "."));
+    const precio = Number.isFinite(maybeNum) ? maybeNum : precioRaw;
+    return { nombre, precio, venta, obs };
+  }).filter(Boolean);
+
   productsCache = { at: now, items };
   return items;
 }
-
-async function upsertProductMongo(payload) {
-  const db = await getDb();
-  const _id = payload._id;
-  const doc = {
-    descripcion: String(payload.descripcion || "").trim(),
-    importe: normalizeImporte(payload.importe),
-    observacion: String(payload.observacion || "").trim(),
-    active: payload.active === false ? false : true,
-    updatedAt: new Date()
-  };
-  if (!doc.descripcion) throw new Error("descripcion es requerida");
-
-  if (_id) {
-    await db.collection("products").updateOne(
-      { _id: new ObjectId(String(_id)) },
-      { $set: doc }
-    );
-  } else {
-    await db.collection("products").updateOne(
-      { descripcion: doc.descripcion },
-      { $set: doc, $setOnInsert: { createdAt: new Date() } },
-      { upsert: true }
-    );
-  }
-  productsCache = { at: 0, items: [] };
-}
-
-async function removeProductMongo(id) {
-  const db = await getDb();
-  await db.collection("products").deleteOne({ _id: new ObjectId(String(id)) });
-  productsCache = { at: 0, items: [] };
-}
-
-function buildCatalogTextFromMongo(items) {
-  const activos = (items || []).filter(it => it.active !== false);
-  if (!activos.length) return "Catálogo de productos: (ninguno activo)";
-  const lines = activos.map(it => {
-    const precioTxt = (typeof it.importe === "number") ? ` — $${it.importe}` : (it.importe ? ` — $${it.importe}` : "");
-    const obsTxt = it.observacion ? ` | Obs: ${it.observacion}` : "";
-    return `- ${it.descripcion}${precioTxt}${obsTxt}`;
+function buildCatalogText(items) {
+  if (!items?.length) return "Catálogo de productos: (ninguno activo)";
+  const lines = items.map(it => {
+    const precioTxt = (typeof it.precio === "number") ? ` — $${it.precio}` : (it.precio ? ` — $${it.precio}` : "");
+    const ventaTxt  = it.venta ? ` (${it.venta})` : "";
+    const obsTxt    = it.obs ? ` | Obs: ${it.obs}` : "";
+    return `- ${it.nombre}${precioTxt}${ventaTxt}${obsTxt}`;
   });
-  return "Catálogo de productos (descripcion — precio | Obs: observaciones):\n" + lines.join("\n");
+  return "Catálogo de productos (nombre — precio (modo de venta) | Obs: observaciones):\n" + lines.join("\n");
 }
+
+/* ======================= Comportamiento (ENV, Sheet o Mongo) ======================= */
+const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); // "env" | "sheet" | "mongo"
+const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000;
+let behaviorCache = { at: 0, text: null };
+
+async function loadBehaviorTextFromEnv() {
+  const txt = (process.env.COMPORTAMIENTO || "Sos un asistente claro, amable y conciso. Respondé en español.").trim();
+  return txt;
+}
+async function loadBehaviorTextFromSheet() {
+  const spreadsheetId = getSpreadsheetIdFromEnv();
+  const sheets = getSheetsClient();
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: "Comportamiento_API!A1:B100"
+  });
+  const rows = resp.data.values || [];
+  const parts = rows
+    .map(r => {
+      const a = (r[0] || "").replace(/\s+/g, " ").trim();
+      const b = (r[1] || "").replace(/\s+/g, " ").trim();
+      const line = [a, b].filter(Boolean).join(" ").trim();
+      return line;
+    })
+    .filter(Boolean);
+  return parts.length ? parts.join("\n") : "Sos un asistente claro, amable y conciso. Respondé en español.";
+}
+
+
+async function loadBehaviorTextFromMongo() {
+  const db = await getDb();
+  const doc = await db.collection("settings").findOne({ _id: "behavior" });
+  if (doc && typeof doc.text === "string" && doc.text.trim()) return doc.text.trim();
+  const fallback = "Sos un asistente claro, amable y conciso. Respondé en español.";
+  await db.collection("settings").updateOne(
+    { _id: "behavior" },
+    { $setOnInsert: { text: fallback, updatedAt: new Date() } },
+    { upsert: true }
+  );
+  return fallback;
+}
+async function saveBehaviorTextToMongo(newText) {
+  const db = await getDb();
+  await db.collection("settings").updateOne(
+    { _id: "behavior" },
+    { $set: { text: String(newText || "").trim(), updatedAt: new Date() } },
+    { upsert: true }
+  );
+  behaviorCache = { at: 0, text: null };
+}
+
+async function buildSystemPrompt({ force = false, conversation = null } = {}) {
+  // Usar snapshot si viene atado a la conversación
+  if (conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
+    return conversation.behaviorSnapshot.text;
+  }
+
+  const now = Date.now();
+  if (!force && (now - behaviorCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && behaviorCache.text) {
+    return behaviorCache.text;
+  }
+
+  // 1) Comportamiento desde ENV o desde Sheet
+  const baseText = (BEHAVIOR_SOURCE === "env")
+    ? await loadBehaviorTextFromEnv()
+    : (BEHAVIOR_SOURCE === "mongo")
+      ? await loadBehaviorTextFromMongo()
+      : await loadBehaviorTextFromSheet();
+
+  // 2) Catálogo SIEMPRE desde Sheet
+  let catalogText = "";
+  try {
+    const products = await loadProductsFromSheet();
+    catalogText = buildCatalogText(products);
+  } catch (e) {
+    console.warn("⚠️ No se pudo leer Productos:", e.message);
+    catalogText = "Catálogo de productos: (error al leer)";
+  }
+
+  // 3) Reglas de uso de observaciones
+  const reglasVenta =
+    "Instrucciones de venta (OBLIGATORIAS):\n" +
+    "- Usá las Observaciones para decidir qué ofrecer, sugerir complementos, aplicar restricciones o proponer sustituciones.\n" +
+    "- Respetá limitaciones (stock/horarios/porciones/preparación) indicadas en Observaciones.\n" +
+    "- Si sugerís bundles o combos, ofrecé esas opciones con precio estimado cuando corresponda.\n" +
+    "- Si falta un dato (sabor/tamaño/cantidad), pedilo brevemente.\n";
+
+  // 4) Esquema JSON
+  const jsonSchema =
+    "FORMATO DE RESPUESTA (OBLIGATORIO - SOLO JSON, sin ```):\n" +
+    '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED", ' +
+    '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
+    '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
+
+  const fullText = [
+    "[COMPORTAMIENTO]\n" + baseText,
+    "[REGLAS]\n" + reglasVenta,
+    "[CATALOGO]\n" + catalogText,
+    "[SALIDA]\n" + jsonSchema,
+    "RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
+  ].join("\n\n").trim();
+
+  behaviorCache = { at: now, text: fullText };
+  return fullText;
+}
+
+/* ======================= Mongo: conversaciones, mensajes, orders ======================= */
+async function ensureOpenConversation(waId, { contactName = null } = {}) {
+  const db = await getDb();
+  let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
+  if (!conv) {
+    // ⚡ Al iniciar una conversación: recargo comportamiento (ignora caché)
+    const behaviorText = await buildSystemPrompt({ force: true });
+    const doc = {
+      waId,
+      status: "OPEN",         // OPEN | COMPLETED | CANCELLED
+      finalized: false,       // idempotencia para Sheets/orden
+      contactName: contactName || null,
+      openedAt: new Date(),
+      closedAt: null,
+      lastUserTs: null,
+      lastAssistantTs: null,
+      turns: 0,
+      behaviorSnapshot: {
+        text: behaviorText,
+        source: (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(),
+        savedAt: new Date()
+      }
+    };
+    const ins = await db.collection("conversations").insertOne(doc);
+    conv = { _id: ins.insertedId, ...doc };
+  } else if (contactName && !conv.contactName) {
+    await db.collection("conversations").updateOne(
+      { _id: conv._id },
+      { $set: { contactName } }
+    );
+    conv.contactName = contactName;
+  }
+  return conv;
+}
+
+async function appendMessage(conversationId, {
+  role,
+  content,
+  type = "text",
+  meta = {},
+  ttlDays = null
+}) {
+  const db = await getDb();
+  const doc = {
+    conversationId: new ObjectId(conversationId),
+    role, content, type, meta,
+    ts: new Date()
+  };
+  if (ttlDays && Number.isFinite(ttlDays)) {
+    doc.expireAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
+  }
+  await db.collection("messages").insertOne(doc);
+
+  const upd = { $inc: { turns: 1 }, $set: {} };
+  if (role === "user") upd.$set.lastUserTs = doc.ts;
+  if (role === "assistant") upd.$set.lastAssistantTs = doc.ts;
+  await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId) }, upd);
+}
+
+// Normalizar “Pedido” a estructura de order
+function normalizeOrder(waId, contactName, pedido) {
+  const entrega = pedido?.["Entrega"] || "";
+  const domicilio = pedido?.["Domicilio"] || "";
+  const monto = Number(pedido?.["Monto"] ?? 0) || 0;
+
+  // Intentar construir items a partir de los campos del pedido
+  const items = [];
+  const mappedFields = [
+    "Pedido pollo",
+    "Pedido papas",
+    "Milanesas comunes",
+    "Milanesas Napolitanas",
+    "Ensaladas",
+    "Bebidas"
+  ];
+  for (const key of mappedFields) {
+    const val = (pedido?.[key] || "").toString().trim();
+    if (val && val.toUpperCase() !== "NO") {
+      items.push({ name: key, selection: val });
+    }
+  }
+
+  // Otros datos que puedan servir
+  const name = pedido?.["Nombre"] || contactName || "";
+  const fechaEntrega = pedido?.["Fecha y hora de entrega"] || "";
+  const hora = pedido?.["Hora"] || "";
+  const estadoPedido = pedido?.["Estado pedido"] || "";
+
+  return {
+    waId,
+    name,
+    entrega,
+    domicilio,
+    items,
+    amount: monto,
+    estadoPedido,
+    fechaEntrega,
+    hora,
+    createdAt: new Date(),
+    processed: false
+  };
+}
+
+// Cierre idempotente + guardado en Sheets y en orders
+async function finalizeConversationOnce(conversationId, finalPayload, estado) {
+  const db = await getDb();
+  const res = await db.collection("conversations").findOneAndUpdate(
+    { _id: new ObjectId(conversationId), finalized: { $ne: true } },
+    {
+      $set: {
+        status: estado || "COMPLETED",
+        finalized: true,
+        closedAt: new Date(),
+        summary: {
+          response: finalPayload?.response || "",
+          Pedido: finalPayload?.Pedido || null,
+          Bigdata: finalPayload?.Bigdata || null
+        }
+      }
+    },
+    { returnDocument: "after" }
+  );
+
+  const didFinalize = !!res?.value?.finalized;
+  if (!didFinalize) {
+    return { didFinalize: false };
+  }
+
+  const conv = res.value;
+  try {
+    // Guardar en Sheets
+    await saveCompletedToSheets({
+      waId: conv.waId,
+      data: finalPayload || {}
+    });
+  } catch (e) {
+    console.error("⚠️ Error guardando en Sheets tras finalizar:", e);
+  }
+
+  // Si hay Pedido, guardamos en orders con normalización
+  try {
+    if (finalPayload?.Pedido) {
+      // si el nombre vino del pedido y no lo teníamos, sincronizamos
+      const pedidoNombre = finalPayload.Pedido["Nombre"];
+      if (pedidoNombre && !conv.contactName) {
+        await db.collection("conversations").updateOne(
+          { _id: conv._id },
+          { $set: { contactName: pedidoNombre } }
+        );
+        conv.contactName = pedidoNombre;
+      }
+
+      const orderDoc = normalizeOrder(conv.waId, conv.contactName, finalPayload.Pedido);
+      orderDoc.conversationId = conv._id;
+      await db.collection("orders").insertOne(orderDoc);
+    }
+  } catch (e) {
+    console.error("⚠️ Error guardando order:", e);
+  }
+
+  return { didFinalize: true };
+}
+
+/* ======================= Sesiones (historial) ======================= */
+const sessions = new Map(); // waId -> { messages, updatedAt }
+
+async function getSession(waId) {
+  if (!sessions.has(waId)) {
+        const db = await getDb();
+    const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
+    const systemText = await buildSystemPrompt({ conversation: conv || null });
+// al iniciar conversación
+    sessions.set(waId, {
+      messages: [{ role: "system", content: systemText }],
+      updatedAt: Date.now()
+    });
+  }
+  return sessions.get(waId);
+}
+function resetSession(waId) { sessions.delete(waId); }
+function pushMessage(session, role, content, maxTurns = 20) {
+  session.messages.push({ role, content });
+  const system = session.messages[0];
+  const tail = session.messages.slice(-2 * maxTurns);
+  session.messages = [system, ...tail];
+  session.updatedAt = Date.now();
+}
+
+// OpenAI chat call with retries & backoff (retriable on timeouts / 429 / reset)
+async function openaiChatWithRetries(messages, { model, temperature }) {
+  const maxRetries = parseInt(process.env.OPENAI_RETRY_COUNT || "2", 10);
+  const baseDelay  = parseInt(process.env.OPENAI_RETRY_BASE_MS || "600", 10);
+  let lastErr = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await withTimeout(
+        openai.chat.completions.create({
+          model,
+          response_format: { type: "json_object" },
+          temperature,
+          top_p: 1,
+          messages
+        }),
+        parseInt(process.env.OPENAI_TIMEOUT_MS || "12000", 10),
+        "openai_chat"
+      );
+    } catch (e) {
+      lastErr = e;
+      const msg = (e && e.message) ? e.message : String(e);
+      const retriable = /timeout/i.test(msg) || e?.status === 429 || e?.code === "ETIMEDOUT" || e?.code === "ECONNRESET";
+      if (attempt < maxRetries && retriable) {
+        const jitter = Math.floor(Math.random() * 250);
+        const delay = baseDelay * Math.pow(2, attempt) + jitter;
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      break;
+    }
+  }
+  throw lastErr || new Error("openai_chat_failed");
+}
+/* ======================= Chat (historial + parser robusto) ======================= */
+async function chatWithHistoryJSON(
+  waId,
+  userText,
+  model = CHAT_MODEL,
+  temperature = CHAT_TEMPERATURE
+) {
+  const session = await getSession(waId);
+
+  // refrescar system en cada turno
+  try {
+        const db = await getDb();
+    const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
+    const systemText = await buildSystemPrompt({ conversation: conv || null });
+    session.messages[0] = { role: "system", content: systemText };
+} catch (e) {
+    console.warn("⚠️ No se pudo refrescar system:", e.message);
+  }
+
+  pushMessage(session, "user", userText);
+
+  let content = "";
+  try {
+    const completion = await openaiChatWithRetries([ ...session.messages ], { model, temperature });
+    content = completion.choices?.[0]?.message?.content || "";
+  } catch (e) {
+    console.error("❌ OpenAI error/timeout:", e.message || e);
+    const fallback = {
+      response: "Perdón, tuve un inconveniente para responder ahora mismo. ¿Podés repetir o reformular tu mensaje?",
+      estado: "IN_PROGRESS"
+    };
+    pushMessage(session, "assistant", fallback.response);
+    return { response: fallback.response, estado: fallback.estado, raw: fallback };
+  }
+
+  const data = await safeJsonParseStrictOrFix(content, { openai, model }) || null;
+
+  const responseText =
+    (data && typeof data.response === "string" && data.response.trim()) ||
+    (typeof content === "string" ? content.trim() : "") ||
+    "Perdón, no pude generar una respuesta. ¿Podés reformular?";
+
+  const estado =
+    (data && typeof data.estado === "string" && data.estado.trim().toUpperCase()) || "IN_PROGRESS";
+
+  pushMessage(session, "assistant", responseText);
+  return { response: responseText, estado, raw: data || {} };
+}
+
+/* ======================= Rutas básicas ======================= */
+app.get("/", (_req, res) => res.status(200).send("WhatsApp Webhook up ✅"));
+
+app.get("/webhook", (req, res) => {
+  const VERIFY_TOKEN = process.env.verify_token || process.env.VERIFY_TOKEN;
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
+    console.log("✅ Webhook verificado");
+    return res.status(200).send(challenge);
+  }
+  console.warn("❌ Verificación fallida");
+  return res.sendStatus(403);
+});
+
+
 /* ======================= UI y API para editar comportamiento ======================= */
 app.get("/comportamiento", async (_req, res) => {
   try {
@@ -638,130 +1008,6 @@ app.post("/api/behavior", async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error("⚠️ POST /api/behavior error:", e);
-    res.status(500).json({ error: "internal" });
-  }
-});
-
-/* ======================= UI /productos + API ======================= */
-app.get("/productos", async (_req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Productos</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; max-width: 1100px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
-    th { background: #f5f5f5; text-align: left; }
-    input[type="text"], input[type="number"], textarea { width: 100%; box-sizing: border-box; }
-    textarea { min-height: 56px; }
-    .row { display:flex; gap:8px; align-items:center; }
-    .muted { color:#666; font-size:12px; }
-    .pill { border:1px solid #ccc; border-radius: 999px; padding:2px 8px; font-size:12px; }
-  </style>
-</head>
-<body>
-  <h1>Productos</h1>
-  <p class="muted">Fuente: <span class="pill">MongoDB (colección <code>products</code>)</span></p>
-  <div class="row">
-    <button id="btnReload">Recargar</button>
-    <button id="btnAdd">Agregar</button>
-  </div>
-  <p></p>
-  <table id="tbl">
-    <thead>
-      <tr>
-        <th>Descripción</th><th>Importe</th><th>Observación (comportamiento de venta)</th><th>Activo</th><th>Acciones</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  </table>
-  <template id="row-tpl">
-    <tr>
-      <td><input type="text" class="descripcion" placeholder="Ej: Helado 1/2 kg" /></td>
-      <td><input type="number" class="importe" step="0.01" placeholder="0.00" /></td>
-      <td><textarea class="observacion" placeholder="Reglas/comportamiento para vender este producto"></textarea></td>
-      <td style="text-align:center;"><input type="checkbox" class="active" checked /></td>
-      <td>
-        <button class="save">Guardar</button>
-        <button class="del">Borrar</button>
-      </td>
-    </tr>
-  </template>
-  <script>
-    async function j(url, opts){ const r=await fetch(url, opts); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
-    async function load(){
-      const data = await j('/api/products');
-      const tb = document.querySelector('#tbl tbody');
-      tb.innerHTML = '';
-      for (const it of data.items) {
-        const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
-        tr.dataset.id = it._id;
-        tr.querySelector('.descripcion').value = it.descripcion || '';
-        tr.querySelector('.importe').value = (typeof it.importe==='number') ? it.importe : (it.importe || '');
-        tr.querySelector('.observacion').value = it.observacion || '';
-        tr.querySelector('.active').checked = it.active !== false;
-        tr.querySelector('.save').addEventListener('click', async ()=>{ await saveRow(tr); });
-        tr.querySelector('.del').addEventListener('click', async ()=>{
-          if (confirm('¿Borrar "'+(it.descripcion||'')+'"?')){
-            await j('/api/products/'+encodeURIComponent(it._id), { method:'DELETE' });
-            await load();
-          }
-        });
-        tb.appendChild(tr);
-      }
-    }
-    async function saveRow(tr){
-      const payload = {
-        _id: tr.dataset.id || undefined,
-        descripcion: tr.querySelector('.descripcion').value.trim(),
-        importe: tr.querySelector('.importe').value.trim(),
-        observacion: tr.querySelector('.observacion').value.trim(),
-        active: tr.querySelector('.active').checked
-      };
-      await j('/api/products', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-      alert('Guardado ✅'); await load();
-    }
-    document.getElementById('btnReload').addEventListener('click', load);
-    document.getElementById('btnAdd').addEventListener('click', ()=>{
-      const tb = document.querySelector('#tbl tbody');
-      const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
-      tr.querySelector('.save').addEventListener('click', async ()=>{ await saveRow(tr); });
-      tr.querySelector('.del').addEventListener('click', ()=> tr.remove());
-      tb.prepend(tr);
-    });
-    load();
-  </script>
-</body>
-</html>`);
-});
-
-app.get("/api/products", async (_req, res) => {
-  try {
-    const items = await loadProductsFromMongo({ force: true });
-    res.json({ items: items.map(it => ({ ...it, _id: String(it._id) })) });
-  } catch (e) {
-    console.error("GET /api/products error:", e);
-    res.status(500).json({ error: "internal" });
-  }
-});
-app.post("/api/products", async (req, res) => {
-  try {
-    await upsertProductMongo(req.body || {});
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(400).json({ error: e.message || "bad_request" });
-  }
-});
-app.delete("/api/products/:id", async (req, res) => {
-  try {
-    await removeProductMongo(req.params.id);
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("DELETE /api/products/:id error:", e);
     res.status(500).json({ error: "internal" });
   }
 });
