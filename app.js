@@ -54,6 +54,9 @@ function withTimeout(promise, ms, label = "operation") {
 }
 
 /* ======================= Helpers JSON robustos ======================= */
+// Regex escape helper (safe for user-provided phone filters)
+function escapeRegExp(s) { return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'); }
+
 function coerceJsonString(raw) {
   if (raw == null) return null;
   let s = String(raw);
@@ -782,6 +785,39 @@ function pushMessage(session, role, content, maxTurns = 20) {
   session.updatedAt = Date.now();
 }
 
+// OpenAI chat call with retries & backoff (retriable on timeouts / 429 / reset)
+async function openaiChatWithRetries(messages, { model, temperature }) {
+  const maxRetries = parseInt(process.env.OPENAI_RETRY_COUNT || "2", 10);
+  const baseDelay  = parseInt(process.env.OPENAI_RETRY_BASE_MS || "600", 10);
+  let lastErr = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await withTimeout(
+        openai.chat.completions.create({
+          model,
+          response_format: { type: "json_object" },
+          temperature,
+          top_p: 1,
+          messages
+        }),
+        parseInt(process.env.OPENAI_TIMEOUT_MS || "12000", 10),
+        "openai_chat"
+      );
+    } catch (e) {
+      lastErr = e;
+      const msg = (e && e.message) ? e.message : String(e);
+      const retriable = /timeout/i.test(msg) || e?.status === 429 || e?.code === "ETIMEDOUT" || e?.code === "ECONNRESET";
+      if (attempt < maxRetries && retriable) {
+        const jitter = Math.floor(Math.random() * 250);
+        const delay = baseDelay * Math.pow(2, attempt) + jitter;
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      break;
+    }
+  }
+  throw lastErr || new Error("openai_chat_failed");
+}
 /* ======================= Chat (historial + parser robusto) ======================= */
 async function chatWithHistoryJSON(
   waId,
@@ -803,17 +839,7 @@ async function chatWithHistoryJSON(
 
   let content = "";
   try {
-    const completion = await withTimeout(
-      openai.chat.completions.create({
-        model,
-        response_format: { type: "json_object" },
-        temperature,
-        top_p: 1,
-        messages: [ ...session.messages ]
-      }),
-      parseInt(process.env.OPENAI_TIMEOUT_MS || "12000", 10),
-      "openai_chat"
-    );
+    const completion = await openaiChatWithRetries([ ...session.messages ], { model, temperature });
     content = completion.choices?.[0]?.message?.content || "";
   } catch (e) {
     console.error("❌ OpenAI error/timeout:", e.message || e);
@@ -1228,30 +1254,54 @@ app.get("/api/admin/conversations", async (req, res) => {
   try {
     const db = await getDb();
     const q = {};
-    if (typeof req.query.processed === "string") {
-      if (req.query.processed === "true") q.processed = true;
-      if (req.query.processed === "false") q.processed = { $ne: true };
+    const { processed, phone, status, date_field, from, to } = req.query;
+
+    if (typeof processed === "string") {
+      if (processed === "true") q.processed = true;
+      else if (processed === "false") q.processed = { $ne: true };
     }
+
+    if (phone && String(phone).trim()) {
+      const esc = escapeRegExp(String(phone).trim());
+      q.waId = { $regex: esc, $options: "i" };
+    }
+
+    if (status && String(status).trim()) {
+      q.status = String(status).trim().toUpperCase();
+    }
+
+    const field = (date_field === "closed") ? "closedAt" : "openedAt";
+    const range = {};
+    if (from) {
+      const d1 = new Date(`${from}T00:00:00.000Z`);
+      if (!isNaN(d1)) range.$gte = d1;
+    }
+    if (to) {
+      const d2 = new Date(`${to}T23:59:59.999Z`);
+      if (!isNaN(d2)) range.$lte = d2;
+    }
+    if (Object.keys(range).length) q[field] = range;
+
     const convs = await db.collection("conversations")
       .find(q, { sort: { openedAt: -1 } })
       .project({ waId:1, status:1, openedAt:1, closedAt:1, turns:1, contactName:1, processed:1 })
+      .limit(500)
       .toArray();
 
-    // normalizar _id a string
     const out = convs.map(c => ({
-      _id: c._id.toString(),
+      _id: c._id && c._id.toString ? c._id.toString() : String(c._id),
       waId: c.waId,
       contactName: c.contactName || "",
       status: c.status || "OPEN",
       openedAt: c.openedAt,
       closedAt: c.closedAt,
-      turns: c.turns || 0,
+      turns: typeof c.turns === "number" ? c.turns : 0,
       processed: !!c.processed
     }));
     res.json(out);
   } catch (e) {
     console.error("⚠️ /api/admin/conversations error:", e);
-    res.status(500).json({ error: "internal" });
+    res.status(200).json([]);
   }
 });
 
