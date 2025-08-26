@@ -1313,7 +1313,7 @@ app.get("/admin", async (req, res) => {
 
     // Teléfono (waId) con regex case-insensitive
     if (phone && typeof phone === "string" && phone.trim()) {
-      const esc = phone.replace(/[.*+?^${}()|[\]\]/g, "\$&");
+      const esc = phone.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&");
       q.waId = { $regex: esc, $options: "i" };
     }
 
