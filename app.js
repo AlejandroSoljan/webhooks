@@ -582,7 +582,12 @@ async function saveBehaviorTextToMongo(newText) {
   behaviorCache = { at: 0, text: null };
 }
 
-async function buildSystemPrompt({ force = false } = {}) {
+async function buildSystemPrompt({ force = false, conversation = null } = {}) {
+  // Usar snapshot si viene atado a la conversación
+  if (conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
+    return conversation.behaviorSnapshot.text;
+  }
+
   const now = Date.now();
   if (!force && (now - behaviorCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && behaviorCache.text) {
     return behaviorCache.text;
@@ -637,6 +642,8 @@ async function ensureOpenConversation(waId, { contactName = null } = {}) {
   const db = await getDb();
   let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
   if (!conv) {
+    // ⚡ Al iniciar una conversación: recargo comportamiento (ignora caché)
+    const behaviorText = await buildSystemPrompt({ force: true });
     const doc = {
       waId,
       status: "OPEN",         // OPEN | COMPLETED | CANCELLED
@@ -646,7 +653,12 @@ async function ensureOpenConversation(waId, { contactName = null } = {}) {
       closedAt: null,
       lastUserTs: null,
       lastAssistantTs: null,
-      turns: 0
+      turns: 0,
+      behaviorSnapshot: {
+        text: behaviorText,
+        source: (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(),
+        savedAt: new Date()
+      }
     };
     const ins = await db.collection("conversations").insertOne(doc);
     conv = { _id: ins.insertedId, ...doc };
@@ -793,7 +805,10 @@ const sessions = new Map(); // waId -> { messages, updatedAt }
 
 async function getSession(waId) {
   if (!sessions.has(waId)) {
-    const systemText = await buildSystemPrompt({ force: true }); // al iniciar conversación
+        const db = await getDb();
+    const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
+    const systemText = await buildSystemPrompt({ conversation: conv || null });
+// al iniciar conversación
     sessions.set(waId, {
       messages: [{ role: "system", content: systemText }],
       updatedAt: Date.now()
@@ -854,9 +869,11 @@ async function chatWithHistoryJSON(
 
   // refrescar system en cada turno
   try {
-    const systemText = await buildSystemPrompt({ force: true });
-    session.messages[0] = { role: "system", content: systemText };
-  } catch (e) {
+        const db = await getDb();
+    const conv = await db.collection(\"conversations\").findOne({ waId, status: \"OPEN\" });
+    const systemText = await buildSystemPrompt({ conversation: conv || null });
+    session.messages[0] = { role: \"system\", content: systemText };
+} catch (e) {
     console.warn("⚠️ No se pudo refrescar system:", e.message);
   }
 
