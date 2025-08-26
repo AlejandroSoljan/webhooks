@@ -94,16 +94,41 @@ async function safeJsonParseStrictOrFix(raw, { openai, model = "gpt-4o-mini" } =
 
   // reintento con “arreglador” (una sola vez)
   try {
+    let __fixLastErr = null;
+const __fixRetries = parseInt(process.env.OPENAI_RETRY_COUNT || "2", 10);
+const __fixBase = parseInt(process.env.OPENAI_RETRY_BASE_MS || "600", 10);
+let fixed = "";
+for (let __a = 0; __a <= __fixRetries; __a++) {
+  try {
     const fix = await openai.chat.completions.create({
       model,
       temperature: 0,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: "Devuelve EXCLUSIVAMENTE un JSON válido, sin comentarios ni markdown." },
-        { role: "user", content: `Convertí lo siguiente a JSON estricto (si falta llaves, completalas):\n\n${raw}` }
+        { role: "user", content: `Convertí lo siguiente a JSON estricto (si falta llaves, completalas):
+
+${raw}` }
       ]
     });
-    const fixed = fix.choices?.[0]?.message?.content || "";
+    fixed = fix.choices?.[0]?.message?.content || "";
+    __fixLastErr = null;
+    break;
+  } catch (e) {
+    __fixLastErr = e;
+    const msg = e && e.message ? e.message : String(e);
+    const retriable = /timeout/i.test(msg) || e?.code === "ETIMEDOUT" || e?.code === "ECONNRESET" || e?.status === 429;
+    if (__a < __fixRetries && retriable) {
+      const jitter = Math.floor(Math.random() * 250);
+      const delay = __fixBase * Math.pow(2, __a) + jitter;
+      await new Promise(r => setTimeout(r, delay));
+      continue;
+    }
+    break;
+  }
+}
+if (__fixLastErr) throw __fixLastErr;
+const fixedClean = coerceJsonString(fixed);
     const fixedClean = coerceJsonString(fixed);
     return JSON.parse(fixedClean);
   } catch (e2) {
@@ -1042,11 +1067,9 @@ app.post("/webhook", async (req, res) => {
  * /api/admin/order/:conversationId/process -> POST marca orden como procesada
  */
 
-app.get("/admin", async (req, res) => {
-  // HTML minimal con fetch al endpoint JSON
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`
-<!doctype html>
+    app.get("/admin", async (req, res) => {
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(`<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -1055,7 +1078,7 @@ app.get("/admin", async (req, res) => {
     body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; }
     h1 { margin-top: 0; }
     table { border-collapse: collapse; width: 100%; font-size: 14px; }
-    th, td { border: 1px solid #ddd; padding: 8px; }
+    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
     th { background: #f6f6f6; text-align: left; }
     tr:nth-child(even) { background: #fafafa; }
     .btn { padding: 6px 10px; border: 1px solid #333; background: #fff; cursor: pointer; border-radius: 4px; font-size: 12px; }
@@ -1065,34 +1088,56 @@ app.get("/admin", async (req, res) => {
     .tag.OPEN { background: #e7f5ff; color: #1971c2; }
     .tag.COMPLETED { background: #e6fcf5; color: #2b8a3e; }
     .tag.CANCELLED { background: #fff0f6; color: #c2255c; }
+    .filters { display:flex; flex-wrap: wrap; gap:8px; align-items:center; margin:10px 0; }
+    .filters input, .filters select { padding:6px 8px; border:1px solid #ccc; border-radius:6px; }
     /* modal */
     .modal-backdrop { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); align-items:center; justify-content:center; }
     .modal { background:#fff; width: 720px; max-width: calc(100% - 32px); border-radius:8px; overflow:hidden; }
     .modal header { padding:12px 16px; background:#f6f6f6; display:flex; align-items:center; justify-content:space-between;}
     .modal header h3{ margin:0; font-size:16px;}
     .modal .content { padding:16px; max-height:70vh; overflow:auto; }
-    .modal .actions { padding:12px 16px; text-align:right; border-top:1px solid #eee;}
+    .modal .actions { padding:12px 16px; text-align:right; border-top:1px solid #eee; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; font-size: 12px; }
     .printable { background: #fff; color: #000; }
-    @media print {
-      .no-print { display: none; }
-      .printable { padding: 0; }
-    }
+    @media print { .no-print { display: none; } .printable { padding: 0; } }
   </style>
 </head>
 <body>
   <h1>Admin - Conversaciones</h1>
-  <div class="muted">Actualiza la página para refrescar.</div>
+
+  <div class="filters no-print">
+    <label>Procesado
+      <select id="fProcessed">
+        <option value="">Todos</option>
+        <option value="false">No procesado</option>
+        <option value="true">Procesado</option>
+      </select>
+    </label>
+    <label>Teléfono <input id="fPhone" placeholder="wa_id…" /></label>
+    <label>Estado
+      <select id="fStatus">
+        <option value="">Todos</option>
+        <option value="OPEN">OPEN</option>
+        <option value="COMPLETED">COMPLETED</option>
+        <option value="CANCELLED">CANCELLED</option>
+      </select>
+    </label>
+    <label>Campo fecha
+      <select id="fDateField">
+        <option value="opened">Apertura</option>
+        <option value="closed">Cierre</option>
+      </select>
+    </label>
+    <label>Desde <input type="date" id="fFrom"></label>
+    <label>Hasta <input type="date" id="fTo"></label>
+    <button class="btn" id="btnSearch">Buscar</button>
+    <button class="btn" id="btnClear">Limpiar</button>
+  </div>
+
   <table id="tbl">
     <thead>
       <tr>
-        <th>wa_id</th>
-        <th>Nombre</th>
-        <th>Estado</th>
-        <th>Abierta</th>
-        <th>Cerrada</th>
-        <th>Turnos</th>
-        <th>Acciones</th>
+        <th>wa_id</th><th>Nombre</th><th>Estado</th><th>Apertura</th><th>Cierre</th><th>Turnos</th><th>Procesado</th><th>Acciones</th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -1105,7 +1150,7 @@ app.get("/admin", async (req, res) => {
         <button class="btn no-print" onclick="closeModal()">✕</button>
       </header>
       <div class="content" id="modalContent"></div>
-      <div class="actions no-print">
+      <div class="actions no-print" id="modalActions">
         <button class="btn" onclick="window.print()">Imprimir</button>
         <button class="btn" onclick="closeModal()">Cerrar</button>
       </div>
@@ -1114,68 +1159,63 @@ app.get("/admin", async (req, res) => {
 
   <script>
     async function loadConversations() {
-  const params = new URLSearchParams();
-  const p = (document.getElementById('fProcessed')||{}).value || "";
-  const phone = (document.getElementById('fPhone')||{}).value || "";
-  const st = (document.getElementById('fStatus')||{}).value || "";
-  const d1 = (document.getElementById('fFrom')||{}).value || "";
-  const d2 = (document.getElementById('fTo')||{}).value || "";
-  const hasAnyFilter = !!(p || phone.trim() || st || d1 || d2);
-  if (p) params.set('processed', p);
-  if (phone.trim()) params.set('phone', phone.trim());
-  if (st) params.set('status', st);
-  if (d1) params.set('from', d1);
-  if (d2) params.set('to', d2);
+      const params = new URLSearchParams();
+      const p = (document.getElementById('fProcessed')||{}).value || "";
+      const phone = (document.getElementById('fPhone')||{}).value || "";
+      const st = (document.getElementById('fStatus')||{}).value || "";
+      const df = (document.getElementById('fDateField')||{}).value || "opened";
+      const d1 = (document.getElementById('fFrom')||{}).value || "";
+      const d2 = (document.getElementById('fTo')||{}).value || "";
+      if (p) params.set('processed', p);
+      if (phone.trim()) params.set('phone', phone.trim());
+      if (st) params.set('status', st);
+      if (df) params.set('date_field', df);
+      if (d1) params.set('from', d1);
+      if (d2) params.set('to', d2);
 
-  let url = '/api/admin/conversations' + (params.toString() ? ('?' + params.toString()) : '');
-  const tb = document.querySelector("#tbl tbody");
-  try {
-    let r = await fetch(url);
-    if (!r.ok) throw new Error('HTTP '+r.status);
-    let data = await r.json();
-    if ((!Array.isArray(data) || data.length === 0) && !hasAnyFilter) {
-      // retry without filters, explicit fallback
-      r = await fetch('/api/admin/conversations?fallback=all');
-      if (r.ok) data = await r.json();
+      const url = '/api/admin/conversations' + (params.toString() ? ('?' + params.toString()) : '');
+      const tb = document.querySelector("#tbl tbody");
+      try {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        const data = await r.json();
+        tb.innerHTML = "";
+        if (!Array.isArray(data) || data.length === 0) {
+          tb.innerHTML = '<tr><td colspan="8" class="muted">Sin resultados (probá limpiar filtros)</td></tr>';
+          return;
+        }
+        for (const row of data) {
+          const tr = document.createElement('tr');
+          const processedIcon = row.processed ? '✅' : '—';
+          const pbtnDisabled = row.processed ? ' disabled' : '';
+          const pbtnLabel = row.processed ? 'Procesada' : 'Procesado';
+          tr.innerHTML =
+            '<td>' + (row.waId || '') + '</td>' +
+            '<td>' + (row.contactName || '') + '</td>' +
+            '<td><span class="tag ' + (row.status || '') + '">' + (row.status || '') + '</span></td>' +
+            '<td>' + (row.openedAt ? new Date(row.openedAt).toLocaleString() : '') + '</td>' +
+            '<td>' + (row.closedAt ? new Date(row.closedAt).toLocaleString() : '') + '</td>' +
+            '<td>' + (row.turns ?? 0) + '</td>' +
+            '<td id="proc-' + row._id + '">' + processedIcon + '</td>' +
+            '<td>' +
+              '<button class="btn" onclick="openMessages(\\'' + row._id + '\\')">Mensajes</button>' +
+              '<button class="btn" onclick="openOrder(\\'' + row._id + '\\')">Pedido</button>' +
+              '<button id="pbtn-' + row._id + '" class="btn" onclick="markProcessed(\\'' + row._id + '\\')"' + pbtnDisabled + '>' + pbtnLabel + '</button>' +
+              '<div class="printmenu">' +
+                '<select id="pm-' + row._id + '" class="btn">' +
+                  '<option value="kitchen"' + (row.processed ? '' : ' selected') + '>Cocina</option>' +
+                  '<option value="client"' + (row.processed ? ' selected' : '') + '>Cliente</option>' +
+                '</select>' +
+                '<button class="btn" onclick="printTicketOpt(\\'' + row._id + '\\')">Imprimir</button>' +
+                '<button class="btn" title="Imprimir cocina rápido" onclick="quickPrint(\\'' + row._id + '\\')">🍳</button>' +
+              '</div>' +
+            '</td>';
+          tb.appendChild(tr);
+        }
+      } catch (err) {
+        tb.innerHTML = '<tr><td colspan="8" style="color:#b00020">Error: ' + (err.message||err) + '</td></tr>';
+      }
     }
-    tb.innerHTML = "";
-    if (!Array.isArray(data) || data.length === 0) {
-      tb.innerHTML = '<tr><td colspan="8" class="muted">Sin resultados (probá limpiar filtros)</td></tr>';
-      return;
-    }
-    for (const row of data) {
-      const tr = document.createElement('tr');
-      const processedIcon = row.processed ? '✅' : '—';
-      const pbtnDisabled = row.processed ? ' disabled' : '';
-      const pbtnLabel = row.processed ? 'Procesado ✓' : 'Procesado';
-      tr.innerHTML =
-        '<td>' + (row.waId || '') + '</td>' +
-        '<td>' + (row.contactName || '') + '</td>' +
-        '<td><span class="tag ' + (row.status || '') + '">' + (row.status || '') + '</span></td>' +
-        '<td>' + (row.openedAt ? new Date(row.openedAt).toLocaleString() : '') + '</td>' +
-        '<td>' + (row.closedAt ? new Date(row.closedAt).toLocaleString() : '') + '</td>' +
-        '<td>' + (row.turns ?? 0) + '</td>' +
-        '<td id="proc-' + row._id + '">' + processedIcon + '</td>' +
-        '<td>' +
-          '<button class="btn" onclick="openMessages(\'' + row._id + '\')">Mensajes</button>' +
-          '<button class="btn" onclick="openOrder(\'' + row._id + '\')">Pedido</button>' +
-          '<button id="pbtn-' + row._id + '" class="btn" onclick="markProcessed(\'' + row._id + '\')"' + pbtnDisabled + '>' + pbtnLabel + '</button>' +
-          '<div class="printmenu">' +
-            '<select id="pm-' + row._id + '" class="btn">' +
-              '<option value="kitchen"' + (row.processed ? '' : ' selected') + '>Cocina</option>' +
-              '<option value="client"' + (row.processed ? ' selected' : '') + '>Cliente</option>' +
-            '</select>' +
-            '<button class="btn" onclick="printTicketOpt(\'' + row._id + '\')">Imprimir</button>' +
-            '<button class="btn" title="Imprimir cocina rápido" onclick="quickPrint(\'' + row._id + '\')">🍳</button>' +
-          '</div>' +
-        '</td>';
-      tb.appendChild(tr);
-    }
-  } catch (err) {
-    tb.innerHTML = '<tr><td colspan="8" style="color:#b00020">Error cargando datos: ' + (err.message||err) + '</td></tr>';
-  }
-}
-}
 
     function openMessages(id) {
       window.open('/api/admin/messages/' + id, '_blank');
@@ -1186,11 +1226,83 @@ app.get("/admin", async (req, res) => {
       const data = await r.json();
       const root = document.getElementById('modalContent');
       root.innerHTML = renderOrder(data);
+      const actions = document.getElementById('modalActions');
+      if (actions) {
+        actions.innerHTML =
+          '<button class="btn" onclick="window.print()">Imprimir</button>' +
+          '<button class="btn" onclick="window.open(\\'/admin/print/' + id + '?v=kitchen\\', \\'_blank\\')">Cocina</button>' +
+          '<button class="btn" onclick="window.open(\\'/admin/print/' + id + '?v=client\\', \\'_blank\\')">Cliente</button>' +
+          '<button class="btn" onclick="closeModal()">Cerrar</button>';
+      }
       openModal();
     }
 
     async function markProcessed(id) {
+      const btn = document.getElementById('pbtn-' + id);
+      if (btn) { btn.disabled = true; btn.textContent = 'Procesando…'; }
       const r = await fetch('/api/admin/order/' + id + '/process', { method: 'POST' });
+      if (r.ok) setRowProcessedUI(id, true);
+      else { alert('No se pudo marcar.'); if (btn) { btn.disabled = false; btn.textContent = 'Procesado'; } }
+    }
+    function setRowProcessedUI(id, processed) {
+      const cell = document.getElementById('proc-' + id);
+      if (cell) cell.textContent = processed ? '✅' : '—';
+      const btn = document.getElementById('pbtn-' + id);
+      if (btn) { btn.textContent = 'Procesada'; btn.disabled = true; }
+      const sel = document.getElementById('pm-' + id);
+      if (sel) sel.value = processed ? 'client' : 'kitchen';
+    }
+
+    function printTicketOpt(id) {
+      const sel = document.getElementById('pm-' + id);
+      const which = sel ? sel.value : 'kitchen';
+      window.open('/admin/print/' + id + '?v=' + encodeURIComponent(which), '_blank');
+    }
+    function quickPrint(id) {
+      window.open('/admin/print/' + id + '?v=kitchen', '_blank');
+    }
+
+    function renderOrder(o) {
+      if (!o || !o.order) return '<div class="mono">No hay pedido para esta conversación.</div>';
+      const ord = o.order;
+      const items = Array.isArray(ord.items) ? ord.items : [];
+      const itemsHtml = items.map(it => '<li>' + (it.name||it.producto||'Item') + (it.selection?': <strong>'+it.selection+'</strong>':'') + '</li>').join('') || '<li>(sin ítems)</li>';
+      const rawHtml = o.rawPedido ? '<pre class="mono">' + JSON.stringify(o.rawPedido, null, 2) + '</pre>' : '';
+      return ''
+        + '<div class="printable">'
+        + '  <h2>Pedido</h2>'
+        + '  <p><strong>Cliente:</strong> ' + (ord.name || '') + ' <span class="muted">(' + (o.waId || '') + ')</span></p>'
+        + '  <p><strong>Entrega:</strong> ' + (ord.entrega || '') + '</p>'
+        + '  <p><strong>Domicilio:</strong> ' + (ord.domicilio || '') + '</p>'
+        + '  <p><strong>Monto:</strong> ' + ((ord.amount!=null)?('$'+ord.amount):'') + '</p>'
+        + '  <p><strong>Estado pedido:</strong> ' + (ord.estadoPedido || '') + '</p>'
+        + '  <p><strong>Fecha/Hora entrega:</strong> ' + (ord.fechaEntrega || '') + ' ' + (ord.hora || '') + '</p>'
+        + '  <h3>Ítems</h3>'
+        + '  <ul>' + itemsHtml + '</ul>'
+        + '  <h3>Detalle crudo del Pedido</h3>'
+        +    rawHtml
+        + '</div>';
+    }
+
+    function openModal(){ document.getElementById('modalBackdrop').style.display='flex'; }
+    function closeModal(){ document.getElementById('modalBackdrop').style.display='none'; }
+
+    document.getElementById('btnSearch').addEventListener('click', loadConversations);
+    document.getElementById('btnClear').addEventListener('click', () => {
+      document.getElementById('fProcessed').value='';
+      document.getElementById('fPhone').value='';
+      document.getElementById('fStatus').value='';
+      document.getElementById('fDateField').value='opened';
+      document.getElementById('fFrom').value='';
+      document.getElementById('fTo').value='';
+      loadConversations();
+    });
+    // Inicial
+    loadConversations();
+  </script>
+</body>
+</html>`);
+    });
       if (r.ok) {
         alert('Pedido marcado como procesado.');
       } else {
@@ -1235,38 +1347,25 @@ app.get("/admin", async (req, res) => {
 });
 
 // JSON de conversaciones para Admin
-// ===== Admin JSON (stable + filtros + fallback) =====
-// --- helper (dejar una sola vez en el archivo) ---
-// --- helper (una sola vez en todo el archivo) ---
-function escapeRegExp(s) {
-  // Escapa caracteres especiales para armar un regex con texto libre
-  return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
-}
-
-// --- GET /api/admin/conversations (filtros + salida normalizada) ---
-app.get('/api/admin/conversations', async (req, res) => {
+app.get("/api/admin/conversations", async (req, res) => {
   try {
     const db = await getDb();
     const q = {};
     const { processed, phone, status, date_field, from, to } = req.query;
 
-    // processed=true|false
-    if (processed === 'true') q.processed = true;
-    else if (processed === 'false') q.processed = { $ne: true };
+    if (processed === "true") q.processed = true;
+    else if (processed === "false") q.processed = { $ne: true };
 
-    // teléfono / waId (match parcial, case-insensitive)
-    if (phone && String(phone).trim() !== '') {
+    if (phone && String(phone).trim() !== "") {
       const esc = escapeRegExp(String(phone).trim());
-      q.waId = { $regex: esc, $options: 'i' };
+      q.waId = { $regex: esc, $options: "i" };
     }
 
-    // estado exacto (OPEN|COMPLETED|CANCELLED...)
-    if (status && String(status).trim() !== '') {
+    if (status && String(status).trim() !== "") {
       q.status = String(status).trim().toUpperCase();
     }
 
-    // rango de fechas por campo elegido: openedAt (default) o closedAt
-    const field = (date_field === 'closed') ? 'closedAt' : 'openedAt';
+    const field = (date_field === "closed") ? "closedAt" : "openedAt";
     const range = {};
     if (from) {
       const d1 = new Date(`${from}T00:00:00.000Z`);
@@ -1278,44 +1377,26 @@ app.get('/api/admin/conversations', async (req, res) => {
     }
     if (Object.keys(range).length) q[field] = range;
 
-    // Si no hay filtros, lista todo (comportamiento anterior)
-    const list = await db.collection('conversations')
-      .find(q)
-      .project({ waId:1, contactName:1, status:1, openedAt:1, closedAt:1, turns:1, processed:1 })
-      .sort({ openedAt: -1 })
-      .limit(500)
+    const convs = await db.collection("conversations")
+      .find(q, { sort: { openedAt: -1 } })
+      .project({ waId:1, status:1, openedAt:1, closedAt:1, turns:1, contactName:1, processed:1 })
       .toArray();
 
-    // normalizo salida (_id a string) para la UI
-    const out = list.map(c => ({
+    const out = convs.map(c => ({
       _id: c._id && c._id.toString ? c._id.toString() : String(c._id),
-      waId: c.waId || '',
-      contactName: c.contactName || '',
-      status: c.status || 'OPEN',
+      waId: c.waId || "",
+      contactName: c.contactName || "",
+      status: c.status || "OPEN",
       openedAt: c.openedAt || null,
       closedAt: c.closedAt || null,
-      turns: typeof c.turns === 'number' ? c.turns : 0,
+      turns: typeof c.turns === "number" ? c.turns : 0,
       processed: !!c.processed
     }));
 
     res.json(out);
   } catch (e) {
-    console.error('⚠️ /api/admin/conversations error:', e);
-    res.status(200).json([]); // no romper /admin ante errores
-  }
-}); // <— cierre correcto del handler (no agregues otra llave después)
-
-// Debug: inspeccionar conteo y primer ID
-app.get("/api/admin/conversations/_debug", async (req, res) => {
-  try {
-    const db = await getDb();
-    const total = await db.collection("conversations").countDocuments({});
-    const sample = await db.collection("conversations").find({}).project({_id:1}).limit(3).toArray();
-    res.json({ ok:true, total, sample: sample.map(s => s._id && s._id.toString ? s._id.toString() : String(s._id)) });
-  } catch (e) {
-    res.status(200).json({ ok:false, error: (e && e.message) || String(e) });
-  }
-});
+    console.error("⚠️ /api/admin/conversations error:", e);
+    res.status(200).json([]);
   }
 });
 
@@ -1431,6 +1512,65 @@ app.post("/api/admin/order/:id/process", async (req, res) => {
   }
 });
 
+    // Imprimir ticket 80mm (kitchen/client)
+    app.get("/admin/print/:id", async (req, res) => {
+      try {
+        const id = req.params.id;
+        const v = (req.query.v || "kitchen").toString();
+        const db = await getDb();
+        const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
+        if (!conv) return res.status(404).send("Conversation not found");
+        let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) });
+        if (!order && conv.summary?.Pedido) {
+          order = normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
+        }
+        if (!order) return res.status(404).send("Order not found");
+        const isKitchen = v === "kitchen";
+
+        const items = Array.isArray(order.items) ? order.items : [];
+        const itemsHtml = items.map(it => 
+          '<div class="row"><div class="qty">•</div><div class="desc">' + (it.name||it.producto||'Item') + (it.selection?': <strong>'+it.selection+'</strong>':'') + '</div></div>'
+        ).join('') || '<div>(sin ítems)</div>';
+
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.end(`<!doctype html>
+<html><head><meta charset="utf-8"/>
+  <title>Ticket</title>
+  <style>
+    @page { size: 80mm auto; margin: 4mm; }
+    body { font: 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+    .ticket { width: 72mm; }
+    h1 { font-size: 16px; margin: 0 0 6px; text-align:center; }
+    .row { display:flex; margin: 4px 0; }
+    .qty { width: 10mm; }
+    .desc { flex:1; }
+    .muted { color:#555; }
+    .tot { margin-top:8px; border-top:1px dashed #000; padding-top:6px; }
+    .big { font-size: 14px; }
+    .center { text-align:center; }
+    .right { text-align:right; }
+  </style>
+</head>
+<body onload="window.print()">
+  <div class="ticket">
+    <h1>${process.env.BUSINESS_NAME || 'Pedido'}</h1>
+    <div class="muted center">${process.env.BUSINESS_ADDRESS || ''} ${process.env.BUSINESS_PHONE || ''}</div>
+    <div class="row"><div class="qty">Cliente</div><div class="desc big"><strong>${order.name || ''}</strong></div></div>
+    <div class="row"><div class="qty">wa</div><div class="desc">${conv.waId || ''}</div></div>
+    ${order.domicilio ? `<div class="row"><div class="qty">Dir</div><div class="desc">${order.domicilio}</div></div>` : ''}
+    ${order.entrega ? `<div class="row"><div class="qty">Entrega</div><div class="desc">${order.entrega}</div></div>` : ''}
+    ${order.fechaEntrega || order.hora ? `<div class="row"><div class="qty">Cuando</div><div class="desc">${order.fechaEntrega || ''} ${order.hora || ''}</div></div>` : ''}
+    <div class="row"><div class="qty"></div><div class="desc"><strong>Ítems</strong></div></div>
+    ${itemsHtml}
+    ${isKitchen ? '' : `<div class="tot right">Total: <strong>$${order.amount ?? order.total ?? ''}</strong></div>`}
+  </div>
+</body></html>`);
+      } catch (e) {
+        console.error("⚠️ /admin/print/:id error:", e);
+        res.status(500).send("internal");
+      }
+    });
+
 /* ======================= Seguridad global de errores ======================= */
 process.on("unhandledRejection", (reason) => {
   console.error("🧨 UnhandledRejection:", reason);
@@ -1442,3 +1582,9 @@ process.on("uncaughtException", (err) => {
 /* ======================= Start ======================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Webhook listening on port ${PORT}`));
+
+
+// --- escape regex helper ---
+function escapeRegExp(s) {
+  return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+}
