@@ -1236,71 +1236,72 @@ app.get("/admin", async (req, res) => {
 
 // JSON de conversaciones para Admin
 // ===== Admin JSON (stable + filtros + fallback) =====
-app.get("/api/admin/conversations", async (req, res) => {
+// --- helper (dejar una sola vez en el archivo) ---
+function escapeRegExp(s) {
+  // Escapa todos los caracteres especiales de regex
+  // Ej: "11+22(33)" -> "11\+22\(33\)"
+  return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+}
+
+// --- GET /api/admin/conversations (con filtros y regex seguro) ---
+app.get('/api/admin/conversations', async (req, res) => {
   try {
     const db = await getDb();
     const q = {};
-    const processed = typeof req.query.processed === "string" ? req.query.processed : "";
-    const phone = (req.query.phone || "").toString().trim();
-    const status = (req.query.status || "").toString().trim();
-    const from = (req.query.from || "").toString().trim();
-    const to = (req.query.to || "").toString().trim();
-    const fallbackAll = req.query.fallback === "all";
+    const { processed, phone, status, date_field, from, to } = req.query;
 
-    const hasAnyFilter = !!(processed || phone || status || from || to);
+    // processed=true|false
+    if (processed === 'true') q.processed = true;
+    else if (processed === 'false') q.processed = { $ne: true };
 
-    if (processed === "true") q.processed = true;
-    else if (processed === "false") q.processed = { $ne: true };
-
-    if (phone) {
-      const esc = phone.replace(/[.*+?^${}()|[\]\]/g, "\$&");
-      q.waId = { $regex: esc, $options: "i" };
+    // teléfono / waId (match parcial, case-insensitive)
+    if (phone && String(phone).trim() !== '') {
+      const esc = escapeRegExp(String(phone).trim());
+      q.waId = { $regex: esc, $options: 'i' };
     }
 
-    if (status) q.status = status.toUpperCase();
-
-    if (from || to) {
-      const range = {};
-      if (from) {
-        const d1 = new Date(from + "T00:00:00.000Z");
-        if (!isNaN(d1)) range.$gte = d1;
-      }
-      if (to) {
-        const d2 = new Date(to + "T23:59:59.999Z");
-        if (!isNaN(d2)) range.$lte = d2;
-      }
-      if (Object.keys(range).length) q.openedAt = range;
+    // estado exacto (OPEN|COMPLETED|CANCELLED...)
+    if (status && String(status).trim() !== '') {
+      q.status = String(status).trim().toUpperCase();
     }
 
-    let cursor;
-    if (fallbackAll || !hasAnyFilter) {
-      cursor = db.collection("conversations")
-        .find({}, { sort: { openedAt: -1 } })
-        .project({ waId:1, contactName:1, status:1, openedAt:1, closedAt:1, turns:1, processed:1 });
-    } else {
-      cursor = db.collection("conversations")
-        .find(q, { sort: { openedAt: -1 } })
-        .project({ waId:1, contactName:1, status:1, openedAt:1, closedAt:1, turns:1, processed:1 });
+    // rango de fechas por campo elegido: openedAt (default) o closedAt
+    const field = (date_field === 'closed') ? 'closedAt' : 'openedAt';
+    const range = {};
+    if (from) {
+      const d1 = new Date(`${from}T00:00:00.000Z`);
+      if (!isNaN(d1)) range.$gte = d1;
     }
-    const list = await cursor.limit(500).toArray();
+    if (to) {
+      const d2 = new Date(`${to}T23:59:59.999Z`);
+      if (!isNaN(d2)) range.$lte = d2;
+    }
+    if (Object.keys(range).length) q[field] = range;
 
-    const out = Array.isArray(list) ? list.map(c => ({
-      _id: (c._id && c._id.toString ? c._id.toString() : String(c._id || "")),
-      waId: c.waId || "",
-      contactName: c.contactName || "",
-      status: c.status || "OPEN",
+    // si no hay filtros, q queda vacío → comportamiento anterior (lista todo)
+    const list = await db.collection('conversations')
+      .find(q)
+      .project({ waId:1, contactName:1, status:1, openedAt:1, closedAt:1, turns:1, processed:1 })
+      .sort({ openedAt: -1 })
+      .limit(500)
+      .toArray();
+
+    // normalizo salida (_id a string) para el frontend
+    const out = list.map(c => ({
+      _id: c._id && c._id.toString ? c._id.toString() : String(c._id),
+      waId: c.waId || '',
+      contactName: c.contactName || '',
+      status: c.status || 'OPEN',
       openedAt: c.openedAt || null,
       closedAt: c.closedAt || null,
-      turns: typeof c.turns === "number" ? c.turns : 0,
+      turns: typeof c.turns === 'number' ? c.turns : 0,
       processed: !!c.processed
-    })) : [];
-
-    // Log server-side for debug
-    console.log("[/api/admin/conversations] q=", q, "filters?", hasAnyFilter, "returned:", out.length);
+    }));
 
     res.json(out);
   } catch (e) {
-    console.error("⚠️ /api/admin/conversations error:", e);
+    console.error('⚠️ /api/admin/conversations error:', e);
+    // Para que /admin no “muera” si algo falla, devolvemos array vacío
     res.status(200).json([]);
   }
 });
