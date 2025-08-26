@@ -1151,39 +1151,77 @@ app.get("/admin", async (req, res) => {
   <script>
     async function loadConversations() {
       
-      const sel = document.getElementById('filterProcessed');
-      const p = sel ? sel.value : '';
-      const url = p ? ('/api/admin/conversations?processed=' + p) : '/api/admin/conversations';
-      const r = await fetch(url);
+const params = new URLSearchParams();
+const pSel = document.getElementById('fProcessed') || document.getElementById('filterProcessed');
+const p = pSel ? pSel.value : '';
+const phone = (document.getElementById('fPhone')||{}).value || '';
+const st = (document.getElementById('fStatus')||{}).value || '';
+const df = (document.getElementById('fDateField')||{}).value || 'opened';
+const d1 = (document.getElementById('fFrom')||{}).value || '';
+const d2 = (document.getElementById('fTo')||{}).value || '';
 
-      const data = await r.json();
-      const tb = document.querySelector("#tbl tbody");
-      tb.innerHTML = "";
-      for (const row of data) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = \`
-          <td>\${row.waId}</td>
-          <td>\${row.contactName || ""}</td>
-          <td><span class="tag \${row.status}">\${row.status}</span></td>
-          <td>\${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
-          <td>\${row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
-          <td>\${row.turns ?? 0}</td>
-          <td>\${row.processed ? '✅' : '—'}</td>
-          <td>
-            <button class="btn" onclick="openMessages('\${row._id}')">Mensajes</button>
-            <button class="btn" onclick="openOrder('\${row._id}')">Pedido</button>
-            <button class="btn" onclick="markProcessed('\${row._id}')">Procesado</button>
-            <div class="printmenu">
-              <select id="pm-\${row._id}" class="btn">
-                <option value="kitchen">Cocina</option>
-                <option value="client">Cliente</option>
-              </select>
-              <button class="btn" onclick="printTicketOpt('\${row._id}')">Imprimir</button>
-            </div>
-          </td>
-        \`;
-        tb.appendChild(tr);
-      }
+if (p) params.set('processed', p);
+if (phone.trim()) params.set('phone', phone.trim());
+if (st) params.set('status', st);
+if (df) params.set('date_field', df);
+if (d1) params.set('from', d1);
+if (d2) params.set('to', d2);
+
+params.set('page', String(window.currentPage || 1));
+params.set('pageSize', String((window.getPageSize && window.getPageSize()) || 50));
+
+const url = '/api/admin/conversations' + (params.toString() ? ('?' + params.toString()) : '');
+const r = await fetch(url);
+const payload = await r.json();
+const data = Array.isArray(payload) ? payload : (payload.items || []);
+const total = Array.isArray(payload) ? data.length : (payload.total || 0);
+const page = Array.isArray(payload) ? (window.currentPage || 1) : (payload.page || 1);
+const limit = Array.isArray(payload) ? ((window.getPageSize && window.getPageSize()) || 50) : (payload.pageSize || 50);
+
+const tb = document.querySelector("#tbl tbody");
+tb.innerHTML = "";
+if (!Array.isArray(data) || data.length === 0) {
+  tb.innerHTML = '<tr><td colspan="8" class="muted">Sin resultados (probá limpiar filtros)</td></tr>';
+} else {
+  for (const row of data) {
+    const tr = document.createElement('tr');
+    const processedIcon = row.processed ? '✅' : '—';
+    const pbtnDisabled = row.processed ? ' disabled' : '';
+    const pbtnLabel = row.processed ? 'Procesada ✓' : 'Procesado';
+    tr.innerHTML =
+      '<td>' + (row.waId || '') + '</td>' +
+      '<td>' + (row.contactName || '') + '</td>' +
+      '<td><span class="tag ' + (row.status || '') + '">' + (row.status || '') + '</span></td>' +
+      '<td>' + (row.openedAt ? new Date(row.openedAt).toLocaleString() : '') + '</td>' +
+      '<td>' + (row.closedAt ? new Date(row.closedAt).toLocaleString() : '') + '</td>' +
+      '<td>' + (row.turns ?? 0) + '</td>' +
+      '<td id="proc-' + row._id + '">' + processedIcon + '</td>' +
+      '<td>' +
+        '<button class="btn" onclick="openMessages(\\'' + row._id + '\\')">Mensajes</button>' +
+        '<button class="btn" onclick="openOrder(\\'' + row._id + '\\')">Pedido</button>' +
+        '<button id="pbtn-' + row._id + '" class="btn" onclick="markProcessed(\\'' + row._id + '\\')"' + pbtnDisabled + '>' + pbtnLabel + '</button>' +
+        '<div class="printmenu">' +
+          '<select id="pm-' + row._id + '" class="btn">' +
+            '<option value="kitchen"' + (row.processed ? '' : ' selected') + '>Cocina</option>' +
+            '<option value="client"' + (row.processed ? ' selected' : '') + '>Cliente</option>' +
+          '</select>' +
+          '<button class="btn" onclick="printTicketOpt(\\'' + row._id + '\\')">Imprimir</button>' +
+          '<button class="btn" title="Imprimir cocina rápido" onclick="quickPrint(\\'' + row._id + '\\')">🍳</button>' +
+        '</div>' +
+      '</td>';
+    tb.appendChild(tr);
+  }
+}
+const info = document.getElementById('pageInfo');
+if (info) {
+  const fromN = (page-1)*limit + 1;
+  const toN = Math.min(page*limit, total);
+  info.textContent = total ? ` — Mostrando ${fromN}-${toN} de ${total}` : '';
+}
+const pageInput = document.getElementById('pageInput'); if (pageInput) pageInput.value = String(page);
+const prev = document.getElementById('btnPrev'); if (prev) prev.disabled = (page <= 1);
+const next = document.getElementById('btnNext'); if (next) next.disabled = (page*limit >= total);
+    }
     }
 
     function openMessages(id) {
