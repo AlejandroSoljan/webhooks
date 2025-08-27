@@ -1717,9 +1717,9 @@ app.patch("/api/products/:id/reactivate", async (req, res) => {
 
 // === Vista /productos (UI CRUD) ===
 // 🔧 REEMPLAZA SOLO ESTA RUTA /productos
+// /productos con CRUD (SSR para ver datos + UI con fetch)
 app.get("/productos", async (req, res) => {
   try {
-    // usa tu helper si existe, o un db ya guardado en app.locals/global
     const database =
       (typeof getDb === "function" && await getDb()) ||
       req.app?.locals?.db ||
@@ -1744,37 +1744,165 @@ app.get("/productos", async (req, res) => {
   <title>Productos</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1000px}
-    table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px}
-    th{background:#f5f5f5;text-align:left}.muted{color:#666;font-size:12px}.btn{padding:6px 10px;border:1px solid #333;background:#fff;border-radius:4px;text-decoration:none}
+    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1100px}
+    table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px;vertical-align:top}
+    th{background:#f5f5f5;text-align:left}
+    input[type="text"],input[type="number"],textarea{width:100%;box-sizing:border-box}
+    textarea{min-height:56px}
+    .row{display:flex;gap:8px;align-items:center}
+    .muted{color:#666;font-size:12px}.pill{border:1px solid #ccc;border-radius:999px;padding:2px 8px;font-size:12px}
+    .btn{padding:6px 10px;border:1px solid #333;background:#fff;border-radius:4px;cursor:pointer}
+    .btn + .btn{margin-left:6px}
   </style>
 </head>
 <body>
   <h1>Productos</h1>
-  <p class="muted">Fuente: colección <code>products</code> (${verTodos ? "todos" : "solo activos"})</p>
-  <p>
-    ${verTodos
-      ? '<a class="btn" href="/productos">Ver solo activos</a>'
-      : '<a class="btn" href="/productos?all=true">Ver todos</a>'}
-  </p>
-  <table>
+  <p class="muted">Fuente: <span class="pill">MongoDB (colección <code>products</code>)</span></p>
+
+  <div class="row">
+    <a class="btn" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a>
+    <button id="btnAdd" class="btn">Agregar</button>
+    <button id="btnReload" class="btn">Recargar</button>
+  </div>
+  <p></p>
+
+  <table id="tbl">
     <thead>
-      <tr><th>Descripción</th><th>Importe</th><th>Observación</th><th>Activo</th></tr>
+      <tr>
+        <th>Descripción</th><th>Importe</th><th>Observación</th><th>Activo</th><th>Acciones</th>
+      </tr>
     </thead>
     <tbody>
       ${
-        productos.length
-          ? productos.map(p => `
-            <tr>
-              <td>${p.descripcion ?? "-"}</td>
-              <td>$${(typeof p.importe === "number" ? p.importe.toFixed(2) : (p.importe ?? "-"))}</td>
-              <td>${p.observacion ?? "-"}</td>
-              <td>${p.active !== false ? "Sí" : "No"}</td>
-            </tr>`).join("")
-          : `<tr><td colspan="4" style="text-align:center;color:#666">Sin productos para mostrar</td></tr>`
+        productos.length ? productos.map(p => `
+          <tr data-id="${p._id}">
+            <td><input type="text" class="descripcion" value="${(p.descripcion ?? "").toString().replace(/"/g,'&quot;')}" /></td>
+            <td><input type="number" class="importe" step="0.01" value="${typeof p.importe==='number'?p.importe:(p.importe??'')}" /></td>
+            <td><textarea class="observacion">${(p.observacion ?? "").toString().replace(/</g,'&lt;')}</textarea></td>
+            <td style="text-align:center;"><input type="checkbox" class="active" ${p.active!==false?"checked":""} /></td>
+            <td>
+              <button class="btn save">Guardar</button>
+              <button class="btn del">Eliminar</button>
+              <button class="btn toggle">${p.active!==false?"Inactivar":"Reactivar"}</button>
+            </td>
+          </tr>
+        `).join("") : `<tr><td colspan="5" style="text-align:center;color:#666">Sin productos para mostrar</td></tr>`
       }
     </tbody>
   </table>
+
+  <template id="row-tpl">
+    <tr>
+      <td><input type="text" class="descripcion" placeholder="Ej: Pollo entero" /></td>
+      <td><input type="number" class="importe" step="0.01" placeholder="0.00" /></td>
+      <td><textarea class="observacion" placeholder="Observaciones / reglas"></textarea></td>
+      <td style="text-align:center;"><input type="checkbox" class="active" checked /></td>
+      <td>
+        <button class="btn save">Guardar</button>
+        <button class="btn del">Eliminar</button>
+        <button class="btn toggle">Inactivar</button>
+      </td>
+    </tr>
+  </template>
+
+  <script>
+    function q(sel, ctx){ return (ctx||document).querySelector(sel) }
+    function all(sel, ctx){ return Array.from((ctx||document).querySelectorAll(sel)) }
+
+    async function j(url, opts){
+      const r = await fetch(url, opts||{});
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const ct = r.headers.get('content-type')||'';
+      return ct.includes('application/json') ? r.json() : r.text();
+    }
+
+    async function reload(){
+      const url = new URL(location.href);
+      const allFlag = url.searchParams.get('all') === 'true';
+      const data = await j('/api/products' + (allFlag ? '?all=true' : ''));
+      const tb = q('#tbl tbody');
+      tb.innerHTML = '';
+      for (const it of data){
+        const tr = q('#row-tpl').content.firstElementChild.cloneNode(true);
+        tr.dataset.id = it._id || '';
+        q('.descripcion', tr).value = it.descripcion || '';
+        q('.importe', tr).value = typeof it.importe==='number' ? it.importe : (it.importe||'');
+        q('.observacion', tr).value = it.observacion || '';
+        q('.active', tr).checked = it.active !== false;
+        q('.toggle', tr).textContent = (it.active !== false) ? 'Inactivar' : 'Reactivar';
+
+        bindRow(tr);
+        tb.appendChild(tr);
+      }
+      if (!data.length){
+        const r = document.createElement('tr');
+        r.innerHTML = '<td colspan="5" style="text-align:center;color:#666">Sin productos para mostrar</td>';
+        tb.appendChild(r);
+      }
+    }
+
+    async function saveRow(tr){
+      const id = tr.dataset.id;
+      const payload = {
+        descripcion: q('.descripcion', tr).value.trim(),
+        importe: q('.importe', tr).value.trim(),
+        observacion: q('.observacion', tr).value.trim(),
+        active: q('.active', tr).checked
+      };
+      if (!payload.descripcion){ alert('Descripción requerida'); return; }
+      if (id){
+        await j('/api/products/'+encodeURIComponent(id), {
+          method:'PUT',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+      } else {
+        await j('/api/products', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+      }
+      await reload();
+    }
+
+    async function deleteRow(tr){
+      const id = tr.dataset.id;
+      if (!id) { tr.remove(); return; }
+      if (!confirm('¿Eliminar definitivamente?')) return;
+      await j('/api/products/'+encodeURIComponent(id), { method:'DELETE' });
+      await reload();
+    }
+
+    async function toggleRow(tr){
+      const id = tr.dataset.id;
+      if (!id) { alert('Primero guardá el nuevo producto.'); return; }
+      const active = q('.active', tr).checked;
+      const path = active ? '/api/products/'+encodeURIComponent(id)+'/inactivate'
+                          : '/api/products/'+encodeURIComponent(id)+'/reactivate';
+      await j(path, { method:'POST' });
+      await reload();
+    }
+
+    function bindRow(tr){
+      q('.save', tr).addEventListener('click', ()=> saveRow(tr));
+      q('.del', tr).addEventListener('click', ()=> deleteRow(tr));
+      q('.toggle', tr).addEventListener('click', ()=> toggleRow(tr));
+    }
+
+    // Bind inicial a filas SSR
+    all('#tbl tbody tr').forEach(bindRow);
+
+    // Botones generales
+    q('#btnAdd').addEventListener('click', ()=>{
+      const tb = q('#tbl tbody');
+      const tr = q('#row-tpl').content.firstElementChild.cloneNode(true);
+      bindRow(tr);
+      tb.prepend(tr);
+      q('.descripcion', tr).focus();
+    });
+    q('#btnReload').addEventListener('click', reload);
+  </script>
 </body>
 </html>`);
   } catch (err) {
@@ -1782,6 +1910,11 @@ app.get("/productos", async (req, res) => {
     res.status(500).send("Error al obtener productos");
   }
 });
+
+
+
+
+
 app.get("/productos.json", async (req, res) => {
   try {
     const database =
