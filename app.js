@@ -1682,6 +1682,7 @@ app.get("/productos", async (req, res) => {
         active: tr.querySelector('.active').checked
       };
       await j('/api/products', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+}
       alert('Guardado ✅'); await load();
     }
     document.getElementById('btnReload').addEventListener('click', load);
