@@ -1,10 +1,17 @@
+
+const express = require("express");
+const app = express();
+
+// ✅ AHORA podés usar middleware como:
 app.use('/public', express.static('public'));
+
+
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 // server.js
 require("dotenv").config();
 
-const express = require("express");
+
 const crypto = require("crypto");
 const OpenAI = require("openai");
 const { google } = require("googleapis");
@@ -14,7 +21,7 @@ const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
 
 // --- Node fetch (Node 18+ trae global fetch)
-const app = express();
+
 
 /* ======================= Body / firma ======================= */
 app.use(express.json({
