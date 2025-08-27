@@ -592,14 +592,14 @@ async function buildSystemPrompt({ force = false } = {}) {
   const baseText = BEHAVIOR_SOURCE === 'mongo' ? await loadBehaviorTextFromMongo() : await loadBehaviorTextFromEnv();
   // 2) Catálogo SIEMPRE desde Sheet
   let catalogText = "";
-  try {
-    const products = await loadProductsFromMongo({ force });
-    catalogText = buildCatalogTextFromMongo(products);
-  } catch (e) {
-    console.warn('⚠️ No se pudo leer Productos Mongo:', e.message);
-    catalogText = 'Catálogo de productos: (error al leer)';
-  }
-  } catch (e) {
+try {
+  const products = await loadProductsFromMongo({ force });
+  catalogText = buildCatalogTextFromMongo(products);
+} catch (e) {
+  console.warn("⚠️ No se pudo leer Productos Mongo:", e.message);
+  catalogText = "Catálogo de productos: (error al leer)";
+}
+} catch (e) {
     console.warn("⚠️ No se pudo leer Productos:", e.message);
     catalogText = "Catálogo de productos: (error al leer)";
   }
