@@ -71,9 +71,9 @@ function buildCatalogTextFromMongo(items) {
   const activos = (items || []).filter(it => it.active !== false);
   if (!activos.length) return "Catálogo de productos: (ninguno activo)";
   const lines = activos.map(it => {
-    const precioTxt = (typeof it.importe === "number") ? ` — $\${it.importe}` : (it.importe ? ` — $\${it.importe}` : "");
-    const obsTxt = it.observacion ? ` | Obs: \${it.observacion}` : "";
-    return `- \${it.descripcion}${precioTxt}${obsTxt}`;
+    const precioTxt = (typeof it.importe === "number") ? ` — $${it.importe}` : (it.importe ? ` — $${it.importe}` : "");
+    const obsTxt = it.observacion ? ` | Obs: ${it.observacion}` : "";
+    return `- ${it.descripcion}${precioTxt}${obsTxt}`;
   });
   return "Catálogo de productos (descripcion — precio | Obs: observaciones):\n" + lines.join("\n");
 }
@@ -442,7 +442,7 @@ function registerProductRoutes(app) {
     </tr>
   </template>
   <script>
-async function j(url, opts){ const r=await fetch(url, opts); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+    async function j(url, opts){ const r=await fetch(url, opts); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
     async function load(){
       const data = await j('/api/products');
       const tb = document.querySelector('#tbl tbody');
@@ -484,7 +484,7 @@ async function j(url, opts){ const r=await fetch(url, opts); if(!r.ok) throw new
       tb.prepend(tr);
     });
     load();
-</script>
+  </script>
 </body>
 </html>`);
   });
@@ -518,6 +518,7 @@ async function j(url, opts){ const r=await fetch(url, opts); if(!r.ok) throw new
 }
 
 /* ======================= Admin UI + APIs ======================= */
+function registerAdminRoutes(app) {
 function registerAdminRoutes(app) {
 
   /* =================== Página de Admin principal =================== */
@@ -604,7 +605,7 @@ function registerAdminRoutes(app) {
   </div>
 
   <script>
-async function loadConversations() {
+    async function loadConversations() {
       const sel = document.getElementById('filterProcessed');
       const p = sel ? sel.value : '';
       const url = p ? ('/api/admin/conversations?processed=' + p) : '/api/admin/conversations';
@@ -615,27 +616,27 @@ async function loadConversations() {
       tb.innerHTML = "";
       for (const row of data) {
         const tr = document.createElement('tr');
-        tr.innerHTML = \`
-          <td>\${row.waId}</td>
-          <td>\${row.contactName || ""}</td>
-          <td><span class="tag \${row.status}">\${row.status}</span></td>
-          <td>\${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
-          <td>\${row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
-          <td>\${row.turns ?? 0}</td>
-          <td>\${row.processed ? '✅' : '—'}</td>
+        tr.innerHTML = `
+          <td>${row.waId}</td>
+          <td>${row.contactName || ""}</td>
+          <td><span class="tag ${row.status}">${row.status}</span></td>
+          <td>${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
+          <td>${row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
+          <td>${row.turns ?? 0}</td>
+          <td>${row.processed ? '✅' : '—'}</td>
           <td>
-            <button class="btn" onclick="openMessages('\${row._id}')">Mensajes</button>
-            <button class="btn" onclick="openOrder('\${row._id}')">Pedido</button>
-            <button class="btn" onclick="markProcessed('\${row._id}')">Procesado</button>
+            <button class="btn" onclick="openMessages('${row._id}')">Mensajes</button>
+            <button class="btn" onclick="openOrder('${row._id}')">Pedido</button>
+            <button class="btn" onclick="markProcessed('${row._id}')">Procesado</button>
             <div class="printmenu">
-              <select id="pm-\${row._id}" class="btn">
+              <select id="pm-${row._id}" class="btn">
                 <option value="kitchen">Cocina</option>
                 <option value="client">Cliente</option>
               </select>
-              <button class="btn" onclick="printTicketOpt('\${row._id}')">Imprimir</button>
+              <button class="btn" onclick="printTicketOpt('${row._id}')">Imprimir</button>
             </div>
           </td>
-        \`;
+        `;
         tb.appendChild(tr);
       }
     }
@@ -664,23 +665,23 @@ async function loadConversations() {
     function renderOrder(o) {
       if (!o || !o.order) return '<div class="mono">No hay pedido para esta conversación.</div>';
       const ord = o.order;
-      const itemsHtml = (ord.items || []).map(it => \`<li>\${it.name}: <strong>\${it.selection}</strong></li>\`).join('') || '<li>(sin ítems)</li>';
+      const itemsHtml = (ord.items || []).map(it => `<li>${it.name}: <strong>${it.selection}</strong></li>`).join('') || '<li>(sin ítems)</li>';
       const rawHtml = o.rawPedido ? '<pre class="mono">' + JSON.stringify(o.rawPedido, null, 2) + '</pre>' : '';
-      return \`
+      return `
         <div class="printable">
           <h2>Pedido</h2>
-          <p><strong>Cliente:</strong> \\${ord.name || ''} <span class="muted">(\\${o.waId})</span></p>
-          <p><strong>Entrega:</strong> \\${ord.entrega || ''}</p>
-          <p><strong>Domicilio:</strong> \\${ord.domicilio || ''}</p>
+          <p><strong>Cliente:</strong> ${ord.name || ''} <span class="muted">(${o.waId})</span></p>
+          <p><strong>Entrega:</strong> ${ord.entrega || ''}</p>
+          <p><strong>Domicilio:</strong> ${ord.domicilio || ''}</p>
           <p><strong>Monto:</strong> ${(ord.amount!=null)?('$'+ord.amount):''}</p>
-          <p><strong>Estado pedido:</strong> \\${ord.estadoPedido || ''}</p>
-          <p><strong>Fecha/Hora entrega:</strong> \\${ord.fechaEntrega || ''} \\${ord.hora || ''}</p>
+          <p><strong>Estado pedido:</strong> ${ord.estadoPedido || ''}</p>
+          <p><strong>Fecha/Hora entrega:</strong> ${ord.fechaEntrega || ''} ${ord.hora || ''}</p>
           <h3>Ítems</h3>
-          <ul>\${itemsHtml}</ul>
+          <ul>${itemsHtml}</ul>
           <h3>Detalle crudo del Pedido</h3>
-          \${rawHtml}
+          ${rawHtml}
         </div>
-      \`;
+      `;
     }
 
     function openModal() {
@@ -697,7 +698,7 @@ async function loadConversations() {
     }
 
     loadConversations();
-</script>
+  </script>
 </body>
 </html>
     `);
@@ -988,7 +989,7 @@ async function loadConversations() {
   </div>
   <textarea id="txt"></textarea>
   <script>
-async function load(){
+    async function load(){
       const r = await fetch('/api/behavior');
       const data = await r.json();
       document.getElementById('txt').value = data.text || '';
@@ -1000,7 +1001,7 @@ async function load(){
       else alert('No se pudo guardar');
     }
     load();
-</script>
+  </script>
 </body>
 </html>`);
     } catch (e) {
