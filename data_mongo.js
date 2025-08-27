@@ -519,6 +519,7 @@ function registerProductRoutes(app) {
 
 /* ======================= Admin UI + APIs ======================= */
 function registerAdminRoutes(app) {
+function registerAdminRoutes(app) {
 
   /* =================== Página de Admin principal =================== */
   app.get("/admin", async (req, res) => {
@@ -615,27 +616,27 @@ function registerAdminRoutes(app) {
       tb.innerHTML = "";
       for (const row of data) {
         const tr = document.createElement('tr');
-        tr.innerHTML = \`
-          <td>${row.waId}</td>
-          <td>${row.contactName || ""}</td>
-          <td><span class="tag ${row.status}">${row.status}</span></td>
-          <td>${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
-          <td>${row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
-          <td>${row.turns ?? 0}</td>
-          <td>${row.processed ? '✅' : '—'}</td>
+        tr.innerHTML = `
+          <td>\${row.waId}</td>
+          <td>\${row.contactName || ""}</td>
+          <td><span class="tag \${row.status}">\${row.status}</span></td>
+          <td>\${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
+          <td>\${row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
+          <td>\${row.turns ?? 0}</td>
+          <td>\${row.processed ? '✅' : '—'}</td>
           <td>
-            <button class="btn" onclick="openMessages('${row._id}')">Mensajes</button>
-            <button class="btn" onclick="openOrder('${row._id}')">Pedido</button>
-            <button class="btn" onclick="markProcessed('${row._id}')">Procesado</button>
+            <button class="btn" onclick="openMessages('\${row._id}')">Mensajes</button>
+            <button class="btn" onclick="openOrder('\${row._id}')">Pedido</button>
+            <button class="btn" onclick="markProcessed('\${row._id}')">Procesado</button>
             <div class="printmenu">
-              <select id="pm-${row._id}" class="btn">
+              <select id="pm-\${row._id}" class="btn">
                 <option value="kitchen">Cocina</option>
                 <option value="client">Cliente</option>
               </select>
-              <button class="btn" onclick="printTicketOpt('${row._id}')">Imprimir</button>
+              <button class="btn" onclick="printTicketOpt('\${row._id}')">Imprimir</button>
             </div>
           </td>
-        \`;
+        `;
         tb.appendChild(tr);
       }
     }
@@ -664,23 +665,23 @@ function registerAdminRoutes(app) {
     function renderOrder(o) {
       if (!o || !o.order) return '<div class="mono">No hay pedido para esta conversación.</div>';
       const ord = o.order;
-      const itemsHtml = (ord.items || []).map(it => `<li>\${it.name}: <strong>\${it.selection}</strong></li>`).join('') || '<li>(sin ítems)</li>';
+      const itemsHtml = (ord.items || []).map(it => \\`<li>\${it.name}: <strong>\${it.selection}</strong></li>\\`).join('') || '<li>(sin ítems)</li>';
       const rawHtml = o.rawPedido ? '<pre class="mono">' + JSON.stringify(o.rawPedido, null, 2) + '</pre>' : '';
       return \`
         <div class="printable">
           <h2>Pedido</h2>
-          <p><strong>Cliente:</strong> ${ord.name || ''} <span class="muted">(${o.waId})</span></p>
-          <p><strong>Entrega:</strong> ${ord.entrega || ''}</p>
-          <p><strong>Domicilio:</strong> ${ord.domicilio || ''}</p>
+          <p><strong>Cliente:</strong> \\${ord.name || ''} <span class="muted">(\\${o.waId})</span></p>
+          <p><strong>Entrega:</strong> \\${ord.entrega || ''}</p>
+          <p><strong>Domicilio:</strong> \\${ord.domicilio || ''}</p>
           <p><strong>Monto:</strong> ${(ord.amount!=null)?('$'+ord.amount):''}</p>
-          <p><strong>Estado pedido:</strong> ${ord.estadoPedido || ''}</p>
-          <p><strong>Fecha/Hora entrega:</strong> ${ord.fechaEntrega || ''} ${ord.hora || ''}</p>
+          <p><strong>Estado pedido:</strong> \\${ord.estadoPedido || ''}</p>
+          <p><strong>Fecha/Hora entrega:</strong> \\${ord.fechaEntrega || ''} \\${ord.hora || ''}</p>
           <h3>Ítems</h3>
-          <ul>${itemsHtml}</ul>
+          <ul>\${itemsHtml}</ul>
           <h3>Detalle crudo del Pedido</h3>
-          ${rawHtml}
+          \${rawHtml}
         </div>
-      \`;
+      `;
     }
 
     function openModal() {
