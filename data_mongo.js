@@ -617,7 +617,7 @@ function registerAdminRoutes(app) {
       for (const row of data) {
         const tr = document.createElement('tr');
         tr.innerHTML = `
-          <td>\${row.waId}</td>
+          <td>\\${row.waId}</td>
           <td>\${row.contactName || ""}</td>
           <td><span class="tag \${row.status}">\${row.status}</span></td>
           <td>\${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
