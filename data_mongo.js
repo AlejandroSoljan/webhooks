@@ -519,7 +519,9 @@ function registerProductRoutes(app) {
 
 /* ======================= Admin UI + APIs ======================= */
 function registerAdminRoutes(app) {
+function registerAdminRoutes(app) {
 
+  /* =================== Página de Admin principal =================== */
   app.get("/admin", async (req, res) => {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`
@@ -559,6 +561,10 @@ function registerAdminRoutes(app) {
 </head>
 <body>
   <h1>Admin - Conversaciones</h1>
+  <p style="margin:0 0 12px 0">
+    <a class="btn" href="/productos">Productos</a>
+    <a class="btn" href="/comportamiento">Comportamiento</a>
+  </p>
   <div class="muted">Actualiza la página para refrescar.</div>
   <div class="no-print" id="filterBar" style="margin:8px 0 12px;">
   <label>Filtrar: </label>
@@ -610,27 +616,27 @@ function registerAdminRoutes(app) {
       tb.innerHTML = "";
       for (const row of data) {
         const tr = document.createElement('tr');
-        tr.innerHTML = \`
-          <td>\${row.waId}</td>
-          <td>\${row.contactName || ""}</td>
-          <td><span class="tag \${row.status}">\${row.status}</span></td>
-          <td>\${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
-          <td>\${row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
-          <td>\${row.turns ?? 0}</td>
-          <td>\${row.processed ? '✅' : '—'}</td>
+        tr.innerHTML = `
+          <td>${row.waId}</td>
+          <td>${row.contactName || ""}</td>
+          <td><span class="tag ${row.status}">${row.status}</span></td>
+          <td>${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
+          <td>${row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
+          <td>${row.turns ?? 0}</td>
+          <td>${row.processed ? '✅' : '—'}</td>
           <td>
-            <button class="btn" onclick="openMessages('\${row._id}')">Mensajes</button>
-            <button class="btn" onclick="openOrder('\${row._id}')">Pedido</button>
-            <button class="btn" onclick="markProcessed('\${row._id}')">Procesado</button>
+            <button class="btn" onclick="openMessages('${row._id}')">Mensajes</button>
+            <button class="btn" onclick="openOrder('${row._id}')">Pedido</button>
+            <button class="btn" onclick="markProcessed('${row._id}')">Procesado</button>
             <div class="printmenu">
-              <select id="pm-\${row._id}" class="btn">
+              <select id="pm-${row._id}" class="btn">
                 <option value="kitchen">Cocina</option>
                 <option value="client">Cliente</option>
               </select>
-              <button class="btn" onclick="printTicketOpt('\${row._id}')">Imprimir</button>
+              <button class="btn" onclick="printTicketOpt('${row._id}')">Imprimir</button>
             </div>
           </td>
-        \`;
+        `;
         tb.appendChild(tr);
       }
     }
@@ -659,23 +665,23 @@ function registerAdminRoutes(app) {
     function renderOrder(o) {
       if (!o || !o.order) return '<div class="mono">No hay pedido para esta conversación.</div>';
       const ord = o.order;
-      const itemsHtml = (ord.items || []).map(it => \`<li>\${it.name}: <strong>\${it.selection}</strong></li>\`).join('') || '<li>(sin ítems)</li>';
+      const itemsHtml = (ord.items || []).map(it => `<li>${it.name}: <strong>${it.selection}</strong></li>`).join('') || '<li>(sin ítems)</li>';
       const rawHtml = o.rawPedido ? '<pre class="mono">' + JSON.stringify(o.rawPedido, null, 2) + '</pre>' : '';
-      return \`
+      return `
         <div class="printable">
           <h2>Pedido</h2>
-          <p><strong>Cliente:</strong> \${ord.name || ''} <span class="muted">(\${o.waId})</span></p>
-          <p><strong>Entrega:</strong> \${ord.entrega || ''}</p>
-          <p><strong>Domicilio:</strong> \${ord.domicilio || ''}</p>
-          <p><strong>Monto:</strong> \${(ord.amount!=null)?('$'+ord.amount):''}</p>
-          <p><strong>Estado pedido:</strong> \${ord.estadoPedido || ''}</p>
-          <p><strong>Fecha/Hora entrega:</strong> \${ord.fechaEntrega || ''} \${ord.hora || ''}</p>
+          <p><strong>Cliente:</strong> ${ord.name || ''} <span class="muted">(${o.waId})</span></p>
+          <p><strong>Entrega:</strong> ${ord.entrega || ''}</p>
+          <p><strong>Domicilio:</strong> ${ord.domicilio || ''}</p>
+          <p><strong>Monto:</strong> ${(ord.amount!=null)?('$'+ord.amount):''}</p>
+          <p><strong>Estado pedido:</strong> ${ord.estadoPedido || ''}</p>
+          <p><strong>Fecha/Hora entrega:</strong> ${ord.fechaEntrega || ''} ${ord.hora || ''}</p>
           <h3>Ítems</h3>
-          <ul>\${itemsHtml}</ul>
+          <ul>${itemsHtml}</ul>
           <h3>Detalle crudo del Pedido</h3>
-          \${rawHtml}
+          ${rawHtml}
         </div>
-      \`;
+      `;
     }
 
     function openModal() {
@@ -698,7 +704,7 @@ function registerAdminRoutes(app) {
     `);
   });
 
-  // JSON de conversaciones para Admin
+  /* =================== API Conversaciones =================== */
   app.get("/api/admin/conversations", async (req, res) => {
     try {
       const db = await getDb();
@@ -754,7 +760,7 @@ function registerAdminRoutes(app) {
     }
   });
 
-  // HTML con mensajes
+  /* =================== Mensajes (HTML) =================== */
   app.get("/api/admin/messages/:id", async (req, res) => {
     try {
       const id = req.params.id;
@@ -767,32 +773,43 @@ function registerAdminRoutes(app) {
         .sort({ ts: 1 })
         .toArray();
 
+      function escHtml(s) {
+        return String(s).replace(/[<>&]/g, ch => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[ch]));
+      }
+
+      const rows = msgs.map(m => {
+        const role = String(m.role || '').toUpperCase();
+        const time = new Date(m.ts).toLocaleString();
+        const content = escHtml(m.content || '');
+        const meta = (m.meta && Object.keys(m.meta).length) ? `<div class="meta">meta: <code>${escHtml(JSON.stringify(m.meta))}</code></div>` : '';
+        return `<div class="msg">
+          <div class="role">${role} <span class="meta">(${time})</span></div>
+          <pre>${content}</pre>
+          ${meta}
+        </div>`;
+      }).join("");
+
+      const title = escHtml(conv.waId);
+      const subtitle = conv.contactName ? escHtml(conv.contactName) + ' • ' : '';
+
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.end(`
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Mensajes - ${"${conv.waId}"}</title>
+  <title>Mensajes - ${title}</title>
   <style>
     body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; }
     .msg { margin-bottom: 12px; }
     .role { font-weight: bold; }
     .meta { color: #666; font-size: 12px; }
-    pre { background:#f6f6f6; padding:8px; border-radius:4px; overflow:auto; }
+    pre { background:#f6f6f6; padding:8px; border-radius:4px; overflow:auto; white-space:pre-wrap; }
   </style>
 </head>
 <body>
-  <h2>Mensajes - ${"${conv.contactName ? (conv.contactName + ' • ') : ''}"}${"${conv.waId}"}</h2>
-  <div>
-    ${"${msgs.map(m => `"} 
-      <div class="msg">
-        <div class="role">${"${m.role.toUpperCase()}"} <span class="meta">(${ "${new Date(m.ts).toLocaleString()}" })</span></div>
-        <pre>${"${(m.content || '').replace(/[<>&]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}"}</pre>
-        ${"${m.meta && Object.keys(m.meta).length ? `<div class=\"meta\">meta: <code>${JSON.stringify(m.meta)}</code></div>` : ``}"} 
-      </div>
-    ${"`).join('')}"}
-  </div>
+  <h2>Mensajes - ${subtitle}${title}</h2>
+  <div>${rows || '<em>Sin mensajes aún.</em>'}</div>
 </body>
 </html>
       `);
@@ -802,7 +819,7 @@ function registerAdminRoutes(app) {
     }
   });
 
-  // JSON del pedido normalizado
+  /* =================== JSON del pedido =================== */
   app.get("/api/admin/order/:id", async (req, res) => {
     try {
       const id = req.params.id;
@@ -810,10 +827,8 @@ function registerAdminRoutes(app) {
       const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
       if (!conv) return res.status(404).json({ error: "not_found" });
 
-      // Buscar order por conversationId si existe
       let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) });
       if (!order && conv.summary?.Pedido) {
-        // normalizar on the fly si no se grabó orders (backfill)
         order = normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
       }
 
@@ -838,7 +853,7 @@ function registerAdminRoutes(app) {
     }
   });
 
-  // marcar pedido como procesado
+  /* =================== Procesado =================== */
   app.post("/api/admin/order/:id/process", async (req, res) => {
     try {
       const id = req.params.id;
@@ -866,7 +881,7 @@ function registerAdminRoutes(app) {
     }
   });
 
-  // Impresión ticket térmico 80mm / 58mm
+  /* =================== Impresión ticket =================== */
   app.get("/admin/print/:id", async (req, res) => {
     try {
       const id = req.params.id;
@@ -945,7 +960,90 @@ function registerAdminRoutes(app) {
       res.status(500).send("internal");
     }
   });
+
+  /* =================== Página /comportamiento =================== */
+  app.get("/comportamiento", async (_req, res) => {
+    try {
+      const text = await buildSystemPrompt({ force: true });
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.end(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Comportamiento del Asistente</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; max-width: 1100px; }
+    textarea { width: 100%; height: 420px; box-sizing: border-box; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .row { display:flex; gap:8px; margin: 8px 0; }
+    .btn { padding: 6px 10px; border: 1px solid #333; background: #fff; cursor: pointer; border-radius: 4px; font-size: 12px; }
+    .muted { color:#666; font-size:12px; }
+  </style>
+</head>
+<body>
+  <h1>Comportamiento del Asistente</h1>
+  <p class="muted">Editá el texto base que guía al modelo. Guardar actualiza lo que recibe ChatGPT en el próximo turno.</p>
+  <div class="row">
+    <button class="btn" onclick="load()">Recargar</button>
+    <button class="btn" onclick="save()">Guardar</button>
+    <a class="btn" href="/admin">Volver a Admin</a>
+  </div>
+  <textarea id="txt"></textarea>
+  <script>
+    async function load(){
+      const r = await fetch('/api/behavior');
+      const data = await r.json();
+      document.getElementById('txt').value = data.text || '';
+    }
+    async function save(){
+      const text = document.getElementById('txt').value;
+      const r = await fetch('/api/behavior', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text }) });
+      if (r.ok) alert('Guardado ✅');
+      else alert('No se pudo guardar');
+    }
+    load();
+  </script>
+</body>
+</html>`);
+    } catch (e) {
+      console.error("⚠️ GET /comportamiento error:", e);
+      res.status(500).send("internal");
+    }
+  });
+
+  /* =================== API /api/behavior (GET/POST) =================== */
+  app.get("/api/behavior", async (_req, res) => {
+    try {
+      const db = await getDb();
+      const doc = await db.collection('settings').findOne({ _id: 'behavior' });
+      const text = (doc && doc.text) ? String(doc.text) : await loadBehaviorTextFromEnv();
+      res.json({ source: doc ? 'mongo' : 'env', text });
+    } catch (e) {
+      console.error("⚠️ GET /api/behavior error:", e);
+      res.status(500).json({ error: "internal" });
+    }
+  });
+
+  app.post("/api/behavior", async (req, res) => {
+    try {
+      const text = String((req.body && req.body.text) || "").trim();
+      if (!text) return res.status(400).json({ error: "empty_text" });
+      const db = await getDb();
+      await db.collection('settings').updateOne(
+        { _id: 'behavior' },
+        { $set: { text, updatedAt: new Date() } },
+        { upsert: true }
+      );
+      // invalida cache local
+      behaviorCache = { at: 0, text: null };
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("⚠️ POST /api/behavior error:", e);
+      res.status(500).json({ error: "internal" });
+    }
+  });
+
 }
+
 
 /* ======================= Exports ======================= */
 module.exports = {
