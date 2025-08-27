@@ -1651,7 +1651,7 @@ process.on("uncaughtException", (err) => {
 });
 
 /* ======================= Start ======================= */
-const PORT = process.env.PORT || 3000;
+
 
 // GET lista (activos por defecto, ?all=true para todos)
 app.get("/api/products", async (req, res) => {
@@ -2013,3 +2013,14 @@ app.get("/productos.json", async (req, res) => {
 });
 
 
+/* ======================= Seguridad global de errores ======================= */
+process.on("unhandledRejection", (reason) => {
+  console.error("🧨 UnhandledRejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("🧨 UncaughtException:", err);
+});
+
+/* ======================= Start ======================= */
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 Webhook listening on port ${PORT}`));
