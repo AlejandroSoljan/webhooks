@@ -16,14 +16,10 @@ async function loadProductsFromMongo({ force = false } = {}) {
     return productsCache.items;
   }
   const db = await getDb();
-  const items = await db.collection("products")
-    .find({})
-    .sort({ descripcion: 1 })
-    .toArray();
+  const items = await db.collection("products").find({}).sort({ descripcion: 1 }).toArray();
   productsCache = { at: now, items };
   return items;
 }
-
 async function upsertProductMongo(payload) {
   const db = await getDb();
   const _id = payload._id;
@@ -35,12 +31,8 @@ async function upsertProductMongo(payload) {
     updatedAt: new Date()
   };
   if (!doc.descripcion) throw new Error("descripcion es requerida");
-
   if (_id) {
-    await db.collection("products").updateOne(
-      { _id: new ObjectId(String(_id)) },
-      { $set: doc }
-    );
+    await db.collection("products").updateOne({ _id: new ObjectId(String(_id)) }, { $set: doc });
   } else {
     await db.collection("products").updateOne(
       { descripcion: doc.descripcion },
@@ -50,13 +42,11 @@ async function upsertProductMongo(payload) {
   }
   productsCache = { at: 0, items: [] };
 }
-
 async function removeProductMongo(id) {
   const db = await getDb();
   await db.collection("products").deleteOne({ _id: new ObjectId(String(id)) });
   productsCache = { at: 0, items: [] };
 }
-
 function buildCatalogTextFromMongo(items) {
   const activos = (items || []).filter(it => it.active !== false);
   if (!activos.length) return "Catálogo de productos: (ninguno activo)";
@@ -83,6 +73,22 @@ const { getDb } = require("./db");
 // --- Node fetch (Node 18+ trae global fetch)
 const app = express();
 
+/* ========== Behavior loaders (ENV & Mongo) ========== */
+async function loadBehaviorTextFromEnv() {
+  return (process.env.COMPORTAMIENTO || 'Sos un asistente claro, amable y conciso. Respondé en español.').trim();
+}
+async function loadBehaviorTextFromMongo() {
+  const db = await getDb();
+  const doc = await db.collection('settings').findOne({ _id: 'behavior' });
+  if (doc?.text && String(doc.text).trim()) return String(doc.text).trim();
+  const fallback = 'Sos un asistente claro, amable y conciso. Respondé en español.';
+  await db.collection('settings').updateOne(
+    { _id: 'behavior' },
+    { $setOnInsert: { text: fallback, updatedAt: new Date() } },
+    { upsert: true }
+  );
+  return fallback;
+}
 /* ======================= Body / firma ======================= */
 app.use(express.json({
   verify: (req, res, buf) => { req.rawBody = buf; }
@@ -555,54 +561,8 @@ async function saveCompletedToSheets({ waId, data }) {
   await appendRow({ sheetName: "BigData", values: vBig });
 }
 
-/* ======================= Productos (Sheet) ======================= */
-// Productos!A nombre, B precio, C venta, D obs, E activo (S/N)
-const PRODUCTS_CACHE_TTL_MS = parseInt(process.env.PRODUCTS_CACHE_TTL_MS || "300000", 10);
-let productsCache = { at: 0, items: [] };
-
-function looksActive(v) { return String(v || "").trim().toUpperCase() === "S"; }
-
-async function loadProductsFromSheet() {
-  const now = Date.now();
-  if (now - productsCache.at < PRODUCTS_CACHE_TTL_MS && productsCache.items?.length) {
-    return productsCache.items;
-  }
-  const spreadsheetId = getSpreadsheetIdFromEnv();
-  const sheets = getSheetsClient();
-  const range = "Productos!A2:E";
-  const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-  const rows = resp.data.values || [];
-
-  const items = rows.map((r) => {
-    const nombre = (r[0] || "").trim();
-    const precioRaw = (r[1] || "").trim();
-    const venta = (r[2] || "").trim();
-    const obs = (r[3] || "").trim();
-    const activo = r[4];
-    if (!nombre) return null;
-    if (!looksActive(activo)) return null;
-
-    const maybeNum = Number(precioRaw.replace(/[^\d.,-]/g, "").replace(",", "."));
-    const precio = Number.isFinite(maybeNum) ? maybeNum : precioRaw;
-    return { nombre, precio, venta, obs };
-  }).filter(Boolean);
-
-  productsCache = { at: now, items };
-  return items;
-}
-function buildCatalogText(items) {
-  if (!items?.length) return "Catálogo de productos: (ninguno activo)";
-  const lines = items.map(it => {
-    const precioTxt = (typeof it.precio === "number") ? ` — $${it.precio}` : (it.precio ? ` — $${it.precio}` : "");
-    const ventaTxt  = it.venta ? ` (${it.venta})` : "";
-    const obsTxt    = it.obs ? ` | Obs: ${it.obs}` : "";
-    return `- ${it.nombre}${precioTxt}${ventaTxt}${obsTxt}`;
-  });
-  return "Catálogo de productos (nombre — precio (modo de venta) | Obs: observaciones):\n" + lines.join("\n");
-}
-
 /* ======================= Comportamiento (ENV o Sheet) ======================= */
-const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); // "env" | "sheet"
+const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || 'mongo').toLowerCase(); // "env" | "sheet"
 const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000;
 let behaviorCache = { at: 0, text: null };
 
@@ -610,41 +570,24 @@ async function loadBehaviorTextFromEnv() {
   const txt = (process.env.COMPORTAMIENTO || "Sos un asistente claro, amable y conciso. Respondé en español.").trim();
   return txt;
 }
-async function loadBehaviorTextFromSheet() {
-  const spreadsheetId = getSpreadsheetIdFromEnv();
-  const sheets = getSheetsClient();
-  const resp = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: "Comportamiento_API!A1:B100"
-  });
-  const rows = resp.data.values || [];
-  const parts = rows
-    .map(r => {
-      const a = (r[0] || "").replace(/\s+/g, " ").trim();
-      const b = (r[1] || "").replace(/\s+/g, " ").trim();
-      const line = [a, b].filter(Boolean).join(" ").trim();
-      return line;
-    })
-    .filter(Boolean);
-  return parts.length ? parts.join("\n") : "Sos un asistente claro, amable y conciso. Respondé en español.";
-}
-
-async function buildSystemPrompt({ force = false } = {}) {
+async function buildSystemPrompt({   if (conversation?.behaviorSnapshot?.text) { return conversation.behaviorSnapshot.text; }
+force = false } = {}) {
   const now = Date.now();
   if (!force && (now - behaviorCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && behaviorCache.text) {
     return behaviorCache.text;
   }
 
   // 1) Comportamiento desde ENV o desde Sheet
-  const baseText = (BEHAVIOR_SOURCE === "env")
-    ? await loadBehaviorTextFromEnv()
-    : await loadBehaviorTextFromSheet();
-
+  const baseText = BEHAVIOR_SOURCE === 'mongo' ? await loadBehaviorTextFromMongo() : await loadBehaviorTextFromEnv();
   // 2) Catálogo SIEMPRE desde Sheet
   let catalogText = "";
   try {
     const products = await loadProductsFromMongo({ force });
-  catalogText = buildCatalogTextFromMongo(products);
+    catalogText = buildCatalogTextFromMongo(products);
+  } catch (e) {
+    console.warn('⚠️ No se pudo leer Productos Mongo:', e.message);
+    catalogText = 'Catálogo de productos: (error al leer)';
+  }
   } catch (e) {
     console.warn("⚠️ No se pudo leer Productos:", e.message);
     catalogText = "Catálogo de productos: (error al leer)";
@@ -679,28 +622,6 @@ async function buildSystemPrompt({ force = false } = {}) {
 
 /* ======================= Mongo: conversaciones, mensajes, orders ======================= */
 async function ensureOpenConversation(waId, { contactName = null } = {}) {
-  const db = await getDb();
-  let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
-  if (!conv) {
-    const behaviorText = await buildSystemPrompt({ force: true });
-    const doc = {
-      waId,
-      status: "OPEN",
-      finalized: false,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      contactName: contactName || null,
-      behaviorSnapshot: { text: behaviorText, source: (process.env.BEHAVIOR_SOURCE || "mongo").toLowerCase(), savedAt: new Date() },
-      conversationSummary: null
-    };
-    const ins = await db.collection("conversations").insertOne(doc);
-    conv = { _id: ins.insertedId, ...doc };
-  } else if (contactName && !conv.contactName) {
-    await db.collection("conversations").updateOne({ _id: conv._id }, { $set: { contactName } });
-    conv.contactName = contactName;
-  }
-  return conv;
-} = {}) {
   const db = await getDb();
   let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
   if (!conv) {
