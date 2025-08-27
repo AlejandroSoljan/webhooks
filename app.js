@@ -599,10 +599,7 @@ try {
   console.warn("⚠️ No se pudo leer Productos Mongo:", e.message);
   catalogText = "Catálogo de productos: (error al leer)";
 }
-} catch (e) {
-    console.warn("⚠️ No se pudo leer Productos:", e.message);
-    catalogText = "Catálogo de productos: (error al leer)";
-  }
+
 
   // 3) Reglas de uso de observaciones
   const reglasVenta =
