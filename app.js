@@ -1642,10 +1642,125 @@ app.get("/admin/print/:id", async (req, res) => {
 /*============================ PRODUCTOS ===============================*/
 /* ======================= UI /productos + API ======================= */
 
+
 app.get("/productos", async (req, res) => {
-  try {
-    const db = await getDb();
-    const productos = await db.collection("products").find({ active: true }).sort({ createdAt: -1 }).toArray();
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Productos</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; max-width: 1100px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
+    th { background: #f5f5f5; text-align: left; }
+    input[type="text"], input[type="number"], textarea { width: 100%; box-sizing: border-box; }
+    textarea { min-height: 56px; }
+    .row { display:flex; gap:8px; align-items:center; }
+    .muted { color:#666; font-size:12px; }
+    .pill { border:1px solid #ccc; border-radius: 999px; padding:2px 8px; font-size:12px; }
+    .btn { padding: 6px 10px; border: 1px solid #333; background: #fff; cursor: pointer; border-radius: 4px; }
+    .btn + .btn { margin-left: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Productos</h1>
+  <p class="muted">Fuente: <span class="pill">MongoDB (colección <code>products</code>)</span></p>
+
+  <div class="row">
+    <button id="btnReload" class="btn">Recargar</button>
+    <button id="btnAdd" class="btn">Agregar</button>
+  </div>
+  <p></p>
+
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>Descripción</th><th>Importe</th><th>Observación</th><th>Activo</th><th>Acciones</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <template id="row-tpl">
+    <tr>
+      <td><input type="text" class="descripcion" placeholder="Ej: Pollo entero" /></td>
+      <td><input type="number" class="importe" step="0.01" placeholder="0.00" /></td>
+      <td><textarea class="observacion" placeholder="Observaciones / reglas"></textarea></td>
+      <td style="text-align:center;"><input type="checkbox" class="active" checked /></td>
+      <td>
+        <button class="btn save">Guardar</button>
+        <button class="btn del">Eliminar</button>
+        <button class="btn toggle">Inactivar</button>
+      </td>
+    </tr>
+  </template>
+
+  <script>
+    async function j(url, opts){ const r=await fetch(url, opts); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+
+    async function load(){
+      const data = await j('/api/products');
+      const tb = document.querySelector('#tbl tbody');
+      tb.innerHTML = '';
+      for (const it of data.items) {
+        const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
+        tr.dataset.id = it._id || '';
+        tr.querySelector('.descripcion').value = it.descripcion || '';
+        tr.querySelector('.importe').value = typeof it.importe === 'number' ? it.importe : (it.importe || '');
+        tr.querySelector('.observacion').value = it.observacion || '';
+        tr.querySelector('.active').checked = it.active !== false;
+
+        tr.querySelector('.save').addEventListener('click', async ()=>{ await saveRow(tr); });
+        tr.querySelector('.del').addEventListener('click', async ()=>{
+          if (confirm('¿Eliminar definitivamente "'+(it.descripcion||'')+'"?')){
+            await j('/api/products/'+encodeURIComponent(it._id), { method:'DELETE' });
+            await load();
+          }
+        });
+        const toggleBtn = tr.querySelector('.toggle');
+        toggleBtn.textContent = (it.active !== false) ? 'Inactivar' : 'Reactivar';
+        toggleBtn.addEventListener('click', async ()=>{
+          const id = tr.dataset.id;
+          const path = (it.active !== false) ? '/api/products/'+encodeURIComponent(id)+'/inactivate'
+                                             : '/api/products/'+encodeURIComponent(id)+'/reactivate';
+          await j(path, { method:'PATCH' });
+          await load();
+        });
+
+        tb.appendChild(tr);
+      }
+    }
+
+    async function saveRow(tr){
+      const payload = {
+        _id: tr.dataset.id || undefined,
+        descripcion: tr.querySelector('.descripcion').value.trim(),
+        importe: tr.querySelector('.importe').value.trim(),
+        observacion: tr.querySelector('.observacion').value.trim(),
+        active: tr.querySelector('.active').checked
+      };
+      await j('/api/products', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      alert('Guardado ✅'); await load();
+    }
+
+    document.getElementById('btnReload').addEventListener('click', load);
+    document.getElementById('btnAdd').addEventListener('click', ()=>{
+      const tb = document.querySelector('#tbl tbody');
+      const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
+      tr.querySelector('.save').addEventListener('click', async ()=>{ await saveRow(tr); });
+      tr.querySelector('.del').addEventListener('click', ()=> tr.remove());
+      tr.querySelector('.toggle').addEventListener('click', ()=> alert('Primero guardá el nuevo producto.'));
+      tb.prepend(tr);
+    });
+    load();
+  </script>
+</body>
+</html>`);
+});
+const productos = await db.collection("products").find({ active: true }).sort({ createdAt: -1 }).toArray();
 
     res.send(`
       <h1>Productos</h1>
@@ -1705,6 +1820,30 @@ process.on("uncaughtException", (err) => {
 
 /* ======================= Start ======================= */
 const PORT = process.env.PORT || 3000;
+
+app.patch("/api/products/:id/inactivate", async (req, res) => {
+  try {
+    const db = await getDb();
+    await db.collection("products").updateOne({ _id: new ObjectId(String(req.params.id)) }, { $set: { active: false, updatedAt: new Date() } });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("⚠️ PATCH /api/products/:id/inactivate error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+
+app.patch("/api/products/:id/reactivate", async (req, res) => {
+  try {
+    const db = await getDb();
+    await db.collection("products").updateOne({ _id: new ObjectId(String(req.params.id)) }, { $set: { active: true, updatedAt: new Date() } });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("⚠️ PATCH /api/products/:id/reactivate error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
 app.listen(PORT, () => console.log(`🚀 Webhook listening on port ${PORT}`));
 
 app.post("/productos/:id/eliminar", async (req, res) => {
