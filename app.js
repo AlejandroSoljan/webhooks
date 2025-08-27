@@ -1644,6 +1644,7 @@ app.get("/admin/print/:id", async (req, res) => {
 
 app.get("/productos", async (req, res) => {
   try {
+    const db = await getDb();
     const productos = await db.collection("products").find({ active: true }).sort({ createdAt: -1 }).toArray();
 
     res.send(`
@@ -1662,41 +1663,6 @@ app.get("/productos", async (req, res) => {
     console.error("Error al obtener productos:", err);
     res.status(500).send("Error al obtener productos");
   }
-});
-
-        tr.querySelector('.del').addEventListener('click', async ()=>{
-          if (confirm('¿Borrar "'+(it.descripcion||'')+'"?')){
-            await j('/api/products/'+encodeURIComponent(it._id), { method:'DELETE' });
-            await load();
-          }
-        });
-        tb.appendChild(tr);
-      }
-    }
-    async function saveRow(tr){
-      const payload = {
-        _id: tr.dataset.id || undefined,
-        descripcion: tr.querySelector('.descripcion').value.trim(),
-        importe: tr.querySelector('.importe').value.trim(),
-        observacion: tr.querySelector('.observacion').value.trim(),
-        active: tr.querySelector('.active').checked
-      };
-      await j('/api/products', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
-}
-      alert('Guardado ✅'); await load();
-    }
-    document.getElementById('btnReload').addEventListener('click', load);
-    document.getElementById('btnAdd').addEventListener('click', ()=>{
-      const tb = document.querySelector('#tbl tbody');
-      const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
-      tr.querySelector('.save').addEventListener('click', async ()=>{ await saveRow(tr); });
-      tr.querySelector('.del').addEventListener('click', ()=> tr.remove());
-      tb.prepend(tr);
-    });
-    load();
-  </script>
-</body>
-</html>`);
 });
 
 app.get("/api/products", async (_req, res) => {
