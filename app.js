@@ -1643,14 +1643,20 @@ app.get("/admin/print/:id", async (req, res) => {
 /* ======================= UI /productos + API ======================= */
 
 
+
 app.get("/productos", async (req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`<!doctype html>
+  try {
+    const db = await getDb();
+    // Pre-cargar (opcional) para validar conexión; no se usa en el HTML
+    await db.collection("products").find({ active: true }).limit(1).toArray();
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Productos</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Productos</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; max-width: 1100px; }
     table { border-collapse: collapse; width: 100%; }
@@ -1699,7 +1705,7 @@ app.get("/productos", async (req, res) => {
   </template>
 
   <script>
-    async function j(url, opts){ const r=await fetch(url, opts); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+    async function j(url, opts){ const r=await fetch(url, opts||{}); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
 
     async function load(){
       const data = await j('/api/products');
@@ -1715,6 +1721,56 @@ app.get("/productos", async (req, res) => {
 
         tr.querySelector('.save').addEventListener('click', async ()=>{ await saveRow(tr); });
         tr.querySelector('.del').addEventListener('click', async ()=>{
+          if (confirm('¿Eliminar definitivamente \"'+(it.descripcion||'')+'\"?')){
+            await j('/api/products/'+encodeURIComponent(it._id), { method:'DELETE' });
+            await load();
+          }
+        });
+        const toggleBtn = tr.querySelector('.toggle');
+        toggleBtn.textContent = (it.active !== false) ? 'Inactivar' : 'Reactivar';
+        toggleBtn.addEventListener('click', async ()=>{
+          const id = tr.dataset.id;
+          const path = (it.active !== false) ? '/api/products/'+encodeURIComponent(id)+'/inactivate'
+                                             : '/api/products/'+encodeURIComponent(id)+'/reactivate';
+          await j(path, { method:'PATCH' });
+          await load();
+        });
+
+        tb.appendChild(tr);
+      }
+    }
+
+    async function saveRow(tr){
+      const payload = {
+        _id: tr.dataset.id || undefined,
+        descripcion: tr.querySelector('.descripcion').value.trim(),
+        importe: tr.querySelector('.importe').value.trim(),
+        observacion: tr.querySelector('.observacion').value.trim(),
+        active: tr.querySelector('.active').checked
+      };
+      await j('/api/products', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      alert('Guardado ✅'); await load();
+    }
+
+    document.getElementById('btnReload').addEventListener('click', load);
+    document.getElementById('btnAdd').addEventListener('click', ()=>{
+      const tb = document.querySelector('#tbl tbody');
+      const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
+      tr.querySelector('.save').addEventListener('click', async ()=>{ await saveRow(tr); });
+      tr.querySelector('.del').addEventListener('click', ()=> tr.remove());
+      tr.querySelector('.toggle').addEventListener('click', ()=> alert('Primero guardá el nuevo producto.'));
+      tb.prepend(tr);
+    });
+    load();
+  </script>
+</body>
+</html>`);
+  } catch (err) {
+    console.error("Error al renderizar /productos:", err);
+    res.status(500).send("Error al renderizar /productos");
+  }
+});
+tr.querySelector('.del').addEventListener('click', async ()=>{
           if (confirm('¿Eliminar definitivamente "'+(it.descripcion||'')+'"?')){
             await j('/api/products/'+encodeURIComponent(it._id), { method:'DELETE' });
             await load();
