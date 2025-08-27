@@ -16,10 +16,14 @@ async function loadProductsFromMongo({ force = false } = {}) {
     return productsCache.items;
   }
   const db = await getDb();
-  const items = await db.collection("products").find({}).sort({ descripcion: 1 }).toArray();
+  const items = await db.collection("products")
+    .find({})
+    .sort({ descripcion: 1 })
+    .toArray();
   productsCache = { at: now, items };
   return items;
 }
+
 async function upsertProductMongo(payload) {
   const db = await getDb();
   const _id = payload._id;
@@ -31,8 +35,12 @@ async function upsertProductMongo(payload) {
     updatedAt: new Date()
   };
   if (!doc.descripcion) throw new Error("descripcion es requerida");
+
   if (_id) {
-    await db.collection("products").updateOne({ _id: new ObjectId(String(_id)) }, { $set: doc });
+    await db.collection("products").updateOne(
+      { _id: new ObjectId(String(_id)) },
+      { $set: doc }
+    );
   } else {
     await db.collection("products").updateOne(
       { descripcion: doc.descripcion },
@@ -42,11 +50,13 @@ async function upsertProductMongo(payload) {
   }
   productsCache = { at: 0, items: [] };
 }
+
 async function removeProductMongo(id) {
   const db = await getDb();
   await db.collection("products").deleteOne({ _id: new ObjectId(String(id)) });
   productsCache = { at: 0, items: [] };
 }
+
 function buildCatalogTextFromMongo(items) {
   const activos = (items || []).filter(it => it.active !== false);
   if (!activos.length) return "Catálogo de productos: (ninguno activo)";
@@ -73,6 +83,7 @@ const { getDb } = require("./db");
 // --- Node fetch (Node 18+ trae global fetch)
 const app = express();
 
+
 /* ========== Behavior loaders (ENV & Mongo) ========== */
 async function loadBehaviorTextFromEnv() {
   return (process.env.COMPORTAMIENTO || 'Sos un asistente claro, amable y conciso. Respondé en español.').trim();
@@ -89,6 +100,7 @@ async function loadBehaviorTextFromMongo() {
   );
   return fallback;
 }
+
 /* ======================= Body / firma ======================= */
 app.use(express.json({
   verify: (req, res, buf) => { req.rawBody = buf; }
@@ -570,8 +582,7 @@ async function loadBehaviorTextFromEnv() {
   const txt = (process.env.COMPORTAMIENTO || "Sos un asistente claro, amable y conciso. Respondé en español.").trim();
   return txt;
 }
-async function buildSystemPrompt({   if (conversation?.behaviorSnapshot?.text) { return conversation.behaviorSnapshot.text; }
-force = false } = {}) {
+async function buildSystemPrompt({ force = false } = {}) {
   const now = Date.now();
   if (!force && (now - behaviorCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && behaviorCache.text) {
     return behaviorCache.text;
