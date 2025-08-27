@@ -1641,68 +1641,29 @@ app.get("/admin/print/:id", async (req, res) => {
 
 /*============================ PRODUCTOS ===============================*/
 /* ======================= UI /productos + API ======================= */
-app.get("/productos", async (_req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Productos</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; max-width: 1100px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
-    th { background: #f5f5f5; text-align: left; }
-    input[type="text"], input[type="number"], textarea { width: 100%; box-sizing: border-box; }
-    textarea { min-height: 56px; }
-    .row { display:flex; gap:8px; align-items:center; }
-    .muted { color:#666; font-size:12px; }
-    .pill { border:1px solid #ccc; border-radius: 999px; padding:2px 8px; font-size:12px; }
-  </style>
-</head>
-<body>
-  <h1>Productos</h1>
-  <p class="muted">Fuente: <span class="pill">MongoDB (colección <code>products</code>)</span></p>
-  <div class="row">
-    <button id="btnReload">Recargar</button>
-    <button id="btnAdd">Agregar</button>
-  </div>
-  <p></p>
-  <table id="tbl">
-    <thead>
-      <tr>
-        <th>Descripción</th><th>Importe</th><th>Observación (comportamiento de venta)</th><th>Activo</th><th>Acciones</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  </table>
-  <template id="row-tpl">
-    <tr>
-      <td><input type="text" class="descripcion" placeholder="Ej: Helado 1/2 kg" /></td>
-      <td><input type="number" class="importe" step="0.01" placeholder="0.00" /></td>
-      <td><textarea class="observacion" placeholder="Reglas/comportamiento para vender este producto"></textarea></td>
-      <td style="text-align:center;"><input type="checkbox" class="active" checked /></td>
-      <td>
-        <button class="save">Guardar</button>
-        <button class="del">Borrar</button>
-      </td>
-    </tr>
-  </template>
-  <script>
-    async function j(url, opts){ const r=await fetch(url, opts); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
-    async function load(){
-      const data = await j('/api/products');
-      const tb = document.querySelector('#tbl tbody');
-      tb.innerHTML = '';
-      for (const it of data.items) {
-        const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
-        tr.dataset.id = it._id;
-        tr.querySelector('.descripcion').value = it.descripcion || '';
-        tr.querySelector('.importe').value = (typeof it.importe==='number') ? it.importe : (it.importe || '');
-        tr.querySelector('.observacion').value = it.observacion || '';
-        tr.querySelector('.active').checked = it.active !== false;
-        tr.querySelector('.save').addEventListener('click', async ()=>{ await saveRow(tr); });
+
+app.get("/productos", async (req, res) => {
+  try {
+    const productos = await db.collection("products").find({ active: true }).sort({ createdAt: -1 }).toArray();
+
+    res.send(`
+      <h1>Productos</h1>
+      ${productos.map(p => `
+        <p>
+          <strong>${p.descripcion}</strong><br>
+          Precio: $${p.importe}<br>
+          Observación: ${p.observacion || "-"}<br>
+          Estado: ${p.active ? "Activo" : "Inactivo"}<br>
+          <hr>
+        </p>
+      `).join("")}
+    `);
+  } catch (err) {
+    console.error("Error al obtener productos:", err);
+    res.status(500).send("Error al obtener productos");
+  }
+});
+
         tr.querySelector('.del').addEventListener('click', async ()=>{
           if (confirm('¿Borrar "'+(it.descripcion||'')+'"?')){
             await j('/api/products/'+encodeURIComponent(it._id), { method:'DELETE' });
