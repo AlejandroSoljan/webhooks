@@ -1,3 +1,6 @@
+app.use('/public', express.static('public'));
+const ExcelJS = require('exceljs');
+const PDFDocument = require('pdfkit');
 // server.js
 require("dotenv").config();
 
@@ -1768,3 +1771,79 @@ process.on("uncaughtException", (err) => {
 /* ======================= Start ======================= */
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Webhook listening on port ${PORT}`));
+
+app.post("/productos/:id/eliminar", async (req, res) => {
+  await Producto.findByIdAndUpdate(req.params.id, { activo: false });
+  res.redirect("/productos");
+});
+
+
+app.post("/productos/:id/reactivar", async (req, res) => {
+  await Producto.findByIdAndUpdate(req.params.id, { activo: true });
+  res.redirect("/productos?ver=todo");
+});
+
+
+app.get("/productos/exportar/excel", async (req, res) => {
+  const verTodo = req.query.ver === "todo";
+  const productos = await Producto.find(verTodo ? {} : { activo: true }).sort({ creado: -1 });
+
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Productos");
+
+  worksheet.columns = [
+    { header: "Nombre", key: "nombre" },
+    { header: "Precio", key: "precio" },
+    { header: "Venta", key: "venta" },
+    { header: "Observaciones", key: "obs" },
+    { header: "Activo", key: "activo" },
+  ];
+
+  productos.forEach(p => worksheet.addRow({
+    nombre: p.nombre,
+    precio: p.precio,
+    venta: p.venta || '',
+    obs: p.obs || '',
+    activo: p.activo ? 'Sí' : 'No'
+  }));
+
+  const fecha = new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-");
+  const filename = `productos_${verTodo ? 'todos' : 'activos'}_${fecha}.xlsx`;
+
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  await workbook.xlsx.write(res);
+  res.end();
+});
+
+
+app.get("/productos/exportar/pdf", async (req, res) => {
+  const verTodo = req.query.ver === "todo";
+  const productos = await Producto.find(verTodo ? {} : { activo: true }).sort({ creado: -1 });
+
+  const doc = new PDFDocument({ margin: 40, size: "A4" });
+  const fecha = new Date().toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
+  const filename = `productos_${verTodo ? 'todos' : 'activos'}_${new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-")}.pdf`;
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  doc.pipe(res);
+
+  try {
+    const logoPath = path.join(__dirname, 'public', 'logo.png');
+    doc.image(logoPath, 40, 40, { width: 80 });
+  } catch (error) {
+    console.warn("Logo no encontrado:", error.message);
+  }
+
+  doc.fontSize(20).text("Supermercado Digital", 130, 50);
+  doc.fontSize(12).text(`Listado de Productos (${verTodo ? 'Todos' : 'Activos'})`, 130, 75);
+  doc.fontSize(10).text(`Exportado: ${fecha}`, 130, 90);
+  doc.moveDown(3);
+
+  productos.forEach(p => {
+    doc.fontSize(12).text(`• ${p.nombre} - $${p.precio} - ${p.venta || ''} - ${p.obs || ''} - ${p.activo ? 'Activo' : 'Inactivo'}`, { lineGap: 4 });
+  });
+
+  doc.end();
+});
