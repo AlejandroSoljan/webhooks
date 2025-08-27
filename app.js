@@ -1641,7 +1641,7 @@ app.get("/admin/print/:id", async (req, res) => {
   }
 });
 
-/
+
 /* ======================= Seguridad global de errores ======================= */
 process.on("unhandledRejection", (reason) => {
   console.error("🧨 UnhandledRejection:", reason);
