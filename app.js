@@ -483,7 +483,7 @@ async function markAsRead(messageId, phoneNumberId) {
 }
 
 /* ======================= Google Sheets ======================= */
-function getSheetsClient() {
+/*function getSheetsClient() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const key = (process.env.GOOGLE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
   if (!email || !key) throw new Error("Faltan credenciales de Google (email/clave).");
@@ -572,7 +572,7 @@ async function saveCompletedToSheets({ waId, data }) {
   await ensureHeaderIfEmpty({ sheetName: "BigData", header: hBig });
   await appendRow({ sheetName: "BigData", values: vBig });
 }
-
+*/
 /* ======================= Comportamiento (ENV o Sheet) ======================= */
 const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || 'mongo').toLowerCase(); // "env" | "sheet"
 const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000;
