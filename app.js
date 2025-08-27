@@ -1999,3 +1999,4 @@ app.get("/productos/exportar/pdf", async (req, res) => {
   doc.end();
 });
 }
+}
