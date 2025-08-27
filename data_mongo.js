@@ -519,7 +519,6 @@ function registerProductRoutes(app) {
 
 /* ======================= Admin UI + APIs ======================= */
 function registerAdminRoutes(app) {
-function registerAdminRoutes(app) {
 
   /* =================== Página de Admin principal =================== */
   app.get("/admin", async (req, res) => {
@@ -616,7 +615,7 @@ function registerAdminRoutes(app) {
       tb.innerHTML = "";
       for (const row of data) {
         const tr = document.createElement('tr');
-        tr.innerHTML = `
+        tr.innerHTML = \`
           <td>\${row.waId}</td>
           <td>\${row.contactName || ""}</td>
           <td><span class="tag \${row.status}">\${row.status}</span></td>
@@ -667,7 +666,7 @@ function registerAdminRoutes(app) {
       const ord = o.order;
       const itemsHtml = (ord.items || []).map(it => `<li>\${it.name}: <strong>\${it.selection}</strong></li>`).join('') || '<li>(sin ítems)</li>';
       const rawHtml = o.rawPedido ? '<pre class="mono">' + JSON.stringify(o.rawPedido, null, 2) + '</pre>' : '';
-      return `
+      return \`
         <div class="printable">
           <h2>Pedido</h2>
           <p><strong>Cliente:</strong> \\${ord.name || ''} <span class="muted">(\\${o.waId})</span></p>
