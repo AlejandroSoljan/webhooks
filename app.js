@@ -1641,44 +1641,7 @@ app.get("/admin/print/:id", async (req, res) => {
   }
 });
 
-/*============================ PRODUCTOS ===============================*/
-/* ======================= UI /productos + API ======================= */
-
-
-
-
-
-
-app.get("/api/products", async (_req, res) => {
-  try {
-    const items = await loadProductsFromMongo({ force: true });
-    res.json({ items: items.map(it => ({ ...it, _id: String(it._id) })) });
-  } catch (e) {
-    console.error("GET /api/products error:", e);
-    res.status(500).json({ error: "internal" });
-  }
-});
-app.post("/api/products", async (req, res) => {
-  try {
-    await upsertProductMongo(req.body || {});
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(400).json({ error: e.message || "bad_request" });
-  }
-});
-app.delete("/api/products/:id", async (req, res) => {
-  try {
-    await removeProductMongo(req.params.id);
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("DELETE /api/products/:id error:", e);
-    res.status(500).json({ error: "internal" });
-  }
-});
-
-
-
-
+/
 /* ======================= Seguridad global de errores ======================= */
 process.on("unhandledRejection", (reason) => {
   console.error("🧨 UnhandledRejection:", reason);
@@ -1690,31 +1653,152 @@ process.on("uncaughtException", (err) => {
 /* ======================= Start ======================= */
 const PORT = process.env.PORT || 3000;
 
-app.patch("/api/products/:id/inactivate", async (req, res) => {
+// GET lista (activos por defecto, ?all=true para todos)
+app.get("/api/products", async (req, res) => {
   try {
-    const db = await getDb();
-    await db.collection("products").updateOne({ _id: new ObjectId(String(req.params.id)) }, { $set: { active: false, updatedAt: new Date() } });
-    res.json({ ok: true });
+    const database =
+      (typeof getDb === "function" && await getDb()) ||
+      req.app?.locals?.db ||
+      global.db;
+
+    const q = req.query.all === "true" ? {} : { active: { $ne: false } };
+    const items = await database.collection("products")
+      .find(q).sort({ createdAt: -1, descripcion: 1 }).toArray();
+
+    res.json(items.map(it => ({ ...it, _id: String(it._id) })));
   } catch (e) {
-    console.error("⚠️ PATCH /api/products/:id/inactivate error:", e);
+    console.error("GET /api/products error:", e);
     res.status(500).json({ error: "internal" });
   }
 });
 
-
-app.patch("/api/products/:id/reactivate", async (req, res) => {
+// POST crear
+app.post("/api/products", async (req, res) => {
   try {
-    const db = await getDb();
-    await db.collection("products").updateOne({ _id: new ObjectId(String(req.params.id)) }, { $set: { active: true, updatedAt: new Date() } });
-    res.json({ ok: true });
+    const database =
+      (typeof getDb === "function" && await getDb()) ||
+      req.app?.locals?.db ||
+      global.db;
+
+    let { descripcion, importe, observacion, active } = req.body || {};
+    descripcion = String(descripcion || "").trim();
+    observacion = String(observacion || "").trim();
+    if (typeof active !== "boolean") active = !!active;
+
+    let imp = null;
+    if (typeof importe === "number") imp = importe;
+    else if (typeof importe === "string") {
+      const n = Number(importe.replace(/[^\d.,-]/g, "").replace(",", "."));
+      imp = Number.isFinite(n) ? n : null;
+    }
+    if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
+
+    const now = new Date();
+    const doc = { descripcion, observacion, active, createdAt: now, updatedAt: now };
+    if (imp !== null) doc.importe = imp;
+
+    const ins = await database.collection("products").insertOne(doc);
+    res.json({ ok: true, _id: String(ins.insertedId) });
   } catch (e) {
-    console.error("⚠️ PATCH /api/products/:id/reactivate error:", e);
+    console.error("POST /api/products error:", e);
     res.status(500).json({ error: "internal" });
   }
 });
 
+// PUT actualizar
+app.put("/api/products/:id", async (req, res) => {
+  try {
+    const database =
+      (typeof getDb === "function" && await getDb()) ||
+      req.app?.locals?.db ||
+      global.db;
 
+    const { id } = req.params;
+    const upd = {};
+    ["descripcion","observacion","active","importe"].forEach(k => {
+      if (req.body[k] !== undefined) upd[k] = req.body[k];
+    });
+    if (upd.importe !== undefined) {
+      const v = upd.importe;
+      if (typeof v === "string") {
+        const n = Number(v.replace(/[^\d.,-]/g, "").replace(",", "."));
+        upd.importe = Number.isFinite(n) ? n : undefined;
+      }
+    }
+    if (Object.keys(upd).length === 0) return res.status(400).json({ error: "no_fields" });
+    upd.updatedAt = new Date();
 
+    const result = await database.collection("products").updateOne(
+      { _id: new ObjectId(String(id)) },
+      { $set: upd }
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("PUT /api/products/:id error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// DELETE borrar
+app.delete("/api/products/:id", async (req, res) => {
+  try {
+    const database =
+      (typeof getDb === "function" && await getDb()) ||
+      req.app?.locals?.db ||
+      global.db;
+
+    const { id } = req.params;
+    const result = await database.collection("products").deleteOne({ _id: new ObjectId(String(id)) });
+    if (!result.deletedCount) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("DELETE /api/products/:id error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// Inactivar
+app.post("/api/products/:id/inactivate", async (req, res) => {
+  try {
+    const database =
+      (typeof getDb === "function" && await getDb()) ||
+      req.app?.locals?.db ||
+      global.db;
+
+    const { id } = req.params;
+    const result = await database.collection("products").updateOne(
+      { _id: new ObjectId(String(id)) },
+      { $set: { active: false, updatedAt: new Date() } }
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/products/:id/inactivate error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// Reactivar
+app.post("/api/products/:id/reactivate", async (req, res) => {
+  try {
+    const database =
+      (typeof getDb === "function" && await getDb()) ||
+      req.app?.locals?.db ||
+      global.db;
+
+    const { id } = req.params;
+    const result = await database.collection("products").updateOne(
+      { _id: new ObjectId(String(id)) },
+      { $set: { active: true, updatedAt: new Date() } }
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/products/:id/reactivate error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
 // === Vista /productos (UI CRUD) ===
 // 🔧 REEMPLAZA SOLO ESTA RUTA /productos
 // /productos con CRUD (SSR para ver datos + UI con fetch)
@@ -1926,153 +2010,6 @@ app.get("/productos.json", async (req, res) => {
   } catch (e) {
     console.error(e); res.status(500).json({ error: String(e) });
   }
-});
-
-
-// === API: Reactivar ===
-app.post("/api/products/:id/reactivate", async (req, res) => {
-  try {
-    const db = await getDb();
-    const { id } = req.params;
-    const result = await db.collection("products").updateOne(
-      { _id: new ObjectId(String(id)) },
-      { $set: { active: true, updatedAt: new Date() } }
-    );
-    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("POST /api/products/:id/reactivate error:", e);
-    res.status(500).json({ error: "internal" });
-  }
-});
-
-
-
-// === API: Inactivar (soft delete) ===
-app.post("/api/products/:id/inactivate", async (req, res) => {
-  try {
-    const db = await getDb();
-    const { id } = req.params;
-    const result = await db.collection("products").updateOne(
-      { _id: new ObjectId(String(id)) },
-      { $set: { active: false, updatedAt: new Date() } }
-    );
-    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("POST /api/products/:id/inactivate error:", e);
-    res.status(500).json({ error: "internal" });
-  }
-});
-
-
-
-// === API: Actualizar producto por ID ===
-app.put("/api/products/:id", async (req, res) => {
-  try {
-    const db = await getDb();
-    const { id } = req.params;
-    const upd = {};
-    ["descripcion", "observacion", "active", "importe"].forEach(k => {
-      if (req.body[k] !== undefined) upd[k] = req.body[k];
-    });
-    if (upd.importe !== undefined) {
-      const v = upd.importe;
-      if (typeof v === "string") {
-        const n = Number(v.replace(/[^\d.,-]/g, "").replace(",", "."));
-        upd.importe = Number.isFinite(n) ? n : undefined;
-      }
-    }
-    if (Object.keys(upd).length === 0) return res.status(400).json({ error: "no_fields" });
-    upd.updatedAt = new Date();
-    const result = await db.collection("products").updateOne(
-      { _id: new ObjectId(String(id)) },
-      { $set: upd }
-    );
-    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("PUT /api/products/:id error:", e);
-    res.status(500).json({ error: "internal" });
-  }
-});
-
-app.listen(PORT, () => console.log(`🚀 Webhook listening on port ${PORT}`));
-
-app.post("/productos/:id/eliminar", async (req, res) => {
-  await Producto.findByIdAndUpdate(req.params.id, { activo: false });
-  res.redirect("/productos");
-});
-
-
-app.post("/productos/:id/reactivar", async (req, res) => {
-  await Producto.findByIdAndUpdate(req.params.id, { activo: true });
-  res.redirect("/productos?ver=todo");
-});
-
-
-app.get("/productos/exportar/excel", async (req, res) => {
-  const verTodo = req.query.ver === "todo";
-  const productos = await Producto.find(verTodo ? {} : { activo: true }).sort({ creado: -1 });
-
-  const workbook = new ExcelJS.Workbook();
-  const worksheet = workbook.addWorksheet("Productos");
-
-  worksheet.columns = [
-    { header: "Nombre", key: "nombre" },
-    { header: "Precio", key: "precio" },
-    { header: "Venta", key: "venta" },
-    { header: "Observaciones", key: "obs" },
-    { header: "Activo", key: "activo" },
-  ];
-
-  productos.forEach(p => worksheet.addRow({
-    nombre: p.nombre,
-    precio: p.precio,
-    venta: p.venta || '',
-    obs: p.obs || '',
-    activo: p.activo ? 'Sí' : 'No'
-  }));
-
-  const fecha = new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-");
-  const filename = `productos_${verTodo ? 'todos' : 'activos'}_${fecha}.xlsx`;
-
-  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-  await workbook.xlsx.write(res);
-  res.end();
-});
-
-
-app.get("/productos/exportar/pdf", async (req, res) => {
-  const verTodo = req.query.ver === "todo";
-  const productos = await Producto.find(verTodo ? {} : { activo: true }).sort({ creado: -1 });
-
-  const doc = new PDFDocument({ margin: 40, size: "A4" });
-  const fecha = new Date().toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
-  const filename = `productos_${verTodo ? 'todos' : 'activos'}_${new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-")}.pdf`;
-
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-  doc.pipe(res);
-
-  try {
-    const logoPath = path.join(__dirname, 'public', 'logo.png');
-    doc.image(logoPath, 40, 40, { width: 80 });
-  } catch (error) {
-    console.warn("Logo no encontrado:", error.message);
-  }
-
-  doc.fontSize(20).text("Supermercado Digital", 130, 50);
-  doc.fontSize(12).text(`Listado de Productos (${verTodo ? 'Todos' : 'Activos'})`, 130, 75);
-  doc.fontSize(10).text(`Exportado: ${fecha}`, 130, 90);
-  doc.moveDown(3);
-
-  productos.forEach(p => {
-    doc.fontSize(12).text(`• ${p.nombre} - $${p.precio} - ${p.venta || ''} - ${p.obs || ''} - ${p.activo ? 'Activo' : 'Inactivo'}`, { lineGap: 4 });
-  });
-
-  doc.end();
 });
 
 
