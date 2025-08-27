@@ -1,6 +1,8 @@
 
 const express = require("express");
 const app = express();
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // ✅ AHORA podés usar middleware como:
 app.use('/public', express.static('public'));
@@ -1707,6 +1709,214 @@ app.patch("/api/products/:id/reactivate", async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error("⚠️ PATCH /api/products/:id/reactivate error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+
+
+// === Vista /productos (UI CRUD) ===
+app.get("/productos", async (req, res) => {
+  try {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Productos</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; max-width: 1100px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
+    th { background: #f5f5f5; text-align: left; }
+    input[type="text"], input[type="number"], textarea { width: 100%; box-sizing: border-box; }
+    textarea { min-height: 56px; }
+    .row { display:flex; gap:8px; align-items:center; }
+    .muted { color:#666; font-size:12px; }
+    .pill { border:1px solid #ccc; border-radius: 999px; padding:2px 8px; font-size:12px; }
+    .btn { padding: 6px 10px; border: 1px solid #333; background: #fff; cursor: pointer; border-radius: 4px; }
+    .btn + .btn { margin-left: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Productos</h1>
+  <p class="muted">Fuente: <span class="pill">MongoDB (colección <code>products</code>)</span></p>
+
+  <div class="row">
+    <button id="btnReload" class="btn">Recargar</button>
+    <button id="btnAdd" class="btn">Agregar</button>
+    <label class="pill"><input type="checkbox" id="verTodos"> Ver todos</label>
+  </div>
+  <p></p>
+
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>Descripción</th><th>Importe</th><th>Observación</th><th>Activo</th><th>Acciones</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <template id="row-tpl">
+    <tr>
+      <td><input type="text" class="descripcion" placeholder="Ej: Pollo entero" /></td>
+      <td><input type="number" class="importe" step="0.01" placeholder="0.00" /></td>
+      <td><textarea class="observacion" placeholder="Observaciones / reglas"></textarea></td>
+      <td style="text-align:center;"><input type="checkbox" class="active" checked /></td>
+      <td>
+        <button class="btn save">Guardar</button>
+        <button class="btn del">Eliminar</button>
+        <button class="btn toggle">Inactivar</button>
+      </td>
+    </tr>
+  </template>
+
+  <script>
+    async function j(url, opts){ const r=await fetch(url, opts||{}); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+
+    async function load(){
+      const verTodos = document.getElementById('verTodos').checked;
+      const data = await j('/api/products'+(verTodos ? '?all=true' : ''));
+      const tb = document.querySelector('#tbl tbody');
+      tb.innerHTML = '';
+      for (const it of data) {
+        const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
+        tr.dataset.id = it._id || '';
+        tr.querySelector('.descripcion').value = it.descripcion || '';
+        tr.querySelector('.importe').value = typeof it.importe === 'number' ? it.importe : (it.importe || '');
+        tr.querySelector('.observacion').value = it.observacion || '';
+        tr.querySelector('.active').checked = it.active !== false;
+
+        tr.querySelector('.save').addEventListener('click', async ()=>{
+          const payload = {
+            descripcion: tr.querySelector('.descripcion').value.trim(),
+            importe: tr.querySelector('.importe').value.trim(),
+            observacion: tr.querySelector('.observacion').value.trim(),
+            active: tr.querySelector('.active').checked
+          };
+          const id = tr.dataset.id;
+          if (id) {
+            await fetch('/api/products/'+encodeURIComponent(id), {
+              method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+            }).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); });
+          } else {
+            await fetch('/api/products', {
+              method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+            }).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); });
+          }
+          await load();
+        });
+
+        tr.querySelector('.del').addEventListener('click', async ()=>{
+          const id = tr.dataset.id;
+          if (!id) return tr.remove();
+          if (confirm('¿Eliminar definitivamente "'+(it.descripcion||'')+'"?')){
+            await fetch('/api/products/'+encodeURIComponent(id), { method:'DELETE' })
+              .then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); });
+            await load();
+          }
+        });
+
+        const toggleBtn = tr.querySelector('.toggle');
+        toggleBtn.textContent = (it.active !== false) ? 'Inactivar' : 'Reactivar';
+        toggleBtn.addEventListener('click', async ()=>{
+          const id = tr.dataset.id;
+          if (!id) return alert('Primero guardá el nuevo producto.');
+          const path = (it.active !== false) ? '/api/products/'+encodeURIComponent(id)+'/inactivate'
+                                             : '/api/products/'+encodeURIComponent(id)+'/reactivate';
+          await fetch(path, { method:'POST' }).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); });
+          await load();
+        });
+
+        document.querySelector('#tbl tbody').appendChild(tr);
+      }
+    }
+
+    document.getElementById('btnReload').addEventListener('click', load);
+    document.getElementById('btnAdd').addEventListener('click', ()=>{
+      const tb = document.querySelector('#tbl tbody');
+      const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
+      tb.prepend(tr);
+    });
+    document.getElementById('verTodos').addEventListener('change', load);
+    load();
+  </script>
+</body>
+</html>`);
+  } catch (err) {
+    console.error("Error en /productos:", err);
+    res.status(500).send("Error en /productos");
+  }
+});
+
+
+
+// === API: Reactivar ===
+app.post("/api/products/:id/reactivate", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { id } = req.params;
+    const result = await db.collection("products").updateOne(
+      { _id: new ObjectId(String(id)) },
+      { $set: { active: true, updatedAt: new Date() } }
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/products/:id/reactivate error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+
+
+// === API: Inactivar (soft delete) ===
+app.post("/api/products/:id/inactivate", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { id } = req.params;
+    const result = await db.collection("products").updateOne(
+      { _id: new ObjectId(String(id)) },
+      { $set: { active: false, updatedAt: new Date() } }
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/products/:id/inactivate error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+
+
+// === API: Actualizar producto por ID ===
+app.put("/api/products/:id", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { id } = req.params;
+    const upd = {};
+    ["descripcion", "observacion", "active", "importe"].forEach(k => {
+      if (req.body[k] !== undefined) upd[k] = req.body[k];
+    });
+    if (upd.importe !== undefined) {
+      const v = upd.importe;
+      if (typeof v === "string") {
+        const n = Number(v.replace(/[^\d.,-]/g, "").replace(",", "."));
+        upd.importe = Number.isFinite(n) ? n : undefined;
+      }
+    }
+    if (Object.keys(upd).length === 0) return res.status(400).json({ error: "no_fields" });
+    upd.updatedAt = new Date();
+    const result = await db.collection("products").updateOne(
+      { _id: new ObjectId(String(id)) },
+      { $set: upd }
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("PUT /api/products/:id error:", e);
     res.status(500).json({ error: "internal" });
   }
 });
