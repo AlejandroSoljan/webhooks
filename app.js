@@ -2,7 +2,7 @@
  * server-whatsapp-chatgpt.js
  * ---------------------------------------------
  * WhatsApp webhook + OpenAI chat + media/TTS send helpers.
- * All Mongo persistence + HTML UIs live in ./data_mongo_html.js
+ * All Mongo persistence + HTML UIs live in ./data_mongo.js
  * ---------------------------------------------
  */
 
@@ -20,7 +20,7 @@ const {
   finalizeConversationOnce,
   registerProductRoutes,
   registerAdminRoutes
-} = require("./data_mongo");
+} = require("./data_mongo_html");
 
 // --- App
 const app = express();
