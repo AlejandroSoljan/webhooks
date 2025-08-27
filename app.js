@@ -1,3 +1,73 @@
+
+/* ======================= Productos (Mongo) ======================= */
+const PRODUCTS_CACHE_TTL_MS = parseInt(process.env.PRODUCTS_CACHE_TTL_MS || "300000", 10); // 5 min
+let productsCache = { at: 0, items: [] };
+
+function normalizeImporte(v) {
+  if (typeof v === "number") return v;
+  if (typeof v !== "string") return null;
+  const n = Number(v.replace(/[^\d.,-]/g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+async function loadProductsFromMongo({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && (now - productsCache.at < PRODUCTS_CACHE_TTL_MS) && productsCache.items?.length) {
+    return productsCache.items;
+  }
+  const db = await getDb();
+  const items = await db.collection("products")
+    .find({})
+    .sort({ descripcion: 1 })
+    .toArray();
+  productsCache = { at: now, items };
+  return items;
+}
+
+async function upsertProductMongo(payload) {
+  const db = await getDb();
+  const _id = payload._id;
+  const doc = {
+    descripcion: String(payload.descripcion || "").trim(),
+    importe: normalizeImporte(payload.importe),
+    observacion: String(payload.observacion || "").trim(),
+    active: payload.active === false ? false : true,
+    updatedAt: new Date()
+  };
+  if (!doc.descripcion) throw new Error("descripcion es requerida");
+
+  if (_id) {
+    await db.collection("products").updateOne(
+      { _id: new ObjectId(String(_id)) },
+      { $set: doc }
+    );
+  } else {
+    await db.collection("products").updateOne(
+      { descripcion: doc.descripcion },
+      { $set: doc, $setOnInsert: { createdAt: new Date() } },
+      { upsert: true }
+    );
+  }
+  productsCache = { at: 0, items: [] };
+}
+
+async function removeProductMongo(id) {
+  const db = await getDb();
+  await db.collection("products").deleteOne({ _id: new ObjectId(String(id)) });
+  productsCache = { at: 0, items: [] };
+}
+
+function buildCatalogTextFromMongo(items) {
+  const activos = (items || []).filter(it => it.active !== false);
+  if (!activos.length) return "Catálogo de productos: (ninguno activo)";
+  const lines = activos.map(it => {
+    const precioTxt = (typeof it.importe === "number") ? ` — $${it.importe}` : (it.importe ? ` — $${it.importe}` : "");
+    const obsTxt = it.observacion ? ` | Obs: ${it.observacion}` : "";
+    return `- ${it.descripcion}${precioTxt}${obsTxt}`;
+  });
+  return "Catálogo de productos (descripcion — precio | Obs: observaciones):\n" + lines.join("\n");
+}
+
 // server.js
 require("dotenv").config();
 
@@ -531,8 +601,8 @@ function buildCatalogText(items) {
   return "Catálogo de productos (nombre — precio (modo de venta) | Obs: observaciones):\n" + lines.join("\n");
 }
 
-/* ======================= Comportamiento (ENV, Sheet o Mongo) ======================= */
-const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); // "env" | "sheet" | "mongo"
+/* ======================= Comportamiento (ENV o Sheet) ======================= */
+const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); // "env" | "sheet"
 const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000;
 let behaviorCache = { at: 0, text: null };
 
@@ -559,35 +629,7 @@ async function loadBehaviorTextFromSheet() {
   return parts.length ? parts.join("\n") : "Sos un asistente claro, amable y conciso. Respondé en español.";
 }
 
-
-async function loadBehaviorTextFromMongo() {
-  const db = await getDb();
-  const doc = await db.collection("settings").findOne({ _id: "behavior" });
-  if (doc && typeof doc.text === "string" && doc.text.trim()) return doc.text.trim();
-  const fallback = "Sos un asistente claro, amable y conciso. Respondé en español.";
-  await db.collection("settings").updateOne(
-    { _id: "behavior" },
-    { $setOnInsert: { text: fallback, updatedAt: new Date() } },
-    { upsert: true }
-  );
-  return fallback;
-}
-async function saveBehaviorTextToMongo(newText) {
-  const db = await getDb();
-  await db.collection("settings").updateOne(
-    { _id: "behavior" },
-    { $set: { text: String(newText || "").trim(), updatedAt: new Date() } },
-    { upsert: true }
-  );
-  behaviorCache = { at: 0, text: null };
-}
-
-async function buildSystemPrompt({ force = false, conversation = null } = {}) {
-  // Usar snapshot si viene atado a la conversación
-  if (conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
-    return conversation.behaviorSnapshot.text;
-  }
-
+async function buildSystemPrompt({ force = false } = {}) {
   const now = Date.now();
   if (!force && (now - behaviorCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && behaviorCache.text) {
     return behaviorCache.text;
@@ -596,15 +638,13 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
   // 1) Comportamiento desde ENV o desde Sheet
   const baseText = (BEHAVIOR_SOURCE === "env")
     ? await loadBehaviorTextFromEnv()
-    : (BEHAVIOR_SOURCE === "mongo")
-      ? await loadBehaviorTextFromMongo()
-      : await loadBehaviorTextFromSheet();
+    : await loadBehaviorTextFromSheet();
 
   // 2) Catálogo SIEMPRE desde Sheet
   let catalogText = "";
   try {
-    const products = await loadProductsFromSheet();
-    catalogText = buildCatalogText(products);
+    const products = await loadProductsFromMongo({ force });
+  catalogText = buildCatalogTextFromMongo(products);
   } catch (e) {
     console.warn("⚠️ No se pudo leer Productos:", e.message);
     catalogText = "Catálogo de productos: (error al leer)";
@@ -642,8 +682,28 @@ async function ensureOpenConversation(waId, { contactName = null } = {}) {
   const db = await getDb();
   let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
   if (!conv) {
-    // ⚡ Al iniciar una conversación: recargo comportamiento (ignora caché)
     const behaviorText = await buildSystemPrompt({ force: true });
+    const doc = {
+      waId,
+      status: "OPEN",
+      finalized: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      contactName: contactName || null,
+      behaviorSnapshot: { text: behaviorText, source: (process.env.BEHAVIOR_SOURCE || "mongo").toLowerCase(), savedAt: new Date() },
+      conversationSummary: null
+    };
+    const ins = await db.collection("conversations").insertOne(doc);
+    conv = { _id: ins.insertedId, ...doc };
+  } else if (contactName && !conv.contactName) {
+    await db.collection("conversations").updateOne({ _id: conv._id }, { $set: { contactName } });
+    conv.contactName = contactName;
+  }
+  return conv;
+} = {}) {
+  const db = await getDb();
+  let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
+  if (!conv) {
     const doc = {
       waId,
       status: "OPEN",         // OPEN | COMPLETED | CANCELLED
@@ -653,12 +713,7 @@ async function ensureOpenConversation(waId, { contactName = null } = {}) {
       closedAt: null,
       lastUserTs: null,
       lastAssistantTs: null,
-      turns: 0,
-      behaviorSnapshot: {
-        text: behaviorText,
-        source: (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(),
-        savedAt: new Date()
-      }
+      turns: 0
     };
     const ins = await db.collection("conversations").insertOne(doc);
     conv = { _id: ins.insertedId, ...doc };
@@ -805,10 +860,7 @@ const sessions = new Map(); // waId -> { messages, updatedAt }
 
 async function getSession(waId) {
   if (!sessions.has(waId)) {
-        const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
-    const systemText = await buildSystemPrompt({ conversation: conv || null });
-// al iniciar conversación
+    const systemText = await buildSystemPrompt({ force: true }); // al iniciar conversación
     sessions.set(waId, {
       messages: [{ role: "system", content: systemText }],
       updatedAt: Date.now()
@@ -869,11 +921,9 @@ async function chatWithHistoryJSON(
 
   // refrescar system en cada turno
   try {
-        const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
-    const systemText = await buildSystemPrompt({ conversation: conv || null });
+    const systemText = await buildSystemPrompt({ force: true });
     session.messages[0] = { role: "system", content: systemText };
-} catch (e) {
+  } catch (e) {
     console.warn("⚠️ No se pudo refrescar system:", e.message);
   }
 
@@ -924,90 +974,126 @@ app.get("/webhook", (req, res) => {
 });
 
 
-/* ======================= UI y API para editar comportamiento ======================= */
-app.get("/comportamiento", async (_req, res) => {
-  try {
-    const text = (BEHAVIOR_SOURCE === "env")
-      ? await loadBehaviorTextFromEnv()
-      : (BEHAVIOR_SOURCE === "mongo")
-        ? await loadBehaviorTextFromMongo()
-        : await loadBehaviorTextFromSheet();
-
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.end(`<!doctype html>
+/* ======================= UI /productos + API ======================= */
+app.get("/productos", async (_req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end(`<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Comportamiento del Bot</title>
+  <title>Productos</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; max-width: 960px; }
-    textarea { width: 100%; min-height: 360px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; font-size: 14px; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; max-width: 1100px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
+    th { background: #f5f5f5; text-align: left; }
+    input[type="text"], input[type="number"], textarea { width: 100%; box-sizing: border-box; }
+    textarea { min-height: 56px; }
     .row { display:flex; gap:8px; align-items:center; }
-    .hint { color:#666; font-size: 12px; }
-    .tag { padding:2px 6px; border:1px solid #ccc; border-radius:4px; font-size:12px; }
+    .muted { color:#666; font-size:12px; }
+    .pill { border:1px solid #ccc; border-radius: 999px; padding:2px 8px; font-size:12px; }
   </style>
 </head>
 <body>
-  <h1>Comportamiento del Bot</h1>
-  <p class="hint">Fuente actual: <span class="tag">${BEHAVIOR_SOURCE}</span>. ${BEHAVIOR_SOURCE !== "mongo" ? 'Para editar aquí, seteá <code>BEHAVIOR_SOURCE=mongo</code> y reiniciá.' : ''}</p>
+  <h1>Productos</h1>
+  <p class="muted">Fuente: <span class="pill">MongoDB (colección <code>products</code>)</span></p>
   <div class="row">
     <button id="btnReload">Recargar</button>
-    ${BEHAVIOR_SOURCE === "mongo" ? '<button id="btnSave">Guardar</button>' : ''}
+    <button id="btnAdd">Agregar</button>
   </div>
   <p></p>
-  <textarea id="txt"></textarea>
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>Descripción</th><th>Importe</th><th>Observación (comportamiento de venta)</th><th>Activo</th><th>Acciones</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <template id="row-tpl">
+    <tr>
+      <td><input type="text" class="descripcion" placeholder="Ej: Helado 1/2 kg" /></td>
+      <td><input type="number" class="importe" step="0.01" placeholder="0.00" /></td>
+      <td><textarea class="observacion" placeholder="Reglas/comportamiento para vender este producto"></textarea></td>
+      <td style="text-align:center;"><input type="checkbox" class="active" checked /></td>
+      <td>
+        <button class="save">Guardar</button>
+        <button class="del">Borrar</button>
+      </td>
+    </tr>
+  </template>
   <script>
-    async function load() {
-      const r = await fetch('/api/behavior');
-      const j = await r.json();
-      document.getElementById('txt').value = j.text || '';
+    async function j(url, opts){ const r=await fetch(url, opts); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+    async function load(){
+      const data = await j('/api/products');
+      const tb = document.querySelector('#tbl tbody');
+      tb.innerHTML = '';
+      for (const it of data.items) {
+        const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
+        tr.dataset.id = it._id;
+        tr.querySelector('.descripcion').value = it.descripcion || '';
+        tr.querySelector('.importe').value = (typeof it.importe==='number') ? it.importe : (it.importe || '');
+        tr.querySelector('.observacion').value = it.observacion || '';
+        tr.querySelector('.active').checked = it.active !== false;
+        tr.querySelector('.save').addEventListener('click', async ()=>{ await saveRow(tr); });
+        tr.querySelector('.del').addEventListener('click', async ()=>{
+          if (confirm('¿Borrar "'+(it.descripcion||'')+'"?')){
+            await j('/api/products/'+encodeURIComponent(it._id), { method:'DELETE' });
+            await load();
+          }
+        });
+        tb.appendChild(tr);
+      }
     }
-    ${BEHAVIOR_SOURCE === "mongo" ? `
-    async function save() {
-      const v = document.getElementById('txt').value || '';
-      const r = await fetch('/api/behavior', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: v })
-      });
-      if (r.ok) alert('Guardado ✅'); else alert('Error al guardar');
+    async function saveRow(tr){
+      const payload = {
+        _id: tr.dataset.id || undefined,
+        descripcion: tr.querySelector('.descripcion').value.trim(),
+        importe: tr.querySelector('.importe').value.trim(),
+        observacion: tr.querySelector('.observacion').value.trim(),
+        active: tr.querySelector('.active').checked
+      };
+      await j('/api/products', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      alert('Guardado ✅'); await load();
     }
-    document.getElementById('btnSave').addEventListener('click', save);
-    ` : ``}
     document.getElementById('btnReload').addEventListener('click', load);
+    document.getElementById('btnAdd').addEventListener('click', ()=>{
+      const tb = document.querySelector('#tbl tbody');
+      const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
+      tr.querySelector('.save').addEventListener('click', async ()=>{ await saveRow(tr); });
+      tr.querySelector('.del').addEventListener('click', ()=> tr.remove());
+      tb.prepend(tr);
+    });
     load();
   </script>
 </body>
 </html>`);
-  } catch (e) {
-    console.error("⚠️ /comportamiento error:", e);
-    res.status(500).send("internal");
-  }
 });
 
-app.get("/api/behavior", async (_req, res) => {
+app.get("/api/products", async (_req, res) => {
   try {
-    const text = (BEHAVIOR_SOURCE === "env")
-      ? await loadBehaviorTextFromEnv()
-      : (BEHAVIOR_SOURCE === "mongo")
-        ? await loadBehaviorTextFromMongo()
-        : await loadBehaviorTextFromSheet();
-    res.json({ source: BEHAVIOR_SOURCE, text });
+    const items = await loadProductsFromMongo({ force: true });
+    res.json({ items: items.map(it => ({ ...it, _id: String(it._id) })) });
   } catch (e) {
+    console.error("GET /api/products error:", e);
     res.status(500).json({ error: "internal" });
   }
 });
-app.post("/api/behavior", async (req, res) => {
+app.post("/api/products", async (req, res) => {
   try {
-    if (BEHAVIOR_SOURCE !== "mongo") {
-      return res.status(400).json({ error: "behavior_source_not_mongo" });
-    }
-    const text = String(req.body?.text || "").trim();
-    await saveBehaviorTextToMongo(text);
+    await upsertProductMongo(req.body || {});
     res.json({ ok: true });
   } catch (e) {
-    console.error("⚠️ POST /api/behavior error:", e);
+    res.status(400).json({ error: e.message || "bad_request" });
+  }
+});
+app.delete("/api/products/:id", async (req, res) => {
+  try {
+    await removeProductMongo(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("DELETE /api/products/:id error:", e);
     res.status(500).json({ error: "internal" });
   }
 });
