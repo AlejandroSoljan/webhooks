@@ -617,23 +617,23 @@ function registerAdminRoutes(app) {
       for (const row of data) {
         const tr = document.createElement('tr');
         tr.innerHTML = `
-          <td>${row.waId}</td>
-          <td>${row.contactName || ""}</td>
-          <td><span class="tag \\${row.status}">\\${row.status}</span></td>
-          <td>${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
-          <td>${row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
-          <td>${row.turns ?? 0}</td>
-          <td>${row.processed ? '✅' : '—'}</td>
+          <td>\${row.waId}</td>
+          <td>\${row.contactName || ""}</td>
+          <td><span class="tag \${row.status}">\${row.status}</span></td>
+          <td>\${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
+          <td>\${row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
+          <td>\${row.turns ?? 0}</td>
+          <td>\${row.processed ? '✅' : '—'}</td>
           <td>
-            <button class="btn" onclick="openMessages('\\${row._id}')">Mensajes</button>
-            <button class="btn" onclick="openOrder('\\${row._id}')">Pedido</button>
-            <button class="btn" onclick="markProcessed('\\${row._id}')">Procesado</button>
+            <button class="btn" onclick="openMessages('\${row._id}')">Mensajes</button>
+            <button class="btn" onclick="openOrder('\${row._id}')">Pedido</button>
+            <button class="btn" onclick="markProcessed('\${row._id}')">Procesado</button>
             <div class="printmenu">
-              <select id="pm-\\${row._id}" class="btn">
+              <select id="pm-\${row._id}" class="btn">
                 <option value="kitchen">Cocina</option>
                 <option value="client">Cliente</option>
               </select>
-              <button class="btn" onclick="printTicketOpt('\\${row._id}')">Imprimir</button>
+              <button class="btn" onclick="printTicketOpt('\${row._id}')">Imprimir</button>
             </div>
           </td>
         `;
