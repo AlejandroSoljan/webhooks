@@ -1628,6 +1628,135 @@ app.get("/admin/print/:id", async (req, res) => {
     res.status(500).send("internal");
   }
 });
+
+/*============================ PRODUCTOS ===============================*/
+/* ======================= UI /productos + API ======================= */
+app.get("/productos", async (_req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Productos</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 24px; max-width: 1100px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 8px; vertical-align: top; }
+    th { background: #f5f5f5; text-align: left; }
+    input[type="text"], input[type="number"], textarea { width: 100%; box-sizing: border-box; }
+    textarea { min-height: 56px; }
+    .row { display:flex; gap:8px; align-items:center; }
+    .muted { color:#666; font-size:12px; }
+    .pill { border:1px solid #ccc; border-radius: 999px; padding:2px 8px; font-size:12px; }
+  </style>
+</head>
+<body>
+  <h1>Productos</h1>
+  <p class="muted">Fuente: <span class="pill">MongoDB (colección <code>products</code>)</span></p>
+  <div class="row">
+    <button id="btnReload">Recargar</button>
+    <button id="btnAdd">Agregar</button>
+  </div>
+  <p></p>
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>Descripción</th><th>Importe</th><th>Observación (comportamiento de venta)</th><th>Activo</th><th>Acciones</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <template id="row-tpl">
+    <tr>
+      <td><input type="text" class="descripcion" placeholder="Ej: Helado 1/2 kg" /></td>
+      <td><input type="number" class="importe" step="0.01" placeholder="0.00" /></td>
+      <td><textarea class="observacion" placeholder="Reglas/comportamiento para vender este producto"></textarea></td>
+      <td style="text-align:center;"><input type="checkbox" class="active" checked /></td>
+      <td>
+        <button class="save">Guardar</button>
+        <button class="del">Borrar</button>
+      </td>
+    </tr>
+  </template>
+  <script>
+    async function j(url, opts){ const r=await fetch(url, opts); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+    async function load(){
+      const data = await j('/api/products');
+      const tb = document.querySelector('#tbl tbody');
+      tb.innerHTML = '';
+      for (const it of data.items) {
+        const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
+        tr.dataset.id = it._id;
+        tr.querySelector('.descripcion').value = it.descripcion || '';
+        tr.querySelector('.importe').value = (typeof it.importe==='number') ? it.importe : (it.importe || '');
+        tr.querySelector('.observacion').value = it.observacion || '';
+        tr.querySelector('.active').checked = it.active !== false;
+        tr.querySelector('.save').addEventListener('click', async ()=>{ await saveRow(tr); });
+        tr.querySelector('.del').addEventListener('click', async ()=>{
+          if (confirm('¿Borrar "'+(it.descripcion||'')+'"?')){
+            await j('/api/products/'+encodeURIComponent(it._id), { method:'DELETE' });
+            await load();
+          }
+        });
+        tb.appendChild(tr);
+      }
+    }
+    async function saveRow(tr){
+      const payload = {
+        _id: tr.dataset.id || undefined,
+        descripcion: tr.querySelector('.descripcion').value.trim(),
+        importe: tr.querySelector('.importe').value.trim(),
+        observacion: tr.querySelector('.observacion').value.trim(),
+        active: tr.querySelector('.active').checked
+      };
+      await j('/api/products', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+      alert('Guardado ✅'); await load();
+    }
+    document.getElementById('btnReload').addEventListener('click', load);
+    document.getElementById('btnAdd').addEventListener('click', ()=>{
+      const tb = document.querySelector('#tbl tbody');
+      const tr = document.querySelector('#row-tpl').content.firstElementChild.cloneNode(true);
+      tr.querySelector('.save').addEventListener('click', async ()=>{ await saveRow(tr); });
+      tr.querySelector('.del').addEventListener('click', ()=> tr.remove());
+      tb.prepend(tr);
+    });
+    load();
+  </script>
+</body>
+</html>`);
+});
+
+app.get("/api/products", async (_req, res) => {
+  try {
+    const items = await loadProductsFromMongo({ force: true });
+    res.json({ items: items.map(it => ({ ...it, _id: String(it._id) })) });
+  } catch (e) {
+    console.error("GET /api/products error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+app.post("/api/products", async (req, res) => {
+  try {
+    await upsertProductMongo(req.body || {});
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message || "bad_request" });
+  }
+});
+app.delete("/api/products/:id", async (req, res) => {
+  try {
+    await removeProductMongo(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("DELETE /api/products/:id error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+
+
+
 /* ======================= Seguridad global de errores ======================= */
 process.on("unhandledRejection", (reason) => {
   console.error("🧨 UnhandledRejection:", reason);
