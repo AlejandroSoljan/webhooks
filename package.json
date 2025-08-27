@@ -14,7 +14,11 @@
     "googleapis": "^133.0.0",
     "openai": "^4.58.1",
     "node-fetch": "^3.3.2",
-    "mongodb": "^6.8.0"
+    "mongodb": "^6.8.0",
+    "body-parser": "^1.20.2",
+    "exceljs": "^4.3.0",
+   "pdfkit": "^0.15.0"
+    
   },
   "devDependencies": {
     "nodemon": "^3.1.4"
