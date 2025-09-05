@@ -1,30 +1,21 @@
-// server.js
-const express = require("express");
-require("dotenv").config();
+require('dotenv').config();
+const express = require('express');
+const bodyParser = require('body-parser');
+const { connect } = require('./services/db');
+const { handleWebhookGet, handleWebhookPost } = require('./services/webhookService');
 
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(bodyParser.json({ limit: '10mb' }));
 
-// Static
-app.use("/public", express.static("public"));
-
-// Rutas
-const webhookRoutes = require("./routes/webhook");
-const adminRoutes = require("./routes/admin");
-const behaviorRoutes = require("./routes/behavior");
-
-app.use("/", webhookRoutes);
-app.use("/", adminRoutes);
-app.use("/", behaviorRoutes);
-
-// Error global
-process.on("unhandledRejection", (reason) => {
-  console.error("Unhandled Rejection:", reason);
+// Conectar DB al inicio
+connect().then(()=> console.log('✅ Mongo conectado')).catch(e=>{
+  console.error('❌ Error conectando a Mongo:', e);
+  process.exit(1);
 });
-process.on("uncaughtException", (err) => {
-  console.error("Uncaught Exception:", err);
-});
+
+app.get('/', (_req,res)=> res.send('OK'));
+app.get('/webhook', handleWebhookGet);
+app.post('/webhook', handleWebhookPost);
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Servidor en http://localhost:${PORT}`));
+app.listen(PORT, ()=> console.log(`🚀 Webhook en puerto ${PORT}`));
