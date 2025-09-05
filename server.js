@@ -2,10 +2,11 @@ require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const { connect } = require('./services/db');
-const { handleWebhookGet, handleWebhookPost } = require('./services/webhookService');
 
 const app = express();
 app.use(bodyParser.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use('/public', express.static('public'));
 
 // Conectar DB al inicio
 connect().then(()=> console.log('✅ Mongo conectado')).catch(e=>{
@@ -13,9 +14,14 @@ connect().then(()=> console.log('✅ Mongo conectado')).catch(e=>{
   process.exit(1);
 });
 
+// Health
 app.get('/', (_req,res)=> res.send('OK'));
-app.get('/webhook', handleWebhookGet);
-app.post('/webhook', handleWebhookPost);
+
+// Routers
+app.use('/', require('./routes/webhook'));
+app.use('/', require('./routes/behavior'));
+app.use('/', require('./routes/products'));
+app.use('/', require('./routes/admin'));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, ()=> console.log(`🚀 Webhook en puerto ${PORT}`));
