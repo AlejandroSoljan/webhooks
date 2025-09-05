@@ -1,27 +1,53 @@
-// Usa fetch global (Node 18+) o cae a node-fetch dinámico si no está
-const fetch = global.fetch || ((...args) => import('node-fetch').then(({default: f}) => f(...args)));
-const WA_TOKEN = process.env.WHATSAPP_TOKEN;
-const PHONE_ID = process.env.WHATSAPP_PHONE_ID;
+// services/whatsappService.js
+// Usa fetch nativo (Node 18+) o cae a node-fetch dinámico si no está
+const fetch = global.fetch || ((...args) => import('node-fetch').then(({ default: f }) => f(...args)));
 
-async function sendText(waId, text){
-  const url = `https://graph.facebook.com/v21.0/${PHONE_ID}/messages`;
+// Leer variables de entorno con *fallbacks* para evitar 'undefined' en la URL
+const GRAPH_VERSION = process.env.GRAPH_VERSION || "v21.0";
+const PHONE_ID =
+  process.env.WHATSAPP_PHONE_ID ||
+  process.env.PHONE_NUMBER_ID ||   // nombre alternativo muy común
+  process.env.PHONE_ID ||          // por las dudas
+  null;
+
+const WA_TOKEN = process.env.WHATSAPP_TOKEN;
+
+// Validaciones tempranas (log claro)
+function assertEnv() {
+  const missing = [];
+  if (!WA_TOKEN) missing.push("WHATSAPP_TOKEN");
+  if (!PHONE_ID) missing.push("WHATSAPP_PHONE_ID (o PHONE_NUMBER_ID)");
+  if (missing.length) {
+    const msg = "Faltan variables de entorno: " + missing.join(", ");
+    console.error("❌", msg);
+    throw new Error(msg);
+  }
+}
+
+async function sendText(waId, text) {
+  assertEnv();
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${PHONE_ID}/messages`;
   const body = {
     messaging_product: "whatsapp",
     to: waId,
     type: "text",
-    text: { body: String(text || "") }
+    text: { body: String(text || "") },
   };
-  const r = await fetch(url, {
+
+  const resp = await fetch(url, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${WA_TOKEN}`,
-      "Content-Type": "application/json"
+      Authorization: `Bearer ${WA_TOKEN}`,
+      "Content-Type": "application/json",
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
   });
-  if (!r.ok) {
-    const errTxt = await r.text().catch(()=>'');
-    throw new Error(`WhatsApp API ${r.status} ${errTxt}`);
+
+  if (!resp.ok) {
+    const errBody = await resp.text().catch(() => "");
+    const err = `WhatsApp API ${resp.status} ${errBody}`;
+    console.error("❌ sendText error:", err);
+    throw new Error(err);
   }
   return true;
 }
