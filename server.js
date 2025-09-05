@@ -9,11 +9,7 @@ app.use(express.urlencoded({ extended: true }));
 // Static
 app.use("/public", express.static("public"));
 
-// Cache routes for media/tts
-const { registerCacheRoutes } = require("./services/mediaService");
-registerCacheRoutes(app);
-
-// Routes
+// Rutas
 const webhookRoutes = require("./routes/webhook");
 const adminRoutes = require("./routes/admin");
 const behaviorRoutes = require("./routes/behavior");
@@ -22,8 +18,7 @@ app.use("/", webhookRoutes);
 app.use("/", adminRoutes);
 app.use("/", behaviorRoutes);
 
-app.get("/", (_req, res) => res.status(200).send("WhatsApp Webhook up ✅"));
-
+// Error global
 process.on("unhandledRejection", (reason) => {
   console.error("Unhandled Rejection:", reason);
 });
