@@ -1,8 +1,24 @@
 // routes/admin.js (compact clean)
 const express = require('express');
-const { getDb } = require('./services/db');
 const { ObjectId } = require('mongodb');
 const router = express.Router();
+const path = require('path');
+let getDb;
+try {
+  ({ getDb } = require(path.join(__dirname, '..', 'services', 'db')));
+  console.log('[admin] using ../services/db.js');
+} catch (e1) {
+  try {
+    ({ getDb } = require(path.join(__dirname, '..', '..', 'services', 'db')));
+    console.log('[admin] using ../../services/db.js');
+  } catch (e2) {
+    console.error('[admin] No se encontró services/db.js');
+    console.error('Primero:', e1 && e1.message);
+    console.error('Luego  :', e2 && e2.message);
+    throw e2;
+  }
+}
+
 
 function escapeHtml(s){ return String(s||'').replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])); }
 
