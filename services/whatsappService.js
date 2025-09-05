@@ -1,18 +1,15 @@
 // services/whatsappService.js
-// Usa fetch nativo (Node 18+) o cae a node-fetch dinámico si no está
 const fetch = global.fetch || ((...args) => import('node-fetch').then(({ default: f }) => f(...args)));
 
-// Leer variables de entorno con *fallbacks* para evitar 'undefined' en la URL
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v21.0";
 const PHONE_ID =
   process.env.WHATSAPP_PHONE_ID ||
-  process.env.PHONE_NUMBER_ID ||   // nombre alternativo muy común
-  process.env.PHONE_ID ||          // por las dudas
+  process.env.PHONE_NUMBER_ID ||
+  process.env.PHONE_ID ||
   null;
 
 const WA_TOKEN = process.env.WHATSAPP_TOKEN;
 
-// Validaciones tempranas (log claro)
 function assertEnv() {
   const missing = [];
   if (!WA_TOKEN) missing.push("WHATSAPP_TOKEN");
@@ -36,10 +33,7 @@ async function sendText(waId, text) {
 
   const resp = await fetch(url, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${WA_TOKEN}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${WA_TOKEN}`, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
@@ -52,4 +46,19 @@ async function sendText(waId, text) {
   return true;
 }
 
-module.exports = { sendText };
+async function getMediaUrl(mediaId) {
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`;
+  const resp = await fetch(url, { headers: { Authorization: `Bearer ${WA_TOKEN}` } });
+  if (!resp.ok) throw new Error(`getMediaUrl ${resp.status}: ${await resp.text()}`);
+  const j = await resp.json();
+  return j.url;
+}
+
+async function downloadBuffer(fileUrl) {
+  const resp = await fetch(fileUrl, { headers: { Authorization: `Bearer ${WA_TOKEN}` } });
+  if (!resp.ok) throw new Error(`downloadBuffer ${resp.status}`);
+  const arr = await resp.arrayBuffer();
+  return Buffer.from(arr);
+}
+
+module.exports = { sendText, getMediaUrl, downloadBuffer };

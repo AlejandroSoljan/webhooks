@@ -8,13 +8,12 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/public', express.static('public'));
 
-// Conectar DB al inicio
+// Conectar DB
 connect().then(()=> console.log('✅ Mongo conectado')).catch(e=>{
   console.error('❌ Error conectando a Mongo:', e);
   process.exit(1);
 });
 
-// Health
 app.get('/', (_req,res)=> res.send('OK'));
 
 // Routers
