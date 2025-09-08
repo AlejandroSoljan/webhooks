@@ -2,6 +2,7 @@
 const express = require("express");
 const app = express();
 app.use(express.json());
++// Multiempresa por ENV: cada script establece su TENANT_ID
 app.use(express.urlencoded({ extended: true }));
 
 // ✅ AHORA podés usar middleware como:
@@ -43,6 +44,24 @@ function isValidSignature(req) {
   } catch {
     return false;
   }
+}
+/* ======================= Multiempresa (tenant) ======================= */
+// Prioridad: TENANT_ID > COMPANY_ID > BUSINESS_ID > "default"
+const TENANT_ID = String(
+  process.env.TENANT_ID || process.env.COMPANY_ID || process.env.BUSINESS_ID || "default"
+).trim();
+
+function attachTenant(doc = {}) {
+  // no pisamos si ya viene tenantId
+  return ("tenantId" in doc) ? doc : { ...doc, tenantId: TENANT_ID };
+}
+function withTenantFilter(filter = {}) {
+  // si ya viene tenantId, respetar
+  return ("tenantId" in filter) ? filter : { ...filter, tenantId: TENANT_ID };
+}
+// sesiones en memoria por tenant para evitar cruces
+function sessionKey(waId) {
+  return `${TENANT_ID}:${waId}`;
 }
 
 /* ======================= OpenAI ======================= */
@@ -485,7 +504,7 @@ async function loadProductsFromMongo() {
   const db = await getDb();
   // Por defecto, sólo activos (compatible con /api/products)
   const docs = await db.collection("products")
-    .find({ active: { $ne: false } })
+    .find(withTenantFilter({ active: { $ne: false } }))
     .sort({ createdAt: -1, descripcion: 1 })
     .toArray();
 
@@ -551,21 +570,22 @@ function buildCatalogText(products) {
 
 async function loadBehaviorTextFromMongo() {
   const db = await getDb();
-  const doc = await db.collection("settings").findOne({ _id: "behavior" });
+  const doc = await db.collection("settings").findOne({ _id: "behavior", tenantId: TENANT_ID });
   if (doc && typeof doc.text === "string" && doc.text.trim()) return doc.text.trim();
   const fallback = "Sos un asistente claro, amable y conciso. Respondé en español.";
   await db.collection("settings").updateOne(
-    { _id: "behavior" },
-    { $setOnInsert: { text: fallback, updatedAt: new Date() } },
+    { _id: "behavior", tenantId: TENANT_ID },
+    { $setOnInsert: { text: fallback, updatedAt: new Date(), tenantId: TENANT_ID } },
     { upsert: true }
   );
   return fallback;
 }
 async function saveBehaviorTextToMongo(newText) {
   const db = await getDb();
-  await db.collection("settings").updateOne(
-    { _id: "behavior" },
-    { $set: { text: String(newText || "").trim(), updatedAt: new Date() } },
+ await db.collection("settings").updateOne(
+    { _id: "behavior", tenantId: TENANT_ID },
+    { $set: { text: String(newText || "").trim(), updatedAt: new Date(), tenantId: TENANT_ID } },
+
     { upsert: true }
   );
   behaviorCache = { at: 0, text: null };
@@ -649,15 +669,16 @@ app.post("/api/behavior/refresh-cache", async (_req, res) => {
 /* ======================= Mongo: conversaciones, mensajes, orders ======================= */
 async function ensureOpenConversation(waId, { contactName = null } = {}) {
   const db = await getDb();
-  let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
+  let conv = await db.collection("conversations").findOne(withTenantFilter({ waId, status: "OPEN" }));
   if (!conv) {
     // ⚡ Al iniciar una conversación: recargo comportamiento (ignora caché)
     const behaviorText = await buildSystemPrompt({ force: true });
-    const doc = {
+    const doc = attachTenant({
       waId,
       status: "OPEN",         // OPEN | COMPLETED | CANCELLED
       finalized: false,       // idempotencia para Sheets/orden
       contactName: contactName || null,
+      tenantId: TENANT_ID,
       openedAt: new Date(),
       closedAt: null,
       lastUserTs: null,
@@ -668,12 +689,12 @@ async function ensureOpenConversation(waId, { contactName = null } = {}) {
         source: (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(),
         savedAt: new Date()
       }
-    };
+      });
     const ins = await db.collection("conversations").insertOne(doc);
     conv = { _id: ins.insertedId, ...doc };
   } else if (contactName && !conv.contactName) {
     await db.collection("conversations").updateOne(
-      { _id: conv._id },
+      { _id: conv._id, tenantId: TENANT_ID },
       { $set: { contactName } }
     );
     conv.contactName = contactName;
@@ -689,11 +710,12 @@ async function appendMessage(conversationId, {
   ttlDays = null
 }) {
   const db = await getDb();
-  const doc = {
+  const doc = attachTenant({
     conversationId: new ObjectId(conversationId),
     role, content, type, meta,
     ts: new Date()
-  };
+  });
+  doc.tenantId = TENANT_ID;
   if (ttlDays && Number.isFinite(ttlDays)) {
     doc.expireAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
   }
@@ -702,7 +724,7 @@ async function appendMessage(conversationId, {
   const upd = { $inc: { turns: 1 }, $set: {} };
   if (role === "user") upd.$set.lastUserTs = doc.ts;
   if (role === "assistant") upd.$set.lastAssistantTs = doc.ts;
-  await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId) }, upd);
+  await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId), tenantId: TENANT_ID }, upd);
 }
 
 // Normalizar “Pedido” a estructura de order
@@ -753,7 +775,7 @@ function normalizeOrder(waId, contactName, pedido) {
 async function finalizeConversationOnce(conversationId, finalPayload, estado) {
   const db = await getDb();
   const res = await db.collection("conversations").findOneAndUpdate(
-    { _id: new ObjectId(conversationId), finalized: { $ne: true } },
+    { _id: new ObjectId(conversationId), tenantId: TENANT_ID, finalized: { $ne: true } },
     {
       $set: {
         status: estado || "COMPLETED",
@@ -800,6 +822,7 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
 
       const orderDoc = normalizeOrder(conv.waId, conv.contactName, finalPayload.Pedido);
       orderDoc.conversationId = conv._id;
+      orderDoc.tenantId = TENANT_ID;
       await db.collection("orders").insertOne(orderDoc);
     }
   } catch (e) {
@@ -813,19 +836,20 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
 const sessions = new Map(); // waId -> { messages, updatedAt }
 
 async function getSession(waId) {
-  if (!sessions.has(waId)) {
+  const key = sessionKey(waId);
+  if (!sessions.has(key)) {
         const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
+    const conv = await db.collection("conversations").findOne(withTenantFilter({ waId, status: "OPEN" }));
     const systemText = await buildSystemPrompt({ conversation: conv || null });
 // al iniciar conversación
-    sessions.set(waId, {
+    sessions.set(key, {
       messages: [{ role: "system", content: systemText }],
       updatedAt: Date.now()
     });
   }
-  return sessions.get(waId);
+  return sessions.get(key);
 }
-function resetSession(waId) { sessions.delete(waId); }
+function resetSession(waId) { sessions.delete(sessionKey(waId)); }
 function pushMessage(session, role, content, maxTurns = 20) {
   session.messages.push({ role, content });
   const system = session.messages[0];
@@ -885,7 +909,7 @@ async function chatWithHistoryJSON(
   // refrescar system en cada turno
   try {
         const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
+    const conv = await db.collection("conversations").findOne(withTenantFilter({ waId, status: "OPEN" }));
     const systemText = await buildSystemPrompt({ conversation: conv || null });
     session.messages[0] = { role: "system", content: systemText };
 } catch (e) {
@@ -1425,7 +1449,7 @@ app.get("/admin", async (req, res) => {
 app.get("/api/admin/conversations", async (req, res) => {
   try {
     const db = await getDb();
-    const q = {};
+    const q = { tenantId: TENANT_ID };
     const { processed, phone, status, date_field, from, to } = req.query;
 
     if (typeof processed === "string") {
@@ -1482,9 +1506,10 @@ app.get("/api/admin/messages/:id", async (req, res) => {
   try {
     const id = req.params.id;
     const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id), tenantId: TENANT_ID });
     if (!conv) return res.status(404).send("Conversation not found");
-
+// mensajes por conversationId (ya pertenece al tenant por conv)
+    // opcional: { tenantId: TENANT_ID } en mensajes si guardamos tenantId allí
     const msgs = await db.collection("messages")
       .find({ conversationId: new ObjectId(id) })
       .sort({ ts: 1 })
@@ -1530,10 +1555,10 @@ app.get("/api/admin/order/:id", async (req, res) => {
   try {
     const id = req.params.id;
     const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id), tenantId: TENANT_ID });
     if (!conv) return res.status(404).json({ error: "not_found" });
 
-    // Buscar order por conversationId si existe
+     // Buscar order por conversationId si existe (scoped por tenant en insert)
     let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) });
     if (!order && conv.summary?.Pedido) {
       // normalizar on the fly si no se grabó orders (backfill)
@@ -1574,10 +1599,11 @@ app.post("/api/admin/order/:id/process", async (req, res) => {
     );
     if (!upd.matchedCount) {
       // si no hay order, intentamos construirla desde summary y crearla procesada
-      const conv = await db.collection("conversations").findOne({ _id: convId });
+      const conv = await db.collection("conversations").findOne({ _id: convId, tenantId: TENANT_ID });
       if (!conv || !conv.summary?.Pedido) return res.status(404).json({ error: "order_not_found" });
       const orderDoc = normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
       orderDoc.conversationId = convId;
+      orderDoc.tenantId = TENANT_ID;
       orderDoc.processed = true;
       orderDoc.processedAt = new Date();
       await db.collection("orders").insertOne(orderDoc);
@@ -1691,7 +1717,9 @@ app.get("/api/products", async (req, res) => {
       req.app?.locals?.db ||
       global.db;
 
-    const q = req.query.all === "true" ? {} : { active: { $ne: false } };
+    const q = req.query.all === "true"
+      ? withTenantFilter({})
+      : withTenantFilter({ active: { $ne: false } });
     const items = await database.collection("products")
       .find(q).sort({ createdAt: -1, descripcion: 1 }).toArray();
 
@@ -1724,7 +1752,8 @@ app.post("/api/products", async (req, res) => {
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
 
     const now = new Date();
-    const doc = { descripcion, observacion, active, createdAt: now, updatedAt: now };
+    const doc = attachTenant({ descripcion, observacion, active, createdAt: now, updatedAt: now });
+    doc.tenantId = TENANT_ID;
     if (imp !== null) doc.importe = imp;
 
     const ins = await database.collection("products").insertOne(doc);
@@ -1760,7 +1789,7 @@ app.put("/api/products/:id", async (req, res) => {
     upd.updatedAt = new Date();
 
     const result = await database.collection("products").updateOne(
-      { _id: new ObjectId(String(id)) },
+      { _id: new ObjectId(String(id)), tenantId: TENANT_ID },
       { $set: upd }
     );
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
@@ -1782,7 +1811,7 @@ app.delete("/api/products/:id", async (req, res) => {
       global.db;
 
     const { id } = req.params;
-    const result = await database.collection("products").deleteOne({ _id: new ObjectId(String(id)) });
+    const result = await database.collection("products").deleteOne({ _id: new ObjectId(String(id)), tenantId: TENANT_ID });
     if (!result.deletedCount) return res.status(404).json({ error: "not_found" });
     rinvalidateBehaviorCache();
    res.json({ ok: true });
@@ -1802,7 +1831,7 @@ app.post("/api/products/:id/inactivate", async (req, res) => {
 
     const { id } = req.params;
     const result = await database.collection("products").updateOne(
-      { _id: new ObjectId(String(id)) },
+      { _id: new ObjectId(String(id)), tenantId: TENANT_ID },
       { $set: { active: false, updatedAt: new Date() } }
     );
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
@@ -1824,7 +1853,7 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
 
     const { id } = req.params;
     const result = await database.collection("products").updateOne(
-      { _id: new ObjectId(String(id)) },
+      { _id: new ObjectId(String(id)), tenantId: TENANT_ID },
       { $set: { active: true, updatedAt: new Date() } }
     );
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
@@ -1847,8 +1876,10 @@ app.get("/productos", async (req, res) => {
 
     if (!database) throw new Error("DB no inicializada");
 
-    const verTodos = req.query.all === "true";
-    const filtro = verTodos ? {} : { active: { $ne: false } };
+   const verTodos = req.query.all === "true";
+    const filtro = verTodos
+      ? withTenantFilter({})
+      : withTenantFilter({ active: { $ne: false } });
 
     const productos = await database
       .collection("products")
@@ -2041,7 +2072,7 @@ app.get("/productos.json", async (req, res) => {
       (typeof getDb === "function" && await getDb()) ||
       req.app?.locals?.db ||
       global.db;
-    const data = await database.collection("products").find({}).limit(50).toArray();
+    const data = await database.collection("products").find(withTenantFilter({})).limit(50).toArray();
     res.json(data);
   } catch (e) {
     console.error(e); res.status(500).json({ error: String(e) });
