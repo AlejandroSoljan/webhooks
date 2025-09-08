@@ -453,7 +453,9 @@ async function markAsRead(messageId, phoneNumberId) {
 
 /* ======================= Comportamiento (ENV, Sheet o Mongo) ======================= */
 const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); // "env" | "sheet" | "mongo"
-const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000;
+// Hacemos el TTL configurable por env (ms). Default: 5 minutos.
+const COMPORTAMIENTO_CACHE_TTL_MS = Number(process.env.COMPORTAMIENTO_CACHE_TTL_MS || (5 * 60 * 1000));
+
 let behaviorCache = { at: 0, text: null };
 
 async function loadBehaviorTextFromEnv() {
@@ -488,12 +490,28 @@ async function loadProductsFromMongo() {
     .toArray();
 
   // Normalizamos al shape usado por buildCatalogText
-  return docs.map(d => ({
-    descripcion: d.descripcion || "",
-    importe: typeof d.importe === "number" ? d.importe : null,
-    observacion: d.observacion || "",
-    active: d.active !== false
-  }));
+  function toNumber(v) {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string") {
+      const n = Number(v.replace(/[^\d.,-]/g, "").replace(",", "."));
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
+  return docs.map(d => {
+    const importe =
+      toNumber(d.importe ?? d.precio ?? d.price ?? d.monto);
+    const descripcion =
+      d.descripcion || d.description || d.nombre || d.title || "";
+    const observacion =
+      d.observacion || d.observaciones || d.nota || d.note || "";
+    return {
+      descripcion,
+      importe,
+      observacion,
+      active: d.active !== false
+    };
+  });
 }
 
 async function loadBehaviorTextFromMongo() {
@@ -517,7 +535,10 @@ async function saveBehaviorTextToMongo(newText) {
   );
   behaviorCache = { at: 0, text: null };
 }
-
+// Permite invalidar manualmente la caché de prompt (por ejemplo, tras CRUD de productos)
+function invalidateBehaviorCache() {
+  behaviorCache = { at: 0, text: null };
+}
 async function buildSystemPrompt({ force = false, conversation = null } = {}) {
   // Si querés congelar el prompt completo (comportamiento + catálogo), seteá FREEZE_FULL_PROMPT=true.
   const FREEZE_FULL_PROMPT = String(process.env.FREEZE_FULL_PROMPT || "false").toLowerCase() === "true";
@@ -578,6 +599,17 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
   behaviorCache = { at: now, text: fullText };
   return fullText;
 }
+
+// Endpoint para refrescar caché manualmente (útil tras cambios de catálogo)
+app.post("/api/behavior/refresh-cache", async (_req, res) => {
+  try {
+    invalidateBehaviorCache();
+    res.json({ ok: true, cache: "invalidated" });
+  } catch (e) {
+    console.error("⚠️ refresh-cache error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
 
 /* ======================= Mongo: conversaciones, mensajes, orders ======================= */
 async function ensureOpenConversation(waId, { contactName = null } = {}) {
@@ -1661,6 +1693,7 @@ app.post("/api/products", async (req, res) => {
     if (imp !== null) doc.importe = imp;
 
     const ins = await database.collection("products").insertOne(doc);
+     invalidateBehaviorCache();
     res.json({ ok: true, _id: String(ins.insertedId) });
   } catch (e) {
     console.error("POST /api/products error:", e);
@@ -1696,6 +1729,8 @@ app.put("/api/products/:id", async (req, res) => {
       { $set: upd }
     );
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    
+    invalidateBehaviorCache();
     res.json({ ok: true });
   } catch (e) {
     console.error("PUT /api/products/:id error:", e);
@@ -1714,7 +1749,8 @@ app.delete("/api/products/:id", async (req, res) => {
     const { id } = req.params;
     const result = await database.collection("products").deleteOne({ _id: new ObjectId(String(id)) });
     if (!result.deletedCount) return res.status(404).json({ error: "not_found" });
-    res.json({ ok: true });
+    rinvalidateBehaviorCache();
+   res.json({ ok: true });
   } catch (e) {
     console.error("DELETE /api/products/:id error:", e);
     res.status(500).json({ error: "internal" });
@@ -1735,7 +1771,8 @@ app.post("/api/products/:id/inactivate", async (req, res) => {
       { $set: { active: false, updatedAt: new Date() } }
     );
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
-    res.json({ ok: true });
+    invalidateBehaviorCache();
+   res.json({ ok: true });
   } catch (e) {
     console.error("POST /api/products/:id/inactivate error:", e);
     res.status(500).json({ error: "internal" });
@@ -1756,6 +1793,7 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
       { $set: { active: true, updatedAt: new Date() } }
     );
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    invalidateBehaviorCache();
     res.json({ ok: true });
   } catch (e) {
     console.error("POST /api/products/:id/reactivate error:", e);
