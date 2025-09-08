@@ -476,24 +476,30 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
       ? await loadBehaviorTextFromMongo()
       : await loadBehaviorTextFromSheet();
 
-  // 2) Catálogo SIEMPRE desde Sheet
-  let catalogText = "";
+  // 2) Catálogo desde MongoDB (products) con fallback a Sheet si viniera vacío
+ let catalogText = "";
   try {
-    const products = await loadProductsFromSheet();
-    catalogText = buildCatalogText(products);
+    let products = await loadProductsFromMongo();
+    if (!products || !products.length) {
+      try {
+        // fallback opcional para ambientes de transición
+        products = await loadProductsFromSheet();
+      } catch (_) {}
+    }
+    catalogText = buildCatalogText(products || []);
   } catch (e) {
-    console.warn("⚠️ No se pudo leer Productos:", e.message);
+    console.warn("⚠️ No se pudo leer Productos (Mongo/Sheet):", e.message);
     catalogText = "Catálogo de productos: (error al leer)";
   }
 
   // 3) Reglas de uso de observaciones
-  const reglasVenta =
+  /*const reglasVenta =
     "Instrucciones de venta (OBLIGATORIAS):\n" +
     "- Usá las Observaciones para decidir qué ofrecer, sugerir complementos, aplicar restricciones o proponer sustituciones.\n" +
     "- Respetá limitaciones (stock/horarios/porciones/preparación) indicadas en Observaciones.\n" +
     "- Si sugerís bundles o combos, ofrecé esas opciones con precio estimado cuando corresponda.\n" +
     "- Si falta un dato (sabor/tamaño/cantidad), pedilo brevemente.\n";
-
+*/
   // 4) Esquema JSON
   const jsonSchema =
     "FORMATO DE RESPUESTA (OBLIGATORIO - SOLO JSON, sin ```):\n" +
@@ -503,7 +509,7 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
 
   const fullText = [
     "[COMPORTAMIENTO]\n" + baseText,
-    "[REGLAS]\n" + reglasVenta,
+   // "[REGLAS]\n" + reglasVenta,
     "[CATALOGO]\n" + catalogText,
     "[SALIDA]\n" + jsonSchema,
     "RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
