@@ -519,8 +519,9 @@ async function saveBehaviorTextToMongo(newText) {
 }
 
 async function buildSystemPrompt({ force = false, conversation = null } = {}) {
-  // Usar snapshot si viene atado a la conversación
-  if (conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
+  // Si querés congelar el prompt completo (comportamiento + catálogo), seteá FREEZE_FULL_PROMPT=true.
+  const FREEZE_FULL_PROMPT = String(process.env.FREEZE_FULL_PROMPT || "false").toLowerCase() === "true";
+  if (FREEZE_FULL_PROMPT && conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
     return conversation.behaviorSnapshot.text;
   }
 
@@ -537,15 +538,14 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
       : await loadBehaviorTextFromSheet();
 
   // 2) Catálogo desde MongoDB (products) con fallback a Sheet si viniera vacío
- let catalogText = "";
+  let catalogText = "";
   try {
     let products = await loadProductsFromMongo();
     if (!products || !products.length) {
-      try {
-        // fallback opcional para ambientes de transición
-        products = await loadProductsFromSheet();
-      } catch (_) {}
+      try { products = await loadProductsFromSheet(); } catch (_) {}
     }
+    console.log("📦 Catálogo:", (products || []).length, "items",
+                (products && products.length ? "(Mongo OK)" : "(fallback Sheet)"));
     catalogText = buildCatalogText(products || []);
   } catch (e) {
     console.warn("⚠️ No se pudo leer Productos (Mongo/Sheet):", e.message);
