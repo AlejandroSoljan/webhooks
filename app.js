@@ -514,6 +514,41 @@ async function loadProductsFromMongo() {
   });
 }
 
+// --- Construcción de texto de catálogo para el prompt del sistema
+// Recibe [{ descripcion, importe, observacion, active }] y devuelve líneas legibles.
+function buildCatalogText(products) {
+  if (!Array.isArray(products) || !products.length) {
+    return "No hay productos disponibles por el momento.";
+  }
+  // Sólo activos por las dudas (aunque ya vienen filtrados)
+  const list = products.filter(p => p && p.active !== false);
+
+  function fmtMoney(n) {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return "";
+    // sin decimales si es entero, con 2 si no
+    return "$" + (Number.isInteger(v) ? String(v) : v.toFixed(2));
+  }
+
+  const lines = [];
+  for (const p of list) {
+    const desc = String(p.descripcion || "").trim();
+    const price = (p.importe != null) ? fmtMoney(p.importe) : "";
+    const obs = String(p.observacion || "").trim();
+    let line = `- ${desc}`;
+    if (price) line += ` - ${price}`;
+    if (obs) line += ` — Obs: ${obs}`;
+    lines.push(line);
+  }
+
+  // Si después del filtrado no quedó nada:
+  if (!lines.length) return "No hay productos activos en el catálogo.";
+  return lines.join("\n");
+}
+
+
+
+
 async function loadBehaviorTextFromMongo() {
   const db = await getDb();
   const doc = await db.collection("settings").findOne({ _id: "behavior" });
