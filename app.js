@@ -1064,7 +1064,7 @@ app.post("/webhook", async (req, res) => {
           console.log("📩 IN:", { from, type, preview: (userText || "").slice(0, 120) });
          // tokens de OpenAI
         
-
+/*
           // tokens de OpenAI (usage) capturados más arriba en el flujo
           const _usage = (raw && raw.usage) || (out && out.usage) || null;
           const _tokens = _usage ? {
@@ -1073,7 +1073,7 @@ app.post("/webhook", async (req, res) => {
             total: _usage.total_tokens || 0
           } : null
 
-
+*/
           // persistencia usuario: aseguro conv abierta y guardo nombre si viene
           const conv = await ensureOpenConversation(from, { contactName });
           await appendMessage(conv._id, {
@@ -1087,8 +1087,9 @@ app.post("/webhook", async (req, res) => {
           let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
           let estado = "IN_PROGRESS";
           let raw = null;
+          let out = null;
           try {
-            const out = await chatWithHistoryJSON(from, userText);
+            out = await chatWithHistoryJSON(from, userText);
             responseText = out.response || responseText;
             estado = (out.estado || "IN_PROGRESS").toUpperCase();
             raw = out.raw || null;
@@ -1101,7 +1102,13 @@ app.post("/webhook", async (req, res) => {
           await sendSafeText(from, responseText, value);
           console.log("OUT →", from, "| estado:", estado);
 
-          
+          // tokens de OpenAI (usage) a partir de la salida real del modelo
+          const _usage = out?.usage || null;
+          const _tokens = _usage ? {
+            prompt: _usage.prompt_tokens || 0,
+            completion: _usage.completion_tokens || 0,
+            total: _usage.total_tokens || 0
+          } : null;
 
           // persistencia assistant
           await appendMessage(conv._id, {
