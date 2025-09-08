@@ -391,6 +391,50 @@ async function sendSafeText(to, body, value) {
     return { error: e.message || "send_failed" };
   }
 }
+
+
+/* ======================= Tokens por conversación ======================= */
+/**
+ * Acumula contadores de tokens a nivel conversación.
+ * Guarda:
+ *  - counters.tokens_prompt_total
+ *  - counters.tokens_completion_total
+ *  - counters.tokens_total
+ *  - counters.messages_total (+1)
+ *  - counters.messages_assistant (+1 si role === "assistant")
+ *  - last_usage (últimos tokens observados)
+ *  - updatedAt (timestamp)
+ */
+async function bumpConversationTokenCounters(conversationId, tokens, role = "assistant") {
+  try {
+    const db = await getDb();
+    const prompt = (tokens && typeof tokens.prompt === "number") ? tokens.prompt : 0;
+    const completion = (tokens && typeof tokens.completion === "number") ? tokens.completion : 0;
+    const total = (tokens && typeof tokens.total === "number") ? tokens.total : (prompt + completion);
+
+    const inc = {
+      "counters.messages_total": 1,
+      "counters.tokens_prompt_total": prompt,
+      "counters.tokens_completion_total": completion,
+      "counters.tokens_total": total
+    };
+    if (role === "assistant") {
+      inc["counters.messages_assistant"] = 1;
+    } else if (role === "user") {
+      inc["counters.messages_user"] = 1;
+    }
+
+    const set = { updatedAt: new Date() };
+    if (tokens) set["last_usage"] = tokens;
+    await db.collection("conversations").updateOne({ _id: conversationId }, { $inc: inc, $set: set });
+  } catch (err) {
+    console.warn("⚠️ bumpConversationTokenCounters error:", err?.message || err);
+  }
+}
+
+
+
+
 async function markAsRead(messageId, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
@@ -434,7 +478,23 @@ async function loadBehaviorTextFromSheet() {
     .filter(Boolean);
   return parts.length ? parts.join("\n") : "Sos un asistente claro, amable y conciso. Respondé en español.";
 }
+// === Mongo: carga de catálogo ===
+async function loadProductsFromMongo() {
+  const db = await getDb();
+  // Por defecto, sólo activos (compatible con /api/products)
+  const docs = await db.collection("products")
+    .find({ active: { $ne: false } })
+    .sort({ createdAt: -1, descripcion: 1 })
+    .toArray();
 
+  // Normalizamos al shape usado por buildCatalogText
+  return docs.map(d => ({
+    descripcion: d.descripcion || "",
+    importe: typeof d.importe === "number" ? d.importe : null,
+    observacion: d.observacion || "",
+    active: d.active !== false
+  }));
+}
 
 async function loadBehaviorTextFromMongo() {
   const db = await getDb();
@@ -708,6 +768,12 @@ function pushMessage(session, role, content, maxTurns = 20) {
 }
 
 // OpenAI chat call with retries & backoff (retriable on timeouts / 429 / reset)
+
+
+
+
+
+
 async function openaiChatWithRetries(messages, { model, temperature }) {
   const maxRetries = parseInt(process.env.OPENAI_RETRY_COUNT || "2", 10);
   const baseDelay  = parseInt(process.env.OPENAI_RETRY_BASE_MS || "600", 10);
@@ -762,8 +828,10 @@ async function chatWithHistoryJSON(
   pushMessage(session, "user", userText);
 
   let content = "";
+  let usage = null;
   try {
     const completion = await openaiChatWithRetries([ ...session.messages ], { model, temperature });
+    usage = completion.usage || null;
     content = completion.choices?.[0]?.message?.content || "";
   } catch (e) {
     console.error("❌ OpenAI error/timeout:", e.message || e);
@@ -786,7 +854,8 @@ async function chatWithHistoryJSON(
     (data && typeof data.estado === "string" && data.estado.trim().toUpperCase()) || "IN_PROGRESS";
 
   pushMessage(session, "assistant", responseText);
-  return { response: responseText, estado, raw: data || {} };
+  //return { response: responseText, estado, raw: data || {} };
+  return { response: responseText, estado, raw: data || {}, usage };
 }
 
 /* ======================= Rutas básicas ======================= */
@@ -993,6 +1062,17 @@ app.post("/webhook", async (req, res) => {
           }
 
           console.log("📩 IN:", { from, type, preview: (userText || "").slice(0, 120) });
+         // tokens de OpenAI
+        
+
+          // tokens de OpenAI (usage) capturados más arriba en el flujo
+          const _usage = (raw && raw.usage) || (out && out.usage) || null;
+          const _tokens = _usage ? {
+            prompt: _usage.prompt_tokens || 0,
+            completion: _usage.completion_tokens || 0,
+            total: _usage.total_tokens || 0
+          } : null
+
 
           // persistencia usuario: aseguro conv abierta y guardo nombre si viene
           const conv = await ensureOpenConversation(from, { contactName });
@@ -1021,13 +1101,19 @@ app.post("/webhook", async (req, res) => {
           await sendSafeText(from, responseText, value);
           console.log("OUT →", from, "| estado:", estado);
 
+          
+
           // persistencia assistant
           await appendMessage(conv._id, {
             role: "assistant",
             content: responseText,
             type: "text",
-            meta: { estado }
+            meta: { estado, tokens: _tokens }
           });
+           // acumular tokens a nivel conversación
+          if (conv && conv._id) {
+            await bumpConversationTokenCounters(conv._id, _tokens, "assistant");
+          }
 
           // TTS si el usuario envió audio
           if (type === "audio" && (process.env.ENABLE_TTS_FOR_AUDIO || "true").toLowerCase() === "true") {
