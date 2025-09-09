@@ -458,6 +458,44 @@ async function saveBehaviorTextToMongo(newText) {
   behaviorCache = { at: 0, text: null };
 }
 
+// === Texto de catálogo para el prompt del sistema ===
+function buildCatalogText(products) {
+  if (!Array.isArray(products) || !products.length) {
+    return "Catálogo: (sin productos activos)";
+  }
+  const lines = products
+    .filter(p => p && p.active !== false && String(p.descripcion || "").trim())
+    .map(p => {
+      const precio = (typeof p.importe === "number") ? ` - $${p.importe.toFixed(2)}` : "";
+      const obs = p.observacion ? ` (Obs: ${p.observacion})` : "";
+      return `• ${p.descripcion}${precio}${obs}`;
+    });
+  return lines.join("\n");
+}
+
+// === Mongo: carga de catálogo ===
+async function loadProductsFromMongo() {
+  const db = await getDb();
+  const filter = { active: { $ne: false } };
+  if (process.env.TENANT_ID) {
+    filter.$or = [
+      { tenantId: process.env.TENANT_ID },
+      { tenantId: { $exists: false } },
+      { tenantId: null }
+    ];
+  }
+  const docs = await db.collection("products")
+    .find(filter)
+    .sort({ createdAt: -1, descripcion: 1 })
+    .toArray();
+  return docs.map(d => ({
+    descripcion: d.descripcion || "",
+    importe: (typeof d.importe === "number") ? d.importe : null,
+    observacion: d.observacion || "",
+    active: d.active !== false
+  }));
+}
+
 async function buildSystemPrompt({ force = false, conversation = null } = {}) {
   // Usar snapshot si viene atado a la conversación
   if (conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
@@ -476,13 +514,17 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
       ? await loadBehaviorTextFromMongo()
       : await loadBehaviorTextFromSheet();
 
-  // 2) Catálogo SIEMPRE desde Sheet
+  // 2) Catálogo desde MongoDB (products) con fallback a Sheet si viniera vacío
   let catalogText = "";
   try {
-    const products = await loadProductsFromSheet();
-    catalogText = buildCatalogText(products);
+    let products = await loadProductsFromMongo();
+    if (!products || !products.length) {
+      try { products = await loadProductsFromSheet(); } catch (_) {}
+    }
+    console.log("📦 Catálogo:", (products || []).length, "items", (products && products.length ? "(Mongo OK)" : "(fallback Sheet)"));
+    catalogText = buildCatalogText(products || []);
   } catch (e) {
-    console.warn("⚠️ No se pudo leer Productos:", e.message);
+    console.warn("⚠️ No se pudo leer Productos (Mongo/Sheet):", e.message);
     catalogText = "Catálogo de productos: (error al leer)";
   }
 
@@ -1556,6 +1598,14 @@ app.get("/api/products", async (req, res) => {
       global.db;
 
     const q = req.query.all === "true" ? {} : { active: { $ne: false } };
+    if (process.env.TENANT_ID) {
+      q.$or = [
+        { tenantId: process.env.TENANT_ID },
+        { tenantId: { $exists: false } },
+        { tenantId: null }
+      ];
+    }
+
     const items = await database.collection("products")
       .find(q).sort({ createdAt: -1, descripcion: 1 }).toArray();
 
@@ -1589,6 +1639,7 @@ app.post("/api/products", async (req, res) => {
 
     const now = new Date();
     const doc = { descripcion, observacion, active, createdAt: now, updatedAt: now };
+    if (process.env.TENANT_ID) doc.tenantId = process.env.TENANT_ID;
     if (imp !== null) doc.importe = imp;
 
     const ins = await database.collection("products").insertOne(doc);
@@ -1707,6 +1758,14 @@ app.get("/productos", async (req, res) => {
 
     const verTodos = req.query.all === "true";
     const filtro = verTodos ? {} : { active: { $ne: false } };
+    if (process.env.TENANT_ID) {
+      filtro.$or = [
+        { tenantId: process.env.TENANT_ID },
+        { tenantId: { $exists: false } },
+        { tenantId: null }
+      ];
+    }
+
 
     const productos = await database
       .collection("products")
@@ -1918,7 +1977,7 @@ app.get("/productos.json", async (req, res) => {
       (typeof getDb === "function" && await getDb()) ||
       req.app?.locals?.db ||
       global.db;
-    const data = await database.collection("products").find({}).limit(50).toArray();
+    const data = await database.collection("products").find((() => { const q = {}; if (process.env.TENANT_ID) { q.$or = [ { tenantId: process.env.TENANT_ID }, { tenantId: { $exists: false } }, { tenantId: null } ]; } return q; })()).limit(50).toArray();
     res.json(data);
   } catch (e) {
     console.error(e); res.status(500).json({ error: String(e) });
