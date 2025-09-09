@@ -2122,7 +2122,7 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
 });
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ES Modules
-import crypto from "node:crypto";
+const crypto = require("crypto");
 
 app.get("/productos", async (req, res) => {
   try {
