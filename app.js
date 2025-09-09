@@ -2327,20 +2327,24 @@ app.get("/productos", async (req, res) => {
     // Bind inicial a filas SSR
     all('#tbl tbody tr').forEach(bindRow);
 
-    // Botones generales
-    q('#btnAdd').addEventListener('click', ()=>{
-      const tb = q('#tbl tbody');
-      const tr = q('#row-tpl').content.firstElementChild.cloneNode(true);
-      bindRow(tr);
-      tb.prepend(tr);
-      q('.descripcion', tr).focus();
-    });
-    q('#btnReload').addEventListener('click', reload);
-
-
-
-
-  </script>
+    // Botones generales (delegados para evitar problemas de binding/CSP)
+document.addEventListener('click', (ev) => {
+  const addBtn = ev.target.closest('#btnAdd');
+  if (addBtn) {
+    const tb = q('#tbl tbody');
+    const tr = q('#row-tpl').content.firstElementChild.cloneNode(true);
+    bindRow(tr);
+    tb.prepend(tr);
+    q('.descripcion', tr).focus();
+    return;
+  }
+  const relBtn = ev.target.closest('#btnReload');
+  if (relBtn) {
+    reload();
+    return;
+  }
+});
+</script>
 </body>
 </html>`);
   } catch (err) {
