@@ -691,14 +691,9 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
 }
 
 // Endpoint para refrescar caché manualmente (útil tras cambios de catálogo)
-app.post("/api/behavior/refresh-cache", async (_req, res) => {
-  try {
-    invalidateBehaviorCache();
-    res.json({ ok: true, cache: "invalidated" });
-  } catch (e) {
-    console.error("⚠️ refresh-cache error:", e);
-    res.status(500).json({ error: "internal" });
-  }
+app.post("/api/behavior/refresh-cache", (_req, res) => {
+  invalidateBehaviorCache();
+  res.json({ ok: true });
 });
 
 /* ======================= Mongo: conversaciones, mensajes, orders ======================= */
@@ -1780,7 +1775,7 @@ process.on("uncaughtException", (err) => {
 
 
 /* ======================= Costos (tokens y $) ======================= */
-function getCostRates() {
+/*function getCostRates() {
   const inPer1K  = Number(process.env.COST_IN_PER_1K  || process.env.OPENAI_INPUT_PRICE_PER_1K  || 0);
   const outPer1K = Number(process.env.COST_OUT_PER_1K || process.env.OPENAI_OUTPUT_PRICE_PER_1K || 0);
   const currency = (process.env.COSTS_CURRENCY || "USD").toUpperCase();
@@ -1790,187 +1785,176 @@ function costOfTokens(promptTokens, completionTokens, rates) {
   const p = Number(promptTokens || 0);
   const c = Number(completionTokens || 0);
   return (p / 1000) * rates.inPer1K + (c / 1000) * rates.outPer1K;
-}
+}*/
+
+
+// ======================= Costos (tokens y $$) =======================
+// Configurá precios por 1K tokens (entrada/salida). Defaults seguros:
+const PRICE_IN_PER_1K  = parseFloat(process.env.OPENAI_PRICE_IN_PER_1K  || "0.005"); // ej: gpt-4o-mini input
+const PRICE_OUT_PER_1K = parseFloat(process.env.OPENAI_PRICE_OUT_PER_1K || "0.015"); // ej: gpt-4o-mini output
+
 
 app.get("/api/costos", async (req, res) => {
   try {
     const db = await getDb();
-    const { from, to } = req.query || {};
-    const match = {};
-    if (TENANT_ID) match.tenantId = TENANT_ID;
-    if (from || to) {
-      match.openedAt = {};
-      if (from) match.openedAt.$gte = new Date(`${from}T00:00:00.000Z`);
-      if (to)   match.openedAt.$lte = new Date(`${to}T23:59:59.999Z`);
+    const q = {};
+    // Si usás multi-tenant y guardás tenantId en conversations, podés filtrar:
+    if (process.env.TENANT_ID) {
+      q.$or = [
+        { tenantId: process.env.TENANT_ID },
+        { tenantId: { $exists: false } },
+        { tenantId: null }
+      ];
     }
+    const { from, to } = req.query || {};
+    if (from || to) {
+      q.openedAt = {};
+      if (from) q.openedAt.$gte = new Date(`${from}T00:00:00.000Z`);
+      if (to)   q.openedAt.$lte = new Date(`${to}T23:59:59.999Z`);
+    }
+
     const convs = await db.collection("conversations")
-      .find(match, {
-        sort: { openedAt: -1 },
-        projection: {
-          waId: 1, contactName: 1, openedAt: 1, closedAt: 1, status: 1,
-          "counters.tokens_prompt_total": 1,
-          "counters.tokens_completion_total": 1,
-          "counters.tokens_total": 1,
-          "counters.messages_total": 1
-        }
+      .find(q, { sort: { openedAt: -1 } })
+      .project({
+        waId: 1, contactName: 1, openedAt: 1, closedAt: 1,
+        counters: 1, last_usage: 1
       })
-      .limit(2000)
+      .limit(1000)
       .toArray();
 
-    const rates = getCostRates();
-    let tp = 0, tc = 0, tt = 0, convCount = 0;
-    for (const c of convs) {
-      const p = Number(c?.counters?.tokens_prompt_total || 0);
-      const co = Number(c?.counters?.tokens_completion_total || 0);
-      const t = Number(c?.counters?.tokens_total || (p + co));
-      tp += p; tc += co; tt += t; convCount += 1;
-    }
-    const totalCost = costOfTokens(tp, tc, rates);
-
-    const byDayMap = new Map();
-    for (const c of convs) {
-      const d = c.openedAt ? new Date(c.openedAt) : null;
-      const key = d ? d.toISOString().slice(0,10) : "sin_fecha";
-      const p = Number(c?.counters?.tokens_prompt_total || 0);
-      const co = Number(c?.counters?.tokens_completion_total || 0);
-      const t = Number(c?.counters?.tokens_total || (p + co));
-      if (!byDayMap.has(key)) byDayMap.set(key, { day: key, prompt: 0, completion: 0, total: 0, convs: 0 });
-      const row = byDayMap.get(key);
-      row.prompt += p; row.completion += co; row.total += t; row.convs += 1;
-    }
-    const byDay = Array.from(byDayMap.values())
-      .map(r => ({ ...r, cost: costOfTokens(r.prompt, r.completion, rates) }))
-      .sort((a,b)=> a.day < b.day ? 1 : -1);
-
-    const recent = convs.slice(0, 50).map(c => {
-      const prompt = Number(c?.counters?.tokens_prompt_total || 0);
-      const comp   = Number(c?.counters?.tokens_completion_total || 0);
-      const total  = Number(c?.counters?.tokens_total || (prompt + comp));
+    const rows = convs.map(c => {
+      const p = c?.counters?.tokens_prompt_total     || 0;
+      const r = c?.counters?.tokens_completion_total || 0;
+      const t = c?.counters?.tokens_total || (p + r);
+      const cost_in  = (p / 1000) * PRICE_IN_PER_1K;
+      const cost_out = (r / 1000) * PRICE_OUT_PER_1K;
       return {
-        _id: String(c._id),
+        id: (c._id && c._id.toString && c._id.toString()) || "",
         waId: c.waId,
-        contactName: c.contactName || "",
+        name: c.contactName || "",
         openedAt: c.openedAt || null,
         closedAt: c.closedAt || null,
-        status: c.status || "OPEN",
-        messages: Number(c?.counters?.messages_total || 0),
-        tokens: { prompt, completion: comp, total },
-        cost: costOfTokens(prompt, comp, rates)
+        prompt_tokens: p,
+        completion_tokens: r,
+        total_tokens: t,
+        cost_in:  Number(cost_in.toFixed(6)),
+        cost_out: Number(cost_out.toFixed(6)),
+        cost_total: Number((cost_in + cost_out).toFixed(6))
       };
     });
 
+    const totals = rows.reduce((acc, r) => {
+      acc.prompt_tokens     += r.prompt_tokens;
+      acc.completion_tokens += r.completion_tokens;
+      acc.total_tokens      += r.total_tokens;
+      acc.cost_in           += r.cost_in;
+      acc.cost_out          += r.cost_out;
+      acc.cost_total        += r.cost_total;
+      return acc;
+    }, { prompt_tokens:0, completion_tokens:0, total_tokens:0, cost_in:0, cost_out:0, cost_total:0 });
+
+    for (const k of Object.keys(totals)) {
+      if (typeof totals[k] === "number") totals[k] = Number(totals[k].toFixed(6));
+    }
+
     res.json({
-      tenantId: TENANT_ID || null,
-      rates: { currency: rates.currency, in_per_1k: rates.inPer1K, out_per_1k: rates.outPer1K },
-      totals: {
-        conversations: convCount,
-        tokens: { prompt: tp, completion: tc, total: tt },
-        cost: totalCost
-      },
-      byDay,
-      recent
+      price_in_per_1k: PRICE_IN_PER_1K,
+      price_out_per_1k: PRICE_OUT_PER_1K,
+      count: rows.length,
+      totals,
+      rows
     });
   } catch (e) {
-    console.error("⚠️ /api/costos error:", e);
+    console.error("GET /api/costos error:", e);
     res.status(500).json({ error: "internal" });
   }
 });
 
-app.get("/costos", async (req, res) => {
+app.get("/costos", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(`<!doctype html>
 <html>
 <head>
-<meta charset="utf-8" />
-<title>Costos (tokens y $)</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<style>
-  body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1100px}
-  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-  .card{border:1px solid #ddd;border-radius:8px;padding:12px 14px;background:#fff}
-  table{border-collapse:collapse;width:100%;margin-top:12px}
-  th,td{border:1px solid #eee;padding:8px;vertical-align:top}
-  th{background:#f6f6f6;text-align:left}
-  .muted{color:#666}
-  .mono{font-family:ui-monospace, Menlo, Consolas, monospace}
-</style>
+  <meta charset="utf-8" />
+  <title>Costos</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1100px}
+    table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px;vertical-align:top}
+    th{background:#f5f5f5;text-align:left}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .btn{padding:6px 10px;border:1px solid #333;background:#fff;border-radius:4px;cursor:pointer}
+    input{padding:6px 8px;border:1px solid #ccc;border-radius:4px}
+    .muted{color:#666;font-size:12px}
+    tfoot td{font-weight:bold}
+  </style>
 </head>
 <body>
   <h1>Costos</h1>
-  <form id="f" class="row">
-    <label>Desde <input type="date" name="from"></label>
-    <label>Hasta <input type="date" name="to"></label>
-    <button>Aplicar</button>
-    <span class="muted">Tenant: <span class="mono">${TENANT_ID || ""}</span></span>
-  </form>
-
-  <div id="summary" class="row" style="margin-top:12px;"></div>
-
-  <h2>Por día</h2>
-  <table id="byDay">
-    <thead><tr><th>Día</th><th>Prompt</th><th>Completion</th><th>Total</th><th>Costo</th><th>Convs</th></tr></thead>
+  <div class="row">
+    <label>Desde <input type="date" id="from"></label>
+    <label>Hasta <input type="date" id="to"></label>
+    <button class="btn" id="btnGo">Filtrar</button>
+    <button class="btn" id="btnReset">Reset</button>
+    <span class="muted">Precios configurables: <code>OPENAI_PRICE_IN_PER_1K</code> / <code>OPENAI_PRICE_OUT_PER_1K</code></span>
+  </div>
+  <p></p>
+  <div id="meta" class="muted"></div>
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>Inicio</th><th>Cliente</th><th>waId</th>
+        <th>Input</th><th>Output</th><th>Total</th>
+        <th>$ In</th><th>$ Out</th><th>$ Total</th>
+      </tr>
+    </thead>
     <tbody></tbody>
+    <tfoot><tr>
+      <td colspan="3">TOTAL</td>
+      <td id="t_in">0</td><td id="t_out">0</td><td id="t_tok">0</td>
+      <td id="t_$in">0</td><td id="t_$out">0</td><td id="t_$tot">0</td>
+    </tr></tfoot>
   </table>
-
-  <h2>Conversaciones recientes</h2>
-  <table id="recent">
-    <thead><tr><th>Fecha</th><th>Cliente</th><th>WA</th><th>Msgs</th><th>Prompt</th><th>Completion</th><th>Total</th><th>Costo</th></tr></thead>
-    <tbody></tbody>
-  </table>
-
 <script>
-  const fmtInt = n => Number(n||0).toLocaleString();
-  const fmtUsd = (n, c) => (c||'USD') + ' ' + (Number(n||0)).toFixed(4);
+async function j(url){ const r = await fetch(url); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+function fmt(n){ return (Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:6}); }
+function fmtTok(n){ return (Number(n)||0).toLocaleString(); }
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g, m=>({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[m])); }
 
-  async function load() {
-    const p = new URLSearchParams(new FormData(document.getElementById('f')));
-    const r = await fetch('/api/costos?' + p.toString());
-    const j = await r.json();
-
-    const s = document.getElementById('summary');
-    s.innerHTML = '';
-    const cards = [
-      ['Conversaciones', j.totals.conversations],
-      ['Prompt tokens', fmtInt(j.totals.tokens.prompt)],
-      ['Completion tokens', fmtInt(j.totals.tokens.completion)],
-      ['Total tokens', fmtInt(j.totals.tokens.total)],
-      ['Costo total', fmtUsd(j.totals.cost, j.rates.currency)],
-      ['Tarifas', 'in=${j.rates.in_per_1k}/1K, out=${j.rates.out_per_1k}/1K ${j.rates.currency}']
-    ];
-    for (const [k,v] of cards) {
-      const d = document.createElement('div'); d.className='card';
-      d.innerHTML = '<div class="muted">'+k+'</div><div class="mono" style="font-size:18px">'+v+'</div>';
-      s.appendChild(d);
-    }
-
-    const tb1 = document.querySelector('#byDay tbody');
-    tb1.innerHTML = '';
-    for (const r of j.byDay) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = '<td>${r.day}</td><td>${fmtInt(r.prompt)}</td><td>${fmtInt(r.completion)}</td><td>${fmtInt(r.total)}</td><td>${fmtUsd(r.cost, j.rates.currency)}</td><td>${r.convs}</td>';
-      tb1.appendChild(tr);
-    }
-
-    const tb2 = document.querySelector('#recent tbody');
-    tb2.innerHTML = '';
-    for (const r of j.recent) {
-      const d = r.openedAt ? new Date(r.openedAt).toLocaleString() : '';
-      const tr = document.createElement('tr');
-      tr.innerHTML = '
-        <td>${d}</td>
-        <td>${(r.contactName||'')}</td>
-        <td class="mono">${r.waId||''}</td>
-        <td>${r.messages||0}</td>
-        <td>${fmtInt(r.tokens.prompt)}</td>
-        <td>${fmtInt(r.tokens.completion)}</td>
-        <td>${fmtInt(r.tokens.total)}</td>
-        <td>${fmtUsd(r.cost, j.rates.currency)}</td>
-      ';
-      tb2.appendChild(tr);
-    }
+async function load(){
+  const p = new URLSearchParams();
+  const f = document.getElementById('from').value; if (f) p.set('from', f);
+  const t = document.getElementById('to').value;   if (t) p.set('to', t);
+  const data = await j('/api/costos' + (p.toString()?('?' + p.toString()):''));
+  const tb = document.querySelector('#tbl tbody');
+  tb.innerHTML = '';
+  for (const r of data.rows){
+    const tr = document.createElement('tr');
+    tr.innerHTML = \`
+      <td>\${r.openedAt ? new Date(r.openedAt).toLocaleString() : ''}</td>
+      <td>\${esc(r.name)}</td>
+      <td>\${esc(r.waId)}</td>
+      <td>\${fmtTok(r.prompt_tokens)}</td>
+      <td>\${fmtTok(r.completion_tokens)}</td>
+      <td>\${fmtTok(r.total_tokens)}</td>
+      <td>\${fmt(r.cost_in)}</td>
+      <td>\${fmt(r.cost_out)}</td>
+      <td>\${fmt(r.cost_total)}</td>\`;
+    tb.appendChild(tr);
   }
-  document.getElementById('f').addEventListener('submit', (e)=>{e.preventDefault(); load();});
-  load();
+  document.getElementById('meta').textContent =
+    \`\${data.count} conversaciones • $/1K in=\${data.price_in_per_1k} • $/1K out=\${data.price_out_per_1k}\`;
+
+  document.getElementById('t_in').textContent   = fmtTok(data.totals.prompt_tokens);
+  document.getElementById('t_out').textContent  = fmtTok(data.totals.completion_tokens);
+  document.getElementById('t_tok').textContent  = fmtTok(data.totals.total_tokens);
+  document.getElementById('t_$in').textContent  = fmt(data.totals.cost_in);
+  document.getElementById('t_$out').textContent = fmt(data.totals.cost_out);
+  document.getElementById('t_$tot').textContent = fmt(data.totals.cost_total);
+}
+document.getElementById('btnGo').addEventListener('click', load);
+document.getElementById('btnReset').addEventListener('click', ()=>{ document.getElementById('from').value=''; document.getElementById('to').value=''; load(); });
+load();
 </script>
 </body>
 </html>`);
@@ -2024,6 +2008,7 @@ app.post("/api/products", async (req, res) => {
     // Log mínimo para diagnóstico si algo falla aguas arriba
     try {
       const ins = await database.collection("products").insertOne(doc);
+      invalidateBehaviorCache();   
       return res.json({ ok: true, _id: String(ins.insertedId) });
     } catch (e) {
       console.error("POST /api/products insertOne error:", e);
@@ -2064,7 +2049,7 @@ app.put("/api/products/:id", async (req, res) => {
       { $set: upd }
     );
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
-    
+
     invalidateBehaviorCache();
     res.json({ ok: true });
   } catch (e) {
@@ -2084,7 +2069,7 @@ app.delete("/api/products/:id", async (req, res) => {
     const { id } = req.params;
     const result = await database.collection("products").deleteOne({ _id: new ObjectId(String(id)), tenantId: TENANT_ID });
     if (!result.deletedCount) return res.status(404).json({ error: "not_found" });
-    rinvalidateBehaviorCache();
+    invalidateBehaviorCache(); 
    res.json({ ok: true });
   } catch (e) {
     console.error("DELETE /api/products/:id error:", e);
