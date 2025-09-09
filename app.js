@@ -1,5 +1,5 @@
 /* Carga lógica sin modificar el código original */
-eval(require('fs').readFileSync(require('path').join(__dirname,'logic.split.js'),'utf8'));
+eval(require('fs').readFileSync(require('path').join(__dirname,'logic.js'),'utf8'));
 
 const express = require("express");const app = express();app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
