@@ -2170,8 +2170,8 @@ app.get("/productos", async (req, res) => {
 
   <div class="row">
     <a class="btn" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a>
-    <button id="btnAdd" class="btn">Agregar</button>
-    <button id="btnReload" class="btn">Recargar</button>
+    <button id="btnAdd" class="btn" type="button">Agregar</button>
+    <button id="btnReload" class="btn" type="button">Recargar</button>
   </div>
   <p></p>
 
@@ -2338,14 +2338,7 @@ app.get("/productos", async (req, res) => {
     q('#btnReload').addEventListener('click', reload);
 
 
-document.getElementById('btnAdd').addEventListener('click', () => {
-  const tb = document.querySelector('#tbl tbody');
-  const tr = document.getElementById('row-tpl').content.firstElementChild.cloneNode(true);
-  // reusa tus handlers:
-  bindRow(tr);
-  tb.prepend(tr);
-  tr.querySelector('.descripcion').focus();
-});
+
 
   </script>
 </body>
