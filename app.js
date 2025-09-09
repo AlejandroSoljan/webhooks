@@ -343,9 +343,8 @@ app.get("/admin", async (req, res) => {
 </body>
 </html>
   `);
-});
-res.end(`<!doctype html><html><head><meta charset="utf-8" /><title>Admin</title></head><body><h1>Panel Admin</h1><p><a href="/productos">Productos</a> • <a href="/comportamiento">Comportamiento</a></p></body></html>`);
-  } catch (e) { res.status(500).send("internal"); }
+
+} catch (e) { res.status(500).send("internal"); }
 });
 app.get("/api/admin/conversations", async (req, res) => {
   try {
