@@ -2,7 +2,7 @@
 const express = require("express");
 const app = express();
 app.use(express.json());
-+// Multiempresa por ENV: cada script establece su TENANT_ID
+// Multiempresa por ENV: cada script establece su TENANT_ID
 app.use(express.urlencoded({ extended: true }));
 
 // ✅ AHORA podés usar middleware como:
@@ -2270,7 +2270,7 @@ app.get("/productos", async (req, res) => {
       }
     }
 
-    async async function saveRow(tr){
+    async function saveRow(tr){
       const id = tr.dataset.id;
       const payload = {
         descripcion: q('.descripcion', tr).value.trim(),
