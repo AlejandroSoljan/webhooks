@@ -459,30 +459,29 @@ async function saveBehaviorTextToMongo(newText) {
 }
 
 async function buildSystemPrompt({ force = false, conversation = null } = {}) {
-  // Usar snapshot si viene atado a la conversación
-  if (conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
-    return conversation.behaviorSnapshot.text;
-  }
+  const FREEZE_FULL_PROMPT = String(process.env.FREEZE_FULL_PROMPT || "false").toLowerCase() === "true";
+  if (FREEZE_FULL_PROMPT && conversation?.behaviorSnapshot?.text) return conversation.behaviorSnapshot.text;
 
   const now = Date.now();
-  if (!force && (now - behaviorCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && behaviorCache.text) {
-    return behaviorCache.text;
-  }
+  if (!force && (now - behaviorCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && behaviorCache.text) return behaviorCache.text;
 
-  // 1) Comportamiento desde ENV o desde Sheet
   const baseText = (BEHAVIOR_SOURCE === "env")
     ? await loadBehaviorTextFromEnv()
     : (BEHAVIOR_SOURCE === "mongo")
       ? await loadBehaviorTextFromMongo()
       : await loadBehaviorTextFromSheet();
 
-  // 2) Catálogo SIEMPRE desde Sheet
+  // 🔴 Catalogo: primero Mongo, fallback a Sheet
   let catalogText = "";
   try {
-    const products = await loadProductsFromSheet();
-    catalogText = buildCatalogText(products);
+    let products = await loadProductsFromMongo();
+    if (!products?.length) {
+      try { products = await loadProductsFromSheet(); } catch(_) {}
+    }
+    console.log("📦 Catálogo:", (products || []).length, "items", (products?.length ? "(Mongo OK)" : "(fallback Sheet)"));
+    catalogText = buildCatalogText(products || []);
   } catch (e) {
-    console.warn("⚠️ No se pudo leer Productos:", e.message);
+    console.warn("⚠️ No se pudo leer Productos (Mongo/Sheet):", e.message);
     catalogText = "Catálogo de productos: (error al leer)";
   }
 
