@@ -2,6 +2,7 @@
 const express = require("express");
 const app = express();
 app.use(express.json());
++// Multiempresa por ENV: cada script establece su TENANT_ID
 app.use(express.urlencoded({ extended: true }));
 
 // ✅ AHORA podés usar middleware como:
@@ -43,6 +44,63 @@ function isValidSignature(req) {
   } catch {
     return false;
   }
+}
+/* ======================= Multiempresa (tenant) ======================= */
+// Prioridad: TENANT_ID > COMPANY_ID > BUSINESS_ID > "default"
+const TENANT_ID = String(
+  process.env.TENANT_ID || process.env.COMPANY_ID || process.env.BUSINESS_ID || "default"
+).trim();
+
+function attachTenant(doc = {}) {
+  // no pisamos si ya viene tenantId
+  return ("tenantId" in doc) ? doc : { ...doc, tenantId: TENANT_ID };
+}
+function withTenantFilter(filter = {}) {
+  // si ya viene tenantId, respetar
+  return ("tenantId" in filter) ? filter : { ...filter, tenantId: TENANT_ID };
+}
+
+
+/* ======================= Parseo robusto de importes ======================= */
+/**
+ * Acepta formatos: "1234", "1.234", "1.234,56", "1,234.56", "$ 1.234,56", etc.
+ * Devuelve Number o null si no se puede parsear.
+ */
+function parseMoneyFlexible(v) {
+  if (v == null) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  let s = String(v).trim();
+  if (!s) return null;
+  // dejar solo dígitos, coma, punto, signo
+  s = s.replace(/[^\d,.\-]/g, "");
+  if (!s) return null;
+  const lastComma = s.lastIndexOf(",");
+  const lastDot   = s.lastIndexOf(".");
+  if (lastComma !== -1 && lastDot !== -1) {
+    // tiene ambos separadores: definimos decimal por el que aparece más a la derecha
+    if (lastComma > lastDot) {
+      // decimal = coma  -> quitamos todos los puntos (miles) y cambiamos coma por punto
+      s = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      // decimal = punto -> quitamos todas las comas (miles)
+      s = s.replace(/,/g, "");
+    }
+  } else if (lastComma !== -1) {
+    // sólo coma -> decimal es coma
+    s = s.replace(/,/g, ".");
+  } else {
+    // sólo punto o sin separadores -> ya está
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+
+
+
+// sesiones en memoria por tenant para evitar cruces
+function sessionKey(waId) {
+  return `${TENANT_ID}:${waId}`;
 }
 
 /* ======================= OpenAI ======================= */
@@ -391,6 +449,50 @@ async function sendSafeText(to, body, value) {
     return { error: e.message || "send_failed" };
   }
 }
+
+
+/* ======================= Tokens por conversación ======================= */
+/**
+ * Acumula contadores de tokens a nivel conversación.
+ * Guarda:
+ *  - counters.tokens_prompt_total
+ *  - counters.tokens_completion_total
+ *  - counters.tokens_total
+ *  - counters.messages_total (+1)
+ *  - counters.messages_assistant (+1 si role === "assistant")
+ *  - last_usage (últimos tokens observados)
+ *  - updatedAt (timestamp)
+ */
+async function bumpConversationTokenCounters(conversationId, tokens, role = "assistant") {
+  try {
+    const db = await getDb();
+    const prompt = (tokens && typeof tokens.prompt === "number") ? tokens.prompt : 0;
+    const completion = (tokens && typeof tokens.completion === "number") ? tokens.completion : 0;
+    const total = (tokens && typeof tokens.total === "number") ? tokens.total : (prompt + completion);
+
+    const inc = {
+      "counters.messages_total": 1,
+      "counters.tokens_prompt_total": prompt,
+      "counters.tokens_completion_total": completion,
+      "counters.tokens_total": total
+    };
+    if (role === "assistant") {
+      inc["counters.messages_assistant"] = 1;
+    } else if (role === "user") {
+      inc["counters.messages_user"] = 1;
+    }
+
+    const set = { updatedAt: new Date() };
+    if (tokens) set["last_usage"] = tokens;
+    await db.collection("conversations").updateOne({ _id: conversationId }, { $inc: inc, $set: set });
+  } catch (err) {
+    console.warn("⚠️ bumpConversationTokenCounters error:", err?.message || err);
+  }
+}
+
+
+
+
 async function markAsRead(messageId, phoneNumberId) {
   const token = process.env.WHATSAPP_TOKEN;
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
@@ -409,7 +511,9 @@ async function markAsRead(messageId, phoneNumberId) {
 
 /* ======================= Comportamiento (ENV, Sheet o Mongo) ======================= */
 const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(); // "env" | "sheet" | "mongo"
-const COMPORTAMIENTO_CACHE_TTL_MS = 5 * 60 * 1000;
+// Hacemos el TTL configurable por env (ms). Default: 5 minutos.
+const COMPORTAMIENTO_CACHE_TTL_MS = Number(process.env.COMPORTAMIENTO_CACHE_TTL_MS || (5 * 60 * 1000));
+
 let behaviorCache = { at: 0, text: null };
 
 async function loadBehaviorTextFromEnv() {
@@ -434,76 +538,99 @@ async function loadBehaviorTextFromSheet() {
     .filter(Boolean);
   return parts.length ? parts.join("\n") : "Sos un asistente claro, amable y conciso. Respondé en español.";
 }
+// === Mongo: carga de catálogo ===
+async function loadProductsFromMongo() {
+  const db = await getDb();
+  // Por defecto, sólo activos (compatible con /api/products)
+  const docs = await db.collection("products")
+    .find(withTenantFilter({ active: { $ne: false } }))
+    .sort({ createdAt: -1, descripcion: 1 })
+    .toArray();
+
+  // Normalizamos al shape usado por buildCatalogText
+  function toNumber(v) {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string") {
+      const n = Number(v.replace(/[^\d.,-]/g, "").replace(",", "."));
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
+  return docs.map(d => {
+    const importe =
+      toNumber(d.importe ?? d.precio ?? d.price ?? d.monto);
+    const descripcion =
+      d.descripcion || d.description || d.nombre || d.title || "";
+    const observacion =
+      d.observacion || d.observaciones || d.nota || d.note || "";
+    return {
+      descripcion,
+      importe,
+      observacion,
+      active: d.active !== false
+    };
+  });
+}
+
+// --- Construcción de texto de catálogo para el prompt del sistema
+// Recibe [{ descripcion, importe, observacion, active }] y devuelve líneas legibles.
+function buildCatalogText(products) {
+  if (!Array.isArray(products) || !products.length) {
+    return "No hay productos disponibles por el momento.";
+  }
+  // Sólo activos por las dudas (aunque ya vienen filtrados)
+  const list = products.filter(p => p && p.active !== false);
+
+  function fmtMoney(n) {
+    const v = Number(n);
+    if (!Number.isFinite(v)) return "";
+    // sin decimales si es entero, con 2 si no
+    return "$" + (Number.isInteger(v) ? String(v) : v.toFixed(2));
+  }
+
+  const lines = [];
+  for (const p of list) {
+    const desc = String(p.descripcion || "").trim();
+    const price = (p.importe != null) ? fmtMoney(p.importe) : "";
+    const obs = String(p.observacion || "").trim();
+    let line = `- ${desc}`;
+    if (price) line += ` - ${price}`;
+    if (obs) line += ` — Obs: ${obs}`;
+    lines.push(line);
+  }
+
+  // Si después del filtrado no quedó nada:
+  if (!lines.length) return "No hay productos activos en el catálogo.";
+  return lines.join("\n");
+}
+
+
 
 
 async function loadBehaviorTextFromMongo() {
   const db = await getDb();
-  const doc = await db.collection("settings").findOne({ _id: "behavior" });
+  const doc = await db.collection("settings").findOne({ _id: `behavior:${TENANT_ID}` });
   if (doc && typeof doc.text === "string" && doc.text.trim()) return doc.text.trim();
   const fallback = "Sos un asistente claro, amable y conciso. Respondé en español.";
-  await db.collection("settings").updateOne(
-    { _id: "behavior" },
-    { $setOnInsert: { text: fallback, updatedAt: new Date() } },
+  await db.collection("settings").updateOne({ _id: `behavior:${TENANT_ID}` }, { $setOnInsert: { text: fallback, updatedAt: new Date(), tenantId: TENANT_ID } },
     { upsert: true }
   );
   return fallback;
 }
 async function saveBehaviorTextToMongo(newText) {
   const db = await getDb();
-  await db.collection("settings").updateOne(
-    { _id: "behavior" },
-    { $set: { text: String(newText || "").trim(), updatedAt: new Date() } },
+ await db.collection("settings").updateOne({ _id: `behavior:${TENANT_ID}` }, { $set: { text: String(newText || "").trim(), updatedAt: new Date(), tenantId: TENANT_ID } },
+
     { upsert: true }
   );
   behaviorCache = { at: 0, text: null };
 }
-
-// === Texto de catálogo para el prompt del sistema ===
-function buildCatalogText(products) {
-  if (!Array.isArray(products) || !products.length) {
-    return "Catálogo: (sin productos activos)";
-  }
-  const lines = products
-    .filter(p => p && p.active !== false && String(p.descripcion || "").trim())
-    .map(p => {
-      const precio = (typeof p.importe === "number") ? ` - $${p.importe.toFixed(2)}` : "";
-      const obs = p.observacion ? ` (Obs: ${p.observacion})` : "";
-      return `• ${p.descripcion}${precio}${obs}`;
-    });
-  return lines.join("\n");
-}
-
-// === Mongo: carga de catálogo ===
-async function loadProductsFromMongo() {
-  const db = await getDb();
-  const filter = { active: { $ne: false } };
-  if (process.env.TENANT_ID) {
-    filter.$or = [
-      { tenantId: process.env.TENANT_ID },
-      { tenantId: { $exists: false } },
-      { tenantId: null }
-    ];
-  }
-  const docs = await db.collection("products")
-    .find(filter)
-    .sort({ createdAt: -1, descripcion: 1 })
-    .toArray();
-  return docs.map(d => ({
-    descripcion: d.descripcion || "",
-    importe: (() => {
-      if (typeof d.importe === "number") return d.importe;
-      if (typeof d.importe === "string") {
-        const n = Number(d.importe.replace(/[^\d.,-]/g, "").replace(",", "."));
-        return Number.isFinite(n) ? n : null;
-      }
-      return null;
-    })(),
-    observacion: d.observacion || "",
-    active: d.active !== false
-  }));
+// Permite invalidar manualmente la caché de prompt (por ejemplo, tras CRUD de productos)
+function invalidateBehaviorCache() {
+  behaviorCache = { at: 0, text: null };
 }
 async function buildSystemPrompt({ force = false, conversation = null } = {}) {
-// Usar snapshot SOLO si FREEZE_FULL_PROMPT=true
+  // Si querés congelar el prompt completo (comportamiento + catálogo), seteá FREEZE_FULL_PROMPT=true.
   const FREEZE_FULL_PROMPT = String(process.env.FREEZE_FULL_PROMPT || "false").toLowerCase() === "true";
   if (FREEZE_FULL_PROMPT && conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
     return conversation.behaviorSnapshot.text;
@@ -528,7 +655,8 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
     if (!products || !products.length) {
       try { products = await loadProductsFromSheet(); } catch (_) {}
     }
-    console.log("📦 Catálogo:", (products || []).length, "items", (products && products.length ? "(Mongo OK)" : "(fallback Sheet)"));
+    console.log("📦 Catálogo:", (products || []).length, "items",
+                (products && products.length ? "(Mongo OK)" : "(fallback Sheet)"));
     catalogText = buildCatalogText(products || []);
   } catch (e) {
     console.warn("⚠️ No se pudo leer Productos (Mongo/Sheet):", e.message);
@@ -562,18 +690,30 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
   return fullText;
 }
 
+// Endpoint para refrescar caché manualmente (útil tras cambios de catálogo)
+app.post("/api/behavior/refresh-cache", async (_req, res) => {
+  try {
+    invalidateBehaviorCache();
+    res.json({ ok: true, cache: "invalidated" });
+  } catch (e) {
+    console.error("⚠️ refresh-cache error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
 /* ======================= Mongo: conversaciones, mensajes, orders ======================= */
 async function ensureOpenConversation(waId, { contactName = null } = {}) {
   const db = await getDb();
-  let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
+  let conv = await db.collection("conversations").findOne(withTenantFilter({ waId, status: "OPEN" }));
   if (!conv) {
     // ⚡ Al iniciar una conversación: recargo comportamiento (ignora caché)
     const behaviorText = await buildSystemPrompt({ force: true });
-    const doc = {
+    const doc = attachTenant({
       waId,
       status: "OPEN",         // OPEN | COMPLETED | CANCELLED
       finalized: false,       // idempotencia para Sheets/orden
       contactName: contactName || null,
+      tenantId: TENANT_ID,
       openedAt: new Date(),
       closedAt: null,
       lastUserTs: null,
@@ -584,12 +724,12 @@ async function ensureOpenConversation(waId, { contactName = null } = {}) {
         source: (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(),
         savedAt: new Date()
       }
-    };
+      });
     const ins = await db.collection("conversations").insertOne(doc);
     conv = { _id: ins.insertedId, ...doc };
   } else if (contactName && !conv.contactName) {
     await db.collection("conversations").updateOne(
-      { _id: conv._id },
+      { _id: conv._id, tenantId: TENANT_ID },
       { $set: { contactName } }
     );
     conv.contactName = contactName;
@@ -605,11 +745,12 @@ async function appendMessage(conversationId, {
   ttlDays = null
 }) {
   const db = await getDb();
-  const doc = {
+  const doc = attachTenant({
     conversationId: new ObjectId(conversationId),
     role, content, type, meta,
     ts: new Date()
-  };
+  });
+  doc.tenantId = TENANT_ID;
   if (ttlDays && Number.isFinite(ttlDays)) {
     doc.expireAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
   }
@@ -618,7 +759,7 @@ async function appendMessage(conversationId, {
   const upd = { $inc: { turns: 1 }, $set: {} };
   if (role === "user") upd.$set.lastUserTs = doc.ts;
   if (role === "assistant") upd.$set.lastAssistantTs = doc.ts;
-  await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId) }, upd);
+  await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId), tenantId: TENANT_ID }, upd);
 }
 
 // Normalizar “Pedido” a estructura de order
@@ -669,7 +810,7 @@ function normalizeOrder(waId, contactName, pedido) {
 async function finalizeConversationOnce(conversationId, finalPayload, estado) {
   const db = await getDb();
   const res = await db.collection("conversations").findOneAndUpdate(
-    { _id: new ObjectId(conversationId), finalized: { $ne: true } },
+    { _id: new ObjectId(conversationId), tenantId: TENANT_ID, finalized: { $ne: true } },
     {
       $set: {
         status: estado || "COMPLETED",
@@ -708,7 +849,7 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
       const pedidoNombre = finalPayload.Pedido["Nombre"];
       if (pedidoNombre && !conv.contactName) {
         await db.collection("conversations").updateOne(
-          { _id: conv._id },
+          { _id: conv._id, tenantId: TENANT_ID },
           { $set: { contactName: pedidoNombre } }
         );
         conv.contactName = pedidoNombre;
@@ -716,6 +857,7 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
 
       const orderDoc = normalizeOrder(conv.waId, conv.contactName, finalPayload.Pedido);
       orderDoc.conversationId = conv._id;
+      orderDoc.tenantId = TENANT_ID;
       await db.collection("orders").insertOne(orderDoc);
     }
   } catch (e) {
@@ -729,19 +871,20 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
 const sessions = new Map(); // waId -> { messages, updatedAt }
 
 async function getSession(waId) {
-  if (!sessions.has(waId)) {
+  const key = sessionKey(waId);
+  if (!sessions.has(key)) {
         const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
+    const conv = await db.collection("conversations").findOne(withTenantFilter({ waId, status: "OPEN" }));
     const systemText = await buildSystemPrompt({ conversation: conv || null });
 // al iniciar conversación
-    sessions.set(waId, {
+    sessions.set(key, {
       messages: [{ role: "system", content: systemText }],
       updatedAt: Date.now()
     });
   }
-  return sessions.get(waId);
+  return sessions.get(key);
 }
-function resetSession(waId) { sessions.delete(waId); }
+function resetSession(waId) { sessions.delete(sessionKey(waId)); }
 function pushMessage(session, role, content, maxTurns = 20) {
   session.messages.push({ role, content });
   const system = session.messages[0];
@@ -751,6 +894,12 @@ function pushMessage(session, role, content, maxTurns = 20) {
 }
 
 // OpenAI chat call with retries & backoff (retriable on timeouts / 429 / reset)
+
+
+
+
+
+
 async function openaiChatWithRetries(messages, { model, temperature }) {
   const maxRetries = parseInt(process.env.OPENAI_RETRY_COUNT || "2", 10);
   const baseDelay  = parseInt(process.env.OPENAI_RETRY_BASE_MS || "600", 10);
@@ -784,28 +933,6 @@ async function openaiChatWithRetries(messages, { model, temperature }) {
   throw lastErr || new Error("openai_chat_failed");
 }
 /* ======================= Chat (historial + parser robusto) ======================= */
-// === Extrae el mejor campo de texto desde un JSON del modelo ===
-function pickResponseField(obj) {
-  if (!obj || typeof obj !== "object") return "";
-  const CANDIDATES = [
-    "response", "respuesta", "message", "texto", "text",
-    "output", "content", "mensaje", "reply"
-  ];
-  for (const k of CANDIDATES) {
-    const v = obj[k];
-    if (typeof v === "string" && v.trim()) return v.trim();
-  }
-  if (obj.data && typeof obj.data === "object") {
-    const nested = pickResponseField(obj.data);
-    if (nested) return nested;
-  }
-  if (Array.isArray(obj.messages)) {
-    const firstStr = obj.messages.find(m => typeof m === "string" && m.trim());
-    if (firstStr) return firstStr.trim();
-  }
-  return "";
-}
-
 async function chatWithHistoryJSON(
   waId,
   userText,
@@ -817,7 +944,7 @@ async function chatWithHistoryJSON(
   // refrescar system en cada turno
   try {
         const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
+    const conv = await db.collection("conversations").findOne(withTenantFilter({ waId, status: "OPEN" }));
     const systemText = await buildSystemPrompt({ conversation: conv || null });
     session.messages[0] = { role: "system", content: systemText };
 } catch (e) {
@@ -844,21 +971,16 @@ async function chatWithHistoryJSON(
 
   const data = await safeJsonParseStrictOrFix(content, { openai, model }) || null;
 
-// ✅ Nunca mandar JSON crudo al usuario.
-let responseText = "";
-if (data) {
-  responseText = pickResponseField(data);
-}
-if (!responseText) {
-  const looksJson = typeof content === "string" && /^\s*[\{\[]/.test(content);
-  responseText = (!looksJson && typeof content === "string" ? content.trim() : "") ||
-    "Perdón, hubo un formato inesperado. ¿Podés repetir o reformular tu consulta?";
-}
+  const responseText =
+    (data && typeof data.response === "string" && data.response.trim()) ||
+    (typeof content === "string" ? content.trim() : "") ||
+    "Perdón, no pude generar una respuesta. ¿Podés reformular?";
 
-const estado =
+  const estado =
     (data && typeof data.estado === "string" && data.estado.trim().toUpperCase()) || "IN_PROGRESS";
 
   pushMessage(session, "assistant", responseText);
+  //return { response: responseText, estado, raw: data || {} };
   return { response: responseText, estado, raw: data || {}, usage };
 }
 
@@ -1066,7 +1188,18 @@ app.post("/webhook", async (req, res) => {
           }
 
           console.log("📩 IN:", { from, type, preview: (userText || "").slice(0, 120) });
+         // tokens de OpenAI
+        
+/*
+          // tokens de OpenAI (usage) capturados más arriba en el flujo
+          const _usage = (raw && raw.usage) || (out && out.usage) || null;
+          const _tokens = _usage ? {
+            prompt: _usage.prompt_tokens || 0,
+            completion: _usage.completion_tokens || 0,
+            total: _usage.total_tokens || 0
+          } : null
 
+*/
           // persistencia usuario: aseguro conv abierta y guardo nombre si viene
           const conv = await ensureOpenConversation(from, { contactName });
           await appendMessage(conv._id, {
@@ -1080,8 +1213,9 @@ app.post("/webhook", async (req, res) => {
           let responseText = "Perdón, no pude generar una respuesta. ¿Podés reformular?";
           let estado = "IN_PROGRESS";
           let raw = null;
+          let out = null;
           try {
-            const out = await chatWithHistoryJSON(from, userText);
+            out = await chatWithHistoryJSON(from, userText);
             responseText = out.response || responseText;
             estado = (out.estado || "IN_PROGRESS").toUpperCase();
             raw = out.raw || null;
@@ -1094,13 +1228,25 @@ app.post("/webhook", async (req, res) => {
           await sendSafeText(from, responseText, value);
           console.log("OUT →", from, "| estado:", estado);
 
+          // tokens de OpenAI (usage) a partir de la salida real del modelo
+          const _usage = out?.usage || null;
+          const _tokens = _usage ? {
+            prompt: _usage.prompt_tokens || 0,
+            completion: _usage.completion_tokens || 0,
+            total: _usage.total_tokens || 0
+          } : null;
+
           // persistencia assistant
           await appendMessage(conv._id, {
             role: "assistant",
             content: responseText,
             type: "text",
-            meta: { estado }
+            meta: { estado, tokens: _tokens }
           });
+           // acumular tokens a nivel conversación
+          if (conv && conv._id) {
+            await bumpConversationTokenCounters(conv._id, _tokens, "assistant");
+          }
 
           // TTS si el usuario envió audio
           if (type === "audio" && (process.env.ENABLE_TTS_FOR_AUDIO || "true").toLowerCase() === "true") {
@@ -1143,6 +1289,43 @@ app.post("/webhook", async (req, res) => {
     console.error("⚠️ Error en webhook:", err);
   }
 });
+
+
+/* ======================= Índices (multiempresa + performance) ======================= */
+async function ensureIndexes() {
+  try {
+    const db = await getDb();
+    await db.collection("products").createIndexes([
+      { key: { tenantId: 1, active: 1, createdAt: -1 }, name: "products_tenant_active_createdAt" },
+      { key: { tenantId: 1, descripcion: 1 },          name: "products_tenant_descripcion" },
+      { key: { tenantId: 1, updatedAt: -1 },           name: "products_tenant_updatedAt" }
+    ]);
+    await db.collection("conversations").createIndexes([
+      { key: { tenantId: 1, waId: 1, status: 1 }, name: "conversations_tenant_wa_status" },
+      { key: { tenantId: 1, openedAt: -1 },       name: "conversations_tenant_openedAt" },
+      { key: { tenantId: 1, processed: 1, openedAt: -1 }, name: "conversations_tenant_processed_openedAt" }
+    ]);
+    await db.collection("messages").createIndexes([
+      { key: { conversationId: 1, ts: 1 }, name: "messages_conversation_ts" },
+      { key: { tenantId: 1, ts: -1 },      name: "messages_tenant_ts" }
+    ]);
+    try {
+      await db.collection("messages").createIndex({ expireAt: 1 }, { name: "messages_expireAt_TTL", expireAfterSeconds: 0 });
+    } catch (e) {
+      console.warn("ℹ️ TTL index messages.expireAt:", e.message);
+    }
+    await db.collection("orders").createIndexes([
+      { key: { conversationId: 1 }, name: "orders_conversationId" },
+      { key: { tenantId: 1, processed: 1, createdAt: -1 }, name: "orders_tenant_processed_createdAt" }
+    ]);
+    await db.collection("settings").createIndexes([
+      { key: { tenantId: 1 }, name: "settings_tenant" }
+    ]);
+    console.log("✅ Índices verificados/creados");
+  } catch (e) {
+    console.warn("⚠️ ensureIndexes error:", e.message || e);
+  }
+}
 
 /* ======================= Admin UI ======================= */
 /**
@@ -1338,7 +1521,7 @@ app.get("/admin", async (req, res) => {
 app.get("/api/admin/conversations", async (req, res) => {
   try {
     const db = await getDb();
-    const q = {};
+    const q = { tenantId: TENANT_ID };
     const { processed, phone, status, date_field, from, to } = req.query;
 
     if (typeof processed === "string") {
@@ -1395,9 +1578,10 @@ app.get("/api/admin/messages/:id", async (req, res) => {
   try {
     const id = req.params.id;
     const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id), tenantId: TENANT_ID });
     if (!conv) return res.status(404).send("Conversation not found");
-
+// mensajes por conversationId (ya pertenece al tenant por conv)
+    // opcional: { tenantId: TENANT_ID } en mensajes si guardamos tenantId allí
     const msgs = await db.collection("messages")
       .find({ conversationId: new ObjectId(id) })
       .sort({ ts: 1 })
@@ -1443,10 +1627,10 @@ app.get("/api/admin/order/:id", async (req, res) => {
   try {
     const id = req.params.id;
     const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id), tenantId: TENANT_ID });
     if (!conv) return res.status(404).json({ error: "not_found" });
 
-    // Buscar order por conversationId si existe
+     // Buscar order por conversationId si existe (scoped por tenant en insert)
     let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) });
     if (!order && conv.summary?.Pedido) {
       // normalizar on the fly si no se grabó orders (backfill)
@@ -1487,10 +1671,11 @@ app.post("/api/admin/order/:id/process", async (req, res) => {
     );
     if (!upd.matchedCount) {
       // si no hay order, intentamos construirla desde summary y crearla procesada
-      const conv = await db.collection("conversations").findOne({ _id: convId });
+      const conv = await db.collection("conversations").findOne({ _id: convId, tenantId: TENANT_ID });
       if (!conv || !conv.summary?.Pedido) return res.status(404).json({ error: "order_not_found" });
       const orderDoc = normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
       orderDoc.conversationId = convId;
+      orderDoc.tenantId = TENANT_ID;
       orderDoc.processed = true;
       orderDoc.processedAt = new Date();
       await db.collection("orders").insertOne(orderDoc);
@@ -1510,7 +1695,7 @@ app.get("/admin/print/:id", async (req, res) => {
     const id = req.params.id;
     const v = String(req.query.v || "kitchen").toLowerCase(); // kitchen | client
     const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id), tenantId: TENANT_ID });
     if (!conv) return res.status(404).send("Conversación no encontrada");
     let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) });
     if (!order && conv.summary?.Pedido) {
@@ -1593,6 +1778,205 @@ process.on("uncaughtException", (err) => {
   console.error("🧨 UncaughtException:", err);
 });
 
+
+/* ======================= Costos (tokens y $) ======================= */
+function getCostRates() {
+  const inPer1K  = Number(process.env.COST_IN_PER_1K  || process.env.OPENAI_INPUT_PRICE_PER_1K  || 0);
+  const outPer1K = Number(process.env.COST_OUT_PER_1K || process.env.OPENAI_OUTPUT_PRICE_PER_1K || 0);
+  const currency = (process.env.COSTS_CURRENCY || "USD").toUpperCase();
+  return { inPer1K, outPer1K, currency };
+}
+function costOfTokens(promptTokens, completionTokens, rates) {
+  const p = Number(promptTokens || 0);
+  const c = Number(completionTokens || 0);
+  return (p / 1000) * rates.inPer1K + (c / 1000) * rates.outPer1K;
+}
+
+app.get("/api/costos", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { from, to } = req.query || {};
+    const match = {};
+    if (TENANT_ID) match.tenantId = TENANT_ID;
+    if (from || to) {
+      match.openedAt = {};
+      if (from) match.openedAt.$gte = new Date(`${from}T00:00:00.000Z`);
+      if (to)   match.openedAt.$lte = new Date(`${to}T23:59:59.999Z`);
+    }
+    const convs = await db.collection("conversations")
+      .find(match, {
+        sort: { openedAt: -1 },
+        projection: {
+          waId: 1, contactName: 1, openedAt: 1, closedAt: 1, status: 1,
+          "counters.tokens_prompt_total": 1,
+          "counters.tokens_completion_total": 1,
+          "counters.tokens_total": 1,
+          "counters.messages_total": 1
+        }
+      })
+      .limit(2000)
+      .toArray();
+
+    const rates = getCostRates();
+    let tp = 0, tc = 0, tt = 0, convCount = 0;
+    for (const c of convs) {
+      const p = Number(c?.counters?.tokens_prompt_total || 0);
+      const co = Number(c?.counters?.tokens_completion_total || 0);
+      const t = Number(c?.counters?.tokens_total || (p + co));
+      tp += p; tc += co; tt += t; convCount += 1;
+    }
+    const totalCost = costOfTokens(tp, tc, rates);
+
+    const byDayMap = new Map();
+    for (const c of convs) {
+      const d = c.openedAt ? new Date(c.openedAt) : null;
+      const key = d ? d.toISOString().slice(0,10) : "sin_fecha";
+      const p = Number(c?.counters?.tokens_prompt_total || 0);
+      const co = Number(c?.counters?.tokens_completion_total || 0);
+      const t = Number(c?.counters?.tokens_total || (p + co));
+      if (!byDayMap.has(key)) byDayMap.set(key, { day: key, prompt: 0, completion: 0, total: 0, convs: 0 });
+      const row = byDayMap.get(key);
+      row.prompt += p; row.completion += co; row.total += t; row.convs += 1;
+    }
+    const byDay = Array.from(byDayMap.values())
+      .map(r => ({ ...r, cost: costOfTokens(r.prompt, r.completion, rates) }))
+      .sort((a,b)=> a.day < b.day ? 1 : -1);
+
+    const recent = convs.slice(0, 50).map(c => {
+      const prompt = Number(c?.counters?.tokens_prompt_total || 0);
+      const comp   = Number(c?.counters?.tokens_completion_total || 0);
+      const total  = Number(c?.counters?.tokens_total || (prompt + comp));
+      return {
+        _id: String(c._id),
+        waId: c.waId,
+        contactName: c.contactName || "",
+        openedAt: c.openedAt || null,
+        closedAt: c.closedAt || null,
+        status: c.status || "OPEN",
+        messages: Number(c?.counters?.messages_total || 0),
+        tokens: { prompt, completion: comp, total },
+        cost: costOfTokens(prompt, comp, rates)
+      };
+    });
+
+    res.json({
+      tenantId: TENANT_ID || null,
+      rates: { currency: rates.currency, in_per_1k: rates.inPer1K, out_per_1k: rates.outPer1K },
+      totals: {
+        conversations: convCount,
+        tokens: { prompt: tp, completion: tc, total: tt },
+        cost: totalCost
+      },
+      byDay,
+      recent
+    });
+  } catch (e) {
+    console.error("⚠️ /api/costos error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+app.get("/costos", async (req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end(`<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Costos (tokens y $)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1100px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .card{border:1px solid #ddd;border-radius:8px;padding:12px 14px;background:#fff}
+  table{border-collapse:collapse;width:100%;margin-top:12px}
+  th,td{border:1px solid #eee;padding:8px;vertical-align:top}
+  th{background:#f6f6f6;text-align:left}
+  .muted{color:#666}
+  .mono{font-family:ui-monospace, Menlo, Consolas, monospace}
+</style>
+</head>
+<body>
+  <h1>Costos</h1>
+  <form id="f" class="row">
+    <label>Desde <input type="date" name="from"></label>
+    <label>Hasta <input type="date" name="to"></label>
+    <button>Aplicar</button>
+    <span class="muted">Tenant: <span class="mono">${TENANT_ID || ""}</span></span>
+  </form>
+
+  <div id="summary" class="row" style="margin-top:12px;"></div>
+
+  <h2>Por día</h2>
+  <table id="byDay">
+    <thead><tr><th>Día</th><th>Prompt</th><th>Completion</th><th>Total</th><th>Costo</th><th>Convs</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+  <h2>Conversaciones recientes</h2>
+  <table id="recent">
+    <thead><tr><th>Fecha</th><th>Cliente</th><th>WA</th><th>Msgs</th><th>Prompt</th><th>Completion</th><th>Total</th><th>Costo</th></tr></thead>
+    <tbody></tbody>
+  </table>
+
+<script>
+  const fmtInt = n => Number(n||0).toLocaleString();
+  const fmtUsd = (n, c) => (c||'USD') + ' ' + (Number(n||0)).toFixed(4);
+
+  async function load() {
+    const p = new URLSearchParams(new FormData(document.getElementById('f')));
+    const r = await fetch('/api/costos?' + p.toString());
+    const j = await r.json();
+
+    const s = document.getElementById('summary');
+    s.innerHTML = '';
+    const cards = [
+      ['Conversaciones', j.totals.conversations],
+      ['Prompt tokens', fmtInt(j.totals.tokens.prompt)],
+      ['Completion tokens', fmtInt(j.totals.tokens.completion)],
+      ['Total tokens', fmtInt(j.totals.tokens.total)],
+      ['Costo total', fmtUsd(j.totals.cost, j.rates.currency)],
+      ['Tarifas', 'in=${j.rates.in_per_1k}/1K, out=${j.rates.out_per_1k}/1K ${j.rates.currency}']
+    ];
+    for (const [k,v] of cards) {
+      const d = document.createElement('div'); d.className='card';
+      d.innerHTML = '<div class="muted">'+k+'</div><div class="mono" style="font-size:18px">'+v+'</div>';
+      s.appendChild(d);
+    }
+
+    const tb1 = document.querySelector('#byDay tbody');
+    tb1.innerHTML = '';
+    for (const r of j.byDay) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td>${r.day}</td><td>${fmtInt(r.prompt)}</td><td>${fmtInt(r.completion)}</td><td>${fmtInt(r.total)}</td><td>${fmtUsd(r.cost, j.rates.currency)}</td><td>${r.convs}</td>';
+      tb1.appendChild(tr);
+    }
+
+    const tb2 = document.querySelector('#recent tbody');
+    tb2.innerHTML = '';
+    for (const r of j.recent) {
+      const d = r.openedAt ? new Date(r.openedAt).toLocaleString() : '';
+      const tr = document.createElement('tr');
+      tr.innerHTML = '
+        <td>${d}</td>
+        <td>${(r.contactName||'')}</td>
+        <td class="mono">${r.waId||''}</td>
+        <td>${r.messages||0}</td>
+        <td>${fmtInt(r.tokens.prompt)}</td>
+        <td>${fmtInt(r.tokens.completion)}</td>
+        <td>${fmtInt(r.tokens.total)}</td>
+        <td>${fmtUsd(r.cost, j.rates.currency)}</td>
+      ';
+      tb2.appendChild(tr);
+    }
+  }
+  document.getElementById('f').addEventListener('submit', (e)=>{e.preventDefault(); load();});
+  load();
+</script>
+</body>
+</html>`);
+});
+
+
 /* ======================= Start ======================= */
 
 
@@ -1604,15 +1988,9 @@ app.get("/api/products", async (req, res) => {
       req.app?.locals?.db ||
       global.db;
 
-    const q = req.query.all === "true" ? {} : { active: { $ne: false } };
-    if (process.env.TENANT_ID) {
-      q.$or = [
-        { tenantId: process.env.TENANT_ID },
-        { tenantId: { $exists: false } },
-        { tenantId: null }
-      ];
-    }
-
+    const q = req.query.all === "true"
+      ? withTenantFilter({})
+      : withTenantFilter({ active: { $ne: false } });
     const items = await database.collection("products")
       .find(q).sort({ createdAt: -1, descripcion: 1 }).toArray();
 
@@ -1636,21 +2014,22 @@ app.post("/api/products", async (req, res) => {
     observacion = String(observacion || "").trim();
     if (typeof active !== "boolean") active = !!active;
 
-    let imp = null;
-    if (typeof importe === "number") imp = importe;
-    else if (typeof importe === "string") {
-      const n = Number(importe.replace(/[^\d.,-]/g, "").replace(",", "."));
-      imp = Number.isFinite(n) ? n : null;
-    }
+    const imp = parseMoneyFlexible(importe);
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
 
     const now = new Date();
-    const doc = { descripcion, observacion, active, createdAt: now, updatedAt: now };
-    if (process.env.TENANT_ID) doc.tenantId = process.env.TENANT_ID;
+    const doc = attachTenant({ descripcion, observacion, active, createdAt: now, updatedAt: now });
+    doc.tenantId = TENANT_ID;
     if (imp !== null) doc.importe = imp;
-
-    const ins = await database.collection("products").insertOne(doc);
-    res.json({ ok: true, _id: String(ins.insertedId) });
+    // Log mínimo para diagnóstico si algo falla aguas arriba
+    try {
+      const ins = await database.collection("products").insertOne(doc);
+      return res.json({ ok: true, _id: String(ins.insertedId) });
+    } catch (e) {
+      console.error("POST /api/products insertOne error:", e);
+      return res.status(500).json({ error: "insert_failed" });
+    }
+    
   } catch (e) {
     console.error("POST /api/products error:", e);
     res.status(500).json({ error: "internal" });
@@ -1670,21 +2049,23 @@ app.put("/api/products/:id", async (req, res) => {
     ["descripcion","observacion","active","importe"].forEach(k => {
       if (req.body[k] !== undefined) upd[k] = req.body[k];
     });
-    if (upd.importe !== undefined) {
-      const v = upd.importe;
-      if (typeof v === "string") {
-        const n = Number(v.replace(/[^\d.,-]/g, "").replace(",", "."));
-        upd.importe = Number.isFinite(n) ? n : undefined;
-      }
+
+
+     if (upd.importe !== undefined) {
+      const n = parseMoneyFlexible(upd.importe);
+      if (n === null) delete upd.importe;  // si no parsea, no sobreescribimos
+      else upd.importe = n;
     }
     if (Object.keys(upd).length === 0) return res.status(400).json({ error: "no_fields" });
     upd.updatedAt = new Date();
 
     const result = await database.collection("products").updateOne(
-      { _id: new ObjectId(String(id)) },
+      { _id: new ObjectId(String(id)), tenantId: TENANT_ID },
       { $set: upd }
     );
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    
+    invalidateBehaviorCache();
     res.json({ ok: true });
   } catch (e) {
     console.error("PUT /api/products/:id error:", e);
@@ -1701,9 +2082,10 @@ app.delete("/api/products/:id", async (req, res) => {
       global.db;
 
     const { id } = req.params;
-    const result = await database.collection("products").deleteOne({ _id: new ObjectId(String(id)) });
+    const result = await database.collection("products").deleteOne({ _id: new ObjectId(String(id)), tenantId: TENANT_ID });
     if (!result.deletedCount) return res.status(404).json({ error: "not_found" });
-    res.json({ ok: true });
+    rinvalidateBehaviorCache();
+   res.json({ ok: true });
   } catch (e) {
     console.error("DELETE /api/products/:id error:", e);
     res.status(500).json({ error: "internal" });
@@ -1720,11 +2102,12 @@ app.post("/api/products/:id/inactivate", async (req, res) => {
 
     const { id } = req.params;
     const result = await database.collection("products").updateOne(
-      { _id: new ObjectId(String(id)) },
+      { _id: new ObjectId(String(id)), tenantId: TENANT_ID },
       { $set: { active: false, updatedAt: new Date() } }
     );
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
-    res.json({ ok: true });
+    invalidateBehaviorCache();
+   res.json({ ok: true });
   } catch (e) {
     console.error("POST /api/products/:id/inactivate error:", e);
     res.status(500).json({ error: "internal" });
@@ -1741,10 +2124,11 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
 
     const { id } = req.params;
     const result = await database.collection("products").updateOne(
-      { _id: new ObjectId(String(id)) },
+      { _id: new ObjectId(String(id)), tenantId: TENANT_ID },
       { $set: { active: true, updatedAt: new Date() } }
     );
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    invalidateBehaviorCache();
     res.json({ ok: true });
   } catch (e) {
     console.error("POST /api/products/:id/reactivate error:", e);
@@ -1763,16 +2147,10 @@ app.get("/productos", async (req, res) => {
 
     if (!database) throw new Error("DB no inicializada");
 
-    const verTodos = req.query.all === "true";
-    const filtro = verTodos ? {} : { active: { $ne: false } };
-    if (process.env.TENANT_ID) {
-      filtro.$or = [
-        { tenantId: process.env.TENANT_ID },
-        { tenantId: { $exists: false } },
-        { tenantId: null }
-      ];
-    }
-
+   const verTodos = req.query.all === "true";
+    const filtro = verTodos
+      ? withTenantFilter({})
+      : withTenantFilter({ active: { $ne: false } });
 
     const productos = await database
       .collection("products")
@@ -1805,8 +2183,8 @@ app.get("/productos", async (req, res) => {
 
   <div class="row">
     <a class="btn" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a>
-    <button id="btnAdd" class="btn" type="button">Agregar</button>
-    <button id="btnReload" class="btn" type="button">Recargar</button>
+    <button id="btnAdd" class="btn">Agregar</button>
+    <button id="btnReload" class="btn">Recargar</button>
   </div>
   <p></p>
 
@@ -1850,15 +2228,35 @@ app.get("/productos", async (req, res) => {
   </template>
 
   <script>
-    function q(sel, ctx){ return (ctx||document).querySelector(sel) }
-    function all(sel, ctx){ return Array.from((ctx||document).querySelectorAll(sel)) }
+
+ function showError(e){
+      try {
+        alert(e.message || String(e));
+      } catch {
+        alert(String(e));
+      }
+    }
 
     async function j(url, opts){
       const r = await fetch(url, opts||{});
-      if(!r.ok) throw new Error('HTTP '+r.status);
       const ct = r.headers.get('content-type')||'';
+      if (!r.ok) {
+        let payload = null;
+        try { payload = ct.includes('application/json') ? await r.json() : await r.text(); } catch {}
+        const msg = (payload && (payload.error || payload.message)) ? (payload.error || payload.message)
+                  : ('HTTP ' + r.status + (typeof payload==='string' ? (' - ' + payload.slice(0,200)) : ''));
+        throw new Error(msg);
+      }
       return ct.includes('application/json') ? r.json() : r.text();
     }
+    // (reemplaza la definición previa de j si existía)
+    window.j = j;
+
+
+    function q(sel, ctx){ return (ctx||document).querySelector(sel) }
+    function all(sel, ctx){ return Array.from((ctx||document).querySelectorAll(sel)) }
+
+    
 
     async function reload(){
       const url = new URL(location.href);
@@ -1901,11 +2299,16 @@ app.get("/productos", async (req, res) => {
           body: JSON.stringify(payload)
         });
       } else {
-        await j('/api/products', {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify(payload)
-        });
+      try{
+          await j('/api/products', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify(payload)
+          });
+        } catch(e){
+          showError(e);
+          return;
+        }
       }
       await reload();
     }
@@ -1940,26 +2343,7 @@ app.get("/productos", async (req, res) => {
     // Botones generales
     q('#btnAdd').addEventListener('click', ()=>{
       const tb = q('#tbl tbody');
-      const tpl = q('#row-tpl');
-      let tr = null;
-      if (tpl && tpl.content && tpl.content.firstElementChild) {
-        tr = tpl.content.firstElementChild.cloneNode(true);
-      } else {
-        // Fallback si <template> no está soportado
-        const tmp = document.createElement('tbody');
-        tmp.innerHTML = '<tr>\
-          <td><input type="text" class="descripcion" placeholder="Ej: Pollo entero" /></td>\
-          <td><input type="number" class="importe" step="0.01" placeholder="0.00" /></td>\
-          <td><textarea class="observacion" placeholder="Observaciones / reglas"></textarea></td>\
-          <td style="text-align:center;"><input type="checkbox" class="active" checked /></td>\
-          <td>\
-            <button class="btn save" type="button">Guardar</button>\
-            <button class="btn del" type="button">Eliminar</button>\
-            <button class="btn toggle" type="button">Inactivar</button>\
-          </td>\
-        </tr>';
-        tr = tmp.firstElementChild;
-      }
+      const tr = q('#row-tpl').content.firstElementChild.cloneNode(true);
       bindRow(tr);
       tb.prepend(tr);
       q('.descripcion', tr).focus();
@@ -1984,7 +2368,7 @@ app.get("/productos.json", async (req, res) => {
       (typeof getDb === "function" && await getDb()) ||
       req.app?.locals?.db ||
       global.db;
-    const data = await database.collection("products").find((() => { const q = {}; if (process.env.TENANT_ID) { q.$or = [ { tenantId: process.env.TENANT_ID }, { tenantId: { $exists: false } }, { tenantId: null } ]; } return q; })()).limit(50).toArray();
+    const data = await database.collection("products").find(withTenantFilter({})).limit(50).toArray();
     res.json(data);
   } catch (e) {
     console.error(e); res.status(500).json({ error: String(e) });
