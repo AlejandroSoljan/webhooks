@@ -2270,7 +2270,7 @@ app.get("/productos", async (req, res) => {
       }
     }
 
-    async function saveRow(tr){
+    async async function saveRow(tr){
       const id = tr.dataset.id;
       const payload = {
         descripcion: q('.descripcion', tr).value.trim(),
