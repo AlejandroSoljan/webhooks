@@ -123,7 +123,192 @@ function withTimeout(promise, ms, label = "operation") {
   ]);
 }
 
-/* ======================= Helpers JSON robustos ======================= */
+/* ======================= Helpers JSON robustos
+// === CANONICAL PRODUCTS ENDPOINTS (inserted) ===
+function parseMoneyFlexible(v) {
+  if (v == null) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  let s = String(v).trim();
+  if (!s) return null;
+  s = s.replace(/[^\d,.\-]/g, "");
+  if (!s) return null;
+  const lastComma = s.lastIndexOf(",");
+  const lastDot   = s.lastIndexOf(".");
+  if (lastComma !== -1 && lastDot !== -1) {
+    if (lastComma > lastDot) { s = s.replace(/\./g, "").replace(",", "."); }
+    else { s = s.replace(/,/g, ""); }
+  } else if (lastComma !== -1) {
+    s = s.replace(/,/g, ".");
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+app.get("/api/products", async (req, res) => {
+  try {
+    const database =
+      (typeof getDb === "function" && await getDb()) ||
+      req.app?.locals?.db ||
+      global.db;
+    const qBase = req.query.all === "true" ? {} : { active: { $ne: false } };
+    const q = withTenantFilter(qBase);
+    const items = await database.collection("products")
+      .find(q).sort({ createdAt: -1, descripcion: 1 }).toArray();
+    res.json(items.map(it => ({ ...it, _id: String(it._id) })));
+  } catch (e) {
+    console.error("GET /api/products error (canon):", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+app.post("/api/products", async (req, res) => {
+  try {
+    const database =
+      (typeof getDb === "function" && await getDb()) ||
+      req.app?.locals?.db ||
+      global.db;
+    let { descripcion, importe, observacion, active } = req.body || {};
+    descripcion = String(descripcion || "").trim();
+    observacion = String(observacion || "").trim();
+    if (typeof active !== "boolean") active = !!active;
+    const imp = parseMoneyFlexible(importe);
+    if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
+    const now = new Date();
+    const doc = attachTenant({ descripcion, observacion, active, createdAt: now, updatedAt: now });
+    if (imp !== null) doc.importe = imp;
+    const ins = await database.collection("products").insertOne(doc);
+    try { invalidateBehaviorCache(); } catch {}
+    res.json({ ok: true, _id: String(ins.insertedId) });
+  } catch (e) {
+    console.error("POST /api/products error (canon):", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+app.put("/api/products/:id", async (req, res) => {
+  try {
+    const database =
+      (typeof getDb === "function" && await getDb()) ||
+      req.app?.locals?.db ||
+      global.db;
+    const { id } = req.params;
+    const upd = {};
+    ["descripcion","observacion","active","importe"].forEach(k => {
+      if (req.body[k] !== undefined) upd[k] = req.body[k];
+    });
+    if (upd.importe !== undefined) {
+      const n = parseMoneyFlexible(upd.importe);
+      if (n === null) delete upd.importe;
+      else upd.importe = n;
+    }
+    if (Object.keys(upd).length === 0) return res.status(400).json({ error: "no_fields" });
+    upd.updatedAt = new Date();
+    upd.tenantId = TENANT_ID;
+    const result = await database.collection("products").updateOne(
+      { _id: new ObjectId(String(id)), tenantId: TENANT_ID },
+      { $set: upd }
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    try { invalidateBehaviorCache(); } catch {}
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("PUT /api/products/:id error (canon):", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+app.delete("/api/products/:id", async (req, res) => {
+  try {
+    const database =
+      (typeof getDb === "function" && await getDb()) ||
+      req.app?.locals?.db ||
+      global.db;
+    const { id } = req.params;
+    const result = await database.collection("products").deleteOne({ _id: new ObjectId(String(id)), tenantId: TENANT_ID });
+    if (!result.deletedCount) return res.status(404).json({ error: "not_found" });
+    try { invalidateBehaviorCache(); } catch {}
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("DELETE /api/products/:id error (canon):", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+app.post("/api/products/:id/inactivate", async (req, res) => {
+  try {
+    const database =
+      (typeof getDb === "function" && await getDb()) ||
+      req.app?.locals?.db ||
+      global.db;
+    const { id } = req.params;
+    const result = await database.collection("products").updateOne(
+      { _id: new ObjectId(String(id)), tenantId: TENANT_ID },
+      { $set: { active: false, updatedAt: new Date() } }
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    try { invalidateBehaviorCache(); } catch {}
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/products/:id/inactivate error (canon):", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+app.post("/api/products/:id/reactivate", async (req, res) => {
+  try {
+    const database =
+      (typeof getDb === "function" && await getDb()) ||
+      req.app?.locals?.db ||
+      global.db;
+    const { id } = req.params;
+    const result = await database.collection("products").updateOne(
+      { _id: new ObjectId(String(id)), tenantId: TENANT_ID },
+      { $set: { active: true, updatedAt: new Date() } }
+    );
+    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    try { invalidateBehaviorCache(); } catch {}
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/products/:id/reactivate error (canon):", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+app.get("/productos", async (req, res) => {
+  try {
+    const database =
+      (typeof getDb === "function" && await getDb()) ||
+      req.app?.locals?.db ||
+      global.db;
+    const verTodos = req.query.all === "true";
+    const filtro = withTenantFilter(verTodos ? {} : { active: { $ne: false } });
+    const productos = await database
+      .collection("products")
+      .find(filtro)
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end("<!doctype html><html><head><meta charset=\"utf-8\" /><title>Productos</title>"+
+      "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />"+
+      "<style>body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1100px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px;vertical-align:top}th{background:#f5f5f5;text-align:left}input[type=\"text\"],input[type=\"number\"],textarea{width:100%;box-sizing:border-box}textarea{min-height:56px}.row{display:flex;gap:8px;align-items:center}.muted{color:#666;font-size:12px}.pill{border:1px solid #ccc;border-radius:999px;padding:2px 8px;font-size:12px}.btn{padding:6px 10px;border:1px solid #333;background:#fff;border-radius:4px;cursor:pointer}.btn + .btn{margin-left:6px}</style></head><body>"+
+      "<h1>Productos</h1><p class=\"muted\">Fuente: <span class=\"pill\">MongoDB (colección <code>products</code>)</span> • Tenant: <code>"+TENANT_ID+"</code></p>"+
+      "<div class=\"row\"><a class=\"btn\" href=\"/productos"+(verTodos ? "" : "?all=true")+"\">"+(verTodos ? "Ver solo activos" : "Ver todos")+"</a>"+
+      "<button id=\"btnAdd\" class=\"btn\">Agregar</button><button id=\"btnReload\" class=\"btn\">Recargar</button></div><p></p>"+
+      "<table id=\"tbl\"><thead><tr><th>Descripción</th><th>Importe</th><th>Observación</th><th>Activo</th><th>Acciones</th></tr></thead><tbody>"+
+      (productos.length ? productos.map(p => (
+        "<tr data-id=\""+p._id+"\">"+
+        "<td><input type=\"text\" class=\"descripcion\" value=\""+String(p.descripcion or "").replace('"','&quot;')+"\" /></td>"+
+        "<td><input type=\"number\" class=\"importe\" step=\"0.01\" value=\""+(str(p.get("importe")) if isinstance(p.get("importe"), (int,float)) else str(p.get("importe") or ""))+"\" /></td>"+
+        "<td><textarea class=\"observacion\">"+str(p.get("observacion") or "").replace('<','&lt;')+"</textarea></td>"+
+        "<td style=\"text-align:center;\"><input type=\"checkbox\" class=\"active\" "+("checked" if p.get("active", True) else "")+" /></td>"+
+        "<td><button class=\"btn save\">Guardar</button><button class=\"btn del\">Eliminar</button><button class=\"btn toggle\">"+("Inactivar" if p.get("active", True) else "Reactivar")+"</button></td>"+
+        "</tr>"
+      )).join("") : "<tr><td colspan=\"5\" style=\"text-align:center;color:#666\">Sin productos para mostrar</td></tr>")+
+      "</tbody></table>"+
+      "<template id=\"row-tpl\"><tr><td><input type=\"text\" class=\"descripcion\" placeholder=\"Ej: Pollo entero\" /></td><td><input type=\"number\" class=\"importe\" step=\"0.01\" placeholder=\"0.00\" /></td><td><textarea class=\"observacion\" placeholder=\"Observaciones / reglas\"></textarea></td><td style=\"text-align:center;\"><input type=\"checkbox\" class=\"active\" checked /></td><td><button class=\"btn save\">Guardar</button><button class=\"btn del\">Eliminar</button><button class=\"btn toggle\">Inactivar</button></td></tr></template>"+
+      "<script>function q(s,c){return (c||document).querySelector(s)}function all(s,c){return Array.from((c||document).querySelectorAll(s))}async function j(u,o){const r=await fetch(u,o||{});const ct=r.headers.get('content-type')||'';if(!r.ok){let p=null;try{p=ct.includes('application/json')?await r.json():await r.text()}catch{}const m=(p&&(p.error||p.message))?(p.error||p.message):('HTTP '+r.status+(typeof p==='string'?(' - '+p.slice(0,200)) :''));throw new Error(m)}return ct.includes('application/json')?r.json():r.text()}async function reload(){const url=new URL(location.href);const allFlag=url.searchParams.get('all')==='true';const data=await j('/api/products'+(allFlag?'?all=true':''));const tb=q('#tbl tbody');tb.innerHTML='';for(const it of data){const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);tr.dataset.id=it._id||'';q('.descripcion',tr).value=it.descripcion||'';q('.importe',tr).value=typeof it.importe==='number'?it.importe:(it.importe||'');q('.observacion',tr).value=it.observacion||'';q('.active',tr).checked=it.active!==false;q('.toggle',tr).textContent=(it.active!==false)?'Inactivar':'Reactivar';bindRow(tr);tb.appendChild(tr)}if(!data.length){const r=document.createElement('tr');r.innerHTML='<td colspan=\'5\' style=\'text-align:center;color:#666\'>Sin productos para mostrar</td>';tb.appendChild(r)}}async function saveRow(tr){const id=tr.dataset.id;const payload={descripcion:q('.descripcion',tr).value.trim(),importe:q('.importe',tr).value.trim(),observacion:q('.observacion',tr).value.trim(),active:q('.active',tr).checked};if(!payload.descripcion){alert('Descripción requerida');return}if(id){await j('/api/products/'+encodeURIComponent(id),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})}else{await j('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})}await reload()}async function deleteRow(tr){const id=tr.dataset.id;if(!id){tr.remove();return}if(!confirm('¿Eliminar definitivamente?'))return;await j('/api/products/'+encodeURIComponent(id),{method:'DELETE'});await reload()}async function toggleRow(tr){const id=tr.dataset.id;if(!id){alert('Primero guardá el nuevo producto.');return}const active=q('.active',tr).checked;const path=active?('/api/products/'+encodeURIComponent(id)+'/inactivate'):('/api/products/'+encodeURIComponent(id)+'/reactivate');await j(path,{method:'POST'});await reload()}function bindRow(tr){q('.save',tr).addEventListener('click',()=>saveRow(tr));q('.del',tr).addEventListener('click',()=>deleteRow(tr));q('.toggle',tr).addEventListener('click',()=>toggleRow(tr))}all('#tbl tbody tr').forEach(bindRow);q('#btnAdd').addEventListener('click',()=>{const tb=q('#tbl tbody');const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);bindRow(tr);tb.prepend(tr);q('.descripcion',tr).focus()});q('#btnReload').addEventListener('click',reload);</script>"+
+      "</body></html>");
+  } catch (err) {
+    console.error("❌ /productos error (canon):", err);
+    res.status(500).send("Error al obtener productos");
+  }
+});
+// === END CANONICAL PRODUCTS ENDPOINTS ===
+
+ ======================= */
 // Regex escape helper (safe for user-provided phone filters)
 function escapeRegExp(s) { return String(s).replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&'); }
 
