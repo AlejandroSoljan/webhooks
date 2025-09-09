@@ -2120,9 +2120,10 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
     res.status(500).json({ error: "internal" });
   }
 });
-// === Vista /productos (UI CRUD) ===
-// 🔧 REEMPLAZA SOLO ESTA RUTA /productos
-// /productos con CRUD (SSR para ver datos + UI con fetch)
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ES Modules
+import crypto from "node:crypto";
+
 app.get("/productos", async (req, res) => {
   try {
     const database =
@@ -2132,7 +2133,7 @@ app.get("/productos", async (req, res) => {
 
     if (!database) throw new Error("DB no inicializada");
 
-   const verTodos = req.query.all === "true";
+    const verTodos = req.query.all === "true";
     const filtro = verTodos
       ? withTenantFilter({})
       : withTenantFilter({ active: { $ne: false } });
@@ -2143,11 +2144,27 @@ app.get("/productos", async (req, res) => {
       .sort({ createdAt: -1 })
       .toArray();
 
+    // 🔐 Nonce por request
+    const nonce = crypto.randomUUID();
+
+    // 🔒 CSP que habilita solo scripts propios y el inline con ese nonce
+    res.setHeader(
+      "Content-Security-Policy",
+      [
+        "default-src 'self'",
+        `script-src 'self' 'nonce-${nonce}'`,
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "connect-src 'self'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "frame-ancestors 'self'",
+      ].join("; ")
+    );
+
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html>
 <html>
-
-
 <head>
   <meta charset="utf-8" />
   <title>Productos</title>
@@ -2214,7 +2231,9 @@ app.get("/productos", async (req, res) => {
     </tr>
   </template>
 
-  <script>function ensureToastContainer(){
+  <!-- ⬇️ Script ORIGINAL, marcado con el nonce -->
+  <script nonce="${nonce}">
+    function ensureToastContainer(){
       var c = document.getElementById("toast-root");
       if(!c){
         c = document.createElement("div");
@@ -2249,9 +2268,7 @@ app.get("/productos", async (req, res) => {
       }, ms);
     }
 
-
-
- function showError(e){
+    function showError(e){
       try {
         alert(e.message || String(e));
       } catch {
@@ -2271,14 +2288,10 @@ app.get("/productos", async (req, res) => {
       }
       return ct.includes('application/json') ? r.json() : r.text();
     }
-    // (reemplaza la definición previa de j si existía)
     window.j = j;
-
 
     function q(sel, ctx){ return (ctx||document).querySelector(sel) }
     function all(sel, ctx){ return Array.from((ctx||document).querySelectorAll(sel)) }
-
-    
 
     async function reload(){
       const url = new URL(location.href);
@@ -2321,7 +2334,7 @@ app.get("/productos", async (req, res) => {
           body: JSON.stringify(payload)
         });
       } else {
-      try{
+        try{
           await j('/api/products', {
             method:'POST',
             headers:{'Content-Type':'application/json'},
@@ -2362,25 +2375,25 @@ app.get("/productos", async (req, res) => {
     // Bind inicial a filas SSR
     all('#tbl tbody tr').forEach(bindRow);
 
-    // Botones generales (delegados para evitar problemas de binding/CSP)
-document.addEventListener('click', (ev) => {
-  const addBtn = ev.target.closest('#btnAdd');
-  if (addBtn) {
-    const tb = q('#tbl tbody');
-    const tr = q('#row-tpl').content.firstElementChild.cloneNode(true);
-    bindRow(tr);
-    tb.prepend(tr);
-    q('.descripcion', tr).focus();
-    showToast('Fila agregada');
-    return;
-  }
-  const relBtn = ev.target.closest('#btnReload');
-  if (relBtn) {
-    reload();
-    return;
-  }
-});
-</script>
+    // Botones generales (delegados)
+    document.addEventListener('click', (ev) => {
+      const addBtn = ev.target.closest('#btnAdd');
+      if (addBtn) {
+        const tb = q('#tbl tbody');
+        const tr = q('#row-tpl').content.firstElementChild.cloneNode(true);
+        bindRow(tr);
+        tb.prepend(tr);
+        q('.descripcion', tr).focus();
+        showToast('Fila agregada');
+        return;
+      }
+      const relBtn = ev.target.closest('#btnReload');
+      if (relBtn) {
+        reload();
+        return;
+      }
+    });
+  </script>
 </body>
 </html>`);
   } catch (err) {
@@ -2391,6 +2404,55 @@ document.addEventListener('click', (ev) => {
 
 
 
+
+
+
+
+
+
+
+
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+
+import helmet from "helmet";
+
+app.use((req, res, next) => {
+  // guardá el nonce en res.locals (o req.locals)
+  res.locals.nonce = crypto.randomUUID();
+  next();
+});
+
+app.use(
+  helmet.contentSecurityPolicy({
+    useDefaults: true,
+    directives: {
+      "script-src": ["'self'", (req, res) => `'nonce-${res.locals.nonce}'`],
+      "style-src": ["'self'", "'unsafe-inline'"],
+      "img-src": ["'self'", "data:"],
+      "object-src": ["'none'"],
+      "base-uri": ["'self'"],
+      // agrega otras según necesidad (connect-src, font-src, etc.)
+    },
+  })
+);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/////////////////////////////////////////////
 
 
 app.get("/productos.json", async (req, res) => {
