@@ -1029,13 +1029,64 @@ app.get("/comportamiento", async (_req, res) => {
   </div>
   <p></p>
   <textarea id="txt"></textarea>
-  <script>
-    async function load() {
+  <script src="/productos.js" defer></script>
+</body>
+</html>`);
+  } catch (err) {
+    console.error("❌ /productos error:", err);
+    res.status(500).send("Error al obtener productos");
+  }
+});
+
+
+
+// === Static JS for /productos to avoid inline script/CSP issues ===
+
+app.get("/productos.js", (_req, res) => {
+  res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+  res.end(`(function(){
+"use strict";
+function ensureToastContainer(){
+  var c = document.getElementById("toast-root");
+  if(!c){
+    c = document.createElement("div");
+    c.id = "toast-root";
+    c.style.position = "fixed";
+    c.style.right = "16px";
+    c.style.bottom = "16px";
+    c.style.zIndex = "9999";
+    document.body.appendChild(c);
+  }
+  return c;
+}
+function showToast(msg, ms){
+  ms = (typeof ms==="number" && ms>0) ? ms : 1800;
+  var root = ensureToastContainer();
+  var t = document.createElement("div");
+  t.textContent = msg || "";
+  t.style.padding = "10px 14px";
+  t.style.marginTop = "8px";
+  t.style.background = "#333";
+  t.style.color = "#fff";
+  t.style.borderRadius = "8px";
+  t.style.boxShadow = "0 2px 8px rgba(0,0,0,.2)";
+  t.style.opacity = "0";
+  t.style.transform = "translateY(8px)";
+  t.style.transition = "opacity .2s, transform .2s";
+  root.appendChild(t);
+  requestAnimationFrame(function(){ t.style.opacity="1"; t.style.transform="translateY(0)"; });
+  setTimeout(function(){
+    t.style.opacity="0"; t.style.transform="translateY(8px)";
+    setTimeout(function(){ if(t && t.parentNode){ t.parentNode.removeChild(t); } }, 250);
+  }, ms);
+}
+
+async function load() {
       const r = await fetch('/api/behavior');
       const j = await r.json();
       document.getElementById('txt').value = j.text || '';
     }
-    ${BEHAVIOR_SOURCE === "mongo" ? `
+    ${'${'}BEHAVIOR_SOURCE === "mongo" ? \`
     async function save() {
       const v = document.getElementById('txt').value || '';
       const r = await fetch('/api/behavior', {
@@ -1046,12 +1097,12 @@ app.get("/comportamiento", async (_req, res) => {
       if (r.ok) alert('Guardado ✅'); else alert('Error al guardar');
     }
     document.getElementById('btnSave').addEventListener('click', save);
-    ` : ``}
+    \` : \`\`}
     document.getElementById('btnReload').addEventListener('click', load);
     load();
   </script>
 </body>
-</html>`);
+</html>\`);
   } catch (e) {
     console.error("⚠️ /comportamiento error:", e);
     res.status(500).send("internal");
@@ -1135,7 +1186,7 @@ app.post("/webhook", async (req, res) => {
                 const buffer = await downloadMediaBuffer(info.url);
                 const id = putInCache(buffer, info.mime_type);
                 const baseUrl = getBaseUrl(req);
-                const publicUrl = `${baseUrl}/cache/audio/${id}`;
+                const publicUrl = \`${'${'}baseUrl}/cache/audio/${'${'}id}\`;
                 userMeta.mediaUrl = publicUrl;
 
                 try {
@@ -1143,7 +1194,7 @@ app.post("/webhook", async (req, res) => {
                   const transcript = trData.text || trData.transcript || trData.transcription || trData.result || "";
                   if (transcript) {
                     userMeta.transcript = transcript;
-                    userText = `Transcripción del audio del usuario: "${transcript}"`;
+                    userText = \`Transcripción del audio del usuario: "${'${'}transcript}"\`;
                   } else {
                     userText = "No obtuve texto de la transcripción. ¿Podés escribir tu consulta?";
                   }
@@ -1161,13 +1212,13 @@ app.post("/webhook", async (req, res) => {
                 const buffer = await downloadMediaBuffer(info.url);
                 const id = putInCache(buffer, info.mime_type);
                 const baseUrl = getBaseUrl(req);
-                const publicUrl = `${baseUrl}/cache/image/${id}`;
+                const publicUrl = \`${'${'}baseUrl}/cache/image/${'${'}id}\`;
                 userMeta.mediaUrl = publicUrl;
 
                 const text = await transcribeImageWithOpenAI(publicUrl);
                 if (text) {
                   userMeta.ocrText = text;
-                  userText = `Texto detectado en la imagen: "${text}"`;
+                  userText = \`Texto detectado en la imagen: "${'${'}text}"\`;
                 } else {
                   userText = "No pude detectar texto en la imagen. ¿Podés escribir lo que dice?";
                 }
@@ -1249,7 +1300,7 @@ app.post("/webhook", async (req, res) => {
               const { buffer, mime } = await synthesizeTTS(responseText);
               const ttsId = putInCache(buffer, mime || "audio/mpeg");
               const baseUrl = getBaseUrl(req);
-              const ttsUrl = `${baseUrl}/cache/tts/${ttsId}`;
+              const ttsUrl = \`${'${'}baseUrl}/cache/tts/${'${'}ttsId}\`;
               const phoneId = getPhoneNumberId(value);
               if (phoneId) await sendAudioLink(from, ttsUrl, phoneId);
             } catch (e) {
@@ -1334,7 +1385,7 @@ async function ensureIndexes() {
 app.get("/admin", async (req, res) => {
   // HTML minimal con fetch al endpoint JSON
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`
+  res.end(\`
 <!doctype html>
 <html>
 <head>
@@ -1424,27 +1475,27 @@ app.get("/admin", async (req, res) => {
       tb.innerHTML = "";
       for (const row of data) {
         const tr = document.createElement('tr');
-        tr.innerHTML = \`
-          <td>\${row.waId}</td>
-          <td>\${row.contactName || ""}</td>
-          <td><span class="tag \${row.status}">\${row.status}</span></td>
-          <td>\${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
-          <td>\${row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
-          <td>\${row.turns ?? 0}</td>
-          <td>\${row.processed ? '✅' : '—'}</td>
+        tr.innerHTML = \\\`
+          <td>\\${'${'}row.waId}</td>
+          <td>\\${'${'}row.contactName || ""}</td>
+          <td><span class="tag \\${'${'}row.status}">\\${'${'}row.status}</span></td>
+          <td>\\${'${'}row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
+          <td>\\${'${'}row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
+          <td>\\${'${'}row.turns ?? 0}</td>
+          <td>\\${'${'}row.processed ? '✅' : '—'}</td>
           <td>
-            <button class="btn" onclick="openMessages('\${row._id}')">Mensajes</button>
-            <button class="btn" onclick="openOrder('\${row._id}')">Pedido</button>
-            <button class="btn" onclick="markProcessed('\${row._id}')">Procesado</button>
+            <button class="btn" onclick="openMessages('\\${'${'}row._id}')">Mensajes</button>
+            <button class="btn" onclick="openOrder('\\${'${'}row._id}')">Pedido</button>
+            <button class="btn" onclick="markProcessed('\\${'${'}row._id}')">Procesado</button>
             <div class="printmenu">
-              <select id="pm-\${row._id}" class="btn">
+              <select id="pm-\\${'${'}row._id}" class="btn">
                 <option value="kitchen">Cocina</option>
                 <option value="client">Cliente</option>
               </select>
-              <button class="btn" onclick="printTicketOpt('\${row._id}')">Imprimir</button>
+              <button class="btn" onclick="printTicketOpt('\\${'${'}row._id}')">Imprimir</button>
             </div>
           </td>
-        \`;
+        \\\`;
         tb.appendChild(tr);
       }
     }
@@ -1473,23 +1524,23 @@ app.get("/admin", async (req, res) => {
     function renderOrder(o) {
       if (!o || !o.order) return '<div class="mono">No hay pedido para esta conversación.</div>';
       const ord = o.order;
-      const itemsHtml = (ord.items || []).map(it => \`<li>\${it.name}: <strong>\${it.selection}</strong></li>\`).join('') || '<li>(sin ítems)</li>';
+      const itemsHtml = (ord.items || []).map(it => \\\`<li>\\${'${'}it.name}: <strong>\\${'${'}it.selection}</strong></li>\\\`).join('') || '<li>(sin ítems)</li>';
       const rawHtml = o.rawPedido ? '<pre class="mono">' + JSON.stringify(o.rawPedido, null, 2) + '</pre>' : '';
-      return \`
+      return \\\`
         <div class="printable">
           <h2>Pedido</h2>
-          <p><strong>Cliente:</strong> \${ord.name || ''} <span class="muted">(\${o.waId})</span></p>
-          <p><strong>Entrega:</strong> \${ord.entrega || ''}</p>
-          <p><strong>Domicilio:</strong> \${ord.domicilio || ''}</p>
-          <p><strong>Monto:</strong> \${(ord.amount!=null)?('$'+ord.amount):''}</p>
-          <p><strong>Estado pedido:</strong> \${ord.estadoPedido || ''}</p>
-          <p><strong>Fecha/Hora entrega:</strong> \${ord.fechaEntrega || ''} \${ord.hora || ''}</p>
+          <p><strong>Cliente:</strong> \\${'${'}ord.name || ''} <span class="muted">(\\${'${'}o.waId})</span></p>
+          <p><strong>Entrega:</strong> \\${'${'}ord.entrega || ''}</p>
+          <p><strong>Domicilio:</strong> \\${'${'}ord.domicilio || ''}</p>
+          <p><strong>Monto:</strong> \\${'${'}(ord.amount!=null)?('$'+ord.amount):''}</p>
+          <p><strong>Estado pedido:</strong> \\${'${'}ord.estadoPedido || ''}</p>
+          <p><strong>Fecha/Hora entrega:</strong> \\${'${'}ord.fechaEntrega || ''} \\${'${'}ord.hora || ''}</p>
           <h3>Ítems</h3>
-          <ul>\${itemsHtml}</ul>
+          <ul>\\${'${'}itemsHtml}</ul>
           <h3>Detalle crudo del Pedido</h3>
-          \${rawHtml}
+          \\${'${'}rawHtml}
         </div>
-      \`;
+      \\\`;
     }
 
     function openModal() {
@@ -1509,7 +1560,7 @@ app.get("/admin", async (req, res) => {
   </script>
 </body>
 </html>
-  `);
+  \`);
 });
 
 // JSON de conversaciones para Admin
@@ -1536,11 +1587,11 @@ app.get("/api/admin/conversations", async (req, res) => {
     const field = (date_field === "closed") ? "closedAt" : "openedAt";
     const range = {};
     if (from) {
-      const d1 = new Date(`${from}T00:00:00.000Z`);
+      const d1 = new Date(\`${'${'}from}T00:00:00.000Z\`);
       if (!isNaN(d1)) range.$gte = d1;
     }
     if (to) {
-      const d2 = new Date(`${to}T23:59:59.999Z`);
+      const d2 = new Date(\`${'${'}to}T23:59:59.999Z\`);
       if (!isNaN(d2)) range.$lte = d2;
     }
     if (Object.keys(range).length) q[field] = range;
@@ -1583,12 +1634,12 @@ app.get("/api/admin/messages/:id", async (req, res) => {
       .toArray();
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.end(`
+    res.end(\`
 <!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Mensajes - ${conv.waId}</title>
+  <title>Mensajes - ${'${'}conv.waId}</title>
   <style>
     body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; }
     .msg { margin-bottom: 12px; }
@@ -1598,19 +1649,19 @@ app.get("/api/admin/messages/:id", async (req, res) => {
   </style>
 </head>
 <body>
-  <h2>Mensajes - ${conv.contactName ? (conv.contactName + " • ") : ""}${conv.waId}</h2>
+  <h2>Mensajes - ${'${'}conv.contactName ? (conv.contactName + " • ") : ""}${'${'}conv.waId}</h2>
   <div>
-    ${msgs.map(m => `
+    ${'${'}msgs.map(m => \`
       <div class="msg">
-        <div class="role">${m.role.toUpperCase()} <span class="meta">(${new Date(m.ts).toLocaleString()})</span></div>
-        <pre>${(m.content || "").replace(/[<>&]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</pre>
-        ${m.meta && Object.keys(m.meta).length ? `<div class="meta">meta: <code>${JSON.stringify(m.meta)}</code></div>` : ""}
+        <div class="role">${'${'}m.role.toUpperCase()} <span class="meta">(${'${'}new Date(m.ts).toLocaleString()})</span></div>
+        <pre>${'${'}(m.content || "").replace(/[<>&]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</pre>
+        ${'${'}m.meta && Object.keys(m.meta).length ? \`<div class="meta">meta: <code>${'${'}JSON.stringify(m.meta)}</code></div>\` : ""}
       </div>
-    `).join("")}
+    \`).join("")}
   </div>
 </body>
 </html>
-    `);
+    \`);
   } catch (e) {
     console.error("⚠️ /api/admin/messages error:", e);
     res.status(500).send("internal");
@@ -1712,12 +1763,12 @@ app.get("/admin/print/:id", async (req, res) => {
       const name = esc(it.name || it.nombre || it.producto || it.title || "Item");
       const sel = esc(it.selection || it.seleccion || it.detalle || it.toppings || "");
       return sel ? (name + " - " + sel) : name;
-    }).join("\n");
+    }).join("\\n");
 
     const showPrices = (v === "client");
-    const totalHtml = showPrices && (monto != null) ? `<div class="row big"><span>TOTAL</span><span>$${monto.toFixed(2)}</span></div>` : "";
+    const totalHtml = showPrices && (monto != null) ? \`<div class="row big"><span>TOTAL</span><span>$${'${'}monto.toFixed(2)}</span></div>\` : "";
 
-    const html = `<!doctype html>
+    const html = \`<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -1735,26 +1786,26 @@ app.get("/admin/print/:id", async (req, res) => {
 </head>
 <body>
   <div class="ticket">
-    <div class="center big">${esc(negocio)}</div>
-    ${direccionNegocio ? `<div class="center">${esc(direccionNegocio)}</div>` : ""}
-    ${telNegocio ? `<div class="center">${esc(telNegocio)}</div>` : ""}
+    <div class="center big">${'${'}esc(negocio)}</div>
+    ${'${'}direccionNegocio ? \`<div class="center">${'${'}esc(direccionNegocio)}</div>\` : ""}
+    ${'${'}telNegocio ? \`<div class="center">${'${'}esc(telNegocio)}</div>\` : ""}
     <div class="hr"></div>
-    <div>Cliente: ${esc(cliente)}</div>
-    ${domicilio ? `<div>Dirección: ${esc(domicilio)}</div>` : ""}
-    ${showPrices && pago ? `<div>Pago: ${esc(pago)}</div>` : ""}
+    <div>Cliente: ${'${'}esc(cliente)}</div>
+    ${'${'}domicilio ? \`<div>Dirección: ${'${'}esc(domicilio)}</div>\` : ""}
+    ${'${'}showPrices && pago ? \`<div>Pago: ${'${'}esc(pago)}</div>\` : ""}
     <div class="hr"></div>
     <div>Pedido:</div>
-    <pre>${esc(itemLines)}</pre>
+    <pre>${'${'}esc(itemLines)}</pre>
     <div class="hr"></div>
-    ${totalHtml}
+    ${'${'}totalHtml}
     <div class="hr"></div>
-    <div>${new Date().toLocaleString()}</div>
-    <div class="center">${showPrices ? "¡Gracias por su compra!" : "TICKET COCINA"}</div>
+    <div>${'${'}new Date().toLocaleString()}</div>
+    <div class="center">${'${'}showPrices ? "¡Gracias por su compra!" : "TICKET COCINA"}</div>
     <div class="hr"></div>
     <button class="noprint" onclick="window.print()">Imprimir</button>
   </div>
 </body>
-</html>`;
+</html>\`;
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(html);
@@ -1809,8 +1860,8 @@ app.get("/api/costos", async (req, res) => {
     const { from, to } = req.query || {};
     if (from || to) {
       q.openedAt = {};
-      if (from) q.openedAt.$gte = new Date(`${from}T00:00:00.000Z`);
-      if (to)   q.openedAt.$lte = new Date(`${to}T23:59:59.999Z`);
+      if (from) q.openedAt.$gte = new Date(\`${'${'}from}T00:00:00.000Z\`);
+      if (to)   q.openedAt.$lte = new Date(\`${'${'}to}T23:59:59.999Z\`);
     }
 
     const convs = await db.collection("conversations")
@@ -1872,7 +1923,7 @@ app.get("/api/costos", async (req, res) => {
 
 app.get("/costos", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`<!doctype html>
+  res.end(\`<!doctype html>
 <html>
 <head>
   <meta charset="utf-8" />
@@ -1930,20 +1981,20 @@ async function load(){
   tb.innerHTML = '';
   for (const r of data.rows){
     const tr = document.createElement('tr');
-    tr.innerHTML = \`
-      <td>\${r.openedAt ? new Date(r.openedAt).toLocaleString() : ''}</td>
-      <td>\${esc(r.name)}</td>
-      <td>\${esc(r.waId)}</td>
-      <td>\${fmtTok(r.prompt_tokens)}</td>
-      <td>\${fmtTok(r.completion_tokens)}</td>
-      <td>\${fmtTok(r.total_tokens)}</td>
-      <td>\${fmt(r.cost_in)}</td>
-      <td>\${fmt(r.cost_out)}</td>
-      <td>\${fmt(r.cost_total)}</td>\`;
+    tr.innerHTML = \\\`
+      <td>\\${'${'}r.openedAt ? new Date(r.openedAt).toLocaleString() : ''}</td>
+      <td>\\${'${'}esc(r.name)}</td>
+      <td>\\${'${'}esc(r.waId)}</td>
+      <td>\\${'${'}fmtTok(r.prompt_tokens)}</td>
+      <td>\\${'${'}fmtTok(r.completion_tokens)}</td>
+      <td>\\${'${'}fmtTok(r.total_tokens)}</td>
+      <td>\\${'${'}fmt(r.cost_in)}</td>
+      <td>\\${'${'}fmt(r.cost_out)}</td>
+      <td>\\${'${'}fmt(r.cost_total)}</td>\\\`;
     tb.appendChild(tr);
   }
   document.getElementById('meta').textContent =
-    \`\${data.count} conversaciones • $/1K in=\${data.price_in_per_1k} • $/1K out=\${data.price_out_per_1k}\`;
+    \\\`\\${'${'}data.count} conversaciones • $/1K in=\\${'${'}data.price_in_per_1k} • $/1K out=\\${'${'}data.price_out_per_1k}\\\`;
 
   document.getElementById('t_in').textContent   = fmtTok(data.totals.prompt_tokens);
   document.getElementById('t_out').textContent  = fmtTok(data.totals.completion_tokens);
@@ -1957,7 +2008,7 @@ document.getElementById('btnReset').addEventListener('click', ()=>{ document.get
 load();
 </script>
 </body>
-</html>`);
+</html>\`);
 });
 
 
@@ -2144,7 +2195,7 @@ app.get("/productos", async (req, res) => {
       .toArray();
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.end(`<!doctype html>
+    res.end(\`<!doctype html>
 <html>
 
 
@@ -2169,7 +2220,7 @@ app.get("/productos", async (req, res) => {
   <p class="muted">Fuente: <span class="pill">MongoDB (colección <code>products</code>)</span></p>
 
   <div class="row">
-    <a class="btn" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a>
+    <a class="btn" href="/productos${'${'}verTodos ? "" : "?all=true"}">${'${'}verTodos ? "Ver solo activos" : "Ver todos"}</a>
     <button id="btnAdd" class="btn" type="button">Agregar</button>
     <button id="btnReload" class="btn" type="button">Recargar</button>
   </div>
@@ -2182,20 +2233,20 @@ app.get("/productos", async (req, res) => {
       </tr>
     </thead>
     <tbody>
-      ${
-        productos.length ? productos.map(p => `
-          <tr data-id="${p._id}">
-            <td><input type="text" class="descripcion" value="${(p.descripcion ?? "").toString().replace(/"/g,'&quot;')}" /></td>
-            <td><input type="number" class="importe" step="0.01" value="${typeof p.importe==='number'?p.importe:(p.importe??'')}" /></td>
-            <td><textarea class="observacion">${(p.observacion ?? "").toString().replace(/</g,'&lt;')}</textarea></td>
-            <td style="text-align:center;"><input type="checkbox" class="active" ${p.active!==false?"checked":""} /></td>
+      ${'${'}
+        productos.length ? productos.map(p => \`
+          <tr data-id="${'${'}p._id}">
+            <td><input type="text" class="descripcion" value="${'${'}(p.descripcion ?? "").toString().replace(/"/g,'&quot;')}" /></td>
+            <td><input type="number" class="importe" step="0.01" value="${'${'}typeof p.importe==='number'?p.importe:(p.importe??'')}" /></td>
+            <td><textarea class="observacion">${'${'}(p.observacion ?? "").toString().replace(/</g,'&lt;')}</textarea></td>
+            <td style="text-align:center;"><input type="checkbox" class="active" ${'${'}p.active!==false?"checked":""} /></td>
             <td>
               <button class="btn save">Guardar</button>
               <button class="btn del">Eliminar</button>
-              <button class="btn toggle">${p.active!==false?"Inactivar":"Reactivar"}</button>
+              <button class="btn toggle">${'${'}p.active!==false?"Inactivar":"Reactivar"}</button>
             </td>
           </tr>
-        `).join("") : `<tr><td colspan="5" style="text-align:center;color:#666">Sin productos para mostrar</td></tr>`
+        \`).join("") : \`<tr><td colspan="5" style="text-align:center;color:#666">Sin productos para mostrar</td></tr>\`
       }
     </tbody>
   </table>
@@ -2336,6 +2387,7 @@ document.addEventListener('click', (ev) => {
     bindRow(tr);
     tb.prepend(tr);
     q('.descripcion', tr).focus();
+    showToast('Fila agregada');
     return;
   }
   const relBtn = ev.target.closest('#btnReload');
@@ -2344,16 +2396,8 @@ document.addEventListener('click', (ev) => {
     return;
   }
 });
-</script>
-</body>
-</html>`);
-  } catch (err) {
-    console.error("❌ /productos error:", err);
-    res.status(500).send("Error al obtener productos");
-  }
+})();`);
 });
-
-
 
 
 
