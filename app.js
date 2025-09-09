@@ -2343,7 +2343,14 @@ app.get("/productos", async (req, res) => {
   }
 });
 
-
+document.getElementById('btnAdd').addEventListener('click', () => {
+  const tb = document.querySelector('#tbl tbody');
+  const tr = document.getElementById('row-tpl').content.firstElementChild.cloneNode(true);
+  // reusa tus handlers:
+  bindRow(tr);
+  tb.prepend(tr);
+  tr.querySelector('.descripcion').focus();
+});
 
 
 
