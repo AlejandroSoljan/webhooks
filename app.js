@@ -979,6 +979,43 @@ async function chatWithHistoryJSON(
   return { response: responseText, estado, raw: data || {}, usage };
 }
 
+
+
+//////////////////////////////////////////////////////////////////////////////////////
+
+const helmet = require("helmet");
+
+app.use((req, res, next) => {
+  // guardá el nonce en res.locals (o req.locals)
+  res.locals.nonce = crypto.randomUUID();
+  next();
+});
+
+app.use(
+  helmet.contentSecurityPolicy({
+    useDefaults: true,
+    directives: {
+      "script-src": ["'self'", (req, res) => `'nonce-${res.locals.nonce}'`],
+      "style-src": ["'self'", "'unsafe-inline'"],
+      "img-src": ["'self'", "data:"],
+      "object-src": ["'none'"],
+      "base-uri": ["'self'"],
+      // agrega otras según necesidad (connect-src, font-src, etc.)
+    },
+  })
+);
+
+
+
+
+
+
+
+
+
+
+
+
 /* ======================= Rutas básicas ======================= */
 app.get("/", (_req, res) => res.status(200).send("WhatsApp Webhook up ✅"));
 
@@ -2144,23 +2181,8 @@ app.get("/productos", async (req, res) => {
       .sort({ createdAt: -1 })
       .toArray();
 
-    // 🔐 Nonce por request
-    const nonce = crypto.randomUUID();
-
-    // 🔒 CSP que habilita solo scripts propios y el inline con ese nonce
-    res.setHeader(
-      "Content-Security-Policy",
-      [
-        "default-src 'self'",
-        `script-src 'self' 'nonce-${nonce}'`,
-        "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data:",
-        "connect-src 'self'",
-        "object-src 'none'",
-        "base-uri 'self'",
-        "frame-ancestors 'self'",
-      ].join("; ")
-    );
+    // ✅ Usar el mismo nonce que definió Helmet
+    const nonce = res.locals.nonce;
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html>
@@ -2231,7 +2253,7 @@ app.get("/productos", async (req, res) => {
     </tr>
   </template>
 
-  <!-- ⬇️ Script ORIGINAL, marcado con el nonce -->
+  <!-- Tu JS original, ejecutado gracias al nonce global -->
   <script nonce="${nonce}">
     function ensureToastContainer(){
       var c = document.getElementById("toast-root");
@@ -2269,11 +2291,7 @@ app.get("/productos", async (req, res) => {
     }
 
     function showError(e){
-      try {
-        alert(e.message || String(e));
-      } catch {
-        alert(String(e));
-      }
+      try { alert(e.message || String(e)); } catch { alert(String(e)); }
     }
 
     async function j(url, opts){
@@ -2401,48 +2419,6 @@ app.get("/productos", async (req, res) => {
     res.status(500).send("Error al obtener productos");
   }
 });
-
-
-
-
-
-
-
-
-
-
-
-
-
-//////////////////////////////////////////////////////////////////////////////////////
-
-const helmet = require("helmet");
-
-app.use((req, res, next) => {
-  // guardá el nonce en res.locals (o req.locals)
-  res.locals.nonce = crypto.randomUUID();
-  next();
-});
-
-app.use(
-  helmet.contentSecurityPolicy({
-    useDefaults: true,
-    directives: {
-      "script-src": ["'self'", (req, res) => `'nonce-${res.locals.nonce}'`],
-      "style-src": ["'self'", "'unsafe-inline'"],
-      "img-src": ["'self'", "data:"],
-      "object-src": ["'none'"],
-      "base-uri": ["'self'"],
-      // agrega otras según necesidad (connect-src, font-src, etc.)
-    },
-  })
-);
-
-
-
-
-
-
 
 
 
