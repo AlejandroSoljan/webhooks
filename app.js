@@ -132,6 +132,78 @@ async function safeJsonParseStrictOrFix(raw, { openai, model = "gpt-4o-mini" } =
   }
 }
 
+// === Sheet: carga de catálogo (fallback opcional) ===
+async function loadProductsFromSheet() {
+  try {
+    const spreadsheetId = getSpreadsheetIdFromEnv();
+    const sheets = getSheetsClient();
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: "Productos!A2:C1000"
+    });
+    const rows = resp.data.values || [];
+    return rows.map(r => ({
+      descripcion: String(r[0] || "").trim(),
+      importe: (function(v){ if (v==null) return null; const s=String(v).trim().replace(/[^\d,.-]/g,'').replace(',', '.'); const n = Number(s); return Number.isFinite(n) ? n : null; })(r[1]),
+      observacion: String(r[2] || "").trim(),
+      active: true
+    })).filter(p => p.descripcion);
+  } catch (e) {
+    console.warn("⚠️ loadProductsFromSheet fallo:", e.message || e);
+    return [];
+  }
+}
+
+async function buildSystemPrompt({ force = false, conversation = null } = {}) {
+  const FREEZE_FULL_PROMPT = String(process.env.FREEZE_FULL_PROMPT || "false").toLowerCase() === "true";
+  if (FREEZE_FULL_PROMPT && conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
+    return conversation.behaviorSnapshot.text;
+  }
+
+  const now = Date.now();
+  if (!force && (now - behaviorCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && behaviorCache.text) {
+    return behaviorCache.text;
+  }
+
+  // 1) Base de comportamiento según fuente
+  const baseText = (BEHAVIOR_SOURCE === "env")
+    ? await loadBehaviorTextFromEnv()
+    : (BEHAVIOR_SOURCE === "mongo")
+      ? await loadBehaviorTextFromMongo()
+      : await loadBehaviorTextFromSheet();
+
+  // 2) Catálogo: primero Mongo, fallback a Sheet si viniera vacío o falla
+  let catalogText = "";
+  try {
+    let products = await loadProductsFromMongo();
+    if (!products || !products.length) {
+      try { products = await loadProductsFromSheet(); } catch (_) {}
+    }
+    console.log("📦 Catálogo:", (products || []).length, "items", (products && products.length ? "(Mongo OK)" : "(fallback Sheet)"));
+    catalogText = buildCatalogText(products || []);
+  } catch (e) {
+    console.warn("⚠️ No se pudo leer Productos (Mongo/Sheet):", e.message);
+    catalogText = "Catálogo de productos: (error al leer)";
+  }
+
+  // 3) Esquema de salida
+  const jsonSchema =
+    "FORMATO DE RESPUESTA (OBLIGATORIO - SOLO JSON, sin ```):\n" +
+    '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED", ' +
+    '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
+    '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
+
+  const fullText = [
+    "[COMPORTAMIENTO]\n" + baseText,
+    "[CATALOGO]\n" + catalogText,
+    "[SALIDA]\n" + jsonSchema,
+    "RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
+  ].join("\n\n").trim();
+
+  behaviorCache = { at: now, text: fullText };
+  return fullText;
+}
+
 /* ======================= WhatsApp / Media ======================= */
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
 const TRANSCRIBE_API_URL = (process.env.TRANSCRIBE_API_URL || "https://transcribegpt-569454200011.northamerica-northeast1.run.app").trim().replace(/\/+$/,"");
@@ -458,59 +530,41 @@ async function saveBehaviorTextToMongo(newText) {
   behaviorCache = { at: 0, text: null };
 }
 
-async function buildSystemPrompt({ force = false, conversation = null } = {}) {
-  const FREEZE_FULL_PROMPT = String(process.env.FREEZE_FULL_PROMPT || "false").toLowerCase() === "true";
-  if (FREEZE_FULL_PROMPT && conversation?.behaviorSnapshot?.text) return conversation.behaviorSnapshot.text;
-
-  const now = Date.now();
-  if (!force && (now - behaviorCache.at < COMPORTAMIENTO_CACHE_TTL_MS) && behaviorCache.text) return behaviorCache.text;
-
-  const baseText = (BEHAVIOR_SOURCE === "env")
-    ? await loadBehaviorTextFromEnv()
-    : (BEHAVIOR_SOURCE === "mongo")
-      ? await loadBehaviorTextFromMongo()
-      : await loadBehaviorTextFromSheet();
-
-  // 🔴 Catalogo: primero Mongo, fallback a Sheet
-  let catalogText = "";
-  try {
-    let products = await loadProductsFromMongo();
-    if (!products?.length) {
-      try { products = await loadProductsFromSheet(); } catch(_) {}
-    }
-    console.log("📦 Catálogo:", (products || []).length, "items", (products?.length ? "(Mongo OK)" : "(fallback Sheet)"));
-    catalogText = buildCatalogText(products || []);
-  } catch (e) {
-    console.warn("⚠️ No se pudo leer Productos (Mongo/Sheet):", e.message);
-    catalogText = "Catálogo de productos: (error al leer)";
+// === Mongo: carga de catálogo ===
+async function loadProductsFromMongo() {
+  const db = await getDb();
+  const filter = { active: { $ne: false } };
+  if (typeof TENANT_ID !== "undefined" && TENANT_ID) {
+    filter.tenantId = TENANT_ID;
   }
-
-  // 3) Reglas de uso de observaciones
-  /*const reglasVenta =
-    "Instrucciones de venta (OBLIGATORIAS):\n" +
-    "- Usá las Observaciones para decidir qué ofrecer, sugerir complementos, aplicar restricciones o proponer sustituciones.\n" +
-    "- Respetá limitaciones (stock/horarios/porciones/preparación) indicadas en Observaciones.\n" +
-    "- Si sugerís bundles o combos, ofrecé esas opciones con precio estimado cuando corresponda.\n" +
-    "- Si falta un dato (sabor/tamaño/cantidad), pedilo brevemente.\n";
-*/
-  // 4) Esquema JSON
-  const jsonSchema =
-    "FORMATO DE RESPUESTA (OBLIGATORIO - SOLO JSON, sin ```):\n" +
-    '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED", ' +
-    '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
-    '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
-
-  const fullText = [
-    "[COMPORTAMIENTO]\n" + baseText,
-   // "[REGLAS]\n" + reglasVenta,
-    "[CATALOGO]\n" + catalogText,
-    "[SALIDA]\n" + jsonSchema,
-    "RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
-  ].join("\n\n").trim();
-
-  behaviorCache = { at: now, text: fullText };
-  return fullText;
+  const docs = await db.collection("products")
+    .find(filter)
+    .sort({ createdAt: -1, descripcion: 1 })
+    .toArray();
+  return docs.map(d => ({
+    descripcion: d.descripcion || "",
+    importe: (typeof d.importe === "number") ? d.importe : null,
+    observacion: d.observacion || "",
+    active: d.active !== false
+  }));
 }
+
+// === Texto de catálogo para el prompt del sistema ===
+function buildCatalogText(products) {
+  if (!Array.isArray(products) || !products.length) {
+    return "Catálogo: (sin productos activos)";
+  }
+  const lines = products
+    .filter(p => p && p.active !== false && String(p.descripcion || "").trim())
+    .map(p => {
+      const precio = (typeof p.importe === "number") ? ` - $${p.importe.toFixed(2)}` : "";
+      const obs = p.observacion ? ` (Obs: ${p.observacion})` : "";
+      return `• ${p.descripcion}${precio}${obs}`;
+    });
+  return lines.join("\n");
+}
+
+
 
 /* ======================= Mongo: conversaciones, mensajes, orders ======================= */
 async function ensureOpenConversation(waId, { contactName = null } = {}) {
