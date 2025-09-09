@@ -2416,7 +2416,7 @@ app.get("/productos", async (req, res) => {
 
 //////////////////////////////////////////////////////////////////////////////////////
 
-import helmet from "helmet";
+const helmet = require("helmet");
 
 app.use((req, res, next) => {
   // guardá el nonce en res.locals (o req.locals)
