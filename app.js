@@ -59,6 +59,45 @@ function withTenantFilter(filter = {}) {
   // si ya viene tenantId, respetar
   return ("tenantId" in filter) ? filter : { ...filter, tenantId: TENANT_ID };
 }
+
+
+/* ======================= Parseo robusto de importes ======================= */
+/**
+ * Acepta formatos: "1234", "1.234", "1.234,56", "1,234.56", "$ 1.234,56", etc.
+ * Devuelve Number o null si no se puede parsear.
+ */
+function parseMoneyFlexible(v) {
+  if (v == null) return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  let s = String(v).trim();
+  if (!s) return null;
+  // dejar solo dígitos, coma, punto, signo
+  s = s.replace(/[^\d,.\-]/g, "");
+  if (!s) return null;
+  const lastComma = s.lastIndexOf(",");
+  const lastDot   = s.lastIndexOf(".");
+  if (lastComma !== -1 && lastDot !== -1) {
+    // tiene ambos separadores: definimos decimal por el que aparece más a la derecha
+    if (lastComma > lastDot) {
+      // decimal = coma  -> quitamos todos los puntos (miles) y cambiamos coma por punto
+      s = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      // decimal = punto -> quitamos todas las comas (miles)
+      s = s.replace(/,/g, "");
+    }
+  } else if (lastComma !== -1) {
+    // sólo coma -> decimal es coma
+    s = s.replace(/,/g, ".");
+  } else {
+    // sólo punto o sin separadores -> ya está
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+
+
+
 // sesiones en memoria por tenant para evitar cruces
 function sessionKey(waId) {
   return `${TENANT_ID}:${waId}`;
@@ -1776,22 +1815,22 @@ app.post("/api/products", async (req, res) => {
     observacion = String(observacion || "").trim();
     if (typeof active !== "boolean") active = !!active;
 
-    let imp = null;
-    if (typeof importe === "number") imp = importe;
-    else if (typeof importe === "string") {
-      const n = Number(importe.replace(/[^\d.,-]/g, "").replace(",", "."));
-      imp = Number.isFinite(n) ? n : null;
-    }
+    const imp = parseMoneyFlexible(importe);
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
 
     const now = new Date();
     const doc = attachTenant({ descripcion, observacion, active, createdAt: now, updatedAt: now });
     doc.tenantId = TENANT_ID;
     if (imp !== null) doc.importe = imp;
-
-    const ins = await database.collection("products").insertOne(doc);
-     invalidateBehaviorCache();
-    res.json({ ok: true, _id: String(ins.insertedId) });
+    // Log mínimo para diagnóstico si algo falla aguas arriba
+    try {
+      const ins = await database.collection("products").insertOne(doc);
+      return res.json({ ok: true, _id: String(ins.insertedId) });
+    } catch (e) {
+      console.error("POST /api/products insertOne error:", e);
+      return res.status(500).json({ error: "insert_failed" });
+    }
+    
   } catch (e) {
     console.error("POST /api/products error:", e);
     res.status(500).json({ error: "internal" });
@@ -1811,12 +1850,12 @@ app.put("/api/products/:id", async (req, res) => {
     ["descripcion","observacion","active","importe"].forEach(k => {
       if (req.body[k] !== undefined) upd[k] = req.body[k];
     });
-    if (upd.importe !== undefined) {
-      const v = upd.importe;
-      if (typeof v === "string") {
-        const n = Number(v.replace(/[^\d.,-]/g, "").replace(",", "."));
-        upd.importe = Number.isFinite(n) ? n : undefined;
-      }
+
+
+     if (upd.importe !== undefined) {
+      const n = parseMoneyFlexible(upd.importe);
+      if (n === null) delete upd.importe;  // si no parsea, no sobreescribimos
+      else upd.importe = n;
     }
     if (Object.keys(upd).length === 0) return res.status(400).json({ error: "no_fields" });
     upd.updatedAt = new Date();
@@ -1990,15 +2029,35 @@ app.get("/productos", async (req, res) => {
   </template>
 
   <script>
-    function q(sel, ctx){ return (ctx||document).querySelector(sel) }
-    function all(sel, ctx){ return Array.from((ctx||document).querySelectorAll(sel)) }
+
+ function showError(e){
+      try {
+        alert(e.message || String(e));
+      } catch {
+        alert(String(e));
+      }
+    }
 
     async function j(url, opts){
       const r = await fetch(url, opts||{});
-      if(!r.ok) throw new Error('HTTP '+r.status);
       const ct = r.headers.get('content-type')||'';
+      if (!r.ok) {
+        let payload = null;
+        try { payload = ct.includes('application/json') ? await r.json() : await r.text(); } catch {}
+        const msg = (payload && (payload.error || payload.message)) ? (payload.error || payload.message)
+                  : ('HTTP ' + r.status + (typeof payload==='string' ? (' - ' + payload.slice(0,200)) : ''));
+        throw new Error(msg);
+      }
       return ct.includes('application/json') ? r.json() : r.text();
     }
+    // (reemplaza la definición previa de j si existía)
+    window.j = j;
+
+
+    function q(sel, ctx){ return (ctx||document).querySelector(sel) }
+    function all(sel, ctx){ return Array.from((ctx||document).querySelectorAll(sel)) }
+
+    
 
     async function reload(){
       const url = new URL(location.href);
@@ -2041,11 +2100,16 @@ app.get("/productos", async (req, res) => {
           body: JSON.stringify(payload)
         });
       } else {
-        await j('/api/products', {
-          method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body: JSON.stringify(payload)
-        });
+      try{
+          await j('/api/products', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify(payload)
+          });
+        } catch(e){
+          showError(e);
+          return;
+        }
       }
       await reload();
     }
