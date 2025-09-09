@@ -2,7 +2,6 @@
 const express = require("express");
 const app = express();
 app.use(express.json());
-// Multiempresa por ENV: cada script establece su TENANT_ID
 app.use(express.urlencoded({ extended: true }));
 
 // ✅ AHORA podés usar middleware como:
@@ -44,63 +43,6 @@ function isValidSignature(req) {
   } catch {
     return false;
   }
-}
-/* ======================= Multiempresa (tenant) ======================= */
-// Prioridad: TENANT_ID > COMPANY_ID > BUSINESS_ID > "default"
-const TENANT_ID = String(
-  process.env.TENANT_ID || process.env.COMPANY_ID || process.env.BUSINESS_ID || "default"
-).trim();
-
-function attachTenant(doc = {}) {
-  // no pisamos si ya viene tenantId
-  return ("tenantId" in doc) ? doc : { ...doc, tenantId: TENANT_ID };
-}
-function withTenantFilter(filter = {}) {
-  // si ya viene tenantId, respetar
-  return ("tenantId" in filter) ? filter : { ...filter, tenantId: TENANT_ID };
-}
-
-
-/* ======================= Parseo robusto de importes ======================= */
-/**
- * Acepta formatos: "1234", "1.234", "1.234,56", "1,234.56", "$ 1.234,56", etc.
- * Devuelve Number o null si no se puede parsear.
- */
-function parseMoneyFlexible(v) {
-  if (v == null) return null;
-  if (typeof v === "number") return Number.isFinite(v) ? v : null;
-  let s = String(v).trim();
-  if (!s) return null;
-  // dejar solo dígitos, coma, punto, signo
-  s = s.replace(/[^\d,.\-]/g, "");
-  if (!s) return null;
-  const lastComma = s.lastIndexOf(",");
-  const lastDot   = s.lastIndexOf(".");
-  if (lastComma !== -1 && lastDot !== -1) {
-    // tiene ambos separadores: definimos decimal por el que aparece más a la derecha
-    if (lastComma > lastDot) {
-      // decimal = coma  -> quitamos todos los puntos (miles) y cambiamos coma por punto
-      s = s.replace(/\./g, "").replace(",", ".");
-    } else {
-      // decimal = punto -> quitamos todas las comas (miles)
-      s = s.replace(/,/g, "");
-    }
-  } else if (lastComma !== -1) {
-    // sólo coma -> decimal es coma
-    s = s.replace(/,/g, ".");
-  } else {
-    // sólo punto o sin separadores -> ya está
-  }
-  const n = Number(s);
-  return Number.isFinite(n) ? n : null;
-}
-
-
-
-
-// sesiones en memoria por tenant para evitar cruces
-function sessionKey(waId) {
-  return `${TENANT_ID}:${waId}`;
 }
 
 /* ======================= OpenAI ======================= */
@@ -543,7 +485,7 @@ async function loadProductsFromMongo() {
   const db = await getDb();
   // Por defecto, sólo activos (compatible con /api/products)
   const docs = await db.collection("products")
-    .find(withTenantFilter({ active: { $ne: false } }))
+    .find({ active: { $ne: false } })
     .sort({ createdAt: -1, descripcion: 1 })
     .toArray();
 
@@ -609,18 +551,21 @@ function buildCatalogText(products) {
 
 async function loadBehaviorTextFromMongo() {
   const db = await getDb();
-  const doc = await db.collection("settings").findOne({ _id: `behavior:${TENANT_ID}` });
+  const doc = await db.collection("settings").findOne({ _id: "behavior" });
   if (doc && typeof doc.text === "string" && doc.text.trim()) return doc.text.trim();
   const fallback = "Sos un asistente claro, amable y conciso. Respondé en español.";
-  await db.collection("settings").updateOne({ _id: `behavior:${TENANT_ID}` }, { $setOnInsert: { text: fallback, updatedAt: new Date(), tenantId: TENANT_ID } },
+  await db.collection("settings").updateOne(
+    { _id: "behavior" },
+    { $setOnInsert: { text: fallback, updatedAt: new Date() } },
     { upsert: true }
   );
   return fallback;
 }
 async function saveBehaviorTextToMongo(newText) {
   const db = await getDb();
- await db.collection("settings").updateOne({ _id: `behavior:${TENANT_ID}` }, { $set: { text: String(newText || "").trim(), updatedAt: new Date(), tenantId: TENANT_ID } },
-
+  await db.collection("settings").updateOne(
+    { _id: "behavior" },
+    { $set: { text: String(newText || "").trim(), updatedAt: new Date() } },
     { upsert: true }
   );
   behaviorCache = { at: 0, text: null };
@@ -691,24 +636,28 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
 }
 
 // Endpoint para refrescar caché manualmente (útil tras cambios de catálogo)
-app.post("/api/behavior/refresh-cache", (_req, res) => {
-  invalidateBehaviorCache();
-  res.json({ ok: true });
+app.post("/api/behavior/refresh-cache", async (_req, res) => {
+  try {
+    invalidateBehaviorCache();
+    res.json({ ok: true, cache: "invalidated" });
+  } catch (e) {
+    console.error("⚠️ refresh-cache error:", e);
+    res.status(500).json({ error: "internal" });
+  }
 });
 
 /* ======================= Mongo: conversaciones, mensajes, orders ======================= */
 async function ensureOpenConversation(waId, { contactName = null } = {}) {
   const db = await getDb();
-  let conv = await db.collection("conversations").findOne(withTenantFilter({ waId, status: "OPEN" }));
+  let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
   if (!conv) {
     // ⚡ Al iniciar una conversación: recargo comportamiento (ignora caché)
     const behaviorText = await buildSystemPrompt({ force: true });
-    const doc = attachTenant({
+    const doc = {
       waId,
       status: "OPEN",         // OPEN | COMPLETED | CANCELLED
       finalized: false,       // idempotencia para Sheets/orden
       contactName: contactName || null,
-      tenantId: TENANT_ID,
       openedAt: new Date(),
       closedAt: null,
       lastUserTs: null,
@@ -719,12 +668,12 @@ async function ensureOpenConversation(waId, { contactName = null } = {}) {
         source: (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(),
         savedAt: new Date()
       }
-      });
+    };
     const ins = await db.collection("conversations").insertOne(doc);
     conv = { _id: ins.insertedId, ...doc };
   } else if (contactName && !conv.contactName) {
     await db.collection("conversations").updateOne(
-      { _id: conv._id, tenantId: TENANT_ID },
+      { _id: conv._id },
       { $set: { contactName } }
     );
     conv.contactName = contactName;
@@ -740,12 +689,11 @@ async function appendMessage(conversationId, {
   ttlDays = null
 }) {
   const db = await getDb();
-  const doc = attachTenant({
+  const doc = {
     conversationId: new ObjectId(conversationId),
     role, content, type, meta,
     ts: new Date()
-  });
-  doc.tenantId = TENANT_ID;
+  };
   if (ttlDays && Number.isFinite(ttlDays)) {
     doc.expireAt = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
   }
@@ -754,7 +702,7 @@ async function appendMessage(conversationId, {
   const upd = { $inc: { turns: 1 }, $set: {} };
   if (role === "user") upd.$set.lastUserTs = doc.ts;
   if (role === "assistant") upd.$set.lastAssistantTs = doc.ts;
-  await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId), tenantId: TENANT_ID }, upd);
+  await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId) }, upd);
 }
 
 // Normalizar “Pedido” a estructura de order
@@ -805,7 +753,7 @@ function normalizeOrder(waId, contactName, pedido) {
 async function finalizeConversationOnce(conversationId, finalPayload, estado) {
   const db = await getDb();
   const res = await db.collection("conversations").findOneAndUpdate(
-    { _id: new ObjectId(conversationId), tenantId: TENANT_ID, finalized: { $ne: true } },
+    { _id: new ObjectId(conversationId), finalized: { $ne: true } },
     {
       $set: {
         status: estado || "COMPLETED",
@@ -844,7 +792,7 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
       const pedidoNombre = finalPayload.Pedido["Nombre"];
       if (pedidoNombre && !conv.contactName) {
         await db.collection("conversations").updateOne(
-          { _id: conv._id, tenantId: TENANT_ID },
+          { _id: conv._id },
           { $set: { contactName: pedidoNombre } }
         );
         conv.contactName = pedidoNombre;
@@ -852,7 +800,6 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
 
       const orderDoc = normalizeOrder(conv.waId, conv.contactName, finalPayload.Pedido);
       orderDoc.conversationId = conv._id;
-      orderDoc.tenantId = TENANT_ID;
       await db.collection("orders").insertOne(orderDoc);
     }
   } catch (e) {
@@ -866,20 +813,19 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
 const sessions = new Map(); // waId -> { messages, updatedAt }
 
 async function getSession(waId) {
-  const key = sessionKey(waId);
-  if (!sessions.has(key)) {
+  if (!sessions.has(waId)) {
         const db = await getDb();
-    const conv = await db.collection("conversations").findOne(withTenantFilter({ waId, status: "OPEN" }));
+    const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
     const systemText = await buildSystemPrompt({ conversation: conv || null });
 // al iniciar conversación
-    sessions.set(key, {
+    sessions.set(waId, {
       messages: [{ role: "system", content: systemText }],
       updatedAt: Date.now()
     });
   }
-  return sessions.get(key);
+  return sessions.get(waId);
 }
-function resetSession(waId) { sessions.delete(sessionKey(waId)); }
+function resetSession(waId) { sessions.delete(waId); }
 function pushMessage(session, role, content, maxTurns = 20) {
   session.messages.push({ role, content });
   const system = session.messages[0];
@@ -939,7 +885,7 @@ async function chatWithHistoryJSON(
   // refrescar system en cada turno
   try {
         const db = await getDb();
-    const conv = await db.collection("conversations").findOne(withTenantFilter({ waId, status: "OPEN" }));
+    const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
     const systemText = await buildSystemPrompt({ conversation: conv || null });
     session.messages[0] = { role: "system", content: systemText };
 } catch (e) {
@@ -978,43 +924,6 @@ async function chatWithHistoryJSON(
   //return { response: responseText, estado, raw: data || {} };
   return { response: responseText, estado, raw: data || {}, usage };
 }
-
-
-
-//////////////////////////////////////////////////////////////////////////////////////
-
-const helmet = require("helmet");
-
-app.use((req, res, next) => {
-  // guardá el nonce en res.locals (o req.locals)
-  res.locals.nonce = crypto.randomUUID();
-  next();
-});
-
-app.use(
-  helmet.contentSecurityPolicy({
-    useDefaults: true,
-    directives: {
-      "script-src": ["'self'", (req, res) => `'nonce-${res.locals.nonce}'`],
-      "style-src": ["'self'", "'unsafe-inline'"],
-      "img-src": ["'self'", "data:"],
-      "object-src": ["'none'"],
-      "base-uri": ["'self'"],
-      // agrega otras según necesidad (connect-src, font-src, etc.)
-    },
-  })
-);
-
-
-
-
-
-
-
-
-
-
-
 
 /* ======================= Rutas básicas ======================= */
 app.get("/", (_req, res) => res.status(200).send("WhatsApp Webhook up ✅"));
@@ -1322,43 +1231,6 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-
-/* ======================= Índices (multiempresa + performance) ======================= */
-async function ensureIndexes() {
-  try {
-    const db = await getDb();
-    await db.collection("products").createIndexes([
-      { key: { tenantId: 1, active: 1, createdAt: -1 }, name: "products_tenant_active_createdAt" },
-      { key: { tenantId: 1, descripcion: 1 },          name: "products_tenant_descripcion" },
-      { key: { tenantId: 1, updatedAt: -1 },           name: "products_tenant_updatedAt" }
-    ]);
-    await db.collection("conversations").createIndexes([
-      { key: { tenantId: 1, waId: 1, status: 1 }, name: "conversations_tenant_wa_status" },
-      { key: { tenantId: 1, openedAt: -1 },       name: "conversations_tenant_openedAt" },
-      { key: { tenantId: 1, processed: 1, openedAt: -1 }, name: "conversations_tenant_processed_openedAt" }
-    ]);
-    await db.collection("messages").createIndexes([
-      { key: { conversationId: 1, ts: 1 }, name: "messages_conversation_ts" },
-      { key: { tenantId: 1, ts: -1 },      name: "messages_tenant_ts" }
-    ]);
-    try {
-      await db.collection("messages").createIndex({ expireAt: 1 }, { name: "messages_expireAt_TTL", expireAfterSeconds: 0 });
-    } catch (e) {
-      console.warn("ℹ️ TTL index messages.expireAt:", e.message);
-    }
-    await db.collection("orders").createIndexes([
-      { key: { conversationId: 1 }, name: "orders_conversationId" },
-      { key: { tenantId: 1, processed: 1, createdAt: -1 }, name: "orders_tenant_processed_createdAt" }
-    ]);
-    await db.collection("settings").createIndexes([
-      { key: { tenantId: 1 }, name: "settings_tenant" }
-    ]);
-    console.log("✅ Índices verificados/creados");
-  } catch (e) {
-    console.warn("⚠️ ensureIndexes error:", e.message || e);
-  }
-}
-
 /* ======================= Admin UI ======================= */
 /**
  * /admin -> HTML con tabla de conversaciones + acciones
@@ -1553,7 +1425,7 @@ app.get("/admin", async (req, res) => {
 app.get("/api/admin/conversations", async (req, res) => {
   try {
     const db = await getDb();
-    const q = { tenantId: TENANT_ID };
+    const q = {};
     const { processed, phone, status, date_field, from, to } = req.query;
 
     if (typeof processed === "string") {
@@ -1610,10 +1482,9 @@ app.get("/api/admin/messages/:id", async (req, res) => {
   try {
     const id = req.params.id;
     const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id), tenantId: TENANT_ID });
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
     if (!conv) return res.status(404).send("Conversation not found");
-// mensajes por conversationId (ya pertenece al tenant por conv)
-    // opcional: { tenantId: TENANT_ID } en mensajes si guardamos tenantId allí
+
     const msgs = await db.collection("messages")
       .find({ conversationId: new ObjectId(id) })
       .sort({ ts: 1 })
@@ -1659,10 +1530,10 @@ app.get("/api/admin/order/:id", async (req, res) => {
   try {
     const id = req.params.id;
     const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id), tenantId: TENANT_ID });
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
     if (!conv) return res.status(404).json({ error: "not_found" });
 
-     // Buscar order por conversationId si existe (scoped por tenant en insert)
+    // Buscar order por conversationId si existe
     let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) });
     if (!order && conv.summary?.Pedido) {
       // normalizar on the fly si no se grabó orders (backfill)
@@ -1703,11 +1574,10 @@ app.post("/api/admin/order/:id/process", async (req, res) => {
     );
     if (!upd.matchedCount) {
       // si no hay order, intentamos construirla desde summary y crearla procesada
-      const conv = await db.collection("conversations").findOne({ _id: convId, tenantId: TENANT_ID });
+      const conv = await db.collection("conversations").findOne({ _id: convId });
       if (!conv || !conv.summary?.Pedido) return res.status(404).json({ error: "order_not_found" });
       const orderDoc = normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
       orderDoc.conversationId = convId;
-      orderDoc.tenantId = TENANT_ID;
       orderDoc.processed = true;
       orderDoc.processedAt = new Date();
       await db.collection("orders").insertOne(orderDoc);
@@ -1727,7 +1597,7 @@ app.get("/admin/print/:id", async (req, res) => {
     const id = req.params.id;
     const v = String(req.query.v || "kitchen").toLowerCase(); // kitchen | client
     const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id), tenantId: TENANT_ID });
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
     if (!conv) return res.status(404).send("Conversación no encontrada");
     let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) });
     if (!order && conv.summary?.Pedido) {
@@ -1810,194 +1680,6 @@ process.on("uncaughtException", (err) => {
   console.error("🧨 UncaughtException:", err);
 });
 
-
-/* ======================= Costos (tokens y $) ======================= */
-/*function getCostRates() {
-  const inPer1K  = Number(process.env.COST_IN_PER_1K  || process.env.OPENAI_INPUT_PRICE_PER_1K  || 0);
-  const outPer1K = Number(process.env.COST_OUT_PER_1K || process.env.OPENAI_OUTPUT_PRICE_PER_1K || 0);
-  const currency = (process.env.COSTS_CURRENCY || "USD").toUpperCase();
-  return { inPer1K, outPer1K, currency };
-}
-function costOfTokens(promptTokens, completionTokens, rates) {
-  const p = Number(promptTokens || 0);
-  const c = Number(completionTokens || 0);
-  return (p / 1000) * rates.inPer1K + (c / 1000) * rates.outPer1K;
-}*/
-
-
-// ======================= Costos (tokens y $$) =======================
-// Configurá precios por 1K tokens (entrada/salida). Defaults seguros:
-const PRICE_IN_PER_1K  = parseFloat(process.env.OPENAI_PRICE_IN_PER_1K  || "0.005"); // ej: gpt-4o-mini input
-const PRICE_OUT_PER_1K = parseFloat(process.env.OPENAI_PRICE_OUT_PER_1K || "0.015"); // ej: gpt-4o-mini output
-
-
-app.get("/api/costos", async (req, res) => {
-  try {
-    const db = await getDb();
-    const q = {};
-    // Si usás multi-tenant y guardás tenantId en conversations, podés filtrar:
-    if (process.env.TENANT_ID) {
-      q.$or = [
-        { tenantId: process.env.TENANT_ID },
-        { tenantId: { $exists: false } },
-        { tenantId: null }
-      ];
-    }
-    const { from, to } = req.query || {};
-    if (from || to) {
-      q.openedAt = {};
-      if (from) q.openedAt.$gte = new Date(`${from}T00:00:00.000Z`);
-      if (to)   q.openedAt.$lte = new Date(`${to}T23:59:59.999Z`);
-    }
-
-    const convs = await db.collection("conversations")
-      .find(q, { sort: { openedAt: -1 } })
-      .project({
-        waId: 1, contactName: 1, openedAt: 1, closedAt: 1,
-        counters: 1, last_usage: 1
-      })
-      .limit(1000)
-      .toArray();
-
-    const rows = convs.map(c => {
-      const p = c?.counters?.tokens_prompt_total     || 0;
-      const r = c?.counters?.tokens_completion_total || 0;
-      const t = c?.counters?.tokens_total || (p + r);
-      const cost_in  = (p / 1000) * PRICE_IN_PER_1K;
-      const cost_out = (r / 1000) * PRICE_OUT_PER_1K;
-      return {
-        id: (c._id && c._id.toString && c._id.toString()) || "",
-        waId: c.waId,
-        name: c.contactName || "",
-        openedAt: c.openedAt || null,
-        closedAt: c.closedAt || null,
-        prompt_tokens: p,
-        completion_tokens: r,
-        total_tokens: t,
-        cost_in:  Number(cost_in.toFixed(6)),
-        cost_out: Number(cost_out.toFixed(6)),
-        cost_total: Number((cost_in + cost_out).toFixed(6))
-      };
-    });
-
-    const totals = rows.reduce((acc, r) => {
-      acc.prompt_tokens     += r.prompt_tokens;
-      acc.completion_tokens += r.completion_tokens;
-      acc.total_tokens      += r.total_tokens;
-      acc.cost_in           += r.cost_in;
-      acc.cost_out          += r.cost_out;
-      acc.cost_total        += r.cost_total;
-      return acc;
-    }, { prompt_tokens:0, completion_tokens:0, total_tokens:0, cost_in:0, cost_out:0, cost_total:0 });
-
-    for (const k of Object.keys(totals)) {
-      if (typeof totals[k] === "number") totals[k] = Number(totals[k].toFixed(6));
-    }
-
-    res.json({
-      price_in_per_1k: PRICE_IN_PER_1K,
-      price_out_per_1k: PRICE_OUT_PER_1K,
-      count: rows.length,
-      totals,
-      rows
-    });
-  } catch (e) {
-    console.error("GET /api/costos error:", e);
-    res.status(500).json({ error: "internal" });
-  }
-});
-
-app.get("/costos", (_req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Costos</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1100px}
-    table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px;vertical-align:top}
-    th{background:#f5f5f5;text-align:left}
-    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-    .btn{padding:6px 10px;border:1px solid #333;background:#fff;border-radius:4px;cursor:pointer}
-    input{padding:6px 8px;border:1px solid #ccc;border-radius:4px}
-    .muted{color:#666;font-size:12px}
-    tfoot td{font-weight:bold}
-  </style>
-</head>
-<body>
-  <h1>Costos</h1>
-  <div class="row">
-    <label>Desde <input type="date" id="from"></label>
-    <label>Hasta <input type="date" id="to"></label>
-    <button class="btn" id="btnGo">Filtrar</button>
-    <button class="btn" id="btnReset">Reset</button>
-    <span class="muted">Precios configurables: <code>OPENAI_PRICE_IN_PER_1K</code> / <code>OPENAI_PRICE_OUT_PER_1K</code></span>
-  </div>
-  <p></p>
-  <div id="meta" class="muted"></div>
-  <table id="tbl">
-    <thead>
-      <tr>
-        <th>Inicio</th><th>Cliente</th><th>waId</th>
-        <th>Input</th><th>Output</th><th>Total</th>
-        <th>$ In</th><th>$ Out</th><th>$ Total</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-    <tfoot><tr>
-      <td colspan="3">TOTAL</td>
-      <td id="t_in">0</td><td id="t_out">0</td><td id="t_tok">0</td>
-      <td id="t_$in">0</td><td id="t_$out">0</td><td id="t_$tot">0</td>
-    </tr></tfoot>
-  </table>
-<script>
-async function j(url){ const r = await fetch(url); if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
-function fmt(n){ return (Number(n)||0).toLocaleString(undefined,{maximumFractionDigits:6}); }
-function fmtTok(n){ return (Number(n)||0).toLocaleString(); }
-function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g, m=>({ '&':'&amp;', '<':'&lt;', '>':'&gt;' }[m])); }
-
-async function load(){
-  const p = new URLSearchParams();
-  const f = document.getElementById('from').value; if (f) p.set('from', f);
-  const t = document.getElementById('to').value;   if (t) p.set('to', t);
-  const data = await j('/api/costos' + (p.toString()?('?' + p.toString()):''));
-  const tb = document.querySelector('#tbl tbody');
-  tb.innerHTML = '';
-  for (const r of data.rows){
-    const tr = document.createElement('tr');
-    tr.innerHTML = \`
-      <td>\${r.openedAt ? new Date(r.openedAt).toLocaleString() : ''}</td>
-      <td>\${esc(r.name)}</td>
-      <td>\${esc(r.waId)}</td>
-      <td>\${fmtTok(r.prompt_tokens)}</td>
-      <td>\${fmtTok(r.completion_tokens)}</td>
-      <td>\${fmtTok(r.total_tokens)}</td>
-      <td>\${fmt(r.cost_in)}</td>
-      <td>\${fmt(r.cost_out)}</td>
-      <td>\${fmt(r.cost_total)}</td>\`;
-    tb.appendChild(tr);
-  }
-  document.getElementById('meta').textContent =
-    \`\${data.count} conversaciones • $/1K in=\${data.price_in_per_1k} • $/1K out=\${data.price_out_per_1k}\`;
-
-  document.getElementById('t_in').textContent   = fmtTok(data.totals.prompt_tokens);
-  document.getElementById('t_out').textContent  = fmtTok(data.totals.completion_tokens);
-  document.getElementById('t_tok').textContent  = fmtTok(data.totals.total_tokens);
-  document.getElementById('t_$in').textContent  = fmt(data.totals.cost_in);
-  document.getElementById('t_$out').textContent = fmt(data.totals.cost_out);
-  document.getElementById('t_$tot').textContent = fmt(data.totals.cost_total);
-}
-document.getElementById('btnGo').addEventListener('click', load);
-document.getElementById('btnReset').addEventListener('click', ()=>{ document.getElementById('from').value=''; document.getElementById('to').value=''; load(); });
-load();
-</script>
-</body>
-</html>`);
-});
-
-
 /* ======================= Start ======================= */
 
 
@@ -2009,9 +1691,7 @@ app.get("/api/products", async (req, res) => {
       req.app?.locals?.db ||
       global.db;
 
-    const q = req.query.all === "true"
-      ? withTenantFilter({})
-      : withTenantFilter({ active: { $ne: false } });
+    const q = req.query.all === "true" ? {} : { active: { $ne: false } };
     const items = await database.collection("products")
       .find(q).sort({ createdAt: -1, descripcion: 1 }).toArray();
 
@@ -2035,23 +1715,21 @@ app.post("/api/products", async (req, res) => {
     observacion = String(observacion || "").trim();
     if (typeof active !== "boolean") active = !!active;
 
-    const imp = parseMoneyFlexible(importe);
+    let imp = null;
+    if (typeof importe === "number") imp = importe;
+    else if (typeof importe === "string") {
+      const n = Number(importe.replace(/[^\d.,-]/g, "").replace(",", "."));
+      imp = Number.isFinite(n) ? n : null;
+    }
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
 
     const now = new Date();
-    const doc = attachTenant({ descripcion, observacion, active, createdAt: now, updatedAt: now });
-    doc.tenantId = TENANT_ID;
+    const doc = { descripcion, observacion, active, createdAt: now, updatedAt: now };
     if (imp !== null) doc.importe = imp;
-    // Log mínimo para diagnóstico si algo falla aguas arriba
-    try {
-      const ins = await database.collection("products").insertOne(doc);
-      invalidateBehaviorCache();   
-      return res.json({ ok: true, _id: String(ins.insertedId) });
-    } catch (e) {
-      console.error("POST /api/products insertOne error:", e);
-      return res.status(500).json({ error: "insert_failed" });
-    }
-    
+
+    const ins = await database.collection("products").insertOne(doc);
+     invalidateBehaviorCache();
+    res.json({ ok: true, _id: String(ins.insertedId) });
   } catch (e) {
     console.error("POST /api/products error:", e);
     res.status(500).json({ error: "internal" });
@@ -2071,22 +1749,22 @@ app.put("/api/products/:id", async (req, res) => {
     ["descripcion","observacion","active","importe"].forEach(k => {
       if (req.body[k] !== undefined) upd[k] = req.body[k];
     });
-
-
-     if (upd.importe !== undefined) {
-      const n = parseMoneyFlexible(upd.importe);
-      if (n === null) delete upd.importe;  // si no parsea, no sobreescribimos
-      else upd.importe = n;
+    if (upd.importe !== undefined) {
+      const v = upd.importe;
+      if (typeof v === "string") {
+        const n = Number(v.replace(/[^\d.,-]/g, "").replace(",", "."));
+        upd.importe = Number.isFinite(n) ? n : undefined;
+      }
     }
     if (Object.keys(upd).length === 0) return res.status(400).json({ error: "no_fields" });
     upd.updatedAt = new Date();
 
     const result = await database.collection("products").updateOne(
-      { _id: new ObjectId(String(id)), tenantId: TENANT_ID },
+      { _id: new ObjectId(String(id)) },
       { $set: upd }
     );
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
-
+    
     invalidateBehaviorCache();
     res.json({ ok: true });
   } catch (e) {
@@ -2104,9 +1782,9 @@ app.delete("/api/products/:id", async (req, res) => {
       global.db;
 
     const { id } = req.params;
-    const result = await database.collection("products").deleteOne({ _id: new ObjectId(String(id)), tenantId: TENANT_ID });
+    const result = await database.collection("products").deleteOne({ _id: new ObjectId(String(id)) });
     if (!result.deletedCount) return res.status(404).json({ error: "not_found" });
-    invalidateBehaviorCache(); 
+    rinvalidateBehaviorCache();
    res.json({ ok: true });
   } catch (e) {
     console.error("DELETE /api/products/:id error:", e);
@@ -2124,7 +1802,7 @@ app.post("/api/products/:id/inactivate", async (req, res) => {
 
     const { id } = req.params;
     const result = await database.collection("products").updateOne(
-      { _id: new ObjectId(String(id)), tenantId: TENANT_ID },
+      { _id: new ObjectId(String(id)) },
       { $set: { active: false, updatedAt: new Date() } }
     );
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
@@ -2146,7 +1824,7 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
 
     const { id } = req.params;
     const result = await database.collection("products").updateOne(
-      { _id: new ObjectId(String(id)), tenantId: TENANT_ID },
+      { _id: new ObjectId(String(id)) },
       { $set: { active: true, updatedAt: new Date() } }
     );
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
@@ -2157,10 +1835,9 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
     res.status(500).json({ error: "internal" });
   }
 });
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ES Modules
-//const crypto = require("crypto");
-
+// === Vista /productos (UI CRUD) ===
+// 🔧 REEMPLAZA SOLO ESTA RUTA /productos
+// /productos con CRUD (SSR para ver datos + UI con fetch)
 app.get("/productos", async (req, res) => {
   try {
     const database =
@@ -2171,18 +1848,13 @@ app.get("/productos", async (req, res) => {
     if (!database) throw new Error("DB no inicializada");
 
     const verTodos = req.query.all === "true";
-    const filtro = verTodos
-      ? withTenantFilter({})
-      : withTenantFilter({ active: { $ne: false } });
+    const filtro = verTodos ? {} : { active: { $ne: false } };
 
     const productos = await database
       .collection("products")
       .find(filtro)
       .sort({ createdAt: -1 })
       .toArray();
-
-    // ✅ Usar el mismo nonce que definió Helmet
-    const nonce = res.locals.nonce;
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html>
@@ -2209,8 +1881,8 @@ app.get("/productos", async (req, res) => {
 
   <div class="row">
     <a class="btn" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a>
-    <button id="btnAdd" class="btn" type="button">Agregar</button>
-    <button id="btnReload" class="btn" type="button">Recargar</button>
+    <button id="btnAdd" class="btn">Agregar</button>
+    <button id="btnReload" class="btn">Recargar</button>
   </div>
   <p></p>
 
@@ -2253,63 +1925,16 @@ app.get("/productos", async (req, res) => {
     </tr>
   </template>
 
-  <!-- Tu JS original, ejecutado gracias al nonce global -->
-  <script nonce="${nonce}">
-    function ensureToastContainer(){
-      var c = document.getElementById("toast-root");
-      if(!c){
-        c = document.createElement("div");
-        c.id = "toast-root";
-        c.style.position = "fixed";
-        c.style.right = "16px";
-        c.style.bottom = "16px";
-        c.style.zIndex = "9999";
-        document.body.appendChild(c);
-      }
-      return c;
-    }
-    function showToast(msg, ms){
-      ms = (typeof ms==="number" && ms>0) ? ms : 1800;
-      var root = ensureToastContainer();
-      var t = document.createElement("div");
-      t.textContent = msg || "";
-      t.style.padding = "10px 14px";
-      t.style.marginTop = "8px";
-      t.style.background = "#333";
-      t.style.color = "#fff";
-      t.style.borderRadius = "8px";
-      t.style.boxShadow = "0 2px 8px rgba(0,0,0,.2)";
-      t.style.opacity = "0";
-      t.style.transform = "translateY(8px)";
-      t.style.transition = "opacity .2s, transform .2s";
-      root.appendChild(t);
-      requestAnimationFrame(function(){ t.style.opacity="1"; t.style.transform="translateY(0)"; });
-      setTimeout(function(){
-        t.style.opacity="0"; t.style.transform="translateY(8px)";
-        setTimeout(function(){ if(t && t.parentNode){ t.parentNode.removeChild(t); } }, 250);
-      }, ms);
-    }
-
-    function showError(e){
-      try { alert(e.message || String(e)); } catch { alert(String(e)); }
-    }
+  <script>
+    function q(sel, ctx){ return (ctx||document).querySelector(sel) }
+    function all(sel, ctx){ return Array.from((ctx||document).querySelectorAll(sel)) }
 
     async function j(url, opts){
       const r = await fetch(url, opts||{});
+      if(!r.ok) throw new Error('HTTP '+r.status);
       const ct = r.headers.get('content-type')||'';
-      if (!r.ok) {
-        let payload = null;
-        try { payload = ct.includes('application/json') ? await r.json() : await r.text(); } catch {}
-        const msg = (payload && (payload.error || payload.message)) ? (payload.error || payload.message)
-                  : ('HTTP ' + r.status + (typeof payload==='string' ? (' - ' + payload.slice(0,200)) : ''));
-        throw new Error(msg);
-      }
       return ct.includes('application/json') ? r.json() : r.text();
     }
-    window.j = j;
-
-    function q(sel, ctx){ return (ctx||document).querySelector(sel) }
-    function all(sel, ctx){ return Array.from((ctx||document).querySelectorAll(sel)) }
 
     async function reload(){
       const url = new URL(location.href);
@@ -2352,16 +1977,11 @@ app.get("/productos", async (req, res) => {
           body: JSON.stringify(payload)
         });
       } else {
-        try{
-          await j('/api/products', {
-            method:'POST',
-            headers:{'Content-Type':'application/json'},
-            body: JSON.stringify(payload)
-          });
-        } catch(e){
-          showError(e);
-          return;
-        }
+        await j('/api/products', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
       }
       await reload();
     }
@@ -2393,24 +2013,15 @@ app.get("/productos", async (req, res) => {
     // Bind inicial a filas SSR
     all('#tbl tbody tr').forEach(bindRow);
 
-    // Botones generales (delegados)
-    document.addEventListener('click', (ev) => {
-      const addBtn = ev.target.closest('#btnAdd');
-      if (addBtn) {
-        const tb = q('#tbl tbody');
-        const tr = q('#row-tpl').content.firstElementChild.cloneNode(true);
-        bindRow(tr);
-        tb.prepend(tr);
-        q('.descripcion', tr).focus();
-        showToast('Fila agregada');
-        return;
-      }
-      const relBtn = ev.target.closest('#btnReload');
-      if (relBtn) {
-        reload();
-        return;
-      }
+    // Botones generales
+    q('#btnAdd').addEventListener('click', ()=>{
+      const tb = q('#tbl tbody');
+      const tr = q('#row-tpl').content.firstElementChild.cloneNode(true);
+      bindRow(tr);
+      tb.prepend(tr);
+      q('.descripcion', tr).focus();
     });
+    q('#btnReload').addEventListener('click', reload);
   </script>
 </body>
 </html>`);
@@ -2424,20 +2035,13 @@ app.get("/productos", async (req, res) => {
 
 
 
-
-
-
-
-/////////////////////////////////////////////
-
-
 app.get("/productos.json", async (req, res) => {
   try {
     const database =
       (typeof getDb === "function" && await getDb()) ||
       req.app?.locals?.db ||
       global.db;
-    const data = await database.collection("products").find(withTenantFilter({})).limit(50).toArray();
+    const data = await database.collection("products").find({}).limit(50).toArray();
     res.json(data);
   } catch (e) {
     console.error(e); res.status(500).json({ error: String(e) });
