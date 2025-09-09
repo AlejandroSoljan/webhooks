@@ -2146,6 +2146,8 @@ app.get("/productos", async (req, res) => {
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html>
 <html>
+
+
 <head>
   <meta charset="utf-8" />
   <title>Productos</title>
@@ -2334,14 +2336,7 @@ app.get("/productos", async (req, res) => {
       q('.descripcion', tr).focus();
     });
     q('#btnReload').addEventListener('click', reload);
-  </script>
-</body>
-</html>`);
-  } catch (err) {
-    console.error("❌ /productos error:", err);
-    res.status(500).send("Error al obtener productos");
-  }
-});
+
 
 document.getElementById('btnAdd').addEventListener('click', () => {
   const tb = document.querySelector('#tbl tbody');
@@ -2351,6 +2346,17 @@ document.getElementById('btnAdd').addEventListener('click', () => {
   tb.prepend(tr);
   tr.querySelector('.descripcion').focus();
 });
+
+  </script>
+</body>
+</html>`);
+  } catch (err) {
+    console.error("❌ /productos error:", err);
+    res.status(500).send("Error al obtener productos");
+  }
+});
+
+
 
 
 
