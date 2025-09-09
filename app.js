@@ -490,15 +490,22 @@ async function loadProductsFromMongo() {
     .toArray();
   return docs.map(d => ({
     descripcion: d.descripcion || "",
-    importe: (typeof d.importe === "number") ? d.importe : null,
+    importe: (() => {
+      if (typeof d.importe === "number") return d.importe;
+      if (typeof d.importe === "string") {
+        const n = Number(d.importe.replace(/[^\d.,-]/g, "").replace(",", "."));
+        return Number.isFinite(n) ? n : null;
+      }
+      return null;
+    })(),
     observacion: d.observacion || "",
     active: d.active !== false
   }));
 }
-
 async function buildSystemPrompt({ force = false, conversation = null } = {}) {
-  // Usar snapshot si viene atado a la conversación
-  if (conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
+// Usar snapshot SOLO si FREEZE_FULL_PROMPT=true
+  const FREEZE_FULL_PROMPT = String(process.env.FREEZE_FULL_PROMPT || "false").toLowerCase() === "true";
+  if (FREEZE_FULL_PROMPT && conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
     return conversation.behaviorSnapshot.text;
   }
 
