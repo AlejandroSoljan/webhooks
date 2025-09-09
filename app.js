@@ -20,7 +20,7 @@ const {
   ObjectId, ensureOpenConversation, appendMessage, chatWithHistoryJSON, finalizeConversationOnce,
   // extras
   buildSystemPrompt, bumpConversationTokenCounters, putInCache
-} = require("/logic");
+} = require("./logic");
 
 const { getDb } = require("./db");
 
@@ -198,7 +198,7 @@ app.get("/api/admin/order/:id", async (req, res) => {
   try {
     const id = req.params.id; const db = await getDb(); const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) }); if (!conv) return res.status(404).json({ error: "not_found" });
     let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) });
-    if (!order && conv.summary?.Pedido) order = require("/logic").normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
+    if (!order && conv.summary?.Pedido) order = require("./logic").normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
     res.json({ waId: conv.waId, order: order ? { name: order.name || conv.contactName || "", entrega: order.entrega || "", domicilio: order.domicilio || "", items: order.items || [], amount: order.amount ?? null, estadoPedido: order.estadoPedido || "", fechaEntrega: order.fechaEntrega || "", hora: order.hora || "", processed: !!order.processed } : null, rawPedido: conv.summary?.Pedido || null });
   } catch (e) { console.error("/api/admin/order error:", e); res.status(500).json({ error: "internal" }); }
 });
@@ -212,7 +212,7 @@ app.post("/api/admin/order/:id/process", async (req, res) => {
 app.get("/admin/print/:id", async (req, res) => {
   try {
     const id = req.params.id; const db = await getDb(); const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) }); if (!conv) return res.status(404).send("not_found");
-    let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) }); if (!order && conv.summary?.Pedido) order = require("/logic").normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
+    let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) }); if (!order && conv.summary?.Pedido) order = require("./logic").normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
     const v = (req.query.v || "kitchen");
     const html = `<!doctype html><html><head><meta charset="utf-8" /><title>${v==='invoice'?'Factura':'Ticket'}</title><style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px}.printable{max-width:480px}.muted{color:#666}.hr{height:1px;background:#ddd;margin:12px 0}</style></head><body><div class="printable"><div>${v==='invoice'?"¡Gracias por su compra!":"TICKET COCINA"}</div><div class="hr"></div><button class="noprint" onclick="window.print()">Imprimir</button></div></body></html>`;
     res.setHeader("Content-Type", "text/html; charset=utf-8"); res.end(html);
