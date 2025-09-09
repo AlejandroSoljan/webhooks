@@ -164,10 +164,187 @@ app.get("/productos", async (req, res) => {
 });
 
 // -------- Admin (conversaciones / mensajes / órdenes / impresión) --------
-app.get("/admin", async (_req, res) => {
-  try {
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.end(`<!doctype html><html><head><meta charset="utf-8" /><title>Admin</title></head><body><h1>Panel Admin</h1><p><a href="/productos">Productos</a> • <a href="/comportamiento">Comportamiento</a></p></body></html>`);
+app.get("/admin", async (req, res) => {
+  // HTML minimal con fetch al endpoint JSON
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end(`
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Admin - Conversaciones</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Arial, sans-serif; margin: 24px; }
+    h1 { margin-top: 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 14px; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { background: #f6f6f6; text-align: left; }
+    tr:nth-child(even) { background: #fafafa; }
+    .btn { padding: 6px 10px; border: 1px solid #333; background: #fff; cursor: pointer; border-radius: 4px; font-size: 12px; }
+    .btn + .btn { margin-left: 6px; }
+    .printmenu { display:inline-flex; gap:6px; align-items:center; }
+    .muted { color: #666; }
+    .tag { display:inline-block; padding:2px 6px; border-radius: 4px; font-size: 12px; }
+    .tag.OPEN { background: #e7f5ff; color: #1971c2; }
+    .tag.COMPLETED { background: #e6fcf5; color: #2b8a3e; }
+    .tag.CANCELLED { background: #fff0f6; color: #c2255c; }
+    /* modal */
+    .modal-backdrop { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); align-items:center; justify-content:center; }
+    .modal { background:#fff; width: 720px; max-width: calc(100% - 32px); border-radius:8px; overflow:hidden; }
+    .modal header { padding:12px 16px; background:#f6f6f6; display:flex; align-items:center; justify-content:space-between;}
+    .modal header h3{ margin:0; font-size:16px;}
+    .modal .content { padding:16px; max-height:70vh; overflow:auto; }
+    .modal .actions { padding:12px 16px; text-align:right; border-top:1px solid #eee;}
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; font-size: 12px; }
+    .printable { background: #fff; color: #000; }
+    @media print {
+      .no-print { display: none; }
+      .printable { padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Admin - Conversaciones</h1>
+  <div class="muted">Actualiza la página para refrescar.</div>
+  <div class="no-print" id="filterBar" style="margin:8px 0 12px;">
+  <label>Filtrar: </label>
+  <select id="filterProcessed" class="btn" onchange="loadConversations()">
+    <option value="">Todas</option>
+    <option value="false">No procesadas</option>
+    <option value="true">Procesadas</option>
+  </select>
+</div>
+<table id="tbl">
+    <thead>
+      <tr>
+        <th>wa_id</th>
+        <th>Nombre</th>
+        <th>Estado</th>
+        <th>Abierta</th>
+        <th>Cerrada</th>
+        <th>Turnos</th>
+        <th>Procesado</th>
+        <th>Acciones</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <div class="modal-backdrop" id="modalBackdrop">
+    <div class="modal">
+      <header>
+        <h3>Pedido</h3>
+        <button class="btn no-print" onclick="closeModal()">✕</button>
+      </header>
+      <div class="content" id="modalContent"></div>
+      <div class="actions no-print">
+        <button class="btn" onclick="window.print()">Imprimir</button>
+        <button class="btn" onclick="closeModal()">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    async function loadConversations() {
+      
+      const sel = document.getElementById('filterProcessed');
+      const p = sel ? sel.value : '';
+      const url = p ? ('/api/admin/conversations?processed=' + p) : '/api/admin/conversations';
+      const r = await fetch(url);
+
+      const data = await r.json();
+      const tb = document.querySelector("#tbl tbody");
+      tb.innerHTML = "";
+      for (const row of data) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = \`
+          <td>\${row.waId}</td>
+          <td>\${row.contactName || ""}</td>
+          <td><span class="tag \${row.status}">\${row.status}</span></td>
+          <td>\${row.openedAt ? new Date(row.openedAt).toLocaleString() : ""}</td>
+          <td>\${row.closedAt ? new Date(row.closedAt).toLocaleString() : ""}</td>
+          <td>\${row.turns ?? 0}</td>
+          <td>\${row.processed ? '✅' : '—'}</td>
+          <td>
+            <button class="btn" onclick="openMessages('\${row._id}')">Mensajes</button>
+            <button class="btn" onclick="openOrder('\${row._id}')">Pedido</button>
+            <button class="btn" onclick="markProcessed('\${row._id}')">Procesado</button>
+            <div class="printmenu">
+              <select id="pm-\${row._id}" class="btn">
+                <option value="kitchen">Cocina</option>
+                <option value="client">Cliente</option>
+              </select>
+              <button class="btn" onclick="printTicketOpt('\${row._id}')">Imprimir</button>
+            </div>
+          </td>
+        \`;
+        tb.appendChild(tr);
+      }
+    }
+
+    function openMessages(id) {
+      window.open('/api/admin/messages/' + id, '_blank');
+    }
+
+    async function openOrder(id) {
+      const r = await fetch('/api/admin/order/' + id);
+      const data = await r.json();
+      const root = document.getElementById('modalContent');
+      root.innerHTML = renderOrder(data);
+      openModal();
+    }
+
+    async function markProcessed(id) {
+      const r = await fetch('/api/admin/order/' + id + '/process', { method: 'POST' });
+      if (r.ok) {
+        alert('Pedido marcado como procesado.');
+      } else {
+        alert('No se pudo marcar como procesado.');
+      }
+    }
+
+    function renderOrder(o) {
+      if (!o || !o.order) return '<div class="mono">No hay pedido para esta conversación.</div>';
+      const ord = o.order;
+      const itemsHtml = (ord.items || []).map(it => \`<li>\${it.name}: <strong>\${it.selection}</strong></li>\`).join('') || '<li>(sin ítems)</li>';
+      const rawHtml = o.rawPedido ? '<pre class="mono">' + JSON.stringify(o.rawPedido, null, 2) + '</pre>' : '';
+      return \`
+        <div class="printable">
+          <h2>Pedido</h2>
+          <p><strong>Cliente:</strong> \${ord.name || ''} <span class="muted">(\${o.waId})</span></p>
+          <p><strong>Entrega:</strong> \${ord.entrega || ''}</p>
+          <p><strong>Domicilio:</strong> \${ord.domicilio || ''}</p>
+          <p><strong>Monto:</strong> \${(ord.amount!=null)?('$'+ord.amount):''}</p>
+          <p><strong>Estado pedido:</strong> \${ord.estadoPedido || ''}</p>
+          <p><strong>Fecha/Hora entrega:</strong> \${ord.fechaEntrega || ''} \${ord.hora || ''}</p>
+          <h3>Ítems</h3>
+          <ul>\${itemsHtml}</ul>
+          <h3>Detalle crudo del Pedido</h3>
+          \${rawHtml}
+        </div>
+      \`;
+    }
+
+    function openModal() {
+      document.getElementById('modalBackdrop').style.display = 'flex';
+    }
+    function closeModal() {
+      document.getElementById('modalBackdrop').style.display = 'none';
+    }
+
+    function printTicketOpt(id) {
+      const sel = document.getElementById('pm-' + id);
+      const v = sel ? sel.value : 'kitchen';
+      window.open('/admin/print/' + id + '?v=' + encodeURIComponent(v), '_blank');
+    }
+
+    loadConversations();
+  </script>
+</body>
+</html>
+  `);
+});
+res.end(`<!doctype html><html><head><meta charset="utf-8" /><title>Admin</title></head><body><h1>Panel Admin</h1><p><a href="/productos">Productos</a> • <a href="/comportamiento">Comportamiento</a></p></body></html>`);
   } catch (e) { res.status(500).send("internal"); }
 });
 app.get("/api/admin/conversations", async (req, res) => {
