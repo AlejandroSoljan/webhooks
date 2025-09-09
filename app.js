@@ -1,4 +1,4 @@
-  const oldDoc = await settings.findOne({ _id: "behavior" });
+  const oldDoc = settings.findOne({ _id: "behavior" });
   const key = `behavior:${TENANT_ID}`;
   if (oldDoc) {
     const { _id, ...rest } = oldDoc;
