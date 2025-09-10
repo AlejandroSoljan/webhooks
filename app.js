@@ -286,6 +286,115 @@ app.post("/webhook", async (req, res) => {
   } catch (e) { console.error("POST /webhook error:", e); /* 200 ya enviado */ }
 });
 
+// -------- Costos por conversación (UI + API + export con agrupaciones) --------
+const CURRENCY = process.env.COST_CURRENCY || "ARS $";
+const COST_PROMPT_PER_1K = Number(process.env.COST_PROMPT_PER_1K || 0);
+const COST_COMPLETION_PER_1K = Number(process.env.COST_COMPLETION_PER_1K || 0);
+
+// UI
+app.get("/costos", async (_req, res) => {
+  try {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!doctype html><html><head><meta charset="utf-8" />
+    <title>Costos por conversación</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1200px}
+      table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px;vertical-align:top}
+      th{background:#f5f5f5;text-align:left}
+      .row{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin:10px 0}
+      .btn{padding:6px 10px;border:1px solid #333;background:#fff;border-radius:4px;cursor:pointer}
+      input,select{padding:6px;border:1px solid #ccc;border-radius:4px}
+      .muted{color:#666;font-size:12px}
+      tfoot td{font-weight:bold;background:#fafafa}
+      .pill{border:1px solid #ccc;border-radius:999px;padding:2px 8px;font-size:12px}
+    </style></head><body>
+      <h1>Costos por conversación</h1>
+      <p class="muted">Moneda: <span class="pill">${CURRENCY}</span>. Precios (por 1K tokens): prompt=${CURRENCY}${COST_PROMPT_PER_1K} · completion=${CURRENCY}${COST_COMPLETION_PER_1K}</p>
+      <div class="row">
+        <label>Teléfono<br/><input id="fPhone" placeholder="waId / teléfono"/></label>
+        <label>Estado<br/>
+          <select id="fStatus">
+            <option value="">Todos</option>
+            <option value="OPEN">OPEN</option>
+            <option value="CLOSED">CLOSED</option>
+          </select>
+        </label>
+        <label>Procesada<br/>
+          <select id="fProcessed">
+            <option value="">Todas</option>
+            <option value="true">Procesadas</option>
+            <option value="false">No procesadas</option>
+          </select>
+        </label>
+        <label>Campo fecha<br/>
+          <select id="fDateField">
+            <option value="openedAt">openedAt</option>
+            <option value="closedAt">closedAt</option>
+            <option value="updatedAt">updatedAt</option>
+          </select>
+        </label>
+        <label>Desde<br/><input type="date" id="fFrom"/></label>
+        <label>Hasta<br/><input type="date" id="fTo"/></label>
+        <label>Agrupar por<br/>
+          <select id="fGroup">
+            <option value="">(sin agrupación)</option>
+            <option value="day">Día</option>
+            <option value="waId">Teléfono</option>
+            <option value="status">Estado</option>
+          </select>
+        </label>
+        <button class="btn" id="btnApply">Aplicar</button>
+        <button class="btn" id="btnCSV">Exportar CSV</button>
+        <button class="btn" id="btnXLSX">Exportar XLSX</button>
+        <button class="btn" id="btnReload">Recargar</button>
+      </div>
+
+      <table id="tbl">
+        <thead></thead>
+        <tbody></tbody>
+        <tfoot></tfoot>
+      </table>
+
+      <script>
+        function q(s,c){return (c||document).querySelector(s)}
+        function buildQuery(){
+          const p = new URLSearchParams();
+          const phone=q('#fPhone').value.trim(); if(phone) p.set('phone', phone);
+          const st=q('#fStatus').value; if(st) p.set('status', st);
+          const pr=q('#fProcessed').value; if(pr) p.set('processed', pr);
+          const df=q('#fDateField').value||'openedAt'; p.set('date_field', df);
+          const f=q('#fFrom').value; const t=q('#fTo').value;
+          if(f) p.set('from', f+'T00:00:00'); if(t) p.set('to', t+'T23:59:59');
+          const g=q('#fGroup').value; if(g) p.set('group_by', g);
+          return p.toString();
+        }
+        function renderTable(meta, rows){
+          const th = q('#tbl thead'); const tb = q('#tbl tbody'); const tf = q('#tbl tfoot');
+          th.innerHTML = tb.innerHTML = tf.innerHTML = '';
+          if(meta.mode === 'group'){
+            th.innerHTML = '<tr><th>Grupo</th><th>Conversaciones</th><th>Turnos</th><th>Tokens (prompt)</th><th>Tokens (completion)</th><th>Tokens (total)</th><th>Costo prompt</th><th>Costo completion</th><th>Costo total</th></tr>';
+            let tp=0, tc=0, tt=0, cp=0, cc=0, ct=0, cnt=0, trn=0;
+            for(const r of rows){
+              const tr=document.createElement('tr');
+              tr.innerHTML =
+                '<td>'+ (r.group||'') +'</td>'+
+                '<td>'+ (r.count||0) +'</td>'+
+                '<td>'+ (r.turns||0) +'</td>'+
+                '<td>'+ (r.tokens_prompt||0) +'</td>'+
+                '<td>'+ (r.tokens_completion||0) +'</td>'+
+                '<td>'+ (r.tokens_total||0) +'</td>'+
+                '<td>${CURRENCY}'+ (r.cost_prompt?.toFixed? r.cost_prompt.toFixed(4):r.cost_prompt) +'</td>'+
+                '<td>${CURRENCY}'+ (r.cost_completion?.toFixed? r.cost_completion.toFixed(4):r.cost_completion) +'</td>'+
+                '<td>${CURRENCY}'+ (r.cost_total?.toFixed? r.cost_total.toFixed(4):r.cost_total) +'</td>';
+              tb.appendChild(tr);
+              tp+=r.tokens_prompt||0; tc+=r.tokens_completion||0; tt+=r.tokens_total_
+
+
+
+
+
+
 // -------- Inicio --------
 const PORT = process.env.PORT || 3000;
 if (require.main === module) {
