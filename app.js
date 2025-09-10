@@ -348,6 +348,7 @@ app.get("/costos", async (_req, res) => {
             <option value="CLOSED">CLOSED</option>
           </select>
         </label>
+           <label>Tenant<br/><input id="fTenant" placeholder="tenantId (opcional)"/></label>
         <label>Procesada<br/>
           <select id="fProcessed">
             <option value="">Todas</option>
@@ -391,6 +392,7 @@ app.get("/costos", async (_req, res) => {
           const p = new URLSearchParams();
           const phone=q('#fPhone').value.trim(); if(phone) p.set('phone', phone);
           const st=q('#fStatus').value; if(st) p.set('status', st);
+            const tnt=q('#fTenant').value.trim(); if(tnt) p.set('tenant', tnt);
           const pr=q('#fProcessed').value; if(pr) p.set('processed', pr);
           const df=q('#fDateField').value||'openedAt'; p.set('date_field', df);
           const f=q('#fFrom').value; const t=q('#fTo').value;
@@ -475,7 +477,7 @@ app.get("/costos", async (_req, res) => {
 app.get("/api/costs", async (req, res) => {
   try {
     const db = await getDb();
-    const { processed, phone, status, date_field, from, to, group_by, export: ex } = req.query;
+    const { processed, phone, tenant, status, date_field, from, to, group_by, export: ex } = req.query;
 
     const q = {};
     if (typeof processed === "string") {
@@ -492,6 +494,14 @@ app.get("/api/costs", async (req, res) => {
     // Filtro por empresa (tenant) si está definido en el proceso
     if (TENANT_ID) q.tenantId = TENANT_ID;
 
+   // Filtro por empresa:
+    // - Si viene ?tenant= en el query, se usa ese valor.
+    // - Si no viene, se usa TENANT_ID del proceso (si existe).
+    if (tenant && String(tenant).trim()) {
+      q.tenantId = String(tenant).trim();
+    } else if (TENANT_ID) {
+      q.tenantId = TENANT_ID;
+    }
     const dateField = (date_field || "openedAt");
     if ((from || to)) {
       const f = {};
