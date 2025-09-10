@@ -1,3 +1,4 @@
+
 // ========================= logic.js =========================
 // Mueve TODA la lógica acá. Los endpoints en app.js importan desde este módulo.
 // Mantiene firmas y comportamiento para no romper nada.
@@ -9,6 +10,9 @@ const OpenAI = require("openai");
 const { google } = require("googleapis");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
+// --- Multi-tenant ---
+const TENANT_ID = (process.env.TENANT_ID || "").trim() || null;
+
 
 const OPENAI_MAX_TURNS = (() => {
   const n = parseInt(process.env.OPENAI_MAX_TURNS || "", 10);
@@ -361,6 +365,7 @@ async function ensureOpenConversation(waId, { contactName = null } = {}) {
   }
   return conv;
 }
+
 async function appendMessage(conversationId, { role, content, type = "text", meta = {}, ttlDays = null }) {
 const db = await getDb();
 const doc = {
