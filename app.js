@@ -510,7 +510,8 @@ app.get("/api/costs", async (req, res) => {
       const y = dt.getFullYear();
       const m = String(dt.getMonth()+1).padStart(2,'0');
       const da = String(dt.getDate()).padStart(2,'0');
-      return \`\${y}-\${m}-\${da}\`;
+      // sin backticks (evita cerrar el template exterior)
+      return y + "-" + m + "-" + da;
     }
 
     if (group_by === "day" || group_by === "waId" || group_by === "status") {
@@ -548,8 +549,8 @@ app.get("/api/costs", async (req, res) => {
 
     if (ex === "csv") {
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
-      const fname = "costos" + (group_by ? \`_\${group_by}\` : "") + ".csv";
-      res.setHeader("Content-Disposition", \`attachment; filename=\${fname}\`);
+      const fname = "costos" + (group_by ? "_" + group_by : "") + ".csv";
+      res.setHeader("Content-Disposition", "attachment; filename=" + fname);
       let header, getter;
       if (mode === "group") {
         header = ["group","count","turns","tokens_prompt","tokens_completion","tokens_total","cost_prompt","cost_completion","cost_total"];
@@ -609,8 +610,8 @@ app.get("/api/costs", async (req, res) => {
       }
       for (const r of rows) ws.addRow(r);
       res.setHeader("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-      const fname = "costos" + (group_by ? \`_\${group_by}\` : "") + ".xlsx";
-      res.setHeader("Content-Disposition", \`attachment; filename=\${fname}\`);
+      const fname = "costos" + (group_by ? "_" + group_by : "") + ".xlsx";
+      res.setHeader("Content-Disposition", "attachment; filename=" + fname);
       await wb.xlsx.write(res);
       res.end();
       return;
@@ -623,7 +624,6 @@ app.get("/api/costs", async (req, res) => {
   }
 });
 // -------- Fin costos --------
-
 
 
 
