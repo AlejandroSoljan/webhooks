@@ -13,6 +13,11 @@ const { getDb } = require("./db");
 // --- Multi-tenant (empresa): usar process.env.TENANT_ID ---
 const TENANT_ID = (process.env.TENANT_ID || "").trim() || null;
 
+db.products.updateMany(
+  { tenantId: { $exists: false } },
+  { $set: { tenantId: "carico" } } // tu TENANT_ID real
+);
+
 
 const OPENAI_MAX_TURNS = (() => {
   const n = parseInt(process.env.OPENAI_MAX_TURNS || "", 10);
@@ -282,8 +287,10 @@ async function saveBehaviorTextToMongo(newText) {
 }
 async function loadProductsFromMongo() {
   const db = await getDb();
-  const docs = await db.collection("products").find({ active: { $ne: false } }).sort({ createdAt: -1, descripcion: 1 }).toArray();
-  function toNumber(v) {
+  const filter = { active: { $ne: false } };
+  if (TENANT_ID) filter.tenantId = TENANT_ID;
+  const docs = await db.collection("products").find(filter).sort({ createdAt: -1, descripcion: 1 }).toArray();
+   function toNumber(v) {
     if (typeof v === "number" && Number.isFinite(v)) return v;
     if (typeof v === "string") { const n = Number(v.replace(/[^\d.,-]/g, "").replace(",", ".")); return Number.isFinite(n) ? n : null; }
     return null;
