@@ -262,11 +262,19 @@ async function loadBehaviorTextFromSheet() {
 }
 async function loadBehaviorTextFromMongo() {
   const db = await getDb();
-  const doc = await db.collection("settings").findOne({ _id: "behavior" });
+  const key = TENANT_ID ? `behavior:${TENANT_ID}` : "behavior";
+  // 1) Intentar doc del tenant
+  let doc = await db.collection("settings").findOne({ _id: key });
   if (doc && typeof doc.text === "string" && doc.text.trim()) return doc.text.trim();
+  // 2) Fallback al global (compatibilidad hacia atrás)
+  if (key !== "behavior") {
+    const globalDoc = await db.collection("settings").findOne({ _id: "behavior" });
+    if (globalDoc && typeof globalDoc.text === "string" && globalDoc.text.trim()) return globalDoc.text.trim();
+  }
+  // 3) Si no existe, sembrar fallback en el doc del tenant (o global)
   const fallback = "Sos un asistente claro, amable y conciso. Respondé en español.";
   await db.collection("settings").updateOne(
-    { _id: "behavior" },
+    { _id: key },
     { $setOnInsert: { text: fallback, updatedAt: new Date() } },
     { upsert: true }
   );
@@ -274,8 +282,9 @@ async function loadBehaviorTextFromMongo() {
 }
 async function saveBehaviorTextToMongo(newText) {
   const db = await getDb();
+  const key = TENANT_ID ? `behavior:${TENANT_ID}` : "behavior";
   await db.collection("settings").updateOne(
-    { _id: "behavior" },
+    { _id: key },
     { $set: { text: String(newText || "").trim(), updatedAt: new Date() } },
     { upsert: true }
   );
