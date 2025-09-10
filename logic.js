@@ -157,16 +157,43 @@ async function transcribeImageWithOpenAI(publicImageUrl) {try {
 } catch { return ""; }}
 async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename = "audio.ogg" }) {
 try {
-  if (publicAudioUrl) {
-    const url = `${TRANSCRIBE_API_URL}/transcribe?url=${encodeURIComponent(publicAudioUrl)}`;
-    const r = await fetch(url);
-    if (!r.ok) return { text: "" };
-    const j = await r.json().catch(() => ({}));
-    return { text: j.text || "" };
+  // 1) Preferir servicio externo si está configurado y hay URL pública
+  const prefer = (process.env.TRANSCRIBE_API_URL || "").trim();
+  if (prefer && publicAudioUrl) {
+    try {
+      const r = await fetch(`${prefer}/transcribe?url=${encodeURIComponent(publicAudioUrl)}`);
+      if (r.ok) {
+        const j = await r.json().catch(() => ({}));
+        if (j && typeof j.text === "string") return { text: j.text };
+      }
+    } catch (_) {}
   }
-  // fallback seguro
-  return { text: "" };
-} catch {
+
+  // 2) Fallback OpenAI: usar buffer directo o bajar la URL pública
+  let buf = buffer, mt = mime;
+  if (!buf && publicAudioUrl) {
+    try {
+      const r2 = await fetch(publicAudioUrl);
+      mt = r2.headers.get("content-type") || mime || "audio/ogg";
+      const ab = await r2.arrayBuffer();
+      buf = Buffer.from(ab);
+    } catch (_) {}
+  }
+  if (!buf) return { text: "" };
+
+  const model = process.env.WHISPER_MODEL || process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-transcribe";
+  const ext = (mt||"").includes("wav") ? "wav"
+            : ((mt||"").includes("mpeg") || (mt||"").includes("mp3")) ? "mp3"
+            : ((mt||"").includes("ogg") || (mt||"").includes("opus")) ? "ogg"
+            : "mp3";
+
+  // Node 18+ expone File/Blob
+  const file = new File([buf], `audio.${ext}`, { type: mt || "audio/ogg" });
+  const resp = await openai.audio.transcriptions.create({ file, model });
+  const text = resp?.text || resp?.data?.text || "";
+  return { text };
+} catch (e) {
+  console.error("transcribeAudioExternal fallback error:", e?.message || e);
   return { text: "" };
 }
 }
