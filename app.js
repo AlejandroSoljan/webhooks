@@ -388,7 +388,242 @@ app.get("/costos", async (_req, res) => {
                 '<td>${CURRENCY}'+ (r.cost_completion?.toFixed? r.cost_completion.toFixed(4):r.cost_completion) +'</td>'+
                 '<td>${CURRENCY}'+ (r.cost_total?.toFixed? r.cost_total.toFixed(4):r.cost_total) +'</td>';
               tb.appendChild(tr);
-              tp+=r.tokens_prompt||0; tc+=r.tokens_completion||0; tt+=r.tokens_total_
+              tp+=r.tokens_prompt||0; tc+=r.tokens_completion||0; tt+=r.tokens_total||0;
+              cp+=r.cost_prompt||0;   cc+=r.cost_completion||0;   ct+=r.cost_total||0;
+              cnt+=r.count||0;        trn+=r.turns||0;
+            }
+            tf.innerHTML = '<tr><td>Totales</td><td>'+cnt+'</td><td>'+trn+'</td><td>'+tp+'</td><td>'+tc+'</td><td>'+tt+'</td><td>${CURRENCY}'+(cp.toFixed?cp.toFixed(4):cp)+'</td><td>${CURRENCY}'+(cc.toFixed?cc.toFixed(4):cc)+'</td><td>${CURRENCY}'+(ct.toFixed?ct.toFixed(4):ct)+'</td></tr>';
+          } else {
+            th.innerHTML = '<tr><th>waId</th><th>Nombre</th><th>Estado</th><th>Inicio</th><th>Cierre</th><th>Turnos</th><th>Tokens (prompt)</th><th>Tokens (completion)</th><th>Tokens (total)</th><th>Costo prompt</th><th>Costo completion</th><th>Costo total</th></tr>';
+            let tp=0, tc=0, tt=0, cp=0, cc=0, ct=0;
+            for(const r of rows){
+              const tr=document.createElement('tr');
+              tr.innerHTML =
+                '<td>'+ (r.waId||'') +'</td>'+
+                '<td>'+ (r.contactName||'') +'</td>'+
+                '<td>'+ (r.status||'') +'</td>'+
+                '<td>'+ (r.openedAt? new Date(r.openedAt).toLocaleString() : '') +'</td>'+
+                '<td>'+ (r.closedAt? new Date(r.closedAt).toLocaleString() : '') +'</td>'+
+                '<td>'+ (r.turns??0) +'</td>'+
+                '<td>'+ (r.tokens_prompt??0) +'</td>'+
+                '<td>'+ (r.tokens_completion??0) +'</td>'+
+                '<td>'+ (r.tokens_total??0) +'</td>'+
+                '<td>${CURRENCY}'+ (r.cost_prompt?.toFixed? r.cost_prompt.toFixed(4) : r.cost_prompt) +'</td>'+
+                '<td>${CURRENCY}'+ (r.cost_completion?.toFixed? r.cost_completion.toFixed(4) : r.cost_completion) +'</td>'+
+                '<td>${CURRENCY}'+ (r.cost_total?.toFixed? r.cost_total.toFixed(4) : r.cost_total) +'</td>';
+              tb.appendChild(tr);
+              tp+=r.tokens_prompt||0; tc+=r.tokens_completion||0; tt+=r.tokens_total||0;
+              cp+=r.cost_prompt||0;   cc+=r.cost_completion||0;   ct+=r.cost_total||0;
+            }
+            tf.innerHTML = '<tr><td colspan="6">Totales</td><td>'+tp+'</td><td>'+tc+'</td><td>'+tt+'</td><td>${CURRENCY}'+(cp.toFixed?cp.toFixed(4):cp)+'</td><td>${CURRENCY}'+(cc.toFixed?cc.toFixed(4):cc)+'</td><td>${CURRENCY}'+(ct.toFixed?ct.toFixed(4):ct)+'</td></tr>';
+          }
+        }
+        async function load(){
+          const qs = buildQuery();
+          const r = await fetch('/api/costs'+(qs?('?'+qs):'')); 
+          const { rows, mode } = await r.json();
+          renderTable({ mode }, rows);
+        }
+        q('#btnApply').addEventListener('click', load);
+        q('#btnReload').addEventListener('click', load);
+        q('#btnCSV').addEventListener('click', ()=>{
+          const qs = buildQuery();
+          const url = '/api/costs?'+(qs?qs+'&':'')+'export=csv';
+          window.open(url,'_blank');
+        });
+        q('#btnXLSX').addEventListener('click', ()=>{
+          const qs = buildQuery();
+          const url = '/api/costs?'+(qs?qs+'&':'')+'export=xlsx';
+          window.open(url,'_blank');
+        });
+        load();
+      </script>
+    </body></html>`);
+  } catch (e) { console.error("/costos error:", e); res.status(500).send("internal"); }
+});
+
+// API (+ CSV / XLSX, con agrupaciones)
+app.get("/api/costs", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { processed, phone, status, date_field, from, to, group_by, export: ex } = req.query;
+
+    const q = {};
+    if (typeof processed === "string") {
+      if (processed === "true") q.processed = true;
+      else if (processed === "false") q.processed = { $ne: true };
+    }
+    if (phone && String(phone).trim()) {
+      const esc = escapeRegExp(String(phone).trim());
+      q.waId = { $regex: esc, $options: "i" };
+    }
+    if (status && String(status).trim()) {
+      q.status = String(status).trim().toUpperCase();
+    }
+    const dateField = (date_field || "openedAt");
+    if ((from || to)) {
+      const f = {};
+      if (from) f.$gte = new Date(from);
+      if (to)   f.$lte = new Date(to);
+      if (Object.keys(f).length) q[dateField] = f;
+    }
+
+    const docs = await db.collection("conversations")
+      .find(q).sort({ openedAt: -1 }).limit(5000).toArray();
+
+    const num = (v)=>Number.isFinite(+v)?+v:0;
+    const money = (n)=>Number(n)||0;
+    const calcCosts = (tp, tc)=>({
+      cp: money(tp/1000 * COST_PROMPT_PER_1K),
+      cc: money(tc/1000 * COST_COMPLETION_PER_1K)
+    });
+
+    const baseRows = docs.map(d => {
+      const c = d.counters || {};
+      const tp = num(c.tokens_prompt_total);
+      const tc = num(c.tokens_completion_total);
+      const tt = num(c.tokens_total) || (tp+tc);
+      const { cp, cc } = calcCosts(tp, tc);
+      return {
+        _id: String(d._id),
+        waId: d.waId || "",
+        contactName: d.contactName || "",
+        status: d.status || "",
+        openedAt: d.openedAt || null,
+        closedAt: d.closedAt || null,
+        turns: d.turns ?? 0,
+        tokens_prompt: tp,
+        tokens_completion: tc,
+        tokens_total: tt,
+        cost_prompt: cp,
+        cost_completion: cc,
+        cost_total: money(cp + cc)
+      };
+    });
+
+    let mode = "rows";
+    let rows = baseRows;
+
+    function keyDay(d){
+      const dt = d && d[dateField] ? new Date(d[dateField]) : null;
+      if (!dt || isNaN(dt)) return "sin_fecha";
+      const y = dt.getFullYear();
+      const m = String(dt.getMonth()+1).padStart(2,'0');
+      const da = String(dt.getDate()).padStart(2,'0');
+      return \`\${y}-\${m}-\${da}\`;
+    }
+
+    if (group_by === "day" || group_by === "waId" || group_by === "status") {
+      mode = "group";
+      const map = new Map();
+      for (const d of docs) {
+        const g = group_by === "day" ? keyDay(d) : (String(d[group_by] || "").trim() || "(vacío)");
+        const c = d.counters || {};
+        const tp = num(c.tokens_prompt_total);
+        const tc = num(c.tokens_completion_total);
+        const tt = num(c.tokens_total) || (tp+tc);
+        const turns = d.turns ?? 0;
+
+        const cur = map.get(g) || { group: g, count: 0, turns: 0, tp: 0, tc: 0, tt: 0 };
+        cur.count += 1;
+        cur.turns += turns;
+        cur.tp += tp; cur.tc += tc; cur.tt += tt;
+        map.set(g, cur);
+      }
+      rows = Array.from(map.values()).map(r => {
+        const { cp, cc } = calcCosts(r.tp, r.tc);
+        return {
+          group: r.group,
+          count: r.count,
+          turns: r.turns,
+          tokens_prompt: r.tp,
+          tokens_completion: r.tc,
+          tokens_total: r.tt,
+          cost_prompt: cp,
+          cost_completion: cc,
+          cost_total: money(cp + cc)
+        };
+      }).sort((a,b)=> a.group < b.group ? -1 : a.group > b.group ? 1 : 0);
+    }
+
+    if (ex === "csv") {
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      const fname = "costos" + (group_by ? \`_\${group_by}\` : "") + ".csv";
+      res.setHeader("Content-Disposition", \`attachment; filename=\${fname}\`);
+      let header, getter;
+      if (mode === "group") {
+        header = ["group","count","turns","tokens_prompt","tokens_completion","tokens_total","cost_prompt","cost_completion","cost_total"];
+        getter = (r)=>[r.group,r.count,r.turns,r.tokens_prompt,r.tokens_completion,r.tokens_total,r.cost_prompt,r.cost_completion,r.cost_total];
+      } else {
+        header = ["_id","waId","contactName","status","openedAt","closedAt","turns","tokens_prompt","tokens_completion","tokens_total","cost_prompt","cost_completion","cost_total"];
+        getter = (r)=>[r._id,r.waId,r.contactName,r.status,r.openedAt?new Date(r.openedAt).toISOString():"",r.closedAt?new Date(r.closedAt).toISOString():"",r.turns,r.tokens_prompt,r.tokens_completion,r.tokens_total,r.cost_prompt,r.cost_completion,r.cost_total];
+      }
+      const esc = (s)=> {
+        const v = (s==null?"":String(s));
+        return /[",\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v;
+      };
+      const lines = [header.join(",")];
+      for (const r of rows) lines.push(getter(r).map(esc).join(","));
+      res.end(lines.join("\n"));
+      return;
+    }
+
+    if (ex === "xlsx") {
+      let ExcelJS = null;
+      try { ExcelJS = require("exceljs"); } catch (_) {}
+      if (!ExcelJS) {
+        res.setHeader("Content-Type","text/plain; charset=utf-8");
+        res.status(200).end("No se encontró 'exceljs'. Usá export=csv o instalá exceljs.\n$ npm i exceljs");
+        return;
+      }
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("Costos");
+      if (mode === "group") {
+        ws.columns = [
+          { header:"Grupo", key:"group" },
+          { header:"Conversaciones", key:"count" },
+          { header:"Turnos", key:"turns" },
+          { header:"Tokens (prompt)", key:"tokens_prompt" },
+          { header:"Tokens (completion)", key:"tokens_completion" },
+          { header:"Tokens (total)", key:"tokens_total" },
+          { header:"Costo prompt", key:"cost_prompt" },
+          { header:"Costo completion", key:"cost_completion" },
+          { header:"Costo total", key:"cost_total" },
+        ];
+      } else {
+        ws.columns = [
+          { header:"_id", key:"_id" },
+          { header:"waId", key:"waId" },
+          { header:"Nombre", key:"contactName" },
+          { header:"Estado", key:"status" },
+          { header:"Inicio", key:"openedAt" },
+          { header:"Cierre", key:"closedAt" },
+          { header:"Turnos", key:"turns" },
+          { header:"Tokens (prompt)", key:"tokens_prompt" },
+          { header:"Tokens (completion)", key:"tokens_completion" },
+          { header:"Tokens (total)", key:"tokens_total" },
+          { header:"Costo prompt", key:"cost_prompt" },
+          { header:"Costo completion", key:"cost_completion" },
+          { header:"Costo total", key:"cost_total" },
+        ];
+      }
+      for (const r of rows) ws.addRow(r);
+      res.setHeader("Content-Type","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      const fname = "costos" + (group_by ? \`_\${group_by}\` : "") + ".xlsx";
+      res.setHeader("Content-Disposition", \`attachment; filename=\${fname}\`);
+      await wb.xlsx.write(res);
+      res.end();
+      return;
+    }
+
+    res.json({ mode, rows });
+  } catch (e) {
+    console.error("/api/costs error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+// -------- Fin costos --------
+
 
 
 
