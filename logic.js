@@ -10,6 +10,11 @@ const { google } = require("googleapis");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
 
+const OPENAI_MAX_TURNS = (() => {
+  const n = parseInt(process.env.OPENAI_MAX_TURNS || "", 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+})();
+
 // ------- OpenAI -------
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini";
