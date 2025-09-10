@@ -51,6 +51,42 @@ s = s.replace(/,\s*([}\]])/g, "$1");
 
 return s.trim();}
 async function safeJsonParseStrictOrFix(raw, { openaiClient = openai, model = "gpt-4o-mini" } = {}) {
+// Intento directo estricto
+try {
+  return JSON.parse(coerceJsonString(raw));
+} catch (_) {}
+
+// Heurística: buscar el bloque {...} más grande
+try {
+  const s = String(raw || "");
+  const first = s.indexOf("{");
+  const last = s.lastIndexOf("}");
+  if (first !== -1 && last > first) {
+    const sliced = s.slice(first, last + 1);
+    return JSON.parse(coerceJsonString(sliced));
+  }
+} catch (_) {}
+
+// Último recurso: pedir al modelo que devuelva SOLO JSON válido
+try {
+  const fix = await withTimeout(
+    openaiClient.chat.completions.create({
+      model,
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: "Devolvé EXCLUSIVAMENTE un JSON válido. Sin explicaciones." },
+        { role: "user", content: `Arreglá este JSON o convertí a JSON válido:\n${String(raw).slice(0, 12000)}` }
+      ]
+    }),
+    parseInt(process.env.OPENAI_TIMEOUT_MS || "12000", 10),
+    "openai_json_fix"
+  );
+  const fixed = fix?.choices?.[0]?.message?.content || "{}";
+  return JSON.parse(coerceJsonString(fixed));
+} catch (e) {
+  return null;
+}
 }
 
 // ------- WhatsApp / media / cache -------
@@ -120,6 +156,19 @@ async function transcribeImageWithOpenAI(publicImageUrl) {try {
   return r.choices?.[0]?.message?.content?.trim() || "";
 } catch { return ""; }}
 async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, filename = "audio.ogg" }) {
+try {
+  if (publicAudioUrl) {
+    const url = `${TRANSCRIBE_API_URL}/transcribe?url=${encodeURIComponent(publicAudioUrl)}`;
+    const r = await fetch(url);
+    if (!r.ok) return { text: "" };
+    const j = await r.json().catch(() => ({}));
+    return { text: j.text || "" };
+  }
+  // fallback seguro
+  return { text: "" };
+} catch {
+  return { text: "" };
+}
 }
 async function synthesizeTTS(text) {try {
   const model = process.env.TTS_MODEL || "gpt-4o-mini-tts";
@@ -258,8 +307,8 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
 // ------- Conversaciones / mensajes / órdenes -------
 async function bumpConversationTokenCounters(conversationId, tokens, role = "assistant") {try {
   const db = await getDb();
-  const prompt = (usage && typeof usage.prompt_tokens === "number") ? usage.prompt_tokens : 0;
-  const completion = (usage && typeof usage.completion_tokens === "number") ? usage.completion_tokens : 0;
+  const prompt = (tokens && typeof tokens.prompt_tokens === "number") ? tokens.prompt_tokens : 0;
+  const completion = (tokens && typeof tokens.completion_tokens === "number") ? tokens.completion_tokens : 0;
   const total = prompt + completion;
   const inc = { "counters.messages_total": 0, "counters.tokens_prompt_total": prompt, "counters.tokens_completion_total": completion, "counters.tokens_total": total };
   if (role === "assistant") inc["counters.messages_assistant"] = 1; else if (role === "user") inc["counters.messages_user"] = 1;
@@ -281,6 +330,17 @@ async function ensureOpenConversation(waId, { contactName = null } = {}) {
   return conv;
 }
 async function appendMessage(conversationId, { role, content, type = "text", meta = {}, ttlDays = null }) {
+const db = await getDb();
+const doc = {
+  conversationId: (conversationId instanceof ObjectId) ? conversationId : new ObjectId(conversationId),
+  role, content: String(content || ""), type, meta: meta || {},
+  ts: new Date()
+};
+if (ttlDays && Number(ttlDays) > 0) {
+  const exp = new Date(Date.now() + Number(ttlDays) * 24 * 3600 * 1000);
+  doc.expireAt = exp; // si hay TTL index configurado
+}
+await db.collection("messages").insertOne(doc);
 }
 function normalizeOrder(waId, contactName, pedido) {
   const entrega = pedido?.["Entrega"] || "";
