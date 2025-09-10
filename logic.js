@@ -282,7 +282,8 @@ async function saveBehaviorTextToMongo(newText) {
 }
 async function loadProductsFromMongo() {
   const db = await getDb();
-  const docs = await db.collection("products").find({ active: { $ne: false } }).sort({ createdAt: -1, descripcion: 1 }).toArray();
+  const filter = { active: { $ne: false } }; if (TENANT_ID) filter.tenantId = TENANT_ID;
+  const docs = await db.collection("products").find(filter).sort({ createdAt: -1, descripcion: 1 }).toArray();
   function toNumber(v) {
     if (typeof v === "number" && Number.isFinite(v)) return v;
     if (typeof v === "string") { const n = Number(v.replace(/[^\d.,-]/g, "").replace(",", ".")); return Number.isFinite(n) ? n : null; }
