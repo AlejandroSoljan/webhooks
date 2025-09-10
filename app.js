@@ -1,3 +1,5 @@
+const TENANT_ID = (process.env.TENANT_ID || "").trim();
+
 // ========================= app.js (endpoints) =========================
 // Mantiene las rutas originales, pero importando la lógica desde logic.js
 
@@ -172,7 +174,8 @@ app.get("/admin", async (_req, res) => {
 
 app.get("/api/admin/conversations", async (req, res) => {
   try {
-    const db = await getDb(); const q = {}; const { processed, phone, status, date_field, from, to } = req.query;
+    const db = await getDb(); const q = {};
+    if (TENANT_ID) q.tenantId = TENANT_ID; const { processed, phone, status, date_field, from, to } = req.query;
     if (typeof processed === "string") { if (processed === "true") q.processed = true; else if (processed === "false") q.processed = { $ne: true }; }
     if (phone && String(phone).trim()) { const esc = escapeRegExp(String(phone).trim()); q.waId = { $regex: esc, $options: "i" }; }
     if (status && String(status).trim()) { q.status = String(status).trim().toUpperCase(); }
