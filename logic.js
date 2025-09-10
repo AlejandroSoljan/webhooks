@@ -368,6 +368,21 @@ if (ttlDays && Number(ttlDays) > 0) {
   doc.expireAt = exp; // si hay TTL index configurado
 }
 await db.collection("messages").insertOne(doc);
+
+// --- Actualizar conversación: timestamps y turns ---
+try {
+  const set = { updatedAt: new Date() };
+  if (role === "user") set.lastUserTs = doc.ts;
+  if (role === "assistant") set.lastAssistantTs = doc.ts;
+  const upd = { $set: set };
+  if (role === "assistant") { upd.$inc = { turns: 1 }; }
+  await db.collection("conversations").updateOne(
+    { _id: doc.conversationId },
+    upd
+  );
+} catch (e) {
+  console.warn("appendMessage: no se pudo actualizar conversation.turns/ts:", e?.message || e);
+}
 }
 function normalizeOrder(waId, contactName, pedido) {
   const entrega = pedido?.["Entrega"] || "";
@@ -462,25 +477,6 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
   return { content: msg, json: parsed, usage };
 }
 
-
-// --- Deduplicación de mensajes entrantes por messageId ---
-async function ensureMessageOnce(messageId) {
-  try {
-    if (!messageId) return true;
-    const db = await getDb();
-    const r = await db.collection("processed_messages").updateOne(
-      { _id: messageId },
-      { $setOnInsert: { ts: new Date() } },
-      { upsert: true }
-    );
-    // upsertedCount === 1 -> primera vez; duplicado -> 0 o error E11000
-    return (r.upsertedCount === 1);
-  } catch (e) {
-    const msg = String(e && e.message || e || "");
-    if (e && (e.code == 11000 || msg.includes("E11000"))) return false;
-    throw e;
-  }
-}
 module.exports = {
   // OpenAI + chat
   CHAT_MODEL, CHAT_TEMPERATURE, openai, withTimeout,
@@ -504,6 +500,4 @@ module.exports = {
   // Sheets helpers (exportados por si un endpoint los necesita)
   getSpreadsheetIdFromEnv, getSheetsClient, saveCompletedToSheets,
   ObjectId
-,
-  ensureMessageOnce
 };
