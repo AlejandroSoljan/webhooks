@@ -1,4 +1,7 @@
+
+// --- Multi-tenant (empresa) ---
 const TENANT_ID = (process.env.TENANT_ID || "").trim();
+ 
 
 // ========================= app.js (endpoints) =========================
 // Mantiene las rutas originales, pero importando la lógica desde logic.js
@@ -190,8 +193,10 @@ app.get("/api/admin/conversations", async (req, res) => {
 });
 app.get("/api/admin/messages/:id", async (req, res) => {
   try {
-    const id = req.params.id; const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) }); if (!conv) return res.status(404).send("not_found");
+    const id = req.params.id; 
+    const db = await getDb();
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) }); 
+    if (TENANT_ID && conv.tenantId !== TENANT_ID) return res.status(404).send("not_found");
     const msgs = await db.collection("messages").find({ conversationId: new ObjectId(id) }).sort({ ts: 1 }).toArray();
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html><html><head><meta charset="utf-8" /><title>Mensajes - ${conv.waId}</title><style>body{font-family:system-ui,-apple-system,Arial,sans-serif;margin:24px}.msg{margin-bottom:12px}.role{font-weight:bold}.meta{color:#666;font-size:12px}pre{background:#f6f6f6;padding:8px;border-radius:4px;overflow:auto}</style></head><body><h2>Mensajes - ${conv.contactName ? (conv.contactName + " • ") : ""}${conv.waId}</h2><div>${msgs.map(m => `<div class="msg"><div class="role">${m.role.toUpperCase()} <span class="meta">(${new Date(m.ts).toLocaleString()})</span></div><pre>${(m.content||"").replace(/[<>&]/g,s=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</pre>${m.meta&&Object.keys(m.meta).length?`<div class="meta">meta: <code>${JSON.stringify(m.meta)}</code></div>`:""}</div>`).join("")}</div></body></html>`);
