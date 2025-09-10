@@ -10,9 +10,6 @@ const { google } = require("googleapis");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
 
-
-// --- Token saving knobs (additive, non-breaking) ---
-const OPENAI_MAX_TURNS = parseInt(process.env.OPENAI_MAX_TURNS || "", 10);
 // ------- OpenAI -------
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const CHAT_MODEL = process.env.OPENAI_CHAT_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini";
@@ -315,10 +312,6 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
     let products = await loadProductsFromMongo();
     if (!products || !products.length) { try { products = await loadProductsFromSheet(); } catch (_) {} }
     catalogText = buildCatalogText(products || []);
-  // shrink catalog in prompt if disabled via env (additive)
-  const __CATALOG_IN_PROMPT = String(process.env.CATALOG_IN_PROMPT || "true").toLowerCase() === "true";
-  if (!__CATALOG_IN_PROMPT) { catalogText = "(Catálogo disponible bajo demanda)"; }
-
   } catch (e) {
     console.warn("⚠️ No se pudo leer Productos (Mongo/Sheet):", e.message);
     catalogText = "Catálogo de productos: (error al leer)";
@@ -328,15 +321,10 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
     '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED", ' +
     '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
     '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
-  
-  // optional compact schema (additive)
-  const __COMPACT_SCHEMA = String(process.env.COMPACT_SCHEMA || "false").toLowerCase() === "true";
-  const __jsonSchemaCompact = 'FORMATO (SOLO JSON): {"response":"...","estado":"IN_PROGRESS|COMPLETED|CANCELLED","Pedido"?:{...},"Bigdata"?:{...}}'
-  const __chosenSchema = __COMPACT_SCHEMA ? __jsonSchemaCompact : jsonSchema;
-const fullText = [
+  const fullText = [
     "[COMPORTAMIENTO]\n" + baseText,
     "[CATALOGO]\n" + catalogText,
-    "[SALIDA]\n" + __chosenSchema,
+    "[SALIDA]\n" + jsonSchema,
     "RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
   ].join("\n\n").trim();
   behaviorCache = { at: now, text: fullText };
@@ -482,11 +470,7 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
   const session = await getSession(waId);
   try { const db = await getDb(); const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" }); if (conv) session.messages[0] = { role: "system", content: await buildSystemPrompt({ conversation: conv }) }; } catch {}
   pushMessage(session, "user", userText);
-  const resp = await 
-  // compute bounded history without mutating session (non-breaking)
-  const __maxTurns = Number.isFinite(OPENAI_MAX_TURNS) && OPENAI_MAX_TURNS > 0 ? OPENAI_MAX_TURNS : null;
-  const messagesForCall = __maxTurns ? (function(mm){ const sys=mm[0]; const tail=mm.slice(-2*__maxTurns); return [sys, ...tail]; })(session.messages) : session.messages;
-openaiChatWithRetries(messagesForCall, { model, temperature });
+  const resp = await openaiChatWithRetries((()=>{const __m=Number.isFinite(OPENAI_MAX_TURNS)&&OPENAI_MAX_TURNS>0; if(!__m) return session.messages; const __mm=session.messages; const __sys=__mm[0]; const __tail=__mm.slice(-2*OPENAI_MAX_TURNS); return [__sys, ...__tail];})(), { model, temperature });
   const msg = resp.choices?.[0]?.message?.content || "";
   const usage = resp.usage || null;
   const parsed = await safeJsonParseStrictOrFix(msg, { openaiClient: openai, model });
