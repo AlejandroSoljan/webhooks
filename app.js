@@ -257,7 +257,7 @@ app.post("/webhook", async (req, res) => {
           const conv = await ensureOpenConversation(from, { contactName });
           
           
-          await appendMessage(conv._id, { role: "user", content: JSON.stringify(msg), type: type || "text", meta: { raw: true } });
+        //  await appendMessage(conv._id, { role: "user", content: JSON.stringify(msg), type: type || "text", meta: { raw: true } });
           // soportar texto / audio / imagen con OCR
           let userText = "";
           const userMeta = {};
@@ -270,7 +270,7 @@ app.post("/webhook", async (req, res) => {
               const publicAudioUrl = `${req.protocol}://${req.get('host')}/cache/audio/${id}`;
               const { text } = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type });
               userText = text || "(audio sin texto)";
-              userMeta.audioUrl = publicAudioUrl;
+             userMeta.imageUrl = publicUrl;
             } catch (e) { userText = "(no se pudo transcribir el audio)"; }
           } else if (type === "image" && msg.image?.id) {
             try {
