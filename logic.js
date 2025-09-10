@@ -13,10 +13,6 @@ const { getDb } = require("./db");
 // --- Multi-tenant (empresa): usar process.env.TENANT_ID ---
 const TENANT_ID = (process.env.TENANT_ID || "").trim() || null;
 
-db.products.updateMany(
-  { tenantId: { $exists: false } },
-  { $set: { tenantId: "carico" } } // tu TENANT_ID real
-);
 
 
 const OPENAI_MAX_TURNS = (() => {
