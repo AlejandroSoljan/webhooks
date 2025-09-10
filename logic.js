@@ -131,13 +131,16 @@ async function synthesizeTTS(text) {try {
   const mime = format === "wav" ? "audio/wav" : format === "opus" ? "audio/ogg" : "audio/mpeg";
   return { buffer, mime };
 } catch { return null; }}
-async function sendAudioLink(to, publicUrl, phoneNumberId) {const token = process.env.WHATSAPP_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN;
-const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-if (!token || !phoneNumberId) return null;
-const url = `https://graph.facebook.com/${GRAPH_VERSION}/${phoneNumberId}/messages`;
-const payload = { messaging_product: "whatsapp", to, type: "audio", audio: { link: publicUrl } };
-const resp = await fetch(url, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-return resp.json().catch(()=>null);}
+
+async function sendAudioLink(to, publicUrl, phoneNumberId) {
+  const token = process.env.WHATSAPP_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN;
+  const pnid = phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!token || !pnid) return null;
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${pnid}/messages`;
+  const payload = { messaging_product: "whatsapp", to, type: "audio", audio: { link: publicUrl } };
+  const resp = await fetch(url, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  return resp.json().catch(()=>null);
+}
 
 // ------- Comportamiento y Catálogo -------
 const BEHAVIOR_SOURCE = (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase();
