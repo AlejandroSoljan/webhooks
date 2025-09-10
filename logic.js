@@ -462,6 +462,28 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
   return { content: msg, json: parsed, usage };
 }
 
+
+
+// --- Deduplicación de mensajes entrantes por messageId ---
+async function ensureMessageOnce(messageId) {
+  try {
+    if (!messageId) return true;
+    const db = await getDb();
+    const r = await db.collection("processed_messages").updateOne(
+      { _id: messageId },
+      { $setOnInsert: { ts: new Date() } },
+      { upsert: true }
+    );
+    // Inserta si es la primera vez (mensaje nuevo)
+    return (r.upsertedCount === 1);
+  } catch (e) {
+    // E11000 (clave duplicada) => ya procesado
+    if (e && (e.code === 11000 || String(e.message||e).indexOf("E11000") != -1))
+        return false
+    throw e
+  }
+}
+
 module.exports = {
   // OpenAI + chat
   CHAT_MODEL, CHAT_TEMPERATURE, openai, withTimeout,
@@ -485,4 +507,6 @@ module.exports = {
   // Sheets helpers (exportados por si un endpoint los necesita)
   getSpreadsheetIdFromEnv, getSheetsClient, saveCompletedToSheets,
   ObjectId
+,
+  ensureMessageOnce
 };
