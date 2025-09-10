@@ -101,6 +101,7 @@ app.get("/api/products", async (req, res) => {
   try {
     const db = await getDb();
     const q = req.query.all === "true" ? {} : { active: { $ne: false } };
+     if (TENANT_ID) q.tenantId = TENANT_ID;
     const items = await db.collection("products").find(q).sort({ createdAt: -1, descripcion: 1 }).toArray();
     res.json(items.map(it => ({ ...it, _id: String(it._id) })));
   } catch (e) { console.error("GET /api/products error:", e); res.status(500).json({ error: "internal" }); }
@@ -112,7 +113,8 @@ app.post("/api/products", async (req, res) => {
     descripcion = String(descripcion || "").trim(); observacion = String(observacion || "").trim(); if (typeof active !== "boolean") active = !!active;
     let imp = null; if (typeof importe === "number") imp = importe; else if (typeof importe === "string") { const n = Number(importe.replace(/[^\d.,-]/g, "").replace(",", ".")); imp = Number.isFinite(n) ? n : null; }
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
-    const now = new Date(); const doc = { descripcion, observacion, active, createdAt: now, updatedAt: now }; if (imp !== null) doc.importe = imp;
+    const now = new Date(); const doc = { tenantId: TENANT_ID || null, descripcion, observacion, active, createdAt: now, updatedAt: now }; if (imp !== null) doc.importe = imp;
+    
     const ins = await db.collection("products").insertOne(doc); invalidateBehaviorCache(); res.json({ ok: true, _id: String(ins.insertedId) });
   } catch (e) { console.error("POST /api/products error:", e); res.status(500).json({ error: "internal" }); }
 });
@@ -122,7 +124,8 @@ app.put("/api/products/:id", async (req, res) => {
     ["descripcion","observacion","active","importe"].forEach(k => { if (req.body[k] !== undefined) upd[k] = req.body[k]; });
     if (upd.importe !== undefined) { const v = upd.importe; if (typeof v === "string") { const n = Number(v.replace(/[^\d.,-]/g, "").replace(",", ".")); upd.importe = Number.isFinite(n) ? n : undefined; } }
     if (Object.keys(upd).length === 0) return res.status(400).json({ error: "no_fields" }); upd.updatedAt = new Date();
-    const result = await db.collection("products").updateOne({ _id: new ObjectId(String(id)) }, { $set: upd });
+    const filter = { _id: new ObjectId(String(id)) }; if (TENANT_ID) filter.tenantId = TENANT_ID;
+    const result = await db.collection("products").updateOne(filter, { $set: upd });
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
     invalidateBehaviorCache(); res.json({ ok: true });
   } catch (e) { console.error("PUT /api/products/:id error:", e); res.status(500).json({ error: "internal" }); }
@@ -130,7 +133,8 @@ app.put("/api/products/:id", async (req, res) => {
 app.delete("/api/products/:id", async (req, res) => {
   try {
     const db = await getDb(); const { id } = req.params;
-    const result = await db.collection("products").deleteOne({ _id: new ObjectId(String(id)) });
+    const filter = { _id: new ObjectId(String(id)) }; if (TENANT_ID) filter.tenantId = TENANT_ID;
+    const result = await db.collection("products").deleteOne(filter);
     if (!result.deletedCount) return res.status(404).json({ error: "not_found" });
     invalidateBehaviorCache(); res.json({ ok: true });
   } catch (e) { console.error("DELETE /api/products/:id error:", e); res.status(500).json({ error: "internal" }); }
@@ -138,14 +142,16 @@ app.delete("/api/products/:id", async (req, res) => {
 app.post("/api/products/:id/inactivate", async (req, res) => {
   try {
     const db = await getDb(); const { id } = req.params;
-    const result = await db.collection("products").updateOne({ _id: new ObjectId(String(id)) }, { $set: { active: false, updatedAt: new Date() } });
-    if (!result.matchedCount) return res.status(404).json({ error: "not_found" }); invalidateBehaviorCache(); res.json({ ok: true });
+    const filter = { _id: new ObjectId(String(id)) }; if (TENANT_ID) filter.tenantId = TENANT_ID;
+    const result = await db.collection("products").updateOne(filter, { $set: { active: false, updatedAt: new Date() } });
+     if (!result.matchedCount) return res.status(404).json({ error: "not_found" }); invalidateBehaviorCache(); res.json({ ok: true });
   } catch (e) { console.error("POST /api/products/:id/inactivate error:", e); res.status(500).json({ error: "internal" }); }
 });
 app.post("/api/products/:id/reactivate", async (req, res) => {
   try {
     const db = await getDb(); const { id } = req.params;
-    const result = await db.collection("products").updateOne({ _id: new ObjectId(String(id)) }, { $set: { active: true, updatedAt: new Date() } });
+    const filter = { _id: new ObjectId(String(id)) }; if (TENANT_ID) filter.tenantId = TENANT_ID;
+    const result = await db.collection("products").updateOne(filter, { $set: { active: true, updatedAt: new Date() } });
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" }); invalidateBehaviorCache(); res.json({ ok: true });
   } catch (e) { console.error("POST /api/products/:id/reactivate error:", e); res.status(500).json({ error: "internal" }); }
 });
@@ -153,6 +159,7 @@ app.get("/productos", async (req, res) => {
   try {
     const db = await getDb(); if (!db) throw new Error("DB no inicializada");
     const verTodos = req.query.all === "true"; const filtro = verTodos ? {} : { active: { $ne: false } };
+    if (TENANT_ID) filtro.tenantId = TENANT_ID;
     const productos = await db.collection("products").find(filtro).sort({ createdAt: -1 }).toArray();
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html><html><head><meta charset="utf-8" /><title>Productos</title><meta name="viewport" content="width=device-width, initial-scale=1" />
