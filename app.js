@@ -20,7 +20,7 @@ const {
   ObjectId, ensureOpenConversation, appendMessage, chatWithHistoryJSON, finalizeConversationOnce,
   // extras
  buildSystemPrompt, bumpConversationTokenCounters, putInCache, resetSession
-} = require("./logic");
+} = require("./logic", ensureMessageOnce );
 
 const { getDb } = require("./db");
 
@@ -238,6 +238,8 @@ app.post("/webhook", async (req, res) => {
         if (!messages.length) continue;
         for (const msg of messages) {
           const from = msg.from; const type = msg.type; const messageId = msg.id;
+          const isNew = await ensureMessageOnce(messageId);
+          if (!isNew) { /* duplicado */ continue; }
           const phoneNumberIdForRead = getPhoneNumberId(value); if (messageId && phoneNumberIdForRead) markAsRead(messageId, phoneNumberIdForRead).catch(()=>{});
           // asegurar conversación
           const conv = await ensureOpenConversation(from, { contactName });
