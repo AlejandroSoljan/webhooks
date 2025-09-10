@@ -370,6 +370,7 @@ app.get("/costos", async (_req, res) => {
             <option value="day">Día</option>
             <option value="waId">Teléfono</option>
             <option value="status">Estado</option>
+            <option value="tenantId">Tenant</option>
           </select>
         </label>
         <button class="btn" id="btnApply">Aplicar</button>
@@ -488,6 +489,9 @@ app.get("/api/costs", async (req, res) => {
     if (status && String(status).trim()) {
       q.status = String(status).trim().toUpperCase();
     }
+    // Filtro por empresa (tenant) si está definido en el proceso
+    if (TENANT_ID) q.tenantId = TENANT_ID;
+
     const dateField = (date_field || "openedAt");
     if ((from || to)) {
       const f = {};
@@ -542,11 +546,14 @@ app.get("/api/costs", async (req, res) => {
       return y + "-" + m + "-" + da;
     }
 
-    if (group_by === "day" || group_by === "waId" || group_by === "status") {
+     if (group_by === "day" || group_by === "waId" || group_by === "status" || group_by === "tenantId") {
       mode = "group";
       const map = new Map();
       for (const d of docs) {
-        const g = group_by === "day" ? keyDay(d) : (String(d[group_by] || "").trim() || "(vacío)");
+        const g =
+          group_by === "day"
+            ? keyDay(d)
+            : (String(d[group_by] || "").trim() || "(vacío)");
         const c = d.counters || {};
         const tp = num(c.tokens_prompt_total);
         const tc = num(c.tokens_completion_total);
@@ -609,7 +616,7 @@ app.get("/api/costs", async (req, res) => {
       const ws = wb.addWorksheet("Costos");
       if (mode === "group") {
         ws.columns = [
-          { header:"Grupo", key:"group" },
+          { header:"Grupo", key:"group" }, // puede ser Día, Teléfono, Estado o Tenant
           { header:"Conversaciones", key:"count" },
           { header:"Turnos", key:"turns" },
           { header:"Tokens (prompt)", key:"tokens_prompt" },
