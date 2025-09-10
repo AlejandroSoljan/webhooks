@@ -1,4 +1,8 @@
 
+// --- Multi-tenant (empresa) ---
+const TENANT_ID = (process.env.TENANT_ID || "").trim();
+ 
+
 // ========================= app.js (endpoints) =========================
 // Mantiene las rutas originales, pero importando la lógica desde logic.js
 
@@ -108,7 +112,7 @@ app.post("/api/products", async (req, res) => {
     descripcion = String(descripcion || "").trim(); observacion = String(observacion || "").trim(); if (typeof active !== "boolean") active = !!active;
     let imp = null; if (typeof importe === "number") imp = importe; else if (typeof importe === "string") { const n = Number(importe.replace(/[^\d.,-]/g, "").replace(",", ".")); imp = Number.isFinite(n) ? n : null; }
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
-    const now = new Date(); const doc = { tenantId: TENANT_ID || null, descripcion, observacion, active, createdAt: now, updatedAt: now }; if (imp !== null) doc.importe = imp;
+    const now = new Date(); const doc = { descripcion, observacion, active, createdAt: now, updatedAt: now }; if (imp !== null) doc.importe = imp;
     const ins = await db.collection("products").insertOne(doc); invalidateBehaviorCache(); res.json({ ok: true, _id: String(ins.insertedId) });
   } catch (e) { console.error("POST /api/products error:", e); res.status(500).json({ error: "internal" }); }
 });
@@ -173,7 +177,8 @@ app.get("/admin", async (_req, res) => {
 
 app.get("/api/admin/conversations", async (req, res) => {
   try {
-    const db = await getDb(); const q = {}; const { processed, phone, status, date_field, from, to } = req.query;
+    const db = await getDb(); const q = {};
+    if (TENANT_ID) q.tenantId = TENANT_ID; const { processed, phone, status, date_field, from, to } = req.query;
     if (typeof processed === "string") { if (processed === "true") q.processed = true; else if (processed === "false") q.processed = { $ne: true }; }
     if (phone && String(phone).trim()) { const esc = escapeRegExp(String(phone).trim()); q.waId = { $regex: esc, $options: "i" }; }
     if (status && String(status).trim()) { q.status = String(status).trim().toUpperCase(); }
@@ -188,8 +193,10 @@ app.get("/api/admin/conversations", async (req, res) => {
 });
 app.get("/api/admin/messages/:id", async (req, res) => {
   try {
-    const id = req.params.id; const db = await getDb();
-    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) }); if (!conv) return res.status(404).send("not_found");
+    const id = req.params.id; 
+    const db = await getDb();
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) }); 
+    if (TENANT_ID && conv.tenantId !== TENANT_ID) return res.status(404).send("not_found");
     const msgs = await db.collection("messages").find({ conversationId: new ObjectId(id) }).sort({ ts: 1 }).toArray();
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html><html><head><meta charset="utf-8" /><title>Mensajes - ${conv.waId}</title><style>body{font-family:system-ui,-apple-system,Arial,sans-serif;margin:24px}.msg{margin-bottom:12px}.role{font-weight:bold}.meta{color:#666;font-size:12px}pre{background:#f6f6f6;padding:8px;border-radius:4px;overflow:auto}</style></head><body><h2>Mensajes - ${conv.contactName ? (conv.contactName + " • ") : ""}${conv.waId}</h2><div>${msgs.map(m => `<div class="msg"><div class="role">${m.role.toUpperCase()} <span class="meta">(${new Date(m.ts).toLocaleString()})</span></div><pre>${(m.content||"").replace(/[<>&]/g,s=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</pre>${m.meta&&Object.keys(m.meta).length?`<div class="meta">meta: <code>${JSON.stringify(m.meta)}</code></div>`:""}</div>`).join("")}</div></body></html>`);
@@ -241,9 +248,12 @@ app.post("/webhook", async (req, res) => {
           const phoneNumberIdForRead = getPhoneNumberId(value); if (messageId && phoneNumberIdForRead) markAsRead(messageId, phoneNumberIdForRead).catch(()=>{});
           // asegurar conversación
           const conv = await ensureOpenConversation(from, { contactName });
+          
+          
           await appendMessage(conv._id, { role: "user", content: JSON.stringify(msg), type: type || "text", meta: { raw: true } });
           // soportar texto / audio / imagen con OCR
           let userText = "";
+          const userMeta = {};
           if (type === "text" && msg.text?.body) userText = msg.text.body;
           else if (type === "audio" && msg.audio?.id) {
             try {
@@ -253,6 +263,7 @@ app.post("/webhook", async (req, res) => {
               const publicAudioUrl = `${req.protocol}://${req.get('host')}/cache/audio/${id}`;
               const { text } = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type });
               userText = text || "(audio sin texto)";
+              userMeta.audioUrl = publicAudioUrl;
             } catch (e) { userText = "(no se pudo transcribir el audio)"; }
           } else if (type === "image" && msg.image?.id) {
             try {
@@ -262,11 +273,20 @@ app.post("/webhook", async (req, res) => {
               const publicUrl = `${req.protocol}://${req.get('host')}/cache/image/${id}`;
               const txt = await transcribeImageWithOpenAI(publicUrl);
               userText = txt || "(sin texto detectable)";
+              userMeta.audioUrl = publicAudioUrl;
             } catch (e) { userText = "(no se pudo leer la imagen)"; }
           } else {
             userText = "(mensaje no soportado)";
           }
 
+          // ⬇️ Persistencia: SOLO el texto en `content`. El JSON original queda en meta.raw
+          await appendMessage(conv._id, {
+            role: "user",
+            content: userText,
+            type: type || "text",
+            meta: { ...userMeta, raw: msg }
+          });
+          
           // Chat con historial
           const { json, content, usage } = await chatWithHistoryJSON(from, userText);
           // guardar respuesta del asistente
