@@ -248,9 +248,12 @@ app.post("/webhook", async (req, res) => {
           const phoneNumberIdForRead = getPhoneNumberId(value); if (messageId && phoneNumberIdForRead) markAsRead(messageId, phoneNumberIdForRead).catch(()=>{});
           // asegurar conversación
           const conv = await ensureOpenConversation(from, { contactName });
+          
+          
           await appendMessage(conv._id, { role: "user", content: JSON.stringify(msg), type: type || "text", meta: { raw: true } });
           // soportar texto / audio / imagen con OCR
           let userText = "";
+          const userMeta = {};
           if (type === "text" && msg.text?.body) userText = msg.text.body;
           else if (type === "audio" && msg.audio?.id) {
             try {
@@ -260,6 +263,7 @@ app.post("/webhook", async (req, res) => {
               const publicAudioUrl = `${req.protocol}://${req.get('host')}/cache/audio/${id}`;
               const { text } = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type });
               userText = text || "(audio sin texto)";
+              userMeta.audioUrl = publicAudioUrl;
             } catch (e) { userText = "(no se pudo transcribir el audio)"; }
           } else if (type === "image" && msg.image?.id) {
             try {
@@ -269,11 +273,20 @@ app.post("/webhook", async (req, res) => {
               const publicUrl = `${req.protocol}://${req.get('host')}/cache/image/${id}`;
               const txt = await transcribeImageWithOpenAI(publicUrl);
               userText = txt || "(sin texto detectable)";
+              userMeta.audioUrl = publicAudioUrl;
             } catch (e) { userText = "(no se pudo leer la imagen)"; }
           } else {
             userText = "(mensaje no soportado)";
           }
 
+          // ⬇️ Persistencia: SOLO el texto en `content`. El JSON original queda en meta.raw
+          await appendMessage(conv._id, {
+            role: "user",
+            content: userText,
+            type: type || "text",
+            meta: { ...userMeta, raw: msg }
+          });
+          
           // Chat con historial
           const { json, content, usage } = await chatWithHistoryJSON(from, userText);
           // guardar respuesta del asistente
