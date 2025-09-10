@@ -10,7 +10,7 @@ const OpenAI = require("openai");
 const { google } = require("googleapis");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
-// --- Multi-tenant ---
+// --- Multi-tenant (empresa): usar process.env.TENANT_ID ---
 const TENANT_ID = (process.env.TENANT_ID || "").trim() || null;
 
 
@@ -351,12 +351,24 @@ async function bumpConversationTokenCounters(conversationId, tokens, role = "ass
   const set = { updatedAt: new Date() };
   await db.collection("conversations").updateOne({ _id: new ObjectId(conversationId) }, { $inc: inc, $set: set });
 } catch (err) { console.warn("bumpConversationTokenCounters warn:", err?.message || err); }}
+
+
+
 async function ensureOpenConversation(waId, { contactName = null } = {}) {
   const db = await getDb();
-  let conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
+  
+  const __tenant = TENANT_ID;
+  let conv = await db.collection("conversations").findOne(
+    __tenant ? { waId, status: "OPEN", tenantId: __tenant } : { waId, status: "OPEN" }
+  );
+
   if (!conv) {
     const behaviorText = await buildSystemPrompt({ force: true });
-    const doc = { waId, status: "OPEN", finalized: false, contactName: contactName || null, openedAt: new Date(), closedAt: null, lastUserTs: null, lastAssistantTs: null, turns: 0, behaviorSnapshot: { text: behaviorText, source: (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(), savedAt: new Date() } };
+    const doc = { tenantId: TENANT_ID || null, waId, status: "OPEN", finalized: false, contactName: contactName || null,
+                   openedAt: new Date(), closedAt: null, lastUserTs: null, lastAssistantTs: null,
+                   turns: 0,
+                   behaviorSnapshot: { text: behaviorText, source: (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(), savedAt: new Date() } };
+  //const doc = { waId, status: "OPEN", finalized: false, contactName: contactName || null, openedAt: new Date(), closedAt: null, lastUserTs: null, lastAssistantTs: null, turns: 0, behaviorSnapshot: { text: behaviorText, source: (process.env.BEHAVIOR_SOURCE || "sheet").toLowerCase(), savedAt: new Date() } };
     const ins = await db.collection("conversations").insertOne(doc);
     conv = { _id: ins.insertedId, ...doc };
   } else if (contactName && !conv.contactName) {
@@ -369,6 +381,7 @@ async function ensureOpenConversation(waId, { contactName = null } = {}) {
 async function appendMessage(conversationId, { role, content, type = "text", meta = {}, ttlDays = null }) {
 const db = await getDb();
 const doc = {
+  tenantId: TENANT_ID || null,
   conversationId: (conversationId instanceof ObjectId) ? conversationId : new ObjectId(conversationId),
   role, content: String(content || ""), type, meta: meta || {},
   ts: new Date()
