@@ -269,8 +269,8 @@ app.post("/webhook", async (req, res) => {
               const id = putInCache(buf, info.mime_type || "audio/ogg");
               const publicAudioUrl = `${req.protocol}://${req.get('host')}/cache/audio/${id}`;
               const { text } = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type });
-              userText = text || "(audio sin texto)";
-             userMeta.imageUrl = publicUrl;
+             userText = text || "(audio sin texto)";
+              userMeta.audioUrl = publicAudioUrl;
             } catch (e) { userText = "(no se pudo transcribir el audio)"; }
           } else if (type === "image" && msg.image?.id) {
             try {
@@ -279,8 +279,8 @@ app.post("/webhook", async (req, res) => {
               const id = putInCache(buf, info.mime_type || "image/jpeg");
               const publicUrl = `${req.protocol}://${req.get('host')}/cache/image/${id}`;
               const txt = await transcribeImageWithOpenAI(publicUrl);
-              userText = txt || "(sin texto detectable)";
-              userMeta.audioUrl = publicAudioUrl;
+              uuserText = txt || "(sin texto detectable)";
+             userMeta.imageUrl = publicUrl;
             } catch (e) { userText = "(no se pudo leer la imagen)"; }
           } else {
             userText = "(mensaje no soportado)";
