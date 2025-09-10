@@ -19,7 +19,7 @@ const {
   // db and convo
   ObjectId, ensureOpenConversation, appendMessage, chatWithHistoryJSON, finalizeConversationOnce,
   // extras
-  buildSystemPrompt, bumpConversationTokenCounters, putInCache
+ buildSystemPrompt, bumpConversationTokenCounters, putInCache, resetSession
 } = require("./logic");
 
 const { getDb } = require("./db");
@@ -279,6 +279,7 @@ app.post("/webhook", async (req, res) => {
           const estado = json?.estado;
           if (estado === "COMPLETED" || estado === "CANCELLED") {
             await finalizeConversationOnce(conv._id, json, estado);
+            resetSession(from); // ← limpia el historial para que la próxima consulta arranque de cero
           }
         }
       }
