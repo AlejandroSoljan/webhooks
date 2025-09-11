@@ -268,9 +268,18 @@ app.post("/webhook", async (req, res) => {
               const buf = await downloadMediaBuffer(info.url);
               const id = putInCache(buf, info.mime_type || "audio/ogg");
               const publicAudioUrl = `${req.protocol}://${req.get('host')}/cache/audio/${id}`;
-              const { text } = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type });
-             userText = text || "(audio sin texto)";
+             const { text, usage: sttUsage } = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type });
+              userText = text || "(audio sin texto)";
               userMeta.audioUrl = publicAudioUrl;
+                            // ⬇️ Sumar tokens de STT al agregado (rol system para no contar mensajes)
+              if (sttUsage && typeof sttUsage === "object") {
+                const p = Number(sttUsage.prompt_tokens ?? sttUsage.input_tokens ?? 0) || 0;
+                const c = Number(sttUsage.completion_tokens ?? sttUsage.output_tokens ?? sttUsage.total_tokens ?? sttUsage.tokens ?? 0) || 0;
+                const norm = { prompt_tokens: p, completion_tokens: c, total_tokens: p + c };
+                try { await bumpConversationTokenCounters(conv._id, norm, "system"); } catch {}
+                // Guardar también en el meta del mensaje del usuario
+                userMeta.sttUsage = sttUsage;
+              }
             } catch (e) { userText = "(no se pudo transcribir el audio)"; }
           } else if (type === "image" && msg.image?.id) {
             try {
@@ -291,7 +300,7 @@ app.post("/webhook", async (req, res) => {
             role: "user",
             content: userText,
             type: type || "text",
-            meta: { ...userMeta, raw: msg }
+            meta: { ...userMeta, raw: msg } // incluye sttUsage si existía
           });
           
           // Chat con historial
