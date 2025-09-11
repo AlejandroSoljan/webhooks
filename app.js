@@ -115,7 +115,9 @@ app.post("/api/products", async (req, res) => {
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
     const now = new Date(); const doc = { tenantId: TENANT_ID || null, descripcion, observacion, active, createdAt: now, updatedAt: now }; if (imp !== null) doc.importe = imp;
     
-    const ins = await db.collection("products").insertOne(doc); invalidateBehaviorCache(); res.json({ ok: true, _id: String(ins.insertedId) });
+    const ins = await db.collection("products").insertOne(doc);
+     invalidateBehaviorCache(); 
+     res.json({ ok: true, _id: String(ins.insertedId) });
   } catch (e) { console.error("POST /api/products error:", e); res.status(500).json({ error: "internal" }); }
 });
 app.put("/api/products/:id", async (req, res) => {
@@ -290,7 +292,7 @@ app.post("/webhook", async (req, res) => {
               const id = putInCache(buf, info.mime_type || "image/jpeg");
               const publicUrl = `${req.protocol}://${req.get('host')}/cache/image/${id}`;
               const txt = await transcribeImageWithOpenAI(publicUrl);
-              uuserText = txt || "(sin texto detectable)";
+              userText = txt || "(sin texto detectable)";
              userMeta.imageUrl = publicUrl;
             } catch (e) { userText = "(no se pudo leer la imagen)"; }
           } else {
