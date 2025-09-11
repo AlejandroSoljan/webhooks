@@ -174,7 +174,10 @@ try {
       const r = await fetch(`${prefer}/transcribe?url=${encodeURIComponent(publicAudioUrl)}`);
       if (r.ok) {
         const j = await r.json().catch(() => ({}));
-        if (j && typeof j.text === "string") return { text: j.text };
+        if (j && typeof j.text === "string") {
+            // transcribeGPT devuelve { tokens: usage, ... }
+            return { text: j.text, usage: j.tokens || j.usage || null, language: j.language || null, meta: j.meta || null, raw: j.raw || null };
+          }
       }
     } catch (_) {}
   }
