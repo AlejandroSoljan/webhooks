@@ -307,7 +307,7 @@ app.post("/webhook", async (req, res) => {
             meta: { ...userMeta, raw: msg }
           });
           
-          // Chat con historial
+        /*  // Chat con historial
           const { json, content, usage } = await chatWithHistoryJSON(from, userText);
           // guardar respuesta del asistente
           const textToSend = (json && json.response) ? String(json.response) : String(content || "").slice(0, 4096);
@@ -320,7 +320,33 @@ app.post("/webhook", async (req, res) => {
           if (estado === "COMPLETED" || estado === "CANCELLED") {
             await finalizeConversationOnce(conv._id, json, estado);
             resetSession(from); // ← limpia el historial para que la próxima consulta arranque de cero
+          }*/
+// Chat con historial (robusto a timeouts/errores)
+          try {
+            const t0 = Date.now();
+            const { json, content, usage } = await chatWithHistoryJSON(from, userText);
+            // guardar respuesta del asistente
+            const textToSend = (json && json.response) ? String(json.response) : String(content || "").slice(0, 4096);
+            await appendMessage(conv._id, { role: "assistant", content: textToSend, type: "text" });
+            if (usage) await bumpConversationTokenCounters(conv._id, usage, "assistant");
+            console.log("openai_latency_ms", Date.now() - t0);
+            await sendSafeText(from, textToSend, value);
+
+            // Finalización (COMPLETED/CANCELLED)
+            const estado = json?.estado;
+            if (estado === "COMPLETED" || estado === "CANCELLED") {
+              await finalizeConversationOnce(conv._id, json, estado);
+              resetSession(from); // ← limpia el historial para que la próxima consulta arranque de cero
+            }
+          } catch (e) {
+            console.error("msg error:", e?.message || e);
+            // Fallback para que el usuario NO quede sin respuesta
+            await sendSafeText(from, "Perdón, estoy con demoras. ¿Podemos intentar de nuevo?", value);
           }
+
+
+
+          ///////////////////////
         }
       }
     }
