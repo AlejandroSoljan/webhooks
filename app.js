@@ -255,22 +255,8 @@ app.post("/webhook", async (req, res) => {
         for (const msg of messages) {
           const from = msg.from; const type = msg.type; const messageId = msg.id;
           const phoneNumberIdForRead = getPhoneNumberId(value); if (messageId && phoneNumberIdForRead) markAsRead(messageId, phoneNumberIdForRead).catch(()=>{});
-          // 1) Idempotencia: si ya procesamos este messageId, salteamos
-          if (messageId) {
-            const firstTime = await ensureMessageOnce(messageId);
-            if (!firstTime) { continue; }
-          }
-
-          // 2) Si la conversación ya estaba finalizada y este mensaje es viejo, ignorar
-          //    (WhatsApp puede reentregar o entregar fuera de orden)
-          const msgTsMs = Number(msg.timestamp ? (Number(msg.timestamp) * 1000) : Date.now());
-
-          
           // asegurar conversación
-           const conv = await ensureOpenConversation(from, { contactName });
-          if (conv?.finalized && conv?.closedAt && msgTsMs <= new Date(conv.closedAt).getTime()) {
-            continue; // mensaje anterior al cierre: no responder
-          }
+          const conv = await ensureOpenConversation(from, { contactName });
           
           
         //  await appendMessage(conv._id, { role: "user", content: JSON.stringify(msg), type: type || "text", meta: { raw: true } });
@@ -338,16 +324,7 @@ app.post("/webhook", async (req, res) => {
 // Chat con historial (robusto a timeouts/errores)
           try {
             const t0 = Date.now();
-             const { json, content, usage } = await chatWithHistoryJSON(
-                from,
-                userText,
-                undefined,                 // model por defecto
-                undefined,                 // temperature por defecto
-              {
-                value,                   // lo usamos para calcular el phone_number_id
-                onTimeoutMessage: "Estoy con demoras, por favor esperá un momento. Sigo trabajando en tu pedido."
-              }
-             );
+            const { json, content, usage } = await chatWithHistoryJSON(from, userText);
             // guardar respuesta del asistente
             const textToSend = (json && json.response) ? String(json.response) : String(content || "").slice(0, 4096);
             await appendMessage(conv._id, { role: "assistant", content: textToSend, type: "text" });
