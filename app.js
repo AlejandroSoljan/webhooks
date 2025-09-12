@@ -255,8 +255,22 @@ app.post("/webhook", async (req, res) => {
         for (const msg of messages) {
           const from = msg.from; const type = msg.type; const messageId = msg.id;
           const phoneNumberIdForRead = getPhoneNumberId(value); if (messageId && phoneNumberIdForRead) markAsRead(messageId, phoneNumberIdForRead).catch(()=>{});
+          // 1) Idempotencia: si ya procesamos este messageId, salteamos
+          if (messageId) {
+            const firstTime = await ensureMessageOnce(messageId);
+            if (!firstTime) { continue; }
+          }
+
+          // 2) Si la conversación ya estaba finalizada y este mensaje es viejo, ignorar
+          //    (WhatsApp puede reentregar o entregar fuera de orden)
+          const msgTsMs = Number(msg.timestamp ? (Number(msg.timestamp) * 1000) : Date.now());
+
+          
           // asegurar conversación
-          const conv = await ensureOpenConversation(from, { contactName });
+           const conv = await ensureOpenConversation(from, { contactName });
+          if (conv?.finalized && conv?.closedAt && msgTsMs <= new Date(conv.closedAt).getTime()) {
+            continue; // mensaje anterior al cierre: no responder
+          }
           
           
         //  await appendMessage(conv._id, { role: "user", content: JSON.stringify(msg), type: type || "text", meta: { raw: true } });
