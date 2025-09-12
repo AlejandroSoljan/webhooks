@@ -324,7 +324,16 @@ app.post("/webhook", async (req, res) => {
 // Chat con historial (robusto a timeouts/errores)
           try {
             const t0 = Date.now();
-            const { json, content, usage } = await chatWithHistoryJSON(from, userText);
+             const { json, content, usage } = await chatWithHistoryJSON(
+                from,
+                userText,
+                undefined,                 // model por defecto
+                undefined,                 // temperature por defecto
+              {
+                value,                   // lo usamos para calcular el phone_number_id
+                onTimeoutMessage: "Estoy con demoras, por favor esperá un momento. Sigo trabajando en tu pedido."
+              }
+             );
             // guardar respuesta del asistente
             const textToSend = (json && json.response) ? String(json.response) : String(content || "").slice(0, 4096);
             await appendMessage(conv._id, { role: "assistant", content: textToSend, type: "text" });
