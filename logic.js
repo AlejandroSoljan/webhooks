@@ -534,21 +534,5 @@ module.exports = {
   sessions, getSession, resetSession, pushMessage, openaiChatWithRetries, chatWithHistoryJSON,
   // Sheets helpers (exportados por si un endpoint los necesita)
   getSpreadsheetIdFromEnv, getSheetsClient, saveCompletedToSheets,
-  ObjectId,
-  ensureMessageOnce
+  ObjectId
 };
-
-
-// --- Idempotencia de mensajes entrantes ---
-async function ensureMessageOnce(messageId) {
-  if (!messageId) return true;
-  const db = await getDb();
-  try {
-    await db.collection("processed_messages").insertOne({ _id: String(messageId), at: new Date() });
-    return true; // primera vez
-  } catch (e) {
-    // 11000 = duplicate key
-    if (e && (e.code === 11000 || String(e.message||'').includes('E11000'))) return false;
-    throw e;
-  }
-}
