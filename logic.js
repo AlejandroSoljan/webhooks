@@ -13,6 +13,36 @@ const { getDb } = require("./db");
 // --- Multi-tenant (empresa): usar process.env.TENANT_ID ---
 const TENANT_ID = (process.env.TENANT_ID || "").trim() || null;
 
+// ================== FECHA/HORA ACTUAL PARA EL MODELO ==================
+// TZ por defecto del local (cámbiala si hace falta)
+const STORE_TZ = (process.env.STORE_TZ || "America/Argentina/Cordoba").trim();
+// (Opcional) Simular "ahora" en QA: ej. 2025-09-15T13:00:00-03:00
+const SIMULATED_NOW_ISO = (process.env.SIMULATED_NOW_ISO || "").trim();
+
+function _nowLabelInTZ() {
+  const base = SIMULATED_NOW_ISO ? new Date(SIMULATED_NOW_ISO) : new Date();
+  const fmt = new Intl.DateTimeFormat("es-AR", {
+    timeZone: STORE_TZ,
+    hour12: false,
+    weekday: "long",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(base).map(p => [p.type, p.value]));
+  const weekday = String(parts.weekday || "").toLowerCase();
+  return `${weekday}, ${parts.day}/${parts.month}/${parts.year} ${parts.hour}:${parts.minute}`;
+}
+
+function buildNowBlock() {
+  return [
+    "[AHORA]",
+    `Zona horaria: ${STORE_TZ}`,
+    `Fecha y hora actuales (local): ${_nowLabelInTZ()}`
+  ].join("\n");
+}
 
 
 // --- Debug logging para ver comportamiento + historial que enviamos a OpenAI ---
@@ -416,6 +446,7 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
     '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
     '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
   const fullText = [
+    buildNowBlock(),    
     "[COMPORTAMIENTO]\n" + baseText,
    // "[CATALOGO]\n" + catalogText,
     "[SALIDA]\n" + jsonSchema
