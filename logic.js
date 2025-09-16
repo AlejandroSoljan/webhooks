@@ -442,10 +442,30 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
   }
   const jsonSchema =
     "FORMATO DE RESPUESTA (OBLIGATORIO - SOLO json, sin ```):\n" +
-    '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED", ' +
-    '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
-    '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
-  const fullText = [
+        '{ "response": "texto para WhatsApp",' +
+    '  "estado": "IN_PROGRESS|COMPLETED|CANCELLED",' +
+    '  "Pedido": {' +
+    '     "Nombre": string,' +
+    '     "Entrega": string,' +
+    '     "Domicilio": string,' +
+    '     "Fecha y hora de entrega": string,' +
+    '     "Hora": string,' +
+    '     "Estado pedido": string,' +
+    '     "Motivo cancelacion": string,' +
+    '     "items": [' +
+    '        { "descripcion": string,' +
+    '          "cantidad": number,' +
+    '          "importe_unitario": number,' +
+    '          "total": number }' +
+    '     ],' +
+    '     "Monto": number' +
+    '  },' +
+    '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }' +
+    '\nREGLAS:\n- Incluir SIEMPRE "Pedido" en todas las respuestas, incluso con "estado":"IN_PROGRESS".' +
+    '\n- Cada ítem debe incluir cantidad, importe_unitario y total (total = cantidad * importe_unitario).' +
+    '\n- "Monto" debe ser la suma de los totales de los ítems.' +
+    '\nPRIVACIDAD/UX:\n- "response" NO debe incluir el detalle del Pedido (items ni precios). Solo mencioná el total si el usuario lo pide explícitamente.';
+   const fullText = [
     buildNowBlock(),    
     "[COMPORTAMIENTO]\n" + baseText,
     "[CATALOGO]\n" + catalogText,
@@ -530,12 +550,69 @@ try {
 function normalizeOrder(waId, contactName, pedido) {
   const entrega = pedido?.["Entrega"] || "";
   const domicilio = pedido?.["Domicilio"] || "";
-  const monto = Number(pedido?.["Monto"] ?? 0) || 0;
+  //const monto = Number(pedido?.["Monto"] ?? 0) || 0;
+const monto = parseMoneyLoose(pedido?.["Monto"]);
+
   const items = [];
   for (const key of ["Pedido pollo","Pedido papas","Milanesas comunes","Milanesas Napolitanas","Ensaladas","Bebidas"]) {
     const val = (pedido?.[key] || "").toString().trim();
     if (val && val.toUpperCase() !== "NO") items.push({ name: key, selection: val });
   }
+
+
+// === Merge incremental del Pedido con importes (helper) ===
+function _normItem(it = {}) {
+  const desc = String(it.descripcion ?? it.name ?? "").trim();
+  const cantidad = Number(it.cantidad ?? 0) || 0;
+  const iu = parseMoneyLoose(it.importe_unitario);
+  const tot = parseMoneyLoose(it.total);
+  const total = Number.isFinite(tot) && tot > 0 ? tot :
+                (Number.isFinite(iu) && cantidad > 0 ? iu * cantidad : 0);
+  return { descripcion: desc, cantidad, importe_unitario: iu || 0, total };
+}
+function _mergeItems(prev = [], next = []) {
+  const byKey = new Map();
+  const key = s => String(s || "").toLowerCase().trim();
+  for (const p of prev) {
+    const n = _normItem(p);
+    if (!n.descripcion) continue;
+    byKey.set(key(n.descripcion), n);
+  }
+  for (const p of next) {
+    const n = _normItem(p);
+    if (!n.descripcion) continue;
+    const k = key(n.descripcion);
+    const old = byKey.get(k) || { descripcion: n.descripcion, cantidad: 0, importe_unitario: 0, total: 0 };
+    const cantidad = (Number.isFinite(n.cantidad) && n.cantidad > 0) ? n.cantidad : old.cantidad;
+    const iu = (Number.isFinite(n.importe_unitario) && n.importe_unitario > 0) ? n.importe_unitario : old.importe_unitario;
+    const total = (Number.isFinite(n.total) && n.total > 0) ? n.total : ((Number.isFinite(iu) && cantidad > 0) ? iu * cantidad : old.total);
+    byKey.set(k, { descripcion: old.descripcion, cantidad, importe_unitario: iu, total });
+  }
+  return Array.from(byKey.values()).filter(x => x.descripcion);
+}
+function _sumItems(items = []) {
+  return items.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
+}
+function mergePedido(prev = {}, nuevo = {}) {
+  const base = { ...(prev || {}) };
+  const claves = ["Nombre","Entrega","Domicilio","Fecha y hora de entrega","Hora","Estado pedido","Motivo cancelacion"];
+  for (const k of claves) {
+    const nv = (nuevo?.[k] ?? "").toString().trim();
+    if (nv) base[k] = nv;
+  }
+  const itemsPrev = Array.isArray(prev?.items) ? prev.items : [];
+ const itemsNext = Array.isArray(nuevo?.items) ? nuevo.items : [];
+  const items = _mergeItems(itemsPrev, itemsNext);
+  let monto = items.length ? _sumItems(items) : parseMoneyLoose(nuevo?.["Monto"]);
+  if (!Number.isFinite(monto) || monto <= 0) {
+    const prevMonto = parseMoneyLoose(prev?.["Monto"]);
+    monto = Number.isFinite(prevMonto) && prevMonto > 0 ? prevMonto : 0;
+  }
+  return { ...base, items, "Monto": monto };
+}
+
+
+
   const name = pedido?.["Nombre"] || contactName || "";
   const fechaEntrega = pedido?.["Fecha y hora de entrega"] || "";
   const hora = pedido?.["Hora"] || "";
@@ -661,7 +738,8 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
       : String(msg || "");
   // recorte defensivo para no inflar tokens
   //pushMessage(session, "assistant", assistantTextForHistory.slice(0, 4096));
-pushMessage(session, "assistant", msg);
+    pushMessage(session, "assistant", assistantTextForHistory.slice(0, 4096));
+//pushMessage(session, "assistant", msg);
   return { content: msg, json: parsed, usage };
 }
 
@@ -683,6 +761,7 @@ module.exports = {
   // Conversaciones / mensajes / órdenes
   escapeRegExp,
   bumpConversationTokenCounters, ensureOpenConversation, appendMessage, normalizeOrder, finalizeConversationOnce,
+  mergePedido,
   // Sesiones + chat
   sessions, getSession, resetSession, pushMessage, openaiChatWithRetries, chatWithHistoryJSON,
   // Sheets helpers (exportados por si un endpoint los necesita)
