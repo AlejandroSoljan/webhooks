@@ -411,14 +411,14 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
     catalogText = "Catálogo de productos: (error al leer)";
   }
   const jsonSchema =
-    "FORMATO DE RESPUESTA (OBLIGATORIO - SOLO JSON, sin ```):\n" +
+    "FORMATO DE RESPUESTA (OBLIGATORIO - SOLO json, sin ```):\n" +
     '{ "response": "texto para WhatsApp", "estado": "IN_PROGRESS|COMPLETED|CANCELLED", ' +
     '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
     '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
   const fullText = [
-    "[COMPORTAMIENTO]\n" + baseText
+    "[COMPORTAMIENTO]\n" + baseText,
    // "[CATALOGO]\n" + catalogText,
-   // "[SALIDA]\n" + jsonSchema,
+    "[SALIDA]\n" + jsonSchema
     //"RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
   ].join("\n\n").trim();
   behaviorCache = { at: now, text: fullText };
@@ -604,6 +604,9 @@ async function openaiChatWithRetries(messages, { model, temperature }) {
   }
   throw lastErr || new Error("openai_chat_failed");
 }
+
+
+
 async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperature = CHAT_TEMPERATURE) {
   const session = await getSession(waId);
   try { const db = await getDb(); const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" }); if (conv) session.messages[0] = { role: "system", content: await buildSystemPrompt({ conversation: conv }) }; } catch {}
