@@ -660,8 +660,8 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
       ? String(parsed.response)
       : String(msg || "");
   // recorte defensivo para no inflar tokens
-  pushMessage(session, "assistant", assistantTextForHistory.slice(0, 4096));
-
+  //pushMessage(session, "assistant", assistantTextForHistory.slice(0, 4096));
+pushMessage(session, "assistant", msg);
   return { content: msg, json: parsed, usage };
 }
 
