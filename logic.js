@@ -15,6 +15,48 @@ const TENANT_ID = (process.env.TENANT_ID || "").trim() || null;
 
 
 
+// --- Debug logging para ver comportamiento + historial que enviamos a OpenAI ---
+const LOG_OPENAI_PROMPT = String(process.env.LOG_OPENAI_PROMPT || "false").toLowerCase() === "true";
+const LOG_OPENAI_MAX = parseInt(process.env.LOG_OPENAI_MAX || "8000", 10);
+
+function previewForLog(s, n = LOG_OPENAI_MAX) {
+  s = String(s ?? "");
+  return s.length > n ? s.slice(0, n) + "… [truncated]" : s;
+}
+
+function redactForLogs(s) {
+  return String(s ?? "")
+    .replace(/Bearer\s+[A-Za-z0-9\-_.]+/g, "Bearer ***")   // tokens
+    .replace(/\b\d{7,}\b/g, "***");                        // números largos (tel/orden)
+}
+
+function logOpenAIPayload(label, messages) {
+  if (!LOG_OPENAI_PROMPT) return;
+ try {
+    const printable = (Array.isArray(messages) ? messages : []).map(m => {
+      if (!m) return m;
+      if (typeof m.content === "string") {
+        return { role: m.role, content: previewForLog(redactForLogs(m.content)) };
+      }
+      if (Array.isArray(m.content)) {
+        // multimodal: mostrar tipos de partes para no inundar logs
+        const parts = m.content.map(p => p?.type || typeof p);
+        return { role: m.role, content: `[${parts.join(", ")}]` };
+      }
+      return { role: m.role, content: "[non-string content]" };
+    });
+    console.log(`🛰️ ${label} → OpenAI messages\n${JSON.stringify(printable, null, 2)}`);
+  } catch (e) {
+    console.warn("logOpenAIPayload failed:", e?.message || e);
+  }
+}
+
+function logSystemPrompt(waId, systemText) {
+  if (!LOG_OPENAI_PROMPT) return;
+  console.log(`🧠 SYSTEM PROMPT (behavior) para sesión ${waId}:\n${previewForLog(systemText)}`);
+}
+
+
 const OPENAI_MAX_TURNS = (() => {
   const n = parseInt(process.env.OPENAI_MAX_TURNS || "", 10);
   return Number.isFinite(n) && n > 0 ? n : 0;
@@ -374,10 +416,10 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
     '  "Pedido"?: { "Fecha y hora de inicio de conversacion": string, "Fecha y hora fin de conversacion": string, "Estado pedido": string, "Motivo cancelacion": string, "Pedido pollo": string, "Pedido papas": string, "Milanesas comunes": string, "Milanesas Napolitanas": string, "Ensaladas": string, "Bebidas": string, "Monto": number, "Nombre": string, "Entrega": string, "Domicilio": string, "Fecha y hora de entrega": string, "Hora": string }, ' +
     '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
   const fullText = [
-    "[COMPORTAMIENTO]\n" + baseText,
-    //"[CATALOGO]\n" + catalogText,
-    "[SALIDA]\n" + jsonSchema,
-    "RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
+    "[COMPORTAMIENTO]\n" + baseText
+   // "[CATALOGO]\n" + catalogText,
+   // "[SALIDA]\n" + jsonSchema,
+    //"RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
   ].join("\n\n").trim();
   behaviorCache = { at: now, text: fullText };
   return fullText;
@@ -406,7 +448,11 @@ async function ensureOpenConversation(waId, { contactName = null } = {}) {
   );
 
   if (!conv) {
+    
     const behaviorText = await buildSystemPrompt({ force: true });
+    logSystemPrompt(waId, behaviorText);
+
+
     const doc = { tenantId: TENANT_ID || null, waId, status: "OPEN", finalized: false, contactName: contactName || null,
                    openedAt: new Date(), closedAt: null, lastUserTs: null, lastAssistantTs: null,
                    turns: 0,
@@ -500,6 +546,9 @@ async function getSession(waId) {
     const db = await getDb();
     const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" });
     const systemText = await buildSystemPrompt({ conversation: conv || null });
+    logSystemPrompt(waId, systemText);
+
+
     sessions.set(waId, { messages: [{ role: "system", content: systemText }], updatedAt: Date.now() });
   }
   return sessions.get(waId);
@@ -512,21 +561,44 @@ function pushMessage(session, role, content, maxTurns = 20) {
   session.messages = [system, ...tail];
   session.updatedAt = Date.now();
 }
+
+
 async function openaiChatWithRetries(messages, { model, temperature }) {
   const maxRetries = parseInt(process.env.OPENAI_RETRY_COUNT || "2", 10);
   const baseDelay = parseInt(process.env.OPENAI_RETRY_BASE_MS || "600", 10);
   let lastErr = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return await withTimeout(
-        openai.chat.completions.create({ model, response_format: { type: "json_object" }, temperature, top_p: 1, messages }),
+      // Log del historial que se envía a OpenAI
+      logOpenAIPayload("REQUEST", messages);
+
+      const result = await withTimeout(
+        openai.chat.completions.create({
+          model,
+          response_format: { type: "json_object" },
+          temperature,
+          top_p: 1,
+          messages
+        }),
         parseInt(process.env.OPENAI_TIMEOUT_MS || "12000", 10),
         "openai_chat"
       );
+
+      if (LOG_OPENAI_PROMPT) {
+        const out = result?.choices?.[0]?.message?.content ?? "";
+        console.log("⬅️ OpenAI response (assistant):\n" + previewForLog(out));
+      }
+      return result;
     } catch (e) {
-      lastErr = e; const msg = (e && e.message) ? e.message : String(e);
+      lastErr = e;
+      const msg = (e && e.message) ? e.message : String(e);
       const retriable = /timeout/i.test(msg) || e?.status === 429 || e?.code === "ETIMEDOUT" || e?.code === "ECONNRESET";
-      if (attempt < maxRetries && retriable) { const jitter = Math.floor(Math.random() * 250); const delay = baseDelay * (2 ** attempt) + jitter; await new Promise(r => setTimeout(r, delay)); continue; }
+      if (attempt < maxRetries && retriable) {
+        const jitter = Math.floor(Math.random() * 400);
+        const delay = baseDelay * Math.pow(2, attempt) + jitter;
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
       break;
     }
   }
