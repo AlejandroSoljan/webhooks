@@ -448,7 +448,7 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
   const fullText = [
     buildNowBlock(),    
     "[COMPORTAMIENTO]\n" + baseText,
-   // "[CATALOGO]\n" + catalogText,
+    "[CATALOGO]\n" + catalogText,
     "[SALIDA]\n" + jsonSchema
     //"RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
   ].join("\n\n").trim();
@@ -648,9 +648,21 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
   const usage = resp.usage || null;
   const parsed = await safeJsonParseStrictOrFix(msg, { openaiClient: openai, model });
    // ⬇️ MUY IMPORTANTE: guardar la respuesta del asistente en el historial en memoria
-  pushMessage(session, "assistant", msg);
+  p//ushMessage(session, "assistant", msg);
 
- return { content: msg, json: parsed, usage };
+// return { content: msg, json: parsed, usage };
+
+
+
+  // ⬇️ En historial, guardamos SOLO el texto “para WhatsApp”, no el JSON completo
+  const assistantTextForHistory =
+    (parsed && typeof parsed === "object" && parsed.response)
+      ? String(parsed.response)
+      : String(msg || "");
+  // recorte defensivo para no inflar tokens
+  pushMessage(session, "assistant", assistantTextForHistory.slice(0, 4096));
+
+  return { content: msg, json: parsed, usage };
 }
 
 module.exports = {
