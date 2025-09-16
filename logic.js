@@ -593,6 +593,63 @@ function _mergeItems(prev = [], next = []) {
 function _sumItems(items = []) {
   return items.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
 }
+
+
+
+
+  const name = pedido?.["Nombre"] || contactName || "";
+  const fechaEntrega = pedido?.["Fecha y hora de entrega"] || "";
+  const hora = pedido?.["Hora"] || "";
+  const estadoPedido = pedido?.["Estado pedido"] || "";
+  return { waId, name, entrega, domicilio, items, amount: monto, estadoPedido, fechaEntrega, hora, createdAt: new Date(), processed: false };
+}
+
+ 
+// === Helpers para mergear el Pedido con importes (definir ANTES de module.exports) ===
+function _normItem(it = {}) {
+  const desc = String(it.descripcion ?? it.name ?? "").trim();
+  const cantidad = Number(it.cantidad ?? 0) || 0;
+  const iu = parseMoneyLoose(it.importe_unitario);
+  const tot = parseMoneyLoose(it.total);
+  const total = Number.isFinite(tot) && tot > 0
+    ? tot
+    : (Number.isFinite(iu) && cantidad > 0 ? iu * cantidad : 0);
+  return { descripcion: desc, cantidad, importe_unitario: iu || 0, total };
+}
+
+function _mergeItems(prev = [], next = []) {
+  const byKey = new Map();
+  const key = (s) => String(s || "").toLowerCase().trim();
+ for (const p of prev) {
+    const n = _normItem(p);
+    if (!n.descripcion) continue;
+    byKey.set(key(n.descripcion), n);
+  }
+  for (const p of next) {
+    const n = _normItem(p);
+    if (!n.descripcion) continue;
+    const k = key(n.descripcion);
+    const old = byKey.get(k) || { descripcion: n.descripcion, cantidad: 0, importe_unitario: 0, total: 0 };
+    const cantidad = (Number.isFinite(n.cantidad) && n.cantidad > 0) ? n.cantidad : old.cantidad;
+    const iu = (Number.isFinite(n.importe_unitario) && n.importe_unitario > 0) ? n.importe_unitario : old.importe_unitario;
+    const total = (Number.isFinite(n.total) && n.total > 0)
+      ? n.total
+      : ((Number.isFinite(iu) && cantidad > 0) ? iu * cantidad : old.total);
+    byKey.set(k, { descripcion: old.descripcion, cantidad, importe_unitario: iu, total });
+  }
+  return Array.from(byKey.values()).filter(x => x.descripcion);
+}
+
+function _sumItems(items = []) {
+  return items.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
+}
+
+/**
+ * Fusiona el Pedido previo con el nuevo parcial, respetando importes.
+ * - Campos de texto: pisa con el valor nuevo si viene no vacío.
+ * - Items: upsert por descripcion; conserva o pisa importes según lo nuevo.
+ * - Monto: suma de items si hay items; si no, toma el nuevo/previo parseado.
+ */
 function mergePedido(prev = {}, nuevo = {}) {
   const base = { ...(prev || {}) };
   const claves = ["Nombre","Entrega","Domicilio","Fecha y hora de entrega","Hora","Estado pedido","Motivo cancelacion"];
@@ -601,7 +658,7 @@ function mergePedido(prev = {}, nuevo = {}) {
     if (nv) base[k] = nv;
   }
   const itemsPrev = Array.isArray(prev?.items) ? prev.items : [];
- const itemsNext = Array.isArray(nuevo?.items) ? nuevo.items : [];
+  const itemsNext = Array.isArray(nuevo?.items) ? nuevo.items : [];
   const items = _mergeItems(itemsPrev, itemsNext);
   let monto = items.length ? _sumItems(items) : parseMoneyLoose(nuevo?.["Monto"]);
   if (!Number.isFinite(monto) || monto <= 0) {
@@ -613,12 +670,6 @@ function mergePedido(prev = {}, nuevo = {}) {
 
 
 
-  const name = pedido?.["Nombre"] || contactName || "";
-  const fechaEntrega = pedido?.["Fecha y hora de entrega"] || "";
-  const hora = pedido?.["Hora"] || "";
-  const estadoPedido = pedido?.["Estado pedido"] || "";
-  return { waId, name, entrega, domicilio, items, amount: monto, estadoPedido, fechaEntrega, hora, createdAt: new Date(), processed: false };
-}
 async function saveCompletedToSheets({ waId, data }) {
 }
 async function finalizeConversationOnce(conversationId, finalPayload, estado) {
@@ -760,8 +811,7 @@ module.exports = {
   loadProductsFromMongo, loadProductsFromSheet, buildCatalogText, invalidateBehaviorCache, buildSystemPrompt,
   // Conversaciones / mensajes / órdenes
   escapeRegExp,
-  bumpConversationTokenCounters, ensureOpenConversation, appendMessage, normalizeOrder, finalizeConversationOnce,
-  mergePedido,
+  bumpConversationTokenCounters, ensureOpenConversation, appendMessage, normalizeOrder, finalizeConversationOnce, mergePedido,
   // Sesiones + chat
   sessions, getSession, resetSession, pushMessage, openaiChatWithRetries, chatWithHistoryJSON,
   // Sheets helpers (exportados por si un endpoint los necesita)
