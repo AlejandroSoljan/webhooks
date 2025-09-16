@@ -452,8 +452,16 @@ app.post("/webhook", async (req, res) => {
              );
             // guardar respuesta del asistente
             const textToSend = (json && json.response) ? String(json.response) : String(content || "").slice(0, 4096);
-            await appendMessage(conv._id, { role: "assistant", content: textToSend, type: "text" });
+
+            await appendMessage(conv._id, {
+  role: "assistant",
+  content: textToSend,
+  type: "text",
+  meta: { ai_json: json || null }   // ← el Pedido queda en el historial del API
+});
+
             if (usage) await bumpConversationTokenCounters(conv._id, usage, "assistant");
+            
             console.log("openai_latency_ms", Date.now() - t0);
             await sendSafeText(from, textToSend, value);
 
