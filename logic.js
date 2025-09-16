@@ -567,6 +567,7 @@ async function openaiChatWithRetries(messages, { model, temperature }) {
   const maxRetries = parseInt(process.env.OPENAI_RETRY_COUNT || "2", 10);
   const baseDelay = parseInt(process.env.OPENAI_RETRY_BASE_MS || "600", 10);
   let lastErr = null;
+
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       // Log del historial que se envía a OpenAI
@@ -615,7 +616,10 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
   const msg = resp.choices?.[0]?.message?.content || "";
   const usage = resp.usage || null;
   const parsed = await safeJsonParseStrictOrFix(msg, { openaiClient: openai, model });
-  return { content: msg, json: parsed, usage };
+   // ⬇️ MUY IMPORTANTE: guardar la respuesta del asistente en el historial en memoria
+  pushMessage(session, "assistant", msg);
+
+ return { content: msg, json: parsed, usage };
 }
 
 module.exports = {
