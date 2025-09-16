@@ -40,6 +40,37 @@ function escapeRegExp(s) { return String(s).replace(/[-\/\\^$*+?.()|[\]{}]/g, "\
 function coerceJsonString(raw) {if (raw == null) return "";
 let s = String(raw);
 
+
+// En logic.js (arriba, junto a helpers)
+function parseMoneyLoose(v) {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  let s = String(v || "").trim();
+  if (!s) return 0;
+  // dejar solo dígitos, separadores y signo
+  s = s.replace(/[^\d.,-]/g, "");
+
+  // Si tiene coma y punto, asumí que el último separador es decimal.
+  if (s.includes(".") && s.includes(",")) {
+    const lastSep = Math.max(s.lastIndexOf("."), s.lastIndexOf(","));
+    const dec = s[lastSep];
+    const thou = dec === "," ? "." : ",";
+    s = s.split(thou).join(""); // saca miles
+    s = s.slice(0, lastSep) + "." + s.slice(lastSep + 1); // decimal a punto
+  } else if (s.includes(",")) {
+    // Si la última parte tiene 1-2 dígitos, tratá la coma como decimal, si no, saca comas
+    const parts = s.split(",");
+    s = (parts[parts.length - 1].length <= 2) ? parts.join(".") : parts.join("");
+  } else if (s.includes(".")) {
+    const parts = s.split(".");
+    // si la última parte tiene 1-2 dígitos => decimal, si no => eran miles
+    s = (parts[parts.length - 1].length <= 2) ? parts.join(".") : parts.join("");
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+
+
 // strip BOM and control chars
 s = s.replace(/^\uFEFF/, "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]+/g, " ").trim();
 
@@ -344,7 +375,7 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
     '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }';
   const fullText = [
     "[COMPORTAMIENTO]\n" + baseText,
-    "[CATALOGO]\n" + catalogText,
+    //"[CATALOGO]\n" + catalogText,
     "[SALIDA]\n" + jsonSchema,
     "RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
   ].join("\n\n").trim();
@@ -534,5 +565,21 @@ module.exports = {
   sessions, getSession, resetSession, pushMessage, openaiChatWithRetries, chatWithHistoryJSON,
   // Sheets helpers (exportados por si un endpoint los necesita)
   getSpreadsheetIdFromEnv, getSheetsClient, saveCompletedToSheets,
-  ObjectId
+  ObjectId,
+  ensureMessageOnce
 };
+
+
+// --- Idempotencia de mensajes entrantes ---
+async function ensureMessageOnce(messageId) {
+  if (!messageId) return true;
+  const db = await getDb();
+  try {
+    await db.collection("processed_messages").insertOne({ _id: String(messageId), at: new Date() });
+    return true; // primera vez
+  } catch (e) {
+    // 11000 = duplicate key
+    if (e && (e.code === 11000 || String(e.message||'').includes('E11000'))) return false;
+    throw e;
+  }
+}
