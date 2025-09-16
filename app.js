@@ -44,6 +44,53 @@ function isValidSignature(req) {
   try { return crypto2.timingSafeEqual(Buffer.from(signature), Buffer.from(expected)); } catch { return false; }
 }
 
+
+
+// === helpers: totales desde catálogo ===
+async function _buildCatalogMap() {
+  const db = await getDb();
+  const q = { active: { $ne: false } };
+  if (TENANT_ID) q.tenantId = TENANT_ID;
+  const list = await db.collection("products").find(q).toArray();
+
+  const normalize = (s) =>
+    String(s || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")   // sin acentos
+      .replace(/[^\w\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const map = new Map();
+  for (const p of list) {
+    if (!p.descripcion) continue;
+    const key = normalize(p.descripcion);
+    if (!map.has(key)) map.set(key, Number(p.importe) || 0);
+  }
+  return { map, normalize };
+}
+
+async function computeAmountFromCatalog(items = []) {
+  const { map, normalize } = await _buildCatalogMap();
+  let total = 0;
+  const enriched = (items || []).map((it) => {
+    const qty = Number(it.cantidad ?? it.qty ?? 1) || 1;
+    const key = normalize(it.descripcion ?? it.producto ?? "");
+    let unit = map.get(key);
+
+    // fallback: si no está en catálogo, usamos el importe del item (si vino)
+    if (!Number.isFinite(unit)) unit = Number(it.importe) || 0;
+
+    const line = +(qty * unit).toFixed(2);
+    total += line;
+    return { ...it, cantidad: qty, importe_unitario: unit, total: line };
+  });
+  return { total: +total.toFixed(2), items: enriched };
+}
+
+
+
 // -------- Cache público (binario/tts) --------
 app.get("/cache/audio/:id", (req, res) => {
   const item = getFromCache(req.params.id); if (!item) return res.status(404).send("Not found");
@@ -213,12 +260,67 @@ app.get("/api/admin/messages/:id", async (req, res) => {
 });
 app.get("/api/admin/order/:id", async (req, res) => {
   try {
-    const id = req.params.id; const db = await getDb(); const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) }); if (!conv) return res.status(404).json({ error: "not_found" });
+    const id = req.params.id; 
+    const db = await getDb();
+     const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
+      if (!conv) return res.status(404).json({ error: "not_found" });
+    //let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) });
+    //if (!order && conv.summary?.Pedido) order = require("./logic").normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
+    //res.json({ waId: conv.waId, order: order ? { name: order.name || conv.contactName || "", entrega: order.entrega || "", domicilio: order.domicilio || "", items: order.items || [], amount: order.amount ?? null, estadoPedido: order.estadoPedido || "", fechaEntrega: order.fechaEntrega || "", hora: order.hora || "", processed: !!order.processed } : null, rawPedido: conv.summary?.Pedido || null });
     let order = await db.collection("orders").findOne({ conversationId: new ObjectId(id) });
-    if (!order && conv.summary?.Pedido) order = require("./logic").normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
-    res.json({ waId: conv.waId, order: order ? { name: order.name || conv.contactName || "", entrega: order.entrega || "", domicilio: order.domicilio || "", items: order.items || [], amount: order.amount ?? null, estadoPedido: order.estadoPedido || "", fechaEntrega: order.fechaEntrega || "", hora: order.hora || "", processed: !!order.processed } : null, rawPedido: conv.summary?.Pedido || null });
+    if (!order && conv.summary?.Pedido) {
+      // si normalizeOrder es sync o async, no rompemos:
+      const maybe = require("./logic").normalizeOrder(conv.waId, conv.contactName, conv.summary.Pedido);
+      order = await Promise.resolve(maybe);
+    }
+    // Calcular total desde catálogo (sin pisar amount existente)
+    let quoted = null;
+    const srcItems =
+      (order?.items && order.items.length) ? order.items :
+      (conv.summary?.Pedido?.items && conv.summary.Pedido.items.length) ? conv.summary.Pedido.items : [];
+    if (srcItems.length) quoted = await computeAmountFromCatalog(srcItems);
+
+    const base = order ? {
+      name: order.name || conv.contactName || "",
+      entrega: order.entrega || "",
+      domicilio: order.domicilio || "",
+      items: order.items || [],
+      amount: (order.amount ?? null),
+      estadoPedido: order.estadoPedido || "",
+      fechaEntrega: order.fechaEntrega || "",
+      hora: order.hora || "",
+      processed: !!order.processed
+    } : null;
+
+    const withTotals = base ? {
+      ...base,
+      // si no hay amount, lo rellenamos con el de catálogo (no rompemos flujos previos)
+      amount: base.amount ?? quoted?.total ?? null,
+      amount_catalog: quoted?.total ?? null,
+      // enriquecemos items (agrega importe_unitario y total por ítem) sin quitar campos existentes
+      items: quoted?.items ?? base.items
+    } : null;
+
+    res.json({
+      waId: conv.waId,
+      order: withTotals,
+      rawPedido: conv.summary?.Pedido || null
+    });
+
+
+
   } catch (e) { console.error("/api/admin/order error:", e); res.status(500).json({ error: "internal" }); }
 });
+
+app.post("/api/quote", async (req, res) => {
+  try {
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const { total, items: enriched } = await computeAmountFromCatalog(items);
+    res.json({ total, items: enriched });
+  } catch (e) { console.error("/api/quote error:", e); res.status(500).json({ error: "internal" }); }
+});
+
+
 app.post("/api/admin/order/:id/process", async (req, res) => {
   try {
     const id = req.params.id; const db = await getDb(); const convId = new ObjectId(id);
@@ -255,8 +357,22 @@ app.post("/webhook", async (req, res) => {
         for (const msg of messages) {
           const from = msg.from; const type = msg.type; const messageId = msg.id;
           const phoneNumberIdForRead = getPhoneNumberId(value); if (messageId && phoneNumberIdForRead) markAsRead(messageId, phoneNumberIdForRead).catch(()=>{});
+          // 1) Idempotencia: si ya procesamos este messageId, salteamos
+          if (messageId) {
+            const firstTime = await ensureMessageOnce(messageId);
+            if (!firstTime) { continue; }
+          }
+
+          // 2) Si la conversación ya estaba finalizada y este mensaje es viejo, ignorar
+          //    (WhatsApp puede reentregar o entregar fuera de orden)
+          const msgTsMs = Number(msg.timestamp ? (Number(msg.timestamp) * 1000) : Date.now());
+
+          
           // asegurar conversación
-          const conv = await ensureOpenConversation(from, { contactName });
+           const conv = await ensureOpenConversation(from, { contactName });
+          if (conv?.finalized && conv?.closedAt && msgTsMs <= new Date(conv.closedAt).getTime()) {
+            continue; // mensaje anterior al cierre: no responder
+          }
           
           
         //  await appendMessage(conv._id, { role: "user", content: JSON.stringify(msg), type: type || "text", meta: { raw: true } });
@@ -324,7 +440,16 @@ app.post("/webhook", async (req, res) => {
 // Chat con historial (robusto a timeouts/errores)
           try {
             const t0 = Date.now();
-            const { json, content, usage } = await chatWithHistoryJSON(from, userText);
+             const { json, content, usage } = await chatWithHistoryJSON(
+                from,
+                userText,
+                undefined,                 // model por defecto
+                undefined,                 // temperature por defecto
+              {
+                value,                   // lo usamos para calcular el phone_number_id
+                onTimeoutMessage: "Estoy con demoras, por favor esperá un momento. Sigo trabajando en tu pedido."
+              }
+             );
             // guardar respuesta del asistente
             const textToSend = (json && json.response) ? String(json.response) : String(content || "").slice(0, 4096);
             await appendMessage(conv._id, { role: "assistant", content: textToSend, type: "text" });
