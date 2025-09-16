@@ -648,7 +648,7 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
   const usage = resp.usage || null;
   const parsed = await safeJsonParseStrictOrFix(msg, { openaiClient: openai, model });
    // ⬇️ MUY IMPORTANTE: guardar la respuesta del asistente en el historial en memoria
-  p//ushMessage(session, "assistant", msg);
+  //pushMessage(session, "assistant", msg);
 
 // return { content: msg, json: parsed, usage };
 
