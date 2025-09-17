@@ -656,7 +656,13 @@ function _mergeItems(prev = [], next = []) {
   return Array.from(byKey.values()).filter(x => x.descripcion);
 }
 function _sumItems(items = []) {
-  return items.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
+    // Suma tolerante (strings, nulls, NaN)
+  let acc = 0;
+  for (const it of (items || [])) {
+    const t = parseMoneyLoose(it?.total);
+    if (Number.isFinite(t) && t > 0) acc += t;
+  }
+  return acc;
 }
 
 /**
@@ -675,13 +681,18 @@ function mergePedido(prev = {}, nuevo = {}) {
   const itemsPrev = Array.isArray(prev?.items) ? prev.items : [];
   const itemsNext = Array.isArray(nuevo?.items) ? nuevo.items : [];
   const items = _mergeItems(itemsPrev, itemsNext);
+  // Server-side: si hay items, el monto es la suma de items (sin depender del modelo)
   let monto = items.length ? _sumItems(items) : parseMoneyLoose(nuevo?.["Monto"]);
-  if (!Number.isFinite(monto) || monto <= 0) {
-    const prevMonto = parseMoneyLoose(prev?.["Monto"]);
-    monto = Number.isFinite(prevMonto) && prevMonto > 0 ? prevMonto : 0;
-  }
+  if (!Number.isFinite(monto) || monto <= 0) monto = _sumItems(items);
   return { ...base, items, "Monto": monto };
 }
+
+function patchTotalInText(responseText, monto) {
+   if (!responseText) return responseText;
+   const n = (Number(monto) || 0).toFixed(2);            // “56100.00”
+
+  return responseText.replace(/(total\s*:\s*)\$?\s*[\d.,]+/i, `$1${n}`);
+ }
 
 function repricerFromCatalog(pedido, { shippingPrice = null } = {}) {
    const P = { ...(pedido || {}) };
@@ -918,7 +929,21 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
    } catch (e) {
      console.warn("memo_pedido warn:", e?.message || e);
    }
- 
+   // --- GUARD RAIL FINAL ---
+  // Aun si no entró en el try de arriba, garantizamos que el Monto NUNCA quede en 0 si hay items.
+  if (parsed?.Pedido) {
+    const items = Array.isArray(parsed.Pedido.items) ? parsed.Pedido.items : [];
+    if (items.length) {
+      const sum = _sumItems(items);
+      if (!Number.isFinite(parsed.Pedido.Monto) || parsed.Pedido.Monto <= 0) {
+        parsed.Pedido.Monto = sum;
+      }
+      if (parsed.response && /total\s*:/.test(parsed.response)) {
+        parsed.response = patchTotalInText(parsed.response, parsed.Pedido.Monto);
+      }
+    }
+  }
+
 
   // 2) Guardar en historial SOLO el texto “para WhatsApp”
    const assistantTextForHistory = String(parsed.response || "Ok.").slice(0, 4096);
