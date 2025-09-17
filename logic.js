@@ -464,8 +464,7 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
     '  "Bigdata"?: { "Sexo": string, "Estudios": string, "Satisfaccion del cliente": number, "Motivo puntaje satisfaccion": string, "Cuanto nos conoce el cliente": number, "Motivo puntaje conocimiento": string, "Motivo puntaje general": string, "Perdida oportunidad": string, "Sugerencias": string, "Flujo": string, "Facilidad en el proceso de compras": number, "Pregunto por bot": string } }' +
     '\nREGLAS:\n- Incluir SIEMPRE "Pedido" en todas las respuestas, incluso con "estado":"IN_PROGRESS".' +
     '\n- Cada ítem debe incluir cantidad, importe_unitario y total (total = cantidad * importe_unitario).' +
-    '\n- "Monto" debe ser la suma de los totales de los ítems.' +
-    '\nPRIVACIDAD/UX:\n- "response" NO debe incluir el detalle del Pedido (items ni precios). Solo mencioná el total si el usuario lo pide explícitamente.';
+    '\n- "Monto" debe ser la suma de los totales de los ítems.'  ;
    const fullText = [
     buildNowBlock(),    
     "[COMPORTAMIENTO]\n" + baseText,
