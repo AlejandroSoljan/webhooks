@@ -683,8 +683,12 @@ async function getSession(waId) {
 function resetSession(waId) { sessions.delete(waId); }
 function pushMessage(session, role, content, maxTurns = 20) {
   session.messages.push({ role, content });
+    // Mantener exactamente 1 mensaje 'system' al frente
   const system = session.messages[0];
-  const tail = session.messages.slice(-2 * maxTurns);
+  // Quitar el system del recorte para no duplicarlo
+  const withoutSystem = session.messages.slice(1);
+  // Mantener solo los últimos 2*maxTurns turnos (user/assistant)
+  const tail = withoutSystem.slice(-2 * maxTurns);
   session.messages = [system, ...tail];
   session.updatedAt = Date.now();
 }
@@ -739,7 +743,29 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
   const session = await getSession(waId);
   try { const db = await getDb(); const conv = await db.collection("conversations").findOne({ waId, status: "OPEN" }); if (conv) session.messages[0] = { role: "system", content: await buildSystemPrompt({ conversation: conv }) }; } catch {}
   pushMessage(session, "user", userText);
-  const resp = await openaiChatWithRetries((()=>{const __m=Number.isFinite(OPENAI_MAX_TURNS)&&OPENAI_MAX_TURNS>0; if(!__m) return session.messages; const __mm=session.messages; const __sys=__mm[0]; const __tail=__mm.slice(-2*OPENAI_MAX_TURNS); return [__sys, ...__tail];})(), { model, temperature });
+  //const resp = await openaiChatWithRetries((()=>{const __m=Number.isFinite(OPENAI_MAX_TURNS)&&OPENAI_MAX_TURNS>0; if(!__m) return session.messages; const __mm=session.messages; const __sys=__mm[0]; const __tail=__mm.slice(-2*OPENAI_MAX_TURNS); return [__sys, ...__tail];})(), { model, temperature });
+    // Recorte por OPENAI_MAX_TURNS como antes…
+  const histBase = (()=>{
+    const __m = Number.isFinite(OPENAI_MAX_TURNS) && OPENAI_MAX_TURNS > 0;
+    if (!__m) return session.messages;
+    const __mm = session.messages;
+    const __sys = __mm[0];
+    const __tail = __mm.slice(-2 * OPENAI_MAX_TURNS);
+    return [__sys, ...__tail];
+  })();
+  // …pero con filtro defensivo: solo UN 'system', primero
+  const histNoDup = (() => {
+    const out = [];
+    let systemAdded = false;
+    for (const m of histBase) {
+      if (m.role === "system") { if (systemAdded) continue; systemAdded = true; }
+      out.push(m);
+    }
+    return out;
+  })();
+  const resp = await openaiChatWithRetries(histNoDup, { model, temperature });
+  
+  
   const msg = resp.choices?.[0]?.message?.content || "";
   const usage = resp.usage || null;
   const parsed = await safeJsonParseStrictOrFix(msg, { openaiClient: openai, model });
