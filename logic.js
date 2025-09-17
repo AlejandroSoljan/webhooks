@@ -285,18 +285,17 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
   const catalogText = buildCatalogText(products);
 
   // guía minimal para empujar al modelo a JSON:
-  const jsonHint = [
+  /*const jsonHint = [
     "[SALIDA]",
     "Devolvé SOLO un objeto JSON plano con esta forma mínima:",
     '{ "response": string, "estado": "IN_PROGRESS" | "COMPLETED" | "CANCELLED", "Pedido"?: { "Nombre"?: string, "Entrega"?: string, "Domicilio"?: string, "Fecha y hora de entrega"?: string, "Hora"?: string, "Estado pedido"?: string, "Motivo cancelacion"?: string, "items"?: [{ "descripcion": string, "cantidad": number, "importe_unitario": number, "total": number }], "Monto"?: number }, "Bigdata"?: object }',
     "No incluyas texto fuera del JSON."
-  ].join("\n");
+  ].join("\n");*/
 
   const fullText = [
     buildNowBlock(),
     "[COMPORTAMIENTO]\n" + baseText,
-    "[CATALOGO]\n" + catalogText,
-    jsonHint
+    "[CATALOGO]\n" + catalogText//,    jsonHint
   ].join("\n\n").trim();
 
   behaviorCache = { at: now, text: fullText };
