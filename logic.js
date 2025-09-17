@@ -560,12 +560,34 @@ const monto = parseMoneyLoose(pedido?.["Monto"]);
   }
 
 
+// Parser local de dinero (tolerante a formatos con coma o punto)
+function _pm(v) {
+  if (v == null) return NaN;
+  let s = String(v).trim();
+  if (!s) return NaN;
+  // quitar moneda y espacios
+  s = s.replace(/\s+/g, "").replace(/[^\d,.,-]/g, "");
+  // caso "1.234,56" -> "1234.56"
+  if (s.includes(",") && s.lastIndexOf(",") > s.lastIndexOf(".")) {
+    const parts = s.split(",");
+    const dec = parts.pop();
+    const int = parts.join(",").replace(/\./g, "").replace(/,/g, "");
+    return Number(int + "." + dec);
+  }
+  // caso "1,234.56" o "1234.56" -> quitar separadores de miles
+  s = s.replace(/,/g, "");
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+
+
 // === Merge incremental del Pedido con importes (helper) ===
 function _normItem(it = {}) {
   const desc = String(it.descripcion ?? it.name ?? "").trim();
   const cantidad = Number(it.cantidad ?? 0) || 0;
-  const iu = parseMoneyLoose(it.importe_unitario);
-  const tot = parseMoneyLoose(it.total);
+  const iu = _pm(it.importe_unitario);
+  const tot = _pm(it.total);
   const total = Number.isFinite(tot) && tot > 0 ? tot :
                 (Number.isFinite(iu) && cantidad > 0 ? iu * cantidad : 0);
   return { descripcion: desc, cantidad, importe_unitario: iu || 0, total };
@@ -660,9 +682,9 @@ function mergePedido(prev = {}, nuevo = {}) {
   const itemsPrev = Array.isArray(prev?.items) ? prev.items : [];
   const itemsNext = Array.isArray(nuevo?.items) ? nuevo.items : [];
   const items = _mergeItems(itemsPrev, itemsNext);
-  let monto = items.length ? _sumItems(items) : parseMoneyLoose(nuevo?.["Monto"]);
+  let monto = items.length ? _sumItems(items) : _pm(nuevo?.["Monto"]);
   if (!Number.isFinite(monto) || monto <= 0) {
-    const prevMonto = parseMoneyLoose(prev?.["Monto"]);
+    const prevMonto = _pm(prev?.["Monto"]);
     monto = Number.isFinite(prevMonto) && prevMonto > 0 ? prevMonto : 0;
   }
   return { ...base, items, "Monto": monto };
