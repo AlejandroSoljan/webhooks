@@ -113,34 +113,6 @@ function coerceJsonString(raw) {if (raw == null) return "";
 let s = String(raw);
 
 
-// En logic.js (arriba, junto a helpers)
-
-// === Helper global: parser de dinero tolerante ($ 1.234,56 / 1,234.56 / 1234.56) ===
-function parseMoneyLoose(v) {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  let s = String(v || "").trim();
-  if (!s) return 0;
-  // dejar solo dígitos, separadores y signo
-  s = s.replace(/[^\d.,-]/g, "");
-  // Si tiene coma y punto, el último separador es el decimal
-  if (s.includes(".") && s.includes(",")) {
-    const lastSep = Math.max(s.lastIndexOf("."), s.lastIndexOf(","));
-    const dec = s[lastSep];
-    const thou = dec === "," ? "." : ",";
-    s = s.split(thou).join(""); // remover miles
-    s = s.slice(0, lastSep) + "." + s.slice(lastSep + 1); // decimal -> punto
-  } else if (s.includes(",")) {
-    const parts = s.split(",");
-    s = (parts[parts.length - 1].length <= 2) ? parts.join(".") : parts.join("");
-  } else if (s.includes(".")) {
-    const parts = s.split(".");
-    s = (parts[parts.length - 1].length <= 2) ? parts.join(".") : parts.join("");
-  }
- const n = Number(s);
-  return Number.isFinite(n) ? n : 0;
-}
-
-
 
 // strip BOM and control chars
 s = s.replace(/^\uFEFF/, "").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]+/g, " ").trim();
@@ -162,6 +134,36 @@ if (first !== -1 && last !== -1 && last > first) s = s.slice(first, last + 1);
 s = s.replace(/,\s*([}\]])/g, "$1");
 
 return s.trim();}
+
+// === Helper global: parser de dinero tolerante ($ 1.234,56 / 1,234.56 / 1234.56) ===
+function parseMoneyLoose(v) {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  let s = String(v || "").trim();
+  if (!s) return 0;
+  // dejar solo dígitos, separadores y signo
+  s = s.replace(/[^\d.,-]/g, "");
+  // Si tiene coma y punto, el último separador es decimal
+  if (s.includes(".") && s.includes(",")) {
+    const lastSep = Math.max(s.lastIndexOf("."), s.lastIndexOf(","));
+    const dec = s[lastSep];
+    const thou = dec === "," ? "." : ",";
+    s = s.split(thou).join(""); // saca miles
+    s = s.slice(0, lastSep) + "." + s.slice(lastSep + 1); // decimal → punto
+  } else if (s.includes(",")) {
+    // si la última parte tiene 1-2 dígitos => coma decimal; si no, eran miles
+    const parts = s.split(",");
+    s = (parts[parts.length - 1].length <= 2) ? parts.join(".") : parts.join("");
+  } else if (s.includes(".")) {
+    const parts = s.split(".");
+    s = (parts[parts.length - 1].length <= 2) ? parts.join(".") : parts.join("");
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+
+
+
 async function safeJsonParseStrictOrFix(raw, { openaiClient = openai, model = "gpt-4o-mini" } = {}) {
 // Intento directo estricto
 try {
@@ -573,7 +575,7 @@ function normalizeOrder(waId, contactName, pedido) {
 }
 
  
-// === Helpers para mergear el Pedido con importes (definir ANTES de module.exports) ===
+// === Helpers de Pedido (globales) ===
 function _normItem(it = {}) {
   const desc = String(it.descripcion ?? it.name ?? "").trim();
   const cantidad = Number(it.cantidad ?? 0) || 0;
@@ -584,11 +586,10 @@ function _normItem(it = {}) {
     : (Number.isFinite(iu) && cantidad > 0 ? iu * cantidad : 0);
   return { descripcion: desc, cantidad, importe_unitario: iu || 0, total };
 }
-
 function _mergeItems(prev = [], next = []) {
   const byKey = new Map();
   const key = (s) => String(s || "").toLowerCase().trim();
- for (const p of prev) {
+  for (const p of prev) {
     const n = _normItem(p);
     if (!n.descripcion) continue;
     byKey.set(key(n.descripcion), n);
@@ -607,7 +608,6 @@ function _mergeItems(prev = [], next = []) {
   }
   return Array.from(byKey.values()).filter(x => x.descripcion);
 }
-
 function _sumItems(items = []) {
   return items.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
 }
@@ -628,7 +628,7 @@ function mergePedido(prev = {}, nuevo = {}) {
   const itemsPrev = Array.isArray(prev?.items) ? prev.items : [];
   const itemsNext = Array.isArray(nuevo?.items) ? nuevo.items : [];
   const items = _mergeItems(itemsPrev, itemsNext);
-   let monto = items.length ? _sumItems(items) : parseMoneyLoose(nuevo?.["Monto"]);
+  let monto = items.length ? _sumItems(items) : parseMoneyLoose(nuevo?.["Monto"]);
   if (!Number.isFinite(monto) || monto <= 0) {
     const prevMonto = parseMoneyLoose(prev?.["Monto"]);
     monto = Number.isFinite(prevMonto) && prevMonto > 0 ? prevMonto : 0;
