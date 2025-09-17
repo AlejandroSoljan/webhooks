@@ -450,6 +450,20 @@ for (const p of list) {
 }
 return lines.length ? lines.join("\n") : "No hay productos activos en el catálogo.";}
 function invalidateBehaviorCache() { behaviorCache = { at: 0, text: null }; }
+
+
+// === Índice de catálogo y normalizador de descripciones ===
+// Mapa global para precios por descripción normalizada.
+let CATALOG_INDEX = new Map();
+// Normaliza descripciones: quita tildes, pasa a minúsculas y colapsa espacios
+function _normDesc(s) {
+  return String(s || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // sin acentos
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function buildSystemPrompt({ force = false, conversation = null } = {}) {
   const FREEZE_FULL_PROMPT = String(process.env.FREEZE_FULL_PROMPT || "false").toLowerCase() === "true";
   if (FREEZE_FULL_PROMPT && conversation && conversation.behaviorSnapshot && conversation.behaviorSnapshot.text) {
@@ -865,7 +879,7 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
   
   const msg = resp.choices?.[0]?.message?.content || "";
   const usage = resp.usage || null;
-  const parsed = await safeJsonParseStrictOrFix(msg, { openaiClient: openai, model });
+ let parsed = await safeJsonParseStrictOrFix(msg, { openaiClient: openai, model });
    // ⬇️ MUY IMPORTANTE: guardar la respuesta del asistente en el historial en memoria
   //pushMessage(session, "assistant", msg);
   // 0) Fallback: si el modelo no trajo response legible, no mandamos JSON crudo
