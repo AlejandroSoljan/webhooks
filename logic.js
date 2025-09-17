@@ -473,9 +473,9 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
    const fullText = [
     buildNowBlock(),    
     "[COMPORTAMIENTO]\n" + baseText,
-    "[CATALOGO]\n" + catalogText,
-    "[SALIDA]\n" + jsonSchema,
-+    memoHint
+    "[CATALOGO]\n" + catalogText//,
+    //"[SALIDA]\n" + jsonSchema,
+    //memoHint
     //"RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
   ].join("\n\n").trim();
   behaviorCache = { at: now, text: fullText };
