@@ -384,8 +384,10 @@ function priceFromCatalog(desc) {
 function extractShippingFromBehavior(systemText) {
   try {
     const s = String(systemText || "");
-    const m = s.match(/(?:env[íi]o|entrega)[^.\n]*?(?:costo|valor)[^0-9]*([\$]?\s*[\d.,]+)/i)
-           || s.match(/tiene\s+un\s+costo\s+de\s+([\$]?\s*[\d.,]+)/i);
+    const m =
+      s.match(/(?:env[íi]o|entrega)[^.\n]*?(?:costo|valor)[^0-9]*([\$]?\s*[\d.,]+)/i) ||
+      s.match(/tiene\s+un\s+costo\s+de\s+([\$]?\s*[\d.,]+)/i) ||
+      s.match(/costo\s+de\s+env[íi]o[^0-9]*([\$]?\s*[\d.,]+)/i);
     return m ? parseMoneyLoose(m[1]) : null;
   } catch { return null; }
 }
@@ -687,12 +689,24 @@ function mergePedido(prev = {}, nuevo = {}) {
   return { ...base, items, "Monto": monto };
 }
 
+// Parchea el total dicho por el modelo (soporta "Total: 123",
+// "El total ... es 123", y "Total 123")
 function patchTotalInText(responseText, monto) {
-   if (!responseText) return responseText;
-   const n = (Number(monto) || 0).toFixed(2);            // “56100.00”
-
-  return responseText.replace(/(total\s*:\s*)\$?\s*[\d.,]+/i, `$1${n}`);
- }
+  if (!responseText) return responseText;
+  const n = (Number(monto) || 0).toFixed(2);
+  let s = responseText;
+  // 1) "Total: 123"
+  s = s.replace(/(total\s*:\s*)\$?\s*[\d.,]+/i, `$1${n}`);
+  // 2) "El total ... es 123" o "Total es 123"
+  s = s.replace(/(total[^0-9]{0,20}(?:es|=)\s*)\$?\s*[\d.,]+/i, `$1${n}`);
+  // 3) "Total 123" (sin dos puntos)
+  s = s.replace(/(total[^0-9]{0,5})\$?\s*[\d.,]+/i, `$1${n}`);
+  // 4) Si habla de "total" pero no hay número, añadimos uno al final
+  if (/total/i.test(responseText) && !/[\d]\d*(?:[.,]\d+)?/.test(s)) {
+    s += ` Total: ${n}`;
+  }
+  return s;
+}
 
 function repricerFromCatalog(pedido, { shippingPrice = null } = {}) {
    const P = { ...(pedido || {}) };
@@ -719,12 +733,6 @@ function repricerFromCatalog(pedido, { shippingPrice = null } = {}) {
    return P;
  }
  
- function patchTotalInText(responseText, monto) {
-   if (!responseText) return responseText;
-   const n = (Number(monto) || 0).toFixed(2);            // “56100.00”
-  // Reemplaza el número que sigue a “Total:” (con o sin $)
-  return responseText.replace(/(total\s*:\s*)\$?\s*[\d.,]+/i, `$1${n}`);
- }
 
 
 
@@ -808,11 +816,12 @@ function _slimPedido(p = {}) {
     })).filter(it => it.descripcion);
   }
   // Recalcular Monto por si acaso
-  if (Array.isArray(out.items) && out.items.length) {
-    out.Monto = out.items.reduce((a, it) => a + (Number(it.total) || 0), 0);
-  } else if (p["Monto"] != null) {
-    out.Monto = parseMoneyLoose(p["Monto"]);
-  }
+    // Mantener Monto si ya incluye envío; si no, usar suma de ítems
+  const sumItems = Array.isArray(out.items)
+    ? out.items.reduce((a, it) => a + (Number(it.total) || 0), 0)
+    : 0;
+  const rawMonto = parseMoneyLoose(p["Monto"]);
+  out.Monto = Number.isFinite(rawMonto) && rawMonto >= sumItems ? rawMonto : sumItems;
   return out;
 }
 
