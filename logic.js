@@ -87,7 +87,7 @@ async function getGPTReply(from, userMessage) {
     const reply = response.data.choices[0].message.content;
 
     chatHistories[from].push({ role: "assistant", content: reply });
-    console.log("Historial:  "+ chatHistories[from]);
+    console.log("Historial:  "+ JSON.stringify( chatHistories[from]));
 
     return reply;
   } catch (error) {
