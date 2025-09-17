@@ -558,6 +558,8 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
   const assistantTextForHistory = String(parsed.response || "Ok.").slice(0, 4096);
   pushMessage(session, "assistant", assistantTextForHistory);
 
+  console.log('RESPUESTA:'+assistantTextForHistory);
+
   return { content: msg, json: parsed, usage };
 }
 
