@@ -461,7 +461,11 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
 }
 
 // ================== Sesiones + chat ==================
+
 const sessions = new Map(); // waId -> { messages, updatedAt }
+// Mantener TODO el historial en memoria hasta finalizar (sin truncar)
+const KEEP_FULL_HISTORY = /^(1|true|yes)$/i.test(process.env.KEEP_FULL_HISTORY || "1");
+
 async function getSession(waId) {
   if (!sessions.has(waId)) {
     const db = await getDb();
@@ -472,22 +476,26 @@ async function getSession(waId) {
   return sessions.get(waId);
 }
 function resetSession(waId){ sessions.delete(waId); }
+
 function pushMessage(session, role, content, maxTurns = 20) {
   session.messages.push({ role, content });
-  const system = session.messages[0];
-  const tail = session.messages.slice(1).slice(-2*maxTurns);
-  session.messages = [system, ...tail];
+  if (!KEEP_FULL_HISTORY) {
+    const system = session.messages[0];
+    const tail = session.messages.slice(1).slice(-2 * maxTurns);
+    session.messages = [system, ...tail];
+  }
   session.updatedAt = Date.now();
 }
 
-// Merge de Pedido muy simple (prioriza lo nuevo si viene bien formateado)
+
+// Merge de Pedido muy simple (SIN cálculos en Node)
 function _normItem(it){
   const desc = String(it?.descripcion || it?.name || "").trim();
   const cantidad = Number(it?.cantidad ?? 0) || 0;
   const iu = parseMoneyLoose(it?.importe_unitario);
   const tot = parseMoneyLoose(it?.total);
-  // Node NO calcula totales. Si vino "total" desde el modelo, se preserva; si no, se omite.
   const out = { descripcion: desc, cantidad, importe_unitario: iu || 0 };
+  // Si el modelo ya mandó "total", se preserva; Node no lo calcula
   if (Number.isFinite(tot)) out.total = tot;
   return out;
 }
@@ -500,7 +508,7 @@ function _mergeItems(prev=[], next=[]){
     const old = byKey.get(k) || { descripcion:n.descripcion, cantidad:0, importe_unitario:0 };
     const cantidad = n.cantidad>0 ? n.cantidad : old.cantidad;
     const iu = n.importe_unitario>0 ? n.importe_unitario : old.importe_unitario;
-        // NO calcular "total" en Node. Se usa el provisto (si existe) o se omite.
+        // Node NO calcula total; usa el provisto si existe
     const total = Number.isFinite(n.total) ? n.total : (Number.isFinite(old.total) ? old.total : undefined);
     const mergedItem = { descripcion: old.descripcion, cantidad, importe_unitario: iu };
     if (Number.isFinite(total)) mergedItem.total = total;
@@ -516,9 +524,9 @@ function mergePedido(prev={}, nuevo={}){
   for (const k of ["Nombre","Entrega","Domicilio","Fecha y hora de entrega","Hora","Estado pedido","Motivo cancelacion"]) {
     const nv = (nuevo?.[k] ?? "").toString().trim(); if (nv) base[k] = nv;
   }
-    const items = _mergeItems(prev?.items||[], nuevo?.items||[]);
+   const items = _mergeItems(prev?.items||[], nuevo?.items||[]);
   base.items = items;
-  // NO calculamos Monto en Node; lo debe traer el modelo
+  // Node NO calcula Monto; lo trae el modelo (o segunda pasada)
   const montoNuevo = parseMoneyLoose(nuevo?.["Monto"]);
   const montoPrev  = parseMoneyLoose(prev?.["Monto"]);
   if (Number.isFinite(montoNuevo)) base["Monto"] = montoNuevo;
@@ -534,7 +542,7 @@ function _findLastPedidoMemo(messages=[]){
   return null;
 }
 function _slimPedido(p){
-  // MEMO sin totales: el modelo calcula "total" por ítem y "Monto" final (con envío)
+  // MEMO sin Monto ni "total" por ítem; el modelo recalcula por comportamiento + catálogo
   const slim = { ...p };
   delete slim["Monto"];
   if (Array.isArray(slim.items)) {
@@ -615,7 +623,11 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
   const assistantTextForHistory = String(parsed.response || "Ok.").slice(0, 4096);
   pushMessage(session, "assistant", assistantTextForHistory);
 
-
+  // Si la conversación terminó, limpiamos el historial en memoria
+  const est = String(parsed.estado || "").toUpperCase();
+  if (est === "COMPLETED" || est === "CANCELLED") {
+    resetSession(waId);
+  }
 
   return { content: msg, json: parsed, usage };
 }
