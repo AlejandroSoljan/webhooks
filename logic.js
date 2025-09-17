@@ -74,7 +74,7 @@ async function getGPTReply(from, userMessage) {
       {
         model: 'gpt-4-1106-preview',////CHAT_MODEL,
         messages: chatHistories[from],
-        temperature: 0.7 //CHAT_TEMPERATURE
+        temperature: 0.3 //CHAT_TEMPERATURE
       },
       {
         headers: {
