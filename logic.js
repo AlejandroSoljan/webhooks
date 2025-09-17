@@ -60,7 +60,7 @@ async function getGPTReply(from, userMessage) {
 
 
 "[CONFIRMACIÓN] " +
-"- Cuando el cliente esté listo para confirmar, muestra un resumen breve en texto con los items y el importe total,no muestres los importes individuales de los items salvo que lo pida el cliente"}
+"- Cuando el cliente esté listo para confirmar, muestra un resumen breve en texto con los items y el importe total,no muestres los importes individuales de los items salvo que lo pida el , asegurate de calcular bien el importe total"}
     ];
   }
   chatHistories[from].push({ role: "user", content: userMessage });
