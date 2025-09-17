@@ -33,6 +33,19 @@ function coerceJsonString(s) {
   return str;
 }
 
+
+function buildChatRequest(messages, { model = CHAT_MODEL, temperature = CHAT_TEMPERATURE } = {}) {
+  return {
+    model,
+    temperature,
+    messages,
+    response_format: { type: "json_object" }
+  };
+}
+
+
+
+
 // parseo tolerante: intenta JSON.parse; si falla, extrae el mayor bloque {...}
 async function safeJsonParseStrictOrFix(s, { openaiClient = null, model = CHAT_MODEL } = {}) {
   try { return JSON.parse(String(s)); } catch {}
@@ -476,9 +489,18 @@ function _slimPedido(p){
   if (Array.isArray(slim.items)) slim.items = slim.items.map(({descripcion,cantidad,importe_unitario,total})=>({descripcion,cantidad,importe_unitario,total}));
   return slim;
 }
-
+/*
 async function openaiChatWithRetries(messages, { model = CHAT_MODEL, temperature = CHAT_TEMPERATURE } = {}) {
   return openai.chat.completions.create({ model, temperature, messages, response_format: { type: "json_object" } });
+}*/
+
+async function openaiChatWithRetries(messages, { model = CHAT_MODEL, temperature = CHAT_TEMPERATURE } = {}) {
+  const payload = buildChatRequest(messages, { model, temperature });
+
+  // LOG: SOLO el JSON que se envía al ChatGPT (sin prefijos ni texto extra)
+  console.log(JSON.stringify(payload));
+
+  return openai.chat.completions.create(payload);
 }
 
 function extractShippingFromBehavior(_systemText){ return null; } // simplificado (si querés, extraé un envío fijo)
