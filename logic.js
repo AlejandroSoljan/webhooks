@@ -6,13 +6,17 @@ const axios = require("axios");
 const app = express();
 app.use(bodyParser.json());
 
-const PORT = process.env.PORT || 3000;
 
-// 🔐 Reemplaza con tus tokens reales
-const WHATSAPP_TOKEN = 'EAAOlXEb393oBPHtpnFvgynk7k1Tg6tuVW7wtguIHkU3sfWGT9b0epaGKnDeJ59UvEZBlUdmcZBhGXs8qkkPfCla5wFEP0U7hLtsh6eAABUQRE1kr4UYHDkoaTurrmZAkSZBc6UY9iS2l0W7EleZAvhO7m30Bh51BBNXa46aqyqg4Ex8hA6d8ZCZBP3y4TZAC5X8YxAZDZD'; // Token de acceso de WhatsApp Cloud API
-const VERIFY_TOKEN = 'aleds5200'; // Token para verificación del webhook
-const PHONE_NUMBER_ID = '764414663425868'; // ID del número de teléfono de WhatsApp
+///Variables
+
+const PORT = process.env.PORT || 3000;
+const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN; 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY
+const CHAT_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const CHAT_TEMPERATURE = Number(process.env.OPENAI_TEMPERATURE ?? 0.3) || 0.3;
+const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID.trim()
+const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || "v17.0";
 
 //'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'; // Tu clave de API de OpenAI
 //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
@@ -68,9 +72,9 @@ async function getGPTReply(from, userMessage) {
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: "gpt-4",
+        model: CHAT_MODEL,
         messages: chatHistories[from],
-        temperature: 0.2
+        temperature: CHAT_TEMPERATURE
       },
       {
         headers: {
@@ -97,7 +101,7 @@ async function getGPTReply(from, userMessage) {
 async function sendWhatsAppMessage(to, text) {
   try {
     await axios.post(
-      `https://graph.facebook.com/v17.0/${PHONE_NUMBER_ID}/messages`,
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
       {
         messaging_product: "whatsapp",
         to: to,
