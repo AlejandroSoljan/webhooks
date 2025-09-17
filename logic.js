@@ -56,7 +56,7 @@ function needsRecalc(payload) {
 }
 
 async function modelRecalcFromBehavior(session, currentJson, { model = CHAT_MODEL, temperature = CHAT_TEMPERATURE } = {}) {
-  // Usar exactamente el MISMO historial que estás usando en el chat normal (como ChatGPT web)
+  // Enviar EXACTAMENTE el mismo historial completo que se viene usando
   const baseHistory = Array.isArray(session?.messages) && session.messages.length
     ? session.messages
     : [{ role: "system", content: await buildSystemPrompt() }];
@@ -71,7 +71,8 @@ async function modelRecalcFromBehavior(session, currentJson, { model = CHAT_MODE
     JSON.stringify(currentJson)
   ].join("\\n");
 
-    // Construir payload con TODO el historial + una última instrucción de recálculo
+ 
+    // Historial COMPLETO + una última instrucción de recálculo
   const messages = [...baseHistory, { role: "user", content: recalcPrompt }];
   const payload = { model, temperature, response_format: { type: "json_object" }, messages };
   // Log: SOLO el JSON que se envía en esta segunda pasada
@@ -474,9 +475,10 @@ async function finalizeConversationOnce(conversationId, finalPayload, estado) {
 
 // ================== Sesiones + chat ==================
 
+// ================== Sesiones + chat ==================
 const sessions = new Map(); // waId -> { messages, updatedAt }
-// Mantener TODO el historial en memoria hasta finalizar (sin truncar)
-const KEEP_FULL_HISTORY = /^(1|true|yes)$/i.test(process.env.KEEP_FULL_HISTORY || "1");
+// Mantener todo el historial en memoria hasta finalizar la conversación
+const KEEP_FULL_HISTORY = true;
 
 async function getSession(waId) {
   if (!sessions.has(waId)) {
@@ -489,13 +491,9 @@ async function getSession(waId) {
 }
 function resetSession(waId){ sessions.delete(waId); }
 
-function pushMessage(session, role, content, maxTurns = 20) {
+function pushMessage(session, role, content) {
+  // SIN recortes: mantenemos TODO el historial en memoria
   session.messages.push({ role, content });
-  if (!KEEP_FULL_HISTORY) {
-    const system = session.messages[0];
-    const tail = session.messages.slice(1).slice(-2 * maxTurns);
-    session.messages = [system, ...tail];
-  }
   session.updatedAt = Date.now();
 }
 
@@ -582,7 +580,8 @@ function extractShippingFromBehavior(_systemText){ return null; } // simplificad
 
 async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperature = CHAT_TEMPERATURE, { onTimeoutMessage = "Demora", value } = {}) {
   const session = await getSession(waId);
-  pushMessage(session, "user", String(userText || "").slice(0, 4096));
+    // NO truncamos el input del usuario
+  pushMessage(session, "user", String(userText || ""));
 
   // Compactar historia si hace falta (sin duplicar system)
   const hist = session.messages;
@@ -631,11 +630,11 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
       parsed = await modelRecalcFromBehavior(session, parsed, { model, temperature });
     }
   } catch (e) { console.warn("model recalc warn:", e?.message || e); }
-  // Guardamos solo el texto visible en el historial
-  const assistantTextForHistory = String(parsed.response || "Ok.").slice(0, 4096);
+    // Guardamos solo el texto visible en el historial (SIN truncar)
+  const assistantTextForHistory = String(parsed.response || "Ok.");
   pushMessage(session, "assistant", assistantTextForHistory);
 
-  // Si la conversación terminó, limpiamos el historial en memoria
+    // Si la conversación finaliza, limpiamos el historial en memoria
   const est = String(parsed.estado || "").toUpperCase();
   if (est === "COMPLETED" || est === "CANCELLED") {
     resetSession(waId);
