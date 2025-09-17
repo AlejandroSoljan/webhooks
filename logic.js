@@ -551,6 +551,7 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
       // MEMO (solo historial del modelo)
       const memo = "MEMO_PEDIDO=" + JSON.stringify(_slimPedido(merged));
       pushMessage(session, "assistant", memo.slice(0, 6000));
+        console.log('RESPUESTA:'+memo.slice(0, 6000));
     }
   } catch (e) { console.warn("merge/memo warn:", e?.message || e); }
 
@@ -558,7 +559,7 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
   const assistantTextForHistory = String(parsed.response || "Ok.").slice(0, 4096);
   pushMessage(session, "assistant", assistantTextForHistory);
 
-  console.log('RESPUESTA:'+memo.slice(0, 6000));
+
 
   return { content: msg, json: parsed, usage };
 }
