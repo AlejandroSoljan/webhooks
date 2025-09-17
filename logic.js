@@ -114,30 +114,29 @@ let s = String(raw);
 
 
 // En logic.js (arriba, junto a helpers)
+
+// === Helper global: parser de dinero tolerante ($ 1.234,56 / 1,234.56 / 1234.56) ===
 function parseMoneyLoose(v) {
   if (typeof v === "number" && Number.isFinite(v)) return v;
   let s = String(v || "").trim();
   if (!s) return 0;
   // dejar solo dígitos, separadores y signo
   s = s.replace(/[^\d.,-]/g, "");
-
-  // Si tiene coma y punto, asumí que el último separador es decimal.
+  // Si tiene coma y punto, el último separador es el decimal
   if (s.includes(".") && s.includes(",")) {
     const lastSep = Math.max(s.lastIndexOf("."), s.lastIndexOf(","));
     const dec = s[lastSep];
     const thou = dec === "," ? "." : ",";
-    s = s.split(thou).join(""); // saca miles
-    s = s.slice(0, lastSep) + "." + s.slice(lastSep + 1); // decimal a punto
+    s = s.split(thou).join(""); // remover miles
+    s = s.slice(0, lastSep) + "." + s.slice(lastSep + 1); // decimal -> punto
   } else if (s.includes(",")) {
-    // Si la última parte tiene 1-2 dígitos, tratá la coma como decimal, si no, saca comas
     const parts = s.split(",");
     s = (parts[parts.length - 1].length <= 2) ? parts.join(".") : parts.join("");
   } else if (s.includes(".")) {
     const parts = s.split(".");
-    // si la última parte tiene 1-2 dígitos => decimal, si no => eran miles
     s = (parts[parts.length - 1].length <= 2) ? parts.join(".") : parts.join("");
   }
-  const n = Number(s);
+ const n = Number(s);
   return Number.isFinite(n) ? n : 0;
 }
 
@@ -550,80 +549,27 @@ try {
 function normalizeOrder(waId, contactName, pedido) {
   const entrega = pedido?.["Entrega"] || "";
   const domicilio = pedido?.["Domicilio"] || "";
-  //const monto = Number(pedido?.["Monto"] ?? 0) || 0;
-const monto = parseMoneyLoose(pedido?.["Monto"]);
+  const monto = parseMoneyLoose(pedido?.["Monto"]);
 
-  const items = [];
-  for (const key of ["Pedido pollo","Pedido papas","Milanesas comunes","Milanesas Napolitanas","Ensaladas","Bebidas"]) {
-    const val = (pedido?.[key] || "").toString().trim();
-    if (val && val.toUpperCase() !== "NO") items.push({ name: key, selection: val });
+  // Items: si viene el array moderno con importes, lo normalizamos; si no, fallback legacy
+  let items = [];
+  if (Array.isArray(pedido?.items) && pedido.items.length) {
+    items = pedido.items.map(_normItem); // {descripcion,cantidad,importe_unitario,total}
+  } else {
+    const legacyKeys = ["Pedido pollo","Pedido papas","Milanesas comunes","Milanesas Napolitanas","Ensaladas","Bebidas"];
+    for (const key of legacyKeys) {
+      const val = (pedido?.[key] || "").toString().trim();
+      if (val && val.toUpperCase() !== "NO") items.push({ name: key, selection: val });
+    }
   }
-
-
-// Parser local de dinero (tolerante a formatos con coma o punto)
-function _pm(v) {
-  if (v == null) return NaN;
-  let s = String(v).trim();
-  if (!s) return NaN;
-  // quitar moneda y espacios
-  s = s.replace(/\s+/g, "").replace(/[^\d,.,-]/g, "");
-  // caso "1.234,56" -> "1234.56"
-  if (s.includes(",") && s.lastIndexOf(",") > s.lastIndexOf(".")) {
-    const parts = s.split(",");
-    const dec = parts.pop();
-    const int = parts.join(",").replace(/\./g, "").replace(/,/g, "");
-    return Number(int + "." + dec);
-  }
-  // caso "1,234.56" o "1234.56" -> quitar separadores de miles
-  s = s.replace(/,/g, "");
-  const n = Number(s);
-  return Number.isFinite(n) ? n : NaN;
-}
-
-
-
-// === Merge incremental del Pedido con importes (helper) ===
-function _normItem(it = {}) {
-  const desc = String(it.descripcion ?? it.name ?? "").trim();
-  const cantidad = Number(it.cantidad ?? 0) || 0;
-  const iu = _pm(it.importe_unitario);
-  const tot = _pm(it.total);
-  const total = Number.isFinite(tot) && tot > 0 ? tot :
-                (Number.isFinite(iu) && cantidad > 0 ? iu * cantidad : 0);
-  return { descripcion: desc, cantidad, importe_unitario: iu || 0, total };
-}
-function _mergeItems(prev = [], next = []) {
-  const byKey = new Map();
-  const key = s => String(s || "").toLowerCase().trim();
-  for (const p of prev) {
-    const n = _normItem(p);
-    if (!n.descripcion) continue;
-    byKey.set(key(n.descripcion), n);
-  }
-  for (const p of next) {
-    const n = _normItem(p);
-    if (!n.descripcion) continue;
-    const k = key(n.descripcion);
-    const old = byKey.get(k) || { descripcion: n.descripcion, cantidad: 0, importe_unitario: 0, total: 0 };
-    const cantidad = (Number.isFinite(n.cantidad) && n.cantidad > 0) ? n.cantidad : old.cantidad;
-    const iu = (Number.isFinite(n.importe_unitario) && n.importe_unitario > 0) ? n.importe_unitario : old.importe_unitario;
-    const total = (Number.isFinite(n.total) && n.total > 0) ? n.total : ((Number.isFinite(iu) && cantidad > 0) ? iu * cantidad : old.total);
-    byKey.set(k, { descripcion: old.descripcion, cantidad, importe_unitario: iu, total });
-  }
-  return Array.from(byKey.values()).filter(x => x.descripcion);
-}
-function _sumItems(items = []) {
-  return items.reduce((acc, it) => acc + (Number(it.total) || 0), 0);
-}
-
-
-
 
   const name = pedido?.["Nombre"] || contactName || "";
   const fechaEntrega = pedido?.["Fecha y hora de entrega"] || "";
   const hora = pedido?.["Hora"] || "";
   const estadoPedido = pedido?.["Estado pedido"] || "";
-  return { waId, name, entrega, domicilio, items, amount: monto, estadoPedido, fechaEntrega, hora, createdAt: new Date(), processed: false };
+  const sum = _sumItems(items);
+  const amount = sum > 0 ? sum : monto;
+  return { waId, name, entrega, domicilio, items, amount, estadoPedido, fechaEntrega, hora, createdAt: new Date(), processed: false };
 }
 
  
@@ -682,9 +628,9 @@ function mergePedido(prev = {}, nuevo = {}) {
   const itemsPrev = Array.isArray(prev?.items) ? prev.items : [];
   const itemsNext = Array.isArray(nuevo?.items) ? nuevo.items : [];
   const items = _mergeItems(itemsPrev, itemsNext);
-  let monto = items.length ? _sumItems(items) : _pm(nuevo?.["Monto"]);
+   let monto = items.length ? _sumItems(items) : parseMoneyLoose(nuevo?.["Monto"]);
   if (!Number.isFinite(monto) || monto <= 0) {
-    const prevMonto = _pm(prev?.["Monto"]);
+    const prevMonto = parseMoneyLoose(prev?.["Monto"]);
     monto = Number.isFinite(prevMonto) && prevMonto > 0 ? prevMonto : 0;
   }
   return { ...base, items, "Monto": monto };
