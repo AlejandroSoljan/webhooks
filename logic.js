@@ -32,7 +32,13 @@ function coerceJsonString(s) {
   if (!str) return null;
   return str;
 }
-
+// Extrae "Total: <num>" del campo response (si existe)
+function _extractResponseTotal(responseText) {
+  const m = String(responseText || "").match(/total\s*:\s*(\d+(?:\.\d+)?)/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
 
 function needsRecalc(payload) {
   try {
@@ -41,7 +47,11 @@ function needsRecalc(payload) {
     const items = Array.isArray(p.items) ? p.items : [];
     const missingItemTotals = items.some(it => !(Number(it?.cantidad) > 0 && Number(it?.importe_unitario) > 0 && Number(it?.total) > 0));
     const badMonto = items.length > 0 && !(Number(p?.Monto) > 0);
-    return missingItemTotals || badMonto;
+        // Inconsistencia entre "Total:" del response y Pedido.Monto (sin sumar nada en Node)
+    const respTotal = _extractResponseTotal(payload.response);
+    const haveMonto = Number(p?.Monto) > 0;
+    const mismatchResponseVsMonto = haveMonto && respTotal != null && Math.abs(respTotal - Number(p.Monto)) > 0.001;
+    return missingItemTotals || badMonto || mismatchResponseVsMonto;
   } catch { return false; }
 }
 
@@ -53,8 +63,9 @@ async function modelRecalcFromBehavior(session, currentJson, { model = CHAT_MODE
   const recalcPrompt = [
     "Recalculá importes por ítem y \"Monto\" usando EXCLUSIVAMENTE las reglas del [COMPORTAMIENTO] y los precios del [CATALOGO] presentes en este mismo mensaje del sistema.",
     "Si \"Entrega\" es a domicilio, incluí el costo de envío según [COMPORTAMIENTO] dentro del \"Monto\" (sin mostrarlo desglosado).",
-    "Conservá el texto de respuesta si ya es válido; si falta el total final en el texto y corresponde mostrarlo, incluilo como 'Total: <monto>' con dos decimales, punto, sin símbolo.",
-    "Devolvé SOLO JSON (sin texto fuera del JSON).",
+    "Asegurate de que: (1) cada ítem tenga total = cantidad × importe_unitario, (2) \"Pedido.Monto\" sea la suma de los totales de ítems (+ envío si corresponde) y (3) si el campo \"response\" incluye una línea 'Total: X', ese X COINCIDA EXACTAMENTE con \"Pedido.Monto\".",
+    "Si hay cualquier discrepancia, corregila y devolvé todo consistente.",
+  "Devolvé SOLO JSON (sin texto fuera del JSON).",
     "",
     "Estado actual:",
     JSON.stringify(currentJson)
