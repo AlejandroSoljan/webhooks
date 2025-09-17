@@ -486,8 +486,10 @@ function _normItem(it){
   const cantidad = Number(it?.cantidad ?? 0) || 0;
   const iu = parseMoneyLoose(it?.importe_unitario);
   const tot = parseMoneyLoose(it?.total);
-  const total = Number.isFinite(tot) && tot > 0 ? tot : (Number.isFinite(iu) && cantidad > 0 ? iu*cantidad : 0);
-  return { descripcion: desc, cantidad, importe_unitario: iu || 0, total };
+  // Node NO calcula totales. Si vino "total" desde el modelo, se preserva; si no, se omite.
+  const out = { descripcion: desc, cantidad, importe_unitario: iu || 0 };
+  if (Number.isFinite(tot)) out.total = tot;
+  return out;
 }
 function _mergeItems(prev=[], next=[]){
   const byKey = new Map(), key = (s)=>String(s||"").toLowerCase().trim();
@@ -495,11 +497,14 @@ function _mergeItems(prev=[], next=[]){
   for (const p of next) {
     const n = _normItem(p); if (!n.descripcion) continue;
     const k = key(n.descripcion);
-    const old = byKey.get(k) || { descripcion:n.descripcion, cantidad:0, importe_unitario:0, total:0 };
+    const old = byKey.get(k) || { descripcion:n.descripcion, cantidad:0, importe_unitario:0 };
     const cantidad = n.cantidad>0 ? n.cantidad : old.cantidad;
     const iu = n.importe_unitario>0 ? n.importe_unitario : old.importe_unitario;
-    const total = n.total>0 ? n.total : ((iu>0 && cantidad>0) ? iu*cantidad : old.total);
-    byKey.set(k, { descripcion: old.descripcion, cantidad, importe_unitario: iu, total });
+        // NO calcular "total" en Node. Se usa el provisto (si existe) o se omite.
+    const total = Number.isFinite(n.total) ? n.total : (Number.isFinite(old.total) ? old.total : undefined);
+    const mergedItem = { descripcion: old.descripcion, cantidad, importe_unitario: iu };
+    if (Number.isFinite(total)) mergedItem.total = total;
+    byKey.set(k, mergedItem);
   }
   return Array.from(byKey.values()).filter(x=>x.descripcion);
 }
@@ -529,8 +534,14 @@ function _findLastPedidoMemo(messages=[]){
   return null;
 }
 function _slimPedido(p){
+  // MEMO sin totales: el modelo calcula "total" por ítem y "Monto" final (con envío)
   const slim = { ...p };
-  if (Array.isArray(slim.items)) slim.items = slim.items.map(({descripcion,cantidad,importe_unitario,total})=>({descripcion,cantidad,importe_unitario,total}));
+  delete slim["Monto"];
+  if (Array.isArray(slim.items)) {
+    slim.items = slim.items.map(({ descripcion, cantidad, importe_unitario }) => (
+      { descripcion, cantidad, importe_unitario }
+    ));
+  }
   return slim;
 }
 /*
