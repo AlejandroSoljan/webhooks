@@ -53,6 +53,13 @@ async function getGPTReply(from, userMessage) {
 "Fecha y hora de entrega: mostrar la fecha y hora de entrega proporcionada por el cliente. Ten en cuenta que los lunes no esta abierta la rotisería. "+
 "Nombre y Apellido: nombre y apellido proporcionado por el cliente. "+
 "Total: debes sumar los productos y envío (si se envía a domicilio). debe ser numero decimal sin símbolo ni separadores de miles, usar punto como separador (ej: 1000.50) . mostrar al final cuando el cliente tenga que confirmar. No delires ya que debe ser exacto y muestra solo el TOTAL que debe pagar el cliente.  "+
+"[ENTREGA Y ENVÍO] "+
+"- Considerá envío a domicilio si: "+
+"  a) el cliente elige esa opción, o "+
+"  b) informa un domicilio. "+
+"- En ese caso, SUMÁ el costo de envío indicado en el comportamiento al Monto. No lo muestres como línea separada ni como Costo de envío. "+
+"- Si cambia a Retiro en local, remové el domicilio y NO sumes envío. "+
+
 //"Cuando muestres el importe muestra solo el total del pedido incluyendo el envio si corresponde, salvo que pida un detalle el clinte. "+
 "[CATALOGO] "+
 "Pollo entero. Categoria: Pollo. Precio: 30000. Observaciones: solicitar si lo quiere con chimi, limon o solo. "+
@@ -88,6 +95,7 @@ async function getGPTReply(from, userMessage) {
     const reply = response.data.choices[0].message.content;
 
     chatHistories[from].push({ role: "assistant", content: reply });
+    console.log("Historial:  "+ chatHistories[from]);
 
     return reply;
   } catch (error) {
