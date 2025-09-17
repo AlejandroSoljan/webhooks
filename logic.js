@@ -465,11 +465,17 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
     '\nREGLAS:\n- Incluir SIEMPRE "Pedido" en todas las respuestas, incluso con "estado":"IN_PROGRESS".' +
     '\n- Cada ítem debe incluir cantidad, importe_unitario y total (total = cantidad * importe_unitario).' +
     '\n- "Monto" debe ser la suma de los totales de los ítems.'  ;
+    const memoHint =
+    "\n\n[HISTORIAL / MEMO]\n" +
+    "Si en el historial ves líneas con el formato MEMO_PEDIDO={...} (JSON), consideralas como el estado acumulado del pedido. " +
+    "Podés usarlas para recalcular el total sin volver a pedir al usuario los importes ya establecidos.\n";
+ 
    const fullText = [
     buildNowBlock(),    
     "[COMPORTAMIENTO]\n" + baseText,
     "[CATALOGO]\n" + catalogText,
-    "[SALIDA]\n" + jsonSchema
+    "[SALIDA]\n" + jsonSchema,
++    memoHint
     //"RECORDATORIOS: Respondé en español. No uses bloques de código. Devolvé SOLO JSON plano."
   ].join("\n\n").trim();
   behaviorCache = { at: now, text: fullText };
@@ -692,6 +698,38 @@ function pushMessage(session, role, content, maxTurns = 20) {
   session.updatedAt = Date.now();
 }
 
+// === Helpers de historial para el MEMO_PEDIDO ===
+function _findLastPedidoMemo(messages = []) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m || m.role !== "assistant" || typeof m.content !== "string") continue;
+    const match = m.content.match(/MEMO_PEDIDO=(\{[\s\S]*\})/);
+    if (match) {
+      try { return JSON.parse(match[1]); } catch { /* ignore */ }
+    }
+  }
+  return null;
+}
+function _slimPedido(p = {}) {
+  const out = {};
+  const keep = ["Nombre","Entrega","Domicilio","Fecha y hora de entrega","Hora","Estado pedido","Motivo cancelacion","Monto"];
+  for (const k of keep) if (p[k] != null && String(p[k]).trim() !== "") out[k] = p[k];
+  if (Array.isArray(p.items)) {
+    out.items = p.items.map(it => ({
+      descripcion: String(it.descripcion || it.name || "").trim(),
+      cantidad: Number(it.cantidad) || 0,
+      importe_unitario: Number(it.importe_unitario) || 0,
+      total: Number(it.total) || 0
+    })).filter(it => it.descripcion);
+  }
+  // Recalcular Monto por si acaso
+  if (Array.isArray(out.items) && out.items.length) {
+    out.Monto = out.items.reduce((a, it) => a + (Number(it.total) || 0), 0);
+  } else if (p["Monto"] != null) {
+    out.Monto = parseMoneyLoose(p["Monto"]);
+  }
+  return out;
+}
 
 async function openaiChatWithRetries(messages, { model, temperature }) {
   const maxRetries = parseInt(process.env.OPENAI_RETRY_COUNT || "2", 10);
@@ -783,6 +821,23 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
   // recorte defensivo para no inflar tokens
   //pushMessage(session, "assistant", assistantTextForHistory.slice(0, 4096));
     pushMessage(session, "assistant", assistantTextForHistory.slice(0, 4096));
+
+  // 2) Guardar un MEMO con el Pedido ACUMULADO para que el modelo lo use en turnos siguientes.
+  try {
+    const nuevoPedido = parsed && parsed.Pedido ? parsed.Pedido : null;
+    if (nuevoPedido) {
+      // Buscar el último memo y mergear
+      const prevMemo = _findLastPedidoMemo(session.messages) || {};
+      const merged = mergePedido(prevMemo, nuevoPedido);
+      const memo = "MEMO_PEDIDO=" + JSON.stringify(_slimPedido(merged));
+      // Este memo vive SOLO en el historial del modelo; no es visible para el cliente
+      pushMessage(session, "assistant", memo.slice(0, 6000));
+    }
+  } catch (e) {
+    console.warn("memo_pedido warn:", e?.message || e);
+  }
+
+
 //pushMessage(session, "assistant", msg);
   return { content: msg, json: parsed, usage };
 }
