@@ -34,6 +34,45 @@ function coerceJsonString(s) {
 }
 
 
+function needsRecalc(payload) {
+  try {
+    if (!payload || typeof payload !== "object") return false;
+    const p = payload.Pedido || {};
+    const items = Array.isArray(p.items) ? p.items : [];
+    const missingItemTotals = items.some(it => !(Number(it?.cantidad) > 0 && Number(it?.importe_unitario) > 0 && Number(it?.total) > 0));
+    const badMonto = items.length > 0 && !(Number(p?.Monto) > 0);
+    return missingItemTotals || badMonto;
+  } catch { return false; }
+}
+
+async function modelRecalcFromBehavior(session, currentJson, { model = CHAT_MODEL, temperature = CHAT_TEMPERATURE } = {}) {
+  const systemMsg = session?.messages?.[0] || { role: "system", content: await buildSystemPrompt() };
+  const recalcPrompt = [
+    "Recalculá importes por ítem y \"Monto\" usando EXCLUSIVAMENTE las reglas del [COMPORTAMIENTO] y los precios del [CATALOGO] presentes en este mismo mensaje del sistema.",
+    "Si \"Entrega\" es a domicilio, incluí el costo de envío según [COMPORTAMIENTO] dentro del \"Monto\" (sin mostrarlo desglosado).",
+    "Conservá el texto de respuesta si ya es válido; si falta el total final en el texto y corresponde mostrarlo, incluilo como 'Total: <monto>' con dos decimales, punto, sin símbolo.",
+    "Devolvé SOLO JSON (sin texto fuera del JSON).",
+    "",
+    "Estado actual:",
+    JSON.stringify(currentJson)
+  ].join("\\n");
+
+  const payload = {
+    model, temperature,
+    response_format: { type: "json_object" },
+    messages: [ systemMsg, { role: "user", content: recalcPrompt } ]
+  };
+  // Log: SOLO el JSON que se envía en esta segunda pasada
+  try { console.log(JSON.stringify(payload)); } catch (_){}
+
+  const r = await openai.chat.completions.create(payload);
+  const raw = r.choices?.[0]?.message?.content || "";
+  let fixed = await safeJsonParseStrictOrFix(raw, { openaiClient: openai, model });
+  return fixed || currentJson;
+}
+
+
+
 function buildChatRequest(messages, { model = CHAT_MODEL, temperature = CHAT_TEMPERATURE } = {}) {
   return {
     model,
@@ -472,9 +511,14 @@ function mergePedido(prev={}, nuevo={}){
   for (const k of ["Nombre","Entrega","Domicilio","Fecha y hora de entrega","Hora","Estado pedido","Motivo cancelacion"]) {
     const nv = (nuevo?.[k] ?? "").toString().trim(); if (nv) base[k] = nv;
   }
-  const items = _mergeItems(prev?.items||[], nuevo?.items||[]);
+    const items = _mergeItems(prev?.items||[], nuevo?.items||[]);
   base.items = items;
-  base["Monto"] = items.length ? _sumItems(items) : parseMoneyLoose(nuevo?.["Monto"]) ?? parseMoneyLoose(prev?.["Monto"]) ?? 0;
+  // NO calculamos Monto en Node; lo debe traer el modelo
+  const montoNuevo = parseMoneyLoose(nuevo?.["Monto"]);
+  const montoPrev  = parseMoneyLoose(prev?.["Monto"]);
+  if (Number.isFinite(montoNuevo)) base["Monto"] = montoNuevo;
+  else if (Number.isFinite(montoPrev)) base["Monto"] = montoPrev;
+  else delete base["Monto"];
   return base;
 }
 function _findLastPedidoMemo(messages=[]){
@@ -542,19 +586,20 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
     if (parsed.Pedido) {
       const previo = _findLastPedidoMemo(session.messages) || {};
       const merged = mergePedido(previo, parsed.Pedido);
-      // si hay items y falta/está en 0 el monto, lo fijamos a la suma
-      if (Array.isArray(merged.items) && merged.items.length) {
-        const sum = _sumItems(merged.items);
-        if (!Number.isFinite(merged.Monto) || merged.Monto <= 0) merged.Monto = sum;
-      }
       parsed.Pedido = merged;
       // MEMO (solo historial del modelo)
       const memo = "MEMO_PEDIDO=" + JSON.stringify(_slimPedido(merged));
       pushMessage(session, "assistant", memo.slice(0, 6000));
-        console.log('RESPUESTA:'+memo.slice(0, 6000));
+        
+      console.log('RESPUESTA:'+String(parsed.response || "Ok.").slice(0, 4096) +'--------------'+memo.slice(0, 6000));
     }
   } catch (e) { console.warn("merge/memo warn:", e?.message || e); }
-
+  // Segunda pasada: si faltan totales/monto, pedimos AL MODELO recálculo según comportamiento+catálogo
+  try {
+    if (needsRecalc(parsed)) {
+      parsed = await modelRecalcFromBehavior(session, parsed, { model, temperature });
+    }
+  } catch (e) { console.warn("model recalc warn:", e?.message || e); }
   // Guardamos solo el texto visible en el historial
   const assistantTextForHistory = String(parsed.response || "Ok.").slice(0, 4096);
   pushMessage(session, "assistant", assistantTextForHistory);
