@@ -46,7 +46,10 @@ function needsRecalc(payload) {
 }
 
 async function modelRecalcFromBehavior(session, currentJson, { model = CHAT_MODEL, temperature = CHAT_TEMPERATURE } = {}) {
-  const systemMsg = session?.messages?.[0] || { role: "system", content: await buildSystemPrompt() };
+  // Usar exactamente el MISMO historial que estás usando en el chat normal (como ChatGPT web)
+  const baseHistory = Array.isArray(session?.messages) && session.messages.length
+    ? session.messages
+    : [{ role: "system", content: await buildSystemPrompt() }];
   const recalcPrompt = [
     "Recalculá importes por ítem y \"Monto\" usando EXCLUSIVAMENTE las reglas del [COMPORTAMIENTO] y los precios del [CATALOGO] presentes en este mismo mensaje del sistema.",
     "Si \"Entrega\" es a domicilio, incluí el costo de envío según [COMPORTAMIENTO] dentro del \"Monto\" (sin mostrarlo desglosado).",
@@ -57,11 +60,9 @@ async function modelRecalcFromBehavior(session, currentJson, { model = CHAT_MODE
     JSON.stringify(currentJson)
   ].join("\\n");
 
-  const payload = {
-    model, temperature,
-    response_format: { type: "json_object" },
-    messages: [ systemMsg, { role: "user", content: recalcPrompt } ]
-  };
+    // Construir payload con TODO el historial + una última instrucción de recálculo
+  const messages = [...baseHistory, { role: "user", content: recalcPrompt }];
+  const payload = { model, temperature, response_format: { type: "json_object" }, messages };
   // Log: SOLO el JSON que se envía en esta segunda pasada
   try { console.log(JSON.stringify(payload)); } catch (_){}
 
