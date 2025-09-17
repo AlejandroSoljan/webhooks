@@ -12,8 +12,8 @@ const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = 'EAAOlXEb393oBPHtpnFvgynk7k1Tg6tuVW7wtguIHkU3sfWGT9b0epaGKnDeJ59UvEZBlUdmcZBhGXs8qkkPfCla5wFEP0U7hLtsh6eAABUQRE1kr4UYHDkoaTurrmZAkSZBc6UY9iS2l0W7EleZAvhO7m30Bh51BBNXa46aqyqg4Ex8hA6d8ZCZBP3y4TZAC5X8YxAZDZD'; // Token de acceso de WhatsApp Cloud API
 const VERIFY_TOKEN = 'aleds5200'; // Token para verificación del webhook
 const PHONE_NUMBER_ID = '764414663425868'; // ID del número de teléfono de WhatsApp
-const OPENAI_API_KEY = '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'; // Tu clave de API de OpenAI
-//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
+//const OPENAI_API_KEY = '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'; // Tu clave de API de OpenAI
+const OPENAI_API_KEY = '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'
 // Historial por número (almacenado en memoria)
 const chatHistories = {};
 
