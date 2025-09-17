@@ -69,9 +69,9 @@ async function getGPTReply(from, userMessage) {
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: CHAT_MODEL,
+        model: 'gpt-4-1106-preview',////CHAT_MODEL,
         messages: chatHistories[from],
-        temperature: CHAT_TEMPERATURE
+        temperature: 0.7 //CHAT_TEMPERATURE
       },
       {
         headers: {
