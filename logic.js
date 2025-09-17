@@ -364,6 +364,32 @@ async function loadBehaviorTextFromSheet() {
     .filter(Boolean);
   return parts.length ? parts.join("\n") : "Sos un asistente claro, amable y conciso. Respondé en español.";
 }
+
+function rebuildCatalogIndex(products = []) {
+  const idx = new Map();
+  for (const p of products || []) {
+    if (!p || p.active === false) continue;
+    const k = _normDesc(p.descripcion);
+    const n = parseMoneyLoose(p.importe);
+    if (k && Number.isFinite(n) && n > 0) idx.set(k, n);
+  }
+  CATALOG_INDEX = idx;
+}
+function priceFromCatalog(desc) {
+  if (!desc) return null;
+  const k = _normDesc(desc);
+  return CATALOG_INDEX.get(k) ?? null;
+}
+// Detecta costo de envío desde el comportamiento (system prompt) si está especificado allí.
+function extractShippingFromBehavior(systemText) {
+  try {
+    const s = String(systemText || "");
+    const m = s.match(/(?:env[íi]o|entrega)[^.\n]*?(?:costo|valor)[^0-9]*([\$]?\s*[\d.,]+)/i)
+           || s.match(/tiene\s+un\s+costo\s+de\s+([\$]?\s*[\d.,]+)/i);
+    return m ? parseMoneyLoose(m[1]) : null;
+  } catch { return null; }
+}
+
 async function loadBehaviorTextFromMongo() {
   const db = await getDb();
   const key = TENANT_ID ? `behavior:${TENANT_ID}` : "behavior";
@@ -437,6 +463,8 @@ async function buildSystemPrompt({ force = false, conversation = null } = {}) {
     let products = await loadProductsFromMongo();
     if (!products || !products.length) { try { products = await loadProductsFromSheet(); } catch (_) {} }
     catalogText = buildCatalogText(products || []);
+    // construir índice de precios para recálculo (sin alias ni hardcodes)
+    rebuildCatalogIndex(products || []);
   } catch (e) {
     console.warn("⚠️ No se pudo leer Productos (Mongo/Sheet):", e.message);
     catalogText = "Catálogo de productos: (error al leer)";
@@ -641,6 +669,38 @@ function mergePedido(prev = {}, nuevo = {}) {
   return { ...base, items, "Monto": monto };
 }
 
+function repricerFromCatalog(pedido, { shippingPrice = null } = {}) {
+   const P = { ...(pedido || {}) };
+   const itemsIn = Array.isArray(P.items) ? P.items : [];
+   const itemsOut = [];
+   for (const it of itemsIn) {
+     const d = String(it.descripcion || it.name || "").trim();
+     if (!d) continue;
+     const cant = Number(it.cantidad) || 0;
+    const price = priceFromCatalog(d);
+    const iu = (price != null) ? price : parseMoneyLoose(it.importe_unitario);
+     const total = (Number.isFinite(iu) && cant > 0) ? (iu * cant) : parseMoneyLoose(it.total);
+     itemsOut.push({ descripcion: d, cantidad: cant, importe_unitario: iu || 0, total: total || 0 });
+   }
+   P.items = itemsOut;
+   // Suma de ítems
+   let monto = itemsOut.reduce((a, x) => a + (Number(x.total) || 0), 0);
+  // Envío a domicilio (tomado del comportamiento si está definido allí)
+   const entrega = String(P["Entrega"] || "").toLowerCase();
+  if (shippingPrice && Number.isFinite(shippingPrice) && shippingPrice > 0 && /domicilio/.test(entrega)) {
+    monto += shippingPrice;
+  }
+   P["Monto"] = monto;
+   return P;
+ }
+ 
+ function patchTotalInText(responseText, monto) {
+   if (!responseText) return responseText;
+   const n = (Number(monto) || 0).toFixed(2);            // “56100.00”
+  // Reemplaza el número que sigue a “Total:” (con o sin $)
+  return responseText.replace(/(total\s*:\s*)\$?\s*[\d.,]+/i, `$1${n}`);
+ }
+
 
 
 async function saveCompletedToSheets({ waId, data }) {
@@ -808,39 +868,50 @@ async function chatWithHistoryJSON(waId, userText, model = CHAT_MODEL, temperatu
   const parsed = await safeJsonParseStrictOrFix(msg, { openaiClient: openai, model });
    // ⬇️ MUY IMPORTANTE: guardar la respuesta del asistente en el historial en memoria
   //pushMessage(session, "assistant", msg);
+  // 0) Fallback: si el modelo no trajo response legible, no mandamos JSON crudo
+   if (!parsed || typeof parsed !== "object") {
+     parsed = { response: "Listo, actualicé tu pedido. ¿Algo más?", Pedido: null, estado: "IN_PROGRESS" };
+   } else if (!parsed.response || /^\s*[\{\[]/.test(String(parsed.response))) {
+     parsed.response = "Listo, actualicé tu pedido. ¿Algo más?";
+   }
+ 
+ try {
+     const nuevoPedido = parsed && parsed.Pedido ? parsed.Pedido : null;
+     if (nuevoPedido) {
 
-// return { content: msg, json: parsed, usage };
-
-
-
-  // ⬇️ En historial, guardamos SOLO el texto “para WhatsApp”, no el JSON completo
-  const assistantTextForHistory =
-    (parsed && typeof parsed === "object" && parsed.response)
-      ? String(parsed.response)
-      : String(msg || "");
-  // recorte defensivo para no inflar tokens
-  //pushMessage(session, "assistant", assistantTextForHistory.slice(0, 4096));
-    pushMessage(session, "assistant", assistantTextForHistory.slice(0, 4096));
-
-  // 2) Guardar un MEMO con el Pedido ACUMULADO para que el modelo lo use en turnos siguientes.
-  try {
-    const nuevoPedido = parsed && parsed.Pedido ? parsed.Pedido : null;
-    if (nuevoPedido) {
       // Buscar el último memo y mergear
-      const prevMemo = _findLastPedidoMemo(session.messages) || {};
-      const merged = mergePedido(prevMemo, nuevoPedido);
-      const memo = "MEMO_PEDIDO=" + JSON.stringify(_slimPedido(merged));
-      // Este memo vive SOLO en el historial del modelo; no es visible para el cliente
-      pushMessage(session, "assistant", memo.slice(0, 6000));
-    }
-  } catch (e) {
-    console.warn("memo_pedido warn:", e?.message || e);
-  }
+       const prevMemo = _findLastPedidoMemo(session.messages) || {};
 
+      const mergedRaw = mergePedido(prevMemo, nuevoPedido);
+      const systemText = session.messages[0]?.content || "";
+      const shippingPrice = extractShippingFromBehavior(systemText);
+      const merged = repricerFromCatalog(mergedRaw, { shippingPrice });
+ 
 
-//pushMessage(session, "assistant", msg);
-  return { content: msg, json: parsed, usage };
-}
+      // Parchar el total dentro del texto visible si aparece “Total: …”
+       if (parsed.response && /total\s*:/.test(parsed.response)) {
+         parsed.response = patchTotalInText(parsed.response, merged["Monto"]);
+       }
+ 
+
+      // Reemplazar en el objeto para el caller (app.js) por si arma texto desde acá
+       parsed.Pedido = merged;
+ 
+       const memo = "MEMO_PEDIDO=" + JSON.stringify(_slimPedido(merged));
+       // Este memo vive SOLO en el historial del modelo; no es visible para el cliente
+       pushMessage(session, "assistant", memo.slice(0, 6000));
+     }
+   } catch (e) {
+     console.warn("memo_pedido warn:", e?.message || e);
+   }
+ 
+
+  // 2) Guardar en historial SOLO el texto “para WhatsApp”
+   const assistantTextForHistory = String(parsed.response || "Ok.").slice(0, 4096);
+   pushMessage(session, "assistant", assistantTextForHistory);
+ 
+   return { content: msg, json: parsed, usage };
+ }
 
 module.exports = {
   // OpenAI + chat
