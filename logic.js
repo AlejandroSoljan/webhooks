@@ -61,9 +61,16 @@ async function getGPTReply(from, userMessage) {
 "- Si el cliente cambia un producto, eliminá el anterior.  " + 
 "- Siempre que se modifique un producto o el método de entrega o se agreguen productos, **recalculá el total desde cero**.  " + 
 "- No mantengas totales anteriores ni sumes dos veces.   " +
-"- Usá solo los precios del catálogo. No inventes precios. " +
+"- Usá solo los precios del catálogo. No inventes precios.  " +
 "[CONFIRMACIÓN] " +
-"- Cuando el cliente esté listo para confirmar, muestra un resumen breve en texto con los items y el importe total,no muestres los importes individuales de los items salvo que lo pida el , asegurate de calcular bien el importe total"}
+"- Cuando el cliente esté listo para confirmar, muestra un resumen breve en texto con los items y el importe total,no muestres los importes individuales de los items salvo que lo pida el , asegurate de calcular bien el importe total del pedido"   +
+
+"[FORMATO DE RESPUESTA] " +
+"- Devolvé SIEMPRE un único objeto JSON con:  " +
+"  response, estado (IN_PROGRESS|COMPLETED|CANCELLED), Pedido { Entrega, Domicilio, items[ {descripcion, cantidad, importe_unitario, total} ] }. " 
+
+
+}
     ];
   }
   chatHistories[from].push({ role: "user", content: userMessage });
@@ -72,9 +79,9 @@ async function getGPTReply(from, userMessage) {
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: 'gpt-4-1106-preview',////CHAT_MODEL,
+        model: CHAT_MODEL,
         messages: chatHistories[from],
-        temperature: 0.3 //CHAT_TEMPERATURE
+        temperature: 0.1 //CHAT_TEMPERATURE
       },
       {
         headers: {
