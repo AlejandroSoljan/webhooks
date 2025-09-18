@@ -58,11 +58,14 @@ async function getGPTReply(from, userMessage) {
 "Papas para 4 personas. Categoria: Papas Fritas. Precio: 5000. Observaciones: se vende por porción. " +
 "Papas para 6 personas. Categoria: Papas Fritas. Precio: 6000. Observaciones: se vende por porción. " +
 "Envio. Categoria: envio a domicilio. Precio: 1500. Observaciones: se aplica automaticamente si el cliente solicita enviarlo a domicilio" +
-"[CAMBIOS EN EL PEDIDO]   " +
+
+
+"[CALCULO DE IMPORTE TOTAL]   " +
 "- Si el cliente cambia un producto, eliminá el anterior.  " + 
 "- Siempre que se modifique un producto o el método de entrega o se agreguen productos, **recalculá el total del pedido sumando los totales del jSON pedido desde cero**.  " + 
 "- No mantengas totales anteriores ni sumes dos veces.   " +
 "- Usá solo los precios del catálogo. No inventes precios.  " +
+"- Asegurate que el importe total del pedido coincida con la suma total de los items en el JOSN pedidos"  +
 "[CONFIRMACIÓN] " +
 "- Cuando el cliente esté listo para confirmar, muestra un resumen breve en texto con los items y el importe total,no muestres los importes individuales de los items salvo que lo pida el , asegurate de calcular bien el importe total del pedido"   +
 
