@@ -20,6 +20,9 @@ const ENDED_SESSION_TTL_MINUTES = Number(process.env.ENDED_SESSION_TTL_MINUTES |
 const CALC_FIX_MAX_RETRIES = Number(process.env.CALC_FIX_MAX_RETRIES || 3);
 const STORE_TZ = (process.env.STORE_TZ || "America/Argentina/Cordoba").trim();
 const SIMULATED_NOW_ISO = (process.env.SIMULATED_NOW_ISO || "").trim();
+const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
+const TRANSCRIBE_API_URL = (process.env.TRANSCRIBE_API_URL || "").trim().replace(/\/+$/, "");
+const CACHE_TTL_MS = parseInt(process.env.AUDIO_CACHE_TTL_MS || "300000", 10);
 
 
 // Historial por número (almacenado en memoria)
