@@ -22,6 +22,38 @@ const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || "v17.0";
 //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
 // Historial por número (almacenado en memoria)
 const chatHistories = {};
+// Marcador de conversaciones finalizadas (COMPLETED/CANCELLED)
+const endedSessions = {};
+
+// ================== Fecha/Hora local para el modelo ==================
+const STORE_TZ = (process.env.STORE_TZ || "America/Argentina/Cordoba").trim();
+const SIMULATED_NOW_ISO = (process.env.SIMULATED_NOW_ISO || "").trim();
+function _nowLabelInTZ() {
+  const base = SIMULATED_NOW_ISO ? new Date(SIMULATED_NOW_ISO) : new Date();
+  const fmt = new Intl.DateTimeFormat("es-AR", {
+    timeZone: STORE_TZ, hour12: false,
+    weekday: "long", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit",
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(base).map(p => [p.type, p.value]));
+  const weekday = String(parts.weekday || "").toLowerCase();
+  return `${weekday}, ${parts.day}/${parts.month}/${parts.year} ${parts.hour}:${parts.minute}`;
+}
+function buildNowBlock() {
+  return [
+    "[AHORA]",
+    `Zona horaria: ${STORE_TZ}`,
+    `Fecha y hora actuales (local): ${_nowLabelInTZ()}`
+  ].join("\n");
+}
+
+let baseText = "";
+  baseText = String(process.env.COMPORTAMIENTO );
+
+const fullText = [
+    buildNowBlock(),
+    "[COMPORTAMIENTO]\n" + baseText,
+  ].join("\n\n").trim();
 
 /**
  * Procesa el mensaje y devuelve una respuesta de ChatGPT.
@@ -29,51 +61,7 @@ const chatHistories = {};
 async function getGPTReply(from, userMessage) {
   if (!chatHistories[from]) {
     chatHistories[from] = [
-      { role: "system", content: "Eres un asistente de WhatsApp para la Rotisería Caryco. Cumple EXACTAMENTE estas reglas y formato. " +
-
-"[IDENTIDAD Y TONO] " +
-"- Estilo: amable, cordial y BREVE (WhatsApp). Frases cortas. " +
-"- No compartas teléfono/dirección del local salvo que el cliente lo pida expresamente. " +
-
-"[HORARIOS] " +
-"- Abierto: Martes a Domingo. Lunes cerrado. " +
-"- Entregas: 12:00–14:00 y 20:00–22:00. " +
-"- Si el cliente pide Lunes o fuera de horario: indícalo brevemente y pedí otra franja válida (no confirmes). " +
-
-"[ENTREGA] " +
-"- Modalidades: retiro | domicilio. " +
-" - si la entrega es domicilio, agregar el item 'Envio' del catalogo. "+
-"- Si el cliente cambia a retiro: elimina domicilio y quita el envío. " +
-
-"[DATOS OBLIGATORIOS] " +
-"- Siempre debes recolectar: (1) productos con cantidades, (2) modalidad de entrega, (3) fecha y hora, (4) nombre y apellido; y si modalidad = domicilio, (5) domicilio. " +
-"- Pedí la información que falte de a una cosa por vez (mensajes breves). " +
-
-"[CATALOGO] " +
-"Pollo entero. Categoria: Pollo. Precio: 30000. Observaciones: solicitar si lo quiere con chimi, limon o solo. " +
-"Pollo mitad. Categoria: Pollo. Precio: 20000. Observaciones: solicitar si lo quiere con chimi, limon o solo. " +
-
-
-"Papas para 2 personas. Categoria: Papas Fritas. Precio: 4000. Observaciones: se vende por porción. " +
-"Papas para 4 personas. Categoria: Papas Fritas. Precio: 5000. Observaciones: se vende por porción. " +
-"Papas para 6 personas. Categoria: Papas Fritas. Precio: 6000. Observaciones: se vende por porción. " +
-"Envio. Categoria: envio a domicilio. Precio: 1500. Observaciones: se aplica automaticamente si el cliente solicita enviarlo a domicilio" +
-
-
-"[CALCULO DE IMPORTE TOTAL]   " +
-"- Si el cliente cambia un producto, eliminá el anterior.  " + 
-"- Siempre que se modifique un producto o el método de entrega o se agreguen productos, **recalculá el total_pedido sumando el total de los items del jSON pedido desde cero**.  " + 
-"- No mantengas totales anteriores ni sumes dos veces.   " +
-"- Usá solo los precios del catálogo. No inventes precios.  " +
-"- Asegurate que el importe de total_pedido coincida con la suma total de los items del último JSON pedidos , recalculalo siempre y asegurate de que sea correcto"  +
-"- siempre que muestres el total del pedido, utiliza el que se informa en JSON pedido, el valor total_pedido. " +
-"[CONFIRMACIÓN] " +
-"- Cuando el cliente esté listo para confirmar, muestra un resumen breve en texto con los items y el importe total,no muestres los importes individuales de los items salvo que lo pida el , asegurate de calcular bien el importe total del pedido"   +
-
-"[FORMATO DE RESPUESTA] " +
-"- Devolvé SIEMPRE un único objeto JSON con:  " +
-"  response, estado (IN_PROGRESS|COMPLETED|CANCELLED), Pedido { Entrega, Domicilio, items[ {descripcion, cantidad, importe_unitario, total} , total_pedido] }. " 
-
+      { role: "system", content: fullText
 
 }
     ];
@@ -132,6 +120,32 @@ async function sendWhatsAppMessage(to, text) {
     console.error("Error enviando WhatsApp:", error.response?.data || error.message);
   }
 }
+
+// ==========================
+// Detección de saludo/agradecimiento breve
+// ==========================
+function isPoliteClosingMessage(textRaw) {
+  const text = String(textRaw || "").trim().toLowerCase();
+  if (!text) return false;
+  // saludos y agradecimientos típicos cortos
+  const exacts = [
+    "gracias","muchas gracias","mil gracias","ok","oka","okey","dale","listo",
+    "genial","perfecto","buenas","buenas noches","buen dia","buen día",
+    "👍","👌","🙌","🙏","🙂","😊","👏","✌️"
+  ];
+  if (exacts.includes(text)) return true;
+  // variantes cortas frecuentes
+  if (/^(gracias+!?|ok+|dale+|listo+|genial+|perfecto+)\b/.test(text)) return true;
+  if (/(saludos|abrazo)/.test(text) && text.length <= 40) return true;
+  return false;
+}
+
+function markSessionEnded(from) {
+  delete chatHistories[from];     // limpia historial
+  endedSessions[from] = true;     // marca que terminó
+}
+
+
 
 // 📥 Endpoint para recibir mensajes entrantes de WhatsApp
 // helper: sanea "20.000", "20,000", etc.
@@ -200,7 +214,21 @@ app.post("/webhook", async (req, res) => {
     if (!entry || !entry.text) return res.sendStatus(200);
 
     const from = entry.from;
-    const text = entry.text.body;
+    const text = (entry.text.body || "").trim();
+
+    // Si la conversación anterior terminó y el cliente solo saluda/agradece,
+    // respondemos cortito y NO iniciamos conversación nueva.
+    if (endedSessions[from]) {
+      if (isPoliteClosingMessage(text)) {
+        await sendWhatsAppMessage(
+          from,
+          "¡Gracias! 😊 Cuando quieras hacemos otro pedido."
+        );
+        return res.sendStatus(200);
+      }
+      // Mensaje “real”: limpiamos el flag para iniciar conversación nueva.
+      delete endedSessions[from];
+    }
 
     const gptReply = await getGPTReply(from, text);
 
@@ -240,6 +268,16 @@ app.post("/webhook", async (req, res) => {
 
     // 5) Enviar UNA sola vez
     await sendWhatsAppMessage(from, responseText);
+
+    // 6) Si el pedido terminó, limpiar historial y marcar sesión finalizada.
+    try {
+      if (estado === "COMPLETED" || estado === "CANCELLED") {
+        markSessionEnded(from);
+      }
+    } catch {}
+
+
+
     res.sendStatus(200);
   } catch (error) {
     console.error("❌ Error en webhook:", error.message);
