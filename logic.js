@@ -42,7 +42,8 @@ async function getGPTReply(from, userMessage) {
 
 "[ENTREGA] " +
 "- Modalidades: retiro | domicilio. " +
-"- Si el cliente cambia a retiro: elimina domicilio y NO sumes envío. " +
+" - si la entrega es domicilio, agregar el item 'Envio' del catalogo. "+
+"- Si el cliente cambia a retiro: elimina domicilio y quita el envío. " +
 
 "[DATOS OBLIGATORIOS] " +
 "- Siempre debes recolectar: (1) productos con cantidades, (2) modalidad de entrega, (3) fecha y hora, (4) nombre y apellido; y si modalidad = domicilio, (5) domicilio. " +
