@@ -160,29 +160,36 @@ function ensureEnvio(pedido) {
 }
 
 // Recalcula totales y detecta diferencias con lo que vino del modelo
+// Recalcula totales y detecta diferencias SOLO cuando hay ítems
 function recalcAndDetectMismatch(pedido) {
+  pedido.items ||= [];
+  const hasItems = pedido.items.length > 0;
   let mismatch = false;
 
-  pedido.items ||= [];
+ // Añadir envío solo si corresponde
   const beforeCount = pedido.items.length;
   ensureEnvio(pedido);
-  if (pedido.items.length !== beforeCount) mismatch = true; // se añadió Envío
+  if (pedido.items.length !== beforeCount && hasItems) mismatch = true;
 
+  // Recalcular ítems
   let totalCalc = 0;
   pedido.items = pedido.items.map(it => {
-    const cantidad = num(it.cantidad);
+   const cantidad = num(it.cantidad);
     const unit = num(it.importe_unitario);
     const totalOk = cantidad * unit;
     const totalIn = it.total != null ? num(it.total) : null;
-    if (totalIn === null || totalIn !== totalOk) mismatch = true;
+    // Solo marcar mismatch por ítems si efectivamente hay ítems
+    if (hasItems && (totalIn === null || totalIn !== totalOk)) mismatch = true;
     totalCalc += totalOk;
     return { ...it, cantidad, importe_unitario: unit, total: totalOk };
   });
 
-  const totalModelo = num(pedido.total_pedido);
-  if (!totalModelo || totalModelo !== totalCalc) mismatch = true;
-  pedido.total_pedido = totalCalc;
-  return { pedidoCorr: pedido, mismatch };
+  // Comparar total_pedido SOLO cuando hay ítems
+  const totalModelo = (pedido.total_pedido == null) ? null : num(pedido.total_pedido);
+  if (hasItems && (totalModelo === null || totalModelo !== totalCalc)) mismatch = true;
+
+  pedido.total_pedido = totalCalc; // 0 si no hay ítems
+  return { pedidoCorr: pedido, mismatch, hasItems };
 }
 
 
@@ -208,10 +215,10 @@ app.post("/webhook", async (req, res) => {
       pedido = parsed.Pedido || { items: [] };
 
       // 2) Recalcular y detectar inconsistencias respecto al JSON del modelo
-      const { pedidoCorr, mismatch } = recalcAndDetectMismatch(pedido);
-      pedido = pedidoCorr; // pedido corregido (totales por ítem y total_pedido)
+       const { pedidoCorr, mismatch, hasItems } = recalcAndDetectMismatch(pedido);
+      pedido = pedidoCorr; // pedido corregido
 
-      if (mismatch) {
+      if (mismatch && hasItems) {
         // 3a) Si hay diferencia, enviamos el total recalculado por backend
         responseText = [
           '🧾 Resumen del pedido:',
