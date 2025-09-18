@@ -137,42 +137,7 @@ async function sendWhatsAppMessage(to, text) {
 // ==========================
 // WhatsApp Media helpers (audio)
 // ==========================
-async function getWhatsAppMediaInfo(mediaId) {
-  // Devuelve { url, mime_type, id, ... } usando Graph API
-  const { data } = await axios.get(
-    `https://graph.facebook.com/${GRAPH_API_VERSION}/${mediaId}`,
-    {
-      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
-    }
-  );
-  return data || {};
-}
 
-async function downloadWhatsAppMediaBuffer(fileUrl) {
-  // Descarga binario del archivo (autenticado) → Buffer
-  const resp = await axios.get(fileUrl, {
-    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
-    responseType: "arraybuffer"
-  });
-  const buf = Buffer.from(resp.data);
-  const mime = resp.headers["content-type"] || "audio/ogg";
-  return { buffer: buf, mime };
-}
-
-async function transcribeIncomingWhatsAppAudio(audioObj) {
-  // audioObj típico: { id: "...", mime_type: "audio/ogg; codecs=opus" }
-  if (!audioObj?.id) return { text: "" };
-  try {
-    const meta = await getWhatsAppMediaInfo(audioObj.id);
-    if (!meta?.url) return { text: "" };
-    const { buffer, mime } = await downloadWhatsAppMediaBuffer(meta.url);
-    // Usa TU función externa ya existente
-    return await transcribeAudioExternal({ buffer, mime });
-  } catch (e) {
-    console.error("❌ Error transcribiendo audio:", e.message);
-    return { text: "" };
-  }
-}
 
 // ==========================
 // Utilidades de fin de sesión con TTL
@@ -337,8 +302,26 @@ function recalcAndDetectMismatch(pedido) {
   pedido.total_pedido = totalCalc; // 0 si no hay ítems
   return { pedidoCorr: pedido, mismatch, hasItems };
 }
-
-
+async function getMediaInfo(mediaId) {
+  const token = process.env.WHATSAPP_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN;
+  if (!token || !mediaId) throw new Error("media_info_missing");
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`;
+  const resp = await fetch(`${url}?fields=url,mime_type`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!resp.ok) throw new Error(`media_info_failed_${resp.status}`);
+  return resp.json();
+}
+async function downloadMediaBuffer(mediaUrl) {
+  const token = process.env.WHATSAPP_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN;
+  const resp = await fetch(mediaUrl, { headers: { Authorization: `Bearer ${token}` } });
+  if (!resp.ok) throw new Error(`download_media_failed_${resp.status}`);
+  const ab = await resp.arrayBuffer();
+  return Buffer.from(ab);
+}
+function putInCache(buffer, mime) {
+  const id = makeId();
+  fileCache.set(id, { buffer, mime: mime || "application/octet-stream", expiresAt: Date.now() + CACHE_TTL_MS });
+  return id;
+}
 
 app.post("/webhook", async (req, res) => {
   try {
@@ -347,12 +330,23 @@ app.post("/webhook", async (req, res) => {
     const from = entry.from;
     let text = (entry.text?.body || "").trim();
 
+    if (type === "text" && msg.text?.body) text = msg.text.body;
+          else
+          {
     // 🎙️ Si viene audio, lo transcribimos y usamos la transcripción como "text"
     if (!text && (entry.type === "audio" || entry.audio?.id)) {
-      const tr = await transcribeIncomingWhatsAppAudio(entry.audio);
-      text = String(tr?.text || "").trim();
-      console.log("🎙️ Transcripción de audio:", text);
-    }
+      try {
+                    const info = await getMediaInfo(msg.audio.id);
+                    const buf = await downloadMediaBuffer(info.url);
+                    const id = putInCache(buf, info.mime_type || "audio/ogg");
+                    const publicAudioUrl = `${req.protocol}://${req.get('host')}/cache/audio/${id}`;
+                   // const { text } = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type });
+                  // userText = text || "(audio sin texto)";
+                  const { text, usage: sttUsage } = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type });
+                    text = text || "(audio sin texto)";
+    }catch (e) { text = "(no se pudo transcribir el audio)"; }
+
+  }
     // Si la conversación anterior terminó (y no expiró por TTL) y el cliente
     // solo saluda/agradece, respondemos corto y NO iniciamos conversación nueva.
     if (hasActiveEndedFlag(from)) {
@@ -366,12 +360,8 @@ app.post("/webhook", async (req, res) => {
       // Mensaje “real”: limpiamos el flag para iniciar conversación nueva.
       delete endedSessions[from];
     }
-    // Si después de todo no hay texto (audio vacío / fallo transcripción), salimos suave
-    if (!text) {
-      await sendWhatsAppMessage(from, "No pude escuchar bien el audio 🙏 ¿Podés repetirlo o escribirlo?");
-      return res.sendStatus(200);
-    }
-
+    
+  }
     const gptReply = await getGPTReply(from, text);
 
     let responseText = 'Perdón, hubo un error. ¿Podés repetir?';
