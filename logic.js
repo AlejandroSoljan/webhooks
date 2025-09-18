@@ -501,7 +501,7 @@ app.post("/webhook", async (req, res) => {
       } else {
         // 3b) Si todo coincide, usamos la respuesta original del modelo
        // responseText = parsed.response;
-        responseText = coalesceResponse(parsedFixLast.response, pedido);
+        responseText = coalesceResponse(parsed.response, pedido);
       }
 
       // (opcional) logs
