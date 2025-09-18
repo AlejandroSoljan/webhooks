@@ -142,13 +142,7 @@ async function sendWhatsAppMessage(to, text) {
 // ==========================
 // Utilidades de fin de sesión con TTL
 // ==========================
-function markSessionEnded(from) {
-  // Limpiar historial y marcar fin con timestamp
-  delete chatHistories[from];
-  endedSessions[from] = { endedAt: Date.now() };
-  // (opcional) limpieza automática para evitar crecimiento en memoria
-  setTimeout(() => { delete endedSessions[from]; }, ENDED_SESSION_TTL_MINUTES * 60000);
-}
+
 
 function hasActiveEndedFlag(from) {
   const rec = endedSessions[from];
@@ -221,14 +215,14 @@ function markSessionEnded(from) {
 const num = v => Number(String(v).replace(/[^\d.-]/g, '') || 0);
 
 // Fallback de resumen correcto calculado por backend
-function buildBackendSummary(pedido) {
+/*function buildBackendSummary(pedido) {
   return [
     '🧾 Resumen del pedido:',
     ...(pedido.items || []).map(i => `- ${i.cantidad} ${i.descripcion}`),
     `💰 Total: ${Number(pedido.total_pedido || 0).toLocaleString('es-AR')}`,
     '¿Confirmamos el pedido? ✅'
   ].join('\n');
-}
+}*/
 
 // Usa la respuesta del modelo si viene, si no usa un fallback seguro
 const START_FALLBACK = "¡Hola! 👋 ¿Qué te gustaría pedir? Pollo (entero/mitad) y papas (2, 4 o 6).";
@@ -317,11 +311,23 @@ async function downloadMediaBuffer(mediaUrl) {
   const ab = await resp.arrayBuffer();
   return Buffer.from(ab);
 }
+
+// cache simple en memoria
+const fileCache = new Map();
+function makeId() { return Math.random().toString(36).slice(2, 10); }
 function putInCache(buffer, mime) {
   const id = makeId();
   fileCache.set(id, { buffer, mime: mime || "application/octet-stream", expiresAt: Date.now() + CACHE_TTL_MS });
   return id;
 }
+// endpoint público para el audio cacheado
+app.get("/cache/audio/:id", (req, res) => {
+  const rec = fileCache.get(req.params.id);
+  if (!rec || rec.expiresAt < Date.now()) return res.status(404).send("expired");
+  res.set("Content-Type", rec.mime); res.send(rec.buffer);
+});
+
+
 
 app.post("/webhook", async (req, res) => {
   try {
@@ -330,23 +336,25 @@ app.post("/webhook", async (req, res) => {
     const from = entry.from;
     let text = (entry.text?.body || "").trim();
 
-    if (type === "text" && msg.text?.body) text = msg.text.body;
-          else
-          {
-    // 🎙️ Si viene audio, lo transcribimos y usamos la transcripción como "text"
-    if (!text && (entry.type === "audio" || entry.audio?.id)) {
+      // Texto directo
+    if (entry.type === "text" && entry.text?.body) {
+      text = entry.text.body;
+    }
+    // 🎙️ Audio → transcribir
+    else if (entry.type === "audio" && entry.audio?.id) {
       try {
-                    const info = await getMediaInfo(msg.audio.id);
-                    const buf = await downloadMediaBuffer(info.url);
-                    const id = putInCache(buf, info.mime_type || "audio/ogg");
-                    const publicAudioUrl = `${req.protocol}://${req.get('host')}/cache/audio/${id}`;
-                   // const { text } = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type });
-                  // userText = text || "(audio sin texto)";
-                  const { text, usage: sttUsage } = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type });
-                    text = text || "(audio sin texto)";
-    }catch (e) { text = "(no se pudo transcribir el audio)"; }
+        const info = await getMediaInfo(entry.audio.id);
+        const buf = await downloadMediaBuffer(info.url);
+        const id = putInCache(buf, info.mime_type || "audio/ogg");
+        const publicAudioUrl = `${req.protocol}://${req.get("host")}/cache/audio/${id}`;
+        const tr = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type });
+        text = String(tr?.text || "").trim() || "(audio sin texto)";
+      } catch (e) {
+        console.error("❌ Audio/transcripción:", e.message);
+        text = "(no se pudo transcribir el audio)";
+      }
+    }
 
-  }
     // Si la conversación anterior terminó (y no expiró por TTL) y el cliente
     // solo saluda/agradece, respondemos corto y NO iniciamos conversación nueva.
     if (hasActiveEndedFlag(from)) {
@@ -359,7 +367,7 @@ app.post("/webhook", async (req, res) => {
       }
       // Mensaje “real”: limpiamos el flag para iniciar conversación nueva.
       delete endedSessions[from];
-    }
+    
     
   }
     const gptReply = await getGPTReply(from, text);
