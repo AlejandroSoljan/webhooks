@@ -8,7 +8,6 @@ app.use(bodyParser.json());
 
 
 ///Variables
-
 const PORT = process.env.PORT || 3000;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN; 
@@ -19,8 +18,10 @@ const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID.trim()
 const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || "v17.0";
 const ENDED_SESSION_TTL_MINUTES = Number(process.env.ENDED_SESSION_TTL_MINUTES || 15);
 const CALC_FIX_MAX_RETRIES = Number(process.env.CALC_FIX_MAX_RETRIES || 3);
-//'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'; // Tu clave de API de OpenAI
-//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
+const STORE_TZ = (process.env.STORE_TZ || "America/Argentina/Cordoba").trim();
+const SIMULATED_NOW_ISO = (process.env.SIMULATED_NOW_ISO || "").trim();
+
+
 // Historial por número (almacenado en memoria)
 const chatHistories = {};
 // Marcador de conversaciones finalizadas (COMPLETED/CANCELLED)
@@ -28,11 +29,8 @@ const chatHistories = {};
 // Guardamos timestamp para TTL
 const endedSessions = {};
 
-
-
 // ================== Fecha/Hora local para el modelo ==================
-const STORE_TZ = (process.env.STORE_TZ || "America/Argentina/Cordoba").trim();
-const SIMULATED_NOW_ISO = (process.env.SIMULATED_NOW_ISO || "").trim();
+
 function _nowLabelInTZ() {
   const base = SIMULATED_NOW_ISO ? new Date(SIMULATED_NOW_ISO) : new Date();
   const fmt = new Intl.DateTimeFormat("es-AR", {
@@ -133,7 +131,45 @@ async function sendWhatsAppMessage(to, text) {
     console.error("Error enviando WhatsApp:", error.response?.data || error.message);
   }
 }
+// ==========================
+// WhatsApp Media helpers (audio)
+// ==========================
+async function getWhatsAppMediaInfo(mediaId) {
+  // Devuelve { url, mime_type, id, ... } usando Graph API
+  const { data } = await axios.get(
+    `https://graph.facebook.com/${GRAPH_API_VERSION}/${mediaId}`,
+    {
+      headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` }
+    }
+  );
+  return data || {};
+}
 
+async function downloadWhatsAppMediaBuffer(fileUrl) {
+  // Descarga binario del archivo (autenticado) → Buffer
+  const resp = await axios.get(fileUrl, {
+    headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` },
+    responseType: "arraybuffer"
+  });
+  const buf = Buffer.from(resp.data);
+  const mime = resp.headers["content-type"] || "audio/ogg";
+  return { buffer: buf, mime };
+}
+
+async function transcribeIncomingWhatsAppAudio(audioObj) {
+  // audioObj típico: { id: "...", mime_type: "audio/ogg; codecs=opus" }
+  if (!audioObj?.id) return { text: "" };
+  try {
+    const meta = await getWhatsAppMediaInfo(audioObj.id);
+    if (!meta?.url) return { text: "" };
+    const { buffer, mime } = await downloadWhatsAppMediaBuffer(meta.url);
+    // Usa TU función externa ya existente
+    return await transcribeAudioExternal({ buffer, mime });
+  } catch (e) {
+    console.error("❌ Error transcribiendo audio:", e.message);
+    return { text: "" };
+  }
+}
 
 // ==========================
 // Utilidades de fin de sesión con TTL
@@ -158,6 +194,33 @@ function hasActiveEndedFlag(from) {
   return true;
 }
 
+async function transcribeAudioExternal({ publicAudioUrl, buffer, mime }) {
+  // 1) servicio externo si está configurado
+  const prefer = TRANSCRIBE_API_URL;
+  if (prefer && publicAudioUrl) {
+    try {
+      const r = await fetch(`${prefer}/transcribe?url=${encodeURIComponent(publicAudioUrl)}`);
+      if (r.ok) {
+        const j = await r.json().catch(() => ({}));
+        if (j && typeof j.text === "string") return { text: j.text, usage: j.tokens || j.usage || null };
+      }
+    } catch {}
+  }
+  // 2) fallback: OpenAI audio
+  try {
+    let buf = buffer, mt = mime;
+    if (!buf && publicAudioUrl) {
+      const r2 = await fetch(publicAudioUrl);
+      mt = r2.headers.get("content-type") || mime || "audio/ogg";
+      const ab = await r2.arrayBuffer(); buf = Buffer.from(ab);
+    }
+    if (!buf) return { text: "" };
+    const model = process.env.WHISPER_MODEL || process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-transcribe";
+    const file = new File([buf], `audio.${(mt||"").includes("wav")?"wav":(mt||"").includes("mp3")?"mp3":((mt||"").includes("ogg")|| (mt||"").includes("opus"))?"ogg":"mp3"}`, { type: mt || "audio/ogg" });
+    const r = await openai.audio.transcriptions.create({ file, model });
+    return { text: r.text || "", usage: r.usage || null };
+  } catch { return { text: "" }; }
+}
 
 // ==========================
 // Detección de saludo/agradecimiento breve
@@ -277,11 +340,16 @@ function recalcAndDetectMismatch(pedido) {
 app.post("/webhook", async (req, res) => {
   try {
     const entry = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-    if (!entry || !entry.text) return res.sendStatus(200);
-
+     if (!entry) return res.sendStatus(200); // admitimos audio o texto
     const from = entry.from;
-    const text = (entry.text.body || "").trim();
+    let text = (entry.text?.body || "").trim();
 
+    // 🎙️ Si viene audio, lo transcribimos y usamos la transcripción como "text"
+    if (!text && (entry.type === "audio" || entry.audio?.id)) {
+      const tr = await transcribeIncomingWhatsAppAudio(entry.audio);
+      text = String(tr?.text || "").trim();
+      console.log("🎙️ Transcripción de audio:", text);
+    }
     // Si la conversación anterior terminó (y no expiró por TTL) y el cliente
     // solo saluda/agradece, respondemos corto y NO iniciamos conversación nueva.
     if (hasActiveEndedFlag(from)) {
@@ -294,6 +362,11 @@ app.post("/webhook", async (req, res) => {
       }
       // Mensaje “real”: limpiamos el flag para iniciar conversación nueva.
       delete endedSessions[from];
+    }
+    // Si después de todo no hay texto (audio vacío / fallo transcripción), salimos suave
+    if (!text) {
+      await sendWhatsAppMessage(from, "No pude escuchar bien el audio 🙏 ¿Podés repetirlo o escribirlo?");
+      return res.sendStatus(200);
     }
 
     const gptReply = await getGPTReply(from, text);
@@ -341,9 +414,9 @@ app.post("/webhook", async (req, res) => {
         console.log("------------------------------------------------");
         console.log("Recalculando totales............................");
         console.log("------------------------------------------------");
-        
+
         // Llamada adicional al modelo con la corrección
-        await sendWhatsAppMessage(from, "recalculo de totales.....");  
+       // await sendWhatsAppMessage(from, "recalculo de totales.....");  
 
           try {
             const parsedFix = JSON.parse(fixReply);
