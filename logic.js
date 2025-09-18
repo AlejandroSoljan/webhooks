@@ -137,6 +137,12 @@ async function sendWhatsAppMessage(to, text) {
 // helper: sanea "20.000", "20,000", etc.
 const num = v => Number(String(v).replace(/[^\d.-]/g, '') || 0);
 
+// helper: quita acentos para comparar texto
+const strip = s =>
+  String(s || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
 // helper: agrega "Envio" si Entrega = domicilio y no está en items
 function ensureEnvio(pedido) {
   const entrega = (pedido?.Entrega || '').toLowerCase();
@@ -152,6 +158,34 @@ function ensureEnvio(pedido) {
     });
   }
 }
+
+// Recalcula totales y detecta diferencias con lo que vino del modelo
+function recalcAndDetectMismatch(pedido) {
+  let mismatch = false;
+
+  pedido.items ||= [];
+  const beforeCount = pedido.items.length;
+  ensureEnvio(pedido);
+  if (pedido.items.length !== beforeCount) mismatch = true; // se añadió Envío
+
+  let totalCalc = 0;
+  pedido.items = pedido.items.map(it => {
+    const cantidad = num(it.cantidad);
+    const unit = num(it.importe_unitario);
+    const totalOk = cantidad * unit;
+    const totalIn = it.total != null ? num(it.total) : null;
+    if (totalIn === null || totalIn !== totalOk) mismatch = true;
+    totalCalc += totalOk;
+    return { ...it, cantidad, importe_unitario: unit, total: totalOk };
+  });
+
+  const totalModelo = num(pedido.total_pedido);
+  if (!totalModelo || totalModelo !== totalCalc) mismatch = true;
+  pedido.total_pedido = totalCalc;
+  return { pedidoCorr: pedido, mismatch };
+}
+
+
 
 app.post("/webhook", async (req, res) => {
   try {
@@ -173,29 +207,22 @@ app.post("/webhook", async (req, res) => {
       estado = parsed.estado;
       pedido = parsed.Pedido || { items: [] };
 
-      // 2) Normalizar y recalcular SIEMPRE desde backend
-      pedido.items ||= [];
-      ensureEnvio(pedido);
+      // 2) Recalcular y detectar inconsistencias respecto al JSON del modelo
+      const { pedidoCorr, mismatch } = recalcAndDetectMismatch(pedido);
+      pedido = pedidoCorr; // pedido corregido (totales por ítem y total_pedido)
 
-      let totalPedido = 0;
-      pedido.items = pedido.items.map(it => {
-        const cantidad = num(it.cantidad);
-        const unit = num(it.importe_unitario);
-        const totalItem = cantidad * unit;       // fuerza total correcto por ítem
-        totalPedido += totalItem;
-        return { ...it, cantidad, importe_unitario: unit, total: totalItem };
-      });
-
-      // 3) Forzar el total_pedido correcto aunque el modelo envíe otro
-      pedido.total_pedido = totalPedido;
-
-      // 4) Generar SIEMPRE el resumen con el total correcto del backend
-      responseText = [
-        '🧾 Resumen del pedido:',
-        ...pedido.items.map(i => `- ${i.cantidad} ${i.descripcion}`),
-        `💰 Total: ${totalPedido.toLocaleString('es-AR')}`,
-        '¿Confirmamos el pedido? ✅'
-      ].join('\n');
+      if (mismatch) {
+        // 3a) Si hay diferencia, enviamos el total recalculado por backend
+        responseText = [
+          '🧾 Resumen del pedido:',
+          ...pedido.items.map(i => `- ${i.cantidad} ${i.descripcion}`),
+          `💰 Total: ${pedido.total_pedido.toLocaleString('es-AR')}`,
+          '¿Confirmamos el pedido? ✅'
+        ].join('\n');
+      } else {
+        // 3b) Si todo coincide, usamos la respuesta original del modelo
+        responseText = parsed.response;
+      }
 
       // (opcional) logs
       console.log('📦 Estado:', estado);
