@@ -42,7 +42,7 @@ async function getGPTReply(from, userMessage) {
 
 "[ENTREGA] " +
 "- Modalidades: retiro | domicilio. " +
-" - si la entrega es domicilio, agregar el item 'Envio' del catalogo. "+ 
+" - si la entrega es domicilio, agregar el item 'Envio' del catalogo. "+
 "- Si el cliente cambia a retiro: elimina domicilio y quita el envío. " +
 
 "[DATOS OBLIGATORIOS] " +
@@ -65,7 +65,7 @@ async function getGPTReply(from, userMessage) {
 "- Siempre que se modifique un producto o el método de entrega o se agreguen productos, **recalculá el total_pedido sumando el total de los items del jSON pedido desde cero**.  " + 
 "- No mantengas totales anteriores ni sumes dos veces.   " +
 "- Usá solo los precios del catálogo. No inventes precios.  " +
-"- Asegurate que el importe de total_pedido coincida con la suma total de los items en el JOSN pedidos, recalculalo en cada mensaje y asegurate de que sea correcto"  +
+"- Asegurate que el importe de total_pedido coincida con la suma total de los items del último JSON pedidos , recalculalo siempre y asegurate de que sea correcto"  +
 "[CONFIRMACIÓN] " +
 "- Cuando el cliente esté listo para confirmar, muestra un resumen breve en texto con los items y el importe total,no muestres los importes individuales de los items salvo que lo pida el , asegurate de calcular bien el importe total del pedido"   +
 
