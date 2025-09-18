@@ -202,6 +202,17 @@ function ensureEnvio(pedido) {
   }
 }
 
+// Helper para armar resumen con total correcto (fallback)
+function buildBackendSummary(pedido) {
+  return [
+    '🧾 Resumen del pedido:',
+    ...(pedido.items || []).map(i => `- ${i.cantidad} ${i.descripcion}`),
+    `💰 Total: ${Number(pedido.total_pedido || 0).toLocaleString('es-AR')}`,
+    '¿Confirmamos el pedido? ✅'
+  ].join('\n');
+}
+
+
 // Recalcula totales y detecta diferencias con lo que vino del modelo
 // Recalcula totales y detecta diferencias SOLO cuando hay ítems
 function recalcAndDetectMismatch(pedido) {
@@ -275,14 +286,50 @@ app.post("/webhook", async (req, res) => {
        const { pedidoCorr, mismatch, hasItems } = recalcAndDetectMismatch(pedido);
       pedido = pedidoCorr; // pedido corregido
 
-      if (mismatch && hasItems) {
-        // 3a) Si hay diferencia, enviamos el total recalculado por backend
-        responseText = [
-          '🧾 Resumen del pedido:',
-          ...pedido.items.map(i => `- ${i.cantidad} ${i.descripcion}`),
-          `💰 Total: ${pedido.total_pedido.toLocaleString('es-AR')}`,
-          '¿Confirmamos el pedido? ✅'
-        ].join('\n');
+       if (mismatch && hasItems) {
+        // 3a) FEEDBACK LOOP: avisar al modelo que el total está mal y pedirle que recalcule
+        const itemsForModel = (pedido.items || [])
+          .map(i => `- ${i.cantidad} x ${i.descripcion} @ ${i.importe_unitario}`)
+          .join('\n');
+        const correctionMessage =
+          [
+            "[CORRECCION_DE_IMPORTES]",
+            "Detectamos que los importes de tu JSON no coinciden con la suma de ítems según el catálogo.",
+            "Recalculá los totales DESDE CERO usando solo los precios del catálogo del prompt.",
+            "Usá estos ítems interpretados (cantidad y precio unitario):",
+            itemsForModel,
+            `Total esperado por backend: ${pedido.total_pedido}`,
+            "Devolvé UN ÚNICO objeto JSON con: response, estado (IN_PROGRESS|COMPLETED|CANCELLED),",
+            "y Pedido { Entrega, Domicilio, items[ {descripcion, cantidad, importe_unitario, total} ], total_pedido }.",
+            "No incluyas texto fuera del JSON."
+          ].join('\n');
+
+        // Llamada adicional al modelo con la corrección
+        await sendWhatsAppMessage(from, "reintento de calculo...");
+
+        
+        const fixReply = await getGPTReply(from, correctionMessage);
+        try {
+          const parsedFix = JSON.parse(fixReply);
+          estado = parsedFix.estado || estado;
+          let pedidoFix = parsedFix.Pedido || { items: [] };
+          const { pedidoCorr: pedidoFixCorr, mismatch: mismatchFix, hasItems: hasItemsFix } =
+            recalcAndDetectMismatch(pedidoFix);
+
+          pedido = pedidoFixCorr; // tomamos el corregido del modelo
+
+          if (!mismatchFix && hasItemsFix) {
+            // 3a.1) Ahora está consistente: usamos la respuesta del modelo corregida
+            responseText = parsedFix.response;
+          } else {
+            // 3a.2) El modelo siguió inconsistente: fallback al resumen del backend
+            responseText = buildBackendSummary(pedido);
+          }
+        } catch (e2) {
+          // 3a.3) Si la segunda respuesta no fue JSON parseable, fallback al resumen del backend
+          console.error('❌ Error al parsear fixReply JSON:', e2.message);
+          responseText = buildBackendSummary(pedido);
+        }
       } else {
         // 3b) Si todo coincide, usamos la respuesta original del modelo
         responseText = parsed.response;
