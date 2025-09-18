@@ -137,114 +137,54 @@ async function sendWhatsAppMessage(to, text) {
 app.post("/webhook", async (req, res) => {
   try {
     const entry = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-
     if (!entry || !entry.text) return res.sendStatus(200);
 
-    const from = entry.from; // número de teléfono del usuario
+    const from = entry.from;
     const text = entry.text.body;
-
-    console.log(`📩 Mensaje recibido de ${from}: ${text}`);
 
     const gptReply = await getGPTReply(from, text);
 
-    //console.log(`🤖 Respuesta GPT: ${gptReply}`);
-
-
-    let responseText = gptReply;
+    let responseText = 'Perdón, hubo un error. ¿Podés repetir?';
     let estado = null;
     let pedido = null;
 
     try {
       const parsed = JSON.parse(gptReply);
-      ////////////////////////////////////////////////////////////////
-// Sanea a número (acepta 20.000, 20,000, etc.)
-const num = v => Number(String(v).replace(/[^\d.-]/g, '') || 0);
-
-// Asegura que exista el ítem de Envío si Entrega = Domicilio
-function ensureEnvio(pedido) {
-
-  /*
-  if (pedido?.Entrega?.toLowerCase() === 'domicilio') {
-    const tieneEnvio = (pedido.items || []).some(i =>
-      (i.descripcion || '').toLowerCase().includes('envio')
-    );
-    if (!tieneEnvio) {
-      (pedido.items ||= []).push({
-        descripcion: 'Envio',
-        cantidad: 1,
-        importe_unitario: 1500,
-        total: 1500
-      });
-    }
-  }*/
-}
-
-try {
-  const parsed = JSON.parse(gptReply);
-  let { response, estado, Pedido: pedido } = parsed;
-
-  // 1) Normaliza estructura
-  pedido.items ||= [];
-
-  // 2) Garantiza que esté el envío cuando corresponde
-  //ensureEnvio(pedido);
-
-  // 3) Recalcula cada total de ítem y el total_pedido
-  let totalPedido = 0;
-  pedido.items = pedido.items.map(it => {
-    const cantidad = num(it.cantidad);
-    const unit = num(it.importe_unitario);
-    const total = it.total != null ? num(it.total) : cantidad * unit;
-    totalPedido += total;
-    return { ...it, cantidad, importe_unitario: unit, total };
-  });
-  pedido.total_pedido = totalPedido;
-
-  // 4) Si el texto del modelo trae un total distinto, lo ignoramos y generamos uno correcto.
-  // (Opcional) Reescribe el mensaje con el total correcto cuando detectes "Total:" o "confirmar".
-  if (/total|confirmar/i.test(response)) {
-    const resumen = [
-      '🧾 Resumen del pedido:',
-      ...pedido.items.map(i => `- ${i.cantidad} ${i.descripcion}`),
-      `💰 Total: ${totalPedido.toLocaleString('es-AR')}`,
-      '¿Confirmamos el pedido? ✅'
-    ].join('\n');
-    response = resumen;
-  }
-
-  // 5) Log y envío
-  console.log('📦 Estado:', estado);
-  console.log('🧾 Pedido:', JSON.stringify(pedido, null, 2));
-  await sendWhatsAppMessage(from, response);
-
-} catch (e) {
-  console.error('❌ Error al parsear/corregir JSON:', e.message);
-  await sendWhatsAppMessage(from, 'Perdón, hubo un error. ¿Podés repetir?');
-}
-
-
-
-
-
-
-      ///////////////////
-
-
-
-      // Extraemos campos
-      responseText = parsed.response;
       estado = parsed.estado;
-      pedido = parsed.Pedido;
+      pedido = parsed.Pedido || { items: [] };
 
-      console.log("📦 response:", responseText);
-      console.log("📦 Estado:", estado);
-      console.log("🧾 Pedido:", JSON.stringify(pedido, null, 2));
+      // --- Recalculo seguro ---
+      const num = v => Number(String(v).replace(/[^\d.-]/g, '') || 0);
+      let totalPedido = 0;
+      pedido.items = (pedido.items || []).map(it => {
+        const cantidad = num(it.cantidad);
+        const unit = num(it.importe_unitario);
+        const total = (it.total != null ? num(it.total) : cantidad * unit);
+        totalPedido += total;
+        return { ...it, cantidad, importe_unitario: unit, total };
+      });
+      pedido.total_pedido = totalPedido;
 
-} catch (e) {
-  console.error("❌ Error al parsear JSON de GPT:", e.message);
-}
+      // Texto final (siempre con el total correcto)
+      const response = [
+        '🧾 Resumen del pedido:',
+        ...(pedido.items || []).map(i => `- ${i.cantidad} ${i.descripcion}`),
+        `💰 Total: ${totalPedido.toLocaleString('es-AR')}`,
+        '¿Confirmamos el pedido? ✅'
+      ].join('\n');
 
-   await sendWhatsAppMessage(from, responseText);
+      // Usar UNA sola variable de salida
+      responseText = response;
+
+      // (opcional) logs internos
+      console.log('📦 Estado:', estado);
+      console.log('🧾 Pedido:', JSON.stringify(pedido, null, 2));
+    } catch (e) {
+      console.error('❌ Error al parsear/corregir JSON:', e.message);
+    }
+
+    // ✅ Enviar SOLO una vez
+    await sendWhatsAppMessage(from, responseText);
 
     res.sendStatus(200);
   } catch (error) {
@@ -252,6 +192,7 @@ try {
     res.sendStatus(500);
   }
 });
+
 
 // 🔐 Verificación de Webhook de Meta (una sola vez)
 app.get("/webhook", (req, res) => {
