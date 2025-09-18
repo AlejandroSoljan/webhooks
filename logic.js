@@ -492,14 +492,16 @@ app.post("/webhook", async (req, res) => {
 
         if (fixedOk && parsedFixLast) {
           // 3a.1) Ahora está consistente: usamos la respuesta del modelo corregida
-          responseText = parsedFixLast.response;
+          //responseText = parsedFixLast.response;
+          responseText = coalesceResponse(parsedFixLast.response, pedido);
         } else {
           // 3a.2) El modelo siguió inconsistente: fallback al resumen del backend
           responseText = buildBackendSummary(pedido);
         }
       } else {
         // 3b) Si todo coincide, usamos la respuesta original del modelo
-        responseText = parsed.response;
+       // responseText = parsed.response;
+        responseText = coalesceResponse(parsedFixLast.response, pedido);
       }
 
       // (opcional) logs
@@ -509,7 +511,20 @@ app.post("/webhook", async (req, res) => {
       console.error('❌ Error al parsear/corregir JSON:', e.message);
     }
 
-    // 5) Enviar UNA sola vez
+    
+    // 5) Guardia FINAL: si el cuerpo quedó vacío, enviar SIEMPRE un resumen del pedido
+    //    (esto cubre especialmente el caso luego del recalculo por diferencia)
+    try {
+      const finalBody = String(responseText ?? "").trim();
+      if (!finalBody) {
+        if (pedido && Array.isArray(pedido.items) && pedido.items.length > 0) {
+          responseText = buildBackendSummary(pedido);
+        } else {
+          responseText = START_FALLBACK;
+        }
+      }
+    } catch {}
+
     await sendWhatsAppMessage(from, responseText);
 
     // 6) Si el pedido terminó, limpiar historial y marcar sesión finalizada.
