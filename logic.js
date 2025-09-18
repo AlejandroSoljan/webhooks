@@ -2,6 +2,11 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 const axios = require("axios");
+// ⬇️ Cliente oficial de OpenAI para fallback de STT
+const OpenAI = require("openai");
+let openai = null;
+// util de SDK para crear File desde Buffer en Node
+let toFile = null;
 
 const app = express();
 app.use(bodyParser.json());
@@ -23,7 +28,7 @@ const SIMULATED_NOW_ISO = (process.env.SIMULATED_NOW_ISO || "").trim();
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
 const TRANSCRIBE_API_URL = (process.env.TRANSCRIBE_API_URL || "").trim().replace(/\/+$/, "");
 const CACHE_TTL_MS = parseInt(process.env.AUDIO_CACHE_TTL_MS || "300000", 10);
-
+const TRANSCRIBE_MODEL = process.env.WHISPER_MODEL || process.env.OPENAI_TRANSCRIBE_MODEL || "whisper-1";
 
 // Historial por número (almacenado en memoria)
 const chatHistories = {};
@@ -52,6 +57,20 @@ function buildNowBlock() {
     `Fecha y hora actuales (local): ${_nowLabelInTZ()}`
   ].join("\n");
 }
+// ================== OpenAI client (para fallback STT) ==================
+try {
+  if (OPENAI_API_KEY) {
+    openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    // import diferido para evitar error si se usa una versión vieja del SDK
+    try {
+      ({ toFile } = require("openai/uploads"));
+    } catch { /* opcional */ }
+  }
+} catch (e) {
+  console.error("OpenAI init error:", e.message);
+}
+
+
 
 let baseText = "";
   baseText = String(process.env.COMPORTAMIENTO );
@@ -157,19 +176,31 @@ function hasActiveEndedFlag(from) {
 }
 
 async function transcribeAudioExternal({ publicAudioUrl, buffer, mime }) {
-  // 1) servicio externo si está configurado
+  // 1) Servicio externo (si está configurado y accesible)
   const prefer = TRANSCRIBE_API_URL;
   if (prefer && publicAudioUrl) {
     try {
+      console.log("🎙️ STT externo →", `${prefer}/transcribe?url=...`);
       const r = await fetch(`${prefer}/transcribe?url=${encodeURIComponent(publicAudioUrl)}`);
       if (r.ok) {
         const j = await r.json().catch(() => ({}));
-        if (j && typeof j.text === "string") return { text: j.text, usage: j.tokens || j.usage || null };
+        if (j && typeof j.text === "string" && j.text.trim()) {
+          return { text: j.text, usage: j.tokens || j.usage || null, engine: "external" };
+        }
+        console.warn("STT externo: respuesta sin texto útil");
+      } else {
+        console.warn("STT externo: HTTP", r.status);
       }
-    } catch {}
+    } catch (e) {
+      console.error("STT externo error:", e.message);
+    }
   }
-  // 2) fallback: OpenAI audio
+  // 2) Fallback: OpenAI (requiere OPENAI_API_KEY)
   try {
+    if (!openai) {
+      console.warn("STT fallback OpenAI no disponible (sin cliente).");
+      return { text: "" };
+    }
     let buf = buffer, mt = mime;
     if (!buf && publicAudioUrl) {
       const r2 = await fetch(publicAudioUrl);
@@ -177,11 +208,29 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime }) {
       const ab = await r2.arrayBuffer(); buf = Buffer.from(ab);
     }
     if (!buf) return { text: "" };
-    const model = process.env.WHISPER_MODEL || process.env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-transcribe";
-    const file = new File([buf], `audio.${(mt||"").includes("wav")?"wav":(mt||"").includes("mp3")?"mp3":((mt||"").includes("ogg")|| (mt||"").includes("opus"))?"ogg":"mp3"}`, { type: mt || "audio/ogg" });
-    const r = await openai.audio.transcriptions.create({ file, model });
-    return { text: r.text || "", usage: r.usage || null };
-  } catch { return { text: "" }; }
+    const ext =
+      (mt || "").includes("wav") ? "wav" :
+      (mt || "").includes("mp3") ? "mp3" :
+      ((mt || "").includes("ogg") || (mt || "").includes("opus")) ? "ogg" : "mp3";
+
+    // usar util del SDK si está disponible
+    let fileObj = null;
+    if (toFile) {
+      fileObj = await toFile(buf, `audio.${ext}`, { type: mt || "audio/ogg" });
+    } else {
+      // fallback simple con Blob/File de node@18+
+      const FileCtor = global.File || require("node:buffer").Blob;
+      fileObj = new FileCtor([buf], `audio.${ext}`, { type: mt || "audio/ogg" });
+    }
+    console.log("🎙️ STT OpenAI →", TRANSCRIBE_MODEL);
+    const r = await openai.audio.transcriptions.create({ file: fileObj, model: TRANSCRIBE_MODEL });
+    const text = (r.text || "").trim();
+    if (!text) console.warn("STT OpenAI devolvió vacío");
+    return { text, usage: r.usage || null, engine: "openai" };
+  } catch (e) {
+    console.error("STT OpenAI error:", e.message);
+    return { text: "" };
+  }
 }
 
 // ==========================
