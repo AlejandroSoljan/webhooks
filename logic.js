@@ -304,10 +304,13 @@ app.post("/webhook", async (req, res) => {
             "No incluyas texto fuera del JSON."
           ].join('\n');
 
+        console.log("------------------------------------------------");
+        console.log("Recalculando totales............................");
+        console.log("------------------------------------------------");
         // Llamada adicional al modelo con la corrección
-        await sendWhatsAppMessage(from, "reintento de calculo...");
+      
 
-        
+
         const fixReply = await getGPTReply(from, correctionMessage);
         try {
           const parsedFix = JSON.parse(fixReply);
