@@ -60,7 +60,7 @@ async function getGPTReply(from, userMessage) {
 "Envio. Categoria: envio a domicilio. Precio: 1500. Observaciones: se aplica automaticamente si el cliente solicita enviarlo a domicilio" +
 "[CAMBIOS EN EL PEDIDO]   " +
 "- Si el cliente cambia un producto, eliminá el anterior.  " + 
-"- Siempre que se modifique un producto o el método de entrega o se agreguen productos, **recalculá el total desde cero**.  " + 
+"- Siempre que se modifique un producto o el método de entrega o se agreguen productos, **recalculá el total del pedido sumando los totales del jSON pedido desde cero**.  " + 
 "- No mantengas totales anteriores ni sumes dos veces.   " +
 "- Usá solo los precios del catálogo. No inventes precios.  " +
 "[CONFIRMACIÓN] " +
