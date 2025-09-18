@@ -85,7 +85,8 @@ async function getGPTReply(from, userMessage) {
       {
         model: CHAT_MODEL,
         messages: chatHistories[from],
-        temperature: CHAT_TEMPERATURE
+        temperature: CHAT_TEMPERATURE,
+        response_format: { type: "json_object" } // ⬅️ JSON MODE
       },
       {
         headers: {
