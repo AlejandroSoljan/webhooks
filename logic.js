@@ -18,6 +18,7 @@ const CHAT_TEMPERATURE = Number(process.env.OPENAI_TEMPERATURE ?? 0.1) || 0.1;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID.trim()
 const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || "v17.0";
 const ENDED_SESSION_TTL_MINUTES = Number(process.env.ENDED_SESSION_TTL_MINUTES || 15);
+const CALC_FIX_MAX_RETRIES = Number(process.env.CALC_FIX_MAX_RETRIES || 3);
 //'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'; // Tu clave de API de OpenAI
 //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
 // Historial por número (almacenado en memoria)
@@ -106,12 +107,20 @@ async function getGPTReply(from, userMessage) {
  */
 async function sendWhatsAppMessage(to, text) {
   try {
+    // ⚠️ Nunca enviar body vacío a WhatsApp
+    const body = String(text ?? "").trim();
+    if (!body) {
+      console.error("WhatsApp: intento de envío con text.body vacío. Se omite el envío.");
+      return;
+    }
+
     await axios.post(
       `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
       {
         messaging_product: "whatsapp",
         to: to,
-        text: { body: text }
+        //text: { body: text }
+        text: { body }
       },
       {
         headers: {
@@ -180,6 +189,23 @@ function markSessionEnded(from) {
 // helper: sanea "20.000", "20,000", etc.
 const num = v => Number(String(v).replace(/[^\d.-]/g, '') || 0);
 
+// Fallback de resumen correcto calculado por backend
+function buildBackendSummary(pedido) {
+  return [
+    '🧾 Resumen del pedido:',
+    ...(pedido.items || []).map(i => `- ${i.cantidad} ${i.descripcion}`),
+    `💰 Total: ${Number(pedido.total_pedido || 0).toLocaleString('es-AR')}`,
+    '¿Confirmamos el pedido? ✅'
+  ].join('\n');
+}
+
+// Usa la respuesta del modelo si viene, si no usa un fallback seguro
+const START_FALLBACK = "¡Hola! 👋 ¿Qué te gustaría pedir? Pollo (entero/mitad) y papas (2, 4 o 6).";
+function coalesceResponse(maybeText, pedidoObj) {
+  const s = String(maybeText ?? "").trim();
+  return s || ((pedidoObj?.items?.length || 0) > 0 ? buildBackendSummary(pedidoObj) : START_FALLBACK);
+}
+ 
 // helper: quita acentos para comparar texto
 const strip = s =>
   String(s || '')
@@ -286,12 +312,13 @@ app.post("/webhook", async (req, res) => {
        const { pedidoCorr, mismatch, hasItems } = recalcAndDetectMismatch(pedido);
       pedido = pedidoCorr; // pedido corregido
 
-       if (mismatch && hasItems) {
-        // 3a) FEEDBACK LOOP: avisar al modelo que el total está mal y pedirle que recalcule
+        if (mismatch && hasItems) {
+        // 3a) FEEDBACK LOOP con límite de reintentos
         const itemsForModel = (pedido.items || [])
           .map(i => `- ${i.cantidad} x ${i.descripcion} @ ${i.importe_unitario}`)
           .join('\n');
-        const correctionMessage =
+
+        const baseCorrection =
           [
             "[CORRECCION_DE_IMPORTES]",
             "Detectamos que los importes de tu JSON no coinciden con la suma de ítems según el catálogo.",
@@ -304,33 +331,47 @@ app.post("/webhook", async (req, res) => {
             "No incluyas texto fuera del JSON."
           ].join('\n');
 
+        let fixedOk = false;
+        let parsedFixLast = null;
+
+        for (let attempt = 1; attempt <= CALC_FIX_MAX_RETRIES; attempt++) {
+          const correctionMessage = `${baseCorrection}\n[INTENTO:${attempt}/${CALC_FIX_MAX_RETRIES}]`;
+          const fixReply = await getGPTReply(from, correctionMessage);
+
         console.log("------------------------------------------------");
         console.log("Recalculando totales............................");
         console.log("------------------------------------------------");
+        
         // Llamada adicional al modelo con la corrección
-      
+        await sendWhatsAppMessage(from, "recalculo de totales.....");  
 
+          try {
+            const parsedFix = JSON.parse(fixReply);
+            parsedFixLast = parsedFix;
+            estado = parsedFix.estado || estado;
 
-        const fixReply = await getGPTReply(from, correctionMessage);
-        try {
-          const parsedFix = JSON.parse(fixReply);
-          estado = parsedFix.estado || estado;
-          let pedidoFix = parsedFix.Pedido || { items: [] };
-          const { pedidoCorr: pedidoFixCorr, mismatch: mismatchFix, hasItems: hasItemsFix } =
-            recalcAndDetectMismatch(pedidoFix);
+            let pedidoFix = parsedFix.Pedido || { items: [] };
+            const { pedidoCorr: pedidoFixCorr, mismatch: mismatchFix, hasItems: hasItemsFix } =
+              recalcAndDetectMismatch(pedidoFix);
 
-          pedido = pedidoFixCorr; // tomamos el corregido del modelo
+            // actualizamos referencia de pedido por si mejora
+            pedido = pedidoFixCorr;
 
-          if (!mismatchFix && hasItemsFix) {
-            // 3a.1) Ahora está consistente: usamos la respuesta del modelo corregida
-            responseText = parsedFix.response;
-          } else {
-            // 3a.2) El modelo siguió inconsistente: fallback al resumen del backend
-            responseText = buildBackendSummary(pedido);
+            if (!mismatchFix && hasItemsFix) {
+              fixedOk = true;
+              break;
+            }
+          } catch (e2) {
+            console.error('❌ Error al parsear fixReply JSON:', e2.message);
+            // sigue el loop
           }
-        } catch (e2) {
-          // 3a.3) Si la segunda respuesta no fue JSON parseable, fallback al resumen del backend
-          console.error('❌ Error al parsear fixReply JSON:', e2.message);
+        }
+
+        if (fixedOk && parsedFixLast) {
+          // 3a.1) Ahora está consistente: usamos la respuesta del modelo corregida
+          responseText = parsedFixLast.response;
+        } else {
+          // 3a.2) El modelo siguió inconsistente: fallback al resumen del backend
           responseText = buildBackendSummary(pedido);
         }
       } else {
