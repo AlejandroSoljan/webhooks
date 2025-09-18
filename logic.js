@@ -42,7 +42,7 @@ async function getGPTReply(from, userMessage) {
 
 "[ENTREGA] " +
 "- Modalidades: retiro | domicilio. " +
-" - si la entrega es domicilio, agregar el item 'Envio' del catalogo. "+
+" - si la entrega es domicilio, agregar el item 'Envio' del catalogo. "+ 
 "- Si el cliente cambia a retiro: elimina domicilio y quita el envío. " +
 
 "[DATOS OBLIGATORIOS] " +
