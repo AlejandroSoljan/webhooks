@@ -82,7 +82,7 @@ async function getGPTReply(from, userMessage) {
       {
         model: CHAT_MODEL,
         messages: chatHistories[from],
-        temperature: 0.1 //CHAT_TEMPERATURE
+        temperature: CHAT_TEMPERATURE
       },
       {
         headers: {
@@ -142,9 +142,30 @@ app.post("/webhook", async (req, res) => {
 
     const gptReply = await getGPTReply(from, text);
 
-    console.log(`🤖 Respuesta GPT: ${gptReply}`);
+    //console.log(`🤖 Respuesta GPT: ${gptReply}`);
 
-    await sendWhatsAppMessage(from, gptReply);
+
+    let responseText = gptReply;
+    let estado = null;
+    let pedido = null;
+
+    try {
+      const parsed = JSON.parse(gptReply);
+
+      // Extraemos campos
+      responseText = parsed.response;
+      estado = parsed.estado;
+      pedido = parsed.Pedido;
+
+      console.log("📦 response:", responseText);
+      console.log("📦 Estado:", estado);
+      console.log("🧾 Pedido:", JSON.stringify(pedido, null, 2));
+
+} catch (e) {
+  console.error("❌ Error al parsear JSON de GPT:", e.message);
+}
+
+   await sendWhatsAppMessage(from, responseText);
 
     res.sendStatus(200);
   } catch (error) {
