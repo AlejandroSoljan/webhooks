@@ -66,6 +66,7 @@ async function getGPTReply(from, userMessage) {
 "- No mantengas totales anteriores ni sumes dos veces.   " +
 "- Usá solo los precios del catálogo. No inventes precios.  " +
 "- Asegurate que el importe de total_pedido coincida con la suma total de los items del último JSON pedidos , recalculalo siempre y asegurate de que sea correcto"  +
+"- siempre que muestres el total del pedido, utiliza el que se informa en JSON pedido, el valor total_pedido. " +
 "[CONFIRMACIÓN] " +
 "- Cuando el cliente esté listo para confirmar, muestra un resumen breve en texto con los items y el importe total,no muestres los importes individuales de los items salvo que lo pida el , asegurate de calcular bien el importe total del pedido"   +
 
