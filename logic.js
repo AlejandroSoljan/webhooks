@@ -17,13 +17,17 @@ const CHAT_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const CHAT_TEMPERATURE = Number(process.env.OPENAI_TEMPERATURE ?? 0.1) || 0.1;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID.trim()
 const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || "v17.0";
-
+const ENDED_SESSION_TTL_MINUTES = Number(process.env.ENDED_SESSION_TTL_MINUTES || 15);
 //'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'; // Tu clave de API de OpenAI
 //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
 // Historial por número (almacenado en memoria)
 const chatHistories = {};
 // Marcador de conversaciones finalizadas (COMPLETED/CANCELLED)
+
+// Guardamos timestamp para TTL
 const endedSessions = {};
+
+
 
 // ================== Fecha/Hora local para el modelo ==================
 const STORE_TZ = (process.env.STORE_TZ || "America/Argentina/Cordoba").trim();
@@ -121,6 +125,31 @@ async function sendWhatsAppMessage(to, text) {
   }
 }
 
+
+// ==========================
+// Utilidades de fin de sesión con TTL
+// ==========================
+function markSessionEnded(from) {
+  // Limpiar historial y marcar fin con timestamp
+  delete chatHistories[from];
+  endedSessions[from] = { endedAt: Date.now() };
+  // (opcional) limpieza automática para evitar crecimiento en memoria
+  setTimeout(() => { delete endedSessions[from]; }, ENDED_SESSION_TTL_MINUTES * 60000);
+}
+
+function hasActiveEndedFlag(from) {
+  const rec = endedSessions[from];
+  if (!rec) return false;
+  const ageMin = (Date.now() - rec.endedAt) / 60000;
+  if (ageMin > ENDED_SESSION_TTL_MINUTES) {
+    // Expiró: limpiamos y permitimos nueva conversación
+    delete endedSessions[from];
+    return false;
+  }
+  return true;
+}
+
+
 // ==========================
 // Detección de saludo/agradecimiento breve
 // ==========================
@@ -216,9 +245,9 @@ app.post("/webhook", async (req, res) => {
     const from = entry.from;
     const text = (entry.text.body || "").trim();
 
-    // Si la conversación anterior terminó y el cliente solo saluda/agradece,
-    // respondemos cortito y NO iniciamos conversación nueva.
-    if (endedSessions[from]) {
+    // Si la conversación anterior terminó (y no expiró por TTL) y el cliente
+    // solo saluda/agradece, respondemos corto y NO iniciamos conversación nueva.
+    if (hasActiveEndedFlag(from)) {
       if (isPoliteClosingMessage(text)) {
         await sendWhatsAppMessage(
           from,
