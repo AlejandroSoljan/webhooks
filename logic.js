@@ -62,16 +62,16 @@ async function getGPTReply(from, userMessage) {
 
 "[CALCULO DE IMPORTE TOTAL]   " +
 "- Si el cliente cambia un producto, eliminá el anterior.  " + 
-"- Siempre que se modifique un producto o el método de entrega o se agreguen productos, **recalculá el total del pedido sumando los totales del jSON pedido desde cero**.  " + 
+"- Siempre que se modifique un producto o el método de entrega o se agreguen productos, **recalculá el total_pedido sumando el total de los items del jSON pedido desde cero**.  " + 
 "- No mantengas totales anteriores ni sumes dos veces.   " +
 "- Usá solo los precios del catálogo. No inventes precios.  " +
-"- Asegurate que el importe total del pedido coincida con la suma total de los items en el JOSN pedidos"  +
+"- Asegurate que el importe de total_pedido coincida con la suma total de los items en el JOSN pedidos, recalculalo en cada mensaje y asegurate de que sea correcto"  +
 "[CONFIRMACIÓN] " +
 "- Cuando el cliente esté listo para confirmar, muestra un resumen breve en texto con los items y el importe total,no muestres los importes individuales de los items salvo que lo pida el , asegurate de calcular bien el importe total del pedido"   +
 
 "[FORMATO DE RESPUESTA] " +
 "- Devolvé SIEMPRE un único objeto JSON con:  " +
-"  response, estado (IN_PROGRESS|COMPLETED|CANCELLED), Pedido { Entrega, Domicilio, items[ {descripcion, cantidad, importe_unitario, total} ] }. " 
+"  response, estado (IN_PROGRESS|COMPLETED|CANCELLED), Pedido { Entrega, Domicilio, items[ {descripcion, cantidad, importe_unitario, total} , total_pedido] }. " 
 
 
 }
