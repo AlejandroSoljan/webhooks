@@ -237,8 +237,7 @@ function buildBackendSummary(pedido) {
   return [
     "🧾 Resumen del pedido:",
     ...(pedido.items || []).map(i => `- ${i.cantidad} ${i.descripcion}`),
-    `💰 Total: ${Number(pedido.total_pedido || 0).toLocaleString("es-AR")}`,
-    "¿Confirmamos el pedido? ✅"
+    `💰 Total: ${Number(pedido.total_pedido || 0).toLocaleString("es-AR")}`
   ].join("\n");
 }
 function coalesceResponse(maybeText, pedidoObj) {
