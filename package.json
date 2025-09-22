@@ -2,11 +2,11 @@
   "name": "whatsapp-webhook-openai",
   "version": "1.0.0",
   "description": "Webhook de WhatsApp Business que integra ChatGPT, transcripción de audios, OCR de imágenes y guarda datos en Google Sheets",
-  "main": "server.js",
+  "main": "endpoint.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node app.js",
-    "dev": "nodemon app.js"
+    "start": "node endpoint.js",
+    "dev": "nodemon endpoint.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
