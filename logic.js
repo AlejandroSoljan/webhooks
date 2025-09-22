@@ -295,6 +295,8 @@ async function getGPTReply(tenantId, from, userMessage) {
     );
     const reply = response.data.choices[0].message.content;
     chatHistories[id].push({ role: "assistant", content: reply });
+
+    console.log( JSON.stringify( chatHistories[id]));
     return reply;
   } catch (error) {
     console.error("Error OpenAI:", error.response?.data || error.message);
