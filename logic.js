@@ -1,5 +1,6 @@
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
+// Incluye logs completos de OpenAI (payload y response).
 
 const axios = require("axios");
 const OpenAI = require("openai");
@@ -36,6 +37,32 @@ try {
   console.error("OpenAI init error:", e.message);
 }
 
+// ================== Utils de serialización segura ==================
+function circularReplacer() {
+  const seen = new WeakSet();
+  return (_key, value) => {
+    if (typeof value === "object" && value !== null) {
+      if (seen.has(value)) return undefined;
+      seen.add(value);
+    }
+    return value;
+  };
+}
+function safeStringify(value) {
+  try {
+    if (typeof value === "string") return value;
+    return JSON.stringify(value, circularReplacer());
+  } catch {
+    try { return String(value); } catch { return ""; }
+  }
+}
+function sanitizeMessages(msgs) {
+  return (msgs || []).map(m => ({
+    role: String(m?.role || "user"),
+    content: typeof m?.content === "string" ? m.content : safeStringify(m?.content)
+  }));
+}
+
 // ================== Fecha/Hora local para el modelo ==================
 function _nowLabelInTZ() {
   const base = SIMULATED_NOW_ISO ? new Date(SIMULATED_NOW_ISO) : new Date();
@@ -58,20 +85,11 @@ function buildNowBlock() {
 
 // ================== Comportamiento desde Mongo (solo al inicio de conversación) ==================
 /**
- * Cache en memoria por tenant { tenantId: { text, at } }
+ * Cache en memoria por tenant { tenantId: { text, history_mode, at } }
  * Se invalida por tenant con invalidateBehaviorCache(tenantId)
  */
 const _behaviorCache = new Map();
 
-function invalidateBehaviorCache(tenantId = DEFAULT_TENANT_ID) {
-  _behaviorCache.delete(String(tenantId));
-}
-
-/**
- * Obtiene el texto de comportamiento para un tenant dado.
- * Guarda el resultado en cache por 5 minutos.
- */
-// ---- Config de comportamiento + modo de historial desde Mongo ----
 async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   const key = String(tenantId);
   const cached = _behaviorCache.get(key);
@@ -88,23 +106,23 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   _behaviorCache.set(key, cfg);
   return cfg;
 }
-
-// Backward compat: función existente retorna solo el texto
 async function loadBehaviorTextFromMongo(tenantId = DEFAULT_TENANT_ID) {
   const cfg = await loadBehaviorConfigFromMongo(tenantId);
   return cfg.text;
 }
-
+function invalidateBehaviorCache(tenantId = DEFAULT_TENANT_ID) {
+  _behaviorCache.delete(String(tenantId));
+}
 
 // ================== Historial por número / sesión ==================
-const chatHistories = {}; // standard mode: { [tenant-from]: [{role,content}, ...] }
-const userOnlyHistories = {}; // minimal mode: { [tenant-from]: [{role:'user',content}, ...] }
+const chatHistories = {};       // standard mode: { [tenant-from]: [{role,content}, ...] }
+const userOnlyHistories = {};   // minimal mode: { [tenant-from]: [{role:'user',content}, ...] }
 const assistantPedidoSnapshot = {}; // minimal mode: { [tenant-from]: string(JSON del Pedido) }
-const endedSessions = {}; // { [tenant-from]: { endedAt } }
 
 function k(tenantId, from) { return `${tenantId}::${from}`; }
 
 // ================== Helpers de sesión ==================
+const endedSessions = {}; // { [tenant-from]: { endedAt } }
 function hasActiveEndedFlag(tenantId, from) {
   const id = k(tenantId, from);
   const rec = endedSessions[id];
@@ -119,6 +137,8 @@ function hasActiveEndedFlag(tenantId, from) {
 function markSessionEnded(tenantId, from) {
   const id = k(tenantId, from);
   delete chatHistories[id];
+  delete userOnlyHistories[id];
+  delete assistantPedidoSnapshot[id];
   endedSessions[id] = { endedAt: Date.now() };
 }
 
@@ -237,36 +257,31 @@ function getFromCache(id) {
 const START_FALLBACK = "¡Hola! 👋 ¿Qué te gustaría pedir? Pollo (entero/mitad) y papas (2, 4 o 6).";
 const num = v => Number(String(v).replace(/[^\d.-]/g, '') || 0);
 
-/*function ensureEnvio(pedido) {
+// Opción A con flag: por defecto requiere dirección; si ADD_ENVIO_WITHOUT_ADDRESS=1, agrega envío apenas sea 'domicilio'
+function ensureEnvio(pedido) {
   const entrega = (pedido?.Entrega || "").toLowerCase();
+  const allowWithoutAddress = String(process.env.ADD_ENVIO_WITHOUT_ADDRESS || "0") === "1";
+
+  // ¿Hay dirección en el JSON?
+  const hasAddress =
+    pedido?.Domicilio &&
+    typeof pedido.Domicilio === "object" &&
+    Object.values(pedido.Domicilio).some(v => String(v || "").trim() !== "");
+
+  if (entrega !== "domicilio") return;
+  if (!allowWithoutAddress && !hasAddress) return;
+
   const tieneEnvio = (pedido.items || []).some(i => (i.descripcion || "").toLowerCase().includes("envio"));
-  if (entrega === "domicilio" && !tieneEnvio) {
-    (pedido.items ||= []).push({ descripcion: "Envio", cantidad: 1, importe_unitario: 1500, total: 1500 });
+  if (!tieneEnvio) {
+    (pedido.items ||= []).push({ id: 6, descripcion: "Envio", cantidad: 1, importe_unitario: 1500, total: 1500 });
   }
-}*/
-
- // Opción A: solo agregar "Envio" si hay dirección informada
- function ensureEnvio(pedido) {
-   const entrega = (pedido?.Entrega || "").toLowerCase();
-   // Consideramos "hay domicilio" si Pedido.Domicilio tiene algún campo no vacío
-   const hasAddress =
-     pedido?.Domicilio &&
-     typeof pedido.Domicilio === "object" &&
-     Object.values(pedido.Domicilio).some(v => String(v || "").trim() !== "");
-
-   // Si no es a domicilio o aún no hay dirección, no agregamos "Envio"
-   if (entrega !== "domicilio" || !hasAddress) return;
-
-   const tieneEnvio = (pedido.items || []).some(i => (i.descripcion || "").toLowerCase().includes("envio"));
-   if (!tieneEnvio) {
-     (pedido.items ||= []).push({ descripcion: "Envio", cantidad: 1, importe_unitario: 1500, total: 1500 });
-   }
- }
+}
 function buildBackendSummary(pedido) {
   return [
     "🧾 Resumen del pedido:",
     ...(pedido.items || []).map(i => `- ${i.cantidad} ${i.descripcion}`),
-    `💰 Total: ${Number(pedido.total_pedido || 0).toLocaleString("es-AR")}`
+    `💰 Total: ${Number(pedido.total_pedido || 0).toLocaleString("es-AR")}`,
+    "¿Confirmamos el pedido? ✅"
   ].join("\n");
 }
 function coalesceResponse(maybeText, pedidoObj) {
@@ -303,9 +318,6 @@ function recalcAndDetectMismatch(pedido) {
 // ================== Chat con historial (inyecta comportamiento de Mongo al inicio) ==================
 async function getGPTReply(tenantId, from, userMessage) {
   const id = k(tenantId, from);
-  
-
-    // Cargamos config (comportamiento + modo)
   const cfg = await loadBehaviorConfigFromMongo(tenantId);
   const baseText = cfg.text;
   const historyMode = (cfg.history_mode || "standard").toLowerCase();
@@ -319,47 +331,65 @@ async function getGPTReply(tenantId, from, userMessage) {
   let messages = [];
 
   if (historyMode === "minimal") {
-    // Inicialización de contenedores
     if (!userOnlyHistories[id]) userOnlyHistories[id] = [];
     if (!assistantPedidoSnapshot[id]) {
-      // Snapshot vacío para dar contexto estructurado desde el primer turno
       assistantPedidoSnapshot[id] = JSON.stringify({ estado: "IN_PROGRESS", Pedido: { items: [], total_pedido: 0 } });
     }
-    // Construimos mensajes "on the fly"
     messages = [{ role: "system", content: fullSystem }];
     const asst = assistantPedidoSnapshot[id];
     if (asst) messages.push({ role: "assistant", content: asst });
-    // Agregamos histórico de usuario + el mensaje actual
     const seq = userOnlyHistories[id].concat([{ role: "user", content: userMessage }]);
     messages.push(...seq);
-    // Persistimos user msg
     userOnlyHistories[id].push({ role: "user", content: userMessage });
-    
-    console.log("[minimal] messages =>", JSON.stringify(messages));
-   // console.log("[minimal] userOnlyHistories =>", JSON.stringify(userOnlyHistories[id]));
-  
-    } else {
-    // standard = historial completo
+
+    console.log("[minimal] comportamiento =>\n" + baseText);
+    console.log("[minimal] messages => " + safeStringify(messages));
+    console.log("[minimal] userOnlyHistories => " + safeStringify(userOnlyHistories[id]));
+  } else {
     if (!chatHistories[id]) chatHistories[id] = [{ role: "system", content: fullSystem }];
     chatHistories[id].push({ role: "user", content: userMessage });
     messages = chatHistories[id];
+
+    console.log("[standard] comportamiento =>\n" + baseText);
+    console.log("[standard] messages => " + safeStringify(messages));
   }
 
   try {
+    const payload = {
+      model: CHAT_MODEL,
+      messages: sanitizeMessages(messages),
+      temperature: CHAT_TEMPERATURE,
+      response_format: { type: "json_object" }
+    };
+    console.log("[openai] payload =>\n" + JSON.stringify(payload, null, 2));
+
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
-      { model: CHAT_MODEL, messages, temperature: CHAT_TEMPERATURE, response_format: { type: "json_object" } },
-     { headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" } }
+      payload,
+      { headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" } }
     );
+
+    try {
+      const { id: oid, model, usage } = response.data || {};
+      console.log("[openai] meta =>", { id: oid, model, usage });
+      console.log("[openai] response.data =>\n" + JSON.stringify(response.data, null, 2));
+    } catch (e) {
+      console.warn("[openai] no se pudo stringify la respuesta:", e?.message);
+    }
+
     const reply = response.data.choices[0].message.content;
-    //console.log("Response: "+JSON.stringify(response));
+    console.log("[openai] assistant.content =>\n" + reply);
+
     if (historyMode === "standard") {
       chatHistories[id].push({ role: "assistant", content: reply });
-      console.log(JSON.stringify(chatHistories[id]));
     }
     return reply;
   } catch (error) {
-    console.error("Error OpenAI:", error.response?.data || error.message);
+    if (error?.response?.data) {
+      console.error("Error OpenAI:", JSON.stringify(error.response.data, null, 2));
+    } else {
+      console.error("Error OpenAI:", error?.message || error);
+    }
     return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","estado":"IN_PROGRESS","Pedido":{"items":[],"total_pedido":0}}';
   }
 }
@@ -372,7 +402,6 @@ function setAssistantPedidoSnapshot(tenantId, from, pedidoObj, estado) {
     assistantPedidoSnapshot[id] = content;
   } catch {}
 }
-
 
 module.exports = {
   // comportamiento
