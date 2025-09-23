@@ -361,7 +361,7 @@ async function getGPTReply(tenantId, from, userMessage) {
       temperature: CHAT_TEMPERATURE,
       response_format: { type: "json_object" }
     };
-    console.log("[openai] payload =>\n" + JSON.stringify(payload, null, 2));
+    console.log("[openai] message =>\n" + JSON.stringify(sanitizeMessages(messages), null, 2));
 
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
@@ -371,8 +371,8 @@ async function getGPTReply(tenantId, from, userMessage) {
 
     try {
       const { id: oid, model, usage } = response.data || {};
-      console.log("[openai] meta =>", { id: oid, model, usage });
-      console.log("[openai] response.data =>\n" + JSON.stringify(response.data, null, 2));
+    //  console.log("[openai] meta =>", { id: oid, model, usage });
+      //console.log("[openai] response.data =>\n" + JSON.stringify(response.data, null, 2));
     } catch (e) {
       console.warn("[openai] no se pudo stringify la respuesta:", e?.message);
     }
