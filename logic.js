@@ -71,24 +71,35 @@ function invalidateBehaviorCache(tenantId = DEFAULT_TENANT_ID) {
  * Obtiene el texto de comportamiento para un tenant dado.
  * Guarda el resultado en cache por 5 minutos.
  */
-async function loadBehaviorTextFromMongo(tenantId = DEFAULT_TENANT_ID) {
+// ---- Config de comportamiento + modo de historial desde Mongo ----
+async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   const key = String(tenantId);
   const cached = _behaviorCache.get(key);
   if (cached && (Date.now() - cached.at) < 5 * 60 * 1000) {
-    return cached.text;
+    return cached; // { text, history_mode, at }
   }
   const db = await getDb();
-  // Estrategia de ID único por tenant para simplicidad en índices
   const _id = `behavior:${key}`;
-  const doc = await db.collection("settings").findOne({ _id });
+  const doc = await db.collection("settings").findOne({ _id }) || {};
   const fallbackEnv = process.env.COMPORTAMIENTO || "";
-  const text = String(doc?.text || fallbackEnv).trim();
-  _behaviorCache.set(key, { text, at: Date.now() });
-  return text;
+  const text = String(doc.text || fallbackEnv).trim();
+  const history_mode = (doc.history_mode || process.env.HISTORY_MODE || "standard").trim();
+  const cfg = { text, history_mode, at: Date.now() };
+  _behaviorCache.set(key, cfg);
+  return cfg;
 }
 
+// Backward compat: función existente retorna solo el texto
+async function loadBehaviorTextFromMongo(tenantId = DEFAULT_TENANT_ID) {
+  const cfg = await loadBehaviorConfigFromMongo(tenantId);
+  return cfg.text;
+}
+
+
 // ================== Historial por número / sesión ==================
-const chatHistories = {}; // { [tenant-from]: [{role,content}, ...] }
+const chatHistories = {}; // standard mode: { [tenant-from]: [{role,content}, ...] }
+const userOnlyHistories = {}; // minimal mode: { [tenant-from]: [{role:'user',content}, ...] }
+const assistantPedidoSnapshot = {}; // minimal mode: { [tenant-from]: string(JSON del Pedido) }
 const endedSessions = {}; // { [tenant-from]: { endedAt } }
 
 function k(tenantId, from) { return `${tenantId}::${from}`; }
@@ -292,28 +303,52 @@ function recalcAndDetectMismatch(pedido) {
 // ================== Chat con historial (inyecta comportamiento de Mongo al inicio) ==================
 async function getGPTReply(tenantId, from, userMessage) {
   const id = k(tenantId, from);
-  if (!chatHistories[id]) {
-    const baseText = await loadBehaviorTextFromMongo(tenantId); // ← SOLO al inicio de la conversación
-    const fullText = [
-      buildNowBlock(),
-      "[COMPORTAMIENTO]\n" + baseText
-    ].join("\n\n").trim();
+  
 
-    chatHistories[id] = [{ role: "system", content: fullText }];
+    // Cargamos config (comportamiento + modo)
+  const cfg = await loadBehaviorConfigFromMongo(tenantId);
+  const baseText = cfg.text;
+  const historyMode = (cfg.history_mode || "standard").toLowerCase();
+
+  // Bloque system inicial
+  const fullSystem = [
+    buildNowBlock(),
+    "[COMPORTAMIENTO]\n" + baseText
+  ].join("\n\n").trim();
+
+  let messages = [];
+
+  if (historyMode === "minimal") {
+    // Inicialización de contenedores
+    if (!userOnlyHistories[id]) userOnlyHistories[id] = [];
+    // Construimos mensajes "on the fly"
+    messages = [{ role: "system", content: fullSystem }];
+    const asst = assistantPedidoSnapshot[id];
+    if (asst) messages.push({ role: "assistant", content: asst });
+    // Agregamos histórico de usuario + el mensaje actual
+    const seq = userOnlyHistories[id].concat([{ role: "user", content: userMessage }]);
+    messages.push(...seq);
+    // Persistimos user msg
+    userOnlyHistories[id].push({ role: "user", content: userMessage });
+  } else {
+    // standard = historial completo
+    if (!chatHistories[id]) chatHistories[id] = [{ role: "system", content: fullSystem }];
+    chatHistories[id].push({ role: "user", content: userMessage });
+    messages = chatHistories[id];
   }
-
-  chatHistories[id].push({ role: "user", content: userMessage });
 
   try {
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
-      { model: CHAT_MODEL, messages: chatHistories[id], temperature: CHAT_TEMPERATURE, response_format: { type: "json_object" } },
-      { headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" } }
+      { model: CHAT_MODEL, messages, temperature: CHAT_TEMPERATURE, response_format: { type: "json_object" } },
+     { headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" } }
     );
     const reply = response.data.choices[0].message.content;
-    chatHistories[id].push({ role: "assistant", content: reply });
 
-    console.log( JSON.stringify( chatHistories[id]));
+    if (historyMode === "standard") {
+      chatHistories[id].push({ role: "assistant", content: reply });
+      console.log(JSON.stringify(chatHistories[id]));
+    }
     return reply;
   } catch (error) {
     console.error("Error OpenAI:", error.response?.data || error.message);
@@ -321,9 +356,20 @@ async function getGPTReply(tenantId, from, userMessage) {
   }
 }
 
+// Permite setear el snapshot que se inyectará como rol assistant (solo minimal)
+function setAssistantPedidoSnapshot(tenantId, from, pedidoObj, estado) {
+  const id = k(tenantId, from);
+  try {
+    const content = JSON.stringify({ estado: estado || null, Pedido: pedidoObj || {} });
+    assistantPedidoSnapshot[id] = content;
+  } catch {}
+}
+
+
 module.exports = {
   // comportamiento
   loadBehaviorTextFromMongo,
+  loadBehaviorConfigFromMongo,
   invalidateBehaviorCache,
 
   // chat
@@ -356,4 +402,5 @@ module.exports = {
 
   // exports auxiliares
   DEFAULT_TENANT_ID,
+  setAssistantPedidoSnapshot,
 };
