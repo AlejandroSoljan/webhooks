@@ -336,8 +336,9 @@ async function getGPTReply(tenantId, from, userMessage) {
     userOnlyHistories[id].push({ role: "user", content: userMessage });
     
     console.log("[minimal] messages =>", JSON.stringify(messages));
-    console.log("[minimal] userOnlyHistories =>", JSON.stringify(userOnlyHistories[id]));
-    
+   // console.log("[minimal] userOnlyHistories =>", JSON.stringify(userOnlyHistories[id]));
+
+    } else {
     // standard = historial completo
     if (!chatHistories[id]) chatHistories[id] = [{ role: "system", content: fullSystem }];
     chatHistories[id].push({ role: "user", content: userMessage });
@@ -351,7 +352,7 @@ async function getGPTReply(tenantId, from, userMessage) {
      { headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" } }
     );
     const reply = response.data.choices[0].message.content;
-
+    console.log("Response: "+JSON.stringify(response));
     if (historyMode === "standard") {
       chatHistories[id].push({ role: "assistant", content: reply });
       console.log(JSON.stringify(chatHistories[id]));
