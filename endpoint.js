@@ -12,6 +12,7 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOK
 const {
   // comportamiento
   loadBehaviorTextFromMongo,
+  loadBehaviorConfigFromMongo,
   invalidateBehaviorCache,
   // chat + sesión
   getGPTReply, hasActiveEndedFlag, markSessionEnded, isPoliteClosingMessage,
@@ -21,6 +22,7 @@ const {
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
   // defaults
   DEFAULT_TENANT_ID,
+  setAssistantPedidoSnapshot,
 } = require("./logic");
 
 // Middlewares
@@ -56,6 +58,7 @@ app.get("/cache/audio/:id", (req, res) => {
 app.get("/comportamiento", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
+    const cfg = await loadBehaviorConfigFromMongo(tenant);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html><html><head><meta charset="utf-8" />
       <title>Comportamiento del Bot (${tenant})</title>
@@ -70,21 +73,40 @@ app.get("/comportamiento", async (req, res) => {
         <button id="btnReload">Recargar</button>
         <button id="btnSave">Guardar</button>
       </div>
+      <div class="row" style="margin-top:8px">
+        <label>Modo de historial:&nbsp;
+          <select id="historyMode">
+            <option value="standard">standard (completo)</option>
+            <option value="minimal">minimal (solo user + assistant Pedido)</option>
+          </select>
+        </label>
+      </div>
       <p></p><textarea id="txt" placeholder="Escribí aquí el comportamiento para este tenant..."></textarea>
       <script>
         async function load(){
           const t = document.getElementById('tenant').value || '';
           const r=await fetch('/api/behavior?tenant='+encodeURIComponent(t));
-          const j=await r.json(); document.getElementById('txt').value=j.text||'';
+          const j=await r.json();
+          document.getElementById('txt').value=j.text||'';
+          document.getElementById('historyMode').value = (j.history_mode || 'standard');
         }
         async function save(){
           const t=document.getElementById('tenant').value||'';
           const v=document.getElementById('txt').value||'';
-          const r=await fetch('/api/behavior?tenant='+encodeURIComponent(t),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:v,tenantId:t})});
+          const m=document.getElementById('historyMode').value||'standard';
+          const r=await fetch('/api/behavior?tenant='+encodeURIComponent(t),{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({text:v,tenantId:t,history_mode:m})
+          });
           alert(r.ok?'Guardado ✅':'Error al guardar');
         }
         document.getElementById('btnSave').addEventListener('click',save);
         document.getElementById('btnReload').addEventListener('click',load);
+        // set default mode on first render
+        document.addEventListener('DOMContentLoaded', () => {
+          document.getElementById('historyMode').value='${(cfg.history_mode || 'standard').replace(/"/g,'&quot;')}';
+        });
         load();
       </script></body></html>`);
   } catch (e) { console.error("/comportamiento error:", e); res.status(500).send("internal"); }
@@ -93,8 +115,8 @@ app.get("/comportamiento", async (req, res) => {
 app.get("/api/behavior", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
-    const text = await loadBehaviorTextFromMongo(tenant);
-    res.json({ source: "mongo", tenant, text });
+    const cfg = await loadBehaviorConfigFromMongo(tenant);
+    res.json({ source: "mongo", tenant, text: cfg.text, history_mode: cfg.history_mode });
   } catch {
     res.status(500).json({ error: "internal" });
   }
@@ -104,18 +126,19 @@ app.post("/api/behavior", async (req, res) => {
   try {
     const tenant = (req.body?.tenantId || resolveTenantId(req)).toString().trim();
     const text = String(req.body?.text || "").trim();
+    const history_mode = String(req.body?.history_mode || "").trim() || "standard";
     const db = await require("./db").getDb();
     const _id = `behavior:${tenant}`;
     await db.collection("settings").updateOne(
       { _id },
-      { $set: { text, tenantId: tenant, updatedAt: new Date() } },
+       { $set: { text, history_mode, tenantId: tenant, updatedAt: new Date() } },
       { upsert: true }
     );
     invalidateBehaviorCache(tenant);
     res.json({ ok: true, tenant });
   } catch (e) {
     console.error("POST /api/behavior error:", e);
-    res.status(500).json({ error: "internal" });
+    res.json({ ok: true, tenant, history_mode });
   }
 });
 
@@ -247,7 +270,8 @@ app.post("/webhook", async (req, res) => {
     } catch {}
 
     await require("./logic").sendWhatsAppMessage(from, responseText);
-
+// Actualizamos snapshot del Pedido para el modo "minimal"
+    try { setAssistantPedidoSnapshot(tenant, from, pedido, estado); } catch {}
     // Si terminó la conversación
     try {
       if (estado === "COMPLETED" || estado === "CANCELLED") {
