@@ -321,6 +321,10 @@ async function getGPTReply(tenantId, from, userMessage) {
   if (historyMode === "minimal") {
     // Inicialización de contenedores
     if (!userOnlyHistories[id]) userOnlyHistories[id] = [];
+    if (!assistantPedidoSnapshot[id]) {
+      // Snapshot vacío para dar contexto estructurado desde el primer turno
+      assistantPedidoSnapshot[id] = JSON.stringify({ estado: "IN_PROGRESS", Pedido: { items: [], total_pedido: 0 } });
+    }
     // Construimos mensajes "on the fly"
     messages = [{ role: "system", content: fullSystem }];
     const asst = assistantPedidoSnapshot[id];
@@ -330,9 +334,10 @@ async function getGPTReply(tenantId, from, userMessage) {
     messages.push(...seq);
     // Persistimos user msg
     userOnlyHistories[id].push({ role: "user", content: userMessage });
-    console.log("messages: "+JSON.stringify(messages));
-    console.log("userOnlyHistories: "+JSON.stringify(userOnlyHistories[id]));
-  } else {
+    
+    console.log("[minimal] messages =>", JSON.stringify(messages));
+    console.log("[minimal] userOnlyHistories =>", JSON.stringify(userOnlyHistories[id]));
+    
     // standard = historial completo
     if (!chatHistories[id]) chatHistories[id] = [{ role: "system", content: fullSystem }];
     chatHistories[id].push({ role: "user", content: userMessage });
