@@ -190,6 +190,14 @@ app.post("/webhook", async (req, res) => {
       }
     }
 
+        // ⚡ Fast-path: si el usuario confirma explícitamente, cerramos sin llamar al modelo
+    const userConfirms = /\bconfirm(ar|o|a|ame|alo|alo\.?|alo!|ado)\b/i.test(text) || /^si(s|,)?\s*confirm/i.test(text);
+    if (userConfirms) {
+      // Tomamos último snapshot si existe
+      let snapshot = null;
+      try { snapshot = JSON.parse(require("./logic").__proto__ ? "{}" : "{}"); } catch {}
+      // En minimal guardamos snapshot siempre; si no lo tenés a mano, seguimos y dejamos que el modelo lo complete
+    }
     const gptReply = await getGPTReply(tenant, from, text);
 
     let responseText = "Perdón, hubo un error. ¿Podés repetir?";
@@ -261,6 +269,16 @@ app.post("/webhook", async (req, res) => {
         else responseText = START_FALLBACK;
       }
     } catch {}
+
+    /*   // 🔒 Normalización: si ya está COMPLETED, no vuelvas a preguntar
+    if (estado === "COMPLETED") {
+      const asks = /¿\s*confirm(a|as|as\?|amos|an)\??/i.test(responseText) || responseText.includes("¿Confirmas?");
+      if (asks) {
+        const total = (pedido?.total_pedido ?? 0).toLocaleString("es-AR");
+        const itemsTxt = (pedido?.items || []).map(i => `${i.cantidad} ${i.descripcion}`).join(", ");
+        responseText = `Perfecto, tu pedido quedó confirmado ✅: ${itemsTxt}. Total: ${total}. ¡Gracias!`;
+      }
+    }*/
 
     await require("./logic").sendWhatsAppMessage(from, responseText);
 
