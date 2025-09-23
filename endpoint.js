@@ -227,9 +227,14 @@ app.post("/webhook", async (req, res) => {
         const baseCorrection = [
           "[CORRECCION_DE_IMPORTES]",
           "Detectamos que los importes de tu JSON no coinciden con la suma de ítems según el catálogo.",
-          `Total esperado por backend de total_pedido es: ${pedido.total_pedido}`,
+          "Usá EXACTAMENTE estos ítems interpretados por backend (cantidad y precio unitario):",
+          itemsForModel,
+          `Total esperado por backend (total_pedido): ${pedido.total_pedido}`,
+          "Reglas OBLIGATORIAS:",
+          "- Recalculá todo DESDE CERO usando esos precios (no arrastres totales previos).",
+          "- Si Pedido.Entrega = 'domicilio', DEBES incluir el ítem 'Envio' (id 6, precio 1500).",
           "Devolvé UN ÚNICO objeto JSON con: response, estado (IN_PROGRESS|COMPLETED|CANCELLED),",
-          "y Pedido { Entrega, Domicilio, items[ {descripcion, cantidad, importe_unitario, total} ], total_pedido }.",
+          "y Pedido { Entrega, Domicilio, items[ {id, descripcion, cantidad, importe_unitario, total} ], total_pedido }.",
           "No incluyas texto fuera del JSON."
         ].join("\n");
 
