@@ -330,6 +330,7 @@ async function getGPTReply(tenantId, from, userMessage) {
     messages.push(...seq);
     // Persistimos user msg
     userOnlyHistories[id].push({ role: "user", content: userMessage });
+    console.log(JSON.stringify(userOnlyHistories[id]));
   } else {
     // standard = historial completo
     if (!chatHistories[id]) chatHistories[id] = [{ role: "system", content: fullSystem }];
