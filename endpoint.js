@@ -1,35 +1,27 @@
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
+// Incluye logs de fixReply en el loop de corrección.
 
 require("dotenv").config();
 const express = require("express");
 const app = express();
 
-// Firma de Webhook (opcional, si usás APP SECRET)
 const crypto = require("crypto");
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOKEN;
 
 const {
-  // comportamiento
   loadBehaviorTextFromMongo,
   loadBehaviorConfigFromMongo,
   invalidateBehaviorCache,
-  // chat + sesión
   getGPTReply, hasActiveEndedFlag, markSessionEnded, isPoliteClosingMessage,
-  // negocio pedido
   START_FALLBACK, buildBackendSummary, coalesceResponse, recalcAndDetectMismatch,
-  // cache público + media + stt
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
-  // defaults
-  DEFAULT_TENANT_ID,
-  setAssistantPedidoSnapshot,
+  DEFAULT_TENANT_ID, setAssistantPedidoSnapshot,
 } = require("./logic");
 
-// Middlewares
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true }));
 
-// ---- Firma de Webhook (si corresponde) ----
 function isValidSignature(req) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   const signature = req.get("X-Hub-Signature-256");
@@ -40,12 +32,15 @@ function isValidSignature(req) {
   try { return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected)); } catch { return false; }
 }
 
-// ---- Resolver tenantId ----
 function resolveTenantId(req) {
   return (req.query.tenant || req.headers["x-tenant-id"] || process.env.TENANT_ID || DEFAULT_TENANT_ID).toString().trim();
 }
 
-// ---- Cache público (audio) ----
+// Health
+app.get("/", (_req, res) => res.send("OK"));
+app.get("/healthz", (_req, res) => res.json({ ok: true }));
+
+// Cache público (audio)
 app.get("/cache/audio/:id", (req, res) => {
   const item = getFromCache(req.params.id);
   if (!item) return res.status(404).send("Not found");
@@ -54,7 +49,7 @@ app.get("/cache/audio/:id", (req, res) => {
   res.send(item.buffer);
 });
 
-// ---- Behavior: UI mínima y API ----
+// Behavior UI
 app.get("/comportamiento", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
@@ -103,7 +98,6 @@ app.get("/comportamiento", async (req, res) => {
         }
         document.getElementById('btnSave').addEventListener('click',save);
         document.getElementById('btnReload').addEventListener('click',load);
-        // set default mode on first render
         document.addEventListener('DOMContentLoaded', () => {
           document.getElementById('historyMode').value='${(cfg.history_mode || 'standard').replace(/"/g,'&quot;')}';
         });
@@ -131,14 +125,14 @@ app.post("/api/behavior", async (req, res) => {
     const _id = `behavior:${tenant}`;
     await db.collection("settings").updateOne(
       { _id },
-       { $set: { text, history_mode, tenantId: tenant, updatedAt: new Date() } },
+      { $set: { text, history_mode, tenantId: tenant, updatedAt: new Date() } },
       { upsert: true }
     );
     invalidateBehaviorCache(tenant);
-    res.json({ ok: true, tenant });
+    res.json({ ok: true, tenant, history_mode });
   } catch (e) {
     console.error("POST /api/behavior error:", e);
-    res.json({ ok: true, tenant, history_mode });
+    res.status(500).json({ error: "internal" });
   }
 });
 
@@ -150,7 +144,7 @@ app.post("/api/behavior/refresh-cache", async (req, res) => {
   } catch (e) { console.error("refresh-cache error:", e); res.status(500).json({ error: "internal" }); }
 });
 
-// ---- Webhook Verify (GET) ----
+// Webhook Verify (GET)
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -161,7 +155,7 @@ app.get("/webhook", (req, res) => {
   return res.sendStatus(403);
 });
 
-// ---- Webhook Entrante (POST) ----
+// Webhook Entrante (POST)
 app.post("/webhook", async (req, res) => {
   try {
     if (process.env.WHATSAPP_APP_SECRET && !isValidSignature(req)) return res.sendStatus(403);
@@ -173,12 +167,9 @@ app.post("/webhook", async (req, res) => {
     const from = entry.from;
     let text = (entry.text?.body || "").trim();
 
-    // Texto
     if (entry.type === "text" && entry.text?.body) {
       text = entry.text.body;
-    }
-    // Audio → STT
-    else if (entry.type === "audio" && entry.audio?.id) {
+    } else if (entry.type === "audio" && entry.audio?.id) {
       try {
         const info = await getMediaInfo(entry.audio.id);
         const buf = await downloadMediaBuffer(info.url);
@@ -192,7 +183,6 @@ app.post("/webhook", async (req, res) => {
       }
     }
 
-    // Si la sesión anterior terminó, permitir respuestas cortas sin reabrir
     if (hasActiveEndedFlag(tenant, from)) {
       if (isPoliteClosingMessage(text)) {
         await require("./logic").sendWhatsAppMessage(from, "¡Gracias! 😊 Cuando quieras hacemos otro pedido.");
@@ -200,7 +190,6 @@ app.post("/webhook", async (req, res) => {
       }
     }
 
-    // Chat con historial (inyecta comportamiento desde Mongo SOLO al inicio)
     const gptReply = await getGPTReply(tenant, from, text);
 
     let responseText = "Perdón, hubo un error. ¿Podés repetir?";
@@ -216,7 +205,6 @@ app.post("/webhook", async (req, res) => {
       pedido = pedidoCorr;
 
       if (mismatch && hasItems) {
-        // Intentos de corrección de totales con feedback loop al modelo
         let fixedOk = false;
         let parsedFixLast = null;
 
@@ -240,6 +228,7 @@ app.post("/webhook", async (req, res) => {
 
         for (let attempt = 1; attempt <= (Number(process.env.CALC_FIX_MAX_RETRIES || 3)); attempt++) {
           const fixReply = await getGPTReply(tenant, from, `${baseCorrection}\n[INTENTO:${attempt}/${process.env.CALC_FIX_MAX_RETRIES || 3}]`);
+          console.log(`[fix][${attempt}] assistant.content =>\n${fixReply}`);
           try {
             const parsedFix = JSON.parse(fixReply);
             parsedFixLast = parsedFix;
@@ -265,7 +254,6 @@ app.post("/webhook", async (req, res) => {
       console.error("Error al parsear/corregir JSON:", e.message);
     }
 
-    // Guardia final por si queda vacío
     try {
       const finalBody = String(responseText ?? "").trim();
       if (!finalBody) {
@@ -275,9 +263,9 @@ app.post("/webhook", async (req, res) => {
     } catch {}
 
     await require("./logic").sendWhatsAppMessage(from, responseText);
-// Actualizamos snapshot del Pedido para el modo "minimal"
+
     try { setAssistantPedidoSnapshot(tenant, from, pedido, estado); } catch {}
-    // Si terminó la conversación
+
     try {
       if (estado === "COMPLETED" || estado === "CANCELLED") {
         markSessionEnded(tenant, from);
@@ -291,7 +279,6 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// ---- Arranque del server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
