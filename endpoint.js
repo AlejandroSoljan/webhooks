@@ -9,6 +9,12 @@ const app = express();
 const crypto = require("crypto");
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOKEN;
 
+// ⬇️ Para catálogo en Mongo
+const { ObjectId } = require("mongodb");
+const { getDb } = require("./db");
+const TENANT_ID = (process.env.TENANT_ID || "").trim();
+
+
 const {
   loadBehaviorTextFromMongo,
   loadBehaviorConfigFromMongo,
@@ -48,6 +54,182 @@ app.get("/cache/audio/:id", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.send(item.buffer);
 });
+
+// ===================================================================
+// ===============       Catálogo de productos        ================
+// ===================================================================
+
+// GET /api/products  → lista (activos por defecto; ?all=true para todos)
+app.get("/api/products", async (req, res) => {
+  try {
+    const db = await getDb();
+    const q = req.query.all === "true" ? {} : { active: { $ne: false } };
+    if (TENANT_ID) q.tenantId = TENANT_ID;
+    const items = await db.collection("products")
+      .find(q).sort({ createdAt: -1, descripcion: 1 }).toArray();
+    res.json(items.map(it => ({ ...it, _id: String(it._id) })));
+  } catch (e) {
+    console.error("GET /api/products error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// POST /api/products  → crear
+app.post("/api/products", async (req, res) => {
+  try {
+    const db = await getDb();
+    let { descripcion, importe, observacion, active } = req.body || {};
+    descripcion = String(descripcion || "").trim();
+    observacion = String(observacion || "").trim();
+    if (typeof active !== "boolean") active = !!active;
+    let imp = null;
+    if (typeof importe === "number") imp = importe;
+    else if (typeof importe === "string") {
+      const n = Number(importe.replace(/[^\d.,-]/g, "").replace(",", "."));
+      imp = Number.isFinite(n) ? n : null;
+    }
+    if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
+    const now = new Date();
+    const doc = { tenantId: TENANT_ID || null, descripcion, observacion, active, createdAt: now, updatedAt: now };
+    if (imp !== null) doc.importe = imp;
+    const ins = await db.collection("products").insertOne(doc);
+    res.json({ ok: true, _id: String(ins.insertedId) });
+  } catch (e) {
+    console.error("POST /api/products error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// PUT /api/products/:id  → actualizar
+app.put("/api/products/:id", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { id } = req.params;
+    const upd = {};
+    ["descripcion","observacion","active","importe"].forEach(k => {
+      if (req.body[k] !== undefined) upd[k] = req.body[k];
+    });
+    if (upd.importe !== undefined && typeof upd.importe === "string") {
+      const n = Number(upd.importe.replace(/[^\d.,-]/g, "").replace(",", "."));
+      upd.importe = Number.isFinite(n) ? n : undefined;
+    }
+    if (Object.keys(upd).length === 0) return res.status(400).json({ error: "no_fields" });
+    upd.updatedAt = new Date();
+    const filter = { _id: new ObjectId(String(id)) };
+    if (TENANT_ID) filter.tenantId = TENANT_ID;
+    const result = await db.collection("products").updateOne(filter, { $set: upd });
+    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("PUT /api/products/:id error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// DELETE /api/products/:id  → eliminar
+app.delete("/api/products/:id", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { id } = req.params;
+    const filter = { _id: new ObjectId(String(id)) };
+    if (TENANT_ID) filter.tenantId = TENANT_ID;
+    const result = await db.collection("products").deleteOne(filter);
+    if (!result.deletedCount) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("DELETE /api/products/:id error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// POST /api/products/:id/inactivate  → inactivar
+app.post("/api/products/:id/inactivate", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { id } = req.params;
+    const filter = { _id: new ObjectId(String(id)) };
+    if (TENANT_ID) filter.tenantId = TENANT_ID;
+    const result = await db.collection("products").updateOne(filter, { $set: { active: false, updatedAt: new Date() } });
+    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/products/:id/inactivate error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// POST /api/products/:id/reactivate  → reactivar
+app.post("/api/products/:id/reactivate", async (req, res) => {
+  try {
+    const db = await getDb();
+    const { id } = req.params;
+    const filter = { _id: new ObjectId(String(id)) };
+    if (TENANT_ID) filter.tenantId = TENANT_ID;
+    const result = await db.collection("products").updateOne(filter, { $set: { active: true, updatedAt: new Date() } });
+    if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/products/:id/reactivate error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// GET /productos  → UI HTML simple para administrar
+app.get("/productos", async (req, res) => {
+  try {
+    const db = await getDb();
+    const verTodos = req.query.all === "true";
+    const filtro = verTodos ? {} : { active: { $ne: false } };
+    if (TENANT_ID) filtro.tenantId = TENANT_ID;
+    const productos = await db.collection("products").find(filtro).sort({ createdAt: -1 }).toArray();
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!doctype html><html><head><meta charset="utf-8" /><title>Productos</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <style>
+        body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1100px}
+        table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px;vertical-align:top}
+        th{background:#f5f5f5;text-align:left}input,textarea{width:100%;box-sizing:border-box}
+        textarea{min-height:56px}.row{display:flex;gap:8px;align-items:center}.btn{padding:6px 10px;border:1px solid #333;background:#fff;border-radius:4px;cursor:pointer}
+      </style></head><body>
+      <h1>Productos</h1>
+      <div class="row"><a class="btn" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a> <button id="btnAdd" class="btn">Agregar</button> <button id="btnReload" class="btn">Recargar</button></div>
+      <p></p>
+      <table id="tbl"><thead><tr><th>Descripción</th><th>Importe</th><th>Obs.</th><th>Activo</th><th>Acciones</th></tr></thead>
+      <tbody>${productos.map(p => `<tr data-id="${p._id}">
+        <td><input class="descripcion" type="text" value="${(p.descripcion||'').replace(/\"/g,'&quot;')}" /></td>
+        <td><input class="importe" type="number" step="0.01" value="${p.importe ?? ''}" /></td>
+        <td><textarea class="observacion">${(p.observacion||'').replace(/</g,'&lt;')}</textarea></td>
+        <td><input class="active" type="checkbox" ${p.active!==false?'checked':''} /></td>
+        <td><button class="save btn">Guardar</button><button class="del btn">Eliminar</button><button class="toggle btn">${p.active!==false?'Inactivar':'Reactivar'}</button></td>
+      </tr>`).join('')}</tbody></table>
+      <template id="row-tpl"><tr data-id="">
+        <td><input class="descripcion" type="text" /></td>
+        <td><input class="importe" type="number" step="0.01" /></td>
+        <td><textarea class="observacion"></textarea></td>
+        <td><input class="active" type="checkbox" checked /></td>
+        <td><button class="save btn">Guardar</button><button class="del btn">Eliminar</button><button class="toggle btn">Inactivar</button></td>
+      </tr></template>
+      <script>
+        function q(s,c){return (c||document).querySelector(s)}function all(s,c){return Array.from((c||document).querySelectorAll(s))}
+        async function j(url,opts){const r=await fetch(url,opts||{});if(!r.ok)throw new Error('HTTP '+r.status);const ct=r.headers.get('content-type')||'';return ct.includes('application/json')?r.json():r.text()}
+        async function reload(){const url=new URL(location.href);const allFlag=url.searchParams.get('all')==='true';const data=await j('/api/products'+(allFlag?'?all=true':''));const tb=q('#tbl tbody');tb.innerHTML='';for(const it of data){const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);tr.dataset.id=it._id||'';q('.descripcion',tr).value=it.descripcion||'';q('.importe',tr).value=typeof it.importe==='number'?it.importe:(it.importe||'');q('.observacion',tr).value=it.observacion||'';q('.active',tr).checked=it.active!==false;q('.toggle',tr).textContent=(it.active!==false)?'Inactivar':'Reactivar';bindRow(tr);tb.appendChild(tr);}if(!data.length){const r=document.createElement('tr');r.innerHTML='<td colspan="5" style="text-align:center;color:#666">Sin productos para mostrar</td>';tb.appendChild(r);}}
+        async function saveRow(tr){const id=tr.dataset.id;const payload={descripcion:q('.descripcion',tr).value.trim(),importe:q('.importe',tr).value.trim(),observacion:q('.observacion',tr).value.trim(),active:q('.active',tr).checked};if(!payload.descripcion){alert('Descripción requerida');return;}if(id){await j('/api/products/'+encodeURIComponent(id),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else{await j('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}await reload();}
+        async function deleteRow(tr){const id=tr.dataset.id;if(!id){tr.remove();return;}if(!confirm('¿Eliminar definitivamente?'))return;await j('/api/products/'+encodeURIComponent(id),{method:'DELETE'});await reload();}
+        async function toggleRow(tr){const id=tr.dataset.id;if(!id){alert('Primero guardá el nuevo producto.');return;}const active=q('.active',tr).checked;const path=active?('/api/products/'+encodeURIComponent(id)+'/inactivate'):('/api/products/'+encodeURIComponent(id)+'/reactivate');await j(path,{method:'POST'});await reload();}
+        function bindRow(tr){q('.save',tr).addEventListener('click',()=>saveRow(tr));q('.del',tr).addEventListener('click',()=>deleteRow(tr));q('.toggle',tr).addEventListener('click',()=>toggleRow(tr));}
+        document.getElementById('btnReload').addEventListener('click',reload);
+        document.getElementById('btnAdd').addEventListener('click',()=>{const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);q('#tbl tbody').prepend(tr);bindRow(tr);});
+        all('#tbl tbody tr').forEach(bindRow);
+      </script></body></html>`);
+  } catch (e) {
+    console.error("/productos error:", e);
+    res.status(500).send("internal");
+  }
+});
+
+
+
+
 
 // Behavior UI
 app.get("/comportamiento", async (req, res) => {
