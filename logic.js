@@ -774,4 +774,5 @@ module.exports = {
   getEnvioItemFromCatalog,
   getStoreCoords,
   computeEnvioItemForPedido,
+  normalizeOrder,
 };
