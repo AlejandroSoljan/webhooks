@@ -98,7 +98,7 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   if (cached && (Date.now() - cached.at) < 5 * 60 * 1000) {
     return cached; // { text, history_mode, at }
   }
-  const db = await getDb();
+  
   const _id = `behavior:${key}`;
   const doc = await db.collection("settings").findOne({ _id }) || {};
   const fallbackEnv = process.env.COMPORTAMIENTO || "";
