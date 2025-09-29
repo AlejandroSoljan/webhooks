@@ -319,18 +319,22 @@ const num = v => Number(String(v).replace(/[^\d.-]/g, '') || 0);
 // - Si Entrega = domicilio  -> asegura que exista el ítem Envio
 // - Si Entrega ≠ domicilio  -> elimina cualquier Envio residual
 // Lee un único "Envio" genérico (backward-compat) cuando no usamos tramos
+// Busca un "Envio" activo. Acepta "Envio", "Envio 1/2/3", etc.
+// Si hay varios, devuelve el más barato (fallback sensato).
 async function getEnvioItemFromCatalog(tenantId = DEFAULT_TENANT_ID) {
   try {
     const db = await getDb();
-    const filter = { active: { $ne: false }, descripcion: { $regex: /^env[ií]o$/i } };
+    const filter = { active: { $ne: false }, descripcion: { $regex: /^env[ií]o/i } };
     if (tenantId) filter.tenantId = String(tenantId);
-    const doc = await db.collection("products").findOne(filter);
-    if (!doc) return null;
-    return {
-      _id: String(doc._id || ""),
-      descripcion: String(doc.descripcion || "Envio"),
-      importe: Number(doc.importe || 0)
-    };
+    const list = await db.collection("products")
+      .find(filter)
+      .project({ _id:1, descripcion:1, importe:1 })
+      .toArray();
+    if (!list?.length) return null;
+    const best = list
+      .map(d => ({ _id:String(d._id||""), descripcion:String(d.descripcion||"Envio"), importe:Number(d.importe||0) }))
+      .sort((a,b) => a.importe - b.importe)[0];
+    return best || null;
   } catch { return null; }
 }
 
@@ -403,10 +407,16 @@ async function pickEnvioTierByDistance(tenantId, distanceKm) {
 async function computeEnvioItemForPedido(tenantId, pedido) {
   const entrega = (pedido?.Entrega || "").toLowerCase();
   if (entrega !== "domicilio") return null;
-  const domicilioStr = typeof pedido?.Domicilio === "string"
-    ? pedido.Domicilio
-    : [pedido?.Domicilio?.calle, pedido?.Domicilio?.numero, pedido?.Domicilio?.ciudad]
-        .filter(Boolean).join(" ");
+  // Acepta Domicilio como string o como objeto con "direccion" (y variantes)
+  let domicilioStr = null;
+  if (typeof pedido?.Domicilio === "string") {
+    domicilioStr = pedido.Domicilio;
+  } else if (pedido?.Domicilio && typeof pedido.Domicilio === "object") {
+    const d = pedido.Domicilio;
+    domicilioStr = [
+      d.direccion, d.calle, d.numero, d.piso, d.depto, d.barrio, d.localidad, d.ciudad, d.provincia, d.cp
+    ].filter(v => String(v||"").trim()).join(" ");
+  }
   if (!domicilioStr) return null;
   const store = await getStoreCoords(tenantId);
   if (!Number.isFinite(store.lat) || !Number.isFinite(store.lng)) return null;
