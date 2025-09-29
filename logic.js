@@ -25,6 +25,8 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || process.env.WHATSAPP_ACCESS
 const DEFAULT_TENANT_ID = (process.env.TENANT_ID || "default").trim();
 
 const { getDb } = require("./db");
+const { ObjectId } = require("mongodb");
+
 const STORE_LAT = parseFloat(process.env.STORE_LAT || "0");
 const STORE_LNG = parseFloat(process.env.STORE_LNG || "0");
 
@@ -100,6 +102,7 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   }
   
   const _id = `behavior:${key}`;
+  const db = await getDb();
   const doc = await db.collection("settings").findOne({ _id }) || {};
   const fallbackEnv = process.env.COMPORTAMIENTO || "";
   const text = String(doc.text || fallbackEnv).trim();
