@@ -370,7 +370,9 @@ async function ensureConversation(tenantId, waId) {
     { $setOnInsert: { tenantId, waId, openedAt: now, status: "OPEN" } },
     { upsert: true, returnDocument: "after" }
   );
-  return upd.value;
+  if (upd && upd.value) return upd.value;
+  // Fallback: algunos drivers/versiones pueden no devolver 'value' en upsert
+  return await db.collection("conversations").findOne({ tenantId, waId, closedAt: { $exists: false } });
 }
 
 // ---------- ADMIN UI ----------
@@ -523,9 +525,18 @@ app.post("/webhook", async (req, res) => {
         // Persistir mensaje de usuario
     try {
       const conv = await ensureConversation(tenant, from);
-      await (await getDb()).collection("messages").insertOne({
-        conversationId: conv._id, role: "user", content: text, ts: new Date(), type: entry.type || "text", meta: { raw: entry }
-      });
+      if (conv && conv._id) {
+        await (await getDb()).collection("messages").insertOne({
+          conversationId: conv._id,
+          role: "user",
+          content: text,
+          ts: new Date(),
+         type: entry.type || "text",
+          meta: { raw: entry }
+        });
+      } else {
+        console.warn("persist user msg: conversación no disponible aún (conv undefined)");
+      }
     } catch (e) { console.warn("persist user msg:", e.message); }
 
     const gptReply = await getGPTReply(tenant, from, text);
