@@ -21,6 +21,8 @@ const {
   invalidateBehaviorCache,
   getGPTReply, hasActiveEndedFlag, markSessionEnded, isPoliteClosingMessage,
   START_FALLBACK, buildBackendSummary, coalesceResponse, recalcAndDetectMismatch,
+  getEnvioItemFromCatalog,
+  computeEnvioItemForPedido,
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
   DEFAULT_TENANT_ID, setAssistantPedidoSnapshot,
 } = require("./logic");
@@ -78,7 +80,7 @@ app.get("/api/products", async (req, res) => {
 app.post("/api/products", async (req, res) => {
   try {
     const db = await getDb();
-    let { descripcion, importe, observacion, active } = req.body || {};
+    let { descripcion, importe, observacion, active, min_km, max_km } = req.body || {};
     descripcion = String(descripcion || "").trim();
     observacion = String(observacion || "").trim();
     if (typeof active !== "boolean") active = !!active;
@@ -88,10 +90,20 @@ app.post("/api/products", async (req, res) => {
       const n = Number(importe.replace(/[^\d.,-]/g, "").replace(",", "."));
       imp = Number.isFinite(n) ? n : null;
     }
+    // parseo de min/max km
+    const toNum = (v) => {
+      if (v === undefined || v === null || v === "") return undefined;
+      const n = Number(String(v).replace(",", "."));
+      return Number.isFinite(n) ? n : undefined;
+    };
+    min_km = toNum(min_km);
+    max_km = toNum(max_km);
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
     const now = new Date();
     const doc = { tenantId: TENANT_ID || null, descripcion, observacion, active, createdAt: now, updatedAt: now };
     if (imp !== null) doc.importe = imp;
+    if (min_km !== undefined) doc.min_km = min_km;
+    if (max_km !== undefined) doc.max_km = max_km;
     const ins = await db.collection("products").insertOne(doc);
     res.json({ ok: true, _id: String(ins.insertedId) });
   } catch (e) {
@@ -106,13 +118,23 @@ app.put("/api/products/:id", async (req, res) => {
     const db = await getDb();
     const { id } = req.params;
     const upd = {};
-    ["descripcion","observacion","active","importe"].forEach(k => {
-      if (req.body[k] !== undefined) upd[k] = req.body[k];
-    });
-    if (upd.importe !== undefined && typeof upd.importe === "string") {
-      const n = Number(upd.importe.replace(/[^\d.,-]/g, "").replace(",", "."));
-      upd.importe = Number.isFinite(n) ? n : undefined;
-    }
+    ["descripcion","observacion","active","importe","min_km","max_km"].forEach(k => { if (req.body[k] !== undefined) upd[k] = req.body[k]; });
+     if (upd.importe !== undefined) {
+       const v = upd.importe;
+       if (typeof v === "string") {
+         const n = Number(v.replace(/[^\d.,-]/g, "").replace(",", "."));
+         upd.importe = Number.isFinite(n) ? n : undefined;
+       }
+     }
+    // parseo min/max km si vienen en string
+    const toNum = (v) => {
+      if (v === undefined || v === null || v === "") return undefined;
+      const n = Number(String(v).replace(",", "."));
+      return Number.isFinite(n) ? n : undefined;
+    };
+    if (upd.min_km !== undefined) upd.min_km = toNum(upd.min_km);
+    if (upd.max_km !== undefined) upd.max_km = toNum(upd.max_km);
+    
     if (Object.keys(upd).length === 0) return res.status(400).json({ error: "no_fields" });
     upd.updatedAt = new Date();
     const filter = { _id: new ObjectId(String(id)) };
@@ -190,15 +212,20 @@ app.get("/productos", async (req, res) => {
         table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px;vertical-align:top}
         th{background:#f5f5f5;text-align:left}input,textarea{width:100%;box-sizing:border-box}
         textarea{min-height:56px}.row{display:flex;gap:8px;align-items:center}.btn{padding:6px 10px;border:1px solid #333;background:#fff;border-radius:4px;cursor:pointer}
-      </style></head><body>
+      .num{max-width:120px}
+        </style></head><body>
       <h1>Productos</h1>
       <div class="row"><a class="btn" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a> <button id="btnAdd" class="btn">Agregar</button> <button id="btnReload" class="btn">Recargar</button></div>
       <p></p>
-      <table id="tbl"><thead><tr><th>Descripción</th><th>Importe</th><th>Obs.</th><th>Activo</th><th>Acciones</th></tr></thead>
+      <table id="tbl"><thead><tr><th>Descripción</th><th>Importe</th><th>Min km</th><th>Max km</th><th>Obs.</th><th>Activo</th><th>Acciones</th></tr></thead>
       <tbody>${productos.map(p => `<tr data-id="${p._id}">
-        <td><input class="descripcion" type="text" value="${(p.descripcion||'').replace(/\"/g,'&quot;')}" /></td>
-        <td><input class="importe" type="number" step="0.01" value="${p.importe ?? ''}" /></td>
-        <td><textarea class="observacion">${(p.observacion||'').replace(/</g,'&lt;')}</textarea></td>
+         <td><input class="descripcion" type="text" /></td>
+        <td><input class="importe num" type="number" step="0.01" /></td>
+        <td><input class="min_km num" type="number" step="0.01" /></td>
+        <td><input class="max_km num" type="number" step="0.01" /></td>
+       <td><input class="min_km num" type="number" step="0.01" value="${p.min_km ?? ''}" /></td>
+        <td><input class="max_km num" type="number" step="0.01" value="${p.max_km ?? ''}" /></td>
+  <td><textarea class="observacion">${(p.observacion||'').replace(/</g,'&lt;')}</textarea></td>
         <td><input class="active" type="checkbox" ${p.active!==false?'checked':''} /></td>
         <td><button class="save btn">Guardar</button><button class="del btn">Eliminar</button><button class="toggle btn">${p.active!==false?'Inactivar':'Reactivar'}</button></td>
       </tr>`).join('')}</tbody></table>
@@ -212,9 +239,9 @@ app.get("/productos", async (req, res) => {
       <script>
         function q(s,c){return (c||document).querySelector(s)}function all(s,c){return Array.from((c||document).querySelectorAll(s))}
         async function j(url,opts){const r=await fetch(url,opts||{});if(!r.ok)throw new Error('HTTP '+r.status);const ct=r.headers.get('content-type')||'';return ct.includes('application/json')?r.json():r.text()}
-        async function reload(){const url=new URL(location.href);const allFlag=url.searchParams.get('all')==='true';const data=await j('/api/products'+(allFlag?'?all=true':''));const tb=q('#tbl tbody');tb.innerHTML='';for(const it of data){const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);tr.dataset.id=it._id||'';q('.descripcion',tr).value=it.descripcion||'';q('.importe',tr).value=typeof it.importe==='number'?it.importe:(it.importe||'');q('.observacion',tr).value=it.observacion||'';q('.active',tr).checked=it.active!==false;q('.toggle',tr).textContent=(it.active!==false)?'Inactivar':'Reactivar';bindRow(tr);tb.appendChild(tr);}if(!data.length){const r=document.createElement('tr');r.innerHTML='<td colspan="5" style="text-align:center;color:#666">Sin productos para mostrar</td>';tb.appendChild(r);}}
-        async function saveRow(tr){const id=tr.dataset.id;const payload={descripcion:q('.descripcion',tr).value.trim(),importe:q('.importe',tr).value.trim(),observacion:q('.observacion',tr).value.trim(),active:q('.active',tr).checked};if(!payload.descripcion){alert('Descripción requerida');return;}if(id){await j('/api/products/'+encodeURIComponent(id),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else{await j('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}await reload();}
-        async function deleteRow(tr){const id=tr.dataset.id;if(!id){tr.remove();return;}if(!confirm('¿Eliminar definitivamente?'))return;await j('/api/products/'+encodeURIComponent(id),{method:'DELETE'});await reload();}
+         async function reload(){const url=new URL(location.href);const allFlag=url.searchParams.get('all')==='true';const data=await j('/api/products'+(allFlag?'?all=true':''));const tb=q('#tbl tbody');tb.innerHTML='';for(const it of data){const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);tr.dataset.id=it._id||'';q('.descripcion',tr).value=it.descripcion||'';q('.importe',tr).value=typeof it.importe==='number'?it.importe:(it.importe||'');q('.min_km',tr).value=(it.min_km ?? '');q('.max_km',tr).value=(it.max_km ?? '');q('.observacion',tr).value=it.observacion||'';q('.active',tr).checked=it.active!==false;q('.toggle',tr).textContent=(it.active!==false)?'Inactivar':'Reactivar';bindRow(tr);tb.appendChild(tr);}if(!data.length){const r=document.createElement('tr');r.innerHTML='<td colspan="7" style="text-align:center;color:#666">Sin productos para mostrar</td>';tb.appendChild(r);}}
+        async function saveRow(tr){const id=tr.dataset.id;const payload={descripcion:q('.descripcion',tr).value.trim(),importe:q('.importe',tr).value.trim(),min_km:q('.min_km',tr).value.trim(),max_km:q('.max_km',tr).value.trim(),observacion:q('.observacion',tr).value.trim(),active:q('.active',tr).checked};if(!payload.descripcion){alert('Descripción requerida');return;}if(id){await j('/api/products/'+encodeURIComponent(id),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else{await j('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}await reload();}
+       async function deleteRow(tr){const id=tr.dataset.id;if(!id){tr.remove();return;}if(!confirm('¿Eliminar definitivamente?'))return;await j('/api/products/'+encodeURIComponent(id),{method:'DELETE'});await reload();}
         async function toggleRow(tr){const id=tr.dataset.id;if(!id){alert('Primero guardá el nuevo producto.');return;}const active=q('.active',tr).checked;const path=active?('/api/products/'+encodeURIComponent(id)+'/inactivate'):('/api/products/'+encodeURIComponent(id)+'/reactivate');await j(path,{method:'POST'});await reload();}
         function bindRow(tr){q('.save',tr).addEventListener('click',()=>saveRow(tr));q('.del',tr).addEventListener('click',()=>deleteRow(tr));q('.toggle',tr).addEventListener('click',()=>toggleRow(tr));}
         document.getElementById('btnReload').addEventListener('click',reload);
@@ -390,8 +417,12 @@ app.post("/webhook", async (req, res) => {
       const parsed = JSON.parse(gptReply);
       estado = parsed.estado;
       pedido = parsed.Pedido || { items: [] };
-
-      const { pedidoCorr, mismatch, hasItems } = recalcAndDetectMismatch(pedido);
+      // Ítem Envío según distancia (tramos). Si no se puede calcular, cae al Envío genérico.
+      let envioItem = await computeEnvioItemForPedido(tenant, pedido);
+      if (!envioItem) {
+        envioItem = await getEnvioItemFromCatalog(tenant);
+      }
+      const { pedidoCorr, mismatch, hasItems } = recalcAndDetectMismatch(pedido, { envioItem });
       pedido = pedidoCorr;
 
       if (mismatch && hasItems) {
@@ -410,7 +441,8 @@ app.post("/webhook", async (req, res) => {
           `Total esperado por backend (total_pedido): ${pedido.total_pedido}`,
           "Reglas OBLIGATORIAS:",
           "- Recalculá todo DESDE CERO usando esos precios (no arrastres totales previos).",
-          "- Si Pedido.Entrega = 'domicilio', DEBES incluir el ítem 'Envio' (id 6, precio 1500).",
+          "- Si Pedido.Entrega = 'domicilio', DEBES incluir el ítem 'Envio' con el precio del catálogo correspondiente al tramo por distancia.",
+          "- Si Pedido.Entrega != 'domicilio', DEBES QUITAR cualquier ítem 'Envio'.",
           "Devolvé UN ÚNICO objeto JSON con: response, estado (IN_PROGRESS|COMPLETED|CANCELLED),",
           "y Pedido { Entrega, Domicilio, items[ {id, descripcion, cantidad, importe_unitario, total} ], total_pedido }.",
           "No incluyas texto fuera del JSON."
@@ -425,7 +457,8 @@ app.post("/webhook", async (req, res) => {
             estado = parsedFix.estado || estado;
 
             let pedidoFix = parsedFix.Pedido || { items: [] };
-            const { pedidoCorr: pedidoFixCorr, mismatch: mismatchFix, hasItems: hasItemsFix } = recalcAndDetectMismatch(pedidoFix);
+           // const { pedidoCorr: pedidoFixCorr, mismatch: mismatchFix, hasItems: hasItemsFix } = recalcAndDetectMismatch(pedidoFix);
+            const { pedidoCorr: pedidoFixCorr, mismatch: mismatchFix, hasItems: hasItemsFix } = recalcAndDetectMismatch(pedidoFix, { envioItem });
             pedido = pedidoFixCorr;
 
             if (!mismatchFix && hasItemsFix) { fixedOk = true; break; }
