@@ -25,6 +25,8 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || process.env.WHATSAPP_ACCESS
 const DEFAULT_TENANT_ID = (process.env.TENANT_ID || "default").trim();
 
 const { getDb } = require("./db");
+const STORE_LAT = parseFloat(process.env.STORE_LAT || "0");
+const STORE_LNG = parseFloat(process.env.STORE_LNG || "0");
 
 // ================== OpenAI client (para fallback STT) ==================
 let openai = null;
@@ -294,7 +296,7 @@ const START_FALLBACK = "¡Hola! 👋 ¿Qué te gustaría pedir? Pollo (entero/mi
 const num = v => Number(String(v).replace(/[^\d.-]/g, '') || 0);
 
 // Opción A con flag: por defecto requiere dirección; si ADD_ENVIO_WITHOUT_ADDRESS=1, agrega envío apenas sea 'domicilio'
-function ensureEnvio(pedido) {
+/*function ensureEnvio(pedido) {
   const entrega = (pedido?.Entrega || "").toLowerCase();
   const allowWithoutAddress = String(process.env.ADD_ENVIO_WITHOUT_ADDRESS || "0") === "1";
 
@@ -311,7 +313,162 @@ function ensureEnvio(pedido) {
   if (!tieneEnvio) {
     (pedido.items ||= []).push({ id: 6, descripcion: "Envio", cantidad: 1, importe_unitario: 1500, total: 1500 });
   }
+}*/
+
+// Validación de "Envio" según método de entrega
+// - Si Entrega = domicilio  -> asegura que exista el ítem Envio
+// - Si Entrega ≠ domicilio  -> elimina cualquier Envio residual
+// Lee un único "Envio" genérico (backward-compat) cuando no usamos tramos
+async function getEnvioItemFromCatalog(tenantId = DEFAULT_TENANT_ID) {
+  try {
+    const db = await getDb();
+    const filter = { active: { $ne: false }, descripcion: { $regex: /^env[ií]o$/i } };
+    if (tenantId) filter.tenantId = String(tenantId);
+    const doc = await db.collection("products").findOne(filter);
+    if (!doc) return null;
+    return {
+      _id: String(doc._id || ""),
+      descripcion: String(doc.descripcion || "Envio"),
+      importe: Number(doc.importe || 0)
+    };
+  } catch { return null; }
 }
+
+// Coordenadas del local desde settings o ENV
+async function getStoreCoords(tenantId = DEFAULT_TENANT_ID) {
+  try {
+    const db = await getDb();
+    const set = await db.collection("settings").findOne({ _id: `store:${tenantId}:coords` });
+    const lat = Number(set?.lat ?? STORE_LAT);
+    const lng = Number(set?.lng ?? STORE_LNG);
+    if (Number.isFinite(lat) && Number.isFinite(lng) && (lat || lng)) return { lat, lng };
+  } catch {}
+  return { lat: STORE_LAT, lng: STORE_LNG };
+}
+
+// Haversine (km)
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const toRad = (v) => (v * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+// Geocode con Nominatim (OSM) — requiere User-Agent
+async function geocodeAddressToCoords(address) {
+  try {
+    const q = encodeURIComponent(String(address || "").trim());
+    if (!q) return null;
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${q}`;
+    const r = await fetch(url, { headers: { "User-Agent": "caryco-bot/1.0 (+contacto)" } });
+    if (!r.ok) return null;
+    const arr = await r.json();
+    if (!Array.isArray(arr) || arr.length === 0) return null;
+    const { lat, lon } = arr[0];
+    const la = Number(lat), lo = Number(lon);
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) return null;
+    return { lat: la, lng: lo };
+  } catch { return null; }
+}
+
+// Selecciona el tramo de envío según distancia (min_km/max_km en products)
+async function pickEnvioTierByDistance(tenantId, distanceKm) {
+  try {
+    const db = await getDb();
+    const filter = { active: { $ne: false }, descripcion: { $regex: /^env[ií]o/i } };
+    if (tenantId) filter.tenantId = String(tenantId);
+    const list = await db.collection("products")
+      .find(filter)
+      .project({ _id: 1, descripcion: 1, importe: 1, min_km: 1, max_km: 1 })
+      .toArray();
+    if (!list.length) return null;
+    // normaliza
+    const tiers = list.map(d => ({
+      _id: String(d._id),
+      descripcion: String(d.descripcion || "Envio"),
+      importe: Number(d.importe || 0),
+      min_km: Number.isFinite(d.min_km) ? Number(d.min_km) : 0,
+      max_km: Number.isFinite(d.max_km) ? Number(d.max_km) : Infinity
+    })).sort((a,b) => a.max_km - b.max_km);
+    const match = tiers.find(t => distanceKm >= t.min_km && distanceKm < t.max_km);
+    return match || tiers[tiers.length - 1];
+  } catch { return null; }
+}
+
+// A partir de Entrega=domicilio y un domicilio textual, calcula distancia y elige ítem
+async function computeEnvioItemForPedido(tenantId, pedido) {
+  const entrega = (pedido?.Entrega || "").toLowerCase();
+  if (entrega !== "domicilio") return null;
+  const domicilioStr = typeof pedido?.Domicilio === "string"
+    ? pedido.Domicilio
+    : [pedido?.Domicilio?.calle, pedido?.Domicilio?.numero, pedido?.Domicilio?.ciudad]
+        .filter(Boolean).join(" ");
+  if (!domicilioStr) return null;
+  const store = await getStoreCoords(tenantId);
+  if (!Number.isFinite(store.lat) || !Number.isFinite(store.lng)) return null;
+  const dst = await geocodeAddressToCoords(domicilioStr);
+  if (!dst) return null;
+  const km = haversineKm(store.lat, store.lng, dst.lat, dst.lng);
+  const tier = await pickEnvioTierByDistance(tenantId, km);
+  if (!tier) return null;
+  return { _id: tier._id, descripcion: tier.descripcion, importe: tier.importe };
+}
+
+
+
+// Opción A con flag: por defecto requiere dirección; si ADD_ENVIO_WITHOUT_ADDRESS=1, agrega envío apenas sea 'domicilio'
+function ensureEnvio(pedido, envioItem) {
+  const entrega = (pedido?.Entrega || "").toLowerCase();
+  const allowWithoutAddress = String(process.env.ADD_ENVIO_WITHOUT_ADDRESS || "0") === "1";
+
+  // Detecta si hay dirección (por si querés exigirla antes de cobrar envío)
+  const hasAddress =
+    pedido?.Domicilio &&
+    typeof pedido.Domicilio === "object" &&
+    Object.values(pedido.Domicilio).some(v => String(v || "").trim() !== "");
+
+  // Normaliza estructura
+  
+
+  pedido.items ||= [];
+  const isEnvio = (it) => (it?.descripcion || "").toLowerCase().includes("envio") ||
+                          (envioItem && it?.id && String(it.id) === String(envioItem._id));
+  const idx = pedido.items.findIndex(isEnvio);
+
+  if (entrega === "domicilio") {
+    if (!allowWithoutAddress && !hasAddress) return; // no agregamos hasta tener domicilio (a menos que flag)
+    if (idx === -1) {
+      if (envioItem) {
+        const price = num(envioItem.importe);
+        pedido.items.push({
+          id: envioItem._id || 0,
+          descripcion: envioItem.descripcion || "Envio",
+          cantidad: 1,
+          importe_unitario: price,
+          total: price
+        });
+      }
+    } else if (envioItem) {
+      // Actualiza precio si cambió en catálogo
+      const price = num(envioItem.importe);
+      pedido.items[idx].importe_unitario = price;
+      pedido.items[idx].total = num(pedido.items[idx].cantidad || 1) * price;
+      // Normaliza descripción/id si está disponible
+      if (envioItem._id) pedido.items[idx].id = envioItem._id;
+      if (envioItem.descripcion) pedido.items[idx].descripcion = envioItem.descripcion;
+    }
+  } else {
+    // Si no es domicilio, quitamos cualquier "Envio" residual
+    if (idx !== -1) {
+      pedido.items.splice(idx, 1);
+    }
+  }
+    }
+
 function buildBackendSummary(pedido) {
   return [
     "🧾 Resumen del pedido:",
@@ -324,13 +481,14 @@ function coalesceResponse(maybeText, pedidoObj) {
   const s = String(maybeText ?? "").trim();
   return s || ((pedidoObj?.items?.length || 0) > 0 ? buildBackendSummary(pedidoObj) : START_FALLBACK);
 }
-function recalcAndDetectMismatch(pedido) {
+function recalcAndDetectMismatch(pedido, opts = {}) {
+  const envioItem = opts.envioItem || null;
   pedido.items ||= [];
   const hasItems = pedido.items.length > 0;
   let mismatch = false;
 
   const beforeCount = pedido.items.length;
-  ensureEnvio(pedido);
+  ensureEnvio(pedido, envioItem);
   if (pedido.items.length !== beforeCount && hasItems) mismatch = true;
 
   let totalCalc = 0;
@@ -479,4 +637,7 @@ module.exports = {
   // exports auxiliares
   DEFAULT_TENANT_ID,
   setAssistantPedidoSnapshot,
+  getEnvioItemFromCatalog,
+  getStoreCoords,
+  computeEnvioItemForPedido,
 };
