@@ -219,23 +219,28 @@ app.get("/productos", async (req, res) => {
       <p></p>
       <table id="tbl"><thead><tr><th>Descripción</th><th>Importe</th><th>Min km</th><th>Max km</th><th>Obs.</th><th>Activo</th><th>Acciones</th></tr></thead>
       <tbody>${productos.map(p => `<tr data-id="${p._id}">
-         <td><input class="descripcion" type="text" /></td>
+        <td><input class="descripcion" type="text" value="${(p.descripcion||'').replace(/\"/g,'&quot;')}" /></td>
+        <td><input class="importe num" type="number" step="0.01" value="${(typeof p.importe==='number'?p.importe:(p.importe??''))}" /></td>
+        <td><input class="min_km num" type="number" step="0.01" value="${p.min_km ?? ''}" /></td>
+        <td><input class="max_km num" type="number" step="0.01" value="${p.max_km ?? ''}" /></td>
+        <td><textarea class="observacion">${(p.observacion||'').replace(/</g,'&lt;')}</textarea></td>
+        <td><input class="active" type="checkbox" ${p.active!==false?'checked':''} /></td>
+        <td>
+          <button class="save btn">Guardar</button>
+          <button class="del btn">Eliminar</button>
+          <button class="toggle btn">${p.active!==false?'Inactivar':'Reactivar'}</button>
+        </td>
+      </tr>`).join('')}</tbody></table>
+
+      <template id="row-tpl"><tr data-id="">
+        <td><input class="descripcion" type="text" /></td>
         <td><input class="importe num" type="number" step="0.01" /></td>
         <td><input class="min_km num" type="number" step="0.01" /></td>
         <td><input class="max_km num" type="number" step="0.01" /></td>
-       <td><input class="min_km num" type="number" step="0.01" value="${p.min_km ?? ''}" /></td>
-        <td><input class="max_km num" type="number" step="0.01" value="${p.max_km ?? ''}" /></td>
-  <td><textarea class="observacion">${(p.observacion||'').replace(/</g,'&lt;')}</textarea></td>
-        <td><input class="active" type="checkbox" ${p.active!==false?'checked':''} /></td>
-        <td><button class="save btn">Guardar</button><button class="del btn">Eliminar</button><button class="toggle btn">${p.active!==false?'Inactivar':'Reactivar'}</button></td>
-      </tr>`).join('')}</tbody></table>
-      <template id="row-tpl"><tr data-id="">
-        <td><input class="descripcion" type="text" /></td>
-        <td><input class="importe" type="number" step="0.01" /></td>
         <td><textarea class="observacion"></textarea></td>
         <td><input class="active" type="checkbox" checked /></td>
         <td><button class="save btn">Guardar</button><button class="del btn">Eliminar</button><button class="toggle btn">Inactivar</button></td>
-      </tr></template>
+   </tr></template>
       <script>
         function q(s,c){return (c||document).querySelector(s)}function all(s,c){return Array.from((c||document).querySelectorAll(s))}
         async function j(url,opts){const r=await fetch(url,opts||{});if(!r.ok)throw new Error('HTTP '+r.status);const ct=r.headers.get('content-type')||'';return ct.includes('application/json')?r.json():r.text()}
