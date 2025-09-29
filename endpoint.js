@@ -25,6 +25,7 @@ const {
   computeEnvioItemForPedido,
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
   DEFAULT_TENANT_ID, setAssistantPedidoSnapshot,
+  normalizeOrder,
 } = require("./logic");
 
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
@@ -393,10 +394,14 @@ app.get("/admin", async (req, res) => {
 </head><body>
   <h2>Conversaciones</h2>
   <table id="tb">
-    <thead><tr><th>Fecha</th><th>Teléfono</th><th>Estado</th><th>Total</th><th>Acciones</th></tr></thead>
+    <thead><tr><th>Fecha</th><th>Teléfono</th><th>Estado</th><th>Imp.</th><th>Total</th><th>Acciones</th></tr></thead>
     <tbody></tbody>
   </table>
   <script>
+   async function markPrinted(id, printed){
+      await fetch('/api/admin/order/'+encodeURIComponent(id)+'/'+(printed?'printed':'unprinted'), {method:'POST'});
+      await loadConversations();
+    }
     async function loadConversations(){
       const r = await fetch('/api/admin/conversations');
       const list = await r.json();
@@ -407,14 +412,25 @@ app.get("/admin", async (req, res) => {
           '<td>'+(row.openedAt? new Date(row.openedAt).toLocaleString(): '-')+'</td>'+
           '<td>'+row.waId+'</td>'+
           '<td>'+row.status+(row.processed?' ✓':'')+'</td>'+
+          '<td>'+(row.printedAt ? '🖨️ '+new Date(row.printedAt).toLocaleTimeString() : '—')+'</td>'+
           '<td>'+(row.lastPedido?.total_pedido ?? '-')+'</td>'+
           '<td>'+
-             '<button class="btn" onclick="openMessages(\\''+row._id+'\\')">Mensajes</button>'+
+             '<button class="btn" onclick="openMessages(\\''+row._id+'\\')">Mensajes</button> '+
+             '<button class="btn" onclick="openOrder(\\''+row._id+'\\')">Ver pedido</button> '+
+             '<button class="btn" onclick="printOrder(\\''+row._id+'\\')">Imprimir</button>'+
+             (row.printedAt
+               ? ' <button class="btn" onclick="markPrinted(\\''+row._id+'\\', false)">Desmarcar</button>'
+               : ' <button class="btn" onclick="markPrinted(\\''+row._id+'\\', true)">Marcar impreso</button>'
+             )+
+        
           '</td>';
         tb.appendChild(tr);
       }
     }
     function openMessages(id){ window.open('/api/admin/messages/'+encodeURIComponent(id),'_blank'); }
+    function openOrder(id){ window.open('/admin/order/'+encodeURIComponent(id),'_blank'); }
+    function printOrder(id){ window.open('/admin/order/'+encodeURIComponent(id)+'?print=1','_blank'); }
+  
     loadConversations();
   </script>
 </body></html>`);
@@ -436,6 +452,152 @@ app.get("/api/admin/conversations", async (req, res) => {
     res.status(500).json({ error: "internal" });
   }
 });
+
+// API: pedido normalizado (JSON) de una conversación
+app.get("/api/admin/order/:id", async (req, res) => {
+  try {
+    const id = String(req.params.id || "");
+    const db = await getDb();
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
+    if (!conv) return res.status(404).json({ error: "not_found" });
+    if (!conv.lastPedido) return res.status(404).json({ error: "no_order" });
+    const order = normalizeOrder(conv.waId, conv.contactName, conv.lastPedido);
+    res.json({ _id: id, waId: conv.waId, createdAt: conv.openedAt, status: conv.status, order });
+  } catch (e) {
+    console.error("/api/admin/order error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+// Marcar / desmarcar como impreso
+app.post("/api/admin/order/:id/printed", async (req, res) => {
+  try {
+    const id = String(req.params.id || "");
+    const db = await getDb();
+    const r = await db.collection("conversations").updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { printedAt: new Date() } }
+    );
+    if (!r.matchedCount) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true, printedAt: new Date() });
+  } catch (e) {
+    console.error("/api/admin/order/:id/printed error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+app.post("/api/admin/order/:id/unprinted", async (req, res) => {
+  try {
+    const id = String(req.params.id || "");
+    const db = await getDb();
+    const r = await db.collection("conversations").updateOne(
+      { _id: new ObjectId(id) },
+      { $unset: { printedAt: "" } }
+    );
+    if (!r.matchedCount) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("/api/admin/order/:id/unprinted error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// UI: vista del pedido + formato impresión (comandera 80mm)
+app.get("/admin/order/:id", async (req, res) => {
+  try {
+    const id = String(req.params.id || "");
+    const isPrint = req.query.print === "1";
+    const db = await getDb();
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
+    if (!conv) return res.status(404).send("not_found");
+    if (!conv.lastPedido) return res.status(404).send("Esta conversación no tiene pedido final.");
+    const ord = normalizeOrder(conv.waId, conv.contactName, conv.lastPedido);
+
+    const fmtDate = conv.openedAt ? new Date(conv.openedAt).toLocaleString() : "-";
+    const itemsHtml = (ord.items || []).map(it =>
+      `<tr><td>${it.cantidad}</td><td>${it.descripcion}</td><td class="num">${it.importe_unitario?.toLocaleString?.('es-AR') ?? it.importe_unitario}</td><td class="num">${it.total?.toLocaleString?.('es-AR') ?? it.total}</td></tr>`
+    ).join("");
+    const totalStr = (ord.amount || 0).toLocaleString('es-AR');
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!doctype html>
+<html><head>
+  <meta charset="utf-8"/><title>Pedido ${id}</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <style>
+    :root{--w:80mm}
+    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:${isPrint?'0':'20px'}}
+    .wrap{max-width:${isPrint?'var(--w)':'720px'};margin:0 auto}
+    h1,h2,h3{margin:.25rem 0}
+    table{border-collapse:collapse;width:100%}
+    th,td{border:1px solid #ddd;padding:6px}
+    th{background:#f5f5f5;text-align:left}
+    .num{text-align:right}
+    .muted{color:#666;font-size:.9em}
+    .row{display:flex;gap:8px;align-items:center;margin:.5rem 0}
+    .btn{padding:.35rem .6rem;border:1px solid #555;background:#fff;cursor:pointer;border-radius:4px}
+    @media print{
+      @page{size: ${isPrint?'80mm auto':'auto'}; margin:${isPrint?'4mm':'10mm'}}
+      .noprint{display:none!important}
+      body{margin:0}
+      th,td{border:0;padding:2px 0}
+      table{border:0}
+      .card{border:0}
+    }
+    .ticket{
+      border:${isPrint?'0':'1px solid #ddd'};
+      padding:${isPrint?'0 6px':'12px'};
+    }
+    .hdr{display:flex;justify-content:space-between;align-items:flex-start}
+    .big{font-size:1.1rem;font-weight:600}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="row noprint">
+      <button class="btn" onclick="window.print()">Imprimir</button>
+      <a class="btn" href="/api/admin/order/${id}" target="_blank">Ver JSON</a>
+      <a class="btn" href="/admin" target="_self">Volver</a>
+      ${conv.printedAt
+        ? `<button class="btn" onclick="fetch('/api/admin/order/${id}/unprinted',{method:'POST'}).then(()=>location.reload())">Desmarcar impreso</button>`
+        : `<button class="btn" onclick="fetch('/api/admin/order/${id}/printed',{method:'POST'}).then(()=>location.reload())">Marcar impreso</button>`
+      }
+    </div>
+    <div class="ticket">
+      <div class="hdr">
+        <div>
+          <div class="big">Rotisería Caryco</div>
+          <div class="muted">Pedido de ${ord.name || '-'}</div>
+        </div>
+        <div class="muted" style="text-align:right">
+          <div>${fmtDate}</div>
+          <div>ID ${id.slice(-6)}</div>
+        </div>
+      </div>
+      <hr/>
+     <div><b>Entrega:</b> ${ord.entrega || '-'}</div>
+      ${ord.entrega==='domicilio' ? `<div><b>Domicilio:</b> ${ord.domicilio || '-'}</div>` : ''}
+      ${ord.fechaEntrega ? `<div><b>Fecha:</b> ${ord.fechaEntrega}</div>` : ''}
+      ${ord.hora ? `<div><b>Hora:</b> ${ord.hora}</div>` : ''}
+      <p></p>
+      <table>
+        <thead><tr><th>Cant</th><th>Descripción</th><th class="num">P. Unit</th><th class="num">Total</th></tr></thead>
+        <tbody>${itemsHtml || '<tr><td colspan="4" class="muted">Sin ítems</td></tr>'}</tbody>
+        <tfoot><tr><th colspan="3" class="num">TOTAL</th><th class="num">$ ${totalStr}</th></tr></tfoot>
+      </table>
+      <p class="muted">Estado: ${ord.estadoPedido}</p>
+      <p class="muted">Tel: ${conv.waId}</p>
+      ${conv.printedAt ? `<p class="muted">Imp: ${new Date(conv.printedAt).toLocaleString()}</p>` : ''}
+      <p style="text-align:center">¡Gracias por su compra! 🧾</p>
+    </div>
+  </div>
+  ${isPrint ? '<script>window.onload=()=>window.print()</script>' : ''}
+</body></html>`);
+  } catch (e) {
+    console.error("/admin/order error:", e);
+    res.status(500).send("internal");
+  }
+});
+
+
 
 // API: mensajes de una conversación
 app.get("/api/admin/messages/:id", async (req, res) => {
