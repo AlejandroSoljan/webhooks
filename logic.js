@@ -677,7 +677,7 @@ async function getGPTReply(tenantId, from, userMessage) {
   }
 }
 
-const { getDb, ObjectId } = require("./db");
+
 
 // Persistencia auxiliar (por si querés llamarlo desde otros módulos)
 async function appendMessage(conversationId, doc) {
