@@ -358,6 +358,114 @@ app.post("/api/behavior/refresh-cache", async (req, res) => {
   } catch (e) { console.error("refresh-cache error:", e); res.status(500).json({ error: "internal" }); }
 });
 
+
+
+
+// Util: asegura una conversación abierta o devuelve la última
+async function ensureConversation(tenantId, waId) {
+  const db = await getDb();
+  const now = new Date();
+  const upd = await db.collection("conversations").findOneAndUpdate(
+    { tenantId, waId, closedAt: { $exists: false } },
+    { $setOnInsert: { tenantId, waId, openedAt: now, status: "OPEN" } },
+    { upsert: true, returnDocument: "after" }
+  );
+  return upd.value;
+}
+
+// ---------- ADMIN UI ----------
+// Listado simple de conversaciones
+app.get("/admin", async (req, res) => {
+  try {
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!doctype html>
+<html><head>
+  <meta charset="utf-8"/><title>Admin</title>
+  <style>
+    body{font-family:system-ui,Arial;margin:20px}
+    table{border-collapse:collapse;width:100%}
+    td,th{border:1px solid #ddd;padding:8px}
+    th{background:#f3f3f3;text-align:left}
+    .btn{padding:.25rem .5rem;border:1px solid #888;background:#fff;cursor:pointer}
+  </style>
+</head><body>
+  <h2>Conversaciones</h2>
+  <table id="tb">
+    <thead><tr><th>Fecha</th><th>Teléfono</th><th>Estado</th><th>Total</th><th>Acciones</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <script>
+    async function loadConversations(){
+      const r = await fetch('/api/admin/conversations');
+      const list = await r.json();
+      const tb = document.querySelector('#tb tbody'); tb.innerHTML='';
+      for (const row of list){
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>'+(row.openedAt? new Date(row.openedAt).toLocaleString(): '-')+'</td>'+
+          '<td>'+row.waId+'</td>'+
+          '<td>'+row.status+(row.processed?' ✓':'')+'</td>'+
+          '<td>'+(row.lastPedido?.total_pedido ?? '-')+'</td>'+
+          '<td>'+
+             '<button class="btn" onclick="openMessages(\\''+row._id+'\\')">Mensajes</button>'+
+          '</td>';
+        tb.appendChild(tr);
+      }
+    }
+    function openMessages(id){ window.open('/api/admin/messages/'+encodeURIComponent(id),'_blank'); }
+    loadConversations();
+  </script>
+</body></html>`);
+  } catch (e) { res.status(500).send("internal"); }
+});
+
+// API: conversaciones
+app.get("/api/admin/conversations", async (req, res) => {
+  try {
+    const db = await getDb();
+    const list = await db.collection("conversations")
+      .find({})
+      .sort({ openedAt: -1 })
+      .limit(300)
+      .toArray();
+    res.json(list.map(x => ({ ...x, _id: String(x._id) })));
+  } catch (e) {
+    console.error("/api/admin/conversations error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// API: mensajes de una conversación
+app.get("/api/admin/messages/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const db = await getDb();
+    const conv = await db.collection("conversations").findOne({ _id: new ObjectId(id) });
+    if (!conv) return res.status(404).send("not_found");
+    const msgs = await db.collection("messages")
+      .find({ conversationId: new ObjectId(id) })
+      .sort({ ts: 1 })
+      .toArray();
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><title>Mensajes</title>
+      <style>body{font-family:system-ui,Arial;margin:20px}pre{white-space:pre-wrap}</style>
+    </head><body>
+      <h3>Conv ${conv.waId} — ${new Date(conv.openedAt).toLocaleString()}</h3>
+      ${msgs.map(m => (
+        '<p><b>'+m.role+'</b> <small>'+new Date(m.ts).toLocaleString()+'</small><br><pre>'+(
+          (typeof m.content==='string'?m.content:JSON.stringify(m.content,null,2))
+        )+'</pre></p>'
+      )).join('')}
+    </body></html>`);
+  } catch (e) {
+    console.error("/api/admin/messages error:", e);
+    res.status(500).send("internal");
+  }
+});
+
+// ---------- WEBHOOK ----------
+
+
 // Webhook Verify (GET)
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
@@ -412,6 +520,14 @@ app.post("/webhook", async (req, res) => {
       try { snapshot = JSON.parse(require("./logic").__proto__ ? "{}" : "{}"); } catch {}
       // En minimal guardamos snapshot siempre; si no lo tenés a mano, seguimos y dejamos que el modelo lo complete
     }
+        // Persistir mensaje de usuario
+    try {
+      const conv = await ensureConversation(tenant, from);
+      await (await getDb()).collection("messages").insertOne({
+        conversationId: conv._id, role: "user", content: text, ts: new Date(), type: entry.type || "text", meta: { raw: entry }
+      });
+    } catch (e) { console.warn("persist user msg:", e.message); }
+
     const gptReply = await getGPTReply(tenant, from, text);
 
     let responseText = "Perdón, hubo un error. ¿Podés repetir?";
@@ -502,10 +618,28 @@ app.post("/webhook", async (req, res) => {
 
     await require("./logic").sendWhatsAppMessage(from, responseText);
 
+    // Persistir mensaje del asistente
+    try {
+      const conv = await ensureConversation(tenant, from);
+      await (await getDb()).collection("messages").insertOne({
+        conversationId: conv._id, role: "assistant", content: String(responseText || ""), ts: new Date(), type: "text"
+      });
+    } catch (e) { console.warn("persist assistant msg:", e.message); }
+
+
     try { setAssistantPedidoSnapshot(tenant, from, pedido, estado); } catch {}
 
     try {
       if (estado === "COMPLETED" || estado === "CANCELLED") {
+                // Guardar cierre + pedido en conversación
+        try {
+          const db = await getDb();
+          const conv = await ensureConversation(tenant, from);
+          await db.collection("conversations").updateOne(
+            { _id: conv._id },
+            { $set: { status: estado, closedAt: new Date(), lastPedido: pedido } }
+          );
+        } catch (e) { console.warn("persist completion:", e.message); }
         markSessionEnded(tenant, from);
       }
     } catch {}
