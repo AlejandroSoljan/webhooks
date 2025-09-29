@@ -114,6 +114,42 @@ function invalidateBehaviorCache(tenantId = DEFAULT_TENANT_ID) {
   _behaviorCache.delete(String(tenantId));
 }
 
+// ------------------ Catálogo dinámico desde Mongo ------------------
+// Cache por tenant para evitar hits constantes (5 min)
+const _catalogCache = new Map(); // { tenantId: { text, at } }
+
+async function loadCatalogTextFromMongo(tenantId = DEFAULT_TENANT_ID) {
+  const key = String(tenantId || "");
+  const cached = _catalogCache.get(key);
+  if (cached && (Date.now() - cached.at) < 5 * 60 * 1000) return cached.text;
+
+  const db = await getDb();
+  // Filtrado: solo activos; si hay tenant, lo aplicamos; si no, dejamos todo
+  const filter = { active: { $ne: false } };
+  if (key) filter.tenantId = key;
+  const items = await db.collection("products").find(filter).sort({ descripcion: 1, createdAt: -1 }).toArray();
+
+  // Armamos un bloque compatible con el comportamiento heredado
+  // Formato: "id N - Descripción. Precio: 12345. Observaciones: ..."
+  const lines = [];
+  let i = 1;
+  for (const it of items) {
+    const precio = (typeof it.importe === "number") ? it.importe : Number(it.importe || 0);
+    const obs = (it.observacion || "").trim();
+    const base = `id ${i} - ${String(it.descripcion || "").trim()}. Precio: ${Number(precio || 0)}`;
+    lines.push(obs ? `${base}. Observaciones: ${obs}` : `${base}.`);
+    i++;
+  }
+  const text = lines.length
+    ? `\n[CATALOGO]\n${lines.join("\n")}\n`
+    : "\n[CATALOGO]\n( catálogo vacío )\n";
+
+  _catalogCache.set(key, { text, at: Date.now() });
+  return text;
+}
+
+
+
 // ================== Historial por número / sesión ==================
 const chatHistories = {};       // standard mode: { [tenant-from]: [{role,content}, ...] }
 const userOnlyHistories = {};   // minimal mode: { [tenant-from]: [{role:'user',content}, ...] }
@@ -323,9 +359,10 @@ async function getGPTReply(tenantId, from, userMessage) {
   const historyMode = (cfg.history_mode || "standard").toLowerCase();
 
   // Bloque system inicial
+  const catalogText = await loadCatalogTextFromMongo(tenantId);
   const fullSystem = [
     buildNowBlock(),
-    "[COMPORTAMIENTO]\n" + baseText
+    "[COMPORTAMIENTO]\n" + baseText + catalogText
   ].join("\n\n").trim();
 
   let messages = [];
@@ -408,6 +445,8 @@ module.exports = {
   loadBehaviorTextFromMongo,
   loadBehaviorConfigFromMongo,
   invalidateBehaviorCache,
+  // catálogo
+  loadCatalogTextFromMongo,
 
   // chat
   getGPTReply,
