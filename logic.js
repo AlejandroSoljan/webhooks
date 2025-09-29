@@ -180,6 +180,84 @@ function markSessionEnded(tenantId, from) {
   endedSessions[id] = { endedAt: Date.now() };
 }
 
+// -------------------------------------------------------------------
+// Persistencia de conversación y mensajes cuando estado=COMPLETED
+// -------------------------------------------------------------------
+async function _persistCompleted({ tenantId, waId, contactName, historyMsgs, assistantObj }) {
+  try {
+    const db = await getDb();
+    const openedAt = new Date(Date.now() - Math.max(0, (historyMsgs?.length || 1) - 1) * 1000);
+    const closedAt = new Date();
+    const turns = historyMsgs?.length || 0;
+    const summary = assistantObj?.Pedido ? { Pedido: assistantObj.Pedido } : {};
+    const convDoc = {
+      tenantId: tenantId || DEFAULT_TENANT_ID,
+      waId: String(waId || ""),
+      contactName: String(contactName || ""),
+      status: "COMPLETED",
+      processed: false,
+      openedAt, closedAt, turns,
+      summary,
+      createdAt: new Date(), updatedAt: new Date()
+    };
+    const ins = await db.collection("conversations").insertOne(convDoc);
+    const convId = ins.insertedId;
+    const rows = (historyMsgs || []).map(m => ({
+      conversationId: convId,
+      tenantId: tenantId || DEFAULT_TENANT_ID,
+      role: String(m.role || "user"),
+      content: typeof m.content === "string" ? m.content : safeStringify(m.content),
+      ts: new Date()
+    }));
+    // agrega el JSON final del assistant si no estuviera
+    if (!rows.length || rows[rows.length - 1].role !== "assistant") {
+      rows.push({
+        conversationId: convId,
+        tenantId: tenantId || DEFAULT_TENANT_ID,
+        role: "assistant",
+        content: safeStringify(assistantObj || {}),
+        ts: new Date()
+      });
+    }
+    if (rows.length) await db.collection("messages").insertMany(rows);
+  } catch (e) {
+    console.error("persistCompleted error:", e.message);
+  }
+}
+
+/**
+ * Normaliza el JSON de Pedido a un objeto “orden” simple para admin.
+ * Exportado para /api/admin/order/:id
+ */
+function normalizeOrder(waId, contactName, Pedido) {
+  const p = Pedido || {};
+  const items = Array.isArray(p.items) ? p.items : [];
+  return {
+    name: String(contactName || ""),
+    entrega: String(p.Entrega || ""),
+    domicilio: typeof p.Domicilio === "string"
+      ? p.Domicilio
+      : (p.Domicilio && typeof p.Domicilio === "object"
+          ? Object.values(p.Domicilio).filter(v => String(v||"").trim()).join(" ")
+          : ""),
+    items: items.map(it => ({
+      descripcion: String(it.descripcion || ""),
+      cantidad: Number(it.cantidad || 1),
+      importe_unitario: Number(it.importe_unitario || 0),
+      total: Number(it.total || 0)
+    })),
+    amount: Number(p.total_pedido || 0),
+    fechaEntrega: String(p.Fecha || ""),
+    hora: String(p.Hora || ""),
+    estadoPedido: "CONFIRMADO"
+  };
+}
+
+
+
+
+
+
 // ================== WhatsApp ==================
 async function sendWhatsAppMessage(to, text) {
   try {
@@ -599,15 +677,55 @@ async function getGPTReply(tenantId, from, userMessage) {
   }
 }
 
-// Permite setear el snapshot que se inyectará como rol assistant (solo minimal)
-function setAssistantPedidoSnapshot(tenantId, from, pedidoObj, estado) {
-  const id = k(tenantId, from);
-  try {
-    const content = JSON.stringify({ estado: estado || null, Pedido: pedidoObj || {} });
-    assistantPedidoSnapshot[id] = content;
-  } catch {}
+const { getDb, ObjectId } = require("./db");
+
+// Persistencia auxiliar (por si querés llamarlo desde otros módulos)
+async function appendMessage(conversationId, doc) {
+  const db = await getDb();
+  await db.collection("messages").insertOne({
+    conversationId: typeof conversationId === "string" ? new ObjectId(conversationId) : conversationId,
+    ts: new Date(),
+    ...doc,
+  });
 }
 
+async function finalizeConversationOnce(conversationId, json, status) {
+  const db = await getDb();
+  await db.collection("conversations").updateOne(
+    { _id: typeof conversationId === "string" ? new ObjectId(conversationId) : conversationId },
+    { $set: { status: status || (json?.estado ?? "COMPLETED"), closedAt: new Date(), lastPedido: json?.Pedido || null } }
+  );
+}
+
+// Permite setear el snapshot que se inyectará como rol assistant (solo minimal)
+
+
+
+// (se exportaba; ahora además dispara el guardado si el estado es COMPLETED)
+function setAssistantPedidoSnapshot(tenantId, from, assistantJson, contactName) {
+  try {
+    if (!assistantJson) return;
+    const id = k(tenantId, from);
+    assistantPedidoSnapshot[id] = safeStringify(assistantJson?.Pedido || {});
+    // Si el modelo cerró la conversación, persistimos conversación y mensajes.
+    if (String(assistantJson?.estado || "").toUpperCase() === "COMPLETED") {
+      // histórico (standard o minimal)
+      const std = chatHistories[id] || [];
+      const min = userOnlyHistories[id] || [];
+      const merged = std.length ? std : (min.length
+        ? [...min, { role: "assistant", content: safeStringify(assistantJson) }]
+        : [{ role: "assistant", content: safeStringify(assistantJson) }]);
+      // no bloqueamos el flujo: guardamos en background
+      _persistCompleted({
+        tenantId: tenantId || DEFAULT_TENANT_ID,
+        waId: from,
+        contactName: contactName || "",
+        historyMsgs: merged,
+        assistantObj: assistantJson
+     });
+    }
+  } catch (e) { console.error("setAssistantPedidoSnapshot error:", e.message); }
+}
 module.exports = {
   // comportamiento
   loadBehaviorTextFromMongo,
@@ -647,6 +765,9 @@ module.exports = {
   // exports auxiliares
   DEFAULT_TENANT_ID,
   setAssistantPedidoSnapshot,
+  // persistencia para admin
+  appendMessage,
+  finalizeConversationOnce,
   getEnvioItemFromCatalog,
   getStoreCoords,
   computeEnvioItemForPedido,
