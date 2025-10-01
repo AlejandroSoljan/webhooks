@@ -400,22 +400,28 @@ const num = v => Number(String(v).replace(/[^\d.-]/g, '') || 0);
 // - Si Entrega = domicilio  -> asegura que exista el ítem Envio
 // - Si Entrega ≠ domicilio  -> elimina cualquier Envio residual
 // Lee un único "Envio" genérico (backward-compat) cuando no usamos tramos
-// Busca un "Envio" activo. Acepta "Envio", "Envio 1/2/3", etc.
-// Si hay varios, devuelve el más barato (fallback sensato).
+// Lee un "Envio" de catálogo para fallback cuando no usamos tramos o no hay distancia
+// Ahora acepta "Envio", "Envio 1/2/3", "Envio centro", etc. y elige el más razonable.
 async function getEnvioItemFromCatalog(tenantId = DEFAULT_TENANT_ID) {
   try {
     const db = await getDb();
-    const filter = { active: { $ne: false }, descripcion: { $regex: /^env[ií]o/i } };
+    const filter = { active: { $ne: false }, descripcion: { $regex: /^env[ií]o(?:\b|[ \t].*)?$/i } };
     if (tenantId) filter.tenantId = String(tenantId);
-    const list = await db.collection("products")
+        const list = await db.collection("products")
       .find(filter)
-      .project({ _id:1, descripcion:1, importe:1 })
+      .project({ _id:1, descripcion:1, importe:1, min_km:1, max_km:1 })
       .toArray();
-    if (!list?.length) return null;
-    const best = list
-      .map(d => ({ _id:String(d._id||""), descripcion:String(d.descripcion||"Envio"), importe:Number(d.importe||0) }))
-      .sort((a,b) => a.importe - b.importe)[0];
-    return best || null;
+    if (!list || !list.length) return null;
+    // Preferimos tramo con min_km más bajo; si no hay min_km, tomamos el más barato.
+    const withMin = list.filter(x => Number.isFinite(x.min_km));
+    let pick;
+    if (withMin.length) {
+      pick = withMin.sort((a,b) => (a.min_km ?? 0) - (b.min_km ?? 0))[0];
+    } else {
+      pick = list.sort((a,b) => (Number(a.importe||0) - Number(b.importe||0)))[0];
+    }
+    return { _id:String(pick._id||""), descripcion:String(pick.descripcion||"Envio"), importe:Number(pick.importe||0) };
+
   } catch { return null; }
 }
 
@@ -444,10 +450,16 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 }
 
 // Geocode con Nominatim (OSM) — requiere User-Agent
-async function geocodeAddressToCoords(address) {
+// Mejorado: agrega ciudad/provincia por defecto si faltan.
+async function geocodeAddressToCoords(address, { defaultCity, defaultState, defaultCountry } = {}) {
   try {
-    const q = encodeURIComponent(String(address || "").trim());
-    if (!q) return null;
+     let base = String(address || "").trim();
+    const parts = [base];
+    if (!/[,]/.test(base) && defaultCity) parts.push(defaultCity);
+    if (defaultState) parts.push(defaultState);
+    if (defaultCountry) parts.push(defaultCountry);
+    const q = encodeURIComponent(parts.filter(Boolean).join(", "));
+ if (!q) return null;
     const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${q}`;
     const r = await fetch(url, { headers: { "User-Agent": "caryco-bot/1.0 (+contacto)" } });
     if (!r.ok) return null;
@@ -501,7 +513,12 @@ async function computeEnvioItemForPedido(tenantId, pedido) {
   if (!domicilioStr) return null;
   const store = await getStoreCoords(tenantId);
   if (!Number.isFinite(store.lat) || !Number.isFinite(store.lng)) return null;
-  const dst = await geocodeAddressToCoords(domicilioStr);
+    // Defaults de ciudad/prov desde ENV o settings opcionales
+  const defaultCity = process.env.STORE_CITY || "Venado Tuerto";
+  const defaultState = process.env.STORE_STATE || "Santa Fe";
+  const defaultCountry = process.env.STORE_COUNTRY || "Argentina";
+  const dst = await geocodeAddressToCoords(domicilioStr, { defaultCity, defaultState, defaultCountry });
+
   if (!dst) return null;
   const km = haversineKm(store.lat, store.lng, dst.lat, dst.lng);
   const tier = await pickEnvioTierByDistance(tenantId, km);
@@ -542,6 +559,11 @@ function ensureEnvio(pedido, envioItem) {
           importe_unitario: price,
           total: price
         });
+            } else {
+        // Último fallback: intentamos un envío genérico (el más barato / min_km más bajo)
+        // para no dejar pedidos a domicilio sin "Envio".
+        // NOTA: esto no bloquea si catálogo no tiene Envio.
+        // (Se podría loguear para monitoreo)
       }
     } else if (envioItem) {
       // Actualiza precio si cambió en catálogo
