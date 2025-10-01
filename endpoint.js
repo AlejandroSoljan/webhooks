@@ -775,15 +775,15 @@ app.post("/webhook", async (req, res) => {
     let pedido = null;
 
     try {
+      
+
       const parsed = JSON.parse(gptReply);
       estado = parsed.estado;
       pedido = parsed.Pedido || { items: [] };
-      // Ítem Envío según distancia (tramos). Si no se puede calcular, cae al Envío genérico.
-      let envioItem = await computeEnvioItemForPedido(tenant, pedido);
-      if (!envioItem) {
-        envioItem = await getEnvioItemFromCatalog(tenant);
-      }
-      const { pedidoCorr, mismatch, hasItems } = recalcAndDetectMismatch(pedido, { envioItem });
+
+      // 💡 calcular tramo de envío por distancia (si corresponde)
+      const envioItem = await require("./logic").computeEnvioItemForPedido(tenant, pedido);
+     
       pedido = pedidoCorr;
 
       if (mismatch && hasItems) {
@@ -810,7 +810,7 @@ app.post("/webhook", async (req, res) => {
         ].join("\n");
 
         for (let attempt = 1; attempt <= (Number(process.env.CALC_FIX_MAX_RETRIES || 3)); attempt++) {
-          const fixReply = await getGPTReply(tenant, from, `${baseCorrection}\n[INTENTO:${attempt}/${process.env.CALC_FIX_MAX_RETRIES || 3}]`);
+           const fixReply = await getGPTReply(tenant, from, `${baseCorrection}\n[INTENTO:${attempt}/${process.env.CALC_FIX_MAX_RETRIES || 3}]`);
           console.log(`[fix][${attempt}] assistant.content =>\n${fixReply}`);
           try {
             const parsedFix = JSON.parse(fixReply);
@@ -818,8 +818,9 @@ app.post("/webhook", async (req, res) => {
             estado = parsedFix.estado || estado;
 
             let pedidoFix = parsedFix.Pedido || { items: [] };
-           // const { pedidoCorr: pedidoFixCorr, mismatch: mismatchFix, hasItems: hasItemsFix } = recalcAndDetectMismatch(pedidoFix);
-            const { pedidoCorr: pedidoFixCorr, mismatch: mismatchFix, hasItems: hasItemsFix } = recalcAndDetectMismatch(pedidoFix, { envioItem });
+            // ⚠️ importante: volver a pasar el mismo envioItem calculado arriba
+            const { pedidoCorr: pedidoFixCorr, mismatch: mismatchFix, hasItems: hasItemsFix } =
+            recalcAndDetectMismatch(pedidoFix, { envioItem });
             pedido = pedidoFixCorr;
 
             if (!mismatchFix && hasItemsFix) { fixedOk = true; break; }
