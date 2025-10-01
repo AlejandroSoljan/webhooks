@@ -3,6 +3,73 @@
 // Incluye logs de fixReply en el loop de corrección.
 
 require("dotenv").config();
+
+
+// --- Helpers de saneo de texto saliente ---
+function _isEnvio(desc) {
+  return String(desc || "").toLowerCase().includes("envio");
+}
+
+function _hasMilanesas(pedido) {
+  const items = Array.isArray(pedido?.items) ? pedido.items : [];
+  return items.some(it =>
+    String(it?.descripcion || "").toLowerCase()
+      .match(/\bmilanesa|milanesas|napolitana|de carne|de pollo\b/)
+  );
+}
+
+function _onlyEnvioTienePrecio(pedido) {
+  const items = Array.isArray(pedido?.items) ? pedido.items : [];
+  const priced = items.filter(it => Number(it?.total || 0) > 0);
+  if (priced.length === 0) return false;
+  return priced.every(it => _isEnvio(it.descripcion));
+}
+
+function _stripTotalsAndAmounts(text) {
+  if (!text) return text;
+  let out = String(text);
+  // Quita montos tipo $ 12.345, $1234, $1.234,00
+  out = out.replace(/\$\s?\d{1,3}(?:\.\d{3})*(?:,\d+)?/g, "");
+  // Quita líneas con Total/Precio/Importe
+  out = out.split("\n").filter(l => !/(^|\s)(total|precio|importe)\b/i.test(l)).join("\n");
+  // Colapsa saltos extra
+  return out.replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function _sanitizeOutgoingText({ text, pedido, userText }) {
+  let out = String(text || "").trim();
+  const userAskedTotals = /\b(total|detalle|resumen|cu[aá]nto\s+es|cuanto\s+es|precio|importe)\b/i.test(
+    String(userText || "")
+  );
+  const looksLikeDetail = /(total|precio|importe|detalle|resumen)/i.test(out);
+  const milaNoteRegex =
+    /milanesas?\s+se\s+pesan\s+al\s+entregar;?\s*el\s+precio\s+se\s+informa\s+al\s+momento\s+de\s+la\s+entrega\.?/i;
+
+  // 1) Si el único precio es el Envío, no mostramos importes
+  if (_onlyEnvioTienePrecio(pedido) && out) {
+    out = _stripTotalsAndAmounts(out);
+  }
+
+  // 2) Leyenda de milanesas: solo si el usuario pidió total/detalle o el propio texto es un detalle
+  if (_hasMilanesas(pedido)) {
+    const shouldKeepNote = userAskedTotals || looksLikeDetail;
+    if (shouldKeepNote) {
+      // garantiza UNA sola vez
+      if (!milaNoteRegex.test(out)) {
+        out = (out ? out + "\n" : "") +
+          "*Las milanesas se pesan al entregar; el precio se informa al momento de la entrega.*";
+      }
+    } else {
+      // elimina si el modelo la metió en preguntas (domicilio/hora)
+      out = out.split("\n").filter(l => !milaNoteRegex.test(l)).join("\n").trim();
+    }
+  }
+
+  return out;
+}
+
+
+
 const express = require("express");
 const app = express();
 
@@ -628,7 +695,14 @@ app.get("/api/admin/messages/:id", async (req, res) => {
 });
 
 // ---------- WEBHOOK ----------
+const pedidoParaSaneado = parsed.Pedido || parsed.pedido || pedido;   // usa el que tengas
+const ultimoTextoUsuario = text || body?.text || "";                   // tu variable de input
 
+parsed.response = _sanitizeOutgoingText({
+  text: parsed.response,
+  pedido: pedidoParaSaneado,
+  userText: ultimoTextoUsuario
+});
 
 // Webhook Verify (GET)
 app.get("/webhook", (req, res) => {
