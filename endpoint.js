@@ -22,7 +22,7 @@ const {
   getGPTReply, hasActiveEndedFlag, markSessionEnded, isPoliteClosingMessage,
   START_FALLBACK, buildBackendSummary, coalesceResponse, recalcAndDetectMismatch,
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
-  DEFAULT_TENANT_ID, setAssistantPedidoSnapshot,
+  DEFAULT_TENANT_ID, setAssistantPedidoSnapshot, calcularDistanciaKm,
 } = require("./logic");
 
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
@@ -464,7 +464,19 @@ app.post("/webhook", async (req, res) => {
 
     await require("./logic").sendWhatsAppMessage(from, responseText);
 
-    try { setAssistantPedidoSnapshot(tenant, from, pedido, estado); } catch {}
+    try {
+      // 🔹 Calcular distancia si es a domicilio
+      if (pedido?.Entrega?.toLowerCase() === "domicilio" && pedido?.Domicilio) {
+        const tiendaLat = -31.4201, tiendaLon = -64.1888; // ejemplo Córdoba centro
+        const { lat, lon } = pedido.Domicilio; // se espera que Domicilio traiga coords
+        if (lat && lon) {
+          const distKm = calcularDistanciaKm(tiendaLat, tiendaLon, lat, lon);
+          console.log(`📍 Distancia calculada al domicilio: ${distKm} km`);
+          pedido.distancia_km = distKm; // opcional: guardar en JSON del pedido
+        }
+      }
+      setAssistantPedidoSnapshot(tenant, from, pedido, estado);
+    } catch {}
 
     try {
       if (estado === "COMPLETED" || estado === "CANCELLED") {
