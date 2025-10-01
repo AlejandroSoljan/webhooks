@@ -695,14 +695,7 @@ app.get("/api/admin/messages/:id", async (req, res) => {
 });
 
 // ---------- WEBHOOK ----------
-const pedidoParaSaneado = parsed.Pedido || parsed.pedido || pedido;   // usa el que tengas
-const ultimoTextoUsuario = text || body?.text || "";                   // tu variable de input
 
-parsed.response = _sanitizeOutgoingText({
-  text: parsed.response,
-  pedido: pedidoParaSaneado,
-  userText: ultimoTextoUsuario
-});
 
 // Webhook Verify (GET)
 app.get("/webhook", (req, res) => {
@@ -863,6 +856,17 @@ app.post("/webhook", async (req, res) => {
       }
     }*/
 
+        // Saneamos el texto saliente (ocultar importes si el único con precio es Envío,
+    // y mostrar/ocultar leyenda de milanesas según corresponda).
+    try {
+      responseText = _sanitizeOutgoingText({
+        text: String(responseText || ""),
+        pedido: pedido || {},
+        userText: text || ""
+      });
+    } catch (e) {
+      console.warn("sanitize outgoing error:", e.message);
+    }
     await require("./logic").sendWhatsAppMessage(from, responseText);
 
     // Persistir mensaje del asistente
