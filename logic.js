@@ -533,11 +533,15 @@ function ensureEnvio(pedido, envioItem) {
   const entrega = (pedido?.Entrega || "").toLowerCase();
   const allowWithoutAddress = String(process.env.ADD_ENVIO_WITHOUT_ADDRESS || "0") === "1";
 
-  // Detecta si hay dirección (por si querés exigirla antes de cobrar envío)
-  const hasAddress =
-    pedido?.Domicilio &&
-    typeof pedido.Domicilio === "object" &&
-    Object.values(pedido.Domicilio).some(v => String(v || "").trim() !== "");
+  // Detecta si hay dirección (acepta string o objeto)
+  let hasAddress = false;
+  if (pedido?.Domicilio) {
+    if (typeof pedido.Domicilio === "string") {
+      hasAddress = String(pedido.Domicilio).trim().length > 0;
+    } else if (typeof pedido.Domicilio === "object") {
+      hasAddress = Object.values(pedido.Domicilio).some(v => String(v || "").trim() !== "");
+    }
+  }
 
   // Normaliza estructura
   
