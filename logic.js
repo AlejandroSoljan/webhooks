@@ -596,7 +596,18 @@ function buildBackendSummary(pedido) {
 }
 function coalesceResponse(maybeText, pedidoObj) {
   const s = String(maybeText ?? "").trim();
-  return s || ((pedidoObj?.items?.length || 0) > 0 ? buildBackendSummary(pedidoObj) : START_FALLBACK);
+   // Si hay milanesas en el pedido, siempre agregamos la aclaración al final del response.
+  const hasMilanesas =
+    Array.isArray(pedidoObj?.items) &&
+    pedidoObj.items.some(it => String(it?.descripcion || "")
+      .toLowerCase()
+      .match(/\bmilanesa|milanesas|napolitana|de carne|de pollo\b/));
+
+  let base = s || ((pedidoObj?.items?.length || 0) > 0 ? buildBackendSummary(pedidoObj) : START_FALLBACK);
+ if (hasMilanesas) {
+    base = `${base}\n\n⚠️ Las milanesas se pesan al entregar; el precio se informa al momento de la entrega.`;
+  }
+  return base;
 }
 function recalcAndDetectMismatch(pedido, opts = {}) {
   const envioItem = opts.envioItem || null;
@@ -609,10 +620,13 @@ function recalcAndDetectMismatch(pedido, opts = {}) {
   if (pedido.items.length !== beforeCount && hasItems) mismatch = true;
 
   let totalCalc = 0;
-  pedido.items = pedido.items.map(it => {
+    pedido.items = pedido.items.map(it => {
+    const desc = String(it.descripcion || "").toLowerCase();
+    const isMilanesa = /\bmilanesa|milanesas|napolitana|de carne|de pollo\b/.test(desc);
     const cantidad = num(it.cantidad);
-    const unit = num(it.importe_unitario);
-    const totalOk = cantidad * unit;
+    // Regla milanesas: precio por kilo —> no computar importe ahora
+    const unit = isMilanesa ? 0 : num(it.importe_unitario);
+    const totalOk = isMilanesa ? 0 : (cantidad * unit);
     const totalIn = it.total != null ? num(it.total) : null;
     if (hasItems && (totalIn === null || totalIn !== totalOk)) mismatch = true;
     totalCalc += totalOk;
