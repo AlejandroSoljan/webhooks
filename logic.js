@@ -665,7 +665,7 @@ function recalcAndDetectMismatch(pedido, opts = {}) {
   if (hasItems && (totalModelo === null || totalModelo !== totalCalc)) mismatch = true;
 
   pedido.total_pedido = totalCalc;
-  return { pedidoCorr: pedido, mismatch, hasItems };
+  return { pedidoCorr: pedido, pedido, mismatch, hasItems };
 }
 
 // ================== Chat con historial (inyecta comportamiento de Mongo al inicio) ==================
