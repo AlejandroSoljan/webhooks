@@ -377,24 +377,7 @@ const START_FALLBACK = "¡Hola! 👋 ¿Qué te gustaría pedir? Pollo (entero/mi
 const num = v => Number(String(v).replace(/[^\d.-]/g, '') || 0);
 
 // Opción A con flag: por defecto requiere dirección; si ADD_ENVIO_WITHOUT_ADDRESS=1, agrega envío apenas sea 'domicilio'
-/*function ensureEnvio(pedido) {
-  const entrega = (pedido?.Entrega || "").toLowerCase();
-  const allowWithoutAddress = String(process.env.ADD_ENVIO_WITHOUT_ADDRESS || "0") === "1";
 
-  // ¿Hay dirección en el JSON?
-  const hasAddress =
-    pedido?.Domicilio &&
-    typeof pedido.Domicilio === "object" &&
-    Object.values(pedido.Domicilio).some(v => String(v || "").trim() !== "");
-
-  if (entrega !== "domicilio") return;
-  if (!allowWithoutAddress && !hasAddress) return;
-
-  const tieneEnvio = (pedido.items || []).some(i => (i.descripcion || "").toLowerCase().includes("envio"));
-  if (!tieneEnvio) {
-    (pedido.items ||= []).push({ id: 6, descripcion: "Envio", cantidad: 1, importe_unitario: 1500, total: 1500 });
-  }
-}*/
 
 // Validación de "Envio" según método de entrega
 // - Si Entrega = domicilio  -> asegura que exista el ítem Envio
@@ -528,20 +511,48 @@ async function computeEnvioItemForPedido(tenantId, pedido) {
 
 
 
-// Opción A con flag: por defecto requiere dirección; si ADD_ENVIO_WITHOUT_ADDRESS=1, agrega envío apenas sea 'domicilio'
+// Inserta/actualiza el ítem de Envío. Acepta Domicilio como string u objeto.
 function ensureEnvio(pedido, envioItem) {
   const entrega = (pedido?.Entrega || "").toLowerCase();
   const allowWithoutAddress = String(process.env.ADD_ENVIO_WITHOUT_ADDRESS || "0") === "1";
 
-  // Detecta si hay dirección (acepta string o objeto)
+  // detectar si hay domicilio (string u objeto)
   let hasAddress = false;
   if (pedido?.Domicilio) {
     if (typeof pedido.Domicilio === "string") {
-      hasAddress = String(pedido.Domicilio).trim().length > 0;
+      hasAddress = pedido.Domicilio.trim().length > 0;
     } else if (typeof pedido.Domicilio === "object") {
       hasAddress = Object.values(pedido.Domicilio).some(v => String(v || "").trim() !== "");
     }
   }
+
+  if (entrega !== "domicilio") return;
+  if (!allowWithoutAddress && !hasAddress) return;
+
+  pedido.items ||= [];
+  const isEnvio = (it) =>
+    (it?.descripcion || "").toLowerCase().includes("envio") ||
+    (envioItem && it?.id && String(it.id) === String(envioItem._id));
+  const idx = pedido.items.findIndex(isEnvio);
+
+  if (idx === -1 && envioItem) {
+    const price = Number(envioItem.importe || 0);
+    pedido.items.push({
+      id: envioItem._id || 0,
+      descripcion: envioItem.descripcion || "Envio",
+      cantidad: 1,
+      importe_unitario: price,
+      total: price
+    });
+  } else if (idx >= 0 && envioItem) {
+    const price = Number(envioItem.importe || 0);
+    const cant = Number(pedido.items[idx].cantidad || 1);
+    pedido.items[idx].id = envioItem._id || pedido.items[idx].id;
+    pedido.items[idx].descripcion = envioItem.descripcion || pedido.items[idx].descripcion;
+    pedido.items[idx].importe_unitario = price;
+    pedido.items[idx].total = cant * price;
+  }
+}
 
   // Normaliza estructura
   
@@ -584,7 +595,7 @@ function ensureEnvio(pedido, envioItem) {
       pedido.items.splice(idx, 1);
     }
   }
-    }
+    
 
 function buildBackendSummary(pedido, opts = {}) {
   const { hideTotal = false } = opts || {};
@@ -661,7 +672,7 @@ function coalesceResponse(maybeText, pedidoObj) {
 }
 
 
-function recalcAndDetectMismatch(pedido, opts = {}) {
++function recalcAndDetectMismatch(pedido, { envioItem } = {}) {
   const envioItem = opts.envioItem || null;
   pedido.items ||= [];
   const hasItems = pedido.items.length > 0;
