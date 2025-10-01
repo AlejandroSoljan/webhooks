@@ -835,8 +835,17 @@ app.post("/webhook", async (req, res) => {
       } else {
         responseText = coalesceResponse(parsed.response, pedido);
       }
-    } catch (e) {
-      console.error("Error al parsear/corregir JSON:", e.message);
+        } catch (e) {
+      // Evitar errores por variables fuera de scope (p.ej. 'pedidoCorr' no definida)
+      console.error("Error al parsear/corregir JSON:", e?.message || e);
+      // Si falló el parseo, pero ya tenemos un 'pedido' armado por el backend, mostramos un resumen seguro
+      if (!responseText) {
+        if (pedido && Array.isArray(pedido.items) && pedido.items.length > 0) {
+          responseText = buildBackendSummary(pedido);
+        } else {
+          responseText = START_FALLBACK;
+        }
+      }
     }
 
     try {
