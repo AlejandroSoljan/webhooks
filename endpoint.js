@@ -465,19 +465,40 @@ app.post("/webhook", async (req, res) => {
     await require("./logic").sendWhatsAppMessage(from, responseText);
 
     try {
-      // 🔹 Calcular distancia si es a domicilio
+      // 🔹 Calcular distancia si es a domicilio (requiere coords en pedido.Domicilio)
+      let distKm = null;
       if (pedido?.Entrega?.toLowerCase() === "domicilio" && pedido?.Domicilio) {
-        const tiendaLat = -31.4201, tiendaLon = -64.1888; // ejemplo Córdoba centro
-        const { lat, lon } = pedido.Domicilio; // se espera que Domicilio traiga coords
-        if (lat && lon) {
-          const distKm = calcularDistanciaKm(tiendaLat, tiendaLon, lat, lon);
+        // ⚠️ Ajustá estas coords a la ubicación de tu local
+        const tiendaLat = -31.4201, tiendaLon = -64.1888; // ejemplo: Córdoba centro
+        const { lat, lon } = pedido.Domicilio || {};
+        if (typeof lat === "number" && typeof lon === "number") {
+          distKm = calcularDistanciaKm(tiendaLat, tiendaLon, lat, lon);
           console.log(`📍 Distancia calculada al domicilio: ${distKm} km`);
-          pedido.distancia_km = distKm; // opcional: guardar en JSON del pedido
+          pedido.distancia_km = distKm; // guardar también en el JSON de pedido
         }
       }
-      setAssistantPedidoSnapshot(tenant, from, pedido, estado);
-    } catch {}
 
+      // 🔹 Mantener snapshot del asistente
+      setAssistantPedidoSnapshot(tenant, from, pedido, estado);
+
+      // 🔹 Persistir pedido (y distancia) en MongoDB (upsert)
+      const db = await require("./db").getDb();
+      await db.collection("orders").updateOne(
+        { tenantId: TENANT_ID || null, from },
+        {
+          $set: {
+            tenantId: TENANT_ID || null,
+            from,
+            pedido,
+            estado: estado || null,
+            distancia_km: typeof pedido?.distancia_km === "number" ? pedido.distancia_km : distKm,
+            updatedAt: new Date(),
+          },
+          $setOnInsert: { createdAt: new Date() }
+        },
+        { upsert: true }
+      );
+    } catch {}
     try {
       if (estado === "COMPLETED" || estado === "CANCELLED") {
         markSessionEnded(tenant, from);
