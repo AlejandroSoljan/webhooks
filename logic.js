@@ -512,50 +512,20 @@ async function computeEnvioItemForPedido(tenantId, pedido) {
 
 
 // Inserta/actualiza el ítem de Envío. Acepta Domicilio como string u objeto.
+// Dejar **una sola** versión de ensureEnvio (esta):
 function ensureEnvio(pedido, envioItem) {
   const entrega = (pedido?.Entrega || "").toLowerCase();
   const allowWithoutAddress = String(process.env.ADD_ENVIO_WITHOUT_ADDRESS || "0") === "1";
 
-  // detectar si hay domicilio (string u objeto)
+  // Detecta si hay dirección (acepta string o objeto)
   let hasAddress = false;
   if (pedido?.Domicilio) {
     if (typeof pedido.Domicilio === "string") {
-      hasAddress = pedido.Domicilio.trim().length > 0;
+      hasAddress = String(pedido.Domicilio).trim().length > 0;
     } else if (typeof pedido.Domicilio === "object") {
       hasAddress = Object.values(pedido.Domicilio).some(v => String(v || "").trim() !== "");
     }
   }
-
-  if (entrega !== "domicilio") return;
-  if (!allowWithoutAddress && !hasAddress) return;
-
-  pedido.items ||= [];
-  const isEnvio = (it) =>
-    (it?.descripcion || "").toLowerCase().includes("envio") ||
-    (envioItem && it?.id && String(it.id) === String(envioItem._id));
-  const idx = pedido.items.findIndex(isEnvio);
-
-  if (idx === -1 && envioItem) {
-    const price = Number(envioItem.importe || 0);
-    pedido.items.push({
-      id: envioItem._id || 0,
-      descripcion: envioItem.descripcion || "Envio",
-      cantidad: 1,
-      importe_unitario: price,
-      total: price
-    });
-  } else if (idx >= 0 && envioItem) {
-    const price = Number(envioItem.importe || 0);
-    const cant = Number(pedido.items[idx].cantidad || 1);
-    pedido.items[idx].id = envioItem._id || pedido.items[idx].id;
-    pedido.items[idx].descripcion = envioItem.descripcion || pedido.items[idx].descripcion;
-    pedido.items[idx].importe_unitario = price;
-    pedido.items[idx].total = cant * price;
-  }
-}
-
-  // Normaliza estructura
-  
 
   pedido.items ||= [];
   const isEnvio = (it) => (it?.descripcion || "").toLowerCase().includes("envio") ||
@@ -563,7 +533,7 @@ function ensureEnvio(pedido, envioItem) {
   const idx = pedido.items.findIndex(isEnvio);
 
   if (entrega === "domicilio") {
-    if (!allowWithoutAddress && !hasAddress) return; // no agregamos hasta tener domicilio (a menos que flag)
+    if (!allowWithoutAddress && !hasAddress) return; // esperar domicilio salvo flag
     if (idx === -1) {
       if (envioItem) {
         const price = num(envioItem.importe);
@@ -574,27 +544,21 @@ function ensureEnvio(pedido, envioItem) {
           importe_unitario: price,
           total: price
         });
-            } else {
-        // Último fallback: intentamos un envío genérico (el más barato / min_km más bajo)
-        // para no dejar pedidos a domicilio sin "Envio".
-        // NOTA: esto no bloquea si catálogo no tiene Envio.
-        // (Se podría loguear para monitoreo)
       }
     } else if (envioItem) {
-      // Actualiza precio si cambió en catálogo
+      // actualizar precio/desc del envío si cambió
       const price = num(envioItem.importe);
       pedido.items[idx].importe_unitario = price;
       pedido.items[idx].total = num(pedido.items[idx].cantidad || 1) * price;
-      // Normaliza descripción/id si está disponible
       if (envioItem._id) pedido.items[idx].id = envioItem._id;
       if (envioItem.descripcion) pedido.items[idx].descripcion = envioItem.descripcion;
     }
   } else {
-    // Si no es domicilio, quitamos cualquier "Envio" residual
-    if (idx !== -1) {
-      pedido.items.splice(idx, 1);
-    }
+    // si cambió a retiro, quitar envío
+    if (idx !== -1) pedido.items.splice(idx, 1);
   }
+}
+  
     
 
 function buildBackendSummary(pedido, opts = {}) {
@@ -672,24 +636,25 @@ function coalesceResponse(maybeText, pedidoObj) {
 }
 
 
-+function recalcAndDetectMismatch(pedido, { envioItem } = {}) {
+function recalcAndDetectMismatch(pedido, opts = {}) {
   const envioItem = opts.envioItem || null;
   pedido.items ||= [];
   const hasItems = pedido.items.length > 0;
   let mismatch = false;
 
+  // puede agregar/actualizar/quitar "Envio" según modalidad/domicilio
   const beforeCount = pedido.items.length;
   ensureEnvio(pedido, envioItem);
   if (pedido.items.length !== beforeCount && hasItems) mismatch = true;
 
+  // recalcula totales, aplicando la regla de milanesas (precio por kilo => 0)
   let totalCalc = 0;
-    pedido.items = pedido.items.map(it => {
+  pedido.items = pedido.items.map(it => {
     const desc = String(it.descripcion || "").toLowerCase();
-    const isMilanesa = /\bmilanesa|milanesas|napolitana|de carne|de pollo\b/.test(desc);
+    const esMilanesa = /\bmilanesa|milanesas|napolitana|de carne|de pollo\b/.test(desc);
     const cantidad = num(it.cantidad);
-    // Regla milanesas: precio por kilo —> no computar importe ahora
-    const unit = isMilanesa ? 0 : num(it.importe_unitario);
-    const totalOk = isMilanesa ? 0 : (cantidad * unit);
+    const unit = esMilanesa ? 0 : num(it.importe_unitario);
+    const totalOk = esMilanesa ? 0 : (cantidad * unit);
     const totalIn = it.total != null ? num(it.total) : null;
     if (hasItems && (totalIn === null || totalIn !== totalOk)) mismatch = true;
     totalCalc += totalOk;
