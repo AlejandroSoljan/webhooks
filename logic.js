@@ -25,10 +25,6 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || process.env.WHATSAPP_ACCESS
 const DEFAULT_TENANT_ID = (process.env.TENANT_ID || "default").trim();
 
 const { getDb } = require("./db");
-const { ObjectId } = require("mongodb");
-
-const STORE_LAT = parseFloat(process.env.STORE_LAT || "0");
-const STORE_LNG = parseFloat(process.env.STORE_LNG || "0");
 
 // ================== OpenAI client (para fallback STT) ==================
 let openai = null;
@@ -100,9 +96,8 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   if (cached && (Date.now() - cached.at) < 5 * 60 * 1000) {
     return cached; // { text, history_mode, at }
   }
-  
-  const _id = `behavior:${key}`;
   const db = await getDb();
+  const _id = `behavior:${key}`;
   const doc = await db.collection("settings").findOne({ _id }) || {};
   const fallbackEnv = process.env.COMPORTAMIENTO || "";
   const text = String(doc.text || fallbackEnv).trim();
@@ -182,84 +177,6 @@ function markSessionEnded(tenantId, from) {
   delete assistantPedidoSnapshot[id];
   endedSessions[id] = { endedAt: Date.now() };
 }
-
-// -------------------------------------------------------------------
-// Persistencia de conversación y mensajes cuando estado=COMPLETED
-// -------------------------------------------------------------------
-async function _persistCompleted({ tenantId, waId, contactName, historyMsgs, assistantObj }) {
-  try {
-    const db = await getDb();
-    const openedAt = new Date(Date.now() - Math.max(0, (historyMsgs?.length || 1) - 1) * 1000);
-    const closedAt = new Date();
-    const turns = historyMsgs?.length || 0;
-    const summary = assistantObj?.Pedido ? { Pedido: assistantObj.Pedido } : {};
-    const convDoc = {
-      tenantId: tenantId || DEFAULT_TENANT_ID,
-      waId: String(waId || ""),
-      contactName: String(contactName || ""),
-      status: "COMPLETED",
-      processed: false,
-      openedAt, closedAt, turns,
-      summary,
-      createdAt: new Date(), updatedAt: new Date()
-    };
-    const ins = await db.collection("conversations").insertOne(convDoc);
-    const convId = ins.insertedId;
-    const rows = (historyMsgs || []).map(m => ({
-      conversationId: convId,
-      tenantId: tenantId || DEFAULT_TENANT_ID,
-      role: String(m.role || "user"),
-      content: typeof m.content === "string" ? m.content : safeStringify(m.content),
-      ts: new Date()
-    }));
-    // agrega el JSON final del assistant si no estuviera
-    if (!rows.length || rows[rows.length - 1].role !== "assistant") {
-      rows.push({
-        conversationId: convId,
-        tenantId: tenantId || DEFAULT_TENANT_ID,
-        role: "assistant",
-        content: safeStringify(assistantObj || {}),
-        ts: new Date()
-      });
-    }
-    if (rows.length) await db.collection("messages").insertMany(rows);
-  } catch (e) {
-    console.error("persistCompleted error:", e.message);
-  }
-}
-
-/**
- * Normaliza el JSON de Pedido a un objeto “orden” simple para admin.
- * Exportado para /api/admin/order/:id
- */
-function normalizeOrder(waId, contactName, Pedido) {
-  const p = Pedido || {};
-  const items = Array.isArray(p.items) ? p.items : [];
-  return {
-    name: String(contactName || ""),
-    entrega: String(p.Entrega || ""),
-    domicilio: typeof p.Domicilio === "string"
-      ? p.Domicilio
-      : (p.Domicilio && typeof p.Domicilio === "object"
-          ? Object.values(p.Domicilio).filter(v => String(v||"").trim()).join(" ")
-          : ""),
-    items: items.map(it => ({
-      descripcion: String(it.descripcion || ""),
-      cantidad: Number(it.cantidad || 1),
-      importe_unitario: Number(it.importe_unitario || 0),
-      total: Number(it.total || 0)
-    })),
-    amount: Number(p.total_pedido || 0),
-    fechaEntrega: String(p.Fecha || ""),
-    hora: String(p.Hora || ""),
-    estadoPedido: "CONFIRMADO"
-  };
-}
-
-
-
-
-
 
 // ================== WhatsApp ==================
 async function sendWhatsAppMessage(to, text) {
@@ -377,284 +294,50 @@ const START_FALLBACK = "¡Hola! 👋 ¿Qué te gustaría pedir? Pollo (entero/mi
 const num = v => Number(String(v).replace(/[^\d.-]/g, '') || 0);
 
 // Opción A con flag: por defecto requiere dirección; si ADD_ENVIO_WITHOUT_ADDRESS=1, agrega envío apenas sea 'domicilio'
-
-
-// Validación de "Envio" según método de entrega
-// - Si Entrega = domicilio  -> asegura que exista el ítem Envio
-// - Si Entrega ≠ domicilio  -> elimina cualquier Envio residual
-// Lee un único "Envio" genérico (backward-compat) cuando no usamos tramos
-// Lee un "Envio" de catálogo para fallback cuando no usamos tramos o no hay distancia
-// Ahora acepta "Envio", "Envio 1/2/3", "Envio centro", etc. y elige el más razonable.
-async function getEnvioItemFromCatalog(tenantId = DEFAULT_TENANT_ID) {
-  try {
-    const db = await getDb();
-    const filter = { active: { $ne: false }, descripcion: { $regex: /^env[ií]o(?:\b|[ \t].*)?$/i } };
-    if (tenantId) filter.tenantId = String(tenantId);
-        const list = await db.collection("products")
-      .find(filter)
-      .project({ _id:1, descripcion:1, importe:1, min_km:1, max_km:1 })
-      .toArray();
-    if (!list || !list.length) return null;
-    // Preferimos tramo con min_km más bajo; si no hay min_km, tomamos el más barato.
-    const withMin = list.filter(x => Number.isFinite(x.min_km));
-    let pick;
-    if (withMin.length) {
-      pick = withMin.sort((a,b) => (a.min_km ?? 0) - (b.min_km ?? 0))[0];
-    } else {
-      pick = list.sort((a,b) => (Number(a.importe||0) - Number(b.importe||0)))[0];
-    }
-    return { _id:String(pick._id||""), descripcion:String(pick.descripcion||"Envio"), importe:Number(pick.importe||0) };
-
-  } catch { return null; }
-}
-
-// Coordenadas del local desde settings o ENV
-async function getStoreCoords(tenantId = DEFAULT_TENANT_ID) {
-  try {
-    const db = await getDb();
-    const set = await db.collection("settings").findOne({ _id: `store:${tenantId}:coords` });
-    const lat = Number(set?.lat ?? STORE_LAT);
-    const lng = Number(set?.lng ?? STORE_LNG);
-    if (Number.isFinite(lat) && Number.isFinite(lng) && (lat || lng)) return { lat, lng };
-  } catch {}
-  return { lat: STORE_LAT, lng: STORE_LNG };
-}
-
-// Haversine (km)
-function haversineKm(lat1, lon1, lat2, lon2) {
-  const toRad = (v) => (v * Math.PI) / 180;
-  const R = 6371;
-  const dLat = toRad(lat2 - lat1);
-  const dLon = toRad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-  return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-}
-
-// Geocode con Nominatim (OSM) — requiere User-Agent
-// Mejorado: agrega ciudad/provincia por defecto si faltan.
-async function geocodeAddressToCoords(address, { defaultCity, defaultState, defaultCountry } = {}) {
-  try {
-     let base = String(address || "").trim();
-    const parts = [base];
-    if (!/[,]/.test(base) && defaultCity) parts.push(defaultCity);
-    if (defaultState) parts.push(defaultState);
-    if (defaultCountry) parts.push(defaultCountry);
-    const q = encodeURIComponent(parts.filter(Boolean).join(", "));
- if (!q) return null;
-    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${q}`;
-    const r = await fetch(url, { headers: { "User-Agent": "caryco-bot/1.0 (+contacto)" } });
-    if (!r.ok) return null;
-    const arr = await r.json();
-    if (!Array.isArray(arr) || arr.length === 0) return null;
-    const { lat, lon } = arr[0];
-    const la = Number(lat), lo = Number(lon);
-    if (!Number.isFinite(la) || !Number.isFinite(lo)) return null;
-    return { lat: la, lng: lo };
-  } catch { return null; }
-}
-
-// Selecciona el tramo de envío según distancia (min_km/max_km en products)
-async function pickEnvioTierByDistance(tenantId, distanceKm) {
-  try {
-    const db = await getDb();
-    const filter = { active: { $ne: false }, descripcion: { $regex: /^env[ií]o/i } };
-    if (tenantId) filter.tenantId = String(tenantId);
-    const list = await db.collection("products")
-      .find(filter)
-      .project({ _id: 1, descripcion: 1, importe: 1, min_km: 1, max_km: 1 })
-      .toArray();
-    if (!list.length) return null;
-    // normaliza
-    const tiers = list.map(d => ({
-      _id: String(d._id),
-      descripcion: String(d.descripcion || "Envio"),
-      importe: Number(d.importe || 0),
-      min_km: Number.isFinite(d.min_km) ? Number(d.min_km) : 0,
-      max_km: Number.isFinite(d.max_km) ? Number(d.max_km) : Infinity
-    })).sort((a,b) => a.max_km - b.max_km);
-    const match = tiers.find(t => distanceKm >= t.min_km && distanceKm < t.max_km);
-    return match || tiers[tiers.length - 1];
-  } catch { return null; }
-}
-
-// A partir de Entrega=domicilio y un domicilio textual, calcula distancia y elige ítem
-async function computeEnvioItemForPedido(tenantId, pedido) {
-  const entrega = (pedido?.Entrega || "").toLowerCase();
-  if (entrega !== "domicilio") return null;
-  // Acepta Domicilio como string o como objeto con "direccion" (y variantes)
-  let domicilioStr = null;
-  if (typeof pedido?.Domicilio === "string") {
-    domicilioStr = pedido.Domicilio;
-  } else if (pedido?.Domicilio && typeof pedido.Domicilio === "object") {
-    const d = pedido.Domicilio;
-    domicilioStr = [
-      d.direccion, d.calle, d.numero, d.piso, d.depto, d.barrio, d.localidad, d.ciudad, d.provincia, d.cp
-    ].filter(v => String(v||"").trim()).join(" ");
-  }
-  if (!domicilioStr) return null;
-  const store = await getStoreCoords(tenantId);
-  if (!Number.isFinite(store.lat) || !Number.isFinite(store.lng)) return null;
-    // Defaults de ciudad/prov desde ENV o settings opcionales
-  const defaultCity = process.env.STORE_CITY || "Venado Tuerto";
-  const defaultState = process.env.STORE_STATE || "Santa Fe";
-  const defaultCountry = process.env.STORE_COUNTRY || "Argentina";
-  const dst = await geocodeAddressToCoords(domicilioStr, { defaultCity, defaultState, defaultCountry });
-
-  if (!dst) return null;
-  const km = haversineKm(store.lat, store.lng, dst.lat, dst.lng);
-  const tier = await pickEnvioTierByDistance(tenantId, km);
-  if (!tier) return null;
-  return { _id: tier._id, descripcion: tier.descripcion, importe: tier.importe };
-}
-
-
-
-// Inserta/actualiza el ítem de Envío. Acepta Domicilio como string u objeto.
-// Dejar **una sola** versión de ensureEnvio (esta):
-function ensureEnvio(pedido, envioItem) {
+function ensureEnvio(pedido) {
   const entrega = (pedido?.Entrega || "").toLowerCase();
   const allowWithoutAddress = String(process.env.ADD_ENVIO_WITHOUT_ADDRESS || "0") === "1";
 
-  // Detecta si hay dirección (acepta string o objeto)
-  let hasAddress = false;
-  if (pedido?.Domicilio) {
-    if (typeof pedido.Domicilio === "string") {
-      hasAddress = String(pedido.Domicilio).trim().length > 0;
-    } else if (typeof pedido.Domicilio === "object") {
-      hasAddress = Object.values(pedido.Domicilio).some(v => String(v || "").trim() !== "");
-    }
-  }
+  // ¿Hay dirección en el JSON?
+  const hasAddress =
+    pedido?.Domicilio &&
+    typeof pedido.Domicilio === "object" &&
+    Object.values(pedido.Domicilio).some(v => String(v || "").trim() !== "");
 
-  pedido.items ||= [];
-  const isEnvio = (it) => (it?.descripcion || "").toLowerCase().includes("envio") ||
-                          (envioItem && it?.id && String(it.id) === String(envioItem._id));
-  const idx = pedido.items.findIndex(isEnvio);
+  if (entrega !== "domicilio") return;
+  if (!allowWithoutAddress && !hasAddress) return;
 
-  if (entrega === "domicilio") {
-    if (!allowWithoutAddress && !hasAddress) return; // esperar domicilio salvo flag
-    if (idx === -1) {
-      if (envioItem) {
-        const price = num(envioItem.importe);
-        pedido.items.push({
-          id: envioItem._id || 0,
-          descripcion: envioItem.descripcion || "Envio",
-          cantidad: 1,
-          importe_unitario: price,
-          total: price
-        });
-      }
-    } else if (envioItem) {
-      // actualizar precio/desc del envío si cambió
-      const price = num(envioItem.importe);
-      pedido.items[idx].importe_unitario = price;
-      pedido.items[idx].total = num(pedido.items[idx].cantidad || 1) * price;
-      if (envioItem._id) pedido.items[idx].id = envioItem._id;
-      if (envioItem.descripcion) pedido.items[idx].descripcion = envioItem.descripcion;
-    }
-  } else {
-    // si cambió a retiro, quitar envío
-    if (idx !== -1) pedido.items.splice(idx, 1);
+  const tieneEnvio = (pedido.items || []).some(i => (i.descripcion || "").toLowerCase().includes("envio"));
+  if (!tieneEnvio) {
+    (pedido.items ||= []).push({ id: 6, descripcion: "Envio", cantidad: 1, importe_unitario: 1500, total: 1500 });
   }
 }
-  
-    
-
-function buildBackendSummary(pedido, opts = {}) {
-  const { hideTotal = false } = opts || {};
-  const lines = [
+function buildBackendSummary(pedido) {
+  return [
     "🧾 Resumen del pedido:",
     ...(pedido.items || []).map(i => `- ${i.cantidad} ${i.descripcion}`),
-  ];
-  if (!hideTotal) {
-    lines.push(`💰 Total: ${Number(pedido.total_pedido || 0).toLocaleString("es-AR")}`);
-  }
-  lines.push("¿Confirmamos el pedido? ✅");
-  return lines.join("\n");
+    `💰 Total: ${Number(pedido.total_pedido || 0).toLocaleString("es-AR")}`,
+    "¿Confirmamos el pedido? ✅"
+  ].join("\n");
 }
-
 function coalesceResponse(maybeText, pedidoObj) {
   const s = String(maybeText ?? "").trim();
-
-  // Detectores
-  const items = Array.isArray(pedidoObj?.items) ? pedidoObj.items : [];
-  const isEnvio = (d) => String(d || "").toLowerCase().includes("envio");
-  const hasMilanesas =
-    items.some(it => String(it?.descripcion || "").toLowerCase()
-      .match(/\bmilanesa|milanesas|napolitana|de carne|de pollo\b/));
-
-  // Ítems con precio (>0)
-  const priced = items.filter(it => Number(it?.total || 0) > 0);
-  const pricedNonEnvio = priced.filter(it => !isEnvio(it.descripcion));
-  const hasOnlyEnvioPriced = priced.length > 0 && pricedNonEnvio.length === 0;
-
-  // ¿El usuario parece haber pedido total/detalle?
-    const intentTotalOrDetalle =
-   /\b(total|detalle|resumen|cu[aá]nto\s+es|cuanto\s+es|precio|importe)\b/i.test(s);
-
-  // Normalizador de la leyenda de milanesas (captura variantes y emojis)
-  const milaNoteRegex =
-    /milanesas?\s+se\s+pesan\s+al\s+entregar;?\s*el\s+precio\s+se\s+informa\s+al\s+momento\s+de\s+la\s+entrega\.?/i;
- 
-
-  // Si NO vino texto, generamos resumen (autónomo)
-  let autogenerated = false;
-  let base = s;
-  if (!base) {
-    autogenerated = true;
-    // En resumen automático, ocultamos total si el único precio es el envío
-    const hideTotal = hasOnlyEnvioPriced;
-    base = (items.length > 0) ? buildBackendSummary(pedidoObj, { hideTotal }) : START_FALLBACK;
-  }
-
-  // Si el modelo trajo un texto con "Total" pero el único precio es el Envío, lo ocultamos
-  if (!autogenerated && hasOnlyEnvioPriced && /total/i.test(base)) {
-    base = base
-      .split("\n")
-      .filter(line => !/total/i.test(line))
-      .join("\n")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-  }
-
-   // Leyenda de milanesas:
-  // - Si NO corresponde mostrarla (no se pidió total/detalle y no es resumen automático),
-  //   eliminamos cualquier línea similar que el modelo haya agregado espontáneamente.
-  // - Si SÍ corresponde, aseguramos que aparezca UNA sola vez.
-  if (hasMilanesas) {
-    const lines = base.split("\n");
-    const filtered = lines.filter(l => !milaNoteRegex.test(l));
-    const shouldAppendMilaNote = intentTotalOrDetalle || autogenerated;
-    base = filtered.join("\n").replace(/\n{3,}/g, "\n\n").trim();
-    if (shouldAppendMilaNote) {
-      base = (base ? base + "\n\n" : "") +
-        "⚠️ Las milanesas se pesan al entregar; el precio se informa al momento de la entrega.";
-    }
-  }
-  return base;
+  return s || ((pedidoObj?.items?.length || 0) > 0 ? buildBackendSummary(pedidoObj) : START_FALLBACK);
 }
-
-
-function recalcAndDetectMismatch(pedido, opts = {}) {
-  const envioItem = opts.envioItem || null;
+function recalcAndDetectMismatch(pedido) {
   pedido.items ||= [];
   const hasItems = pedido.items.length > 0;
   let mismatch = false;
 
-  // puede agregar/actualizar/quitar "Envio" según modalidad/domicilio
   const beforeCount = pedido.items.length;
-  ensureEnvio(pedido, envioItem);
+  ensureEnvio(pedido);
   if (pedido.items.length !== beforeCount && hasItems) mismatch = true;
 
-  // recalcula totales, aplicando la regla de milanesas (precio por kilo => 0)
   let totalCalc = 0;
   pedido.items = pedido.items.map(it => {
-    const desc = String(it.descripcion || "").toLowerCase();
-    const esMilanesa = /\bmilanesa|milanesas|napolitana|de carne|de pollo\b/.test(desc);
     const cantidad = num(it.cantidad);
-    const unit = esMilanesa ? 0 : num(it.importe_unitario);
-    const totalOk = esMilanesa ? 0 : (cantidad * unit);
+    const unit = num(it.importe_unitario);
+    const totalOk = cantidad * unit;
     const totalIn = it.total != null ? num(it.total) : null;
     if (hasItems && (totalIn === null || totalIn !== totalOk)) mismatch = true;
     totalCalc += totalOk;
@@ -665,7 +348,7 @@ function recalcAndDetectMismatch(pedido, opts = {}) {
   if (hasItems && (totalModelo === null || totalModelo !== totalCalc)) mismatch = true;
 
   pedido.total_pedido = totalCalc;
-  return { pedidoCorr: pedido, pedido, mismatch, hasItems };
+  return { pedidoCorr: pedido, mismatch, hasItems };
 }
 
 // ================== Chat con historial (inyecta comportamiento de Mongo al inicio) ==================
@@ -748,55 +431,15 @@ async function getGPTReply(tenantId, from, userMessage) {
   }
 }
 
-
-
-// Persistencia auxiliar (por si querés llamarlo desde otros módulos)
-async function appendMessage(conversationId, doc) {
-  const db = await getDb();
-  await db.collection("messages").insertOne({
-    conversationId: typeof conversationId === "string" ? new ObjectId(conversationId) : conversationId,
-    ts: new Date(),
-    ...doc,
-  });
-}
-
-async function finalizeConversationOnce(conversationId, json, status) {
-  const db = await getDb();
-  await db.collection("conversations").updateOne(
-    { _id: typeof conversationId === "string" ? new ObjectId(conversationId) : conversationId },
-    { $set: { status: status || (json?.estado ?? "COMPLETED"), closedAt: new Date(), lastPedido: json?.Pedido || null } }
-  );
-}
-
 // Permite setear el snapshot que se inyectará como rol assistant (solo minimal)
-
-
-
-// (se exportaba; ahora además dispara el guardado si el estado es COMPLETED)
-function setAssistantPedidoSnapshot(tenantId, from, assistantJson, contactName) {
+function setAssistantPedidoSnapshot(tenantId, from, pedidoObj, estado) {
+  const id = k(tenantId, from);
   try {
-    if (!assistantJson) return;
-    const id = k(tenantId, from);
-    assistantPedidoSnapshot[id] = safeStringify(assistantJson?.Pedido || {});
-    // Si el modelo cerró la conversación, persistimos conversación y mensajes.
-    if (String(assistantJson?.estado || "").toUpperCase() === "COMPLETED") {
-      // histórico (standard o minimal)
-      const std = chatHistories[id] || [];
-      const min = userOnlyHistories[id] || [];
-      const merged = std.length ? std : (min.length
-        ? [...min, { role: "assistant", content: safeStringify(assistantJson) }]
-        : [{ role: "assistant", content: safeStringify(assistantJson) }]);
-      // no bloqueamos el flujo: guardamos en background
-      _persistCompleted({
-        tenantId: tenantId || DEFAULT_TENANT_ID,
-        waId: from,
-        contactName: contactName || "",
-        historyMsgs: merged,
-        assistantObj: assistantJson
-     });
-    }
-  } catch (e) { console.error("setAssistantPedidoSnapshot error:", e.message); }
+    const content = JSON.stringify({ estado: estado || null, Pedido: pedidoObj || {} });
+    assistantPedidoSnapshot[id] = content;
+  } catch {}
 }
+
 module.exports = {
   // comportamiento
   loadBehaviorTextFromMongo,
@@ -836,11 +479,4 @@ module.exports = {
   // exports auxiliares
   DEFAULT_TENANT_ID,
   setAssistantPedidoSnapshot,
-  // persistencia para admin
-  appendMessage,
-  finalizeConversationOnce,
-  getEnvioItemFromCatalog,
-  getStoreCoords,
-  computeEnvioItemForPedido,
-  normalizeOrder,
 };
