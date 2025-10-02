@@ -323,7 +323,14 @@ function ensureEnvio(pedido) {
       let distanceKm = null;
 
       if (hasAddress) {
-        const coordsCliente = await geocodeAddress(pedido.Domicilio.direccion || "");
+         // 🧭 Completar dirección con defaults si el usuario puso solo calle/numero
+        const DEF_CITY = process.env.DEFAULT_CITY || "Venado Tuerto";
+        const DEF_PROVINCE = process.env.DEFAULT_PROVINCE || "Santa Fe";
+        const DEF_COUNTRY = process.env.DEFAULT_COUNTRY || "Argentina";
+        const raw = String(pedido.Domicilio.direccion || "").trim();
+        const addressFinal = /,/.test(raw) ? raw : [raw, DEF_CITY, DEF_PROVINCE, DEF_COUNTRY].filter(Boolean).join(", ");
+        const coordsCliente = await geocodeAddress(addressFinal);
+  
         const coordsStore = getStoreCoords();
         if (coordsCliente && coordsStore) {
           distanceKm = calcularDistanciaKm(
@@ -331,7 +338,7 @@ function ensureEnvio(pedido) {
             coordsCliente.lat, coordsCliente.lon
           );
           envioProd = await pickEnvioProductByDistance(db, DEFAULT_TENANT_ID, distanceKm);
-          console.log(`[envio] Dirección='${pedido.Domicilio.direccion}', distancia=${distanceKm} km, envioProd=${envioProd?.descripcion}`);
+         console.log(`[envio] Dirección='${addressFinal}', distancia=${distanceKm} km, envioProd=${envioProd?.descripcion}`);
         }
       }
 
