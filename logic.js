@@ -311,10 +311,48 @@ function ensureEnvio(pedido) {
   if (entrega !== "domicilio") return;
   if (!allowWithoutAddress && !hasAddress) return;
 
-  const tieneEnvio = (pedido.items || []).some(i => (i.descripcion || "").toLowerCase().includes("envio"));
-  if (!tieneEnvio) {
-    (pedido.items ||= []).push({ id: 6, descripcion: "Envio", cantidad: 1, importe_unitario: 1500, total: 1500 });
-  }
+  const tieneEnvio = (pedido.items || []).some(i =>
+    (i.descripcion || "").toLowerCase().includes("envio")
+  );
+  if (tieneEnvio) return;
+
+  (async () => {
+    try {
+      const db = await getDb();
+      let envioProd = null;
+      let distanceKm = null;
+
+      if (hasAddress) {
+        const coordsCliente = await geocodeAddress(pedido.Domicilio.direccion || "");
+        const coordsStore = getStoreCoords();
+        if (coordsCliente && coordsStore) {
+          distanceKm = calcularDistanciaKm(
+            coordsStore.lat, coordsStore.lon,
+            coordsCliente.lat, coordsCliente.lon
+          );
+          envioProd = await pickEnvioProductByDistance(db, DEFAULT_TENANT_ID, distanceKm);
+          console.log(`[envio] Dirección='${pedido.Domicilio.direccion}', distancia=${distanceKm} km, envioProd=${envioProd?.descripcion}`);
+        }
+      }
+
+      if (!envioProd) {
+        envioProd = await pickEnvioProductByDistance(db, DEFAULT_TENANT_ID, Infinity);
+        console.log(`[envio] Fallback envioProd=${envioProd?.descripcion}`);
+      }
+
+      if (envioProd) {
+        (pedido.items ||= []).push({
+          id: envioProd.id || envioProd._id || 0,
+          descripcion: envioProd.descripcion,
+          cantidad: 1,
+          importe_unitario: envioProd.importe || 0,
+          total: envioProd.importe || 0,
+        });
+      }
+    } catch (err) {
+      console.error("[envio] Error al calcular envio:", err.message);
+    }
+  })();
 }
 function buildBackendSummary(pedido) {
   return [
