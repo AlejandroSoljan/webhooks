@@ -23,6 +23,7 @@ const {
   START_FALLBACK, buildBackendSummary, coalesceResponse, recalcAndDetectMismatch,
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
   DEFAULT_TENANT_ID, setAssistantPedidoSnapshot, calcularDistanciaKm,
+  geocodeAddress, getStoreCoords, pickEnvioProductByDistance,
 } = require("./logic");
 
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
@@ -465,16 +466,52 @@ app.post("/webhook", async (req, res) => {
     await require("./logic").sendWhatsAppMessage(from, responseText);
 
     try {
-      // 🔹 Calcular distancia si es a domicilio (requiere coords en pedido.Domicilio)
+     // 🔹 Distancia + Envío dinámico desde catálogo (no rompe ensureEnvio existente)
       let distKm = null;
       if (pedido?.Entrega?.toLowerCase() === "domicilio" && pedido?.Domicilio) {
-        // ⚠️ Ajustá estas coords a la ubicación de tu local
-        const tiendaLat = -31.4201, tiendaLon = -64.1888; // ejemplo: Córdoba centro
-        const { lat, lon } = pedido.Domicilio || {};
-        if (typeof lat === "number" && typeof lon === "number") {
-          distKm = calcularDistanciaKm(tiendaLat, tiendaLon, lat, lon);
-          console.log(`📍 Distancia calculada al domicilio: ${distKm} km`);
-          pedido.distancia_km = distKm; // guardar también en el JSON de pedido
+        const store = getStoreCoords();
+        if (store) {
+          let lat = pedido.Domicilio.lat, lon = pedido.Domicilio.lon;
+          // Si no vienen coords, geocodificamos la dirección textual
+          if (!(typeof lat === "number" && typeof lon === "number")) {
+            const addrParts = [
+              pedido.Domicilio.direccion,
+              [pedido.Domicilio.calle, pedido.Domicilio.numero].filter(Boolean).join(" "),
+              pedido.Domicilio.barrio,
+              pedido.Domicilio.ciudad || pedido.Domicilio.localidad,
+              pedido.Domicilio.provincia,
+              pedido.Domicilio.cp
+            ].filter(Boolean);
+            const address = addrParts.join(", ").trim();
+            const geo = address ? await geocodeAddress(address) : null;
+            if (geo) { lat = geo.lat; lon = geo.lon; pedido.Domicilio.lat = lat; pedido.Domicilio.lon = lon; }
+          }
+          if (typeof lat === "number" && typeof lon === "number") {
+            distKm = calcularDistanciaKm(store.lat, store.lon, lat, lon);
+            pedido.distancia_km = distKm;
+            console.log(`📍 Distancia calculada al domicilio: ${distKm} km`);
+            // —— Seleccionar Envío desde catálogo por distancia
+           const db = await getDb();
+            const envioProd = await pickEnvioProductByDistance(db, TENANT_ID || null, distKm);
+            if (envioProd && typeof envioProd.importe === "number") {
+              // Ubicar ítem "Envio" existente (ensureEnvio lo pudo agregar antes)
+              const idx = (pedido.items || []).findIndex(i => String(i.descripcion || "").toLowerCase().includes("envio"));
+              if (idx >= 0) {
+                const cantidad = Number(pedido.items[idx].cantidad || 1);
+                pedido.items[idx].importe_unitario = Number(envioProd.importe);
+                pedido.items[idx].total = cantidad * Number(envioProd.importe);
+              }
+              // Recalcular total del pedido localmente (sin tocar ensureEnvio)
+              let totalCalc = 0;
+              (pedido.items || []).forEach(it => {
+                const cant = Number(String(it.cantidad).replace(/[^\d.-]/g,'')) || 0;
+                const unit = Number(String(it.importe_unitario).replace(/[^\d.-]/g,'')) || 0;
+                it.total = cant * unit;
+                totalCalc += it.total;
+              });
+              pedido.total_pedido = totalCalc;
+            }
+          }
         }
       }
 
