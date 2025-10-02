@@ -504,11 +504,22 @@ app.post("/webhook", async (req, res) => {
             ].filter(Boolean);
             const address = addrParts.join(", ").trim();
             if (address) {
-              const geo = await geocodeAddress(address);
+              // ➕ Si el usuario solo escribió "Moreno 2862", agregamos localidad por defecto
+              const DEF_CITY = process.env.DEFAULT_CITY || "";
+              const DEF_PROVINCE = process.env.DEFAULT_PROVINCE || "";
+              const DEF_COUNTRY = process.env.DEFAULT_COUNTRY || "Argentina";
+              const addressFinal = /,/.test(address) ? address : [address, DEF_CITY, DEF_PROVINCE, DEF_COUNTRY].filter(Boolean).join(", ");
+              console.log(`[geo] Direccion compilada='${addressFinal}'`);
+             
+              const geo = await geocodeAddress(addressFinal);
               if (geo) {
                 lat = geo.lat; lon = geo.lon;
                 pedido.Domicilio.lat = lat;
                 pedido.Domicilio.lon = lon;
+                console.log(`[geo] OK lat=${lat}, lon=${lon}`);
+              } else {
+                console.warn("[geo] No hubo resultado de geocoding (¿API key/billing/localidad?)");
+          
               }
             }
           }
@@ -523,6 +534,8 @@ app.post("/webhook", async (req, res) => {
             const db = await getDb();
             const envioProd = await pickEnvioProductByDistance(db, TENANT_ID || null, distKm);
             if (envioProd && typeof envioProd.importe === "number") {
+                 console.log(`[envio] Seleccionado por distancia: '${envioProd.descripcion}' @ ${envioProd.importe}`);
+            
               const idx = (pedido.items || []).findIndex(i =>
                 String(i.descripcion || "").toLowerCase().includes("envio")
               );
