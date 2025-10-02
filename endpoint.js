@@ -505,8 +505,8 @@ app.post("/webhook", async (req, res) => {
             const address = addrParts.join(", ").trim();
             if (address) {
               // ➕ Si el usuario solo escribió "Moreno 2862", agregamos localidad por defecto
-              const DEF_CITY = process.env.DEFAULT_CITY || "";
-              const DEF_PROVINCE = process.env.DEFAULT_PROVINCE || "";
+              const DEF_CITY = process.env.DEFAULT_CITY || "Venado Tuerto";
+              const DEF_PROVINCE = process.env.DEFAULT_PROVINCE || "Santa Fe";
               const DEF_COUNTRY = process.env.DEFAULT_COUNTRY || "Argentina";
               const addressFinal = /,/.test(address) ? address : [address, DEF_CITY, DEF_PROVINCE, DEF_COUNTRY].filter(Boolean).join(", ");
               console.log(`[geo] Direccion compilada='${addressFinal}'`);
