@@ -355,6 +355,71 @@ function recalcAndDetectMismatch(pedido) {
   return { pedidoCorr: pedido, mismatch, hasItems };
 }
 
+
+// ================== Normalización de precios desde catálogo ==================
+function _norm(s) {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // sin tildes
+    .replace(/[^a-z0-9\s]/g, " ")                    // sin símbolos
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Completa precios de items desde Mongo por coincidencia de descripcion (robusta).
+ * - Si el ítem parece una milanesa, NO reemplaza precio (deja 0).
+ * - Para el resto (pollo, papas, bebidas, etc.), pisa el unitario si está vacío/0 o si viene mal.
+ */
+async function hydratePricesFromCatalog(pedido, tenantId) {
+  try {
+    if (!pedido || !Array.isArray(pedido.items) || !pedido.items.length) return pedido;
+    const db = await getDb();
+    const filter = { active: { $ne: false } };
+    if (tenantId) filter.tenantId = tenantId;
+    const products = await db.collection("products").find(filter).toArray();
+    if (!products.length) return pedido;
+
+    // índice por descripción normalizada
+    const map = new Map();
+    for (const p of products) {
+      const key = _norm(p.descripcion);
+      if (key) map.set(key, p);
+    }
+
+    const looksLikeMilanesa = (txt) => /\bmilanesa(s)?\b|\bnapolitana(s)?\b/.test(_norm(txt));
+
+    pedido.items = (pedido.items || []).map(it => {
+      const desc = String(it?.descripcion || "");
+      if (!desc) return it;
+
+      // Si es milanesa, respetamos regla de $0
+      if (looksLikeMilanesa(desc)) {
+        return { ...it, importe_unitario: 0, total: 0 };
+      }
+
+      const key = _norm(desc);
+      let unit = Number(String(it.importe_unitario ?? "").replace(/[^\d.-]/g, "")) || 0;
+      const hit = map.get(key);
+
+      // Reemplazar cuando no tenga precio o venga 0/erróneo
+      if (hit && typeof hit.importe === "number" && (!Number.isFinite(unit) || unit <= 0)) {
+        unit = Number(hit.importe);
+      }
+      const cantidad = Number(String(it.cantidad ?? "1").replace(/[^\d.-]/g, "")) || 0;
+      const total = cantidad * (Number.isFinite(unit) ? unit : 0);
+      return { ...it, importe_unitario: unit, total };
+    });
+    return pedido;
+  } catch {
+    return pedido;
+  }
+}
+
+
+
+
+
 // ================== Chat con historial (inyecta comportamiento de Mongo al inicio) ==================
 async function getGPTReply(tenantId, from, userMessage) {
   const id = k(tenantId, from);
@@ -576,5 +641,6 @@ module.exports = {
   geocodeAddress,
   getStoreCoords,
   pickEnvioProductByDistance,
+  hydratePricesFromCatalog,
  
 };
