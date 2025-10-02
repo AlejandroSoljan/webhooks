@@ -643,6 +643,94 @@ async function pickEnvioProductByDistance(db, tenantId, distanceKm) {
   return productos[0];
 }
 
+
+// ================== Envío inteligente (awaitable) ==================
+/**
+ * Inserta/ajusta el item "Envio" según:
+ *  - Entrega = domicilio
+ *  - Geocoding de la dirección (si hay)
+ *  - Distancia con STORE_LAT/LNG
+ *  - Selección de producto de envío por rango
+ *
+ * Seguro para llamar antes de recálculos. No duplica ítem.
+ */
+async function ensureEnvioSmart(pedido, tenantId) {
+  try {
+    if (!pedido) return pedido;
+    const entrega = String(pedido?.Entrega || "").toLowerCase();
+    if (entrega !== "domicilio") return pedido;
+
+    // ¿ya hay envío?
+    const idx = (pedido.items || []).findIndex(i =>
+      String(i?.descripcion || "").toLowerCase().includes("envio")
+    );
+
+    // Preparar dirección
+    const DEF_CITY = process.env.DEFAULT_CITY || "Venado Tuerto";
+    const DEF_PROVINCE = process.env.DEFAULT_PROVINCE || "Santa Fe";
+    const DEF_COUNTRY = process.env.DEFAULT_COUNTRY || "Argentina";
+    const domicilio = pedido?.Domicilio || {};
+    const addrParts = [
+      domicilio.direccion,
+      [domicilio.calle, domicilio.numero].filter(Boolean).join(" "),
+      domicilio.barrio,
+      domicilio.ciudad || domicilio.localidad,
+      domicilio.provincia,
+      domicilio.cp
+    ].filter(Boolean);
+    let address = addrParts.join(", ").trim();
+    if (address && !/,/.test(address)) {
+      address = [address, DEF_CITY, DEF_PROVINCE, DEF_COUNTRY].filter(Boolean).join(", ");
+    }
+
+    // Geocoding + distancia
+    const store = getStoreCoords?.();
+    let distKm = null;
+    if (store && address) {
+      const geo = await geocodeAddress(address);
+      if (geo) {
+        const { lat, lon } = geo;
+        pedido.Domicilio.lat = lat;
+        pedido.Domicilio.lon = lon;
+        distKm = calcularDistanciaKm(store.lat, store.lon, lat, lon);
+        pedido.distancia_km = distKm;
+        console.log(`[envio] ensureEnvioSmart address='${address}', distancia=${distKm} km`);
+      } else {
+        console.warn("[envio] ensureEnvioSmart: geocoding sin resultado");
+      }
+    }
+
+    // Elegir producto de envío (por distancia si la hay; si no, fallback)
+    const db = await getDb();
+    const envioProd = await pickEnvioProductByDistance(db, tenantId || null, distKm ?? Infinity);
+    if (!envioProd) return pedido;
+
+    // Insertar o actualizar
+    if (idx >= 0) {
+      const cantidad = Number(pedido.items[idx].cantidad || 1);
+      pedido.items[idx].id = envioProd._id || pedido.items[idx].id || 0;
+      pedido.items[idx].descripcion = envioProd.descripcion;
+      pedido.items[idx].importe_unitario = Number(envioProd.importe || 0);
+      pedido.items[idx].total = cantidad * Number(envioProd.importe || 0);
+      console.log(`[envio] ensureEnvioSmart ajustado a '${envioProd.descripcion}' @ ${envioProd.importe}`);
+    } else {
+      (pedido.items ||= []).push({
+        id: envioProd._id || 0,
+        descripcion: envioProd.descripcion,
+        cantidad: 1,
+        importe_unitario: Number(envioProd.importe || 0),
+        total: Number(envioProd.importe || 0),
+      });
+      console.log(`[envio] ensureEnvioSmart insertado '${envioProd.descripcion}' @ ${envioProd.importe}`);
+    }
+    return pedido;
+  } catch (e) {
+    console.error("[envio] ensureEnvioSmart error:", e?.message);
+    return pedido;
+  }
+}
+
+
 module.exports = {
   // comportamiento
   loadBehaviorTextFromMongo,
@@ -687,5 +775,5 @@ module.exports = {
   getStoreCoords,
   pickEnvioProductByDistance,
   hydratePricesFromCatalog,
- 
+ ensureEnvioSmart,
 };
