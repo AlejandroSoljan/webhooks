@@ -25,6 +25,7 @@ const {
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
   DEFAULT_TENANT_ID, setAssistantPedidoSnapshot, calcularDistanciaKm,
   geocodeAddress, getStoreCoords, pickEnvioProductByDistance,
+  ensureEnvioSmart,
 } = require("./logic");
 
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
@@ -394,6 +395,10 @@ app.post("/webhook", async (req, res) => {
       pedido = parsed.Pedido || { items: [] };
       // 💰 Hidratar precios desde catálogo ANTES de recalcular (evita “Pollo entero @ 0”)
       try { pedido = await hydratePricesFromCatalog(pedido, TENANT_ID || null); } catch {}
+      // 🚚 Asegurar ítem Envío con geocoding/distancia (awaitable, sin race)
+      try { pedido = await ensureEnvioSmart(pedido, TENANT_ID || null); } catch {}
+
+
       const { pedidoCorr, mismatch, hasItems } = recalcAndDetectMismatch(pedido);
       pedido = pedidoCorr;
 
@@ -552,7 +557,17 @@ app.post("/webhook", async (req, res) => {
 
                 const changed = (prevImporte !== Number(envioProd.importe)) || (prevDesc !== envioProd.descripcion);
                 if (changed) console.log(`[envio] Ajustado item existente: '${prevDesc}' @ ${prevImporte} -> '${envioProd.descripcion}' @ ${envioProd.importe}`);
-    
+                } else {
+                // 🆕 No existía el item Envío: lo insertamos ahora
+                (pedido.items ||= []).push({
+                  id: envioProd._id || 0,
+                  descripcion: envioProd.descripcion,
+                  cantidad: 1,
+                  importe_unitario: Number(envioProd.importe),
+                  total: Number(envioProd.importe),
+                });
+                console.log(`[envio] Insertado item envío: '${envioProd.descripcion}' @ ${envioProd.importe}`);
+            
               }
               // Recalcular total localmente
               let totalCalc = 0;
