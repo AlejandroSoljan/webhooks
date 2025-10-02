@@ -23,6 +23,10 @@ const CACHE_TTL_MS = parseInt(process.env.AUDIO_CACHE_TTL_MS || "300000", 10);
 const TRANSCRIBE_MODEL = process.env.WHISPER_MODEL || process.env.OPENAI_TRANSCRIBE_MODEL || "whisper-1";
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN || "";
 const DEFAULT_TENANT_ID = (process.env.TENANT_ID || "default").trim();
+  // 🔹 Coordenadas del negocio + API Key de Maps
+const STORE_LAT = parseFloat(process.env.STORE_LAT || "");
+const STORE_LNG = parseFloat(process.env.STORE_LNG || "");
+const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || "";
 
 const { getDb } = require("./db");
 
@@ -455,6 +459,80 @@ function calcularDistanciaKm(lat1, lon1, lat2, lon2) {
   return +(R * c).toFixed(2);
 }
 
+
+// ================== Geocoding por dirección (Google) ==================
+async function geocodeAddress(address) {
+  try {
+    if (!GOOGLE_MAPS_API_KEY || !address) return null;
+    const url = "https://maps.googleapis.com/maps/api/geocode/json";
+    const { data } = await axios.get(url, { params: { address, key: GOOGLE_MAPS_API_KEY } });
+    const hit = data?.results?.[0]?.geometry?.location;
+    if (!hit) return null;
+    return { lat: hit.lat, lon: hit.lng };
+  } catch (e) {
+    console.error("geocodeAddress error:", e?.response?.data || e.message);
+    return null;
+  }
+}
+
+function getStoreCoords() {
+  // Devuelve null si no están configuradas para no romper el flujo
+  if (!Number.isFinite(STORE_LAT) || !Number.isFinite(STORE_LNG)) return null;
+  return { lat: STORE_LAT, lon: STORE_LNG };
+}
+
+// ================== Selección de Envío desde catálogo por distancia ==================
+/**
+ * Busca productos activos del tenant cuya descripción contenga 'Envio' (case-insensitive),
+ * intenta parsear rangos de km en la descripción y elige el que matchee la distancia.
+ * Ejemplos soportados:
+ *  - "Envio 0-3km", "Envio 3 - 6 km", "Envio hasta 3 km", "Envio >6km", "Envio 6+ km"
+ * Fallback: si no hay rangos, retorna el primer "Envio".
+ */
+async function pickEnvioProductByDistance(db, tenantId, distanceKm) {
+  const filter = { active: { $ne: false }, descripcion: { $regex: /envio/i } };
+  if (tenantId) filter.tenantId = tenantId;
+  const productos = await db.collection("products").find(filter).toArray();
+  if (!productos.length) return null;
+
+ const norm = (s) => String(s || "").toLowerCase();
+  const parsed = productos.map(p => {
+    const d = norm(p.descripcion);
+    // intentamos extraer min/max en km
+    // 1) Rango "a-b km"
+    let min = null, max = null;
+    const m1 = d.match(/(\d+(?:[\.,]\d+)?)\s*-\s*(\d+(?:[\.,]\d+)?)\s*km/);
+    if (m1) { min = parseFloat(m1[1].replace(",", ".")); max = parseFloat(m1[2].replace(",", ".")); }
+    // 2) "hasta X km"
+    const m2 = !m1 && d.match(/hasta\s*(\d+(?:[\.,]\d+)?)\s*km/);
+    if (m2) { min = 0; max = parseFloat(m2[1].replace(",", ".")); }
+    // 3) ">X km" o "X+ km"
+    const m3 = !m1 && !m2 && d.match(/(?:>\s*|(^|\s))(\d+(?:[\.,]\d+)?)\s*\+?\s*km/);
+    if (m3) { min = parseFloat(m3[2].replace(",", ".")); max = Infinity; }
+    return { prod: p, min, max };
+  });
+
+  const candidates = parsed.filter(x => x.min !== null || x.max !== null);
+  if (candidates.length) {
+    const hit = candidates.find(x => {
+      const lo = x.min ?? 0;
+      const hi = x.max ?? Infinity;
+      return distanceKm >= lo && distanceKm <= hi;
+    });
+    if (hit) return hit.prod;
+    // si no matchea, tomamos el de mayor max < distancia o el de mayor rango
+    const withMax = candidates.filter(x => Number.isFinite(x.max));
+    if (withMax.length) {
+      const nearestBelow = withMax
+        .filter(x => x.max < distanceKm)
+        .sort((a,b) => b.max - a.max)[0];
+      if (nearestBelow) return nearestBelow.prod;
+    }
+  }
+  // fallback: primer producto "Envio"
+  return productos[0];
+}
+
 module.exports = {
   // comportamiento
   loadBehaviorTextFromMongo,
@@ -495,4 +573,8 @@ module.exports = {
   DEFAULT_TENANT_ID,
   setAssistantPedidoSnapshot,
   calcularDistanciaKm,
+  geocodeAddress,
+  getStoreCoords,
+  pickEnvioProductByDistance,
+ 
 };
