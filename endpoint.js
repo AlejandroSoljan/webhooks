@@ -21,6 +21,7 @@ const {
   invalidateBehaviorCache,
   getGPTReply, hasActiveEndedFlag, markSessionEnded, isPoliteClosingMessage,
   START_FALLBACK, buildBackendSummary, coalesceResponse, recalcAndDetectMismatch,
+  hydratePricesFromCatalog,
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
   DEFAULT_TENANT_ID, setAssistantPedidoSnapshot, calcularDistanciaKm,
   geocodeAddress, getStoreCoords, pickEnvioProductByDistance,
@@ -391,7 +392,8 @@ app.post("/webhook", async (req, res) => {
       const parsed = JSON.parse(gptReply);
       estado = parsed.estado;
       pedido = parsed.Pedido || { items: [] };
-
+      // 💰 Hidratar precios desde catálogo ANTES de recalcular (evita “Pollo entero @ 0”)
+      try { pedido = await hydratePricesFromCatalog(pedido, TENANT_ID || null); } catch {}
       const { pedidoCorr, mismatch, hasItems } = recalcAndDetectMismatch(pedido);
       pedido = pedidoCorr;
 
@@ -426,6 +428,9 @@ app.post("/webhook", async (req, res) => {
             estado = parsedFix.estado || estado;
 
             let pedidoFix = parsedFix.Pedido || { items: [] };
+             // 💰 Rehidratar también en el ciclo de fix
+            try { pedidoFix = await hydratePricesFromCatalog(pedidoFix, TENANT_ID || null); } catch {}
+         
             const { pedidoCorr: pedidoFixCorr, mismatch: mismatchFix, hasItems: hasItemsFix } = recalcAndDetectMismatch(pedidoFix);
             pedido = pedidoFixCorr;
 
