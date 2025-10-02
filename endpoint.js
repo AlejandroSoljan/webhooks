@@ -463,16 +463,31 @@ app.post("/webhook", async (req, res) => {
       }
     }*/
 
+    // 🔎 Quitar nota de milanesas si no hay milanesas en el pedido
+    try {
+      const hasMilanesas = (pedido?.items || []).some(i =>
+        String(i?.descripcion || "").toLowerCase().includes("milanesa")
+      );
+      if (!hasMilanesas) {
+        // remueve la línea (con o sin asteriscos / variaciones menores)
+        responseText = responseText
+          .replace(/\*?\s*Las milanesas se pesan al entregar; el precio se informa al momento de la entrega\.\s*\*?/i, "")
+          .replace(/\n{3,}/g, "\n\n") // normaliza saltos extra
+          .trim();
+      }
+    } catch {}
+
     await require("./logic").sendWhatsAppMessage(from, responseText);
 
     try {
-     // 🔹 Distancia + Envío dinámico desde catálogo (no rompe ensureEnvio existente)
+     // 🔹 Distancia + geocoding + Envío dinámico
       let distKm = null;
       if (pedido?.Entrega?.toLowerCase() === "domicilio" && pedido?.Domicilio) {
         const store = getStoreCoords();
         if (store) {
-          let lat = pedido.Domicilio.lat, lon = pedido.Domicilio.lon;
-          // Si no vienen coords, geocodificamos la dirección textual
+          let { lat, lon } = pedido.Domicilio;
+
+          // Geocodificamos si faltan coords
           if (!(typeof lat === "number" && typeof lon === "number")) {
             const addrParts = [
               pedido.Domicilio.direccion,
@@ -483,25 +498,35 @@ app.post("/webhook", async (req, res) => {
               pedido.Domicilio.cp
             ].filter(Boolean);
             const address = addrParts.join(", ").trim();
-            const geo = address ? await geocodeAddress(address) : null;
-            if (geo) { lat = geo.lat; lon = geo.lon; pedido.Domicilio.lat = lat; pedido.Domicilio.lon = lon; }
+            if (address) {
+              const geo = await geocodeAddress(address);
+              if (geo) {
+                lat = geo.lat; lon = geo.lon;
+                pedido.Domicilio.lat = lat;
+                pedido.Domicilio.lon = lon;
+              }
+            }
           }
+
+          // Si ya tenemos coords → calcular distancia
           if (typeof lat === "number" && typeof lon === "number") {
             distKm = calcularDistanciaKm(store.lat, store.lon, lat, lon);
             pedido.distancia_km = distKm;
             console.log(`📍 Distancia calculada al domicilio: ${distKm} km`);
-            // —— Seleccionar Envío desde catálogo por distancia
-           const db = await getDb();
+
+            // Buscar producto de Envío según km
+            const db = await getDb();
             const envioProd = await pickEnvioProductByDistance(db, TENANT_ID || null, distKm);
             if (envioProd && typeof envioProd.importe === "number") {
-              // Ubicar ítem "Envio" existente (ensureEnvio lo pudo agregar antes)
-              const idx = (pedido.items || []).findIndex(i => String(i.descripcion || "").toLowerCase().includes("envio"));
+              const idx = (pedido.items || []).findIndex(i =>
+                String(i.descripcion || "").toLowerCase().includes("envio")
+              );
               if (idx >= 0) {
                 const cantidad = Number(pedido.items[idx].cantidad || 1);
                 pedido.items[idx].importe_unitario = Number(envioProd.importe);
                 pedido.items[idx].total = cantidad * Number(envioProd.importe);
               }
-              // Recalcular total del pedido localmente (sin tocar ensureEnvio)
+              // Recalcular total localmente
               let totalCalc = 0;
               (pedido.items || []).forEach(it => {
                 const cant = Number(String(it.cantidad).replace(/[^\d.-]/g,'')) || 0;
@@ -514,7 +539,6 @@ app.post("/webhook", async (req, res) => {
           }
         }
       }
-
       // 🔹 Mantener snapshot del asistente
       setAssistantPedidoSnapshot(tenant, from, pedido, estado);
 
