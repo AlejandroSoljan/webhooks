@@ -540,9 +540,19 @@ app.post("/webhook", async (req, res) => {
                 String(i.descripcion || "").toLowerCase().includes("envio")
               );
               if (idx >= 0) {
-                const cantidad = Number(pedido.items[idx].cantidad || 1);
+                 const cantidad = Number(pedido.items[idx].cantidad || 1);
+                const prevImporte = Number(pedido.items[idx].importe_unitario || 0);
+                const prevDesc = String(pedido.items[idx].descripcion || "");
+
+                // ✅ Actualizar TODO: id, descripción, unitario y total
+                pedido.items[idx].id = envioProd._id || pedido.items[idx].id || 0;
+                pedido.items[idx].descripcion = envioProd.descripcion;
                 pedido.items[idx].importe_unitario = Number(envioProd.importe);
                 pedido.items[idx].total = cantidad * Number(envioProd.importe);
+
+                const changed = (prevImporte !== Number(envioProd.importe)) || (prevDesc !== envioProd.descripcion);
+                if (changed) console.log(`[envio] Ajustado item existente: '${prevDesc}' @ ${prevImporte} -> '${envioProd.descripcion}' @ ${envioProd.importe}`);
+    
               }
               // Recalcular total localmente
               let totalCalc = 0;
@@ -553,6 +563,18 @@ app.post("/webhook", async (req, res) => {
                 totalCalc += it.total;
               });
               pedido.total_pedido = totalCalc;
+
+              // 🔔 (opcional pero útil): si hubo cambio de envío, avisar al cliente con total correcto
+            /*  try {
+                const totalStr = (Number(pedido.total_pedido)||0).toLocaleString("es-AR");
+                await require("./logic").sendWhatsAppMessage(
+                  from,
+                  `Actualicé el envío según tu dirección (${distKm} km): ${envioProd.descripcion}. Total: $${totalStr}.`
+                );
+              } catch (e) {
+                console.warn("[envio] No se pudo notificar ajuste de envío:", e?.message);
+              }*/
+
             }
           }
         }
