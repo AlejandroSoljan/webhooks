@@ -89,33 +89,40 @@ async function saveLog(entry) {
   }
 }
 
-// Listado simple de conversaciones (último mensaje por waId)
+// Listado de conversaciones reales (colección `conversations`)
 async function listConversations(limit = 50) {
   const db = await getDb();
   const q = withTenant({});
-  const pipeline = [
-    { $match: q },
-    { $sort: { createdAt: -1 } },
-    {
-      $group: {
-        _id: "$waId",
-        lastAt: { $first: "$createdAt" },
-        lastRole: { $first: "$role" },
-        lastContent: { $first: "$content" }
-      }
-    },
-    { $sort: { lastAt: -1 } },
-    { $limit: limit }
-  ];
-  return db.collection("logs").aggregate(pipeline).toArray();
+  const rows = await db.collection("conversations")
+    .find(q)
+    .sort({ updatedAt: -1, closedAt: -1, openedAt: -1 })
+    .limit(limit)
+    .toArray();
+  return rows.map(c => ({
+    _id: String(c._id),
+    waId: c.waId,
+    contactName: c.contactName,
+    status: c.status,
+    lastAt: c.updatedAt || c.closedAt || c.openedAt
+  }));
 }
 
 // Mensajes por conversación
-async function getConversationMessages(waId, limit = 200) {
+// Mensajes por conversación (colección `messages`)
+async function getConversationMessagesByConvId(convId, limit = 500) {
   const db = await getDb();
-  const q = withTenant({ waId });
-  return db.collection("logs")
-    .find(q).sort({ createdAt: 1 }).limit(limit).toArray();
+  const filter = withTenant({ conversationId: new ObjectId(String(convId)) });
+  return db.collection("messages")
+    .find(filter).sort({ ts: 1, createdAt: 1 }).limit(limit).toArray();
+}
+async function getConversationMessagesByWaId(waId, limit = 500) {
+  const db = await getDb();
+  const conv = await db.collection("conversations").findOne(
+    withTenant({ waId }),
+    { sort: { updatedAt: -1, openedAt: -1 } }
+  );
+  if (!conv) return [];
+  return getConversationMessagesByConvId(conv._id, limit);
 }
 
 // ---------- API de logs ----------
@@ -124,12 +131,7 @@ app.get("/api/logs/conversations", async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(parseInt(req.query.limit || "50", 10), 500));
     const rows = await listConversations(limit);
-    res.json(rows.map(r => ({
-      waId: r._id,
-      lastAt: r.lastAt,
-      lastRole: r.lastRole,
-      lastContent: r.lastContent
-    })));
+    res.json(rows);
   } catch (e) {
     console.error("GET /api/logs/conversations error:", e);
     res.status(500).json({ error: "internal" });
@@ -139,16 +141,17 @@ app.get("/api/logs/conversations", async (req, res) => {
 // Mensajes de una conversación
 app.get("/api/logs/messages", async (req, res) => {
   try {
-    const { waId } = req.query;
-    if (!waId) return res.status(400).json({ error: "waId is required" });
-    const rows = await getConversationMessages(waId, 500);
-    res.json(rows.map(x => ({
-      _id: String(x._id),
-      waId: x.waId,
-      role: x.role,
-      content: x.content,
-      payload: x.payload,
-      createdAt: x.createdAt
+    const { convId, waId } = req.query;
+    if (!convId && !waId) return res.status(400).json({ error: "convId or waId is required" });
+    const rows = convId
+      ? await getConversationMessagesByConvId(convId, 500)
+      : await getConversationMessagesByWaId(waId, 500);
+    res.json(rows.map(m => ({
+      _id: String(m._id),
+      role: m.role,                     // "user" | "assistant" | "system"
+      content: m.content,
+      type: m.type,
+      createdAt: m.ts || m.createdAt
     })));
   } catch (e) {
     console.error("GET /api/logs/messages error:", e);
@@ -160,9 +163,9 @@ app.get("/api/logs/messages", async (req, res) => {
 app.get("/admin", async (req, res) => {
   try {
     const conversations = await listConversations(100);
-    const options = conversations.map(c => {
-      const last = (c.lastContent || "").replace(/</g,"&lt;").slice(0,80);
-      return `<option value="${c._id}">${c._id || "sin waId"} — ${last}</option>`;
+      const options = conversations.map(c => {
+      const label = `${c.waId || "sin waId"} — ${new Date(c.lastAt||Date.now()).toLocaleString()}${c.contactName ? " — " + c.contactName : ""}`;
+      return `<option value="${c._id}">${label}</option>`;
     }).join("");
     const html = `<!doctype html>
 <html lang="es">
@@ -190,12 +193,12 @@ app.get("/admin", async (req, res) => {
 
   <div class="row">
     <div class="col">
-      <label>Conversación (waId):</label><br/>
+      <label>Conversación:</label><br/>
       <select id="convSel">${options}</select>
       <button onclick="loadMsgs()">Ver</button>
     </div>
     <div class="col">
-      <label>Buscar por waId:</label><br/>
+      <label>Buscar por waId (última conversación):</label><br/>
       <input id="waIdI" placeholder="5493..."/><button onclick="loadMsgs(true)">Buscar</button>
     </div>
   </div>
@@ -205,9 +208,11 @@ app.get("/admin", async (req, res) => {
   <script>
     async function loadMsgs(fromInput){
       const sel = document.getElementById('convSel');
-      const wa = fromInput ? document.getElementById('waIdI').value : sel.value;
-      if(!wa){ alert('Seleccioná un waId'); return; }
-      const r = await fetch('/api/logs/messages?waId=' + encodeURIComponent(wa));
+      const convId = fromInput ? '' : (sel.value||'');
+      const wa = fromInput ? (document.getElementById('waIdI').value||'').trim() : '';
+      if(!convId && !wa){ alert('Seleccioná una conversación o ingresá un waId'); return; }
+      const qs = convId ? ('convId=' + encodeURIComponent(convId)) : ('waId=' + encodeURIComponent(wa));
+      const r = await fetch('/api/logs/messages?' + qs);
       const data = await r.json();
       const root = document.getElementById('msgs');
       root.innerHTML = '';
