@@ -393,10 +393,12 @@ function ensureEnvio(pedido) {
    }
    return lines.join("\n");
  }
-function coalesceResponse(maybeText, pedidoObj) {
-  const s = String(maybeText ?? "").trim();
-  return s || ((pedidoObj?.items?.length || 0) > 0 ? buildBackendSummary(pedidoObj) : START_FALLBACK);
-}
+ function coalesceResponse(maybeText, _pedido, _opts = {}) {
+   const s = String(maybeText || "").trim();
+   if (s) return s;
+   // Ya no hacemos autosummary acá.
+   return START_FALLBACK;
+ }
 function recalcAndDetectMismatch(pedido) {
   pedido.items ||= [];
   const hasItems = pedido.items.length > 0;
