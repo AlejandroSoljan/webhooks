@@ -384,7 +384,9 @@ app.post("/webhook", async (req, res) => {
       // En minimal guardamos snapshot siempre; si no lo tenés a mano, seguimos y dejamos que el modelo lo complete
     }
     const gptReply = await getGPTReply(tenant, from, text);
-    const wantsDetail = /\b(detalle|detall|resumen|desglose)\b/i.test(String(text||""));
+    // También dispara si el usuario pide "total" o está en fase de confirmar
+   const wantsDetail = /\b(detalle|detall|resumen|desglose|total|confirm(a|o|ar))\b/i
+      .test(String(text || ""));
 
 
     let responseText = "Perdón, hubo un error. ¿Podés repetir?";
@@ -449,7 +451,8 @@ app.post("/webhook", async (req, res) => {
 
         responseText = fixedOk && parsedFixLast
           ? coalesceResponse(parsedFixLast.response, pedido)
-          : buildBackendSummary(pedido, { showEnvio: wantsDetail });
+          // Solo mostrar resumen si el usuario pidió detalle/total/confirmar
+          : (wantsDetail ? buildBackendSummary(pedido, { showEnvio: wantsDetail }) : "");
       } else {
         responseText = coalesceResponse(parsed.response, pedido);
       }
@@ -460,9 +463,13 @@ app.post("/webhook", async (req, res) => {
     try {
       const finalBody = String(responseText ?? "").trim();
       if (!finalBody) {
-       if (pedido && Array.isArray(pedido.items) && pedido.items.length > 0)
+        // No forzar resumen a menos que lo pidan explícitamente
+        if (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length > 0) {
           responseText = buildBackendSummary(pedido, { showEnvio: wantsDetail });
-           else responseText = START_FALLBACK;
+        } else {
+          // Caer a un prompt breve según el estado, o fallback simple
+          responseText = START_FALLBACK;
+        }
       }
     } catch {}
 
