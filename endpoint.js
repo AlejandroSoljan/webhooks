@@ -14,6 +14,9 @@ const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
 const TENANT_ID = (process.env.TENANT_ID || "").trim();
 
+// ⬇️ Para páginas y formularios simples (admin)
+const path = require("path");
+app.use(express.urlencoded({ extended: true }));
 
 const {
   loadBehaviorTextFromMongo,
@@ -61,6 +64,167 @@ app.get("/cache/audio/:id", (req, res) => {
 // ===================================================================
 // ===============       Catálogo de productos        ================
 // ===================================================================
+
+// ---------- LOGS: helpers ----------
+async function saveLog(entry) {
+  try {
+    const db = await getDb();
+    const doc = {
+      tenantId: TENANT_ID || null,
+      waId: entry.waId || null,
+      role: entry.role,             // 'user' | 'assistant' | 'system'
+      content: entry.content ?? "",
+      payload: entry.payload ?? null, // cualquier JSON extra (Pedido/estado/trace)
+    createdAt: new Date()
+    };
+    await db.collection("logs").insertOne(doc);
+  } catch (e) {
+    console.error("[logs] saveLog error:", e);
+  }
+}
+
+// Listado simple de conversaciones (último mensaje por waId)
+async function listConversations(limit = 50) {
+  const db = await getDb();
+  const q = withTenant({});
+  const pipeline = [
+    { $match: q },
+    { $sort: { createdAt: -1 } },
+    {
+      $group: {
+        _id: "$waId",
+        lastAt: { $first: "$createdAt" },
+        lastRole: { $first: "$role" },
+        lastContent: { $first: "$content" }
+      }
+    },
+    { $sort: { lastAt: -1 } },
+    { $limit: limit }
+  ];
+  return db.collection("logs").aggregate(pipeline).toArray();
+}
+
+// Mensajes por conversación
+async function getConversationMessages(waId, limit = 200) {
+  const db = await getDb();
+  const q = withTenant({ waId });
+  return db.collection("logs")
+    .find(q).sort({ createdAt: 1 }).limit(limit).toArray();
+}
+
+// ---------- API de logs ----------
+// Conversaciones (lista)
+app.get("/api/logs/conversations", async (req, res) => {
+  try {
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit || "50", 10), 500));
+    const rows = await listConversations(limit);
+    res.json(rows.map(r => ({
+      waId: r._id,
+      lastAt: r.lastAt,
+      lastRole: r.lastRole,
+      lastContent: r.lastContent
+    })));
+  } catch (e) {
+    console.error("GET /api/logs/conversations error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// Mensajes de una conversación
+app.get("/api/logs/messages", async (req, res) => {
+  try {
+    const { waId } = req.query;
+    if (!waId) return res.status(400).json({ error: "waId is required" });
+    const rows = await getConversationMessages(waId, 500);
+    res.json(rows.map(x => ({
+      _id: String(x._id),
+      waId: x.waId,
+      role: x.role,
+      content: x.content,
+      payload: x.payload,
+      createdAt: x.createdAt
+    })));
+  } catch (e) {
+    console.error("GET /api/logs/messages error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// ---------- Página /admin (HTML liviano) ----------
+app.get("/admin", async (req, res) => {
+  try {
+    const conversations = await listConversations(100);
+    const options = conversations.map(c => {
+      const last = (c.lastContent || "").replace(/</g,"&lt;").slice(0,80);
+      return `<option value="${c._id}">${c._id || "sin waId"} — ${last}</option>`;
+    }).join("");
+    const html = `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Admin | Conversaciones</title>
+  <style>
+    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin:20px;}
+    header{display:flex; align-items:center; gap:12px; margin-bottom:16px;}
+    select,input,button{font-size:14px; padding:6px 8px;}
+    .row{display:flex; gap:16px}
+    .col{flex:1}
+    .msg{border:1px solid #ddd; border-radius:8px; padding:10px; margin-bottom:10px}
+    .role-user{background:#f0fafc}
+    .role-assistant{background:#f8f6ff}
+    small{color:#666}
+    pre{white-space:pre-wrap}
+  </style>
+</head>
+<body>
+  <header>
+    <h2>Panel de conversaciones</h2>
+  </header>
+
+  <div class="row">
+    <div class="col">
+      <label>Conversación (waId):</label><br/>
+      <select id="convSel">${options}</select>
+      <button onclick="loadMsgs()">Ver</button>
+    </div>
+    <div class="col">
+      <label>Buscar por waId:</label><br/>
+      <input id="waIdI" placeholder="5493..."/><button onclick="loadMsgs(true)">Buscar</button>
+    </div>
+  </div>
+  <hr/>
+  <div id="msgs"></div>
+
+  <script>
+    async function loadMsgs(fromInput){
+      const sel = document.getElementById('convSel');
+      const wa = fromInput ? document.getElementById('waIdI').value : sel.value;
+      if(!wa){ alert('Seleccioná un waId'); return; }
+      const r = await fetch('/api/logs/messages?waId=' + encodeURIComponent(wa));
+      const data = await r.json();
+      const root = document.getElementById('msgs');
+      root.innerHTML = '';
+      data.forEach(m => {
+        const div = document.createElement('div');
+        div.className = 'msg role-' + m.role;
+        const when = new Date(m.createdAt).toLocaleString();
+        const payload = m.payload ? ('<details><summary>payload</summary><pre>' + JSON.stringify(m.payload, null, 2) + '</pre></details>') : '';
+        div.innerHTML = '<small>[' + when + '] ' + m.role + '</small><pre>' + (m.content||'') + '</pre>' + payload;
+        root.appendChild(div);
+      });
+    }
+  </script>
+</body>
+</html>`;
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    res.send(html);
+  } catch (e) {
+    console.error("GET /admin error:", e);
+    res.status(500).send("Error interno");
+  }
+});
+
 
 // GET /api/products  → lista (activos por defecto; ?all=true para todos)
 app.get("/api/products", async (req, res) => {
