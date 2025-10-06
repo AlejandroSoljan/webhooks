@@ -162,10 +162,11 @@ app.get("/api/logs/messages", async (req, res) => {
 // ---------- Página /admin (HTML liviano) ----------
 app.get("/admin", async (req, res) => {
   try {
-    const conversations = await listConversations(100);
-      const options = conversations.map(c => {
+    const conversations = await listConversations(200);
+    const urlConvId = String(req.query.convId || "");
+    const options = conversations.map(c => {
       const label = `${c.waId || "sin waId"} — ${new Date(c.lastAt||Date.now()).toLocaleString()}${c.contactName ? " — " + c.contactName : ""}`;
-      return `<option value="${c._id}">${label}</option>`;
+      return `<option value="${c._id}" ${urlConvId===String(c._id)?"selected":""}>${label}</option>`;
     }).join("");
     const html = `<!doctype html>
 <html lang="es">
@@ -184,6 +185,11 @@ app.get("/admin", async (req, res) => {
     .role-assistant{background:#f8f6ff}
     small{color:#666}
     pre{white-space:pre-wrap}
+    table{border-collapse:collapse; width:100%; margin-top:12px}
+    th,td{border:1px solid #ddd; padding:8px; vertical-align:top; font-size:14px}
+    th{background:#f7f7f7; text-align:left}
+    .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:6px; cursor:pointer}
+    .actions{display:flex; gap:8px}
   </style>
 </head>
 <body>
@@ -193,19 +199,61 @@ app.get("/admin", async (req, res) => {
 
   <div class="row">
     <div class="col">
-      <label>Conversación:</label><br/>
+     <label>Conversación:</label><br/>
       <select id="convSel">${options}</select>
-      <button onclick="loadMsgs()">Ver</button>
+      <button class="btn" onclick="loadMsgs()">Ver</button>
+      <button class="btn" onclick="reloadTable()">Recargar tabla</button>
+    </div>
+    <div class="col">
+      <label>Buscar por waId (última conversación):</label><br/>
+      <input id="waIdI" placeholder="5493..."/><button class="btn" onclick="loadMsgs(true)">Buscar</button>
     </div>
     <div class="col">
       <label>Buscar por waId (última conversación):</label><br/>
       <input id="waIdI" placeholder="5493..."/><button onclick="loadMsgs(true)">Buscar</button>
     </div>
   </div>
-  <hr/>
+   <hr/>
+
+  <h3>Conversaciones recientes</h3>
+  <table id="tblConv">
+    <thead>
+      <tr><th>Fecha</th><th>Teléfono</th><th>Nombre</th><th>Estado</th><th>Acciones</th></tr>
+    </thead>
+    <tbody>
+      ${conversations.map(c => `
+        <tr>
+          <td>${new Date(c.lastAt||Date.now()).toLocaleString()}</td>
+          <td>${c.waId || "-"}</td>
+          <td>${c.contactName || "-"}</td>
+          <td>${c.status || "-"}</td>
+          <td class="actions">
+            <button class="btn" onclick="goDetail('${c._id}')">Detalle</button>
+            <button class="btn" onclick="goPrint('${c._id}')">Imprimir</button>
+          </td>
+        </tr>`).join("")}
+    </tbody>
+  </table>
+
   <div id="msgs"></div>
 
   <script>
+    async function reloadTable(){
+      location.reload();
+    }
+    function goDetail(id){
+      const sel = document.getElementById('convSel');
+      if(sel){ sel.value = id; }
+      const u = new URL(location.href);
+      u.searchParams.set('convId', id);
+      history.replaceState({}, '', u.toString());
+      loadMsgs();
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    }
+    function goPrint(id){
+      window.open('/admin/ticket/' + encodeURIComponent(id), '_blank');
+    }
+
     async function loadMsgs(fromInput){
       const sel = document.getElementById('convSel');
       const convId = fromInput ? '' : (sel.value||'');
@@ -220,11 +268,15 @@ app.get("/admin", async (req, res) => {
         const div = document.createElement('div');
         div.className = 'msg role-' + m.role;
         const when = new Date(m.createdAt).toLocaleString();
-        const payload = m.payload ? ('<details><summary>payload</summary><pre>' + JSON.stringify(m.payload, null, 2) + '</pre></details>') : '';
-        div.innerHTML = '<small>[' + when + '] ' + m.role + '</small><pre>' + (m.content||'') + '</pre>' + payload;
-        root.appendChild(div);
+        div.innerHTML = '<small>[' + when + '] ' + m.role + '</small><pre>' + (m.content||'') + '</pre>';
+     root.appendChild(div);
       });
     }
+       // Auto-cargar si vino ?convId=...
+    (function(){
+      const u = new URL(location.href);
+      if(u.searchParams.get('convId')){ loadMsgs(); }
+    })();
   </script>
 </body>
 </html>`;
@@ -235,7 +287,72 @@ app.get("/admin", async (req, res) => {
     res.status(500).send("Error interno");
   }
 });
-
+// ---------- Ticket imprimible (80mm) ----------
+app.get("/admin/ticket/:convId", async (req, res) => {
+  try {
+    const convId = String(req.params.convId || "").trim();
+    if (!convId) return res.status(400).send("convId requerido");
+    const msgs = await getConversationMessagesByConvId(convId, 1000);
+    // Buscar el último JSON válido con Pedido
+    let pedido = null, nombre = "", waId = "";
+    try {
+      // opcional: traer conversación para teléfono/nombre
+      const db = await getDb();
+      const conv = await db.collection("conversations").findOne(withTenant({ _id: new ObjectId(convId) }));
+      waId = conv?.waId || "";
+      nombre = conv?.contactName || "";
+    } catch {}
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role !== "assistant") continue;
+      const s = String(m.content || "").trim();
+      try {
+        const j = JSON.parse(s);
+        if (j && j.Pedido && Array.isArray(j.Pedido.items)) { pedido = j.Pedido; break; }
+      } catch {}
+    }
+    const items = (pedido?.items || []).map(it => ({
+      desc: String(it.descripcion||"").trim(),
+      qty: Number(it.cantidad||0),
+    }));
+    const total = Number(pedido?.total_pedido || 0);
+    const fecha = new Date().toLocaleString();
+    const html = `<!doctype html>
+<html><head><meta charset="utf-8"/><title>Ticket</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+  @media print { .no-print{display:none} body{margin:0} }
+  body{font-family: ui-monospace, Menlo, Consolas, monospace; width: 80mm; margin:0; padding:8px}
+  h3{margin:0 0 8px 0; font-size:14px; text-align:center}
+  .line{display:flex; justify-content:space-between; font-size:12px; margin:2px 0}
+  .sep{border-top:1px dashed #000; margin:6px 0}
+  .foot{font-size:11px; text-align:center; margin-top:8px}
+  .btn{padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff; cursor:pointer}
+  .warn{font-size:11px; margin-top:6px}
+</style></head>
+<body>
+  <div class="no-print" style="display:flex; gap:8px; margin-bottom:6px">
+    <button class="btn" onclick="window.print()">Imprimir</button>
+    <button class="btn" onclick="window.close()">Cerrar</button>
+  </div>
+  <h3>Comanda Cliente</h3>
+  <div class="line"><span>Fecha</span><span>${fecha}</span></div>
+  <div class="line"><span>Teléfono</span><span>${waId || "-"}</span></div>
+  <div class="line"><span>Nombre</span><span>${(nombre||"-")}</span></div>
+  <div class="sep"></div>
+  ${items.length ? items.map(i => `<div class="line"><span>${i.qty} x ${i.desc}</span><span></span></div>`).join("") : "<div class='line'><em>Sin ítems detectados</em></div>"}
+  <div class="sep"></div>
+  <div class="line"><strong>Total</strong><strong>$ ${total.toLocaleString("es-AR")}</strong></div>
+  ${(items.some(x => /milanesa/i.test(x.desc)) ? `<div class="warn">* Las milanesas se pesan al entregar; el precio se informa al momento de la entrega.</div>` : ``)}
+  <div class="foot">¡Gracias por tu compra!</div>
+</body></html>`;
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    res.send(html);
+  } catch (e) {
+    console.error("GET /admin/ticket error:", e);
+    res.status(500).send("Error interno");
+  }
+});
 
 // GET /api/products  → lista (activos por defecto; ?all=true para todos)
 app.get("/api/products", async (req, res) => {
