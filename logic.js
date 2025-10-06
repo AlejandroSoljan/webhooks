@@ -295,7 +295,34 @@ function getFromCache(id) {
 
 // ================== Reglas de negocio de pedido ==================
 const START_FALLBACK = "¡Hola! 👋 ¿Qué te gustaría pedir? Pollo (entero/mitad) y papas (2, 4 o 6).";
+
 const num = v => Number(String(v).replace(/[^\d.-]/g, '') || 0);
+
+// NUEVO: parser de cantidades (soporta "una", "dos", "x2", "2u", etc.)
+const qty = (v) => {
+  const s = String(v || "").trim().toLowerCase();
+
+  // 1) Si hay dígitos explícitos, usar eso
+  const onlyDigits = s.replace(/[^\d]/g, "");
+  if (onlyDigits) return Number(onlyDigits);
+
+  // 2) Patrones comunes: "x2", "2u", "2 uds", "2 unidades"
+  const xMatch = s.match(/x\s*(\d+)/);
+  if (xMatch) return Number(xMatch[1]);
+  const tailMatch = s.match(/(\d+)\s*(u|ud|uds|unidad|unidades)\b/);
+  if (tailMatch) return Number(tailMatch[1]);
+
+  // 3) Palabras en español
+  const words = {
+    "un": 1, "uno": 1, "una": 1,
+    "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
+    "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10
+  };
+  if (words[s] != null) return words[s];
+
+  // 4) Último recurso
+  return 0;
+};
 
 // Opción A con flag: por defecto requiere dirección; si ADD_ENVIO_WITHOUT_ADDRESS=1, agrega envío apenas sea 'domicilio'
 function ensureEnvio(pedido) {
@@ -410,7 +437,8 @@ function recalcAndDetectMismatch(pedido) {
 
   let totalCalc = 0;
   pedido.items = pedido.items.map(it => {
-    const cantidad = num(it.cantidad);
+        // USAR qty() en lugar de num() para interpretar texto tipo "una", "dos", etc.
+    const cantidad = qty(it.cantidad);
     const unit = num(it.importe_unitario);
     const totalOk = cantidad * unit;
     const totalIn = it.total != null ? num(it.total) : null;
