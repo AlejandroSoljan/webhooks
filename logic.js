@@ -361,14 +361,38 @@ function ensureEnvio(pedido) {
     }
   })();
 }
-function buildBackendSummary(pedido) {
-  return [
-    "🧾 Resumen del pedido:",
-    ...(pedido.items || []).map(i => `- ${i.cantidad} ${i.descripcion}`),
-    `💰 Total: ${Number(pedido.total_pedido || 0).toLocaleString("es-AR")}`,
-    "¿Confirmamos el pedido? ✅"
-  ].join("\n");
-}
+ function _hasMilanesas(pedido) {
+   try {
+     return (pedido?.items || []).some(i =>
+       String(i?.descripcion || "").toLowerCase().includes("milanesa")
+     );
+   } catch { return false; }
+ }
+
+ /**
+  * buildBackendSummary(pedido, { showEnvio:boolean })
+ * - Por defecto NO muestra el ítem “Envío”.
+  * - Si showEnvio=true, lo incluye.
+  * - Si hay milanesas, agrega la leyenda de pesado.
+  */
+ function buildBackendSummary(pedido, opts = {}) {
+   const showEnvio = !!opts.showEnvio;
+   const items = (pedido.items || []).filter(it =>
+     showEnvio ? true : !/env[ií]o/i.test(String(it?.descripcion || ""))
+   );
+  const lines = [
+     "🧾 Resumen del pedido:",
+     ...items.map(i => `- ${i.cantidad} ${i.descripcion}`),
+     `💰 Total: ${Number(pedido.total_pedido || 0).toLocaleString("es-AR")}`,
+     "¿Confirmamos el pedido? ✅"
+   ];
+   if (_hasMilanesas(pedido)) {
+     lines.splice(lines.length - 1, 0,
+       "*Las milanesas se pesan al entregar; el precio se informa al momento de la entrega.*"
+     );
+   }
+   return lines.join("\n");
+ }
 function coalesceResponse(maybeText, pedidoObj) {
   const s = String(maybeText ?? "").trim();
   return s || ((pedidoObj?.items?.length || 0) > 0 ? buildBackendSummary(pedidoObj) : START_FALLBACK);
