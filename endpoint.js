@@ -384,6 +384,8 @@ app.post("/webhook", async (req, res) => {
       // En minimal guardamos snapshot siempre; si no lo tenés a mano, seguimos y dejamos que el modelo lo complete
     }
     const gptReply = await getGPTReply(tenant, from, text);
+    const wantsDetail = /\b(detalle|detall|resumen|desglose)\b/i.test(String(text||""));
+
 
     let responseText = "Perdón, hubo un error. ¿Podés repetir?";
     let estado = null;
@@ -447,7 +449,7 @@ app.post("/webhook", async (req, res) => {
 
         responseText = fixedOk && parsedFixLast
           ? coalesceResponse(parsedFixLast.response, pedido)
-          : buildBackendSummary(pedido);
+          : buildBackendSummary(pedido, { showEnvio: wantsDetail });
       } else {
         responseText = coalesceResponse(parsed.response, pedido);
       }
@@ -458,8 +460,9 @@ app.post("/webhook", async (req, res) => {
     try {
       const finalBody = String(responseText ?? "").trim();
       if (!finalBody) {
-        if (pedido && Array.isArray(pedido.items) && pedido.items.length > 0) responseText = buildBackendSummary(pedido);
-        else responseText = START_FALLBACK;
+       if (pedido && Array.isArray(pedido.items) && pedido.items.length > 0)
+          responseText = buildBackendSummary(pedido, { showEnvio: wantsDetail });
+           else responseText = START_FALLBACK;
       }
     } catch {}
 
@@ -473,7 +476,7 @@ app.post("/webhook", async (req, res) => {
       }
     }*/
 
-    // 🔎 Quitar nota de milanesas si no hay milanesas en el pedido
+    // 🔎 Añadir/quitar leyenda de milanesas y ocultar 'Envío' si no pidieron detalle
     try {
       const hasMilanesas = (pedido?.items || []).some(i =>
         String(i?.descripcion || "").toLowerCase().includes("milanesa")
@@ -483,6 +486,20 @@ app.post("/webhook", async (req, res) => {
         responseText = responseText
           .replace(/\*?\s*Las milanesas se pesan al entregar; el precio se informa al momento de la entrega\.\s*\*?/i, "")
           .replace(/\n{3,}/g, "\n\n") // normaliza saltos extra
+          .trim();
+      } else {
+        // si hay milanesas y NO está la leyenda, agregala al final
+        if (!/\bse pesan al entregar\b/i.test(responseText)) {
+          responseText = `${responseText}\n\n*Las milanesas se pesan al entregar; el precio se informa al momento de la entrega.*`;
+        }
+      }
+      // Ocultar renglones de "Envío" en resúmenes si no pidieron detalle
+      if (!wantsDetail) {
+        responseText = responseText
+          .split("\n")
+          .filter(line => !/^\s*-\s*.*env[ií]o/i.test(line))
+          .join("\n")
+          .replace(/\n{3,}/g, "\n\n")
           .trim();
       }
     } catch {}
