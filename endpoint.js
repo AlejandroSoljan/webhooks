@@ -66,6 +66,12 @@ app.get("/cache/audio/:id", (req, res) => {
 // ===================================================================
 
 // ---------- LOGS: helpers ----------
+const withTenant = (q = {}) => {
+  const out = { ...q };
+  if (TENANT_ID) out.tenantId = TENANT_ID;
+  return out;
+};
+
 async function saveLog(entry) {
   try {
     const db = await getDb();
