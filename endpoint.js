@@ -138,9 +138,12 @@ async function listConversations(limit = 50) {
   return rows.map(c => ({
     _id: String(c._id),
     waId: c.waId,
-    contactName: c.contactName,
-    status: c.status,
-    lastAt: c.updatedAt || c.closedAt || c.openedAt
+     contactName: c.contactName || "-",
+     // Si la conversación está finalizada, forzamos COMPLETED para evitar falsos "OPEN"
+     status: c.finalized ? "COMPLETED" : (c.status || "OPEN"),
+     // Mejor heurística de última actividad
+     lastAt: c.lastUserTs || c.lastAssistantTs || c.updatedAt || c.closedAt || c.openedAt
+
   }));
 }
 
@@ -201,10 +204,7 @@ app.get("/admin", async (req, res) => {
   try {
     const conversations = await listConversations(200);
     const urlConvId = String(req.query.convId || "");
-    const options = conversations.map(c => {
-      const label = `${c.waId || "sin waId"} — ${new Date(c.lastAt||Date.now()).toLocaleString()}${c.contactName ? " — " + c.contactName : ""}`;
-      return `<option value="${c._id}" ${urlConvId===String(c._id)?"selected":""}>${label}</option>`;
-    }).join("");
+   
     const html = `<!doctype html>
 <html lang="es">
 <head>
@@ -213,15 +213,15 @@ app.get("/admin", async (req, res) => {
   <title>Admin | Conversaciones</title>
   <style>
     body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin:20px;}
-    header{display:flex; align-items:center; gap:12px; margin-bottom:16px;}
-    select,input,button{font-size:14px; padding:6px 8px;}
-    .row{display:flex; gap:16px}
-    .col{flex:1}
-    .msg{border:1px solid #ddd; border-radius:8px; padding:10px; margin-bottom:10px}
-    .role-user{background:#f0fafc}
-    .role-assistant{background:#f8f6ff}
-    small{color:#666}
-    pre{white-space:pre-wrap}
+     header{display:flex; align-items:center; gap:12px; margin-bottom:16px;}
+     input,button,select{font-size:14px; padding:6px 8px;}
+     table{border-collapse:collapse; width:100%}
+     th,td{border:1px solid #ddd; padding:8px; vertical-align:top}
+     th{background:#f5f5f5; text-align:left}
+     .row{display:flex; gap:16px; align-items:center}
+     .muted{color:#666}
+     .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:4px; cursor:pointer}
+
     table{border-collapse:collapse; width:100%; margin-top:12px}
     th,td{border:1px solid #ddd; padding:8px; vertical-align:top; font-size:14px}
     th{background:#f7f7f7; text-align:left}
@@ -234,46 +234,25 @@ app.get("/admin", async (req, res) => {
     <h2>Panel de conversaciones</h2>
   </header>
 
-  <div class="row">
-    <div class="col">
-    <!-- Selector conservado para navegación rápida, pero "Detalle" abrirá nueva ventana -->
-     <label>Conversación:</label><br/>
-      <select id="convSel">${options}</select>
-      <button class="btn" onclick="openDetail()">Ver mensajes</button>
-      <button class="btn" onclick="reloadTable()">Recargar tabla</button>
-    </div>
-    <div class="col">
-      <label>Buscar por waId (última conversación):</label><br/>
-      <input id="waIdI" placeholder="5493..."/><button class="btn" onclick="loadMsgs(true)">Buscar</button>
-    </div>
-    <div class="col">
-      <label>Buscar por waId (última conversación):</label><br/>
-      <input id="waIdI" placeholder="5493..."/><button onclick="loadMsgs(true)">Buscar</button>
-    </div>
-  </div>
-   <hr/>
-
-  <h3>Conversaciones recientes</h3>
-  <table id="tblConv">
-    <thead>
-      <tr><th>Fecha</th><th>Teléfono</th><th>Nombre</th><th>Estado</th><th>Acciones</th></tr>
-    </thead>
-    <tbody>
-      ${conversations.map(c => `
-        <tr>
-          <td>${new Date(c.lastAt||Date.now()).toLocaleString()}</td>
-          <td>${c.waId || "-"}</td>
-          <td>${c.contactName || "-"}</td>
-          <td>${c.status || "-"}</td>
-          <td class="actions">
-            <button class="btn" onclick="goDetail('${c._id}')">Detalle</button>
-            <button class="btn" onclick="goPrint('${c._id}')">Imprimir</button>
-          </td>
-        </tr>`).join("")}
-    </tbody>
-  </table>
-
-  <div id="msgs"></div>
+    <div class="row" style="gap:8px">
+     <label>Buscar por waId:&nbsp;<input id="waIdI" placeholder="5493..."/></label>
+     <button class="btn" id="btnBuscar">Buscar</button>
+     <button class="btn" id="btnReload">Recargar tabla</button>
+   </div>
+   <p></p>
+   <table id="tbl">
+     <thead>
+       <tr>
+         <th>Fecha</th>
+         <th>Teléfono</th>
+         <th>Nombre</th>
+         <th>Estado</th>
+         <th>Acciones</th>
+       </tr>
+     </thead>
+     <tbody></tbody>
+   </table>
+  
 
   <script>
      function goDetail(id){
@@ -318,6 +297,51 @@ app.get("/admin", async (req, res) => {
     }
     // Auto-refresh de la tabla cada 10s
     setInterval(reloadTable, 10000);
+
+
+     function fmt(d){ try{ return new Date(d).toLocaleString(); }catch{ return '-'; } }
+     function openDetailByConv(convId){ window.open('/admin/conversation?convId='+encodeURIComponent(convId),'_blank'); }
+     function openDetailByWaId(wa){ window.open('/admin/conversation?waId='+encodeURIComponent(wa),'_blank'); }
+ 
+     async function loadTable(){
+       const r = await fetch('/api/logs/conversations?limit=200');
+       const data = await r.json();
+       const tb = document.querySelector('#tbl tbody');
+       tb.innerHTML = '';
+       for(const c of data){
+         const tr = document.createElement('tr');
+         tr.innerHTML = \`
+           <td>\${fmt(c.lastAt)}</td>
+           <td>\${c.waId || '-'}</td>
+           <td>\${c.contactName || '-'}</td>
+           <td>\${c.status || '-'}</td>
+           <td>
+             <button class="btn" data-conv="\${c._id}">Detalle</button>
+             <button class="btn" data-print="\${c._id}">Imprimir</button>
+           </td>\`;
+        tb.appendChild(tr);
+       }
+       // bind
+       tb.querySelectorAll('button[data-conv]').forEach(b=>{
+         b.addEventListener('click',()=>openDetailByConv(b.getAttribute('data-conv')));
+       });
+       tb.querySelectorAll('button[data-print]').forEach(b=>{
+         b.addEventListener('click',()=>window.open('/admin/conversation?convId='+encodeURIComponent(b.getAttribute('data-print'))+'&print=1','_blank'));
+       });
+     }
+ 
+     document.getElementById('btnReload').addEventListener('click', loadTable);
+     document.getElementById('btnBuscar').addEventListener('click', ()=>{
+       const v=(document.getElementById('waIdI').value||'').trim();
+       if(!v){ alert('Ingresá un waId'); return; }
+       openDetailByWaId(v);
+     });
+ 
+     // primera carga y refresco cada 20s para ver conversaciones nuevas
+     loadTable();
+     setInterval(loadTable, 20000);
+
+
   </script>
 </body>
 </html>`;
@@ -328,7 +352,55 @@ app.get("/admin", async (req, res) => {
     res.status(500).send("Error interno");
   }
 });
-
+ // ---------- Ventana de detalle de conversación ----------
+ app.get("/admin/conversation", async (req, res) => {
+   try {
+     const { convId, waId } = req.query;
+     if (!convId && !waId) return res.status(400).send("convId o waId requerido");
+     const qs = convId ? ("convId="+encodeURIComponent(convId)) : ("waId="+encodeURIComponent(waId));
+     // página simple que consume /api/logs/messages y permite imprimir
+     res.setHeader("content-type","text/html; charset=utf-8");
+     res.end(`<!doctype html><html lang="es"><head>
+       <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+       <title>Detalle de conversación</title>
+       <style>
+         body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin:20px;}
+         .msg{border:1px solid #ddd;border-radius:8px;padding:10px;margin-bottom:10px}
+         .role-user{background:#f0fafc}
+         .role-assistant{background:#f8f6ff}
+         small{color:#666}
+         pre{white-space:pre-wrap}
+         .toolbar{display:flex;gap:8px;margin-bottom:12px}
+         .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:4px; cursor:pointer}
+       </style></head><body>
+       <div class="toolbar">
+         <button class="btn" onclick="window.print()">Imprimir</button>
+         <button class="btn" onclick="location.reload()">Recargar</button>
+       </div>
+       <div id="root"></div>
+       <script>
+         async function load(){
+           const r=await fetch('/api/logs/messages?${qs}');
+           const data=await r.json();
+           const root=document.getElementById('root');
+           root.innerHTML='';
+           for(const m of data){
+             const d=document.createElement('div');
+             d.className='msg role-'+m.role;
+             const when = new Date(m.createdAt).toLocaleString();
+             d.innerHTML='<small>['+when+'] '+m.role+'</small><pre>'+(m.content||'')+'</pre>';
+             root.appendChild(d);
+           }
+           if(!data.length){ root.innerHTML='<p class="muted">Sin mensajes para mostrar</p>'; }
+         }
+         load();
+       </script>
+     </body></html>`);
+   } catch (e) {
+     console.error("GET /admin/conversation error:", e);
+     res.status(500).send("Error interno");
+   }
+ });
 
 // ---------- Ventana separada de mensajes ----------
 app.get("/admin/messages/:convId", async (req, res) => {
