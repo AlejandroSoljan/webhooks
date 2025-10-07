@@ -96,7 +96,6 @@ async function upsertConversation(waId, attrs = {}) {
   const now = new Date();
   const filter = withTenant({ waId: String(waId || "").trim() });
   const update = {
-    // Cuando se crea: guardar claves de identidad también
     $setOnInsert: {
       openedAt: now,
       status: "IN_PROGRESS",
@@ -104,7 +103,6 @@ async function upsertConversation(waId, attrs = {}) {
       waId: String(waId || "").trim(),
       tenantId: TENANT_ID || null
     },
-    // En cada upsert/update: mantener waId y (si hay) contactName/tenant
     $set: {
       updatedAt: now,
       waId: String(waId || "").trim(),
@@ -112,7 +110,6 @@ async function upsertConversation(waId, attrs = {}) {
       ...("contactName" in attrs ? { contactName: attrs.contactName } : {})
     }
   };
-
   const opt = { upsert: true, returnDocument: "after" };
   const res = await db.collection("conversations").findOneAndUpdate(filter, update, opt);
   return res.value;
@@ -133,19 +130,12 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
     createdAt: now
   };
   await db.collection("messages").insertOne(doc);
-  const set = role === "user"
+   const set = role === "user"
     ? { lastUserTs: now, updatedAt: now }
     : { lastAssistantTs: now, updatedAt: now };
-  // Actualizar por _id a secas (y reforzar identidad)
   await db.collection("conversations").updateOne(
     { _id: new ObjectId(String(conversationId)) },
-    {
-      $set: {
-        ...set,
-        waId: String(waId || ""),
-        ...(TENANT_ID ? { tenantId: TENANT_ID } : {})
-      }
-    }
+    { $set: { ...set, waId: String(waId || ""), ...(TENANT_ID ? { tenantId: TENANT_ID } : {}) } }
   );
 }
 
@@ -994,6 +984,18 @@ app.post("/webhook", async (req, res) => {
     } catch {}
 
     await require("./logic").sendWhatsAppMessage(from, responseText);
+    // persistir respuesta del asistente
+    if (convId) {
+      try {
+        await saveMessageDoc({
+          conversationId: convId,
+          waId: from,
+          role: "assistant",
+          content: responseText,
+          type: "text"
+        });
+      } catch (e) { console.error("saveMessage(assistant):", e?.message); }
+    }
 
     try {
      // 🔹 Distancia + geocoding + Envío dinámico
