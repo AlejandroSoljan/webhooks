@@ -424,8 +424,7 @@ app.get("/admin/messages/:convId", async (req, res) => {
   try {
     const convId = String(req.params.convId || "").trim();
     if (!convId) return res.status(400).send("convId requerido");
-    const t = resolveTenantId(req);
-    const msgs = await getConversationMessagesByConvId(convId, 1000, t);
+    const msgs = await getConversationMessagesByConvId(convId, 1000);
     const html = `<!doctype html><html><head><meta charset="utf-8"/>
       <meta name="viewport" content="width=device-width, initial-scale=1"/>
       <title>Mensajes</title>
