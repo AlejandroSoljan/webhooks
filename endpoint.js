@@ -91,7 +91,7 @@ async function saveLog(entry) {
 
  
 // ================== Persistencia de conversaciones y mensajes ==================
-async function upsertConversation(waId, attrs = {}) {
+/*async function upsertConversation(waId, attrs = {}) {
   const db = await getDb();
   const now = new Date();
   const filter = withTenant({ waId: String(waId || "").trim() });
@@ -139,7 +139,7 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
   );
 }
 
-
+*/
 
 
 // Listado de conversaciones reales (colección `conversations`)
@@ -802,7 +802,10 @@ app.get("/webhook", (req, res) => {
 // Webhook Entrante (POST)
 app.post("/webhook", async (req, res) => {
   try {
-    if (process.env.WHATSAPP_APP_SECRET && !isValidSignature(req)) return res.sendStatus(403);
+    if (process.env.WHATSAPP_APP_SECRET && !isValidSignature(req)) {
+      if (process.env.NODE_ENV === "production") return res.sendStatus(403);
+      console.warn("⚠️ Webhook: firma inválida (ignorada en dev).");
+    }
 
     const entry = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
     if (!entry) return res.sendStatus(200);
