@@ -96,9 +96,23 @@ async function upsertConversation(waId, attrs = {}) {
   const now = new Date();
   const filter = withTenant({ waId: String(waId || "").trim() });
   const update = {
-    $setOnInsert: { openedAt: now, status: "IN_PROGRESS", finalized: false },
-    $set: { updatedAt: now, ...("contactName" in attrs ? { contactName: attrs.contactName } : {}) }
+    // Cuando se crea: guardar claves de identidad también
+    $setOnInsert: {
+      openedAt: now,
+      status: "IN_PROGRESS",
+      finalized: false,
+      waId: String(waId || "").trim(),
+      tenantId: TENANT_ID || null
+    },
+    // En cada upsert/update: mantener waId y (si hay) contactName/tenant
+    $set: {
+      updatedAt: now,
+      waId: String(waId || "").trim(),
+      ...(TENANT_ID ? { tenantId: TENANT_ID } : {}),
+      ...("contactName" in attrs ? { contactName: attrs.contactName } : {})
+    }
   };
+
   const opt = { upsert: true, returnDocument: "after" };
   const res = await db.collection("conversations").findOneAndUpdate(filter, update, opt);
   return res.value;
@@ -119,8 +133,20 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
     createdAt: now
   };
   await db.collection("messages").insertOne(doc);
-  const set = role === "user" ? { lastUserTs: now, updatedAt: now } : { lastAssistantTs: now, updatedAt: now };
-  await db.collection("conversations").updateOne(withTenant({ _id: new ObjectId(String(conversationId)) }), { $set: set });
+  const set = role === "user"
+    ? { lastUserTs: now, updatedAt: now }
+    : { lastAssistantTs: now, updatedAt: now };
+  // Actualizar por _id a secas (y reforzar identidad)
+  await db.collection("conversations").updateOne(
+    { _id: new ObjectId(String(conversationId)) },
+    {
+      $set: {
+        ...set,
+        waId: String(waId || ""),
+        ...(TENANT_ID ? { tenantId: TENANT_ID } : {})
+      }
+    }
+  );
 }
 
 
@@ -273,7 +299,7 @@ app.get("/admin", async (req, res) => {
         const r = await fetch('/api/logs/conversations?limit=200');
         const data = await r.json();
         // Recontruir tabla
-        const tb = document.querySelector('#tblConv tbody');
+        const tb = document.querySelector('#tbl tbody');
         tb.innerHTML = data.map(c => \`
           <tr>
             <td>\${new Date(c.lastAt||Date.now()).toLocaleString()}</td>
