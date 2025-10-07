@@ -107,7 +107,7 @@ async function upsertConversation(waId, attrs = {}, tenantArg) {
     },
     $set: {
       updatedAt: now,
-      ...((tenantArg || TENANT_ID) ? { tenantId: (tenantArg || TENANT_ID) } : {}),
+      
       ...("contactName" in attrs ? { contactName: attrs.contactName } : {})
     }
   };
@@ -136,7 +136,7 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
    : { lastAssistantTs: now, updatedAt: now };
  await db.collection("conversations").updateOne(
    { _id: new ObjectId(String(conversationId)) },
-   { $set: { ...set,  ...((tenantId || TENANT_ID) ? { tenantId: (tenantId || TENANT_ID) } : {}) } }
+   { $set: { ...set } }
  );
 }
 
