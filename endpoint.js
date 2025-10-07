@@ -117,12 +117,16 @@ async function upsertConversation(waId, attrs = {}, tenantId) {
 }
 
 async function saveMessageDoc({ conversationId, waId, role, content, type = "text", meta = {}, tenantId }) {
-  const db = await getDb();
-  const now = new Date();
-  const doc = {
+    console.log("[messages] entering saveMessageDoc", { conversationId: String(conversationId || ""), role, type, hasMeta: !!meta });
+  try {
+    const db = await getDb();
+    const now = new Date();
+    const doc = {
     // 👇 Aseguramos tenantId válido (sin variables fuera de scope)
     tenantId: (tenantId ?? TENANT_ID ?? null),
-    conversationId: new ObjectId(String(conversationId)),
+     conversationId: (conversationId && typeof conversationId === "object" && conversationId._bsontype === "ObjectID")
+   ? conversationId
+   : new ObjectId(String(conversationId)),
     waId: String(waId || ""),
     role: String(role),
     content: String(content ?? ""),
@@ -131,11 +135,10 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
     ts: now,
     createdAt: now
   };
-  try {
     const ins = await db.collection("messages").insertOne(doc);
     console.log("[messages] inserted:", ins?.insertedId?.toString?.());
   } catch (e) {
-    console.error("[messages] insert error:", e?.message || e);
+    console.error("[messages] save error:", e?.stack || e?.message || e);
     throw e;
   }
    const set = role === "user"
@@ -845,6 +848,7 @@ app.post("/webhook", async (req, res) => {
     try { conv = await upsertConversation(from, {}, tenant); } catch (e) { console.error("upsertConversation:", e?.message); }
     const convId = conv?._id;
     if (convId) {
+        console.log("[messages] about to save USER message", { convId: String(convId), from, type: entry.type, textPreview: String(text).slice(0,80) });
             // 👇 GUARDA MENSAJE DEL USUARIO (con tenantId)
       try {
         await saveMessageDoc({
@@ -953,6 +957,7 @@ app.post("/webhook", async (req, res) => {
 
     // Guardar respuesta del asistente (texto que se envía al cliente)
     if (convId) {
+      onsole.log("[messages] about to save ASSISTANT message", { convId: String(convId), from, len: String(responseText||"").length });
           // 👇 GUARDA MENSAJE DEL ASISTENTE (con tenantId)
     try {
       await saveMessageDoc({
