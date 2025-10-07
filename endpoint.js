@@ -66,9 +66,9 @@ app.get("/cache/audio/:id", (req, res) => {
 // ===================================================================
 
 // ---------- LOGS: helpers ----------
-const withTenant = (q = {}, tenantArg) => {
+const withTenant = (q = {}, tenantId) => {
   const out = { ...q };
-  const tid = (tenantArg || TENANT_ID || "").trim();
+  const tid = (tenantId || TENANT_ID || "").trim();
   if (tid) out.tenantId = tid;
   return out;
 };
@@ -93,17 +93,17 @@ async function saveLog(entry) {
  
 // ================== Persistencia de conversaciones y mensajes ==================
 // ================== Persistencia de conversaciones y mensajes ==================
-async function upsertConversation(waId, attrs = {}, tenantArg) {
+async function upsertConversation(waId, attrs = {}, tenantId) {
   const db = await getDb();
   const now = new Date();
-  const filter = withTenant({ waId: String(waId || "").trim() }, tenantArg);
+  const filter = withTenant({ waId: String(waId || "").trim() }, tenantId);
   const update = {
     $setOnInsert: {
       openedAt: now,
       status: "IN_PROGRESS",
       finalized: false,
       waId: String(waId || "").trim(),
-      tenantId: (tenantArg || TENANT_ID || DEFAULT_TENANT_ID || null)
+      tenantId: (tenantId || TENANT_ID || DEFAULT_TENANT_ID || null)
     },
     $set: {
       updatedAt: now,
@@ -150,9 +150,9 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
 
 
 // Listado de conversaciones reales (colección `conversations`)
-async function listConversations(limit = 50, tenantArg) {
+async function listConversations(limit = 50, tenantId) {
   const db = await getDb();
-  const q = withTenant({}, tenantArg);
+  const q = withTenant({}, tenantId);
   const rows = await db.collection("conversations")
     .find(q)
     .sort({ updatedAt: -1, closedAt: -1, openedAt: -1 })
@@ -172,20 +172,20 @@ async function listConversations(limit = 50, tenantArg) {
 
 // Mensajes por conversación
 // Mensajes por conversación (colección `messages`)
-async function getConversationMessagesByConvId(convId, limit = 500, tenantArg) {
+async function getConversationMessagesByConvId(convId, limit = 500, tenantId) {
   const db = await getDb();
-  const filter = withTenant({ conversationId: new ObjectId(String(convId)) }, tenantArg);
+  const filter = withTenant({ conversationId: new ObjectId(String(convId)) }, tenantId);
   return db.collection("messages")
     .find(filter).sort({ ts: 1, createdAt: 1 }).limit(limit).toArray();
 }
-async function getConversationMessagesByWaId(waId, limit = 500, tenantArg) {
+async function getConversationMessagesByWaId(waId, limit = 500, tenantId) {
   const db = await getDb();
   const conv = await db.collection("conversations").findOne(
-    withTenant({ waId }, tenantArg),
+    withTenant({ waId }, tenantId),
     { sort: { updatedAt: -1, openedAt: -1 } }
   );
   if (!conv) return [];
-  return getConversationMessagesByConvId(conv._id, limit, tenantArg);
+  return getConversationMessagesByConvId(conv._id, limit, tenantId);
 }
 
 // ---------- API de logs ----------
