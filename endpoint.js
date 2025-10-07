@@ -120,7 +120,8 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
   const db = await getDb();
   const now = new Date();
   const doc = {
-    tenantId: (tenantId || TENANT_ID || null),
+    // 👇 Aseguramos tenantId válido (sin variables fuera de scope)
+    tenantId: (tenantId ?? TENANT_ID ?? null),
     conversationId: new ObjectId(String(conversationId)),
     waId: String(waId || ""),
     role: String(role),
@@ -130,7 +131,13 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
     ts: now,
     createdAt: now
   };
-  await db.collection("messages").insertOne(doc);
+  try {
+    const ins = await db.collection("messages").insertOne(doc);
+    console.log("[messages] inserted:", ins?.insertedId?.toString?.());
+  } catch (e) {
+    console.error("[messages] insert error:", e?.message || e);
+    throw e;
+  }
    const set = role === "user"
    ? { lastUserTs: now, updatedAt: now }
    : { lastAssistantTs: now, updatedAt: now };
@@ -838,7 +845,18 @@ app.post("/webhook", async (req, res) => {
     try { conv = await upsertConversation(from, {}, tenant); } catch (e) { console.error("upsertConversation:", e?.message); }
     const convId = conv?._id;
     if (convId) {
-      try { await saveMessageDoc({ tenantId: tenant, conversationId: convId, waId: from, role: "user", content: text, type: entry.type || "text" }); } catch (e) { console.error("saveMessage(user):", e?.message); }
+            // 👇 GUARDA MENSAJE DEL USUARIO (con tenantId)
+      try {
+        await saveMessageDoc({
+          tenantId: tenant,
+          conversationId: convId,
+          waId: from,
+          role: "user",
+          content: text,
+          type: entry.type || "text",
+          meta: { raw: entry }
+        });
+      } catch (e) { console.error("saveMessage(user):", e?.message); }
     }
 
     if (hasActiveEndedFlag(tenant, from)) {
@@ -935,7 +953,18 @@ app.post("/webhook", async (req, res) => {
 
     // Guardar respuesta del asistente (texto que se envía al cliente)
     if (convId) {
-      try { await saveMessageDoc({ tenantId: tenant, conversationId: convId, waId: from, role: "assistant", content: responseText, type: "text" }); } catch (e) { console.error("saveMessage(assistant):", e?.message); }
+          // 👇 GUARDA MENSAJE DEL ASISTENTE (con tenantId)
+    try {
+      await saveMessageDoc({
+        tenantId: tenant,
+        conversationId: convId,
+        waId: from,
+        role: "assistant",
+        content: responseText,
+        type: "text",
+        meta: { model: "gpt" }
+      });
+    } catch (e) { console.error("saveMessage(assistant):", e?.message); }
     }
 
     try {
