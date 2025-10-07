@@ -89,6 +89,43 @@ async function saveLog(entry) {
   }
 }
 
+ 
+// ================== Persistencia de conversaciones y mensajes ==================
+async function upsertConversation(waId, attrs = {}) {
+  const db = await getDb();
+  const now = new Date();
+  const filter = withTenant({ waId: String(waId || "").trim() });
+  const update = {
+    $setOnInsert: { openedAt: now, status: "IN_PROGRESS", finalized: false },
+    $set: { updatedAt: now, ...("contactName" in attrs ? { contactName: attrs.contactName } : {}) }
+  };
+  const opt = { upsert: true, returnDocument: "after" };
+  const res = await db.collection("conversations").findOneAndUpdate(filter, update, opt);
+  return res.value;
+}
+
+async function saveMessageDoc({ conversationId, waId, role, content, type = "text", meta = {} }) {
+  const db = await getDb();
+  const now = new Date();
+  const doc = {
+    tenantId: TENANT_ID || null,
+    conversationId: new ObjectId(String(conversationId)),
+    waId: String(waId || ""),
+    role: String(role),
+    content: String(content ?? ""),
+    type: String(type || "text"),
+    meta: { ...meta },
+    ts: now,
+    createdAt: now
+  };
+  await db.collection("messages").insertOne(doc);
+  const set = role === "user" ? { lastUserTs: now, updatedAt: now } : { lastAssistantTs: now, updatedAt: now };
+  await db.collection("conversations").updateOne(withTenant({ _id: new ObjectId(String(conversationId)) }), { $set: set });
+}
+
+
+
+
 // Listado de conversaciones reales (colección `conversations`)
 async function listConversations(limit = 50) {
   const db = await getDb();
@@ -199,9 +236,10 @@ app.get("/admin", async (req, res) => {
 
   <div class="row">
     <div class="col">
+    <!-- Selector conservado para navegación rápida, pero "Detalle" abrirá nueva ventana -->
      <label>Conversación:</label><br/>
       <select id="convSel">${options}</select>
-      <button class="btn" onclick="loadMsgs()">Ver</button>
+      <button class="btn" onclick="openDetail()">Ver mensajes</button>
       <button class="btn" onclick="reloadTable()">Recargar tabla</button>
     </div>
     <div class="col">
@@ -238,45 +276,48 @@ app.get("/admin", async (req, res) => {
   <div id="msgs"></div>
 
   <script>
-    async function reloadTable(){
-      location.reload();
+     function goDetail(id){
+      window.open('/admin/messages/' + encodeURIComponent(id), '_blank');
     }
-    function goDetail(id){
+    function openDetail(){
       const sel = document.getElementById('convSel');
-      if(sel){ sel.value = id; }
-      const u = new URL(location.href);
-      u.searchParams.set('convId', id);
-      history.replaceState({}, '', u.toString());
-      loadMsgs();
-      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+      const id = sel ? sel.value : '';
+      if(!id){ alert('Elegí una conversación'); return; }
+      goDetail(id);
     }
     function goPrint(id){
       window.open('/admin/ticket/' + encodeURIComponent(id), '_blank');
     }
-
-    async function loadMsgs(fromInput){
-      const sel = document.getElementById('convSel');
-      const convId = fromInput ? '' : (sel.value||'');
-      const wa = fromInput ? (document.getElementById('waIdI').value||'').trim() : '';
-      if(!convId && !wa){ alert('Seleccioná una conversación o ingresá un waId'); return; }
-      const qs = convId ? ('convId=' + encodeURIComponent(convId)) : ('waId=' + encodeURIComponent(wa));
-      const r = await fetch('/api/logs/messages?' + qs);
-      const data = await r.json();
-      const root = document.getElementById('msgs');
-      root.innerHTML = '';
-      data.forEach(m => {
-        const div = document.createElement('div');
-        div.className = 'msg role-' + m.role;
-        const when = new Date(m.createdAt).toLocaleString();
-        div.innerHTML = '<small>[' + when + '] ' + m.role + '</small><pre>' + (m.content||'') + '</pre>';
-     root.appendChild(div);
-      });
+ 
+    async function reloadTable(){
+      try{
+        const r = await fetch('/api/logs/conversations?limit=200');
+        const data = await r.json();
+        // Recontruir tabla
+        const tb = document.querySelector('#tblConv tbody');
+        tb.innerHTML = data.map(c => \`
+          <tr>
+            <td>\${new Date(c.lastAt||Date.now()).toLocaleString()}</td>
+            <td>\${c.waId||'-'}</td>
+            <td>\${c.contactName||'-'}</td>
+            <td>\${c.status||'-'}</td>
+            <td class="actions">
+              <button class="btn" onclick="goDetail('\${c._id}')">Detalle</button>
+              <button class="btn" onclick="goPrint('\${c._id}')">Imprimir</button>
+            </td>
+          </tr>\`).join('');
+        // Refrescar selector
+        const sel = document.getElementById('convSel');
+        if(sel){
+          sel.innerHTML = data.map(c => {
+            const label = \`\${c.waId||'sin waId'} — \${new Date(c.lastAt||Date.now()).toLocaleString()}\${c.contactName ? ' — ' + c.contactName : ''}\`;
+            return '<option value=\"'+c._id+'\">'+label+'</option>';
+          }).join('');
+        }
+      }catch(e){ console.error('reloadTable error', e); }
     }
-       // Auto-cargar si vino ?convId=...
-    (function(){
-      const u = new URL(location.href);
-      if(u.searchParams.get('convId')){ loadMsgs(); }
-    })();
+    // Auto-refresh de la tabla cada 10s
+    setInterval(reloadTable, 10000);
   </script>
 </body>
 </html>`;
@@ -287,6 +328,44 @@ app.get("/admin", async (req, res) => {
     res.status(500).send("Error interno");
   }
 });
+
+
+// ---------- Ventana separada de mensajes ----------
+app.get("/admin/messages/:convId", async (req, res) => {
+  try {
+    const convId = String(req.params.convId || "").trim();
+    if (!convId) return res.status(400).send("convId requerido");
+    const msgs = await getConversationMessagesByConvId(convId, 1000);
+    const html = `<!doctype html><html><head><meta charset="utf-8"/>
+      <meta name="viewport" content="width=device-width, initial-scale=1"/>
+      <title>Mensajes</title>
+      <style>
+        body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial; margin:16px}
+        .msg{border:1px solid #ddd; border-radius:8px; padding:10px; margin-bottom:10px}
+        .role-user{background:#f0fafc}.role-assistant{background:#f8f6ff}
+        small{color:#666} pre{white-space:pre-wrap; margin:4px 0 0}
+      </style></head><body>
+      <h3>Mensajes</h3>
+      ${msgs.map(m => `
+        <div class="msg role-${m.role}">
+          <small>[${new Date(m.ts || m.createdAt).toLocaleString()}] ${m.role}</small>
+          <pre>${(m.content || "").replace(/</g,"&lt;")}</pre>
+        </div>`).join("") || "<em>Sin mensajes</em>"}
+      </body></html>`;
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    res.send(html);
+  } catch (e) {
+    console.error("GET /admin/messages error:", e);
+    res.status(500).send("Error interno");
+ }
+});
+
+
+
+
+
+
+
 // ---------- Ticket imprimible (80mm) ----------
 app.get("/admin/ticket/:convId", async (req, res) => {
   try {
@@ -660,6 +739,14 @@ app.post("/webhook", async (req, res) => {
       }
     }
 
+        // Asegurar conversación y guardar mensaje de usuario
+    let conv = null;
+    try { conv = await upsertConversation(from); } catch (e) { console.error("upsertConversation:", e?.message); }
+    const convId = conv?._id;
+    if (convId) {
+      try { await saveMessageDoc({ conversationId: convId, waId: from, role: "user", content: text, type: entry.type || "text" }); } catch (e) { console.error("saveMessage(user):", e?.message); }
+    }
+
     if (hasActiveEndedFlag(tenant, from)) {
       if (isPoliteClosingMessage(text)) {
         await require("./logic").sendWhatsAppMessage(from, "¡Gracias! 😊 Cuando quieras hacemos otro pedido.");
@@ -750,6 +837,11 @@ app.post("/webhook", async (req, res) => {
       }
     } catch (e) {
       console.error("Error al parsear/corregir JSON:", e.message);
+    }
+
+    // Guardar respuesta del asistente (texto que se envía al cliente)
+    if (convId) {
+      try { await saveMessageDoc({ conversationId: convId, waId: from, role: "assistant", content: responseText, type: "text" }); } catch (e) { console.error("saveMessage(assistant):", e?.message); }
     }
 
     try {
