@@ -66,9 +66,10 @@ app.get("/cache/audio/:id", (req, res) => {
 // ===================================================================
 
 // ---------- LOGS: helpers ----------
-const withTenant = (q = {}) => {
+const withTenant = (q = {}, tenantArg) => {
   const out = { ...q };
-  if (TENANT_ID) out.tenantId = TENANT_ID;
+  const tid = (tenantArg || TENANT_ID || "").trim();
+  if (tid) out.tenantId = tid;
   return out;
 };
 
@@ -76,7 +77,7 @@ async function saveLog(entry) {
   try {
     const db = await getDb();
     const doc = {
-      tenantId: TENANT_ID || null,
+      tenantId: (tenantArg || TENANT_ID || null),
       waId: entry.waId || null,
       role: entry.role,             // 'user' | 'assistant' | 'system'
       content: entry.content ?? "",
@@ -92,22 +93,22 @@ async function saveLog(entry) {
  
 // ================== Persistencia de conversaciones y mensajes ==================
 // ================== Persistencia de conversaciones y mensajes ==================
-async function upsertConversation(waId, attrs = {}) {
+async function upsertConversation(waId, attrs = {}, tenantArg) {
   const db = await getDb();
   const now = new Date();
-  const filter = withTenant({ waId: String(waId || "").trim() });
+  const filter = withTenant({ waId: String(waId || "").trim() }, tenantArg);
   const update = {
     $setOnInsert: {
       openedAt: now,
       status: "IN_PROGRESS",
       finalized: false,
       waId: String(waId || "").trim(),
-      tenantId: TENANT_ID || null
+      tenantId: (tenantArg || TENANT_ID || null)
     },
     $set: {
       updatedAt: now,
       waId: String(waId || "").trim(),
-      ...(TENANT_ID ? { tenantId: TENANT_ID } : {}),
+      ...((tenantArg || TENANT_ID) ? { tenantId: (tenantArg || TENANT_ID) } : {}),
       ...("contactName" in attrs ? { contactName: attrs.contactName } : {})
     }
   };
@@ -116,11 +117,11 @@ async function upsertConversation(waId, attrs = {}) {
   return res.value;
 }
 
-async function saveMessageDoc({ conversationId, waId, role, content, type = "text", meta = {} }) {
+async function saveMessageDoc({ conversationId, waId, role, content, type = "text", meta = {}, tenantId }) {
   const db = await getDb();
   const now = new Date();
   const doc = {
-    tenantId: TENANT_ID || null,
+    tenantId: (tenantArg || TENANT_ID || null),
     conversationId: new ObjectId(String(conversationId)),
     waId: String(waId || ""),
     role: String(role),
@@ -136,16 +137,16 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
    : { lastAssistantTs: now, updatedAt: now };
  await db.collection("conversations").updateOne(
    { _id: new ObjectId(String(conversationId)) },
-   { $set: { ...set, waId: String(waId || ""), ...(TENANT_ID ? { tenantId: TENANT_ID } : {}) } }
+   { $set: { ...set, waId: String(waId || ""), ...((tenantId || TENANT_ID) ? { tenantId: (tenantId || TENANT_ID) } : {}) } }
  );
 }
 
 
 
 // Listado de conversaciones reales (colección `conversations`)
-async function listConversations(limit = 50) {
+async function listConversations(limit = 50, tenantArg) {
   const db = await getDb();
-  const q = withTenant({});
+  const q = withTenant({}, tenantArg);
   const rows = await db.collection("conversations")
     .find(q)
     .sort({ updatedAt: -1, closedAt: -1, openedAt: -1 })
@@ -165,20 +166,20 @@ async function listConversations(limit = 50) {
 
 // Mensajes por conversación
 // Mensajes por conversación (colección `messages`)
-async function getConversationMessagesByConvId(convId, limit = 500) {
+async function getConversationMessagesByConvId(convId, limit = 500, tenantArg) {
   const db = await getDb();
-  const filter = withTenant({ conversationId: new ObjectId(String(convId)) });
+  const filter = withTenant({ conversationId: new ObjectId(String(convId)) }, tenantArg);
   return db.collection("messages")
     .find(filter).sort({ ts: 1, createdAt: 1 }).limit(limit).toArray();
 }
-async function getConversationMessagesByWaId(waId, limit = 500) {
+async function getConversationMessagesByWaId(waId, limit = 500, tenantArg) {
   const db = await getDb();
   const conv = await db.collection("conversations").findOne(
-    withTenant({ waId }),
+    withTenant({ waId }, tenantArg),
     { sort: { updatedAt: -1, openedAt: -1 } }
   );
   if (!conv) return [];
-  return getConversationMessagesByConvId(conv._id, limit);
+  return getConversationMessagesByConvId(conv._id, limit, tenantArg);
 }
 
 // ---------- API de logs ----------
@@ -186,7 +187,7 @@ async function getConversationMessagesByWaId(waId, limit = 500) {
 app.get("/api/logs/conversations", async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(parseInt(req.query.limit || "50", 10), 500));
-    const rows = await listConversations(limit);
+    const rows = await listConversations(limit, resolveTenantId(req));
     res.json(rows);
   } catch (e) {
     console.error("GET /api/logs/conversations error:", e);
@@ -199,9 +200,10 @@ app.get("/api/logs/messages", async (req, res) => {
   try {
     const { convId, waId } = req.query;
     if (!convId && !waId) return res.status(400).json({ error: "convId or waId is required" });
+    const t = resolveTenantId(req);
     const rows = convId
-      ? await getConversationMessagesByConvId(convId, 500)
-      : await getConversationMessagesByWaId(waId, 500);
+      ? await getConversationMessagesByConvId(convId, 500, t)
+      : await getConversationMessagesByWaId(waId, 500, t);
     res.json(rows.map(m => ({
       _id: String(m._id),
       role: m.role,                     // "user" | "assistant" | "system"
@@ -552,7 +554,7 @@ app.post("/api/products", async (req, res) => {
     }
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
     const now = new Date();
-    const doc = { tenantId: TENANT_ID || null, descripcion, observacion, active, createdAt: now, updatedAt: now };
+    const doc = { tenantId: (tenantArg || TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
     if (imp !== null) doc.importe = imp;
     const ins = await db.collection("products").insertOne(doc);
     res.json({ ok: true, _id: String(ins.insertedId) });
@@ -834,10 +836,10 @@ app.post("/webhook", async (req, res) => {
 
         // Asegurar conversación y guardar mensaje de usuario
     let conv = null;
-    try { conv = await upsertConversation(from); } catch (e) { console.error("upsertConversation:", e?.message); }
+    try { conv = await upsertConversation(from, {}, tenant); } catch (e) { console.error("upsertConversation:", e?.message); }
     const convId = conv?._id;
     if (convId) {
-      try { await saveMessageDoc({ conversationId: convId, waId: from, role: "user", content: text, type: entry.type || "text" }); } catch (e) { console.error("saveMessage(user):", e?.message); }
+      try { await saveMessageDoc({ tenantId: tenant, conversationId: convId, waId: from, role: "user", content: text, type: entry.type || "text" }); } catch (e) { console.error("saveMessage(user):", e?.message); }
     }
 
     if (hasActiveEndedFlag(tenant, from)) {
@@ -870,9 +872,9 @@ app.post("/webhook", async (req, res) => {
       estado = parsed.estado;
       pedido = parsed.Pedido || { items: [] };
       // 💰 Hidratar precios desde catálogo ANTES de recalcular (evita “Pollo entero @ 0”)
-      try { pedido = await hydratePricesFromCatalog(pedido, TENANT_ID || null); } catch {}
+      try { pedido = await hydratePricesFromCatalog(pedido, tenant || null); } catch {}
       // 🚚 Asegurar ítem Envío con geocoding/distancia (awaitable, sin race)
-      try { pedido = await ensureEnvioSmart(pedido, TENANT_ID || null); } catch {}
+      try { pedido = await ensureEnvioSmart(pedido, tenant || null); } catch {}
 
 
       const { pedidoCorr, mismatch, hasItems } = recalcAndDetectMismatch(pedido);
@@ -934,7 +936,7 @@ app.post("/webhook", async (req, res) => {
 
     // Guardar respuesta del asistente (texto que se envía al cliente)
     if (convId) {
-      try { await saveMessageDoc({ conversationId: convId, waId: from, role: "assistant", content: responseText, type: "text" }); } catch (e) { console.error("saveMessage(assistant):", e?.message); }
+      try { await saveMessageDoc({ tenantId: tenant, conversationId: convId, waId: from, role: "assistant", content: responseText, type: "text" }); } catch (e) { console.error("saveMessage(assistant):", e?.message); }
     }
 
     try {
@@ -993,6 +995,7 @@ app.post("/webhook", async (req, res) => {
     if (convId) {
       try {
         await saveMessageDoc({
+          tenantId: tenant,
           conversationId: convId,
           waId: from,
           role: "assistant",
@@ -1113,10 +1116,10 @@ app.post("/webhook", async (req, res) => {
       // 🔹 Persistir pedido (y distancia) en MongoDB (upsert)
       const db = await require("./db").getDb();
       await db.collection("orders").updateOne(
-        { tenantId: TENANT_ID || null, from },
+        { tenantId: (tenantArg || TENANT_ID || null), from },
         {
           $set: {
-            tenantId: TENANT_ID || null,
+            tenantId: (tenantArg || TENANT_ID || null),
             from,
             pedido,
             estado: estado || null,
