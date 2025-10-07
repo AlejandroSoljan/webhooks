@@ -77,7 +77,7 @@ async function saveLog(entry) {
   try {
     const db = await getDb();
     const doc = {
-      tenantId: (tenantArg || TENANT_ID || null),
+      tenantId: (TENANT_ID || null),
       waId: entry.waId || null,
       role: entry.role,             // 'user' | 'assistant' | 'system'
       content: entry.content ?? "",
@@ -103,7 +103,7 @@ async function upsertConversation(waId, attrs = {}, tenantArg) {
       status: "IN_PROGRESS",
       finalized: false,
       waId: String(waId || "").trim(),
-      tenantId: (tenantArg || TENANT_ID || null)
+      tenantId: (TENANT_ID || null)
     },
     $set: {
       updatedAt: now,
@@ -121,7 +121,7 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
   const db = await getDb();
   const now = new Date();
   const doc = {
-    tenantId: (tenantArg || TENANT_ID || null),
+    tenantId: (tenantId || TENANT_ID || null),
     conversationId: new ObjectId(String(conversationId)),
     waId: String(waId || ""),
     role: String(role),
@@ -220,7 +220,7 @@ app.get("/api/logs/messages", async (req, res) => {
 // ---------- Página /admin (HTML liviano) ----------
 app.get("/admin", async (req, res) => {
   try {
-    const conversations = await listConversations(200);
+    const conversations = await listConversations(200, resolveTenantId(req));
     const urlConvId = String(req.query.convId || "");
    
     const html = `<!doctype html>
@@ -554,7 +554,7 @@ app.post("/api/products", async (req, res) => {
     }
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
     const now = new Date();
-    const doc = { tenantId: (tenantArg || TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
+    const doc = { tenantId: (TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
     if (imp !== null) doc.importe = imp;
     const ins = await db.collection("products").insertOne(doc);
     res.json({ ok: true, _id: String(ins.insertedId) });
@@ -1116,10 +1116,10 @@ app.post("/webhook", async (req, res) => {
       // 🔹 Persistir pedido (y distancia) en MongoDB (upsert)
       const db = await require("./db").getDb();
       await db.collection("orders").updateOne(
-        { tenantId: (tenantArg || TENANT_ID || null), from },
+        { tenantId: (TENANT_ID || null), from },
         {
           $set: {
-            tenantId: (tenantArg || TENANT_ID || null),
+            tenantId: (TENANT_ID || null),
             from,
             pedido,
             estado: estado || null,
