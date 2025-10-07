@@ -91,7 +91,8 @@ async function saveLog(entry) {
 
  
 // ================== Persistencia de conversaciones y mensajes ==================
-/*async function upsertConversation(waId, attrs = {}) {
+// ================== Persistencia de conversaciones y mensajes ==================
+async function upsertConversation(waId, attrs = {}) {
   const db = await getDb();
   const now = new Date();
   const filter = withTenant({ waId: String(waId || "").trim() });
@@ -130,16 +131,14 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
     createdAt: now
   };
   await db.collection("messages").insertOne(doc);
-   const set = role === "user"
-    ? { lastUserTs: now, updatedAt: now }
-    : { lastAssistantTs: now, updatedAt: now };
+  const set = role === "user" ? { lastUserTs: now, updatedAt: now } : { lastAssistantTs: now, updatedAt: now };
+  // Actualizar por _id a secas (y reforzar identidad)
   await db.collection("conversations").updateOne(
     { _id: new ObjectId(String(conversationId)) },
     { $set: { ...set, waId: String(waId || ""), ...(TENANT_ID ? { tenantId: TENANT_ID } : {}) } }
   );
 }
 
-*/
 
 
 // Listado de conversaciones reales (colección `conversations`)
