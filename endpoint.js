@@ -66,9 +66,9 @@ app.get("/cache/audio/:id", (req, res) => {
 // ===================================================================
 
 // ---------- LOGS: helpers ----------
-const withTenant = (q = {}, tenantArg) => {
+const withTenant = (q = {}, tenant) => {
   const out = { ...q };
-  const tid = (tenantArg || TENANT_ID || "").trim();
+  const tid = (tenant || TENANT_ID || "").trim();
   if (tid) out.tenantId = tid;
   return out;
 };
@@ -77,7 +77,7 @@ async function saveLog(entry) {
   try {
     const db = await getDb();
     const doc = {
-      tenantId: (TENANT_ID || null),
+      tenantId: (tenant || null),
       waId: entry.waId || null,
       role: entry.role,             // 'user' | 'assistant' | 'system'
       content: entry.content ?? "",
@@ -93,22 +93,22 @@ async function saveLog(entry) {
  
 // ================== Persistencia de conversaciones y mensajes ==================
 // ================== Persistencia de conversaciones y mensajes ==================
-async function upsertConversation(waId, attrs = {}, tenantArg) {
+async function upsertConversation(waId, attrs = {}, tenant) {
   const db = await getDb();
   const now = new Date();
-  const filter = withTenant({ waId: String(waId || "").trim() }, tenantArg);
+  const filter = withTenant({ waId: String(waId || "").trim() }, tenant);
   const update = {
     $setOnInsert: {
       openedAt: now,
       status: "IN_PROGRESS",
       finalized: false,
       waId: String(waId || "").trim(),
-      tenantId: (TENANT_ID || null)
+      tenantId: (tenant || null)
     },
     $set: {
       updatedAt: now,
       waId: String(waId || "").trim(),
-      ...((tenantArg || TENANT_ID) ? { tenantId: (tenantArg || TENANT_ID) } : {}),
+      ...((tenant || TENANT_ID) ? { tenantId: (tenant || TENANT_ID) } : {}),
       ...("contactName" in attrs ? { contactName: attrs.contactName } : {})
     }
   };
@@ -144,9 +144,9 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
 
 
 // Listado de conversaciones reales (colección `conversations`)
-async function listConversations(limit = 50, tenantArg) {
+async function listConversations(limit = 50, tenant) {
   const db = await getDb();
-  const q = withTenant({}, tenantArg);
+  const q = withTenant({}, tenant);
   const rows = await db.collection("conversations")
     .find(q)
     .sort({ updatedAt: -1, closedAt: -1, openedAt: -1 })
@@ -166,20 +166,20 @@ async function listConversations(limit = 50, tenantArg) {
 
 // Mensajes por conversación
 // Mensajes por conversación (colección `messages`)
-async function getConversationMessagesByConvId(convId, limit = 500, tenantArg) {
+async function getConversationMessagesByConvId(convId, limit = 500, tenant) {
   const db = await getDb();
-  const filter = withTenant({ conversationId: new ObjectId(String(convId)) }, tenantArg);
+  const filter = withTenant({ conversationId: new ObjectId(String(convId)) }, tenant);
   return db.collection("messages")
     .find(filter).sort({ ts: 1, createdAt: 1 }).limit(limit).toArray();
 }
-async function getConversationMessagesByWaId(waId, limit = 500, tenantArg) {
+async function getConversationMessagesByWaId(waId, limit = 500, tenant) {
   const db = await getDb();
   const conv = await db.collection("conversations").findOne(
-    withTenant({ waId }, tenantArg),
+    withTenant({ waId }, tenant),
     { sort: { updatedAt: -1, openedAt: -1 } }
   );
   if (!conv) return [];
-  return getConversationMessagesByConvId(conv._id, limit, tenantArg);
+  return getConversationMessagesByConvId(conv._id, limit, tenant);
 }
 
 // ---------- API de logs ----------
@@ -554,7 +554,7 @@ app.post("/api/products", async (req, res) => {
     }
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
     const now = new Date();
-    const doc = { tenantId: (TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
+    const doc = { tenantId: (tenant || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
     if (imp !== null) doc.importe = imp;
     const ins = await db.collection("products").insertOne(doc);
     res.json({ ok: true, _id: String(ins.insertedId) });
@@ -1116,10 +1116,10 @@ app.post("/webhook", async (req, res) => {
       // 🔹 Persistir pedido (y distancia) en MongoDB (upsert)
       const db = await require("./db").getDb();
       await db.collection("orders").updateOne(
-        { tenantId: (TENANT_ID || null), from },
+        { tenantId: (tenant || null), from },
         {
           $set: {
-            tenantId: (TENANT_ID || null),
+            tenantId: (tenant || null),
             from,
             pedido,
             estado: estado || null,
