@@ -131,12 +131,13 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
     createdAt: now
   };
   await db.collection("messages").insertOne(doc);
-  const set = role === "user" ? { lastUserTs: now, updatedAt: now } : { lastAssistantTs: now, updatedAt: now };
-  // Actualizar por _id a secas (y reforzar identidad)
-  await db.collection("conversations").updateOne(
-    { _id: new ObjectId(String(conversationId)) },
-    { $set: { ...set, waId: String(waId || ""), ...(TENANT_ID ? { tenantId: TENANT_ID } : {}) } }
-  );
+   const set = role === "user"
+   ? { lastUserTs: now, updatedAt: now }
+   : { lastAssistantTs: now, updatedAt: now };
+ await db.collection("conversations").updateOne(
+   { _id: new ObjectId(String(conversationId)) },
+   { $set: { ...set, waId: String(waId || ""), ...(TENANT_ID ? { tenantId: TENANT_ID } : {}) } }
+ );
 }
 
 
@@ -805,6 +806,8 @@ app.post("/webhook", async (req, res) => {
       if (process.env.NODE_ENV === "production") return res.sendStatus(403);
       console.warn("⚠️ Webhook: firma inválida (ignorada en dev).");
     }
+
+
 
     const entry = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
     if (!entry) return res.sendStatus(200);
