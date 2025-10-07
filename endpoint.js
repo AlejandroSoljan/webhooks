@@ -77,7 +77,7 @@ async function saveLog(entry) {
   try {
     const db = await getDb();
     const doc = {
-      tenantId: (tenant || null),
+      tenantId: (entry?.tenantId || TENANT_ID || DEFAULT_TENANT_ID || null),
       waId: entry.waId || null,
       role: entry.role,             // 'user' | 'assistant' | 'system'
       content: entry.content ?? "",
@@ -103,10 +103,11 @@ async function upsertConversation(waId, attrs = {}, tenantArg) {
       status: "IN_PROGRESS",
       finalized: false,
       waId: String(waId || "").trim(),
-      tenantId: (tenant || null)
+      tenantId: (tenantArg || TENANT_ID || DEFAULT_TENANT_ID || null)
     },
     $set: {
-      updatedAt: now,      ...((tenantArg || TENANT_ID) ? { tenantId: (tenantArg || TENANT_ID) } : {}),
+      updatedAt: now,
+      ...((tenantArg || TENANT_ID) ? { tenantId: (tenantArg || TENANT_ID) } : {}),
       ...("contactName" in attrs ? { contactName: attrs.contactName } : {})
     }
   };
@@ -135,7 +136,7 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
    : { lastAssistantTs: now, updatedAt: now };
  await db.collection("conversations").updateOne(
    { _id: new ObjectId(String(conversationId)) },
-   { $set: { ...set, waId: String(waId || ""), ...((tenantId || TENANT_ID) ? { tenantId: (tenantId || TENANT_ID) } : {}) } }
+   { $set: { ...set,  ...((tenantId || TENANT_ID) ? { tenantId: (tenantId || TENANT_ID) } : {}) } }
  );
 }
 
@@ -552,8 +553,8 @@ app.post("/api/products", async (req, res) => {
     }
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
     const now = new Date();
-    const doc = { tenantId: (tenant || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
-    if (imp !== null) doc.importe = imp;
+    const doc = { tenantId: (TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
+  if (imp !== null) doc.importe = imp;
     const ins = await db.collection("products").insertOne(doc);
     res.json({ ok: true, _id: String(ins.insertedId) });
   } catch (e) {
