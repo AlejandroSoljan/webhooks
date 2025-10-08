@@ -1005,7 +1005,7 @@ console.log("[convId] "+ convId);
     } catch {}
 
 
-    /*// 🚚 Visibilidad de "Envío": sólo en total/resumen/confirmación
+    // 🚚 Visibilidad de "Envío": sólo en total/resumen/confirmación
     // (o cuando wantsDetail=true). En resúmenes parciales lo ocultamos.
     try {
       const text = String(responseText || "");
@@ -1025,7 +1025,7 @@ console.log("[convId] "+ convId);
           .replace(/\n{3,}/g, "\n\n")
           .trim();
       }
-    } catch {}*/
+    } catch {}
 
 
     // 🔎 Leyenda de milanesas: mostrarla SOLO en resumen/total/confirmar.
