@@ -821,7 +821,7 @@ app.post("/webhook", async (req, res) => {
       if (process.env.NODE_ENV === "production") return res.sendStatus(403);
       console.warn("⚠️ Webhook: firma inválida (ignorada en dev).");
     }
-
+    const tenant = resolveTenantId(req);
 
     // ✅ PARSEO CORRECTO DEL PAYLOAD WHATSAPP
     const change = req.body?.entry?.[0]?.changes?.[0];
