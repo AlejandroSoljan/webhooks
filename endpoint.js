@@ -117,7 +117,17 @@ async function upsertConversation(waId, attrs = {}, tenantId) {
 }
 
 async function saveMessageDoc({ conversationId, waId, role, content, type = "text", meta = {}, tenantId }) {
-  console.log("[messages] entering saveMessageDoc", { conversationId: String(conversationId || ""), role, type, hasMeta: !!meta });
+    console.log("[messages] entering saveMessageDoc", { conversationId: String(conversationId || ""), role, type, hasMeta: !!meta });
+ // hard guard: nunca intentes continuar sin conversationId
+  if (!conversationId) {
+    throw new Error("conversationId_missing");
+  }
+
+  // tolera tanto ObjectId como string
+  const convObjectId =
+    (conversationId && typeof conversationId === "object" && conversationId._bsontype === "ObjectID")
+      ? conversationId
+      : new ObjectId(String(conversationId));
   try {
     const db = await getDb();
     const now = new Date();
@@ -858,15 +868,20 @@ app.post("/webhook", async (req, res) => {
     try { conv = await upsertConversation(from, {}, tenant); } catch (e) { console.error("upsertConversation:", e?.message); }
     const convId = conv?._id;
 
-    console.log("[diag] voy a forzar insert en messages (ping)");
-      await saveMessageDoc({
-      conversationId: convId,
-      waId: from,
-      role: "diag",
-      content: "ping",
-      tenantId: TENANT_ID
-    });
-  console.log("[diag] listo insert de ping");
+     if (convId) {
+   console.log("[diag] voy a forzar insert en messages (ping)");
+   await saveMessageDoc({
+     conversationId: convId,
+     waId: from,
+     role: "diag",
+     content: "ping",
+     // mejor pasar el tenant resuelto para que quede alineado con la conversación
+     tenantId: tenant
+   });
+   console.log("[diag] listo insert de ping");
+ } else {
+   console.warn("[diag] no hay convId; no hago ping");
+ }
 console.log("[convId] "+ convId);
 
     if (convId) {
