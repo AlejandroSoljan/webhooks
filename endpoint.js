@@ -823,36 +823,25 @@ app.post("/webhook", async (req, res) => {
     }
 
 
-
-    
-    if (!entry) return res.sendStatus(200);
-
-    const tenant = resolveTenantId(req);
     // ✅ PARSEO CORRECTO DEL PAYLOAD WHATSAPP
-  const change = req.body?.entry?.[0]?.changes?.[0];
-  const value  = change?.value;
-  const msg    = value?.messages?.[0];   // mensaje entrante (texto/audio/etc.)
-  const status = value?.statuses?.[0];   // (se ignora para persistencia)
-  if (!msg) {
-    console.warn("[webhook] evento sin messages; se ignora");
-    return res.sendStatus(200);
-  }
-  const from = msg.from;
-  let text   = (msg.text?.body || "").trim();
-  const msgType = msg.type;
+    const change = req.body?.entry?.[0]?.changes?.[0];
+    const value  = change?.value;
+    const msg    = value?.messages?.[0];   // mensaje entrante (texto/audio/etc.)
+    const status = value?.statuses?.[0];   // (se ignora para persistencia)
+    if (!msg) {
+      console.warn("[webhook] evento sin messages; se ignora");
+      return res.sendStatus(200);
+    }
+    const from = msg.from;
+    let text   = (msg.text?.body || "").trim();
+    const msgType = msg.type;
 
-
-
-
-
-
-  
-
-    if (entry.type === "text" && entry.text?.body) {
-      text = entry.text.body;
-    } else if (entry.type === "audio" && entry.audio?.id) {
+    // Normalización del texto según tipo de mensaje
+    if (msg.type === "text" && msg.text?.body) {
+      text = msg.text.body;
+    } else if (msg.type === "audio" && msg.audio?.id) {
       try {
-        const info = await getMediaInfo(entry.audio.id);
+        const info = await getMediaInfo(msg.audio.id);
         const buf = await downloadMediaBuffer(info.url);
         const id = putInCache(buf, info.mime_type || "audio/ogg");
         const publicAudioUrl = `${req.protocol}://${req.get("host")}/cache/audio/${id}`;
@@ -862,6 +851,8 @@ app.post("/webhook", async (req, res) => {
         console.error("Audio/transcripción:", e.message);
         text = "(no se pudo transcribir el audio)";
       }
+     } else if (msg.type === "image" && msg.image?.id) {
+      text = "[imagen]";
     }
 
         // Asegurar conversación y guardar mensaje de usuario
@@ -885,18 +876,16 @@ app.post("/webhook", async (req, res) => {
  }
 console.log("[convId] "+ convId);
 
-    if (convId) {
-        console.log("[messages] about to save USER message", { convId: String(convId), from, type: entry.type, textPreview: String(text).slice(0,80) });
-            // 👇 GUARDA MENSAJE DEL USUARIO (con tenantId)
-      try {
+        if (convId) {
+        console.log("[messages] about to save USER message", { convId: String(convId), from, type: msg.type, textPreview: String(text).slice(0,80) });  try {
         await saveMessageDoc({
           tenantId: tenant,
           conversationId: convId,
           waId: from,
           role: "user",
           content: text,
-          type: entry.type || "text",
-          meta: { raw: entry }
+          type: msg.type || "text",
+          meta: { raw: msg }
         });
       } catch (e) { console.error("saveMessage(user):", e?.message); }
     }
