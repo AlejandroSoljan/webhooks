@@ -857,6 +857,18 @@ app.post("/webhook", async (req, res) => {
     let conv = null;
     try { conv = await upsertConversation(from, {}, tenant); } catch (e) { console.error("upsertConversation:", e?.message); }
     const convId = conv?._id;
+
+    console.log("[diag] voy a forzar insert en messages (ping)");
+      await saveMessageDoc({
+      conversationId: convId,
+      waId: from,
+      role: "diag",
+      content: "ping",
+      tenantId: TENANT_ID
+    });
+  console.log("[diag] listo insert de ping");
+console.log("[convId] "+ convId);
+
     if (convId) {
         console.log("[messages] about to save USER message", { convId: String(convId), from, type: entry.type, textPreview: String(text).slice(0,80) });
             // 👇 GUARDA MENSAJE DEL USUARIO (con tenantId)
