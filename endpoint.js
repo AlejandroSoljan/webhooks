@@ -1014,32 +1014,28 @@ console.log("[convId] "+ convId);
       }
     }*/
 
-    // 🔎 Añadir/quitar leyenda de milanesas y ocultar 'Envío' si no pidieron detalle
+        // 🔎 Leyenda de milanesas: mostrarla SOLO en resumen/total/confirmar (wantsDetail=true).
+    // El resumen ya la inserta buildBackendSummary(); aquí evitamos que aparezca fuera de contexto.
     try {
       const hasMilanesas = (pedido?.items || []).some(i =>
         String(i?.descripcion || "").toLowerCase().includes("milanesa")
       );
+      // Si NO hay milanesas: limpiar cualquier rastro de la leyenda.
       if (!hasMilanesas) {
-        // remueve la línea (con o sin asteriscos / variaciones menores)
         responseText = responseText
           .replace(/\*?\s*Las milanesas se pesan al entregar; el precio se informa al momento de la entrega\.\s*\*?/i, "")
-          .replace(/\n{3,}/g, "\n\n") // normaliza saltos extra
-          .trim();
-      } else {
-        // si hay milanesas y NO está la leyenda, agregala al final
-        if (!/\bse pesan al entregar\b/i.test(responseText)) {
-          responseText = `${responseText}\n\n*Las milanesas se pesan al entregar; el precio se informa al momento de la entrega.*`;
-        }
-      }
-      // Ocultar renglones de "Envío" en resúmenes si no pidieron detalle
-      if (!wantsDetail) {
-        responseText = responseText
-          .split("\n")
-          .filter(line => !/^\s*-\s*.*env[ií]o/i.test(line))
-          .join("\n")
           .replace(/\n{3,}/g, "\n\n")
           .trim();
-      }
+      } else {
+        // Si hay milanesas pero NO es resumen/total/confirmar: no mostrar la leyenda.
+        if (!wantsDetail) {
+         responseText = responseText
+            .replace(/\*?\s*Las milanesas se pesan al entregar; el precio se informa al momento de la entrega\.\s*\*?/i, "")
+            .replace(/\n{3,}/g, "\n\n")
+            .trim();
+        }
+        // En caso de wantsDetail=true, la leyenda ya la añade buildBackendSummary().
+     }
     } catch {}
 
     await require("./logic").sendWhatsAppMessage(from, responseText);
