@@ -109,16 +109,8 @@ async function upsertConversation(waId, init = {}, tenantId) {
 
   const res = await db.collection("conversations").findOneAndUpdate(filter, update, opts);
   if (res && res.value) return res.value;
-
-  // Fallback ultra-defensivo
-  const ins = await db.collection("conversations").insertOne({
-    waId: String(waId),
-    tenantId: tenant,
-    createdAt: now,
-    updatedAt: now,
-    ...init,
-  });
-  return { _id: ins.insertedId, waId: String(waId), tenantId: tenant };
+  // (Quitar fallback insertOne para evitar duplicados en condiciones de carrera)
+  return await db.collection("conversations").findOne(filter);
 }
 
 async function saveMessageDoc({ conversationId, waId, role, content, type = "text", meta = {}, tenantId }) {
@@ -860,20 +852,7 @@ app.post("/webhook", async (req, res) => {
     try { conv = await upsertConversation(from, {}, tenant); } catch (e) { console.error("upsertConversation:", e?.message); }
     const convId = conv?._id;
 
-     if (convId) {
-   console.log("[diag] voy a forzar insert en messages (ping)");
-   await saveMessageDoc({
-     conversationId: convId,
-     waId: from,
-     role: "diag",
-     content: "ping",
-     // mejor pasar el tenant resuelto para que quede alineado con la conversación
-     tenantId: tenant
-   });
-   console.log("[diag] listo insert de ping");
- } else {
-   console.warn("[diag] no hay convId; no hago ping");
- }
+   
 console.log("[convId] "+ convId);
 
         if (convId) {
@@ -982,7 +961,7 @@ console.log("[convId] "+ convId);
       console.error("Error al parsear/corregir JSON:", e.message);
     }
 
-    // Guardar respuesta del asistente (texto que se envía al cliente)
+    /*// Guardar respuesta del asistente (texto que se envía al cliente)
     if (convId) {
       console.log("[messages] about to save ASSISTANT message", { convId: String(convId), from, len: String(responseText||"").length });
           // 👇 GUARDA MENSAJE DEL ASISTENTE (con tenantId)
@@ -997,7 +976,7 @@ console.log("[convId] "+ convId);
         meta: { model: "gpt" }
       });
     } catch (e) { console.error("saveMessage(assistant):", e?.message); }
-    }
+    }*/
 
     try {
       const finalBody = String(responseText ?? "").trim();
