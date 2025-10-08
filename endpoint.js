@@ -98,9 +98,10 @@ async function upsertConversation(waId, init = {}, tenantId) {
   const now = new Date();
   const tenant = String(tenantId || TENANT_ID || DEFAULT_TENANT_ID || "default");
 
-  const filter = { waId: String(waId), tenantId: tenant };
+   // 👉 Solo conversaciones abiertas: si la última está finalizada/cancelada, se creará un registro nuevo
+  const filter = { waId: String(waId), tenantId: tenant, finalized: { $ne: true }, status: { $nin: ["COMPLETED", "CANCELLED"] } };
   const update = {
-    $setOnInsert: { createdAt: now },
+    $setOnInsert: { createdAt: now, openedAt: now, status: "OPEN" },
     $set: { updatedAt: now, ...init },
   };
   // Para driver moderno
@@ -112,7 +113,19 @@ async function upsertConversation(waId, init = {}, tenantId) {
   // (Quitar fallback insertOne para evitar duplicados en condiciones de carrera)
   return await db.collection("conversations").findOne(filter);
 }
-
+// ------- helper para cerrar conversación (finalizar/cancelar) -------
+async function closeConversation(convId, status = "COMPLETED", extra = {}) {
+  try {
+    const db = await getDb();
+    const now = new Date();
+    await db.collection("conversations").updateOne(
+      { _id: new ObjectId(String(convId)) },
+      { $set: { finalized: true, status, closedAt: now, updatedAt: now, ...extra } }
+    );
+  } catch (e) {
+    console.error("closeConversation error:", e?.message || e);
+  }
+}
 async function saveMessageDoc({ conversationId, waId, role, content, type = "text", meta = {}, tenantId }) {
   console.log("[messages] entering saveMessageDoc", { conversationId: String(conversationId || ""), role, type, hasMeta: !!meta });
   if (!conversationId) {
@@ -1172,6 +1185,9 @@ console.log("[convId] "+ convId);
     } catch {}
     try {
       if (estado === "COMPLETED" || estado === "CANCELLED") {
+                // 🔒 marcar conversación como finalizada/cancelada en Mongo
+        await closeConversation(convId, estado);
+        // 🧹 limpiar sesión en memoria para que el próximo msg empiece conversación nueva
         markSessionEnded(tenant, from);
       }
     } catch {}
