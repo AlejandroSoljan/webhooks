@@ -547,16 +547,16 @@ async function getGPTReply(tenantId, from, userMessage) {
     messages.push(...seq);
     userOnlyHistories[id].push({ role: "user", content: userMessage });
 
-    console.log("[minimal] comportamiento =>\n" + baseText);
-    console.log("[minimal] messages => " + safeStringify(messages));
-    console.log("[minimal] userOnlyHistories => " + safeStringify(userOnlyHistories[id]));
+   // console.log("[minimal] comportamiento =>\n" + baseText);
+   // console.log("[minimal] messages => " + safeStringify(messages));
+    //console.log("[minimal] userOnlyHistories => " + safeStringify(userOnlyHistories[id]));
   } else {
     if (!chatHistories[id]) chatHistories[id] = [{ role: "system", content: fullSystem }];
     chatHistories[id].push({ role: "user", content: userMessage });
     messages = chatHistories[id];
 
-    console.log("[standard] comportamiento =>\n" + baseText);
-    console.log("[standard] messages => " + safeStringify(messages));
+   // console.log("[standard] comportamiento =>\n" + baseText);
+    //console.log("[standard] messages => " + safeStringify(messages));
   }
 
   try {
