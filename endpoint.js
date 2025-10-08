@@ -117,38 +117,48 @@ async function upsertConversation(waId, attrs = {}, tenantId) {
 }
 
 async function saveMessageDoc({ conversationId, waId, role, content, type = "text", meta = {}, tenantId }) {
-    console.log("[messages] entering saveMessageDoc", { conversationId: String(conversationId || ""), role, type, hasMeta: !!meta });
+  console.log("[messages] entering saveMessageDoc", { conversationId: String(conversationId || ""), role, type, hasMeta: !!meta });
   try {
     const db = await getDb();
     const now = new Date();
+
+    // ConversationId seguro (acepta ObjectId o string)
+    const convObjectId =
+      (conversationId && typeof conversationId === "object" && conversationId._bsontype === "ObjectID")
+        ? conversationId
+        : new ObjectId(String(conversationId));
+
     const doc = {
-    // 👇 Aseguramos tenantId válido (sin variables fuera de scope)
-    tenantId: (tenantId ?? TENANT_ID ?? null),
-     conversationId: (conversationId && typeof conversationId === "object" && conversationId._bsontype === "ObjectID")
-   ? conversationId
-   : new ObjectId(String(conversationId)),
-    waId: String(waId || ""),
-    role: String(role),
-    content: String(content ?? ""),
-    type: String(type || "text"),
-    meta: { ...meta },
-    ts: now,
-    createdAt: now
-  };
+      tenantId: (tenantId ?? TENANT_ID ?? null),
+      conversationId: convObjectId,
+      waId: String(waId || ""),
+      role: String(role),
+      content: String(content ?? ""),
+      type: String(type || "text"),
+      meta: { ...meta },
+      ts: now,
+      createdAt: now
+    };
+
     const ins = await db.collection("messages").insertOne(doc);
     console.log("[messages] inserted:", ins?.insertedId?.toString?.());
+
+    // ✅ mover la actualización de la conversación AQUÍ adentro
+    const set = role === "user"
+      ? { lastUserTs: now, updatedAt: now }
+      : { lastAssistantTs: now, updatedAt: now };
+
+    await db.collection("conversations").updateOne(
+      { _id: convObjectId },
+      { $set: set }
+    );
+
   } catch (e) {
     console.error("[messages] save error:", e?.stack || e?.message || e);
     throw e;
   }
-   const set = role === "user"
-   ? { lastUserTs: now, updatedAt: now }
-   : { lastAssistantTs: now, updatedAt: now };
- await db.collection("conversations").updateOne(
-   { _id: new ObjectId(String(conversationId)) },
-   { $set: { ...set } }
- );
 }
+
 
 
 
@@ -957,7 +967,7 @@ app.post("/webhook", async (req, res) => {
 
     // Guardar respuesta del asistente (texto que se envía al cliente)
     if (convId) {
-      onsole.log("[messages] about to save ASSISTANT message", { convId: String(convId), from, len: String(responseText||"").length });
+      console.log("[messages] about to save ASSISTANT message", { convId: String(convId), from, len: String(responseText||"").length });
           // 👇 GUARDA MENSAJE DEL ASISTENTE (con tenantId)
     try {
       await saveMessageDoc({
