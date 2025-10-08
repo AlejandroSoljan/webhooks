@@ -93,51 +93,46 @@ async function saveLog(entry) {
  
 // ================== Persistencia de conversaciones y mensajes ==================
 // ================== Persistencia de conversaciones y mensajes ==================
-async function upsertConversation(waId, attrs = {}, tenantId) {
+async function upsertConversation(waId, init = {}, tenantId) {
   const db = await getDb();
   const now = new Date();
-  const filter = withTenant({ waId: String(waId || "").trim() }, tenantId);
+  const tenant = String(tenantId || TENANT_ID || DEFAULT_TENANT_ID || "default");
+
+  const filter = { waId: String(waId), tenantId: tenant };
   const update = {
-    $setOnInsert: {
-      openedAt: now,
-      status: "IN_PROGRESS",
-      finalized: false,
-      waId: String(waId || "").trim(),
-      tenantId: (tenantId || TENANT_ID || DEFAULT_TENANT_ID || null)
-    },
-    $set: {
-      updatedAt: now,
-      
-      ...("contactName" in attrs ? { contactName: attrs.contactName } : {})
-    }
+    $setOnInsert: { createdAt: now },
+    $set: { updatedAt: now, ...init },
   };
-  const opt = { upsert: true, returnDocument: "after" };
-  const res = await db.collection("conversations").findOneAndUpdate(filter, update, opt);
-  return res.value;
+  // Para driver moderno
+  const opts = { upsert: true, returnDocument: "after" };
+  // Si tu driver es 4.x antiguo, usar en su lugar: { upsert:true, returnOriginal:false }
+
+  const res = await db.collection("conversations").findOneAndUpdate(filter, update, opts);
+  if (res && res.value) return res.value;
+
+  // Fallback ultra-defensivo
+  const ins = await db.collection("conversations").insertOne({
+    waId: String(waId),
+    tenantId: tenant,
+    createdAt: now,
+    updatedAt: now,
+    ...init,
+  });
+  return { _id: ins.insertedId, waId: String(waId), tenantId: tenant };
 }
 
 async function saveMessageDoc({ conversationId, waId, role, content, type = "text", meta = {}, tenantId }) {
-    console.log("[messages] entering saveMessageDoc", { conversationId: String(conversationId || ""), role, type, hasMeta: !!meta });
- // hard guard: nunca intentes continuar sin conversationId
+  console.log("[messages] entering saveMessageDoc", { conversationId: String(conversationId || ""), role, type, hasMeta: !!meta });
   if (!conversationId) {
     throw new Error("conversationId_missing");
   }
-
-  // tolera tanto ObjectId como string
-  const convObjectId =
-    (conversationId && typeof conversationId === "object" && conversationId._bsontype === "ObjectID")
-      ? conversationId
-      : new ObjectId(String(conversationId));
   try {
     const db = await getDb();
     const now = new Date();
-
-    // ConversationId seguro (acepta ObjectId o string)
     const convObjectId =
       (conversationId && typeof conversationId === "object" && conversationId._bsontype === "ObjectID")
         ? conversationId
         : new ObjectId(String(conversationId));
-
     const doc = {
       tenantId: (tenantId ?? TENANT_ID ?? null),
       conversationId: convObjectId,
@@ -149,20 +144,9 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
       ts: now,
       createdAt: now
     };
-
     const ins = await db.collection("messages").insertOne(doc);
     console.log("[messages] inserted:", ins?.insertedId?.toString?.());
-
-    // ✅ mover la actualización de la conversación AQUÍ adentro
-    const set = role === "user"
-      ? { lastUserTs: now, updatedAt: now }
-      : { lastAssistantTs: now, updatedAt: now };
-
-    await db.collection("conversations").updateOne(
-      { _id: convObjectId },
-      { $set: set }
-    );
-
+    // (si abajo actualizás conversations.lastUserTs/lastAssistantTs, mantenelo dentro de este try)
   } catch (e) {
     console.error("[messages] save error:", e?.stack || e?.message || e);
     throw e;
@@ -844,7 +828,26 @@ app.post("/webhook", async (req, res) => {
     if (!entry) return res.sendStatus(200);
 
     const tenant = resolveTenantId(req);
-    const from = entry.from;
+    
+   // Parseo robusto de la estructura de WhatsApp
+//const entry  = req.body?.entry?.[0];
+const change = entry?.changes?.[0];
+const value  = change?.value;
+const msg    = value?.messages?.[0];       // solo persistimos cuando hay messages
+const status = value?.statuses?.[0];       // ignoramos statuses para persistencia
+
+// Necesitamos un mensaje entrante real
+if (!msg) {
+  console.warn("[webhook] evento sin messages; se ignora");
+  return res.sendStatus(200);
+}
+
+const from = msg?.from;                    // waId del usuario (obligatorio para conversación)
+if (!from) {
+  console.warn("[webhook] 'from' vacío en message; se ignora");
+  return res.sendStatus(200);
+}
+
     let text = (entry.text?.body || "").trim();
 
     if (entry.type === "text" && entry.text?.body) {
