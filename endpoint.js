@@ -1004,6 +1004,30 @@ console.log("[convId] "+ convId);
       }
     } catch {}
 
+
+    // 🚚 Visibilidad de "Envío": sólo en total/resumen/confirmación
+    // (o cuando wantsDetail=true). En resúmenes parciales lo ocultamos.
+    try {
+      const text = String(responseText || "");
+      const showsTotals = /\btotal\s*:?\s*\d/i.test(text);
+      const isConfirmation = /¿\s*confirm/i.test(text) || /\u00BF\s*confirm/i.test(text) || /¿Confirmas\?/i.test(text);
+      const explicitResumen = /resumen del pedido/i.test(text);
+      const allowShipping = wantsDetail || showsTotals || isConfirmation || explicitResumen;
+      if (!allowShipping) {
+        // Remover líneas que muestren "Envío ..." (con o sin viñetas)
+        responseText = text
+          .split(/\r?\n/)
+          .filter(line =>
+            !/^\s*[-•*]\s*Env[ií]o\b/i.test(line) &&  // • Envío ...
+            !/^\s*Env[ií]o\b/i.test(line)            // Envío ...
+          )
+          .join("\n")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
+      }
+    } catch {}
+
+
     // 🔎 Leyenda de milanesas: mostrarla SOLO en resumen/total/confirmar.
     // Si el modelo generó un resumen aunque el usuario no haya pedido "total/resumen",
     // lo detectamos por el contenido del responseText.
