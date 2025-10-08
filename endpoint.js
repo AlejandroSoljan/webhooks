@@ -1004,38 +1004,37 @@ console.log("[convId] "+ convId);
       }
     } catch {}
 
-    /*   // 🔒 Normalización: si ya está COMPLETED, no vuelvas a preguntar
-    if (estado === "COMPLETED") {
-      const asks = /¿\s*confirm(a|as|as\?|amos|an)\??/i.test(responseText) || responseText.includes("¿Confirmas?");
-      if (asks) {
-        const total = (pedido?.total_pedido ?? 0).toLocaleString("es-AR");
-        const itemsTxt = (pedido?.items || []).map(i => `${i.cantidad} ${i.descripcion}`).join(", ");
-        responseText = `Perfecto, tu pedido quedó confirmado ✅: ${itemsTxt}. Total: ${total}. ¡Gracias!`;
-      }
-    }*/
-
-        // 🔎 Leyenda de milanesas: mostrarla SOLO en resumen/total/confirmar (wantsDetail=true).
-    // El resumen ya la inserta buildBackendSummary(); aquí evitamos que aparezca fuera de contexto.
+    // 🔎 Leyenda de milanesas: mostrarla SOLO en resumen/total/confirmar.
+    // Si el modelo generó un resumen aunque el usuario no haya pedido "total/resumen",
+    // lo detectamos por el contenido del responseText.
     try {
       const hasMilanesas = (pedido?.items || []).some(i =>
         String(i?.descripcion || "").toLowerCase().includes("milanesa")
       );
-      // Si NO hay milanesas: limpiar cualquier rastro de la leyenda.
+      // ¿El texto "parece" un resumen?
+      const looksLikeSummary = wantsDetail || /\b(resumen del pedido|total\s*:|\btotal\b|¿\s*confirm|¿confirmas|\u00BF\s*confirm)/i.test(String(responseText || ""));
+
       if (!hasMilanesas) {
-        responseText = responseText
+        // Limpia cualquier rastro de la leyenda si no hay milanesas
+        responseText = String(responseText || "")
           .replace(/\*?\s*Las milanesas se pesan al entregar; el precio se informa al momento de la entrega\.\s*\*?/i, "")
           .replace(/\n{3,}/g, "\n\n")
           .trim();
       } else {
-        // Si hay milanesas pero NO es resumen/total/confirmar: no mostrar la leyenda.
-        if (!wantsDetail) {
-         responseText = responseText
+        if (looksLikeSummary) {
+          // Asegurar que la leyenda esté presente en resúmenes/totales/confirmaciones
+          const hasLegend = /\bse pesan al entregar\b/i.test(String(responseText || ""));
+          if (!hasLegend) {
+            responseText = `${String(responseText || "").trim()}\n\n*Las milanesas se pesan al entregar; el precio se informa al momento de la entrega.*`;
+          }
+        } else {
+          // No es resumen → quitar la leyenda si el modelo la hubiera puesto
+          responseText = String(responseText || "")
             .replace(/\*?\s*Las milanesas se pesan al entregar; el precio se informa al momento de la entrega\.\s*\*?/i, "")
             .replace(/\n{3,}/g, "\n\n")
             .trim();
         }
-        // En caso de wantsDetail=true, la leyenda ya la añade buildBackendSummary().
-     }
+      }
     } catch {}
 
     await require("./logic").sendWhatsAppMessage(from, responseText);
