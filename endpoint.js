@@ -824,31 +824,29 @@ app.post("/webhook", async (req, res) => {
 
 
 
-    const entry = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+    
     if (!entry) return res.sendStatus(200);
 
     const tenant = resolveTenantId(req);
-    
-   // Parseo robusto de la estructura de WhatsApp
-//const entry  = req.body?.entry?.[0];
-const change = entry?.changes?.[0];
-const value  = change?.value;
-const msg    = value?.messages?.[0];       // solo persistimos cuando hay messages
-const status = value?.statuses?.[0];       // ignoramos statuses para persistencia
+    // ✅ PARSEO CORRECTO DEL PAYLOAD WHATSAPP
+  const change = req.body?.entry?.[0]?.changes?.[0];
+  const value  = change?.value;
+  const msg    = value?.messages?.[0];   // mensaje entrante (texto/audio/etc.)
+  const status = value?.statuses?.[0];   // (se ignora para persistencia)
+  if (!msg) {
+    console.warn("[webhook] evento sin messages; se ignora");
+    return res.sendStatus(200);
+  }
+  const from = msg.from;
+  let text   = (msg.text?.body || "").trim();
+  const msgType = msg.type;
 
-// Necesitamos un mensaje entrante real
-if (!msg) {
-  console.warn("[webhook] evento sin messages; se ignora");
-  return res.sendStatus(200);
-}
 
-const from = msg?.from;                    // waId del usuario (obligatorio para conversación)
-if (!from) {
-  console.warn("[webhook] 'from' vacío en message; se ignora");
-  return res.sendStatus(200);
-}
 
-    let text = (entry.text?.body || "").trim();
+
+
+
+  
 
     if (entry.type === "text" && entry.text?.body) {
       text = entry.text.body;
