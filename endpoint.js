@@ -126,6 +126,26 @@ async function closeConversation(convId, status = "COMPLETED", extra = {}) {
     console.error("closeConversation error:", e?.message || e);
   }
 }
+
+// ------- helper para validar que el pedido esté completo antes de cerrar -------
+function isPedidoCompleto(p) {
+  try {
+    if (!p) return false;
+    const itemsOk   = Array.isArray(p.items) && p.items.length > 0;
+    const entregaOk = p.Entrega === 'retiro' || p.Entrega === 'domicilio';
+    const dirOk     = p.Entrega !== 'domicilio'
+      || (p.Domicilio && p.Domicilio.direccion && String(p.Domicilio.direccion).trim());
+    const fechaOk   = /^\d{4}-\d{2}-\d{2}$/.test(p.Fecha || "");
+    const horaOk    = /^\d{2}:\d{2}$/.test(p.Hora  || "");
+    return itemsOk && entregaOk && dirOk && fechaOk && horaOk;
+  } catch {
+    return false;
+  }
+}
+
+
+
+
 async function saveMessageDoc({ conversationId, waId, role, content, type = "text", meta = {}, tenantId }) {
   console.log("[messages] entering saveMessageDoc", { conversationId: String(conversationId || ""), role, type, hasMeta: !!meta });
   if (!conversationId) {
@@ -1005,7 +1025,7 @@ console.log("[convId] "+ convId);
     } catch {}
 
 
-    // 🚚 Visibilidad de "Envío": sólo en total/resumen/confirmación
+    /*// 🚚 Visibilidad de "Envío": sólo en total/resumen/confirmación
     // (o cuando wantsDetail=true). En resúmenes parciales lo ocultamos.
     try {
       const text = String(responseText || "");
@@ -1025,7 +1045,7 @@ console.log("[convId] "+ convId);
           .replace(/\n{3,}/g, "\n\n")
           .trim();
       }
-    } catch {}
+    } catch {}*/
 
 
     // 🔎 Leyenda de milanesas: mostrarla SOLO en resumen/total/confirmar.
@@ -1203,8 +1223,11 @@ console.log("[convId] "+ convId);
       );
     } catch {}
     try {
-      if (estado === "COMPLETED" || estado === "CANCELLED") {
-                // 🔒 marcar conversación como finalizada/cancelada en Mongo
+            const userConfirms =
+        /\bconfirm(ar|o|a)\b/i.test(text) || /^s(i|í)\b.*confirm/i.test(text);
+
+      if ((estado === "COMPLETED" && isPedidoCompleto(pedido) && userConfirms) || estado === "CANCELLED") {
+        // 🔒 marcar conversación como finalizada/cancelada en Mongo solo cuando corresponde
         await closeConversation(convId, estado);
         // 🧹 limpiar sesión en memoria para que el próximo msg empiece conversación nueva
         markSessionEnded(tenant, from);
