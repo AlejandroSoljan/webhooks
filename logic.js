@@ -265,16 +265,15 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime }) {
 
 // ================== Detección de cortesía ==================
 function isPoliteClosingMessage(textRaw) {
-  const text = String(textRaw || "").trim().toLowerCase();
-  if (!text) return false;
-  const exacts = [
-    "gracias","muchas gracias","mil gracias","ok","oka","okey","dale","listo",
-    "genial","perfecto","buenas","buenas noches","buen dia","buen día",
+  const s = String(textRaw || "").trim().toLowerCase();
+  if (!s) return false;
+  // Solo cierres MUY cortos (sin más palabras ni números).
+  const shortExacts = [
+    "ok","dale","listo","gracias","muchas gracias","mil gracias",
     "👍","👌","🙌","🙏","🙂","😊","👏","✌️"
   ];
-  if (exacts.includes(text)) return true;
-  if (/^(gracias+!?|ok+|dale+|listo+|genial+|perfecto+)\b/.test(text)) return true;
-  if (/(saludos|abrazo)/.test(text) && text.length <= 40) return true;
+  if (shortExacts.includes(s)) return true;
+  // Evitar capturar frases como "ok para las 21" o "perfecto, agendá".
   return false;
 }
 
