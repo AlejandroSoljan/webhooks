@@ -1000,6 +1000,13 @@ console.log("[convId] "+ convId);
       // 🚚 Asegurar ítem Envío con geocoding/distancia (awaitable, sin race)
       try { pedido = await ensureEnvioSmart(pedido, tenant || null); } catch {}
 
+      // 🧽 Normalización defensiva: si el modelo puso la HORA en `Entrega`, corrige campos.
+      if (pedido && typeof pedido.Entrega === "string" && /^\d{1,2}:\d{2}$/.test(pedido.Entrega)) {
+        const hhmm = pedido.Entrega.length === 4 ? ("0" + pedido.Entrega) : pedido.Entrega;
+        pedido.Hora = pedido.Hora || hhmm;
+        // Si `Entrega` no es "domicilio" ni "retiro", dejalo vacío para que no bloquee isPedidoCompleto
+        if (!/^(domicilio|retiro)$/i.test(pedido.Entrega)) pedido.Entrega = "";
+      }
 
       const { pedidoCorr, mismatch, hasItems } = recalcAndDetectMismatch(pedido);
       pedido = pedidoCorr;
@@ -1290,9 +1297,9 @@ console.log("[convId] "+ convId);
             const userConfirms =
         /\bconfirm(ar|o|a)\b/i.test(text) || /^s(i|í)\b.*confirm/i.test(text);
 
-      if ((estado === "COMPLETED" && isPedidoCompleto(pedido)) || estado === "CANCELLED") {
-        // 🔒 marcar conversación como finalizada/cancelada en Mongo solo cuando corresponde
-        await closeConversation(convId, estado);
+     // ✅ Cerramos cuando el modelo marcó COMPLETED y el pedido está completo (sin exigir texto "confirm...")
+    if ((estado === "COMPLETED" && isPedidoCompleto(pedido)) || estado === "CANCELLED") {
+     await closeConversation(convId, estado);
         // 🧹 limpiar sesión en memoria para que el próximo msg empiece conversación nueva
         markSessionEnded(tenant, from);
       }
