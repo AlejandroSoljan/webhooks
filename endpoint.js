@@ -181,6 +181,39 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
 
 
 
+// === Helpers para resumen de Pedido (fecha/hora/entrega/envío) ===
+async function _getLastPedidoSummary(db, convId, tenantId) {
+ try {
+    const filter = withTenant({ conversationId: new ObjectId(String(convId)), role: "assistant" }, tenantId);
+    const cursor = db.collection("messages")
+      .find(filter)
+      .sort({ ts: -1, createdAt: -1 })
+      .limit(200);
+    let pedido = null;
+    for await (const m of cursor) {
+      const s = String(m.content || "").trim();
+     try {
+        const j = JSON.parse(s);
+        if (j && j.Pedido && Array.isArray(j.Pedido.items)) { pedido = j.Pedido; break; }
+      } catch {}
+    }
+    if (!pedido) return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-" };
+    // Entrega/Envío
+    const entrega = String(pedido.Entrega || "").toLowerCase();
+   let entregaLabel = "Retiro";
+    if (entrega === "domicilio") {
+      const envio = (pedido.items || []).find(i => /env[ií]o/i.test(String(i?.descripcion || "")));
+      entregaLabel = envio ? String(envio.descripcion || "Domicilio (con envío)") : "Domicilio";
+    }
+   // Día/Hora
+    const fechaEntrega = /^\d{4}-\d{2}-\d{2}$/.test(String(pedido.Fecha || "")) ? pedido.Fecha : "-";
+    const horaEntrega  = /^\d{2}:\d{2}$/.test(String(pedido.Hora  || "")) ? pedido.Hora  : "-";
+    return { entregaLabel, fechaEntrega, horaEntrega };
+  } catch {
+    return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-" };
+  }
+}
+
 // Listado de conversaciones reales (colección `conversations`)
 async function listConversations(limit = 50, tenantId) {
   const db = await getDb();
@@ -190,16 +223,20 @@ async function listConversations(limit = 50, tenantId) {
     .sort({ updatedAt: -1, closedAt: -1, openedAt: -1 })
     .limit(limit)
     .toArray();
-  return rows.map(c => ({
-    _id: String(c._id),
-    waId: c.waId,
-     contactName: c.contactName || "-",
-     // Si la conversación está finalizada, forzamos COMPLETED para evitar falsos "OPEN"
-     status: c.finalized ? "COMPLETED" : (c.status || "OPEN"),
-     // Mejor heurística de última actividad
-     lastAt: c.lastUserTs || c.lastAssistantTs || c.updatedAt || c.closedAt || c.openedAt
-
-  }));
+  // Enriquecer con resumen de Pedido (fecha/hora/entrega/envío)
+  const out = [];
+  for (const c of rows) {
+    const base = {
+      _id: String(c._id),
+      waId: c.waId,
+      contactName: c.contactName || "-",
+      status: c.finalized ? "COMPLETED" : (c.status || "OPEN"),
+      lastAt: c.lastUserTs || c.lastAssistantTs || c.updatedAt || c.closedAt || c.openedAt
+    };
+    const extra = await _getLastPedidoSummary(db, c._id, tenantId);
+    out.push({ ...base, ...extra });
+  }
+  return out;
 }
 
 // Mensajes por conversación
@@ -312,9 +349,12 @@ app.get("/admin", async (req, res) => {
    <table id="tbl">
      <thead>
        <tr>
-         <th>Fecha</th>
+         <th>Actividad</th>
          <th>Teléfono</th>
-         <th>Nombre</th>
+         <th>Nombre y Apellido</th>
+         <th>Entrega</th>
+         <th>Día</th>
+         <th>Hora</th>
          <th>Estado</th>
          <th>Acciones</th>
        </tr>
@@ -399,6 +439,9 @@ app.get("/admin", async (req, res) => {
             <td>\${new Date(c.lastAt||Date.now()).toLocaleString()}</td>
             <td>\${c.waId||'-'}</td>
             <td>\${c.contactName||'-'}</td>
+            <td>\${c.entregaLabel||'-'}</td>
+            <td>\${c.fechaEntrega||'-'}</td>
+            <td>\${c.horaEntrega||'-'}</td>
             <td>\${c.status||'-'}</td>
             <td class="actions">
               <button class="btn" onclick="openDetailModal('\${c._id}')">Detalle</button>
@@ -434,10 +477,13 @@ app.get("/admin", async (req, res) => {
            <td>\${fmt(c.lastAt)}</td>
            <td>\${c.waId || '-'}</td>
            <td>\${c.contactName || '-'}</td>
+           <td>\${c.entregaLabel || '-'}</td>
+           <td>\${c.fechaEntrega || '-'}</td>
+           <td>\${c.horaEntrega || '-'}</td>
            <td>\${c.status || '-'}</td>
            <td>
             <button class="btn" data-conv="\${c._id}">Detalle</button>
-             <button class="btn" data-print="\${c._id}">Imprimir</button>
+            <button class="btn" data-print="\${c._id}">Imprimir</button>
            </td>\`;
         tb.appendChild(tr);
        }
