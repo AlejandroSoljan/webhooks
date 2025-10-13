@@ -1158,22 +1158,47 @@ console.log("[convId] "+ convId);
       console.error("Error al parsear/corregir JSON:", e.message);
     }
 
-    /*// Guardar respuesta del asistente (texto que se envía al cliente)
-    if (convId) {
-      console.log("[messages] about to save ASSISTANT message", { convId: String(convId), from, len: String(responseText||"").length });
-          // 👇 GUARDA MENSAJE DEL ASISTENTE (con tenantId)
-    try {
-      await saveMessageDoc({
-        tenantId: tenant,
-        conversationId: convId,
-        waId: from,
-        role: "assistant",
-        content: responseText,
-        type: "text",
-        meta: { model: "gpt" }
-      });
-    } catch (e) { console.error("saveMessage(assistant):", e?.message); }
-    }*/
+     // Guardar respuesta del asistente:
+     // 1) el TEXTO que se envía al cliente
+     // 2) un SNAPSHOT JSON con el Pedido ya corregido, para que /admin pueda leerlo
+     if (convId) {
+       try {
+         console.log("[messages] about to save ASSISTANT message", { convId: String(convId), from, len: String(responseText||"").length });
+         await saveMessageDoc({
+           tenantId: tenant,
+           conversationId: convId,
+           waId: from,
+           role: "assistant",
+           content: String(responseText || ""),
+           type: "text",
+          meta: { model: "gpt" }
+         });
+       } catch (e) {
+         console.error("saveMessage(assistant text):", e?.message);
+       }
+ 
+       // Preparar el snapshot JSON a persistir (usa el pedido ya rehidratado/corregido)
+       try {
+         const assistantSnapshot = JSON.stringify({
+           response: typeof (parsedFixLast?.response ?? parsed?.response) === "string"
+             ? (parsedFixLast?.response ?? parsed?.response)
+             : "",
+           estado: (parsedFixLast?.estado ?? parsed?.estado) || estado || "IN_PROGRESS",
+           Pedido: pedido || { Entrega: "", Domicilio: {}, items: [], total_pedido: 0 }
+         });
+         await saveMessageDoc({
+           tenantId: tenant,
+           conversationId: convId,
+           waId: from,
+           role: "assistant",
+           content: assistantSnapshot,
+           type: "json",
+           meta: { model: "gpt", kind: "pedido-snapshot" }
+         });
+       } catch (e) {
+         console.error("saveMessage(assistant json):", e?.message);
+       }
+     }
 
     try {
       const finalBody = String(responseText ?? "").trim();
