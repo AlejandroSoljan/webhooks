@@ -1058,10 +1058,11 @@ console.log("[convId] "+ convId);
           }
         }
 
-        responseText = fixedOk && parsedFixLast
-          ? coalesceResponse(parsedFixLast.response, pedido)
-          // Solo mostrar resumen si el usuario pidió detalle/total/confirmar
-          : (wantsDetail ? buildBackendSummary(pedido, { showEnvio: wantsDetail }) : "");
+        responseText =
+          parsedFixLast && typeof parsedFixLast.response === "string"
+            ? coalesceResponse(parsedFixLast.response, pedido)
+            // Solo mostrar resumen si el usuario pidió detalle/total/confirmar
+            : (wantsDetail ? buildBackendSummary(pedido, { showEnvio: wantsDetail }) : "");
       } else {
         responseText = coalesceResponse(parsed.response, pedido);
       }
@@ -1088,15 +1089,15 @@ console.log("[convId] "+ convId);
 
     try {
       const finalBody = String(responseText ?? "").trim();
-      if (!finalBody) {
-        // No forzar resumen a menos que lo pidan explícitamente
-        if (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length > 0) {
-          responseText = buildBackendSummary(pedido, { showEnvio: wantsDetail });
-        } else {
-          // Caer a un prompt breve según el estado, o fallback simple
-          responseText = START_FALLBACK;
-        }
+    if (!finalBody) {
+      // No forzar resumen a menos que lo pidan explícitamente
+      if (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length > 0) {
+        responseText = buildBackendSummary(pedido, { showEnvio: wantsDetail });
+      } else {
+        // Texto neutro si ya hay contexto; saludo solo si no lo hay
+        responseText = coalesceResponse("", pedido);
       }
+    }
     } catch {}
 
 
