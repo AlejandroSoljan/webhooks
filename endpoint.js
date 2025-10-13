@@ -277,6 +277,19 @@ app.get("/admin", async (req, res) => {
      .row{display:flex; gap:16px; align-items:center}
      .muted{color:#666}
      .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:4px; cursor:pointer}
+    /* ===== Modal simple ===== */
+    .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:1000}
+    .modal{background:#fff;border:1px solid #ddd;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);width:min(900px,95vw);max-height:85vh;display:flex;flex-direction:column}
+    .modal header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #eee}
+    .modal header h3{margin:0;font-size:16px}
+    .modal .body{padding:10px 12px;overflow:auto}
+    .chip{display:inline-flex;align-items:center;gap:6px}
+    .iconbtn{border:none;background:transparent;cursor:pointer;font-size:18px}
+    .msg{border:1px solid #eee;border-radius:8px;padding:8px;margin-bottom:8px}
+    .role-user{background:#f0fafc}
+    .role-assistant{background:#f8f6ff}
+    small{color:#666}
+    pre{white-space:pre-wrap;margin:4px 0 0}
 
     table{border-collapse:collapse; width:100%; margin-top:12px}
     th,td{border:1px solid #ddd; padding:8px; vertical-align:top; font-size:14px}
@@ -308,17 +321,68 @@ app.get("/admin", async (req, res) => {
      </thead>
      <tbody></tbody>
    </table>
-  
+    <!-- Modal -->
+   <div id="modalRoot" class="modal-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
+     <div class="modal" role="document">
+       <header>
+         <h3>Detalle de conversación</h3>
+         <div class="chip">
+           <button class="iconbtn" title="Imprimir" id="modalPrintBtn">🖨️</button>
+           <button class="iconbtn" title="Cerrar" id="modalCloseBtn">✖</button>
+         </div>
+       </header>
+       <div class="body" id="modalBody">
+        <p class="muted">Cargando…</p>
+       </div>
+     </div>
+   </div>
 
   <script>
-     function goDetail(id){
-      window.open('/admin/messages/' + encodeURIComponent(id), '_blank');
+     // ===== Modal helpers =====
+    const modalRoot = document.getElementById('modalRoot');
+    const modalBody = document.getElementById('modalBody');
+    const modalCloseBtn = document.getElementById('modalCloseBtn');
+    const modalPrintBtn = document.getElementById('modalPrintBtn');
+
+    function closeModal(){ modalRoot.style.display='none'; modalRoot.setAttribute('aria-hidden','true'); }
+    modalCloseBtn.addEventListener('click', closeModal);
+    modalRoot.addEventListener('click', (e)=>{ if(e.target===modalRoot) closeModal(); });
+
+    function renderMessages(list){
+      if(!Array.isArray(list) || !list.length){
+        modalBody.innerHTML = '<p class="muted">Sin mensajes para mostrar</p>';
+        return;
+      }
+      modalBody.innerHTML = list.map(m => (
+        '<div class="msg role-'+m.role+'">'+
+          '<small>['+new Date(m.createdAt).toLocaleString()+'] '+m.role+'</small>'+
+          '<pre>'+String(m.content||'').replace(/</g,'&lt;')+'</pre>'+
+        '</div>'
+      )).join('');
     }
+
+    async function openDetailModal(convId){
+      try{
+        modalBody.innerHTML = '<p class="muted">Cargando…</p>';
+        modalRoot.style.display='flex';
+        modalRoot.setAttribute('aria-hidden','false');
+        // fetch mensajes
+        const r = await fetch('/api/logs/messages?convId='+encodeURIComponent(convId));
+        const data = await r.json();
+        renderMessages(data);
+        // imprimir en ticket
+        modalPrintBtn.onclick = () => window.open('/admin/ticket/'+encodeURIComponent(convId), '_blank');
+      }catch(e){
+       modalBody.innerHTML = '<p class="muted">Error al cargar.</p>';
+        console.error('Detalle modal error:', e);
+      }
+    }
+
     function openDetail(){
       const sel = document.getElementById('convSel');
       const id = sel ? sel.value : '';
       if(!id){ alert('Elegí una conversación'); return; }
-      goDetail(id);
+       openDetailModal(id);
     }
     function goPrint(id){
       window.open('/admin/ticket/' + encodeURIComponent(id), '_blank');
@@ -337,7 +401,7 @@ app.get("/admin", async (req, res) => {
             <td>\${c.contactName||'-'}</td>
             <td>\${c.status||'-'}</td>
             <td class="actions">
-              <button class="btn" onclick="goDetail('\${c._id}')">Detalle</button>
+              <button class="btn" onclick="openDetailModal('\${c._id}')">Detalle</button>
               <button class="btn" onclick="goPrint('\${c._id}')">Imprimir</button>
             </td>
           </tr>\`).join('');
@@ -372,14 +436,14 @@ app.get("/admin", async (req, res) => {
            <td>\${c.contactName || '-'}</td>
            <td>\${c.status || '-'}</td>
            <td>
-             <button class="btn" data-conv="\${c._id}">Detalle</button>
+            <button class="btn" data-conv="\${c._id}">Detalle</button>
              <button class="btn" data-print="\${c._id}">Imprimir</button>
            </td>\`;
         tb.appendChild(tr);
        }
        // bind
        tb.querySelectorAll('button[data-conv]').forEach(b=>{
-         b.addEventListener('click',()=>openDetailByConv(b.getAttribute('data-conv')));
+        b.addEventListener('click',()=>openDetailModal(b.getAttribute('data-conv')));
        });
        tb.querySelectorAll('button[data-print]').forEach(b=>{
          b.addEventListener('click',()=>window.open('/admin/conversation?convId='+encodeURIComponent(b.getAttribute('data-print'))+'&print=1','_blank'));
@@ -1241,7 +1305,28 @@ console.log("[convId] "+ convId);
   }
 });
 
-const PORT = process.env.PORT || 3000;
+/*const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
 });
+
+*/
+
+// --- reemplazar desde aquí ---
+const PORT = process.env.PORT || 3000;
+
+if (require.main === module) {
+  const server = app.listen(PORT, () => {
+    console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
+  });
+
+  // Cierre prolijo en deployment (Render/Heroku envían SIGTERM)
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM recibido. Cerrando server...');
+    server.close(() => process.exit(0));
+  });
+}
+
+// Exportar la app para que otros módulos (tests/otros entrypoints) puedan importarla sin abrir un puerto.
+module.exports = app;
+// --- reemplazar hasta aquí ---
