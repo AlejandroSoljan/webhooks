@@ -323,6 +323,14 @@ const qty = (v) => {
   return 0;
 };
 
+function hasContext(pedido) {
+  if (!pedido) return false;
+  const hasItems =
+    Array.isArray(pedido.items) && pedido.items.filter(Boolean).length > 0;
+  const hasWhen = Boolean(pedido.Fecha) || Boolean(pedido.Hora);
+  return hasItems || hasWhen;
+}
+
 // Opción A con flag: por defecto requiere dirección; si ADD_ENVIO_WITHOUT_ADDRESS=1, agrega envío apenas sea 'domicilio'
 function ensureEnvio(pedido) {
   const entrega = (pedido?.Entrega || "").toLowerCase();
@@ -419,11 +427,18 @@ function ensureEnvio(pedido) {
    }
    return lines.join("\n");
  }
- function coalesceResponse(maybeText, _pedido, _opts = {}) {
-   const s = String(maybeText || "").trim();
-   if (s) return s;
-   // Ya no hacemos autosummary acá.
-   return START_FALLBACK;
+ function coalesceResponse(maybeText, pedido, _opts = {}) {
+  const s = String(maybeText || "").trim();
+  if (s) return s; // el modelo trajo algo útil
+
+  // Si ya hay contexto, NO resetees al saludo inicial.
+  if (hasContext(pedido)) {
+    // Texto neutro y breve para no perder continuidad.
+    return "Perfecto, sigo acá. ¿Querés confirmar o cambiar algo?";
+  }
+
+  // Sin contexto: sí usamos el saludo inicial.
+  return START_FALLBACK;
  }
 function recalcAndDetectMismatch(pedido) {
   pedido.items ||= [];
@@ -828,5 +843,6 @@ module.exports = {
   getStoreCoords,
   pickEnvioProductByDistance,
   hydratePricesFromCatalog,
+  hasContext,
  ensureEnvioSmart,
 };
