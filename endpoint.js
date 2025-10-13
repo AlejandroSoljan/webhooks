@@ -180,14 +180,26 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
           const j = JSON.parse(s);
           if (j && j.Pedido && Array.isArray(j.Pedido.items)) {
             const pedido = j.Pedido || {};
-            const entrega = String(pedido.Entrega || "").toLowerCase();
-            let entregaLabel = "Retiro";
-            if (entrega === "domicilio") {
-              const envio = (pedido.items || []).find(i => /env[ií]o/i.test(String(i?.descripcion || "")));
-              entregaLabel = envio ? String(envio.descripcion || "Domicilio (con envío)") : "Domicilio";
-            }
+            // 🛠️ Normalizar/Inferir entrega:
+            const entregaRaw = String(pedido.Entrega || "").trim().toLowerCase();
+            const envioItem = (pedido.items || []).find(i => /env[ií]o/i.test(String(i?.descripcion || "")));
+            const hasAddress =
+              pedido?.Domicilio &&
+              typeof pedido.Domicilio === "object" &&
+              Object.values(pedido.Domicilio).some(v => String(v || "").trim() !== "");
+            // Si Entrega no es 'domicilio'/'retiro' pero hay dirección o envío → forzar 'domicilio'
+            let entrega = (entregaRaw === "domicilio" || entregaRaw === "retiro")
+              ? entregaRaw
+              : ((hasAddress || !!envioItem) ? "domicilio" : (entregaRaw || ""));
+            // Etiqueta amigable
+            let entregaLabel =
+              entrega === "domicilio"
+                ? (envioItem ? String(envioItem.descripcion || "Domicilio (con envío)") : "Domicilio")
+                : (entrega === "retiro" ? "Retiro" : "-");
+            // Fecha/Hora sólo si vienen en campos normales
             const fechaEntrega = /^\d{4}-\d{2}-\d{2}$/.test(String(pedido.Fecha || "")) ? pedido.Fecha : null;
             const horaEntrega  = /^\d{2}:\d{2}$/.test(String(pedido.Hora  || "")) ? pedido.Hora  : null;
+   
             await db.collection("conversations").updateOne(
               { _id: convObjectId },
               {
