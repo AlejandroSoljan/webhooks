@@ -974,7 +974,11 @@ console.log("[convId] "+ convId);
     }
 
         // ⚡ Fast-path: si el usuario confirma explícitamente, cerramos sin llamar al modelo
-    const userConfirms = /\bconfirm(ar|o|a|ame|alo|alo\.?|alo!|ado)\b/i.test(text) || /^si(s|,)?\s*confirm/i.test(text);
+    // ⚡ Fast-path: aceptar también “sí/si” como confirmación explícita,
+    // además de las variantes de “confirmar”.
+    const userConfirms =
+      /\bconfirm(ar|o|a|ame|alo|ado)\b/i.test(text) ||
+      /\b(s[ií])\b/.test(text);
     if (userConfirms) {
       // Tomamos último snapshot si existe
       let snapshot = null;
@@ -1297,8 +1301,11 @@ console.log("[convId] "+ convId);
             const userConfirms =
         /\bconfirm(ar|o|a)\b/i.test(text) || /^s(i|í)\b.*confirm/i.test(text);
 
-     // ✅ Cerramos cuando el modelo marcó COMPLETED y el pedido está completo (sin exigir texto "confirm...")
-    if ((estado === "COMPLETED" && isPedidoCompleto(pedido)) || estado === "CANCELLED") {
+
+      // Cerramos si:
+      // 1) el flujo terminó (COMPLETED) o fue cancelado, o
+      // 2) el usuario confirmó explícitamente y el pedido está completo.
+      if (estado === "CANCELLED" || estado === "COMPLETED" || (userConfirms && isPedidoCompleto(pedido))) {
      await closeConversation(convId, estado);
         // 🧹 limpiar sesión en memoria para que el próximo msg empiece conversación nueva
         markSessionEnded(tenant, from);
