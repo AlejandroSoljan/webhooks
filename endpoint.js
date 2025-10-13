@@ -171,34 +171,37 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
     };
     const ins = await db.collection("messages").insertOne(doc);
     console.log("[messages] inserted:", ins?.insertedId?.toString?.());
-    // 🟢 Persistir resumen de Pedido en conversations cuando el asistente envía un JSON válido
+    // 🟢 Persistir resumen de Pedido en conversations SOLO si el contenido es JSON válido del asistente
     if (String(role) === "assistant") {
       try {
         const s = String(content || "").trim();
-        const j = JSON.parse(s);
-        if (j && j.Pedido && Array.isArray(j.Pedido.items)) {
-          const pedido = j.Pedido || {};
-          const entrega = String(pedido.Entrega || "").toLowerCase();
-          let entregaLabel = "Retiro";
-          if (entrega === "domicilio") {
-            const envio = (pedido.items || []).find(i => /env[ií]o/i.test(String(i?.descripcion || "")));
-            entregaLabel = envio ? String(envio.descripcion || "Domicilio (con envío)") : "Domicilio";
-          }
-          const fechaEntrega = /^\d{4}-\d{2}-\d{2}$/.test(String(pedido.Fecha || "")) ? pedido.Fecha : null;
-          const horaEntrega  = /^\d{2}:\d{2}$/.test(String(pedido.Hora  || "")) ? pedido.Hora  : null;
-          await db.collection("conversations").updateOne(
-            { _id: convObjectId },
-            {
-              $set: {
-                updatedAt: now,
-                lastAssistantTs: now,
-                pedidoEntrega: entrega || null,
-                pedidoEntregaLabel: entregaLabel || null,
-                ...(fechaEntrega ? { pedidoFecha: fechaEntrega } : {}),
-                ...(horaEntrega  ? { pedidoHora:  horaEntrega  } : {})
-              }
+        // Solo intentar parsear si claramente es JSON
+        if (String(type) === "json" || s.startsWith("{")) {
+          const j = JSON.parse(s);
+          if (j && j.Pedido && Array.isArray(j.Pedido.items)) {
+            const pedido = j.Pedido || {};
+            const entrega = String(pedido.Entrega || "").toLowerCase();
+            let entregaLabel = "Retiro";
+            if (entrega === "domicilio") {
+              const envio = (pedido.items || []).find(i => /env[ií]o/i.test(String(i?.descripcion || "")));
+              entregaLabel = envio ? String(envio.descripcion || "Domicilio (con envío)") : "Domicilio";
             }
-          );
+            const fechaEntrega = /^\d{4}-\d{2}-\d{2}$/.test(String(pedido.Fecha || "")) ? pedido.Fecha : null;
+            const horaEntrega  = /^\d{2}:\d{2}$/.test(String(pedido.Hora  || "")) ? pedido.Hora  : null;
+            await db.collection("conversations").updateOne(
+              { _id: convObjectId },
+              {
+                $set: {
+                  updatedAt: now,
+                  lastAssistantTs: now,
+                  pedidoEntrega: entrega || null,
+                  pedidoEntregaLabel: entregaLabel || null,
+                  ...(fechaEntrega ? { pedidoFecha: fechaEntrega } : {}),
+                  ...(horaEntrega  ? { pedidoHora:  horaEntrega  } : {})
+                }
+              }
+            );
+          }
         }
       } catch (e) {
         console.warn("[messages] no se pudo persistir resumen de Pedido en conversations:", e?.message);
@@ -1177,15 +1180,16 @@ console.log("[convId] "+ convId);
          console.error("saveMessage(assistant text):", e?.message);
        }
  
-       // Preparar el snapshot JSON a persistir (usa el pedido ya rehidratado/corregido)
+       // Preparar el snapshot JSON a persistir (usa el pedido ya armado en este handler)
        try {
-         const assistantSnapshot = JSON.stringify({
-           response: typeof (parsedFixLast?.response ?? parsed?.response) === "string"
-             ? (parsedFixLast?.response ?? parsed?.response)
-             : "",
-           estado: (parsedFixLast?.estado ?? parsed?.estado) || estado || "IN_PROGRESS",
-           Pedido: pedido || { Entrega: "", Domicilio: {}, items: [], total_pedido: 0 }
-         });
+         const snap = {
+           response: typeof responseText === "string" ? responseText : "",
+           estado: typeof estado === "string" ? estado : "IN_PROGRESS",
+           Pedido: pedido && typeof pedido === "object"
+             ? pedido
+             : { Entrega: "", Domicilio: {}, items: [], total_pedido: 0 }
+         };
+         const assistantSnapshot = JSON.stringify(snap);
          await saveMessageDoc({
            tenantId: tenant,
            conversationId: convId,
