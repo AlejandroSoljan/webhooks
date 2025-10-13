@@ -1290,7 +1290,7 @@ console.log("[convId] "+ convId);
             const userConfirms =
         /\bconfirm(ar|o|a)\b/i.test(text) || /^s(i|í)\b.*confirm/i.test(text);
 
-      if ((estado === "COMPLETED" && isPedidoCompleto(pedido) && userConfirms) || estado === "CANCELLED") {
+      if ((estado === "COMPLETED" && isPedidoCompleto(pedido)) || estado === "CANCELLED") {
         // 🔒 marcar conversación como finalizada/cancelada en Mongo solo cuando corresponde
         await closeConversation(convId, estado);
         // 🧹 limpiar sesión en memoria para que el próximo msg empiece conversación nueva
