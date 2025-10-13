@@ -1317,7 +1317,7 @@ console.log("[convId] "+ convId);
       }
     } catch {}
 
-    await require("./logic").sendWhatsAppMessage(from, responseText);
+    /*await require("./logic").sendWhatsAppMessage(from, responseText);
     // persistir respuesta del asistente
     if (convId) {
       try {
@@ -1330,7 +1330,12 @@ console.log("[convId] "+ convId);
           type: "text"
         });
       } catch (e) { console.error("saveMessage(assistant):", e?.message); }
-    }
+    }*/
+
+    await require("./logic").sendWhatsAppMessage(from, responseText);
+    // ⚠️ No persistimos aquí para evitar duplicados.
+    // El guardado del mensaje del asistente (texto) y del snapshot JSON
+    // se realiza más abajo en un único bloque.
 
     try {
      // 🔹 Distancia + geocoding + Envío dinámico
