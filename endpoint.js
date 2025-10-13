@@ -171,8 +171,31 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
     };
     const ins = await db.collection("messages").insertOne(doc);
     console.log("[messages] inserted:", ins?.insertedId?.toString?.());
-    // 🟢 Persistir resumen de Pedido en conversations SOLO si el contenido es JSON válido del asistente
-    if (String(role) === "assistant") {
+    // 🟢 Actualizar conversación: nombre/apellido (desde texto) y resumen del Pedido (si hay JSON)
+    const roleStr = String(role);
+    // 1) Intento de extracción de NOMBRE desde cualquier mensaje (user/assistant)
+    try {
+      const text = String(content || "").trim();
+      let nameHit = "";
+      // a nombre de <Nombre>
+      let m = text.match(/\ba nombre de\s+([a-záéíóúñü][a-záéíóúñü\s.'-]{2,})/i);
+      if (m && m[1]) nameHit = m[1].trim();
+      // Nombre: <Nombre>
+      if (!nameHit) { m = text.match(/\bNombre\s*:\s*([a-záéíóúñü][a-záéíóúñü\s.'-]{2,})/i); if (m && m[1]) nameHit = m[1].trim(); }
+      // Gracias, <Nombre>
+      if (!nameHit) { m = text.match(/\bgracias[,:\s]+([a-záéíóúñü][a-záéíóúñü\s.'-]{2,})/i); if (m && m[1]) nameHit = m[1].trim(); }
+      if (nameHit) {
+        await db.collection("conversations").updateOne(
+          { _id: convObjectId },
+          { $set: { updatedAt: now, contactName: nameHit } }
+        );
+      }
+    } catch (e) {
+      console.warn("[messages] nombre no detectado:", e?.message);
+    }
+
+    // 2) Resumen del Pedido en conversations SOLO si el contenido es JSON válido del asistente
+    if (roleStr === "assistant") {
       try {
         const s = String(content || "").trim();
         // Solo intentar parsear si claramente es JSON
@@ -191,11 +214,19 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
             let entrega = (entregaRaw === "domicilio" || entregaRaw === "retiro")
               ? entregaRaw
               : ((hasAddress || !!envioItem) ? "domicilio" : (entregaRaw || ""));
-            // Etiqueta amigable
-            let entregaLabel =
-              entrega === "domicilio"
-                ? (envioItem ? String(envioItem.descripcion || "Domicilio (con envío)") : "Domicilio")
-                : (entrega === "retiro" ? "Retiro" : "-");
+            // Etiqueta amigable:
+            // - Si es domicilio y HAY dirección -> mostrar dirección
+            // - Si es domicilio y NO hay dirección -> si hay envío, usar su descripción; si no, "Domicilio"
+            // - Si es retiro -> "Retiro en local"
+            const direccion = String(pedido?.Domicilio?.direccion || "").trim();
+            let entregaLabel;
+            if (entrega === "domicilio") {
+              entregaLabel = direccion || (envioItem ? String(envioItem.descripcion || "Domicilio (con envío)") : "Domicilio");
+            } else if (entrega === "retiro") {
+              entregaLabel = "Retiro en local";
+            } else {
+              entregaLabel = "-";
+            }
             // Fecha/Hora sólo si vienen en campos normales
             const fechaEntrega = /^\d{4}-\d{2}-\d{2}$/.test(String(pedido.Fecha || "")) ? pedido.Fecha : null;
             const horaEntrega  = /^\d{2}:\d{2}$/.test(String(pedido.Hora  || "")) ? pedido.Hora  : null;
