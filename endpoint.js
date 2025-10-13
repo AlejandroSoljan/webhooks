@@ -171,7 +171,39 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
     };
     const ins = await db.collection("messages").insertOne(doc);
     console.log("[messages] inserted:", ins?.insertedId?.toString?.());
-    // (si abajo actualizás conversations.lastUserTs/lastAssistantTs, mantenelo dentro de este try)
+    // 🟢 Persistir resumen de Pedido en conversations cuando el asistente envía un JSON válido
+    if (String(role) === "assistant") {
+      try {
+        const s = String(content || "").trim();
+        const j = JSON.parse(s);
+        if (j && j.Pedido && Array.isArray(j.Pedido.items)) {
+          const pedido = j.Pedido || {};
+          const entrega = String(pedido.Entrega || "").toLowerCase();
+          let entregaLabel = "Retiro";
+          if (entrega === "domicilio") {
+            const envio = (pedido.items || []).find(i => /env[ií]o/i.test(String(i?.descripcion || "")));
+            entregaLabel = envio ? String(envio.descripcion || "Domicilio (con envío)") : "Domicilio";
+          }
+          const fechaEntrega = /^\d{4}-\d{2}-\d{2}$/.test(String(pedido.Fecha || "")) ? pedido.Fecha : null;
+          const horaEntrega  = /^\d{2}:\d{2}$/.test(String(pedido.Hora  || "")) ? pedido.Hora  : null;
+          await db.collection("conversations").updateOne(
+            { _id: convObjectId },
+            {
+              $set: {
+                updatedAt: now,
+                lastAssistantTs: now,
+                pedidoEntrega: entrega || null,
+                pedidoEntregaLabel: entregaLabel || null,
+                ...(fechaEntrega ? { pedidoFecha: fechaEntrega } : {}),
+                ...(horaEntrega  ? { pedidoHora:  horaEntrega  } : {})
+              }
+            }
+          );
+        }
+      } catch (e) {
+        console.warn("[messages] no se pudo persistir resumen de Pedido en conversations:", e?.message);
+      }
+    }
   } catch (e) {
     console.error("[messages] save error:", e?.stack || e?.message || e);
     throw e;
@@ -233,8 +265,18 @@ async function listConversations(limit = 50, tenantId) {
       status: c.finalized ? "COMPLETED" : (c.status || "OPEN"),
       lastAt: c.lastUserTs || c.lastAssistantTs || c.updatedAt || c.closedAt || c.openedAt
     };
-    const extra = await _getLastPedidoSummary(db, c._id, tenantId);
-    out.push({ ...base, ...extra });
+    // Preferir campos persistidos en conversations; si faltan, fallback a escanear mensajes
+    if (c.pedidoEntregaLabel || c.pedidoFecha || c.pedidoHora || c.pedidoEntrega) {
+      const extra = {
+        entregaLabel: c.pedidoEntregaLabel || (c.pedidoEntrega ? (c.pedidoEntrega === "domicilio" ? "Domicilio" : "Retiro") : "-"),
+        fechaEntrega: c.pedidoFecha || "-",
+        horaEntrega: c.pedidoHora || "-"
+      };
+      out.push({ ...base, ...extra });
+    } else {
+      const extra = await _getLastPedidoSummary(db, c._id, tenantId);
+      out.push({ ...base, ...extra });
+    }
   }
   return out;
 }
