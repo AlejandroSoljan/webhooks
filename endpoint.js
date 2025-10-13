@@ -28,7 +28,7 @@ const {
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
   DEFAULT_TENANT_ID, setAssistantPedidoSnapshot, calcularDistanciaKm,
   geocodeAddress, getStoreCoords, pickEnvioProductByDistance,
-  ensureEnvioSmart,
+  ensureEnvioSmart,hasContext,
 } = require("./logic");
 
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
