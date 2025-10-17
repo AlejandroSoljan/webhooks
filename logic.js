@@ -79,11 +79,33 @@ function _nowLabelInTZ() {
   const weekday = String(parts.weekday || "").toLowerCase();
   return `${weekday}, ${parts.day}/${parts.month}/${parts.year} ${parts.hour}:${parts.minute}`;
 }
+// Bloque [AHORA] reforzado: siempre 24h y JSON inequívoco para el LLM
 function buildNowBlock() {
+  const base = SIMULATED_NOW_ISO ? new Date(SIMULATED_NOW_ISO) : new Date();
+  const tz = STORE_TZ;
+  const fmt = new Intl.DateTimeFormat("es-AR", {
+    timeZone: tz,
+    hour12: false,
+    weekday: "long",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(base).map(p => [p.type, p.value]));
+  const weekday = String(parts.weekday || "").toLowerCase();
+  const dd = parts.day, mm = parts.month, yyyy = parts.year;
+  const hh = String(parts.hour).padStart(2, "0");
+  const min = String(parts.minute).padStart(2, "0");
+  const minutes = Number(hh) * 60 + Number(min);
+  const dateISO = `${yyyy}-${mm}-${dd}`;
+
   return [
     "[AHORA]",
-    `Zona horaria: ${STORE_TZ}`,
-    `Fecha y hora actuales (local): ${_nowLabelInTZ()}`
+    `Zona horaria: ${tz}`,
+    `Fecha y hora actuales (local, 24h): ${weekday}, ${dd}/${mm}/${yyyy} ${hh}:${min}`,
+    `NOW_JSON: {"date":"${dateISO}","time_24":"${hh}:${min}","minutes":${minutes},"tz":"${tz}"}`
   ].join("\n");
 }
 
@@ -565,17 +587,15 @@ async function getGPTReply(tenantId, from, userMessage) {
    // console.log("[minimal] messages => " + safeStringify(messages));
     //console.log("[minimal] userOnlyHistories => " + safeStringify(userOnlyHistories[id]));
   } else {
-  if (!chatHistories[id]) {
-    chatHistories[id] = [{ role: "system", content: fullSystem }];
-  } else {
-    // Refrescar SIEMPRE el primer mensaje system con [AHORA] actualizado
-    chatHistories[id][0] = { role: "system", content: fullSystem };
-  }
-  chatHistories[id].push({ role: "user", content: userMessage });
-  messages = chatHistories[id];
-
-   // console.log("[standard] comportamiento =>\n" + baseText);
-    //console.log("[standard] messages => " + safeStringify(messages));
+    // --- standard history: refrescar siempre el primer system con [AHORA] actualizado ---
+    if (!chatHistories[id]) {
+      chatHistories[id] = [{ role: "system", content: fullSystem }];
+    } else {
+      // 🔁 Refresh del bloque system para que [AHORA] sea siempre el del turno actual
+      chatHistories[id][0] = { role: "system", content: fullSystem };
+    }
+    chatHistories[id].push({ role: "user", content: userMessage });
+    messages = chatHistories[id];
   }
 
   try {
