@@ -565,9 +565,16 @@ async function getGPTReply(tenantId, from, userMessage) {
    // console.log("[minimal] messages => " + safeStringify(messages));
     //console.log("[minimal] userOnlyHistories => " + safeStringify(userOnlyHistories[id]));
   } else {
-    if (!chatHistories[id]) chatHistories[id] = [{ role: "system", content: fullSystem }];
-    chatHistories[id].push({ role: "user", content: userMessage });
-    messages = chatHistories[id];
+  if (!chatHistories[id]) {
+    chatHistories[id] = [{ role: "system", content: fullSystem }];
+  } else {
+    // Refrescar SIEMPRE el primer mensaje system con [AHORA] actualizado
+    chatHistories[id][0] = { role: "system", content: fullSystem };
+  }
+  // 🕒 Opcional: dejar una “señal” de hora en el hilo
+  chatHistories[id].push({ role: "assistant", content: buildNowBlock() });
+  chatHistories[id].push({ role: "user", content: userMessage });
+  messages = chatHistories[id];
 
    // console.log("[standard] comportamiento =>\n" + baseText);
     //console.log("[standard] messages => " + safeStringify(messages));
