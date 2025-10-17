@@ -571,8 +571,6 @@ async function getGPTReply(tenantId, from, userMessage) {
     // Refrescar SIEMPRE el primer mensaje system con [AHORA] actualizado
     chatHistories[id][0] = { role: "system", content: fullSystem };
   }
-  // 🕒 Opcional: dejar una “señal” de hora en el hilo
-  chatHistories[id].push({ role: "assistant", content: buildNowBlock() });
   chatHistories[id].push({ role: "user", content: userMessage });
   messages = chatHistories[id];
 
