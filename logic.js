@@ -565,7 +565,7 @@ async function getGPTReply(tenantId, from, userMessage) {
   // Bloque system inicial
   const catalogText = await loadCatalogTextFromMongo(tenantId);
   const fullSystem = [
-    buildNowBlock(),
+   // buildNowBlock(),
     "[COMPORTAMIENTO]\n" + baseText + catalogText
   ].join("\n\n").trim();
 
@@ -589,10 +589,10 @@ async function getGPTReply(tenantId, from, userMessage) {
   } else {
     // --- standard history: refrescar siempre el primer system con [AHORA] actualizado ---
     if (!chatHistories[id]) {
-      chatHistories[id] = [{ role: "system", content: fullSystem }];
+     // chatHistories[id] = [{ role: "system", content: fullSystem }];
     } else {
       // 🔁 Refresh del bloque system para que [AHORA] sea siempre el del turno actual
-      chatHistories[id][0] = { role: "system", content: fullSystem };
+    //  chatHistories[id][0] = { role: "system", content: fullSystem };
     }
     chatHistories[id].push({ role: "user", content: userMessage });
     messages = chatHistories[id];
