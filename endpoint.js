@@ -1344,8 +1344,22 @@ console.log("[convId] "+ convId);
     // El guardado del mensaje del asistente (texto) y del snapshot JSON
     // se realiza más abajo en un único bloque.
     // 1) Enviar EXACTAMENTE el texto final (post-fallback/normalizaciones)
-    await require("./logic").sendWhatsAppMessage(from, responseText);
+    //await require("./logic").sendWhatsAppMessage(from, responseText);
+        // 1) Enviar EXACTAMENTE el texto final (post-fallback/normalizaciones)
+    //    ⚠️ Garantía: nunca mandar vacío a WhatsApp
+    const responseTextSafe = String(responseText || "").trim()
+      || (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length
+          ? buildBackendSummary(pedido, { showEnvio: wantsDetail })
+          : "Perfecto, sigo acá. ¿Querés confirmar o cambiar algo?");
+    await require("./logic").sendWhatsAppMessage(from, responseTextSafe);
+    
+    
+    
     // 2) Guardar ahora el mismo texto y el snapshot JSON (mismo estado/pedido finales)
+
+
+
+
     if (convId) {
       try {
         await saveMessageDoc({
@@ -1353,7 +1367,7 @@ console.log("[convId] "+ convId);
           conversationId: convId,
           waId: from,
           role: "assistant",
-          content: String(responseText || ""),
+          content: String(responseTextSafe || ""),
           type: "text",
           meta: { model: "gpt" }
         });
@@ -1362,7 +1376,7 @@ console.log("[convId] "+ convId);
       }
       try {
         const snap = {
-          response: typeof responseText === "string" ? responseText : "",
+          response: typeof responseTextSafe === "string" ? responseTextSafe : "",
           estado: typeof estado === "string" ? estado : "IN_PROGRESS",
           Pedido: (pedido && typeof pedido === "object")
             ? pedido
