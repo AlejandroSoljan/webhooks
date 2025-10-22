@@ -315,7 +315,14 @@ function getFromCache(id) {
 }
 
 // ================== Reglas de negocio de pedido ==================
-const START_FALLBACK = "¡Hola! 👋 ¿Qué te gustaría pedir? Pollo (entero/mitad) y papas (2, 4 o 6).";
+//const START_FALLBACK = "¡Hola! 👋 ¿Qué te gustaría pedir? Pollo (entero/mitad) y papas (2, 4 o 6).";
+
+// ================== Reglas de negocio de pedido ==================
+// Sin saludo por defecto: preservamos SIEMPRE el texto original del modelo.
+// Si alguna vez quisieras reactivarlo, seteá START_FALLBACK en tu .env.
+const START_FALLBACK = (process.env.START_FALLBACK || "").trim();
+
+
 
 const num = v => Number(String(v).replace(/[^\d.-]/g, '') || 0);
 
