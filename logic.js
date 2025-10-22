@@ -572,7 +572,7 @@ async function getGPTReply(tenantId, from, userMessage) {
   // Bloque system inicial
   const catalogText = await loadCatalogTextFromMongo(tenantId);
   const fullSystem = [
-   // buildNowBlock(),
+    buildNowBlock(),
     "[COMPORTAMIENTO]\n" + baseText + catalogText
   ].join("\n\n").trim();
 
