@@ -628,9 +628,18 @@ async function getGPTReply(tenantId, from, userMessage) {
       console.warn("[openai] no se pudo stringify la respuesta:", e?.message);
     }
 
+    //const reply = response.data.choices[0].message.content;
+    //console.log("[openai] assistant.content =>\n" + reply);
     const reply = response.data.choices[0].message.content;
-    console.log("[openai] assistant.content =>\n" + reply);
-
+    // Si el modelo devuelve {"error":"..."} lo logueamos como warn (regla de negocio, no falla técnica)
+    {
+      let _log = console.log;
+      try {
+        const _j = JSON.parse(reply);
+        if (typeof _j?.error === "string" && _j.error.trim()) _log = console.warn;
+      } catch {}
+      _log("[openai] assistant.content =>\n" + reply);
+    }
     if (historyMode === "standard") {
       chatHistories[id].push({ role: "assistant", content: reply });
     }
