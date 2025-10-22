@@ -1204,7 +1204,7 @@ console.log("[convId] "+ convId);
       console.error("Error al parsear/corregir JSON:", e.message);
     }
 
-     // Guardar respuesta del asistente:
+     /*// Guardar respuesta del asistente:
      // 1) el TEXTO que se envía al cliente
      // 2) un SNAPSHOT JSON con el Pedido ya corregido, para que /admin pueda leerlo
      if (convId) {
@@ -1246,7 +1246,7 @@ console.log("[convId] "+ convId);
          console.error("saveMessage(assistant json):", e?.message);
        }
      }
-
+*/
     try {
       const finalBody = String(responseText ?? "").trim();
     if (!finalBody) {
@@ -1332,10 +1332,51 @@ console.log("[convId] "+ convId);
       } catch (e) { console.error("saveMessage(assistant):", e?.message); }
     }*/
 
-    await require("./logic").sendWhatsAppMessage(from, responseText);
+    //await require("./logic").sendWhatsAppMessage(from, responseText);
     // ⚠️ No persistimos aquí para evitar duplicados.
     // El guardado del mensaje del asistente (texto) y del snapshot JSON
     // se realiza más abajo en un único bloque.
+    // 1) Enviar EXACTAMENTE el texto final (post-fallback/normalizaciones)
+    await require("./logic").sendWhatsAppMessage(from, responseText);
+    // 2) Guardar ahora el mismo texto y el snapshot JSON (mismo estado/pedido finales)
+    if (convId) {
+      try {
+        await saveMessageDoc({
+          tenantId: tenant,
+          conversationId: convId,
+          waId: from,
+          role: "assistant",
+          content: String(responseText || ""),
+          type: "text",
+          meta: { model: "gpt" }
+        });
+      } catch (e) {
+        console.error("saveMessage(assistant text final):", e?.message);
+      }
+      try {
+        const snap = {
+          response: typeof responseText === "string" ? responseText : "",
+          estado: typeof estado === "string" ? estado : "IN_PROGRESS",
+          Pedido: (pedido && typeof pedido === "object")
+            ? pedido
+            : { Entrega: "", Domicilio: {}, items: [], total_pedido: 0 }
+        };
+        await saveMessageDoc({
+          tenantId: tenant,
+          conversationId: convId,
+          waId: from,
+          role: "assistant",
+          content: JSON.stringify(snap),
+          type: "json",
+          meta: { model: "gpt", kind: "pedido-snapshot" }
+        });
+      } catch (e) {
+        console.error("saveMessage(assistant json final):", e?.message);
+      }
+    }
+
+
+
 
     try {
      // 🔹 Distancia + geocoding + Envío dinámico
