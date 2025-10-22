@@ -1149,7 +1149,14 @@ console.log("[convId] "+ convId);
       const { pedidoCorr, mismatch, hasItems } = recalcAndDetectMismatch(pedido);
       pedido = pedidoCorr;
 
-      if (mismatch && hasItems) {
+      //if (mismatch && hasItems) {
+      //  let fixedOk = false;
+      //  let parsedFixLast = null;
+
+       // ✅ Si el modelo devuelve {"error":"..."} lo tratamos como MENSAJE AL USUARIO (no fatal):
+      if (typeof parsed?.error === "string" && parsed.error.trim()) {
+        responseText = parsed.error.trim();
+      } else if (mismatch && hasItems) {
         let fixedOk = false;
         let parsedFixLast = null;
 
