@@ -1531,6 +1531,22 @@ console.log("[convId] "+ convId);
 
     // ✅ Validar día y horario del pedido contra los horarios configurados del local
     try {
+      // Normalizar campos de fecha/hora desde el JSON del modelo.
+      // El asistente devuelve fecha_pedido / hora_pedido, pero la validación
+      // trabaja con Pedido.Fecha / Pedido.Hora.
+      if (pedido && typeof pedido === "object") {
+        if (!pedido.Fecha &&
+            typeof pedido.fecha_pedido === "string" &&
+            pedido.fecha_pedido.trim()) {
+          pedido.Fecha = pedido.fecha_pedido.trim();
+        }
+        if (!pedido.Hora &&
+            typeof pedido.hora_pedido === "string" &&
+            pedido.hora_pedido.trim()) {
+          pedido.Hora = pedido.hora_pedido.trim();
+        }
+      }
+
       if (pedido && typeof pedido === "object" && pedido.Fecha && pedido.Hora) {
         const db = await getDb();
         const hoursDocId = `store_hours:${tenant}`;
