@@ -22,10 +22,9 @@ const STORE_HOURS_DAYS = [
   { key: "wednesday", label: "Miércoles" },
   { key: "thursday", label: "Jueves" },
   { key: "friday", label: "Viernes" },
-   { key: "saturday", label: "Viernes" },
-    { key: "sunday", label: "Domingo" },
+  { key: "saturday", label: "Sábado" },
+  { key: "sunday", label: "Domingo" },
 ];
-
 // ⬇️ Para páginas y formularios simples (admin)
 const path = require("path");
 app.use(express.urlencoded({ extended: true }));
