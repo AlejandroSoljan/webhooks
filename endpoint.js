@@ -155,7 +155,103 @@ function isPedidoCompleto(p) {
   }
 }
 
+// ------- helper: validación de fecha/hora del pedido contra horarios configurados -------
+function _hhmmToMinutes(value) {
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(value || "").trim());
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+}
 
+function _weekdayKeyFromISODate(isoDate) {
+  try {
+    const val = String(isoDate || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) return null;
+    // Usamos el mediodía para evitar problemas de timezone
+    const d = new Date(`${val}T12:00:00`);
+    const idx = d.getDay(); // 0=Domingo ... 6=Sábado
+    const map = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"];
+    return map[idx] || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Valida que Pedido.Fecha / Pedido.Hora caigan dentro de los horarios configurados.
+ * @param {Object} pedido   Pedido con { Fecha: 'YYYY-MM-DD', Hora: 'HH:MM', ... }
+ * @param {Object} hoursCfg Objeto { monday:[{from,to}], tuesday:[...], ... }
+ * @returns {{ok:boolean, reason:string|null, msg:string}}
+ */
+function validatePedidoSchedule(pedido, hoursCfg) {
+  const result = { ok: true, reason: null, msg: "" };
+  try {
+    if (!pedido || !hoursCfg) return result;
+
+    const fecha = String(pedido.Fecha || "").trim();
+    const hora  = String(pedido.Hora  || "").trim();
+
+    // Si el formato no es el esperado, no forzamos nada (lo valida la lógica actual)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return result;
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hora)) return result;
+
+    const dayKey = _weekdayKeyFromISODate(fecha);
+    if (!dayKey) return result;
+
+    const ranges = Array.isArray(hoursCfg[dayKey]) ? hoursCfg[dayKey] : [];
+
+    // Día sin horarios configurados => consideramos cerrado
+    if (!ranges.length) {
+      const dayLabel =
+        (STORE_HOURS_DAYS.find(d => d.key === dayKey)?.label) || "ese día";
+
+      // Armamos una línea con todos los horarios configurados para informar bien
+      const parts = [];
+      for (const d of STORE_HOURS_DAYS) {
+        const rs = Array.isArray(hoursCfg[d.key]) ? hoursCfg[d.key] : [];
+        if (!rs.length) continue;
+        const slots = rs.map(r => `${r.from} a ${r.to}`).join(" y ");
+        parts.push(`${d.label}: ${slots}`);
+      }
+      const allLabel = parts.length ? parts.join(" | ") : "";
+
+      result.ok = false;
+      result.reason = "day_closed";
+      result.msg = allLabel
+        ? `Para ${dayLabel} no tenemos horarios disponibles para recibir pedidos.\n\nNuestros horarios configurados son:\n${allLabel}.\n\n¿Querés elegir otro día y horario dentro de esas franjas?`
+        : `Para ${dayLabel} no tenemos horarios disponibles para recibir pedidos. ¿Querés elegir otro día en el que estemos abiertos?`;
+      return result;
+    }
+
+    const minutes = _hhmmToMinutes(hora);
+    if (minutes == null) return result;
+
+    const inside = ranges.some(r => {
+      const fromM = _hhmmToMinutes(r.from);
+      const toM   = _hhmmToMinutes(r.to);
+      if (fromM == null || toM == null) return false;
+      return minutes >= fromM && minutes <= toM;
+    });
+
+    if (!inside) {
+      const dayLabel =
+        (STORE_HOURS_DAYS.find(d => d.key === dayKey)?.label) || "ese día";
+      const slots = ranges.map(r => `${r.from} a ${r.to}`).join(" y ");
+
+      result.ok = false;
+      result.reason = "time_outside_ranges";
+      result.msg =
+        `En ${dayLabel} no tomamos pedidos para las ${hora}. ` +
+        `Para ese día nuestro horario de atención es: ${slots}.\n\n` +
+        `¿Querés elegir otro horario dentro de esa franja?`;
+      return result;
+    }
+
+    return result;
+  } catch {
+    // Ante cualquier error no rompemos el flujo ni sobreescribimos el mensaje
+    return result;
+  }
+}
 
 
 async function saveMessageDoc({ conversationId, waId, role, content, type = "text", meta = {}, tenantId }) {
@@ -1434,6 +1530,30 @@ console.log("[convId] "+ convId);
       console.error("Error al parsear/corregir JSON:", e.message);
     }
 
+    // ✅ Validar día y horario del pedido contra los horarios configurados del local
+    try {
+      if (pedido && typeof pedido === "object" && pedido.Fecha && pedido.Hora) {
+        const db = await getDb();
+        const hoursDocId = `store_hours:${tenant}`;
+        const docHours = await db.collection("settings").findOne({ _id: hoursDocId });
+        const hoursCfg = docHours?.hours || null;
+
+        if (hoursCfg) {
+          const schedCheck = validatePedidoSchedule(pedido, hoursCfg);
+          if (!schedCheck.ok) {
+            // Si la fecha/hora no es válida, sobreescribimos la respuesta textual
+            // para que el usuario elija un nuevo horario dentro de las franjas.
+            responseText = schedCheck.msg;
+            // Si ya estaba en COMPLETED, lo bajamos a IN_PROGRESS para que siga el flujo
+            if (estado === "COMPLETED") {
+              estado = "IN_PROGRESS";
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[hours] Error al validar fecha/hora de Pedido:", e?.message || e);
+    }
      /*// Guardar respuesta del asistente:
      // 1) el TEXTO que se envía al cliente
      // 2) un SNAPSHOT JSON con el Pedido ya corregido, para que /admin pueda leerlo
