@@ -176,6 +176,62 @@ async function loadCatalogTextFromMongo(tenantId = DEFAULT_TENANT_ID) {
 
 
 
+
+// ================== Horarios desde Mongo → bloque para el prompt ==================
+async function loadStoreHoursBlockFromMongo(tenantId = DEFAULT_TENANT_ID) {
+  try {
+    const key = String(tenantId || "");
+    const db = await getDb();
+    const _id = `store_hours:${key}`;
+    const doc = (await db.collection("settings").findOne({ _id })) || {};
+    const hours = doc.hours || {};
+    if (!hours || typeof hours !== "object") return "";
+
+    const order = ["monday", "tuesday", "wednesday", "thursday", "friday"];
+    const labels = {
+      monday: "Lunes",
+      tuesday: "Martes",
+      wednesday: "Miércoles",
+      thursday: "Jueves",
+      friday: "Viernes",
+      saturday: "Sábado",
+      sunday: "Domingo"
+    };
+
+    const lines = [];
+    for (const dayKey of order) {
+      const ranges = Array.isArray(hours[dayKey]) ? hours[dayKey] : [];
+      if (!ranges.length) continue;
+      const slots = ranges
+        .map(r => {
+          const from = String(r.from || "").trim();
+          const to   = String(r.to   || "").trim();
+          if (!from || !to) return null;
+          return `${from} a ${to}`;
+        })
+        .filter(Boolean);
+      if (!slots.length) continue;
+      lines.push(`- ${labels[dayKey] || dayKey}: ${slots.join(" y ")}`);
+    }
+
+    if (!lines.length) return "";
+
+    return [
+      "[HORARIOS_LOCAL]",
+      "El local solo toma pedidos dentro de estos horarios (hora local 24h).",
+      "Cuando el cliente elija fecha y hora, DEBES asegurarte de que estén dentro de estas franjas.",
+      "Si el cliente pide un horario por fuera de estas franjas, NO lo aceptes y pedile que elija otra fecha/hora dentro de los horarios disponibles.",
+      "",
+      ...lines
+    ].join("\n");
+  } catch (e) {
+    console.error("[hours] Error al armar bloque de horarios:", e?.message || e);
+    return "";
+  }
+}
+ 
+
+
 // ================== Historial por número / sesión ==================
 const chatHistories = {};       // standard mode: { [tenant-from]: [{role,content}, ...] }
 const userOnlyHistories = {};   // minimal mode: { [tenant-from]: [{role:'user',content}, ...] }
@@ -571,10 +627,15 @@ async function getGPTReply(tenantId, from, userMessage) {
 
   // Bloque system inicial
   const catalogText = await loadCatalogTextFromMongo(tenantId);
+  const storeHoursBlock = await loadStoreHoursBlockFromMongo(tenantId);
   const fullSystem = [
     buildNowBlock(),
+    storeHoursBlock,
     "[COMPORTAMIENTO]\n" + baseText + catalogText
-  ].join("\n\n").trim();
+  ]
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
 
   let messages = [];
 
