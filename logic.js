@@ -187,7 +187,7 @@ async function loadStoreHoursBlockFromMongo(tenantId = DEFAULT_TENANT_ID) {
     const hours = doc.hours || {};
     if (!hours || typeof hours !== "object") return "";
 
-    const order = ["monday", "tuesday", "wednesday", "thursday", "friday"];
+    const order = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
     const labels = {
       monday: "Lunes",
       tuesday: "Martes",
