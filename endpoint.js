@@ -14,6 +14,18 @@ const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
 const TENANT_ID = (process.env.TENANT_ID || "").trim();
 
+
+// Días de la semana para configuración de horarios
+const STORE_HOURS_DAYS = [
+  { key: "monday", label: "Lunes" },
+  { key: "tuesday", label: "Martes" },
+  { key: "wednesday", label: "Miércoles" },
+  { key: "thursday", label: "Jueves" },
+  { key: "friday", label: "Viernes" },
+   { key: "saturday", label: "Viernes" },
+    { key: "sunday", label: "Domingo" },
+];
+
 // ⬇️ Para páginas y formularios simples (admin)
 const path = require("path");
 app.use(express.urlencoded({ extended: true }));
@@ -928,6 +940,132 @@ app.get("/productos", async (req, res) => {
 });
 
 
+ 
+// ================== Horarios de atención (UI L-V) ==================
+// Página simple para cargar horarios de lunes a viernes (hasta 2 franjas por día)
+app.get("/horarios", async (req, res) => {
+  try {
+    const tenant = resolveTenantId(req);
+    const db = await getDb();
+    const _id = `store_hours:${tenant}`;
+    const doc = (await db.collection("settings").findOne({ _id })) || {};
+    const hours = doc.hours || {};
+    const hoursJson = JSON.stringify(hours).replace(/</g, "\\u003c");
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!doctype html><html><head><meta charset="utf-8" />
+      <title>Horarios de atención (${tenant})</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <style>
+        body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:960px}
+        table{border-collapse:collapse;width:100%}
+        th,td{border:1px solid #ddd;padding:6px 8px;text-align:left}
+        th{background:#f5f5f5}
+        input[type=time]{width:100%;box-sizing:border-box;padding:4px}
+        input[type=checkbox]{transform:scale(1.1)}
+        .row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+        .btn{padding:6px 10px;border-radius:4px;border:1px solid #333;background:#fff;cursor:pointer}
+        .btn:active{transform:scale(.97)}
+        .hint{color:#555;font-size:13px}
+      </style></head><body>
+      <h1>Horarios de atención</h1>
+      <p class="hint">Configurá las franjas horarias disponibles de <strong>lunes a domingo</strong>. Cada día puede tener hasta dos rangos horarios.</p>
+      <div class="row">
+        <label>Tenant:&nbsp;<input id="tenant" type="text" value="${tenant.replace(/"/g,'&quot;')}" /></label>
+        <button id="btnReload" class="btn">Recargar</button>
+        <button id="btnSave" class="btn">Guardar</button>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Día</th>
+          <th>Habilitado</th>
+          <th>Desde 1</th>
+          <th>Hasta 1</th>
+          <th>Desde 2</th>
+          <th>Hasta 2</th>
+        </tr></thead>
+        <tbody>
+          ${STORE_HOURS_DAYS.map(d => `
+          <tr data-day="${d.key}">
+            <td>${d.label}</td>
+            <td style="text-align:center"><input type="checkbox" class="enabled" /></td>
+            <td><input type="time" class="from1" /></td>
+            <td><input type="time" class="to1" /></td>
+            <td><input type="time" class="from2" /></td>
+            <td><input type="time" class="to2" /></td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+      <p class="hint">Dejá un día deshabilitado o sin horarios para que no se pueda seleccionar. Los horarios se guardan en el backend y se usarán para validar nuevos pedidos.</p>
+      <script>
+        const DAYS = ${JSON.stringify(STORE_HOURS_DAYS).replace(/</g,"\\u003c")};
+
+        function setForm(data){
+          DAYS.forEach(d => {
+            const row = document.querySelector('tr[data-day="'+d.key+'"]');
+            if (!row) return;
+            const ranges = Array.isArray(data[d.key]) ? data[d.key] : [];
+            const r1 = ranges[0] || {};
+            const r2 = ranges[1] || {};
+            row.querySelector('.enabled').checked = ranges.length > 0;
+            row.querySelector('.from1').value = r1.from || "";
+            row.querySelector('.to1').value   = r1.to   || "";
+            row.querySelector('.from2').value = r2.from || "";
+            row.querySelector('.to2').value   = r2.to   || "";
+          });
+        }
+
+        function collectForm(){
+          const out = {};
+          DAYS.forEach(d => {
+            const row = document.querySelector('tr[data-day="'+d.key+'"]');
+            if (!row) return;
+            const enabled = row.querySelector('.enabled').checked;
+            const f1 = row.querySelector('.from1').value;
+            const t1 = row.querySelector('.to1').value;
+            const f2 = row.querySelector('.from2').value;
+            const t2 = row.querySelector('.to2').value;
+            if (!enabled) return;
+            const ranges = [];
+            if (f1 && t1) ranges.push({ from:f1, to:t1 });
+            if (f2 && t2) ranges.push({ from:f2, to:t2 });
+            if (ranges.length) out[d.key] = ranges;
+          });
+          return out;
+        }
+
+        async function reloadHours(){
+          const t = document.getElementById('tenant').value || '';
+          const r = await fetch('/api/hours?tenant=' + encodeURIComponent(t));
+          if (!r.ok) { alert('Error recargando horarios'); return; }
+          const j = await r.json();
+          setForm(j.hours || {});
+        }
+
+        async function saveHours(){
+          const t = document.getElementById('tenant').value || '';
+          const hours = collectForm();
+          const r = await fetch('/api/hours', {
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ tenantId:t, hours })
+          });
+          if (!r.ok) { alert('Error al guardar'); return; }
+          const j = await r.json();
+          setForm(j.hours || {});
+          alert('Horarios guardados ✅');
+        }
+
+        document.getElementById('btnReload').addEventListener('click', reloadHours);
+        document.getElementById('btnSave').addEventListener('click', saveHours);
+        // Inicializar con lo que vino del servidor
+        setForm(${hoursJson});
+      </script></body></html>`);
+  } catch (e) {
+    console.error("/horarios error:", e);
+    res.status(500).send("internal");
+  }
+});
 
 
 
@@ -1025,6 +1163,91 @@ app.post("/api/behavior/refresh-cache", async (req, res) => {
     res.json({ ok: true, tenant, cache: "invalidated" });
   } catch (e) { console.error("refresh-cache error:", e); res.status(500).json({ error: "internal" }); }
 });
+
+// ===================================================================
+// ===============      Horarios de atención (L-V)     ================
+// ===================================================================
+// Permite guardar y leer los horarios disponibles de lunes a viernes.
+// Cada día puede tener hasta dos franjas horarias [{ from, to }, ...]
+// Formato de hora: "HH:MM" (24h).
+
+function normalizeHoursPayload(raw) {
+  const days = ["monday", "tuesday", "wednesday", "thursday", "friday","saturday","sunday"];
+  const out = {};
+  const isHHMM = (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || "").trim());
+
+  for (const d of days) {
+    const ranges = Array.isArray(raw?.[d]) ? raw[d] : [];
+    const normRanges = [];
+
+    for (const r of ranges) {
+      if (!r) continue;
+      // Soportar tanto { from, to } como { desde, hasta }
+      const from = String(r.from ?? r.desde ?? "").trim();
+      const to   = String(r.to   ?? r.hasta ?? "").trim();
+
+      // Validar formato y que from < to
+      if (!isHHMM(from) || !isHHMM(to)) continue;
+      if (from >= to) continue;
+
+      normRanges.push({ from, to });
+      // Máximo 2 franjas por día
+      if (normRanges.length >= 2) break;
+    }
+
+    if (normRanges.length) {
+      out[d] = normRanges;
+    }
+  }
+
+  return out;
+}
+
+// GET /api/hours  → devuelve horarios configurados para el tenant actual
+app.get("/api/hours", async (req, res) => {
+  try {
+    const tenant = resolveTenantId(req);
+    const db = await getDb();
+    const _id = `store_hours:${tenant}`;
+    const doc = (await db.collection("settings").findOne({ _id })) || {};
+
+    res.json({
+      ok: true,
+      tenant,
+      hours: doc.hours || {},
+      updatedAt: doc.updatedAt || null,
+    });
+  } catch (e) {
+    console.error("GET /api/hours error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+// POST /api/hours  → guarda horarios (sobrescribe los existentes para ese tenant)
+app.post("/api/hours", async (req, res) => {
+  try {
+    const tenant = (req.body?.tenantId || resolveTenantId(req)).toString().trim();
+    const hours = normalizeHoursPayload(req.body?.hours || req.body || {});
+
+    const db = await getDb();
+    const _id = `store_hours:${tenant}`;
+    await db.collection("settings").updateOne(
+      { _id },
+      { $set: { hours, tenantId: tenant, updatedAt: new Date() } },
+      { upsert: true }
+    );
+
+    res.json({ ok: true, tenant, hours });
+  } catch (e) {
+    console.error("POST /api/hours error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+
+
+
+
 
 // Webhook Verify (GET)
 app.get("/webhook", (req, res) => {
