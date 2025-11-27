@@ -1862,26 +1862,28 @@ console.log("[convId] "+ convId);
           }
         }
       }
-      // 🔹 Mantener snapshot del asistente
-      setAssistantPedidoSnapshot(tenant, from, pedido, estado);
+   // 🔹 Mantener snapshot del asistente
+setAssistantPedidoSnapshot(tenant, from, pedido, estado);
 
-      // 🔹 Persistir pedido (y distancia) en MongoDB (upsert)
-      const db = await require("./db").getDb();
-      await db.collection("orders").updateOne(
-        { tenantId: (tenant || null), from },
-        {
-          $set: {
-            tenantId: (tenant || null),
-            from,
-            pedido,
-            estado: estado || null,
-            distancia_km: typeof pedido?.distancia_km === "number" ? pedido.distancia_km : distKm,
-            updatedAt: new Date(),
-          },
-          $setOnInsert: { createdAt: new Date() }
-        },
-        { upsert: true }
-      );
+// 🔹 Persistir pedido definitivo en MongoDB SOLO si está COMPLETED
+if (estado === "COMPLETED") {
+  try {
+    const db = await require("./db").getDb();
+
+    await db.collection("orders").insertOne({
+      tenantId: (tenant || null),
+      from,
+      // si tenés conversationId en este scope, podés agregarlo:
+      // conversationId: convId ? new ObjectId(String(convId)) : null,
+      pedido,
+      estado,
+      distancia_km: typeof pedido?.distancia_km === "number" ? pedido.distancia_km : distKm ?? null,
+      createdAt: new Date(),
+    });
+  } catch (e) {
+    console.error("[orders] error insert COMPLETED:", e?.message || e);
+  }
+}
     } catch {}
     try {
             const userConfirms =
