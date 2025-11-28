@@ -669,16 +669,24 @@ app.get("/admin", async (req, res) => {
      </div>
    </div>
 
+ 
+   <!-- Modal para mostrar el ticket -->
+    <div id="ticketModalBackdrop" class="ticket-modal-backdrop">
+      <div class="ticket-modal">
+        <iframe id="ticketFrame" title="Ticket"></iframe>
+        <div class="ticket-modal-actions">
+          <button onclick="closeTicketModal()">Cerrar</button>
+          <button onclick="printTicket()">Imprimir</button>
+        </div>
+      </div>
+    </div>
+
   <script>
      // ===== Modal helpers =====
     const modalRoot = document.getElementById('modalRoot');
     const modalBody = document.getElementById('modalBody');
     const modalCloseBtn = document.getElementById('modalCloseBtn');
-    const modalPrintBtn = document.getElementById('modalPrintBtn');
-
-   function goPrint(id){
-      window.open('/admin/ticket/' + encodeURIComponent(id), '_blank');
-    }
+     const modalPrintBtn = document.getElementById('modalPrintBtn');
 
 
     function closeModal(){ modalRoot.style.display='none'; modalRoot.setAttribute('aria-hidden','true'); }
@@ -721,9 +729,7 @@ app.get("/admin", async (req, res) => {
       if(!id){ alert('Elegí una conversación'); return; }
        openDetailModal(id);
     }
-    function goPrint(id){
-      window.open('/admin/ticket/' + encodeURIComponent(id), '_blank');
-    }
+    
  
     async function reloadTable(){
       try{
@@ -764,16 +770,6 @@ app.get("/admin", async (req, res) => {
      function openDetailByConv(convId){ window.open('/admin/conversation?convId='+encodeURIComponent(convId),'_blank'); }
      function openDetailByWaId(wa){ window.open('/admin/conversation?waId='+encodeURIComponent(wa),'_blank'); }
 
-      <!-- Modal para mostrar el ticket -->
-      <div id="ticketModalBackdrop" class="ticket-modal-backdrop">
-        <div class="ticket-modal">
-          <iframe id="ticketFrame" title="Ticket"></iframe>
-          <div class="ticket-modal-actions">
-            <button onclick="closeTicketModal()">Cerrar</button>
-            <button onclick="printTicket()">Imprimir</button>
-          </div>
-        </div>
-      </div>
       // Abre el modal y carga el ticket en el iframe
       function openTicketModal(conversationId) {
         const backdrop = document.getElementById('ticketModalBackdrop');
@@ -833,7 +829,7 @@ app.get("/admin", async (req, res) => {
         b.addEventListener('click',()=>openDetailModal(b.getAttribute('data-conv')));
        });
         tb.querySelectorAll('button[data-print]').forEach(b=>{
-         b.addEventListener('click',()=>goPrint(b.getAttribute('data-print')));
+         b.addEventListener('click',()=>openTicketModal(b.getAttribute('data-print')));
        });
      }
  
