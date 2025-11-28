@@ -310,30 +310,57 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
           const j = JSON.parse(s);
           if (j && j.Pedido && Array.isArray(j.Pedido.items)) {
             const pedido = j.Pedido || {};
+
+            // 🧾 Nombre y apellido directo desde el Pedido (toma prioridad sobre heurísticas de texto)
+            const nombreFromPedido = String(
+              pedido.nombre_apellido || pedido.nombre || ""
+            ).trim();
+
             // 🛠️ Normalizar/Inferir entrega:
             const entregaRaw = String(pedido.Entrega || "").trim().toLowerCase();
-            const envioItem = (pedido.items || []).find(i => /env[ií]o/i.test(String(i?.descripcion || "")));
+            const envioItem = (pedido.items || []).find(i =>
+              /env[ií]o/i.test(String(i?.descripcion || ""))
+            );
+
+            // ¿Hay dirección en el JSON?
             const hasAddress =
               pedido?.Domicilio &&
               typeof pedido.Domicilio === "object" &&
               Object.values(pedido.Domicilio).some(v => String(v || "").trim() !== "");
+
             // Si Entrega no es 'domicilio'/'retiro' pero hay dirección o envío → forzar 'domicilio'
             let entrega = (entregaRaw === "domicilio" || entregaRaw === "retiro")
               ? entregaRaw
               : ((hasAddress || !!envioItem) ? "domicilio" : (entregaRaw || ""));
-            // Etiqueta amigable:
-            // - Si es domicilio y HAY dirección -> mostrar dirección
-            // - Si es domicilio y NO hay dirección -> si hay envío, usar su descripción; si no, "Domicilio"
-            // - Si es retiro -> "Retiro en local"
-            const direccion = String(pedido?.Domicilio?.direccion || "").trim();
+
+            // Dirección amigable:
+            // - Si Domicilio es string → usarlo directo
+            // - Si es objeto → usar .direccion / .calle
+            // - Si no hay dirección pero sí ítem de envío → usar descripción del envío
+            let direccion = "";
+            if (typeof pedido.Domicilio === "string") {
+              direccion = pedido.Domicilio.trim();
+            } else if (pedido.Domicilio && typeof pedido.Domicilio === "object") {
+              direccion = String(
+                pedido.Domicilio.direccion ||
+                pedido.Domicilio.calle ||
+                ""
+              ).trim();
+            }
+            if (!direccion && envioItem) {
+              direccion = String(envioItem.descripcion || "").trim();
+            }
+
+            // Etiqueta de entrega para la tabla: solo "Envío" o "Retiro"
             let entregaLabel;
             if (entrega === "domicilio") {
-              entregaLabel = direccion || (envioItem ? String(envioItem.descripcion || "Domicilio (con envío)") : "Domicilio");
+              entregaLabel = "Envío";
             } else if (entrega === "retiro") {
-              entregaLabel = "Retiro en local";
+              entregaLabel = "Retiro";
             } else {
               entregaLabel = "-";
             }
+
             // Fecha/Hora sólo si vienen en campos normales
             const fechaEntrega = /^\d{4}-\d{2}-\d{2}$/.test(String(pedido.Fecha || "")) ? pedido.Fecha : null;
             const horaEntrega  = /^\d{2}:\d{2}$/.test(String(pedido.Hora  || "")) ? pedido.Hora  : null;
@@ -346,8 +373,11 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
                   lastAssistantTs: now,
                   pedidoEntrega: entrega || null,
                   pedidoEntregaLabel: entregaLabel || null,
+                  ...(direccion ? { pedidoDireccion: direccion } : {}),
                   ...(fechaEntrega ? { pedidoFecha: fechaEntrega } : {}),
-                  ...(horaEntrega  ? { pedidoHora:  horaEntrega  } : {})
+                  ...(horaEntrega  ? { pedidoHora:  horaEntrega  } : {}),
+                  ...(nombreFromPedido ? { contactName: nombreFromPedido } : {})
+   
                 }
               }
             );
@@ -377,25 +407,45 @@ async function _getLastPedidoSummary(db, convId, tenantId) {
     let pedido = null;
     for await (const m of cursor) {
       const s = String(m.content || "").trim();
-     try {
+      try {
         const j = JSON.parse(s);
         if (j && j.Pedido && Array.isArray(j.Pedido.items)) { pedido = j.Pedido; break; }
       } catch {}
     }
-    if (!pedido) return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-" };
+    if (!pedido) return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-", direccion: "-" };
+
     // Entrega/Envío
-    const entrega = String(pedido.Entrega || "").toLowerCase();
-   let entregaLabel = "Retiro";
-    if (entrega === "domicilio") {
-      const envio = (pedido.items || []).find(i => /env[ií]o/i.test(String(i?.descripcion || "")));
-      entregaLabel = envio ? String(envio.descripcion || "Domicilio (con envío)") : "Domicilio";
+    const entregaRaw = String(pedido.Entrega || "").trim().toLowerCase();
+    const envio = (pedido.items || []).find(i => /env[ií]o/i.test(String(i?.descripcion || "")));
+
+    let entregaLabel = "-";
+    if (entregaRaw === "domicilio") {
+      entregaLabel = "Envío";
+    } else if (entregaRaw === "retiro") {
+      entregaLabel = "Retiro";
     }
-   // Día/Hora
+
+    // Dirección (string u objeto)
+    let direccion = "";
+    if (typeof pedido.Domicilio === "string") {
+      direccion = pedido.Domicilio.trim();
+    } else if (pedido.Domicilio && typeof pedido.Domicilio === "object") {
+      direccion = String(
+        pedido.Domicilio.direccion ||
+        pedido.Domicilio.calle ||
+        ""
+      ).trim();
+    }
+    if (!direccion && envio) {
+      direccion = String(envio.descripcion || "").trim();
+    }
+
+    // Día/Hora
     const fechaEntrega = /^\d{4}-\d{2}-\d{2}$/.test(String(pedido.Fecha || "")) ? pedido.Fecha : "-";
     const horaEntrega  = /^\d{2}:\d{2}$/.test(String(pedido.Hora  || "")) ? pedido.Hora  : "-";
-    return { entregaLabel, fechaEntrega, horaEntrega };
+    return { entregaLabel, fechaEntrega, horaEntrega, direccion: direccion || "-" };
   } catch {
-    return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-" };
+    return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-", direccion: "-" };
   }
 }
 
@@ -421,9 +471,16 @@ async function listConversations(limit = 50, tenantId) {
     // Preferir campos persistidos en conversations; si faltan, fallback a escanear mensajes
     if (c.pedidoEntregaLabel || c.pedidoFecha || c.pedidoHora || c.pedidoEntrega) {
       const extra = {
-        entregaLabel: c.pedidoEntregaLabel || (c.pedidoEntrega ? (c.pedidoEntrega === "domicilio" ? "Domicilio" : "Retiro") : "-"),
+        entregaLabel:
+          c.pedidoEntregaLabel
+          || (c.pedidoEntrega === "domicilio"
+                ? "Envío"
+                : c.pedidoEntrega === "retiro"
+                  ? "Retiro"
+                  : "-"),
         fechaEntrega: c.pedidoFecha || "-",
-        horaEntrega: c.pedidoHora || "-"
+        horaEntrega: c.pedidoHora || "-",
+        direccion: c.pedidoDireccion || "-"
       };
       out.push({ ...base, ...extra });
     } else {
@@ -548,10 +605,10 @@ app.get("/admin", async (req, res) => {
          <th>Teléfono</th>
          <th>Nombre y Apellido</th>
          <th>Entrega</th>
+         <th>Dirección</th>
          <th>Día</th>
          <th>Hora</th>
          <th>Estado</th>
-         <th>Acciones</th>
        </tr>
      </thead>
      <tbody></tbody>
@@ -635,6 +692,7 @@ app.get("/admin", async (req, res) => {
             <td>\${c.waId||'-'}</td>
             <td>\${c.contactName||'-'}</td>
             <td>\${c.entregaLabel||'-'}</td>
+            <td>\${c.direccion||'-'}</td>
             <td>\${c.fechaEntrega||'-'}</td>
             <td>\${c.horaEntrega||'-'}</td>
             <td>\${c.status||'-'}</td>
@@ -673,6 +731,7 @@ app.get("/admin", async (req, res) => {
            <td>\${c.waId || '-'}</td>
            <td>\${c.contactName || '-'}</td>
            <td>\${c.entregaLabel || '-'}</td>
+           <td>\${c.direccion || '-'}</td>
            <td>\${c.fechaEntrega || '-'}</td>
            <td>\${c.horaEntrega || '-'}</td>
            <td>\${c.status || '-'}</td>
