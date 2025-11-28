@@ -502,24 +502,86 @@ function ensureEnvio(pedido) {
   * - Si showEnvio=true, lo incluye.
   * - Si hay milanesas, agrega la leyenda de pesado.
   */
- function buildBackendSummary(pedido, opts = {}) {
-   const showEnvio = !!opts.showEnvio;
-   const items = (pedido.items || []).filter(it =>
-     showEnvio ? true : !/env[ií]o/i.test(String(it?.descripcion || ""))
-   );
-  const lines = [
-     "🧾 Resumen del pedido:",
-     ...items.map(i => `- ${i.cantidad} ${i.descripcion}`),
-     `💰 Total: ${Number(pedido.total_pedido || 0).toLocaleString("es-AR")}`,
-     "¿Confirmamos el pedido? ✅"
-   ];
-   if (_hasMilanesas(pedido)) {
-     lines.splice(lines.length - 1, 0,
-       "*Las milanesas se pesan al entregar; el precio se informa al momento de la entrega.*"
-     );
-   }
-   return lines.join("\n");
+function buildBackendSummary(pedido, opts = {}) {
+  const showEnvio = !!opts.showEnvio;
+  const items = (pedido.items || []).filter(it =>
+    showEnvio ? true : !/env[ií]o/i.test(String(it?.descripcion || ""))
+  );
+
+  // Nombre del cliente
+  const nombre = String(pedido.nombre_apellido || pedido.nombre || "").trim();
+
+  // Fecha y hora del pedido (nuevo esquema y fallback a claves viejas)
+  const fechaRaw = String(
+    pedido.fecha_pedido || pedido.fecha || pedido.Fecha || ""
+  ).trim();
+  const horaRaw = String(
+    pedido.hora_pedido || pedido.hora || pedido.Hora || ""
+  ).trim();
+
+  let diaLabel = "";
+  let fechaLabel = "";
+ if (/^\d{4}-\d{2}-\d{2}$/.test(fechaRaw)) {
+    try {
+      const baseDate = new Date(`${fechaRaw}T${horaRaw || "12:00"}:00`);
+      const fmt = new Intl.DateTimeFormat("es-AR", {
+        timeZone: STORE_TZ,
+        weekday: "long",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      });
+      const parts = Object.fromEntries(fmt.formatToParts(baseDate).map(p => [p.type, p.value]));
+      const weekday = String(parts.weekday || "").toLowerCase();
+      diaLabel = weekday.charAt(0).toUpperCase() + weekday.slice(1);
+      fechaLabel = `${parts.day}/${parts.month}/${parts.year}`;
+    } catch {}
  }
+
+  // Modalidad / entrega
+  const entregaRaw = String(pedido.Entrega || "").trim();
+  let modalidadLabel = "";
+  if (/^domicilio$/i.test(entregaRaw)) {
+    let dir = "";
+    if (typeof pedido.Domicilio === "string") {
+      dir = pedido.Domicilio.trim();
+    } else if (pedido.Domicilio && typeof pedido.Domicilio === "object") {
+      dir = String(
+        pedido.Domicilio.direccion ||
+        pedido.Domicilio.calle ||
+        ""
+      ).trim();
+    }
+    modalidadLabel = dir ? `Envío (${dir})` : "Envío";
+  } else if (/^retiro$/i.test(entregaRaw)) {
+    modalidadLabel = "Retiro";
+  } else if (entregaRaw) {
+    // Ej: "Envío (Moreno 2862)" ya armado por el modelo
+    modalidadLabel = entregaRaw;
+  }
+
+  const lines = [
+    "🧾 Resumen del pedido:",
+    ...(nombre ? [`*Nombre:* ${nombre}`] : []),
+    ...((diaLabel || fechaLabel)
+      ? [`*Día:* ${[diaLabel, fechaLabel].filter(Boolean).join(" ")}`]
+      : []),
+    ...(horaRaw ? [`*Hora de entrega:* ${horaRaw}`] : []),
+    ...(modalidadLabel ? [`*Modalidad:* ${modalidadLabel}`] : []),
+    "*Productos:*",
+    ...items.map(i => `- ${i.cantidad} ${i.descripcion}`),
+    `*Total:* $${Number(pedido.total_pedido || 0).toLocaleString("es-AR")}`,
+    "¿Confirmamos el pedido? ✅"
+  ];
+
+  if (_hasMilanesas(pedido)) {
+    lines.splice(lines.length - 1, 0,
+      "*Las milanesas se pesan al entregar; el precio se informa al momento de la entrega.*"
+    );
+  }
+
+  return lines.join("\\n");
+}
  function coalesceResponse(maybeText, pedido, _opts = {}) {
   const s = String(maybeText || "").trim();
   if (s) return s; // el modelo trajo algo útil
