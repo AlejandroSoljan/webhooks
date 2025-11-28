@@ -462,12 +462,33 @@ async function _getLastPedidoSummary(db, convId, tenantId) {
 async function listConversations(limit = 50, tenantId) {
   const db = await getDb();
   const q = withTenant({}, tenantId);
+
+  // 1) Traer conversaciones
   const rows = await db.collection("conversations")
     .find(q)
     .sort({ updatedAt: -1, closedAt: -1, openedAt: -1 })
     .limit(limit)
     .toArray();
-  // Enriquecer con resumen de Pedido (fecha/hora/entrega/envío)
+
+  // 2) Traer órdenes asociadas para obtener distancia_km
+  const convIds = rows.map(c => c._id).filter(Boolean);
+  const ordersByConvId = new Map();
+
+  if (convIds.length) {
+    const cursor = db.collection("orders")
+      .find({ conversationId: { $in: convIds } })
+      .sort({ createdAt: -1 });
+
+    for await (const ord of cursor) {
+      const key = String(ord.conversationId);
+      // Nos quedamos con la más reciente por conversación
+      if (!ordersByConvId.has(key)) {
+        ordersByConvId.set(key, ord);
+      }
+    }
+  }
+
+  // 3) Enriquecer con resumen de Pedido (fecha/hora/entrega/envío + distancia)
   const out = [];
   for (const c of rows) {
     const base = {
@@ -477,6 +498,13 @@ async function listConversations(limit = 50, tenantId) {
       status: c.finalized ? "COMPLETED" : (c.status || "OPEN"),
       lastAt: c.lastUserTs || c.lastAssistantTs || c.updatedAt || c.closedAt || c.openedAt
     };
+
+    const ord = ordersByConvId.get(String(c._id));
+    const distanceKm =
+      ord && ord.distancia_km !== undefined && ord.distancia_km !== null
+        ? ord.distancia_km
+        : null;
+
     // Preferir campos persistidos en conversations; si faltan, fallback a escanear mensajes
     if (c.pedidoEntregaLabel || c.pedidoFecha || c.pedidoHora || c.pedidoEntrega) {
       const extra = {
@@ -489,12 +517,17 @@ async function listConversations(limit = 50, tenantId) {
                   : "-"),
         fechaEntrega: c.pedidoFecha || "-",
         horaEntrega: c.pedidoHora || "-",
-        direccion: c.pedidoDireccion || "-"
+        direccion: c.pedidoDireccion || "-",
+        ...(distanceKm !== null ? { distanceKm } : {})
       };
       out.push({ ...base, ...extra });
     } else {
       const extra = await _getLastPedidoSummary(db, c._id, tenantId);
-      out.push({ ...base, ...extra });
+      out.push({
+        ...base,
+        ...extra,
+        ...(distanceKm !== null ? { distanceKm } : {})
+      });
     }
   }
   return out;
@@ -655,7 +688,8 @@ app.get("/admin", async (req, res) => {
          <th>Nombre y Apellido</th>
          <th>Entrega</th>
          <th>Dirección</th>
-         <th>Día</th>
+          <th>Distancia (km)</th>
+          <th>Día</th>
          <th>Hora</th>
          <th>Estado</th>
        </tr>
@@ -753,6 +787,7 @@ app.get("/admin", async (req, res) => {
             <td>\${c.contactName||'-'}</td>
             <td>\${c.entregaLabel||'-'}</td>
             <td>\${c.direccion||'-'}</td>
+            <td>\${(c.distanceKm !== undefined && c.distanceKm !== null) ? c.distanceKm : '-'}</td>
             <td>\${c.fechaEntrega||'-'}</td>
             <td>\${c.horaEntrega||'-'}</td>
             <td>\${c.status||'-'}</td>
@@ -824,6 +859,7 @@ app.get("/admin", async (req, res) => {
            <td>\${c.contactName || '-'}</td>
            <td>\${c.entregaLabel || '-'}</td>
            <td>\${c.direccion || '-'}</td>
+           <td>\${(c.distanceKm !== undefined && c.distanceKm !== null) ? c.distanceKm : '-'}</td>
            <td>\${c.fechaEntrega || '-'}</td>
            <td>\${c.horaEntrega || '-'}</td>
            <td>\${c.status || '-'}</td>
