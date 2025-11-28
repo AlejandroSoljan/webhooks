@@ -585,6 +585,46 @@ app.get("/admin", async (req, res) => {
     th{background:#f7f7f7; text-align:left}
     .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:6px; cursor:pointer}
     .actions{display:flex; gap:8px}
+
+      /* ===== Modal de ticket ===== */
+      .ticket-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,.45);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+      }
+
+      .ticket-modal {
+        background: #fff;
+        border-radius: 8px;
+        padding: 12px;
+        box-shadow: 0 10px 30px rgba(0,0,0,.25);
+        width: 90mm;           /* ancho parecido a ticket de 80mm */
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+     .ticket-modal iframe {
+       border: none;
+        width: 100%;
+        flex: 1;
+      }
+
+      .ticket-modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 6px;
+      }
+
+
+
+
   </style>
 </head>
 <body>
@@ -703,7 +743,7 @@ app.get("/admin", async (req, res) => {
             <td>\${c.status||'-'}</td>
             <td class="actions">
               <button class="btn" onclick="openDetailModal('\${c._id}')">Detalle</button>
-              <button class="btn" onclick="goPrint('\${c._id}')">Imprimir</button>
+              <button onclick="openTicketModal('\${c._id}')">🖨️ Imprimir</button>
             </td>
           </tr>\`).join('');
         // Refrescar selector
@@ -723,7 +763,49 @@ app.get("/admin", async (req, res) => {
      function fmt(d){ try{ return new Date(d).toLocaleString(); }catch{ return '-'; } }
      function openDetailByConv(convId){ window.open('/admin/conversation?convId='+encodeURIComponent(convId),'_blank'); }
      function openDetailByWaId(wa){ window.open('/admin/conversation?waId='+encodeURIComponent(wa),'_blank'); }
- 
+
+      <!-- Modal para mostrar el ticket -->
+      <div id="ticketModalBackdrop" class="ticket-modal-backdrop">
+        <div class="ticket-modal">
+          <iframe id="ticketFrame" title="Ticket"></iframe>
+          <div class="ticket-modal-actions">
+            <button onclick="closeTicketModal()">Cerrar</button>
+            <button onclick="printTicket()">Imprimir</button>
+          </div>
+        </div>
+      </div>
+      // Abre el modal y carga el ticket en el iframe
+      function openTicketModal(conversationId) {
+        const backdrop = document.getElementById('ticketModalBackdrop');
+        const frame = document.getElementById('ticketFrame');
+        if (frame) {
+          frame.src = '/admin/ticket/' + conversationId;
+        }
+        if (backdrop) {
+          backdrop.style.display = 'flex';
+        }
+      }
+
+      // Cierra el modal y limpia el iframe
+      function closeTicketModal() {
+        const backdrop = document.getElementById('ticketModalBackdrop');
+        const frame = document.getElementById('ticketFrame');
+        if (frame) {
+          frame.src = 'about:blank';
+        }
+        if (backdrop) {
+          backdrop.style.display = 'none';
+        }
+      }
+
+      // Dispara la impresión del contenido del iframe
+      function printTicket() {
+        const frame = document.getElementById('ticketFrame');
+        if (frame && frame.contentWindow) {
+          frame.contentWindow.focus();
+          frame.contentWindow.print();
+        }
+      }
      async function loadTable(){
        const r = await fetch('/api/logs/conversations?limit=200');
        const data = await r.json();
