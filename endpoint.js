@@ -38,7 +38,7 @@ const {
   hydratePricesFromCatalog,
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
   DEFAULT_TENANT_ID, setAssistantPedidoSnapshot, calcularDistanciaKm,
-  geocodeAddress, getStoreCoords, pickEnvioProductByDistance,
+  geocodeAddress, getStoreCoords, pickEnvioProductByDistance,clearEndedFlag,
   ensureEnvioSmart,hasContext,
 } = require("./logic");
 
@@ -1404,8 +1404,9 @@ app.post("/webhook", async (req, res) => {
    
 console.log("[convId] "+ convId);
 
-        if (convId) {
-        console.log("[messages] about to save USER message", { convId: String(convId), from, type: msg.type, textPreview: String(text).slice(0,80) });  try {
+       if (convId) {
+      console.log("[messages] about to save USER message", { convId, from, type: msg.type, textPreview: String(text).slice(0,80) });
+      try {
         await saveMessageDoc({
           tenantId: tenant,
           conversationId: convId,
@@ -1418,9 +1419,17 @@ console.log("[convId] "+ convId);
       } catch (e) { console.error("saveMessage(user):", e?.message); }
     }
 
+    // Si el mensaje NO es solo un cierre de cortesía, limpiamos el flag de sesión terminada
+    if (!isPoliteClosingMessage(text)) {
+      clearEndedFlag(tenant, from);
+    }
+
     if (hasActiveEndedFlag(tenant, from)) {
       if (isPoliteClosingMessage(text)) {
-        await require("./logic").sendWhatsAppMessage(from, "¡Gracias! 😊 Cuando quieras hacemos otro pedido.");
+        await require("./logic").sendWhatsAppMessage(
+          from,
+          "¡Gracias! 😊 Cuando quieras hacemos otro pedido."
+        );
         return res.sendStatus(200);
       }
     }
@@ -1490,7 +1499,14 @@ console.log("[convId] "+ convId);
           `Total esperado por backend (total_pedido): ${pedido.total_pedido}`,
           "Reglas OBLIGATORIAS:",
           "- Recalculá todo DESDE CERO usando esos precios (no arrastres totales previos).",
-          "- Si Pedido.Entrega = 'domicilio', DEBES incluir el ítem 'Envio' (id 6, precio 1500).",
+          "- Si Pedido.Entrega = 'domicilio', DEBES incluir el ítem de Envío correspondiente.",
+          "",
+          "SOBRE EL CAMPO response:",
+          "- NO digas que estás recalculando ni hables de backend ni de importes.",
+          "- Usá en `response` el MISMO tipo de mensaje que venías usando para seguir la conversación.",
+          "- Si antes estabas pidiendo fecha y hora, seguí pidiendo fecha y hora.",
+          "- Si ya tenés fecha/hora, seguí con el siguiente dato faltante (por ejemplo, nombre del cliente).",
+          "",
           "Devolvé UN ÚNICO objeto JSON con: response, estado (IN_PROGRESS|COMPLETED|CANCELLED),",
           "y Pedido { Entrega, Domicilio, items[ {id, descripcion, cantidad, importe_unitario, total} ], total_pedido }.",
           "No incluyas texto fuera del JSON."
