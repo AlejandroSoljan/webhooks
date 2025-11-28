@@ -1059,76 +1059,117 @@ app.get("/admin/ticket/:convId", async (req, res) => {
     const convId = String(req.params.convId || "").trim();
     if (!convId) return res.status(400).send("convId requerido");
 
-    // Traemos mensajes de la conversación
-    const msgs = await getConversationMessagesByConvId(convId, 1000);
+    const db = await getDb();
+    const convObjectId = new ObjectId(convId);
 
-    // Opcional: datos básicos de la conversación (waId, nombre)
+    // Datos básicos de la conversación
     let waId = "";
     let contactName = "";
+    let fecha = "";
     try {
-      const db = await getDb();
       const conv = await db.collection("conversations").findOne(
-        withTenant({ _id: new ObjectId(convId) })
+        withTenant({ _id: convObjectId })
       );
       waId = conv?.waId || "";
       contactName = conv?.contactName || "";
+      fecha = conv?.lastAt
+        ? new Date(conv.lastAt).toLocaleString("es-AR")
+        : new Date().toLocaleString("es-AR");
     } catch (e) {
       console.warn("[ticket] no se pudo leer conversation:", e?.message);
+      fecha = new Date().toLocaleString("es-AR");
     }
 
-    // Buscamos el último mensaje del asistente que tenga JSON con Pedido
+    // 1) Intentar leer el pedido desde la colección orders (camino nuevo)
     let pedido = null;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i];
-     if (m.role !== "assistant") continue;
-      const s = String(m.content || "").trim();
-      try {
-        const j = JSON.parse(s);
-        if (j && j.Pedido && Array.isArray(j.Pedido.items)) {
-          pedido = j.Pedido;
-          break;
+    try {
+      const order = await db.collection("orders").findOne(
+        withTenant({ conversationId: convObjectId }),
+        { sort: { createdAt: -1 } }
+      );
+      if (order && order.pedido) {
+        pedido = order.pedido;
+      }
+    } catch (e) {
+      console.warn("[ticket] no se pudo leer order:", e?.message);
+    }
+
+    // 2) Fallback: si no hay pedido en orders, buscar JSON viejo en mensajes
+    if (!pedido) {
+      const msgs = await getConversationMessagesByConvId(convId, 1000);
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (m.role !== "assistant") continue;
+        const s = String(m.content || "").trim();
+        try {
+          const j = JSON.parse(s);
+          if (j && j.Pedido && Array.isArray(j.Pedido.items)) {
+            pedido = j.Pedido;
+            break;
+          }
+        } catch {
+          // no era JSON, seguimos
         }
-      } catch {
-        // no era JSON
-     }
+      }
     }
 
     const items = (pedido?.items || []).map(it => ({
       desc: String(it.descripcion || "").trim(),
       qty: Number(it.cantidad || 0),
     }));
-   const total = Number(pedido?.total_pedido || 0);
-    const fecha = new Date().toLocaleString("es-AR");
+    const total = Number(pedido?.total_pedido || 0);
+
+    const modalidadText =
+      pedido?.Entrega === "domicilio"
+        ? "Envío"
+        : pedido?.Entrega === "retiro"
+        ? "Retiro"
+        : "-";
+
+    const direccionText =
+      pedido?.Entrega === "domicilio"
+        ? (pedido?.Domicilio?.direccion || "-")
+        : "-";
 
     const html = `<!doctype html>
 <html><head><meta charset="utf-8"/><title>Ticket</title>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <style>
   @media print { .no-print{display:none} body{margin:0} }
-  body{
-    font-family: ui-monospace, Menlo, Consolas, monospace;
-    width: 80mm;
-    margin:0;
-    padding:8px;
-  }
+  body{font-family: ui-monospace, Menlo, Consolas, monospace; width: 80mm; margin:0; padding:8px}
   h3{margin:0 0 8px 0; font-size:14px; text-align:center}
   .line{display:flex; justify-content:space-between; font-size:12px; margin:2px 0}
   .sep{border-top:1px dashed #000; margin:6px 0}
   .foot{font-size:11px; text-align:center; margin-top:8px}
-  .btn{padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff; cursor:pointer}
   .warn{font-size:11px; margin-top:6px}
-  </style></head>
+</style></head>
 <body>
   <h3>Comanda Cliente</h3>
   <div class="line"><span>Fecha</span><span>${fecha}</span></div>
   <div class="line"><span>Teléfono</span><span>${waId || "-"}</span></div>
   <div class="line"><span>Nombre</span><span>${contactName || "-"}</span></div>
+  <div class="line"><span>Entrega</span><span>${modalidadText}</span></div>
+  <div class="line"><span>Dirección</span><span>${direccionText}</span></div>
   <div class="sep"></div>
-  ${items.length
-    ? items.map(i => `<div class="line"><span>${i.qty} x ${i.desc}</span><span></span></div>`).join("")
-    : "<div class='line'><em>Sin ítems detectados</em></div>"}
+  ${
+    items.length
+      ? items
+          .map(
+            i =>
+              `<div class="line"><span>${i.qty} x ${i.desc}</span><span></span></div>`
+          )
+          .join("")
+      : "<div class='line'><em>Sin ítems detectados</em></div>"
+  }
   <div class="sep"></div>
-  <div class="line"><strong>Total</strong><strong>$ ${total.toLocaleString("es-AR")}</strong></div>
+  <div class="line"><strong>Total</strong><strong>$ ${total.toLocaleString(
+    "es-AR"
+  )}</strong></div>
+  ${
+    items.some(x => /milanesa/i.test(x.desc))
+      ? `<div class="warn">* Las milanesas se pesan al entregar; el precio se informa al momento de la entrega.</div>`
+      : ``
+  }
   <div class="foot">¡Gracias por tu compra!</div>
 </body></html>`;
 
@@ -1139,7 +1180,6 @@ app.get("/admin/ticket/:convId", async (req, res) => {
     res.status(500).send("Error interno");
   }
 });
-
 
 // GET /api/products  → lista (activos por defecto; ?all=true para todos)
 app.get("/api/products", async (req, res) => {
@@ -2178,16 +2218,17 @@ if (estado === "COMPLETED" && pedido && convId) {
   try {
     const db = await getDb();
     await db.collection("orders").insertOne({
-      tenantId: (tenant || null),
-      from,
-      conversationId: new ObjectId(String(convId)),   // ✅ clave única por conversación
-      pedido,
-      estado,
-      distancia_km: typeof pedido?.distancia_km === "number"
-        ? pedido.distancia_km
-        : (typeof distKm === "number" ? distKm : null),
-      createdAt: new Date(),
-    });
+  tenantId: (tenant || null),
+  from,
+  // ahora sí vinculamos el pedido con la conversación
+  conversationId: convId ? new ObjectId(String(convId)) : null,
+  pedido,
+  estado,
+  distancia_km: typeof pedido?.distancia_km === "number"
+    ? pedido.distancia_km
+    : distKm ?? null,
+  createdAt: new Date(),
+});
   } catch (e) {
     console.error("[orders] error insert COMPLETED:", e?.message || e);
   }
