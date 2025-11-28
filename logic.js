@@ -218,11 +218,10 @@ async function loadStoreHoursBlockFromMongo(tenantId = DEFAULT_TENANT_ID) {
 
     return [
       "[HORARIOS_LOCAL]",
-      "El local solo toma pedidos dentro de estos horarios (hora local 24h).",
-      "Cuando el cliente elija fecha y hora, DEBES asegurarte de que estén dentro de estas franjas.",
-      "Los rangos son INCLUSIVOS: si el rango dice '20:00 a 22:00', podés tomar pedidos en cualquier horario desde las 20:00 hasta las 22:00, incluyendo exactamente las 22:00 (ejemplos válidos: 20:00, 21:30, 22:00).",
-      "Un horario se considera fuera de las franjas SOLO si la hora es estrictamente menor a la hora de inicio o estrictamente mayor a la hora de cierre.",
-      "Si el cliente pide un horario por fuera de estas franjas (por ejemplo, anterior a la hora de inicio o posterior a la hora de cierre), NO lo aceptes y pedile que elija otra fecha/hora dentro de los horarios disponibles.",
+      "Estos son los horarios de atención del local (hora local 24h).",
+"Usá esta información solo para informar y sugerir horarios al cliente si pregunta.",
+"NO debes decidir si un horario es válido o inválido ni rechazar pedidos por estar fuera de estas franjas.",
+"Siempre que el cliente proponga una fecha y hora, copia esa fecha y hora al JSON tal cual (formato YYYY-MM-DD y HH:MM).",
    "",
       ...lines
     ].join("\n");
