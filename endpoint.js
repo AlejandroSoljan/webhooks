@@ -955,29 +955,62 @@ app.get("/admin/ticket/:convId", async (req, res) => {
   try {
     const convId = String(req.params.convId || "").trim();
     if (!convId) return res.status(400).send("convId requerido");
-    const msgs = await getConversationMessagesByConvId(convId, 1000);
-    // Buscar el último JSON válido con Pedido
-    let pedido = null, nombre = "", waId = "";
+    const db = await getDb();
+    const convObjectId = new ObjectId(convId);
+
+    // Traemos la conversación para nombre / teléfono
+    let pedido = null;
+    let nombre = "";
+    let waId = "";
+
     try {
-      // opcional: traer conversación para teléfono/nombre
-      const db = await getDb();
-      const conv = await db.collection("conversations").findOne(withTenant({ _id: new ObjectId(convId) }));
+      const conv = await db
+        .collection("conversations")
+        .findOne(withTenant({ _id: convObjectId }));
       waId = conv?.waId || "";
       nombre = conv?.contactName || "";
-    } catch {}
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i];
-      if (m.role !== "assistant") continue;
-      const s = String(m.content || "").trim();
-      try {
-        const j = JSON.parse(s);
-        if (j && j.Pedido && Array.isArray(j.Pedido.items)) { pedido = j.Pedido; break; }
-      } catch {}
+    } catch (e) {
+      console.error("GET /admin/ticket conv error:", e?.message || e);
     }
-    const items = (pedido?.items || []).map(it => ({
-      desc: String(it.descripcion||"").trim(),
-      qty: Number(it.cantidad||0),
+
+    // 1) Intentar leer el pedido desde la colección orders (modo actual)
+    try {
+      const order = await db
+        .collection("orders")
+        .findOne(
+          withTenant({ conversationId: convObjectId }),
+          { sort: { createdAt: -1 } }
+        );
+      if (order && order.pedido) {
+        pedido = order.pedido;
+      }
+    } catch (e) {
+      console.error("GET /admin/ticket orders error:", e?.message || e);
+    }
+
+    // 2) Si por algún motivo no encontramos en orders,
+    //    caemos al método viejo: buscar el JSON en los mensajes.
+    if (!pedido) {
+      const msgs = await getConversationMessagesByConvId(convId, 1000);
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (m.role !== "assistant") continue;
+        const s = String(m.content || "").trim();
+        try {
+          const j = JSON.parse(s);
+          if (j && j.Pedido && Array.isArray(j.Pedido.items)) {
+            pedido = j.Pedido;
+            break;
+          }
+        } catch {}
+      }
+    }
+
+    const items = (pedido?.items || []).map((it) => ({
+      desc: String(it.descripcion || "").trim(),
+      qty: Number(it.cantidad || 0),
     }));
+
     const total = Number(pedido?.total_pedido || 0);
     const fecha = new Date().toLocaleString();
 
@@ -2218,17 +2251,15 @@ if (estado === "COMPLETED" && pedido && convId) {
   try {
     const db = await getDb();
     await db.collection("orders").insertOne({
-  tenantId: (tenant || null),
-  from,
-  // ahora sí vinculamos el pedido con la conversación
-  conversationId: convId ? new ObjectId(String(convId)) : null,
-  pedido,
-  estado,
-  distancia_km: typeof pedido?.distancia_km === "number"
-    ? pedido.distancia_km
-    : distKm ?? null,
-  createdAt: new Date(),
-});
+      tenantId: (tenant || null),
+      from,
+      // vinculamos el pedido con la conversación para poder recuperar el ticket
+      conversationId: convId ? new ObjectId(String(convId)) : null,
+      pedido,
+      estado,
+      distancia_km: typeof pedido?.distancia_km === "number" ? pedido.distancia_km : distKm ?? null,
+      createdAt: new Date(),
+    });
   } catch (e) {
     console.error("[orders] error insert COMPLETED:", e?.message || e);
   }
