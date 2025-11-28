@@ -586,6 +586,129 @@ app.get("/api/logs/messages", async (req, res) => {
   }
 });
 
+
+// Pedido de una conversación (detalle JSON)
+app.get("/api/logs/pedido", async (req, res) => {
+  try {
+    const { convId } = req.query;
+    if (!convId) {
+      return res.status(400).json({ error: "convId required" });
+    }
+
+    const db = await getDb();
+    const tenantId = resolveTenantId(req);
+    const convObjectId = new ObjectId(String(convId));
+
+    // Datos básicos de la conversación
+    let waId = "";
+    let contactName = "";
+    let fecha = new Date().toLocaleString("es-AR");
+    try {
+      const conv = await db.collection("conversations").findOne(
+        withTenant({ _id: convObjectId }, tenantId)
+      );
+      if (conv) {
+        waId = conv.waId || "";
+        contactName = conv.contactName || "";
+        fecha = conv.lastAt
+          ? new Date(conv.lastAt).toLocaleString("es-AR")
+          : fecha;
+      }
+    } catch (e) {
+      console.warn("[pedido] no se pudo leer conversation:", e?.message);
+    }
+
+    // 1) Intentar leer el pedido desde orders
+    let pedido = null;
+    try {
+      const order = await db.collection("orders").findOne(
+        withTenant({ conversationId: convObjectId }, tenantId),
+        { sort: { createdAt: -1 } }
+      );
+      if (order && order.pedido) {
+        pedido = order.pedido;
+      }
+    } catch (e) {
+      console.warn("[pedido] no se pudo leer order:", e?.message);
+    }
+
+    // 2) Fallback: si no hay pedido en orders, buscar JSON en mensajes
+    if (!pedido) {
+      const msgs = await getConversationMessagesByConvId(convId, 1000, tenantId);
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (m.role !== "assistant") continue;
+        const s = String(m.content || "").trim();
+        try {
+          const j = JSON.parse(s);
+          if (j && j.Pedido && Array.isArray(j.Pedido.items)) {
+            pedido = j.Pedido;
+            break;
+          }
+        } catch {
+          // no era JSON, seguimos
+        }
+      }
+    }
+
+    if (!pedido) {
+      return res.status(404).json({ error: "pedido_not_found" });
+    }
+
+    const items = (pedido.items || []).map((it) => ({
+      descripcion: String(it.descripcion || "").trim(),
+      cantidad: Number(it.cantidad || 0),
+      importe_unitario: Number(it.importe_unitario || 0),
+      total: Number(it.total || 0),
+    }));
+
+    let total = Number(pedido.total_pedido || 0);
+    if (!total && items.length) {
+      total = items.reduce(
+        (sum, it) => sum + (Number(it.total) || 0),
+        0
+      );
+    }
+
+    let entregaLabel = "-";
+    const entregaRaw = String(pedido.Entrega || "").trim().toLowerCase();
+    if (entregaRaw === "domicilio") entregaLabel = "Envío";
+    else if (entregaRaw === "retiro") entregaLabel = "Retiro";
+
+    let direccion = "-";
+    if (pedido.Entrega === "domicilio") {
+      if (typeof pedido.Domicilio === "string") {
+        direccion = pedido.Domicilio.trim() || "-";
+      } else if (pedido.Domicilio && typeof pedido.Domicilio === "object") {
+        direccion =
+          String(
+            pedido.Domicilio.direccion ||
+              pedido.Domicilio.calle ||
+              ""
+          ).trim() || "-";
+      }
+    }
+
+    res.json({
+      ok: true,
+      convId,
+      waId,
+      contactName,
+      fecha,
+      entrega: entregaLabel,
+      direccion,
+      fechaEntrega: pedido.Fecha || null,
+      horaEntrega: pedido.Hora || null,
+      items,
+      total,
+    });
+  } catch (e) {
+    console.error("GET /api/logs/pedido error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+
 // ---------- Página /admin (HTML liviano) ----------
 app.get("/admin", async (req, res) => {
   try {
@@ -648,6 +771,7 @@ app.get("/admin", async (req, res) => {
         max-height: 90vh;
         display: flex;
         flex-direction: column;
+        overflow: auto;
         gap: 8px;
       }
 
@@ -712,7 +836,22 @@ app.get("/admin", async (req, res) => {
      </div>
    </div>
 
- 
+    <!-- Modal Detalle de Pedido -->
+    <div id="pedidoModalBackdrop" class="modal-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
+      <div class="modal" role="document">
+        <header>
+          <h3>Detalle de pedido</h3>
+          <div class="chip">
+            <button class="iconbtn" title="Cerrar" id="pedidoModalCloseBtn">✖</button>
+          </div>
+        </header>
+        <div class="body" id="pedidoModalBody">
+          <p class="muted">Cargando…</p>
+        </div>
+      </div>
+    </div>
+
+
    <!-- Modal para mostrar el ticket -->
     <div id="ticketModalBackdrop" class="ticket-modal-backdrop">
       <div class="ticket-modal">
@@ -730,12 +869,20 @@ app.get("/admin", async (req, res) => {
     const modalBody = document.getElementById('modalBody');
     const modalCloseBtn = document.getElementById('modalCloseBtn');
      const modalPrintBtn = document.getElementById('modalPrintBtn');
-
+      const pedidoModalBackdrop = document.getElementById('pedidoModalBackdrop');
+     const pedidoModalBody = document.getElementById('pedidoModalBody');
+     const pedidoModalCloseBtn = document.getElementById('pedidoModalCloseBtn');
 
     function closeModal(){ modalRoot.style.display='none'; modalRoot.setAttribute('aria-hidden','true'); }
     modalCloseBtn.addEventListener('click', closeModal);
     modalRoot.addEventListener('click', (e)=>{ if(e.target===modalRoot) closeModal(); });
 
+     function closePedidoModal() {
+       pedidoModalBackdrop.style.display = 'none';
+       pedidoModalBackdrop.setAttribute('aria-hidden', 'true');
+     }
+     pedidoModalCloseBtn.addEventListener('click', closePedidoModal);
+     pedidoModalBackdrop.addEventListener('click', (e)=>{ if(e.target===pedidoModalBackdrop) closePedidoModal(); });
     function renderMessages(list){
       if(!Array.isArray(list) || !list.length){
         modalBody.innerHTML = '<p class="muted">Sin mensajes para mostrar</p>';
@@ -749,6 +896,90 @@ app.get("/admin", async (req, res) => {
       )).join('');
     }
 
+     function escHtml(str) {
+       return String(str || '')
+         .replace(/&/g, '&amp;')
+         .replace(/</g, '&lt;')
+         .replace(/>/g, '&gt;');
+     }
+
+     function formatMoney(n) {
+       const num = Number(n || 0);
+       if (!Number.isFinite(num)) return '-';
+       return num.toLocaleString('es-AR', { minimumFractionDigits: 0 });
+     }
+
+     function renderPedidoDetail(data) {
+       const items = Array.isArray(data.items) ? data.items : [];
+       let html = '';
+
+       html += '<p>';
+       html += '<strong>Nombre:</strong> ' + escHtml(data.contactName || '-') + '<br/>';
+       html += '<strong>Teléfono:</strong> ' + escHtml(data.waId || '-') + '<br/>';
+       if (data.fechaEntrega || data.horaEntrega) {
+         html += '<strong>Entrega para:</strong> ' +
+           escHtml(data.fechaEntrega || '') + ' ' +
+           escHtml(data.horaEntrega || '') + '<br/>';
+       }
+       html += '<strong>Modalidad:</strong> ' + escHtml(data.entrega || '-') + '<br/>';
+       html += '<strong>Dirección:</strong> ' + escHtml(data.direccion || '-') + '<br/>';
+       html += '</p>';
+
+       if (!items.length) {
+         html += '<p class="muted">No se encontraron ítems en este pedido.</p>';
+         pedidoModalBody.innerHTML = html;
+         return;
+       }
+
+       html += '<table style="width:100%;border-collapse:collapse;margin-top:8px">';
+       html += '<thead><tr>' +
+         '<th style="text-align:left;border-bottom:1px solid #ddd;padding:4px">Cant.</th>' +
+         '<th style="text-align:left;border-bottom:1px solid #ddd;padding:4px">Producto</th>' +
+         '<th style="text-align:right;border-bottom:1px solid #ddd;padding:4px">Unit.</th>' +
+         '<th style="text-align:right;border-bottom:1px solid #ddd;padding:4px">Total</th>' +
+         '</tr></thead><tbody>';
+
+       items.forEach(it => {
+         html += '<tr>';
+         html += '<td style="padding:4px;border-bottom:1px solid #eee">' + escHtml(it.cantidad != null ? it.cantidad : '') + '</td>';
+         html += '<td style="padding:4px;border-bottom:1px solid #eee">' + escHtml(it.descripcion || '') + '</td>';
+         html += '<td style="padding:4px;border-bottom:1px solid #eee;text-align:right">' +
+           (it.importe_unitario ? ('$ ' + formatMoney(it.importe_unitario)) : '-') +
+           '</td>';
+         html += '<td style="padding:4px;border-bottom:1px solid #eee;text-align:right">$ ' +
+           formatMoney(it.total) +
+           '</td>';
+         html += '</tr>';
+       });
+
+       html += '</tbody></table>';
+       html += '<p style="margin-top:8px;text-align:right"><strong>Total:</strong> $ ' + formatMoney(data.total) + '</p>';
+
+       pedidoModalBody.innerHTML = html;
+     }
+
+     async function openPedidoModal(convId) {
+       try {
+         pedidoModalBody.innerHTML = '<p class="muted">Cargando…</p>';
+         pedidoModalBackdrop.style.display = 'flex';
+         pedidoModalBackdrop.setAttribute('aria-hidden', 'false');
+
+         const r = await fetch('/api/logs/pedido?convId=' + encodeURIComponent(convId));
+         if (!r.ok) {
+           pedidoModalBody.innerHTML = '<p class="muted">No se encontró un pedido para esta conversación.</p>';
+           return;
+         }
+         const data = await r.json();
+         if (!data || !data.ok) {
+           pedidoModalBody.innerHTML = '<p class="muted">No se encontró un pedido para esta conversación.</p>';
+           return;
+         }
+         renderPedidoDetail(data);
+       } catch (e) {
+         console.error('Detalle pedido modal error:', e);
+         pedidoModalBody.innerHTML = '<p class="muted">Error al cargar el pedido.</p>';
+       }
+     }
     async function openDetailModal(convId){
       try{
         modalBody.innerHTML = '<p class="muted">Cargando…</p>';
@@ -793,6 +1024,7 @@ app.get("/admin", async (req, res) => {
             <td>\${c.status||'-'}</td>
             <td class="actions">
               <button class="btn" onclick="openDetailModal('\${c._id}')">Detalle</button>
+              <button class="btn" onclick="openPedidoModal('\${c._id}')">Pedido</button>
               <button onclick="openTicketModal('\${c._id}')">🖨️ Imprimir</button>
             </td>
           </tr>\`).join('');
@@ -865,6 +1097,7 @@ app.get("/admin", async (req, res) => {
            <td>\${c.status || '-'}</td>
            <td>
             <button class="btn" data-conv="\${c._id}">Detalle</button>
+            <button class="btn" data-pedido="\${c._id}">Pedido</button>
             <button class="btn" data-print="\${c._id}">Imprimir</button>
            </td>\`;
         tb.appendChild(tr);
@@ -873,6 +1106,9 @@ app.get("/admin", async (req, res) => {
        tb.querySelectorAll('button[data-conv]').forEach(b=>{
         b.addEventListener('click',()=>openDetailModal(b.getAttribute('data-conv')));
        });
+       tb.querySelectorAll('button[data-pedido]').forEach(b=>{
+         b.addEventListener('click',()=>openPedidoModal(b.getAttribute('data-pedido')));
+        });
         tb.querySelectorAll('button[data-print]').forEach(b=>{
          b.addEventListener('click',()=>openTicketModal(b.getAttribute('data-print')));
        });
