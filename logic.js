@@ -242,6 +242,7 @@ const assistantPedidoSnapshot = {}; // minimal mode: { [tenant-from]: string(JSO
 function k(tenantId, from) { return `${tenantId}::${from}`; }
 
 // ================== Helpers de sesión ==================
+// ================== Helpers de sesión ==================
 const endedSessions = {}; // { [tenant-from]: { endedAt } }
 function hasActiveEndedFlag(tenantId, from) {
   const id = k(tenantId, from);
@@ -254,12 +255,18 @@ function hasActiveEndedFlag(tenantId, from) {
   }
   return true;
 }
+
 function markSessionEnded(tenantId, from) {
   const id = k(tenantId, from);
   delete chatHistories[id];
   delete userOnlyHistories[id];
   delete assistantPedidoSnapshot[id];
   endedSessions[id] = { endedAt: Date.now() };
+}
+
+function clearEndedFlag(tenantId, from) {
+  const id = k(tenantId, from);
+  delete endedSessions[id];
 }
 
 // ================== WhatsApp ==================
@@ -935,6 +942,7 @@ module.exports = {
   buildBackendSummary,
   coalesceResponse,
   recalcAndDetectMismatch,
+    clearEndedFlag,
 
   // constants needed by endpoints (optional export)
   GRAPH_VERSION,
