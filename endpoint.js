@@ -1882,18 +1882,18 @@ console.log("[convId] "+ convId);
 setAssistantPedidoSnapshot(tenant, from, pedido, estado);
 
 // 🔹 Persistir pedido definitivo en MongoDB SOLO si está COMPLETED
-if (estado === "COMPLETED") {
+if (estado === "COMPLETED" && pedido && convId) {
   try {
-    const db = await require("./db").getDb();
-
+    const db = await getDb();
     await db.collection("orders").insertOne({
       tenantId: (tenant || null),
       from,
-      // si tenés conversationId en este scope, podés agregarlo:
-      // conversationId: convId ? new ObjectId(String(convId)) : null,
+      conversationId: new ObjectId(String(convId)),   // ✅ clave única por conversación
       pedido,
       estado,
-      distancia_km: typeof pedido?.distancia_km === "number" ? pedido.distancia_km : distKm ?? null,
+      distancia_km: typeof pedido?.distancia_km === "number"
+        ? pedido.distancia_km
+        : (typeof distKm === "number" ? distKm : null),
       createdAt: new Date(),
     });
   } catch (e) {
