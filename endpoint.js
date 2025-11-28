@@ -971,6 +971,43 @@ app.get("/admin/ticket/:convId", async (req, res) => {
     }));
     const total = Number(pedido?.total_pedido || 0);
     const fecha = new Date().toLocaleString();
+
+    // ===== Modalidad de entrega y dirección =====
+    const entregaRaw = String(pedido?.Entrega || "").trim();
+    let modalidadText = "-";
+    let direccionText = "-";
+
+    if (entregaRaw) {
+      // Soportar valores nuevos ("domicilio"/"retiro") y viejos ("Envío (Moreno 2862)")
+      if (/domicilio|env[ií]o|delivery/i.test(entregaRaw)) {
+        modalidadText = "Envío";
+      } else if (/retiro|retir/i.test(entregaRaw)) {
+        modalidadText = "Retiro";
+      } else {
+        // fallback: mostramos lo que vino
+        modalidadText = entregaRaw;
+      }
+    }
+
+    // Dirección: primero miramos Pedido.Domicilio
+    if (pedido?.Domicilio) {
+      const dom = pedido.Domicilio;
+      if (typeof dom === "string") {
+        direccionText = dom;
+      } else if (typeof dom === "object") {
+        direccionText = String(
+          dom.direccion || dom.calle || ""
+        ).trim();
+        if (!direccionText) {
+          // último recurso: stringify para no perder info
+          direccionText = JSON.stringify(dom);
+        }
+      }
+    } else if (entregaRaw) {
+      // Soportar formato viejo: "Envío (Moreno 2862)"
+      const m = entregaRaw.match(/\((.+)\)/);
+      if (m) direccionText = m[1].trim();
+    }
     const html = `<!doctype html>
 <html><head><meta charset="utf-8"/><title>Ticket</title>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -990,10 +1027,12 @@ app.get("/admin/ticket/:convId", async (req, res) => {
     <button class="btn" onclick="window.close()">Cerrar</button>
   </div>
   <h3>Comanda Cliente</h3>
-  <div class="line"><span>Fecha</span><span>${fecha}</span></div>
-  <div class="line"><span>Teléfono</span><span>${waId || "-"}</span></div>
-  <div class="line"><span>Nombre</span><span>${(nombre||"-")}</span></div>
-  <div class="sep"></div>
+    <div class="line"><span>Fecha</span><span>${fecha}</span></div>
+   <div class="line"><span>Teléfono</span><span>${waId || "-"}</span></div>
+   <div class="line"><span>Nombre</span><span>${(nombre||"-")}</span></div>
+   <div class="line"><span>Entrega</span><span>${modalidadText}</span></div>
+   <div class="line"><span>Dirección</span><span>${direccionText}</span></div>
+   <div class="sep"></div>
   ${items.length ? items.map(i => `<div class="line"><span>${i.qty} x ${i.desc}</span><span></span></div>`).join("") : "<div class='line'><em>Sin ítems detectados</em></div>"}
   <div class="sep"></div>
   <div class="line"><strong>Total</strong><strong>$ ${total.toLocaleString("es-AR")}</strong></div>
