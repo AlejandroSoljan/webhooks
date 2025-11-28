@@ -844,11 +844,16 @@ async function ensureEnvioSmart(pedido, tenantId) {
       String(i?.descripcion || "").toLowerCase().includes("envio")
     );
 
-    // Preparar dirección
+        // Preparar dirección
     const DEF_CITY = process.env.DEFAULT_CITY || "Venado Tuerto";
     const DEF_PROVINCE = process.env.DEFAULT_PROVINCE || "Santa Fe";
     const DEF_COUNTRY = process.env.DEFAULT_COUNTRY || "Argentina";
-    const domicilio = pedido?.Domicilio || {};
+    const rawDomicilio = pedido?.Domicilio || {};
+    const domicilio = (typeof rawDomicilio === "string")
+      ? { direccion: rawDomicilio }
+      : rawDomicilio;
+    // normalizamos para que siempre sea objeto
+    pedido.Domicilio = domicilio;
     const addrParts = [
       domicilio.direccion,
       [domicilio.calle, domicilio.numero].filter(Boolean).join(" "),
@@ -858,7 +863,11 @@ async function ensureEnvioSmart(pedido, tenantId) {
       domicilio.cp
     ].filter(Boolean);
     let address = addrParts.join(", ").trim();
-    if (address && !/,/.test(address)) {
+   if (!address) {
+      console.log("[envio] ensureEnvioSmart: sin dirección, no ajusto el envío por distancia");
+      return pedido;
+    }
+    if (!/,/.test(address)) {
       address = [address, DEF_CITY, DEF_PROVINCE, DEF_COUNTRY].filter(Boolean).join(", ");
     }
 
