@@ -265,21 +265,115 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
       (conversationId && typeof conversationId === "object" && conversationId._bsontype === "ObjectID")
         ? conversationId
         : new ObjectId(String(conversationId));
+
+    const roleStr = String(role);
+    const typeStr = String(type || "text");
+
+    // 🔹 Helper: actualizar resumen de Pedido en `conversations` usando el JSON del assistant
+    async function persistPedidoResumenFromAssistantJson() {
+      if (roleStr !== "assistant") return;
+      try {
+        const s = String(content || "").trim();
+        if (!s.startsWith("{")) return;
+        const j = JSON.parse(s);
+        if (!j || !j.Pedido || !Array.isArray(j.Pedido.items)) return;
+        const pedido = j.Pedido || {};
+
+        // 🧾 Nombre y apellido directo desde el Pedido (toma prioridad sobre heurísticas de texto)
+        const nombreFromPedido = String(
+          pedido.nombre_apellido || pedido.nombre || ""
+        ).trim();
+
+       // 🛠️ Normalizar/Inferir entrega:
+       const entregaRaw = String(pedido.Entrega || "").trim().toLowerCase();
+        const envioItem = (pedido.items || []).find(i =>
+          /env[ií]o/i.test(String(i?.descripcion || ""))
+        );
+
+        // ¿Hay dirección en el JSON?
+        const hasAddress =
+          pedido?.Domicilio &&
+          typeof pedido.Domicilio === "object" &&
+          Object.values(pedido.Domicilio).some(v => String(v || "").trim() !== "");
+
+        // Si Entrega no es 'domicilio'/'retiro' pero hay dirección o envío → forzar 'domicilio'
+        let entrega = (entregaRaw === "domicilio" || entregaRaw === "retiro")
+          ? entregaRaw
+          : ((hasAddress || !!envioItem) ? "domicilio" : (entregaRaw || ""));
+
+        // Dirección amigable:
+        // - Si Domicilio es string → usarlo directo
+        // - Si es objeto → usar .direccion / .calle
+        // - Si no hay dirección pero sí ítem de envío → usar descripción del envío
+        let direccion = "";
+        if (typeof pedido.Domicilio === "string") {
+          direccion = pedido.Domicilio.trim();
+        } else if (pedido.Domicilio && typeof pedido.Domicilio === "object") {
+          direccion = String(
+            pedido.Domicilio.direccion ||
+            pedido.Domicilio.calle ||
+            ""
+          ).trim();
+        }
+        if (!direccion && envioItem) {
+          direccion = String(envioItem.descripcion || "").trim();
+        }
+
+        // Etiqueta de entrega para la tabla: solo "Envío" o "Retiro"
+        let entregaLabel;
+        if (entrega === "domicilio") {
+          entregaLabel = "Envío";
+        } else if (entrega === "retiro") {
+          entregaLabel = "Retiro";
+        } else {
+          entregaLabel = "-";
+        }
+
+        // Fecha/Hora sólo si vienen en campos normales
+        const fechaEntrega = /^\d{4}-\d{2}-\d{2}$/.test(String(pedido.Fecha || "")) ? pedido.Fecha : null;
+        const horaEntrega  = /^\d{2}:\d{2}$/.test(String(pedido.Hora  || "")) ? pedido.Hora  : null;
+
+        await db.collection("conversations").updateOne(
+          { _id: convObjectId },
+          {
+            $set: {
+              updatedAt: now,
+              lastAssistantTs: now,
+              pedidoEntrega: entrega || null,
+              pedidoEntregaLabel: entregaLabel || null,
+              ...(direccion ? { pedidoDireccion: direccion } : {}),
+              ...(fechaEntrega ? { pedidoFecha: fechaEntrega } : {}),
+              ...(horaEntrega  ? { pedidoHora:  horaEntrega  } : {}),
+              ...(nombreFromPedido ? { contactName: nombreFromPedido } : {})
+            }
+          }
+        );
+      } catch (e) {
+        console.warn("[messages] no se pudo persistir resumen de Pedido en conversations:", e?.message);
+      }
+    }
+
+    // 🚫 Si es el mensaje JSON del assistant, NO lo guardamos en `messages`,
+    //     solo actualizamos el resumen del Pedido en `conversations` y salimos.
+    if (roleStr === "assistant" && typeStr === "json") {
+      await persistPedidoResumenFromAssistantJson();
+      return;
+    }
+
     const doc = {
       tenantId: (tenantId ?? TENANT_ID ?? null),
       conversationId: convObjectId,
       waId: String(waId || ""),
       role: String(role),
       content: String(content ?? ""),
-      type: String(type || "text"),
+      type: typeStr,
       meta: { ...meta },
       ts: now,
       createdAt: now
     };
     const ins = await db.collection("messages").insertOne(doc);
     console.log("[messages] inserted:", ins?.insertedId?.toString?.());
-    // 🟢 Actualizar conversación: nombre/apellido (desde texto) y resumen del Pedido (si hay JSON)
-    const roleStr = String(role);
+    // 🟢 Actualizar conversación: nombre/apellido (desde texto)
     // 1) Intento de extracción de NOMBRE desde cualquier mensaje (user/assistant)
     try {
       const text = String(content || "").trim();
@@ -301,92 +395,7 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
       console.warn("[messages] nombre no detectado:", e?.message);
     }
 
-    // 2) Resumen del Pedido en conversations SOLO si el contenido es JSON válido del asistente
-    if (roleStr === "assistant") {
-      try {
-        const s = String(content || "").trim();
-        // Solo intentar parsear si claramente es JSON
-        if (String(type) === "json" || s.startsWith("{")) {
-          const j = JSON.parse(s);
-          if (j && j.Pedido && Array.isArray(j.Pedido.items)) {
-            const pedido = j.Pedido || {};
-
-            // 🧾 Nombre y apellido directo desde el Pedido (toma prioridad sobre heurísticas de texto)
-            const nombreFromPedido = String(
-              pedido.nombre_apellido || pedido.nombre || ""
-            ).trim();
-
-            // 🛠️ Normalizar/Inferir entrega:
-            const entregaRaw = String(pedido.Entrega || "").trim().toLowerCase();
-            const envioItem = (pedido.items || []).find(i =>
-              /env[ií]o/i.test(String(i?.descripcion || ""))
-            );
-
-            // ¿Hay dirección en el JSON?
-            const hasAddress =
-              pedido?.Domicilio &&
-              typeof pedido.Domicilio === "object" &&
-              Object.values(pedido.Domicilio).some(v => String(v || "").trim() !== "");
-
-            // Si Entrega no es 'domicilio'/'retiro' pero hay dirección o envío → forzar 'domicilio'
-            let entrega = (entregaRaw === "domicilio" || entregaRaw === "retiro")
-              ? entregaRaw
-              : ((hasAddress || !!envioItem) ? "domicilio" : (entregaRaw || ""));
-
-            // Dirección amigable:
-            // - Si Domicilio es string → usarlo directo
-            // - Si es objeto → usar .direccion / .calle
-            // - Si no hay dirección pero sí ítem de envío → usar descripción del envío
-            let direccion = "";
-            if (typeof pedido.Domicilio === "string") {
-              direccion = pedido.Domicilio.trim();
-            } else if (pedido.Domicilio && typeof pedido.Domicilio === "object") {
-              direccion = String(
-                pedido.Domicilio.direccion ||
-                pedido.Domicilio.calle ||
-                ""
-              ).trim();
-            }
-            if (!direccion && envioItem) {
-              direccion = String(envioItem.descripcion || "").trim();
-            }
-
-            // Etiqueta de entrega para la tabla: solo "Envío" o "Retiro"
-            let entregaLabel;
-            if (entrega === "domicilio") {
-              entregaLabel = "Envío";
-            } else if (entrega === "retiro") {
-              entregaLabel = "Retiro";
-            } else {
-              entregaLabel = "-";
-            }
-
-            // Fecha/Hora sólo si vienen en campos normales
-            const fechaEntrega = /^\d{4}-\d{2}-\d{2}$/.test(String(pedido.Fecha || "")) ? pedido.Fecha : null;
-            const horaEntrega  = /^\d{2}:\d{2}$/.test(String(pedido.Hora  || "")) ? pedido.Hora  : null;
-   
-            await db.collection("conversations").updateOne(
-              { _id: convObjectId },
-              {
-                $set: {
-                  updatedAt: now,
-                  lastAssistantTs: now,
-                  pedidoEntrega: entrega || null,
-                  pedidoEntregaLabel: entregaLabel || null,
-                  ...(direccion ? { pedidoDireccion: direccion } : {}),
-                  ...(fechaEntrega ? { pedidoFecha: fechaEntrega } : {}),
-                  ...(horaEntrega  ? { pedidoHora:  horaEntrega  } : {}),
-                  ...(nombreFromPedido ? { contactName: nombreFromPedido } : {})
-   
-                }
-              }
-            );
-          }
-        }
-      } catch (e) {
-        console.warn("[messages] no se pudo persistir resumen de Pedido en conversations:", e?.message);
-      }
-    }
+    
   } catch (e) {
     console.error("[messages] save error:", e?.stack || e?.message || e);
     throw e;
