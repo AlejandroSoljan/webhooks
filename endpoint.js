@@ -1688,16 +1688,33 @@ console.log("[convId] "+ convId);
      }
 */
     try {
-      const finalBody = String(responseText ?? "").trim();
-    if (!finalBody) {
-      // No forzar resumen a menos que lo pidan explícitamente
-      if (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length > 0) {
-        responseText = buildBackendSummary(pedido, { showEnvio: wantsDetail });
-      } else {
-        // Texto neutro si ya hay contexto; saludo solo si no lo hay
-        responseText = coalesceResponse("", pedido);
+      let finalBody = String(responseText ?? "").trim();
+
+      // 🛡️ Si el modelo solo respondió algo muy corto tipo
+      // "tu pedido queda así" sin detallar productos/total,
+      // generamos un resumen completo desde backend.
+      if (
+        finalBody &&
+        /queda\s+as[ií]/i.test(finalBody) &&
+        finalBody.length < 80 &&
+        pedido &&
+        Array.isArray(pedido.items) &&
+        pedido.items.length > 0
+      ) {
+        // Usamos el resumen estándar del backend (sin ítem de envío)
+        responseText = buildBackendSummary(pedido);
+        finalBody = String(responseText || "").trim();
       }
-    }
+
+      if (!finalBody) {
+        // No forzar resumen a menos que lo pidan explícitamente
+        if (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length > 0) {
+          responseText = buildBackendSummary(pedido, { showEnvio: wantsDetail });
+        } else {
+          // Texto neutro si ya hay contexto; saludo solo si no lo hay
+          responseText = coalesceResponse("", pedido);
+        }
+      }
     } catch {}
 
 
