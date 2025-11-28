@@ -1020,12 +1020,8 @@ app.get("/admin/ticket/:convId", async (req, res) => {
   .foot{font-size:11px; text-align:center; margin-top:8px}
   .btn{padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff; cursor:pointer}
   .warn{font-size:11px; margin-top:6px}
-</style></head>
+  </style></head>
 <body>
-  <div class="no-print" style="display:flex; gap:8px; margin-bottom:6px">
-    <button class="btn" onclick="window.print()">Imprimir</button>
-    <button class="btn" onclick="window.close()">Cerrar</button>
-  </div>
   <h3>Comanda Cliente</h3>
     <div class="line"><span>Fecha</span><span>${fecha}</span></div>
    <div class="line"><span>Teléfono</span><span>${waId || "-"}</span></div>
@@ -1112,12 +1108,8 @@ app.get("/admin/ticket/:convId", async (req, res) => {
   .foot{font-size:11px; text-align:center; margin-top:8px}
   .btn{padding:6px 10px; border:1px solid #333; border-radius:6px; background:#fff; cursor:pointer}
   .warn{font-size:11px; margin-top:6px}
-</style></head>
+  </style></head>
 <body>
-  <div class="no-print" style="display:flex; gap:8px; margin-bottom:6px">
-    <button class="btn" onclick="window.print()">Imprimir</button>
-    <button class="btn" onclick="window.close()">Cerrar</button>
-  </div>
   <h3>Comanda Cliente</h3>
   <div class="line"><span>Fecha</span><span>${fecha}</span></div>
   <div class="line"><span>Teléfono</span><span>${waId || "-"}</span></div>
