@@ -1229,21 +1229,36 @@ app.get("/admin", async (req, res) => {
        }
      }
     async function openDetailModal(convId){
-      try{
-        modalBody.innerHTML = '<p class="muted">Cargando…</p>';
-        modalRoot.style.display='flex';
-        modalRoot.setAttribute('aria-hidden','false');
-        // fetch mensajes
-        const r = await fetch('/api/logs/messages?convId='+encodeURIComponent(convId));
-        const data = await r.json();
-        renderMessages(data);
-          // imprimir en ticket 80mm
-        modalPrintBtn.onclick = () => goPrint(convId);
-      }catch(e){
-       modalBody.innerHTML = '<p class="muted">Error al cargar.</p>';
-        console.error('Detalle modal error:', e);
-      }
-    }
+  try{
+    currentConvId = convId; // ✅ necesario para manual y enviar
+
+    modalRoot.style.display = 'flex';
+    modalRoot.setAttribute('aria-hidden','false');
+
+    const msgsEl = modalMsgs();
+    if (msgsEl) msgsEl.innerHTML = '<p class="muted">Cargando…</p>';
+
+    // ✅ cargar estado manual del chat
+    await loadModalMeta();
+
+    const r = await fetch('/api/logs/messages?convId=' + encodeURIComponent(convId));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+
+    const data = await r.json().catch(()=>[]);
+    renderMessages(data);
+
+    // si vas a usar imprimir desde el modal
+    modalPrintBtn.onclick = () => openTicketModal(convId); 
+    // o si querés otra función:
+    // modalPrintBtn.onclick = () => goPrint(convId);
+
+  }catch(e){
+    console.error('Detalle modal error:', e);
+    const msgsEl = modalMsgs();
+    if (msgsEl) msgsEl.innerHTML = '<p class="muted">Error al cargar.</p>';
+  }
+}
+
 
     function openDetail(){
       const sel = document.getElementById('convSel');
@@ -1286,8 +1301,7 @@ app.get("/admin", async (req, res) => {
         }
       }catch(e){ console.error('reloadTable error', e); }
     }
-    // Auto-refresh de la tabla cada 10s
-    setInterval(reloadTable, 10000);
+  
 
 
      function fmt(d){ try{ return new Date(d).toLocaleString(); }catch{ return '-'; } }
