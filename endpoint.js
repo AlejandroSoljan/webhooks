@@ -891,6 +891,15 @@ app.get("/admin", async (req, res) => {
     small{color:#666}
     pre{white-space:pre-wrap;margin:4px 0 0}
 
+    /* ===== Manual chat UI ===== */
+    .badge{padding:4px 8px;border-radius:999px;font-size:12px}
+    .badge-bot{background:#e3f7e3;color:#145214}
+    .badge-manual{background:#ffe4e1;color:#8b0000}
+    .modal-meta-row{display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap}
+    #modalChatBox{margin-top:12px;border-top:1px solid #eee;padding-top:10px;display:flex;flex-direction:column;gap:6px}
+    #modalReplyText{width:100%;min-height:70px;font-family:inherit;font-size:14px;padding:6px 8px}
+    .chat-actions{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+
     table{border-collapse:collapse; width:100%; margin-top:12px}
     th,td{border:1px solid #ddd; padding:8px; vertical-align:top; font-size:14px}
     th{background:#f7f7f7; text-align:left}
@@ -977,7 +986,20 @@ app.get("/admin", async (req, res) => {
          </div>
        </header>
        <div class="body" id="modalBody">
-        <p class="muted">Cargando…</p>
+         <div class="modal-meta-row">
+           <span id="modalManualBadge" class="badge badge-bot">Estado: ...</span>
+           <button class="btn" id="modalToggleManualBtn">Tomar chat (pausar bot)</button>
+         </div>
+         <div id="modalMsgs">
+           <p class="muted">Cargando…</p>
+         </div>
+         <div id="modalChatBox">
+           <textarea id="modalReplyText" placeholder="Escribí un mensaje para el cliente… (Ctrl/⌘+Enter para enviar)"></textarea>
+           <div class="chat-actions">
+             <button class="btn" id="modalSendBtn">Enviar</button>
+             <span class="muted" style="font-size:12px">El bot solo se pausa si el chat está en modo manual.</span>
+           </div>
+         </div>
        </div>
      </div>
    </div>
@@ -1013,6 +1035,14 @@ app.get("/admin", async (req, res) => {
      // ===== Modal helpers =====
     const modalRoot = document.getElementById('modalRoot');
     const modalBody = document.getElementById('modalBody');
+    const modalMsgs = () => document.getElementById('modalMsgs');
+    const modalManualBadge = () => document.getElementById('modalManualBadge');
+    const modalToggleManualBtn = () => document.getElementById('modalToggleManualBtn');
+    const modalReplyText = () => document.getElementById('modalReplyText');
+    const modalSendBtn = () => document.getElementById('modalSendBtn');
+
+    let currentConvId = null;
+    let modalManualOpen = false;
     const modalCloseBtn = document.getElementById('modalCloseBtn');
      const modalPrintBtn = document.getElementById('modalPrintBtn');
       const pedidoModalBackdrop = document.getElementById('pedidoModalBackdrop');
@@ -1030,17 +1060,89 @@ app.get("/admin", async (req, res) => {
      pedidoModalCloseBtn.addEventListener('click', closePedidoModal);
      pedidoModalBackdrop.addEventListener('click', (e)=>{ if(e.target===pedidoModalBackdrop) closePedidoModal(); });
     function renderMessages(list){
+      const target = modalMsgs();
+      if (!target) return;
       if(!Array.isArray(list) || !list.length){
-        modalBody.innerHTML = '<p class="muted">Sin mensajes para mostrar</p>';
+        target.innerHTML = '<p class="muted">Sin mensajes para mostrar</p>';
         return;
       }
-      modalBody.innerHTML = list.map(m => (
+      target.innerHTML = list.map(m => (
         '<div class="msg role-'+m.role+'">'+
           '<small>['+new Date(m.createdAt).toLocaleString()+'] '+m.role+'</small>'+
           '<pre>'+String(m.content||'').replace(/</g,'&lt;')+'</pre>'+
         '</div>'
       )).join('');
     }
+
+    function updateModalManualUI(){
+      const badge = modalManualBadge();
+      const btn = modalToggleManualBtn();
+      if (!badge || !btn) return;
+      if (modalManualOpen) {
+        badge.textContent = 'Modo MANUAL: bot pausado';
+        badge.classList.remove('badge-bot');
+        badge.classList.add('badge-manual');
+        btn.textContent = 'Liberar al bot';
+      } else {
+        badge.textContent = 'Modo BOT automático';
+        badge.classList.remove('badge-manual');
+        badge.classList.add('badge-bot');
+        btn.textContent = 'Tomar chat (pausar bot)';
+      }
+    }
+
+    
+
+    async function loadModalMeta(){
+      if (!currentConvId) return;
+      const r = await fetch('/api/admin/conversation-meta?convId=' + encodeURIComponent(currentConvId));
+      if (!r.ok) return;
+      const j = await r.json().catch(()=>null);
+      modalManualOpen = !!(j && j.manualOpen);
+      updateModalManualUI();
+    }
+
+    async function toggleModalManual(){
+      if (!currentConvId) return;
+      const r = await fetch('/api/admin/conversation-manual', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ convId: currentConvId, manualOpen: !modalManualOpen })
+      });
+      const j = await r.json().catch(()=>({}));
+      if (!r.ok || !j.ok) {
+        alert('No se pudo cambiar el estado manual.');
+        return;
+      }
+      modalManualOpen = !!j.manualOpen;
+      updateModalManualUI();
+    }
+
+    async function sendModalMessage(){
+      if (!currentConvId) return;
+      const ta = modalReplyText();
+      const text = String(ta?.value || '').trim();
+      if (!text) return;
+
+      const r = await fetch('/api/admin/send-message', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ convId: currentConvId, text })
+      });
+      const j = await r.json().catch(()=>({}));
+      if (!r.ok || !j.ok) {
+        alert('Error al enviar el mensaje.');
+        return;
+      }
+      if (ta) ta.value = '';
+
+      // refrescar mensajes
+      const rm = await fetch('/api/logs/messages?convId=' + encodeURIComponent(currentConvId));
+      const data = await rm.json().catch(()=>[]);
+      renderMessages(data);
+    }
+
+
 
      function escHtml(str) {
        return String(str || '')
@@ -1271,6 +1373,25 @@ app.get("/admin", async (req, res) => {
      loadTable();
      setInterval(loadTable, 20000);
 
+
+     // ===== Bind manual chat modal =====
+     document.addEventListener('DOMContentLoaded', () => {
+       const tBtn = modalToggleManualBtn();
+       const sBtn = modalSendBtn();
+       const ta = modalReplyText();
+
+       if (tBtn) tBtn.addEventListener('click', toggleModalManual);
+       if (sBtn) sBtn.addEventListener('click', sendModalMessage);
+       if (ta) {
+         ta.addEventListener('keydown', (e) => {
+           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+             e.preventDefault();
+             sendModalMessage();
+           }
+         });
+       }
+     });
+     
 
   </script>
 </body>
