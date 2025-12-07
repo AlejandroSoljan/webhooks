@@ -112,7 +112,8 @@ async function upsertConversation(waId, init = {}, tenantId) {
    // 👉 Solo conversaciones abiertas: si la última está finalizada/cancelada, se creará un registro nuevo
   const filter = { waId: String(waId), tenantId: tenant, finalized: { $ne: true }, status: { $nin: ["COMPLETED", "CANCELLED"] } };
   const update = {
-    $setOnInsert: { createdAt: now, openedAt: now, status: "OPEN" },
+    $setOnInsert: { createdAt: now, openedAt: now, status: "OPEN", manualOpen: false },
+   
     $set: { updatedAt: now, ...init },
   };
   // Para driver moderno
@@ -496,6 +497,7 @@ async function listConversations(limit = 50, tenantId) {
       waId: c.waId,
       contactName: c.contactName || "-",
       status: c.finalized ? "COMPLETED" : (c.status || "OPEN"),
+      manualOpen: !!c.manualOpen,
       lastAt: c.lastUserTs || c.lastAssistantTs || c.updatedAt || c.closedAt || c.openedAt
     };
 
@@ -585,6 +587,150 @@ app.get("/api/logs/messages", async (req, res) => {
     res.status(500).json({ error: "internal" });
   }
 });
+
+
+// ---------- Meta de conversación para admin (incluye manualOpen) ----------
+app.get("/api/admin/conversation-meta", async (req, res) => {
+  try {
+    const { convId, waId } = req.query;
+    if (!convId && !waId) {
+      return res.status(400).json({ error: "convId_or_waId_required" });
+    }
+    const tenant = resolveTenantId(req);
+    const db = await getDb();
+
+    let conv = null;
+    if (convId) {
+      conv = await db.collection("conversations").findOne(
+        withTenant({ _id: new ObjectId(String(convId)) }, tenant)
+      );
+    } else {
+      conv = await db.collection("conversations").findOne(
+        withTenant({ waId: String(waId) }, tenant),
+        { sort: { updatedAt: -1, openedAt: -1 } }
+      );
+    }
+
+    if (!conv) {
+      return res.status(404).json({ error: "conv_not_found" });
+    }
+
+    res.json({
+      ok: true,
+      convId: String(conv._id),
+      waId: conv.waId,
+      contactName: conv.contactName || "",
+      status: conv.finalized ? "COMPLETED" : (conv.status || "OPEN"),
+      manualOpen: !!conv.manualOpen,
+    });
+  } catch (e) {
+    console.error("GET /api/admin/conversation-meta error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+
+// ---------- Marcar conversación como manual (humano) / automática (bot) ----------
+app.post("/api/admin/conversation-manual", async (req, res) => {
+  try {
+    const { convId, waId, manualOpen } = req.body || {};
+    if (!convId && !waId) {
+      return res.status(400).json({ error: "convId_or_waId_required" });
+    }
+    const tenant = resolveTenantId(req);
+    const db = await getDb();
+
+    let filter;
+    if (convId) {
+      filter = withTenant({ _id: new ObjectId(String(convId)) }, tenant);
+    } else {
+      filter = withTenant({ waId: String(waId) }, tenant);
+    }
+
+    const now = new Date();
+    const result = await db.collection("conversations").findOneAndUpdate(
+      filter,
+      { $set: { manualOpen: !!manualOpen, updatedAt: now } },
+      { returnDocument: "after" }
+    );
+
+    const conv = result.value;
+    if (!conv) {
+      return res.status(404).json({ error: "conv_not_found" });
+    }
+
+    res.json({
+      ok: true,
+      convId: String(conv._id),
+      manualOpen: !!conv.manualOpen,
+    });
+  } catch (e) {
+    console.error("POST /api/admin/conversation-manual error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+
+// ---------- Enviar mensaje manual al cliente desde /admin ----------
+app.post("/api/admin/send-message", async (req, res) => {
+  try {
+    const { convId, waId, text } = req.body || {};
+    const body = String(text || "").trim();
+    if (!body) {
+      return res.status(400).json({ error: "text_required" });
+    }
+
+    const tenant = resolveTenantId(req);
+    const db = await getDb();
+
+    let conv = null;
+    if (convId) {
+      conv = await db.collection("conversations").findOne(
+        withTenant({ _id: new ObjectId(String(convId)) }, tenant)
+      );
+    } else if (waId) {
+      conv = await db.collection("conversations").findOne(
+        withTenant({ waId: String(waId) }, tenant),
+        { sort: { updatedAt: -1, openedAt: -1 } }
+      );
+    }
+
+    if (!conv) {
+      return res.status(404).json({ error: "conv_not_found" });
+    }
+
+    const to = conv.waId;
+
+    // Enviar por WhatsApp
+    await require("./logic").sendWhatsAppMessage(to, body);
+
+    const now = new Date();
+
+    // Guardar en colección messages como "assistant" pero marcado como humano
+    await saveMessageDoc({
+      tenantId: tenant,
+      conversationId: conv._id,
+      waId: to,
+      role: "assistant",
+      content: body,
+      type: "text",
+      meta: { from: "admin" },
+    });
+
+    // Actualizar timestamps de la conversación
+    await db.collection("conversations").updateOne(
+      { _id: conv._id },
+      { $set: { lastAssistantTs: now, updatedAt: now } }
+    );
+
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("POST /api/admin/send-message error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+
 
 
 // Pedido de una conversación (detalle JSON)
@@ -1136,13 +1282,18 @@ app.get("/admin", async (req, res) => {
     res.status(500).send("Error interno");
   }
 });
+
+
  // ---------- Ventana de detalle de conversación ----------
  app.get("/admin/conversation", async (req, res) => {
    try {
      const { convId, waId } = req.query;
      if (!convId && !waId) return res.status(400).send("convId o waId requerido");
      const qs = convId ? ("convId="+encodeURIComponent(convId)) : ("waId="+encodeURIComponent(waId));
-     // página simple que consume /api/logs/messages y permite imprimir
+
+     const convIdJs = convId ? String(convId).replace(/\\/g, "\\\\").replace(/'/g, "\\'") : "";
+     const waIdJs = waId ? String(waId).replace(/\\/g, "\\\\").replace(/'/g, "\\'") : "";
+
      res.setHeader("content-type","text/html; charset=utf-8");
      res.end(`<!doctype html><html lang="es"><head>
        <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
@@ -1154,21 +1305,43 @@ app.get("/admin", async (req, res) => {
          .role-assistant{background:#f8f6ff}
          small{color:#666}
          pre{white-space:pre-wrap}
-         .toolbar{display:flex;gap:8px;margin-bottom:12px}
+         .toolbar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
          .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:4px; cursor:pointer}
+         .badge{padding:4px 8px;border-radius:999px;font-size:12px}
+         .badge-bot{background:#e3f7e3;color:#145214}
+         .badge-manual{background:#ffe4e1;color:#8b0000}
+         #chatBox{margin-top:16px;border-top:1px solid #ddd;padding-top:10px;display:flex;flex-direction:column;gap:6px}
+         #replyText{width:100%;min-height:70px;font-family:inherit;font-size:14px;padding:6px 8px}
+         .chat-actions{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+         .muted{color:#666;font-size:12px}
        </style></head><body>
        <div class="toolbar">
          <button class="btn" onclick="window.print()">Imprimir</button>
          <button class="btn" onclick="location.reload()">Recargar</button>
+         <span id="manualBadge" class="badge badge-bot">Cargando estado…</span>
+         <button class="btn" id="toggleManualBtn">Tomar chat (pausar bot)</button>
        </div>
        <div id="root"></div>
+       <div id="chatBox">
+         <textarea id="replyText" placeholder="Escribí un mensaje para el cliente… (Ctrl/⌘+Enter para enviar)"></textarea>
+         <div class="chat-actions">
+           <button class="btn" id="sendBtn">Enviar</button>
+           <span class="muted">El bot solo se pausa si el chat está en modo manual.</span>
+         </div>
+       </div>
        <script>
-         async function load(){
-           const r=await fetch('/api/logs/messages?${qs}');
-           const data=await r.json();
-           const root=document.getElementById('root');
+         const CONV_ID = '${convIdJs}';
+         const WA_ID = '${waIdJs}';
+         const QS = '${qs}';
+         let meta = null;
+         let manualOpen = false;
+
+         async function loadMessages(){
+           const r = await fetch('/api/logs/messages?' + QS);
+          const data = await r.json();
+           const root = document.getElementById('root');
            root.innerHTML='';
-           for(const m of data){
+           for (const m of data){
              const d=document.createElement('div');
              d.className='msg role-'+m.role;
              const when = new Date(m.createdAt).toLocaleString();
@@ -1176,8 +1349,92 @@ app.get("/admin", async (req, res) => {
              root.appendChild(d);
            }
            if(!data.length){ root.innerHTML='<p class="muted">Sin mensajes para mostrar</p>'; }
+           root.scrollTop = root.scrollHeight || 0;
          }
-         load();
+
+         function updateManualUI(){
+           const badge = document.getElementById('manualBadge');
+           const btn = document.getElementById('toggleManualBtn');
+           if (!badge || !btn) return;
+           if (manualOpen) {
+             badge.textContent = 'Modo MANUAL: bot pausado';
+             badge.classList.remove('badge-bot');
+             badge.classList.add('badge-manual');
+             btn.textContent = 'Liberar al bot';
+           } else {
+             badge.textContent = 'Modo BOT automático';
+             badge.classList.remove('badge-manual');
+             badge.classList.add('badge-bot');
+             btn.textContent = 'Tomar chat (pausar bot)';
+           }
+         }
+
+         async function loadMeta(){
+           const url = new URL('/api/admin/conversation-meta', window.location.origin);
+           if (CONV_ID) url.searchParams.set('convId', CONV_ID);
+           else if (WA_ID) url.searchParams.set('waId', WA_ID);
+           const r = await fetch(url.toString());
+           if (!r.ok) return;
+           meta = await r.json();
+           manualOpen = !!(meta && meta.manualOpen);
+           updateManualUI();
+         }
+
+         async function toggleManual(){
+           if (!meta && !CONV_ID && !WA_ID) return;
+           const payload = { manualOpen: !manualOpen };
+           if (meta && meta.convId) payload.convId = meta.convId;
+           else if (CONV_ID) payload.convId = CONV_ID;
+           else if (WA_ID) payload.waId = WA_ID;
+
+           const r = await fetch('/api/admin/conversation-manual', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify(payload)
+           });
+           const j = await r.json().catch(()=>({}));
+           if (!r.ok || !j.ok) {
+             alert('No se pudo cambiar el estado manual.');
+             return;
+           }
+           manualOpen = !!j.manualOpen;
+           updateManualUI();
+         }
+
+         async function sendMessage(){
+           const ta = document.getElementById('replyText');
+           const text = (ta.value || '').trim();
+           if (!text) return;
+           const payload = { text };
+           if (meta && meta.convId) payload.convId = meta.convId;
+           else if (CONV_ID) payload.convId = CONV_ID;
+           else if (WA_ID) payload.waId = WA_ID;
+
+           const r = await fetch('/api/admin/send-message', {
+             method: 'POST',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify(payload)
+           });
+           const j = await r.json().catch(()=>({}));
+           if (!r.ok || !j.ok) {
+             alert('Error al enviar el mensaje.');
+             return;
+           }
+           ta.value = '';
+           await loadMessages();
+         }
+
+         document.getElementById('toggleManualBtn').addEventListener('click', toggleManual);
+         document.getElementById('sendBtn').addEventListener('click', sendMessage);
+         document.getElementById('replyText').addEventListener('keydown', function(e){
+           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+             e.preventDefault();
+             sendMessage();
+           }
+         });
+
+         loadMessages();
+         loadMeta();
        </script>
      </body></html>`);
    } catch (e) {
@@ -2038,6 +2295,13 @@ console.log("[convId] "+ convId);
         });
       } catch (e) { console.error("saveMessage(user):", e?.message); }
     }
+
+    // 🧑‍💻 Si la conversación está en modo manual, no respondemos automáticamente
+    if (conv && conv.manualOpen) {
+      console.log("[webhook] conversación en modo manualOpen=true; se omite respuesta automática.");
+      return res.sendStatus(200);
+   }
+
 
     // Si el mensaje NO es solo un cierre de cortesía, limpiamos el flag de sesión terminada
     if (!isPoliteClosingMessage(text)) {
