@@ -971,6 +971,7 @@ app.get("/admin", async (req, res) => {
           <th>Día</th>
          <th>Hora</th>
          <th>Estado</th>
+         <th>Acciones</th>
        </tr>
      </thead>
      <tbody></tbody>
@@ -1031,7 +1032,7 @@ app.get("/admin", async (req, res) => {
       </div>
     </div>
 
-  <script><script>
+  <script>
   // =========================
   // Helpers DOM
   // =========================
@@ -1223,7 +1224,9 @@ app.get("/admin", async (req, res) => {
     if (!Array.isArray(data)) return;
 
     const last = data[data.length - 1];
-    const fp = ${data.length}:${last?._id || last?.createdAt || ""};
+     const fp =
+      String(data.length) + ':' +
+      String((last && (last._id || last.createdAt)) || '');
 
     if (fp !== lastMsgsFingerprint) {
       lastMsgsFingerprint = fp;
@@ -1426,24 +1429,23 @@ app.get("/admin", async (req, res) => {
 
       for(const c of data){
         const tr = document.createElement('tr');
-        tr.innerHTML = 
-          <td>${fmt(c.lastAt)}</td>
-          <td>${escHtml(c.waId || '-')}</td>
-          <td>${escHtml(c.contactName || '-')}</td>
-          <td>${escHtml(c.entregaLabel || '-')}</td>
-          <td>${escHtml(c.direccion || '-')}</td>
-          <td>${(c.distanceKm !== undefined && c.distanceKm !== null) ? escHtml(c.distanceKm) : '-'}</td>
-          <td>${escHtml(c.fechaEntrega || '-')}</td>
-          <td>${escHtml(c.horaEntrega || '-')}</td>
-          <td>${escHtml(c.status || '-')}</td>
-          <td>
-            <div class="actions">
-              <button class="btn" data-conv="${escHtml(c._id)}">Detalle</button>
-              <button class="btn" data-pedido="${escHtml(c._id)}">Pedido</button>
-              <button class="btn" data-print="${escHtml(c._id)}">🖨️ Imprimir</button>
-            </div>
-          </td>
-        ;
+        tr.innerHTML =
+          '<td>' + fmt(c.lastAt) + '</td>' +
+          '<td>' + escHtml(c.waId || '-') + '</td>' +
+          '<td>' + escHtml(c.contactName || '-') + '</td>' +
+          '<td>' + escHtml(c.entregaLabel || '-') + '</td>' +
+          '<td>' + escHtml(c.direccion || '-') + '</td>' +
+          '<td>' + ((c.distanceKm !== undefined && c.distanceKm !== null) ? escHtml(c.distanceKm) : '-') + '</td>' +
+          '<td>' + escHtml(c.fechaEntrega || '-') + '</td>' +
+          '<td>' + escHtml(c.horaEntrega || '-') + '</td>' +
+          '<td>' + escHtml(c.status || '-') + '</td>' +
+          '<td>' +
+            '<div class="actions">' +
+              '<button class="btn" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
+              '<button class="btn" data-pedido="' + escHtml(c._id) + '">Pedido</button>' +
+              '<button class="btn" data-print="' + escHtml(c._id) + '">🖨️ Imprimir</button>' +
+            '</div>' +
+          '</td>';
         tb.appendChild(tr);
       }
 
@@ -1460,8 +1462,8 @@ app.get("/admin", async (req, res) => {
 
       if(!data.length){
         const tr = document.createElement('tr');
-        tr.innerHTML = <td colspan="10" style="text-align:center;color:#666">Sin conversaciones</td>;
-        tb.appendChild(tr);
+       tr.innerHTML = '<td colspan="10" style="text-align:center;color:#666">Sin conversaciones</td>';
+       tb.appendChild(tr);
       }
 
     }catch(e){
@@ -1854,133 +1856,7 @@ app.get("/admin/ticket/:convId", async (req, res) => {
 });
 
 
-// ---------- Ticket imprimible (80mm) ----------
-app.get("/admin/ticket/:convId", async (req, res) => {
-  try {
-    const convId = String(req.params.convId || "").trim();
-    if (!convId) return res.status(400).send("convId requerido");
 
-    const db = await getDb();
-    const convObjectId = new ObjectId(convId);
-
-    // Datos básicos de la conversación
-    let waId = "";
-    let contactName = "";
-    let fecha = "";
-    try {
-      const conv = await db.collection("conversations").findOne(
-        withTenant({ _id: convObjectId })
-      );
-      waId = conv?.waId || "";
-      contactName = conv?.contactName || "";
-      fecha = conv?.lastAt
-        ? new Date(conv.lastAt).toLocaleString("es-AR")
-        : new Date().toLocaleString("es-AR");
-    } catch (e) {
-      console.warn("[ticket] no se pudo leer conversation:", e?.message);
-      fecha = new Date().toLocaleString("es-AR");
-    }
-
-    // 1) Intentar leer el pedido desde la colección orders (camino nuevo)
-    let pedido = null;
-    try {
-      const order = await db.collection("orders").findOne(
-        withTenant({ conversationId: convObjectId }),
-        { sort: { createdAt: -1 } }
-      );
-      if (order && order.pedido) {
-        pedido = order.pedido;
-      }
-    } catch (e) {
-      console.warn("[ticket] no se pudo leer order:", e?.message);
-    }
-
-    // 2) Fallback: si no hay pedido en orders, buscar JSON viejo en mensajes
-    if (!pedido) {
-      const msgs = await getConversationMessagesByConvId(convId, 1000);
-      for (let i = msgs.length - 1; i >= 0; i--) {
-        const m = msgs[i];
-        if (m.role !== "assistant") continue;
-        const s = String(m.content || "").trim();
-        try {
-          const j = JSON.parse(s);
-          if (j && j.Pedido && Array.isArray(j.Pedido.items)) {
-            pedido = j.Pedido;
-            break;
-          }
-        } catch {
-          // no era JSON, seguimos
-        }
-      }
-    }
-
-    const items = (pedido?.items || []).map(it => ({
-      desc: String(it.descripcion || "").trim(),
-      qty: Number(it.cantidad || 0),
-    }));
-    const total = Number(pedido?.total_pedido || 0);
-
-    const modalidadText =
-      pedido?.Entrega === "domicilio"
-        ? "Envío"
-        : pedido?.Entrega === "retiro"
-        ? "Retiro"
-        : "-";
-
-    const direccionText =
-      pedido?.Entrega === "domicilio"
-        ? (pedido?.Domicilio?.direccion || "-")
-        : "-";
-
-    const html = `<!doctype html>
-<html><head><meta charset="utf-8"/><title>Ticket</title>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<style>
-  @media print { .no-print{display:none} body{margin:0} }
-  body{font-family: ui-monospace, Menlo, Consolas, monospace; width: 80mm; margin:0; padding:8px}
-  h3{margin:0 0 8px 0; font-size:14px; text-align:center}
-  .line{display:flex; justify-content:space-between; font-size:12px; margin:2px 0}
-  .sep{border-top:1px dashed #000; margin:6px 0}
-  .foot{font-size:11px; text-align:center; margin-top:8px}
-  .warn{font-size:11px; margin-top:6px}
-</style></head>
-<body>
-  <h3>Comanda Cliente</h3>
-  <div class="line"><span>Fecha</span><span>${fecha}</span></div>
-  <div class="line"><span>Teléfono</span><span>${waId || "-"}</span></div>
-  <div class="line"><span>Nombre</span><span>${contactName || "-"}</span></div>
-  <div class="line"><span>Entrega</span><span>${modalidadText}</span></div>
-  <div class="line"><span>Dirección</span><span>${direccionText}</span></div>
-  <div class="sep"></div>
-  ${
-    items.length
-      ? items
-          .map(
-            i =>
-              `<div class="line"><span>${i.qty} x ${i.desc}</span><span></span></div>`
-          )
-          .join("")
-      : "<div class='line'><em>Sin ítems detectados</em></div>"
-  }
-  <div class="sep"></div>
-  <div class="line"><strong>Total</strong><strong>$ ${total.toLocaleString(
-    "es-AR"
-  )}</strong></div>
-  ${
-    items.some(x => /milanesa/i.test(x.desc))
-      ? `<div class="warn">* Las milanesas se pesan al entregar; el precio se informa al momento de la entrega.</div>`
-      : ``
-  }
-  <div class="foot">¡Gracias por tu compra!</div>
-</body></html>`;
-
-    res.setHeader("content-type", "text/html; charset=utf-8");
-    res.send(html);
-  } catch (e) {
-    console.error("GET /admin/ticket error:", e);
-    res.status(500).send("Error interno");
-  }
-});
 
 // GET /api/products  → lista (activos por defecto; ?all=true para todos)
 app.get("/api/products", async (req, res) => {
