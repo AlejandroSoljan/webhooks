@@ -7,7 +7,8 @@ const OpenAI = require("openai");
 let toFile = null;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const CHAT_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const CHAT_MODEL = process.env.CHAT_MODEL || "gpt-4o-mini";
+const VISION_MODEL = process.env.VISION_MODEL || CHAT_MODEL;
 const CHAT_TEMPERATURE = Number(process.env.OPENAI_TEMPERATURE ?? 0.1) || 0.1;
 
 const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || "v17.0";
@@ -348,6 +349,94 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime }) {
     return { text: "" };
   }
 }
+
+
+/**
+ * Analiza una imagen vía modelo con visión.
+ * Uso principal: extraer info de comprobantes de pago.
+ * NO confirma pago real; sólo OCR/lectura de datos visibles.
+ *
+ * @param {Object} params
+ * @param {string} params.publicImageUrl
+ * @param {string} params.mime
+ * @param {string} params.purpose "payment-proof" | "generic"
+ * @returns {{json: object|null, userText: string}}
+ */
+async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic" } = {}) {
+  try {
+    if (!publicImageUrl) {
+      return { json: null, userText: "[imagen]" };
+    }
+
+    const system = [
+      "Sos un asistente que analiza imágenes y extrae texto/datos clave.",
+      "Si la imagen parece un comprobante de pago/transferencia:",
+      "- Extraé monto, moneda, fecha, referencia/operación, banco/app, emisor/recipiente si aparecen.",
+      "- NO afirmes que el pago está confirmado.",
+      "Respondé exclusivamente en JSON."
+    ].join("\n");
+
+    const user = purpose === "payment-proof"
+      ? "Analizá esta imagen que probablemente sea un comprobante de pago o transferencia. Extraé los datos visibles."
+      : "Describí brevemente la imagen y extraé cualquier texto visible.";
+
+    const resp = await openai.chat.completions.create({
+      model: VISION_MODEL,
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: user },
+            { type: "image_url", image_url: { url: publicImageUrl } }
+          ]
+        }
+      ],
+      max_tokens: 500
+    });
+
+    const content = resp?.choices?.[0]?.message?.content || "";
+    let json = null;
+    try { json = JSON.parse(content); } catch {}
+
+    // Armamos un texto "usable" como input del chat principal
+    if (purpose === "payment-proof") {
+      const amount = json?.amount ?? json?.monto ?? null;
+      const currency = json?.currency ?? json?.moneda ?? "";
+      const date = json?.date ?? json?.fecha ?? "";
+      const ref = json?.reference ?? json?.referencia ?? json?.operacion ?? "";
+      const bank = json?.bank ?? json?.app ?? "";
+
+      const parts = [];
+      if (amount) parts.push(`monto ${amount}${currency ? " " + currency : ""}`);
+      if (date) parts.push(`fecha ${date}`);
+      if (ref) parts.push(`ref/operación ${ref}`);
+      if (bank) parts.push(`entidad ${bank}`);
+
+      const compact = parts.length ? parts.join(", ") : "datos no legibles";
+      const userText =
+        `El usuario envió una imagen de comprobante de pago/transferencia. ` +
+        `Lectura preliminar: ${compact}.`;
+
+      return { json, userText };
+    }
+
+    const extractedText = json?.extracted_text || json?.text || "";
+    const userText = extractedText
+      ? `El usuario envió una imagen. Texto detectado: ${String(extractedText).slice(0, 600)}`
+      : "El usuario envió una imagen.";
+
+    return { json, userText };
+  } catch (e) {
+    console.warn("[vision] analyzeImageExternal error:", e?.message || e);
+    return { json: null, userText: "El usuario envió una imagen." };
+  }
+}
+
+
+
 
 // ================== Detección de cortesía ==================
 function isPoliteClosingMessage(textRaw) {
@@ -1001,7 +1090,7 @@ module.exports = {
   getMediaInfo,
   downloadMediaBuffer,
   transcribeAudioExternal,
-
+  analyzeImageExternal,
   // cache público
   putInCache,
   getFromCache,
