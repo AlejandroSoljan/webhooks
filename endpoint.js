@@ -38,7 +38,7 @@ const {
   hydratePricesFromCatalog,
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
   DEFAULT_TENANT_ID, setAssistantPedidoSnapshot, calcularDistanciaKm,
-  geocodeAddress, getStoreCoords, pickEnvioProductByDistance,clearEndedFlag,
+  geocodeAddress, getStoreCoords, pickEnvioProductByDistance,clearEndedFlag,analyzeImageExternal,
   ensureEnvioSmart,hasContext,
 } = require("./logic");
 
@@ -64,12 +64,23 @@ app.get("/", (_req, res) => res.send("OK"));
 app.get("/healthz", (_req, res) => res.json({ ok: true }));
 
 // Cache público (audio)
-app.get("/cache/audio/:id", (req, res) => {
-  const item = getFromCache(req.params.id);
+function sendCacheItem(res, item) {
   if (!item) return res.status(404).send("Not found");
   res.setHeader("Content-Type", item.mime || "application/octet-stream");
   res.setHeader("Cache-Control", "no-store");
-  res.send(item.buffer);
+  return res.send(item.buffer);
+}
+
+// Backward compatible (audio)
+app.get("/cache/audio/:id", (req, res) => {
+  const item = getFromCache(req.params.id);
+ return sendCacheItem(res, item);
+});
+
+// Nuevo: cache genérico para media (imágenes / audio / etc.)
+app.get("/cache/media/:id", (req, res) => {
+  const item = getFromCache(req.params.id);
+  return sendCacheItem(res, item);
 });
 
 // ===================================================================
@@ -2385,7 +2396,27 @@ app.post("/webhook", async (req, res) => {
         text = "(no se pudo transcribir el audio)";
       }
      } else if (msg.type === "image" && msg.image?.id) {
-      text = "[imagen]";
+      try {
+        const info = await getMediaInfo(msg.image.id);
+        const buf = await downloadMediaBuffer(info.url);
+        const id = putInCache(buf, info.mime_type || "image/jpeg");
+        const publicImageUrl = `${req.protocol}://${req.get("host")}/cache/media/${id}`;
+
+        const img = await analyzeImageExternal({
+          publicImageUrl,
+          mime: info.mime_type,
+          purpose: "payment-proof"
+        });
+
+        // Texto que alimenta al modelo conversacional
+        text = img?.userText || "[imagen recibida]";
+
+        // enriquecemos meta para admin/debug
+        msg.__media = { cacheId: id, publicUrl: publicImageUrl, mime: info.mime_type, analysis: img?.json || null };
+      } catch (e) {
+        console.error("Imagen/análisis:", e?.message || e);
+        text = "[imagen recibida]";
+      }
     }
 
         // Asegurar conversación y guardar mensaje de usuario
@@ -2406,7 +2437,7 @@ console.log("[convId] "+ convId);
           role: "user",
           content: text,
           type: msg.type || "text",
-          meta: { raw: msg }
+           meta: { raw: msg, media: msg.__media || null }
         });
       } catch (e) { console.error("saveMessage(user):", e?.message); }
     }
