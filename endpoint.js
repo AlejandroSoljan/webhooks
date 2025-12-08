@@ -1031,381 +1031,485 @@ app.get("/admin", async (req, res) => {
       </div>
     </div>
 
-  <script>
-     // ===== Modal helpers =====
-    const modalRoot = document.getElementById('modalRoot');
-    const modalBody = document.getElementById('modalBody');
-    const modalMsgs = () => document.getElementById('modalMsgs');
-    const modalManualBadge = () => document.getElementById('modalManualBadge');
-    const modalToggleManualBtn = () => document.getElementById('modalToggleManualBtn');
-    const modalReplyText = () => document.getElementById('modalReplyText');
-    const modalSendBtn = () => document.getElementById('modalSendBtn');
+  <script><script>
+  // =========================
+  // Helpers DOM
+  // =========================
+  const modalRoot = document.getElementById('modalRoot');
+  const modalCloseBtn = document.getElementById('modalCloseBtn');
+  const modalPrintBtn = document.getElementById('modalPrintBtn');
 
-    let currentConvId = null;
-    let modalManualOpen = false;
-    const modalCloseBtn = document.getElementById('modalCloseBtn');
-     const modalPrintBtn = document.getElementById('modalPrintBtn');
-      const pedidoModalBackdrop = document.getElementById('pedidoModalBackdrop');
-     const pedidoModalBody = document.getElementById('pedidoModalBody');
-     const pedidoModalCloseBtn = document.getElementById('pedidoModalCloseBtn');
+  const pedidoModalBackdrop = document.getElementById('pedidoModalBackdrop');
+  const pedidoModalBody = document.getElementById('pedidoModalBody');
+  const pedidoModalCloseBtn = document.getElementById('pedidoModalCloseBtn');
 
-    function closeModal(){ modalRoot.style.display='none'; modalRoot.setAttribute('aria-hidden','true'); }
-    modalCloseBtn.addEventListener('click', closeModal);
-    modalRoot.addEventListener('click', (e)=>{ if(e.target===modalRoot) closeModal(); });
+  const modalMsgs = () => document.getElementById('modalMsgs');
+  const modalManualBadge = () => document.getElementById('modalManualBadge');
+  const modalToggleManualBtn = () => document.getElementById('modalToggleManualBtn');
+  const modalReplyText = () => document.getElementById('modalReplyText');
+  const modalSendBtn = () => document.getElementById('modalSendBtn');
 
-     function closePedidoModal() {
-       pedidoModalBackdrop.style.display = 'none';
-       pedidoModalBackdrop.setAttribute('aria-hidden', 'true');
-     }
-     pedidoModalCloseBtn.addEventListener('click', closePedidoModal);
-     pedidoModalBackdrop.addEventListener('click', (e)=>{ if(e.target===pedidoModalBackdrop) closePedidoModal(); });
-    function renderMessages(list){
-      const target = modalMsgs();
-      if (!target) return;
-      if(!Array.isArray(list) || !list.length){
-        target.innerHTML = '<p class="muted">Sin mensajes para mostrar</p>';
-        return;
-      }
-      target.innerHTML = list.map(m => (
-        '<div class="msg role-'+m.role+'">'+
-          '<small>['+new Date(m.createdAt).toLocaleString()+'] '+m.role+'</small>'+
-          '<pre>'+String(m.content||'').replace(/</g,'&lt;')+'</pre>'+
-        '</div>'
-      )).join('');
+  // =========================
+  // Estado global del modal
+  // =========================
+  let currentConvId = null;
+  let modalManualOpen = false;
+
+  // Auto-refresh modal
+  let modalPollTimer = null;
+  let lastMsgsFingerprint = "";
+
+  // =========================
+  // Utilidades UI
+  // =========================
+  function escHtml(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function formatMoney(n) {
+    const num = Number(n || 0);
+    if (!Number.isFinite(num)) return '-';
+    return num.toLocaleString('es-AR', { minimumFractionDigits: 0 });
+  }
+
+  function fmt(d){
+    try { return new Date(d).toLocaleString(); }
+    catch { return '-'; }
+  }
+
+  // =========================
+  // Render mensajes modal
+  // =========================
+  function renderMessages(list){
+    const target = modalMsgs();
+    if (!target) return;
+
+    if(!Array.isArray(list) || !list.length){
+      target.innerHTML = '<p class="muted">Sin mensajes para mostrar</p>';
+      return;
     }
 
-    function updateModalManualUI(){
-      const badge = modalManualBadge();
-      const btn = modalToggleManualBtn();
-      if (!badge || !btn) return;
-      if (modalManualOpen) {
-        badge.textContent = 'Modo MANUAL: bot pausado';
-        badge.classList.remove('badge-bot');
-        badge.classList.add('badge-manual');
-        btn.textContent = 'Liberar al bot';
-      } else {
-        badge.textContent = 'Modo BOT automático';
-        badge.classList.remove('badge-manual');
-        badge.classList.add('badge-bot');
-        btn.textContent = 'Tomar chat (pausar bot)';
-      }
+    target.innerHTML = list.map(m => (
+      '<div class="msg role-'+escHtml(m.role)+'">'+
+        '<small>['+new Date(m.createdAt).toLocaleString()+'] '+escHtml(m.role)+'</small>'+
+        '<pre>'+escHtml(m.content||'')+'</pre>'+
+      '</div>'
+    )).join('');
+  }
+
+  // =========================
+  // Estado manual UI
+  // =========================
+  function updateModalManualUI(){
+    const badge = modalManualBadge();
+    const btn = modalToggleManualBtn();
+    if (!badge || !btn) return;
+
+    if (modalManualOpen) {
+      badge.textContent = 'Modo MANUAL: bot pausado';
+      badge.classList.remove('badge-bot');
+      badge.classList.add('badge-manual');
+      btn.textContent = 'Liberar al bot';
+    } else {
+      badge.textContent = 'Modo BOT automático';
+      badge.classList.remove('badge-manual');
+      badge.classList.add('badge-bot');
+      btn.textContent = 'Tomar chat (pausar bot)';
     }
+  }
 
-    
-
-    async function loadModalMeta(){
-      if (!currentConvId) return;
+  async function loadModalMeta(){
+    if (!currentConvId) return;
+    try {
       const r = await fetch('/api/admin/conversation-meta?convId=' + encodeURIComponent(currentConvId));
       if (!r.ok) return;
       const j = await r.json().catch(()=>null);
       modalManualOpen = !!(j && j.manualOpen);
       updateModalManualUI();
+    } catch (e) {
+      console.warn("loadModalMeta error", e);
     }
+  }
 
-    async function toggleModalManual(){
-      if (!currentConvId) return;
-      const r = await fetch('/api/admin/conversation-manual', {
+  // ✅ Toggle tolerante (evita “error fantasma”)
+  async function toggleModalManual(){
+    if (!currentConvId) return;
+
+    let j = null;
+    let r = null;
+
+    try {
+      r = await fetch('/api/admin/conversation-manual', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ convId: currentConvId, manualOpen: !modalManualOpen })
       });
-      const j = await r.json().catch(()=>({}));
-      if (!r.ok || !j.ok) {
+
+      j = await r.json().catch(()=>null);
+
+      // Si el backend devolvió manualOpen booleano, es suficiente
+      if (j && typeof j.manualOpen === "boolean") {
+        modalManualOpen = !!j.manualOpen;
+        updateModalManualUI();
+        return;
+      }
+
+      if (!r.ok || !j?.ok) {
         alert('No se pudo cambiar el estado manual.');
         return;
       }
+
       modalManualOpen = !!j.manualOpen;
       updateModalManualUI();
+
+    } catch (e) {
+      console.error("toggleModalManual error", e);
+      alert('No se pudo cambiar el estado manual.');
     }
+  }
 
-    async function sendModalMessage(){
-      if (!currentConvId) return;
-      const ta = modalReplyText();
-      const text = String(ta?.value || '').trim();
-      if (!text) return;
+  // =========================
+  // Enviar mensaje manual
+  // =========================
+  async function sendModalMessage(){
+    if (!currentConvId) return;
 
+    const ta = modalReplyText();
+    const text = String(ta?.value || '').trim();
+    if (!text) return;
+
+    try {
       const r = await fetch('/api/admin/send-message', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ convId: currentConvId, text })
       });
-      const j = await r.json().catch(()=>({}));
-      if (!r.ok || !j.ok) {
+
+      const j = await r.json().catch(()=>null);
+      if (!r.ok || !j?.ok) {
         alert('Error al enviar el mensaje.');
         return;
       }
+
       if (ta) ta.value = '';
 
-      // refrescar mensajes
-      const rm = await fetch('/api/logs/messages?convId=' + encodeURIComponent(currentConvId));
-      const data = await rm.json().catch(()=>[]);
-      renderMessages(data);
+      // refrescar mensajes inmediato
+      await refreshModalMessages(true);
+
+    } catch (e) {
+      console.error("sendModalMessage error", e);
+      alert('Error al enviar el mensaje.');
     }
+  }
 
+  // =========================
+  // Polling del modal (auto refresh)
+  // =========================
+  async function refreshModalMessages(forceScroll){
+    if (!currentConvId) return;
 
+    const target = modalMsgs();
+    const wasNearBottom = target
+      ? (target.scrollHeight - target.scrollTop - target.clientHeight) < 120
+      : true;
 
-     function escHtml(str) {
-       return String(str || '')
-         .replace(/&/g, '&amp;')
-         .replace(/</g, '&lt;')
-         .replace(/>/g, '&gt;');
-     }
-
-     function formatMoney(n) {
-       const num = Number(n || 0);
-       if (!Number.isFinite(num)) return '-';
-       return num.toLocaleString('es-AR', { minimumFractionDigits: 0 });
-     }
-
-     function renderPedidoDetail(data) {
-       const items = Array.isArray(data.items) ? data.items : [];
-       let html = '';
-
-       html += '<p>';
-       html += '<strong>Nombre:</strong> ' + escHtml(data.contactName || '-') + '<br/>';
-       html += '<strong>Teléfono:</strong> ' + escHtml(data.waId || '-') + '<br/>';
-       if (data.fechaEntrega || data.horaEntrega) {
-         html += '<strong>Entrega para:</strong> ' +
-           escHtml(data.fechaEntrega || '') + ' ' +
-           escHtml(data.horaEntrega || '') + '<br/>';
-       }
-       html += '<strong>Modalidad:</strong> ' + escHtml(data.entrega || '-') + '<br/>';
-       html += '<strong>Dirección:</strong> ' + escHtml(data.direccion || '-') + '<br/>';
-       html += '</p>';
-
-       if (!items.length) {
-         html += '<p class="muted">No se encontraron ítems en este pedido.</p>';
-         pedidoModalBody.innerHTML = html;
-         return;
-       }
-
-       html += '<table style="width:100%;border-collapse:collapse;margin-top:8px">';
-       html += '<thead><tr>' +
-         '<th style="text-align:left;border-bottom:1px solid #ddd;padding:4px">Cant.</th>' +
-         '<th style="text-align:left;border-bottom:1px solid #ddd;padding:4px">Producto</th>' +
-         '<th style="text-align:right;border-bottom:1px solid #ddd;padding:4px">Unit.</th>' +
-         '<th style="text-align:right;border-bottom:1px solid #ddd;padding:4px">Total</th>' +
-         '</tr></thead><tbody>';
-
-       items.forEach(it => {
-         html += '<tr>';
-         html += '<td style="padding:4px;border-bottom:1px solid #eee">' + escHtml(it.cantidad != null ? it.cantidad : '') + '</td>';
-         html += '<td style="padding:4px;border-bottom:1px solid #eee">' + escHtml(it.descripcion || '') + '</td>';
-         html += '<td style="padding:4px;border-bottom:1px solid #eee;text-align:right">' +
-           (it.importe_unitario ? ('$ ' + formatMoney(it.importe_unitario)) : '-') +
-           '</td>';
-         html += '<td style="padding:4px;border-bottom:1px solid #eee;text-align:right">$ ' +
-           formatMoney(it.total) +
-           '</td>';
-         html += '</tr>';
-       });
-
-       html += '</tbody></table>';
-       html += '<p style="margin-top:8px;text-align:right"><strong>Total:</strong> $ ' + formatMoney(data.total) + '</p>';
-
-       pedidoModalBody.innerHTML = html;
-     }
-
-     async function openPedidoModal(convId) {
-       try {
-         pedidoModalBody.innerHTML = '<p class="muted">Cargando…</p>';
-         pedidoModalBackdrop.style.display = 'flex';
-         pedidoModalBackdrop.setAttribute('aria-hidden', 'false');
-
-         const r = await fetch('/api/logs/pedido?convId=' + encodeURIComponent(convId));
-         if (!r.ok) {
-           pedidoModalBody.innerHTML = '<p class="muted">No se encontró un pedido para esta conversación.</p>';
-           return;
-         }
-         const data = await r.json();
-         if (!data || !data.ok) {
-           pedidoModalBody.innerHTML = '<p class="muted">No se encontró un pedido para esta conversación.</p>';
-           return;
-         }
-         renderPedidoDetail(data);
-       } catch (e) {
-         console.error('Detalle pedido modal error:', e);
-         pedidoModalBody.innerHTML = '<p class="muted">Error al cargar el pedido.</p>';
-       }
-     }
-    async function openDetailModal(convId){
-  try{
-    currentConvId = convId; // ✅ necesario para manual y enviar
-
-    modalRoot.style.display = 'flex';
-    modalRoot.setAttribute('aria-hidden','false');
-
-    const msgsEl = modalMsgs();
-    if (msgsEl) msgsEl.innerHTML = '<p class="muted">Cargando…</p>';
-
-    // ✅ cargar estado manual del chat
-    await loadModalMeta();
-
-    const r = await fetch('/api/logs/messages?convId=' + encodeURIComponent(convId));
-    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const r = await fetch('/api/logs/messages?convId=' + encodeURIComponent(currentConvId));
+    if (!r.ok) return;
 
     const data = await r.json().catch(()=>[]);
-    renderMessages(data);
+    if (!Array.isArray(data)) return;
 
-    // si vas a usar imprimir desde el modal
-    modalPrintBtn.onclick = () => openTicketModal(convId); 
-    // o si querés otra función:
-    // modalPrintBtn.onclick = () => goPrint(convId);
+    const last = data[data.length - 1];
+    const fp = ${data.length}:${last?._id || last?.createdAt || ""};
 
-  }catch(e){
-    console.error('Detalle modal error:', e);
-    const msgsEl = modalMsgs();
-    if (msgsEl) msgsEl.innerHTML = '<p class="muted">Error al cargar.</p>';
+    if (fp !== lastMsgsFingerprint) {
+      lastMsgsFingerprint = fp;
+      renderMessages(data);
+
+      const target2 = modalMsgs();
+      if (target2 && (forceScroll || wasNearBottom)) {
+        target2.scrollTop = target2.scrollHeight;
+      }
+    }
   }
-}
 
+  function startModalPolling(){
+    stopModalPolling();
+    modalPollTimer = setInterval(async () => {
+      try {
+        await refreshModalMessages(false);
+        await loadModalMeta();
+      } catch (e) {
+        console.warn("modal polling error", e);
+      }
+    }, 3000);
+  }
 
-    function openDetail(){
-      const sel = document.getElementById('convSel');
-      const id = sel ? sel.value : '';
-      if(!id){ alert('Elegí una conversación'); return; }
-       openDetailModal(id);
+  function stopModalPolling(){
+    if (modalPollTimer) {
+      clearInterval(modalPollTimer);
+      modalPollTimer = null;
     }
-    
- 
-    async function reloadTable(){
-      try{
-        const r = await fetch('/api/logs/conversations?limit=200');
-        const data = await r.json();
-        // Recontruir tabla
-        const tb = document.querySelector('#tbl tbody');
-        tb.innerHTML = data.map(c => \`
-          <tr>
-            <td>\${new Date(c.lastAt||Date.now()).toLocaleString()}</td>
-            <td>\${c.waId||'-'}</td>
-            <td>\${c.contactName||'-'}</td>
-            <td>\${c.entregaLabel||'-'}</td>
-            <td>\${c.direccion||'-'}</td>
-            <td>\${(c.distanceKm !== undefined && c.distanceKm !== null) ? c.distanceKm : '-'}</td>
-            <td>\${c.fechaEntrega||'-'}</td>
-            <td>\${c.horaEntrega||'-'}</td>
-            <td>\${c.status||'-'}</td>
-            <td class="actions">
-              <button class="btn" onclick="openDetailModal('\${c._id}')">Detalle</button>
-              <button class="btn" onclick="openPedidoModal('\${c._id}')">Pedido</button>
-              <button onclick="openTicketModal('\${c._id}')">🖨️ Imprimir</button>
-            </td>
-          </tr>\`).join('');
-        // Refrescar selector
-        const sel = document.getElementById('convSel');
-        if(sel){
-          sel.innerHTML = data.map(c => {
-            const label = \`\${c.waId||'sin waId'} — \${new Date(c.lastAt||Date.now()).toLocaleString()}\${c.contactName ? ' — ' + c.contactName : ''}\`;
-            return '<option value=\"'+c._id+'\">'+label+'</option>';
-          }).join('');
-        }
-      }catch(e){ console.error('reloadTable error', e); }
+  }
+
+  // =========================
+  // Modal open/close
+  // =========================
+  function closeModal(){
+    stopModalPolling();
+    currentConvId = null;
+    lastMsgsFingerprint = "";
+    modalRoot.style.display='none';
+    modalRoot.setAttribute('aria-hidden','true');
+  }
+
+  modalCloseBtn.addEventListener('click', closeModal);
+  modalRoot.addEventListener('click', (e)=>{ if(e.target===modalRoot) closeModal(); });
+
+  async function openDetailModal(convId){
+    try{
+      currentConvId = convId;
+      lastMsgsFingerprint = "";
+
+      modalRoot.style.display = 'flex';
+      modalRoot.setAttribute('aria-hidden','false');
+
+      const msgsEl = modalMsgs();
+      if (msgsEl) msgsEl.innerHTML = '<p class="muted">Cargando…</p>';
+
+      await loadModalMeta();
+
+      await refreshModalMessages(true);
+
+      // imprimir desde el modal
+      if (modalPrintBtn) {
+        modalPrintBtn.onclick = () => openTicketModal(convId);
+      }
+
+      // ✅ empezar auto-actualización
+      startModalPolling();
+
+    } catch (e) {
+      console.error('openDetailModal error:', e);
+      const msgsEl = modalMsgs();
+      if (msgsEl) msgsEl.innerHTML = '<p class="muted">Error al cargar.</p>';
     }
-  
+  }
 
+  // =========================
+  // Modal Pedido
+  // =========================
+  function closePedidoModal() {
+    pedidoModalBackdrop.style.display = 'none';
+    pedidoModalBackdrop.setAttribute('aria-hidden', 'true');
+  }
 
-     function fmt(d){ try{ return new Date(d).toLocaleString(); }catch{ return '-'; } }
-     function openDetailByConv(convId){ window.open('/admin/conversation?convId='+encodeURIComponent(convId),'_blank'); }
-     function openDetailByWaId(wa){ window.open('/admin/conversation?waId='+encodeURIComponent(wa),'_blank'); }
+  pedidoModalCloseBtn.addEventListener('click', closePedidoModal);
+  pedidoModalBackdrop.addEventListener('click', (e)=>{ if(e.target===pedidoModalBackdrop) closePedidoModal(); });
 
-      // Abre el modal y carga el ticket en el iframe
-      function openTicketModal(conversationId) {
-        const backdrop = document.getElementById('ticketModalBackdrop');
-        const frame = document.getElementById('ticketFrame');
-        if (frame) {
-          frame.src = '/admin/ticket/' + conversationId;
-        }
-        if (backdrop) {
-          backdrop.style.display = 'flex';
-        }
+  function renderPedidoDetail(data) {
+    const items = Array.isArray(data.items) ? data.items : [];
+    let html = '';
+
+    html += '<p>';
+    html += '<strong>Nombre:</strong> ' + escHtml(data.contactName || '-') + '<br/>';
+    html += '<strong>Teléfono:</strong> ' + escHtml(data.waId || '-') + '<br/>';
+    if (data.fechaEntrega || data.horaEntrega) {
+      html += '<strong>Entrega para:</strong> ' +
+        escHtml(data.fechaEntrega || '') + ' ' +
+        escHtml(data.horaEntrega || '') + '<br/>';
+    }
+    html += '<strong>Modalidad:</strong> ' + escHtml(data.entrega || '-') + '<br/>';
+    html += '<strong>Dirección:</strong> ' + escHtml(data.direccion || '-') + '<br/>';
+    html += '</p>';
+
+    if (!items.length) {
+      html += '<p class="muted">No se encontraron ítems en este pedido.</p>';
+      pedidoModalBody.innerHTML = html;
+      return;
+    }
+
+    html += '<table style="width:100%;border-collapse:collapse;margin-top:8px">';
+    html += '<thead><tr>' +
+      '<th style="text-align:left;border-bottom:1px solid #ddd;padding:4px">Cant.</th>' +
+      '<th style="text-align:left;border-bottom:1px solid #ddd;padding:4px">Producto</th>' +
+      '<th style="text-align:right;border-bottom:1px solid #ddd;padding:4px">Unit.</th>' +
+      '<th style="text-align:right;border-bottom:1px solid #ddd;padding:4px">Total</th>' +
+      '</tr></thead><tbody>';
+
+    items.forEach(it => {
+      html += '<tr>';
+      html += '<td style="padding:4px;border-bottom:1px solid #eee">' + escHtml(it.cantidad != null ? it.cantidad : '') + '</td>';
+      html += '<td style="padding:4px;border-bottom:1px solid #eee">' + escHtml(it.descripcion || '') + '</td>';
+      html += '<td style="padding:4px;border-bottom:1px solid #eee;text-align:right">' +
+        (it.importe_unitario ? ('$ ' + formatMoney(it.importe_unitario)) : '-') +
+        '</td>';
+      html += '<td style="padding:4px;border-bottom:1px solid #eee;text-align:right">$ ' +
+        formatMoney(it.total) +
+        '</td>';
+      html += '</tr>';
+    });
+
+    html += '</tbody></table>';
+    html += '<p style="margin-top:8px;text-align:right"><strong>Total:</strong> $ ' + formatMoney(data.total) + '</p>';
+
+    pedidoModalBody.innerHTML = html;
+  }
+
+  async function openPedidoModal(convId) {
+    try {
+      pedidoModalBody.innerHTML = '<p class="muted">Cargando…</p>';
+      pedidoModalBackdrop.style.display = 'flex';
+      pedidoModalBackdrop.setAttribute('aria-hidden', 'false');
+
+      const r = await fetch('/api/logs/pedido?convId=' + encodeURIComponent(convId));
+      if (!r.ok) {
+        pedidoModalBody.innerHTML = '<p class="muted">No se encontró un pedido para esta conversación.</p>';
+        return;
       }
-
-      // Cierra el modal y limpia el iframe
-      function closeTicketModal() {
-        const backdrop = document.getElementById('ticketModalBackdrop');
-        const frame = document.getElementById('ticketFrame');
-        if (frame) {
-          frame.src = 'about:blank';
-        }
-        if (backdrop) {
-          backdrop.style.display = 'none';
-        }
+      const data = await r.json();
+      if (!data || !data.ok) {
+        pedidoModalBody.innerHTML = '<p class="muted">No se encontró un pedido para esta conversación.</p>';
+        return;
       }
+      renderPedidoDetail(data);
+    } catch (e) {
+      console.error('Detalle pedido modal error:', e);
+      pedidoModalBody.innerHTML = '<p class="muted">Error al cargar el pedido.</p>';
+    }
+  }
 
-      // Dispara la impresión del contenido del iframe
-      function printTicket() {
-        const frame = document.getElementById('ticketFrame');
-        if (frame && frame.contentWindow) {
-          frame.contentWindow.focus();
-          frame.contentWindow.print();
-        }
-      }
-     async function loadTable(){
-       const r = await fetch('/api/logs/conversations?limit=200');
-       const data = await r.json();
-       const tb = document.querySelector('#tbl tbody');
-       tb.innerHTML = '';
-       for(const c of data){
-         const tr = document.createElement('tr');
-         tr.innerHTML = \`
-           <td>\${fmt(c.lastAt)}</td>
-           <td>\${c.waId || '-'}</td>
-           <td>\${c.contactName || '-'}</td>
-           <td>\${c.entregaLabel || '-'}</td>
-           <td>\${c.direccion || '-'}</td>
-           <td>\${(c.distanceKm !== undefined && c.distanceKm !== null) ? c.distanceKm : '-'}</td>
-           <td>\${c.fechaEntrega || '-'}</td>
-           <td>\${c.horaEntrega || '-'}</td>
-           <td>\${c.status || '-'}</td>
-           <td>
-            <button class="btn" data-conv="\${c._id}">Detalle</button>
-            <button class="btn" data-pedido="\${c._id}">Pedido</button>
-            <button class="btn" data-print="\${c._id}">Imprimir</button>
-           </td>\`;
+  // =========================
+  // Ticket modal (iframe)
+  // =========================
+  function openTicketModal(conversationId) {
+    const backdrop = document.getElementById('ticketModalBackdrop');
+    const frame = document.getElementById('ticketFrame');
+    if (frame) frame.src = '/admin/ticket/' + conversationId;
+    if (backdrop) backdrop.style.display = 'flex';
+  }
+
+  function closeTicketModal() {
+    const backdrop = document.getElementById('ticketModalBackdrop');
+    const frame = document.getElementById('ticketFrame');
+    if (frame) frame.src = 'about:blank';
+    if (backdrop) backdrop.style.display = 'none';
+  }
+
+  function printTicket() {
+    const frame = document.getElementById('ticketFrame');
+    if (frame && frame.contentWindow) {
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    }
+  }
+
+  // Exponer para botones inline del HTML
+  window.openTicketModal = openTicketModal;
+  window.closeTicketModal = closeTicketModal;
+  window.printTicket = printTicket;
+
+  // =========================
+  // Tabla conversaciones (ÚNICA versión)
+  // =========================
+  async function loadTable(){
+    try{
+      const r = await fetch('/api/logs/conversations?limit=200');
+      const data = await r.json().catch(()=>[]);
+      const tb = document.querySelector('#tbl tbody');
+      if (!tb) return;
+
+      tb.innerHTML = '';
+
+      for(const c of data){
+        const tr = document.createElement('tr');
+        tr.innerHTML = 
+          <td>${fmt(c.lastAt)}</td>
+          <td>${escHtml(c.waId || '-')}</td>
+          <td>${escHtml(c.contactName || '-')}</td>
+          <td>${escHtml(c.entregaLabel || '-')}</td>
+          <td>${escHtml(c.direccion || '-')}</td>
+          <td>${(c.distanceKm !== undefined && c.distanceKm !== null) ? escHtml(c.distanceKm) : '-'}</td>
+          <td>${escHtml(c.fechaEntrega || '-')}</td>
+          <td>${escHtml(c.horaEntrega || '-')}</td>
+          <td>${escHtml(c.status || '-')}</td>
+          <td>
+            <div class="actions">
+              <button class="btn" data-conv="${escHtml(c._id)}">Detalle</button>
+              <button class="btn" data-pedido="${escHtml(c._id)}">Pedido</button>
+              <button class="btn" data-print="${escHtml(c._id)}">🖨️ Imprimir</button>
+            </div>
+          </td>
+        ;
         tb.appendChild(tr);
-       }
-       // bind
-       tb.querySelectorAll('button[data-conv]').forEach(b=>{
+      }
+
+      // Bind botones
+      tb.querySelectorAll('button[data-conv]').forEach(b=>{
         b.addEventListener('click',()=>openDetailModal(b.getAttribute('data-conv')));
-       });
-       tb.querySelectorAll('button[data-pedido]').forEach(b=>{
-         b.addEventListener('click',()=>openPedidoModal(b.getAttribute('data-pedido')));
-        });
-        tb.querySelectorAll('button[data-print]').forEach(b=>{
-         b.addEventListener('click',()=>openTicketModal(b.getAttribute('data-print')));
-       });
-     }
- 
-     document.getElementById('btnReload').addEventListener('click', loadTable);
-     document.getElementById('btnBuscar').addEventListener('click', ()=>{
-       const v=(document.getElementById('waIdI').value||'').trim();
-       if(!v){ alert('Ingresá un waId'); return; }
-       openDetailByWaId(v);
-     });
- 
-     // primera carga y refresco cada 20s para ver conversaciones nuevas
-     loadTable();
-     setInterval(loadTable, 20000);
+      });
+      tb.querySelectorAll('button[data-pedido]').forEach(b=>{
+        b.addEventListener('click',()=>openPedidoModal(b.getAttribute('data-pedido')));
+      });
+      tb.querySelectorAll('button[data-print]').forEach(b=>{
+        b.addEventListener('click',()=>openTicketModal(b.getAttribute('data-print')));
+      });
 
+      if(!data.length){
+        const tr = document.createElement('tr');
+        tr.innerHTML = <td colspan="10" style="text-align:center;color:#666">Sin conversaciones</td>;
+        tb.appendChild(tr);
+      }
 
-     // ===== Bind manual chat modal =====
-     document.addEventListener('DOMContentLoaded', () => {
-       const tBtn = modalToggleManualBtn();
-       const sBtn = modalSendBtn();
-       const ta = modalReplyText();
+    }catch(e){
+      console.error('loadTable error', e);
+    }
+  }
 
-       if (tBtn) tBtn.addEventListener('click', toggleModalManual);
-       if (sBtn) sBtn.addEventListener('click', sendModalMessage);
-       if (ta) {
-         ta.addEventListener('keydown', (e) => {
-           if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-             e.preventDefault();
-             sendModalMessage();
-           }
-         });
-       }
-     });
-     
+  // =========================
+  // Buscar
+  // =========================
+  function openDetailByWaId(wa){
+    window.open('/admin/conversation?waId='+encodeURIComponent(wa),'_blank');
+  }
+
+  // =========================
+  // Bind general
+  // =========================
+  document.getElementById('btnReload')?.addEventListener('click', loadTable);
+
+  document.getElementById('btnBuscar')?.addEventListener('click', ()=>{
+    const v=(document.getElementById('waIdI')?.value||'').trim();
+    if(!v){ alert('Ingresá un waId'); return; }
+    openDetailByWaId(v);
+  });
+
+  // Bind modal manual/chat
+  document.addEventListener('DOMContentLoaded', () => {
+    const tBtn = modalToggleManualBtn();
+    const sBtn = modalSendBtn();
+    const ta = modalReplyText();
+
+    if (tBtn) tBtn.addEventListener('click', toggleModalManual);
+    if (sBtn) sBtn.addEventListener('click', sendModalMessage);
+
+    if (ta) {
+      ta.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          sendModalMessage();
+        }
+      });
+    }
+  });
+
+  // Carga inicial + refresco tabla
+  loadTable();
+  setInterval(loadTable, 20000);
+
 
   </script>
 </body>
