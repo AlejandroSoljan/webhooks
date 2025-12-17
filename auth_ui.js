@@ -378,6 +378,83 @@ function pageShell({ title, user, body }) {
     .btnDanger{border-color: rgba(240,68,56,.32); color:#b42318}
     .btnOk{border-color: rgba(14,107,102,.28); color: var(--primary)}
     .small{font-size:12px; color:#667085}
+  
+    /* ===== App layout (sidebar) ===== */
+    .layout{
+      width:min(1400px, 100%);
+      margin: 0 auto;
+      padding: 22px;
+      display:flex;
+      gap: 18px;
+      align-items: stretch;
+    }
+    @media (max-width: 980px){
+      .layout{flex-direction: column;}
+      .sidebar{width:100%; position:static; top:auto;}
+    }
+    .sidebar{
+      width: 260px;
+      border-radius: var(--radius);
+      background: rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.10);
+      backdrop-filter: blur(10px);
+      padding: 14px;
+      position: sticky;
+      top: 88px;
+      height: calc(100vh - 110px);
+      overflow:auto;
+    }
+    .sideBrand{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding: 8px 8px 12px;
+      border-bottom: 1px solid rgba(255,255,255,.10);
+      margin-bottom: 12px;
+    }
+    .sideBrand img{width:34px;height:34px;object-fit:contain; filter: drop-shadow(0 6px 12px rgba(0,0,0,.25));}
+    .sideTitle{font-weight:800; letter-spacing:.2px;}
+    .sideSub{font-size:12px; color: rgba(255,255,255,.70); margin-top:2px;}
+    .nav{display:flex; flex-direction:column; gap:6px; padding: 4px 0;}
+    .navItem{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding: 10px 10px;
+      border-radius: 12px;
+      text-decoration:none;
+      color: rgba(255,255,255,.86);
+      border:1px solid transparent;
+    }
+    .navItem:hover{background: rgba(255,255,255,.08)}
+    .navItem.active{
+      background: rgba(255,255,255,.12);
+      border-color: rgba(255,255,255,.14);
+      color:#fff;
+    }
+    .navDot{
+      width: 10px; height: 10px; border-radius: 999px;
+      background: rgba(255,255,255,.26);
+      border: 1px solid rgba(255,255,255,.18);
+      flex:0 0 auto;
+    }
+    .navItem.active .navDot{background: rgba(0,210,160,.75); border-color: rgba(0,210,160,.65);}
+    .main{flex:1; min-width:0;}
+    .frameWrap{
+      background: rgba(255,255,255,.92);
+      border: 1px solid rgba(16,24,40,.10);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+    .frame{
+      width:100%;
+      height: calc(100vh - 140px);
+      border:0;
+      background:#fff;
+      display:block;
+    }
+
   </style>
 </head>
 <body>
@@ -400,6 +477,56 @@ function pageShell({ title, user, body }) {
 </body>
 </html>`;
 }
+
+
+// ===== App layout (sidebar + content) =====
+function getNavItemsForUser(user) {
+  const isAdmin = user && (user.role === "admin" || user.role === "superadmin");
+  const items = [
+    { key: "home", title: "Inicio", href: "/app" },
+    { key: "admin", title: "Conversaciones", href: "/ui/admin" },
+    { key: "inbox", title: "Inbox", href: "/ui/inbox" },
+    { key: "productos", title: "Productos", href: "/ui/productos" },
+    { key: "horarios", title: "Horarios", href: "/ui/horarios" },
+    { key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" },
+  ];
+  if (isAdmin) items.push({ key: "users", title: "Usuarios", href: "/admin/users" });
+  return items;
+}
+
+function sidebarHtml(user, activeKey) {
+  const items = getNavItemsForUser(user).map((it) => {
+    const active = it.key === activeKey ? "active" : "";
+    return `<a class="navItem ${active}" href="${htmlEscape(it.href)}"><span class="navDot"></span><span>${htmlEscape(it.title)}</span></a>`;
+  }).join("");
+
+  return `
+    <aside class="sidebar">
+      <div class="sideBrand">
+        <img src="/static/logo.png" alt="Asisto"/>
+        <div>
+          <div class="sideTitle">Asisto</div>
+          <div class="sideSub">${htmlEscape(user.tenantId)} · ${htmlEscape(user.role)}</div>
+        </div>
+      </div>
+      <nav class="nav">${items}</nav>
+    </aside>
+  `;
+}
+
+function appShell({ title, user, active, main }) {
+  return pageShell({
+    title,
+    user,
+    body: `
+      <div class="layout">
+        ${sidebarHtml(user, active)}
+        <main class="main">${main || ""}</main>
+      </div>
+    `,
+  });
+}
+
 
 function loginPage({ error, to }) {
   const err = error ? `<div class="msg err">${htmlEscape(error)}</div>` : "";
@@ -454,10 +581,11 @@ function appMenuPage({ user, routes }) {
          <span class="badge">Admin</span>
        </a>` : "";
 
-  return pageShell({
+  return appShell({
     title: "Inicio · Asisto",
     user,
-    body: `
+    active: "home",
+    main: `
     <div class="app">
       <h2 style="margin:0 0 6px">Bienvenido, ${htmlEscape(user.username)}</h2>
       <div class="small" style="margin-bottom:18px">Elegí una opción para gestionar Asisto.</div>
@@ -554,10 +682,11 @@ function usersAdminPage({ user, users, msg, err }) {
     `;
   }).join("");
 
-  return pageShell({
+  return appShell({
     title: "Usuarios · Asisto",
     user,
-    body: `
+    active: "users",
+    main: `
     <div class="app">
       <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px">
         <div>
@@ -677,11 +806,11 @@ if (!verifyPassword(password, user.password)) {
   // menú
   app.get("/app", requireAuth, (req, res) => {
     const routes = [
-      { title: "Inbox", href: "/admin/inbox", badge: "Admin UI", desc: "Bandeja de conversaciones" },
-      { title: "Panel Admin", href: "/admin", badge: "Admin UI", desc: "Dashboard y herramientas" },
-      { title: "Productos", href: "/productos", badge: "UI", desc: "Catálogo del tenant" },
-      { title: "Horarios", href: "/horarios", badge: "UI", desc: "Configuración de horarios" },
-      { title: "Comportamiento", href: "/comportamiento", badge: "UI", desc: "Behavior prompt/config" },
+      { title: "Inbox", href: "/ui/inbox", badge: "Admin UI", desc: "Bandeja de conversaciones" },
+      { title: "Conversaciones", href: "/ui/admin", badge: "Admin UI", desc: "Panel de conversaciones" },
+      { title: "Productos", href: "/ui/productos", badge: "UI", desc: "Catálogo del tenant" },
+      { title: "Horarios", href: "/ui/horarios", badge: "UI", desc: "Configuración de horarios" },
+      { title: "Comportamiento", href: "/ui/comportamiento", badge: "UI", desc: "Behavior prompt/config" },
       { title: "Logs Conversaciones", href: "/api/logs/conversations", badge: "API", desc: "Listado de conversaciones" },
       { title: "Logs Mensajes", href: "/api/logs/messages", badge: "API", desc: "Mensajes por conversación" },
       { title: "Behavior API", href: "/api/behavior", badge: "API", desc: "Get/Set behavior" },
@@ -689,6 +818,37 @@ if (!verifyPassword(password, user.password)) {
       { title: "Products API", href: "/api/products", badge: "API", desc: "CRUD de productos" },
     ];
     return res.status(200).send(appMenuPage({ user: req.user, routes }));
+  });
+
+
+  // wrappers UI con menú lateral (mantienen el layout al navegar endpoints)
+  app.get("/ui/:page", requireAuth, (req, res) => {
+    const page = String(req.params.page || "").trim();
+    const map = {
+      admin: { title: "Conversaciones", src: "/admin", active: "admin" },
+      inbox: { title: "Inbox", src: "/admin/inbox", active: "inbox" },
+      productos: { title: "Productos", src: "/productos", active: "productos" },
+      horarios: { title: "Horarios", src: "/horarios", active: "horarios" },
+      comportamiento: { title: "Comportamiento", src: "/comportamiento", active: "comportamiento" },
+    };
+    const conf = map[page];
+    if (!conf) return res.status(404).send("404 - No existe esa pantalla");
+
+    // Conservamos querystring (por ej: ?tenant=xxx o convId=...)
+    const original = String(req.originalUrl || "");
+    const qs = original.includes("?") ? original.split("?").slice(1).join("?") : "";
+    const src = conf.src + (qs ? ("?" + qs) : "");
+
+    return res.status(200).send(appShell({
+      title: conf.title + " · Asisto",
+      user: req.user,
+      active: conf.active,
+      main: `
+        <div class="frameWrap">
+          <iframe class="frame" src="${htmlEscape(src)}"></iframe>
+        </div>
+      `,
+    }));
   });
 
   // Admin usuarios
@@ -914,7 +1074,7 @@ function protectRoutes(app) {
     ) return next();
 
     // Rutas que queremos con login
-    const protectedPrefixes = ["/admin", "/api"];
+    const protectedPrefixes = ["/admin", "/api", "/ui"];
     const protectedExact = ["/app", "/productos", "/horarios", "/comportamiento"];
 
     if (protectedExact.includes(p) || protectedPrefixes.some(pref => p.startsWith(pref))) {
