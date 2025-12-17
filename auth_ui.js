@@ -197,73 +197,8 @@ function htmlEscape(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
-function iconSvg(name) {
-  // tiny inline SVGs (no deps)
-  const common = 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
-  switch (String(name || "")) {
-    case "home":
-      return `<svg class="ico" viewBox="0 0 24 24" ${common}><path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg>`;
-    case "shield":
-      return `<svg class="ico" viewBox="0 0 24 24" ${common}><path d="M12 3 20 7v6c0 5-3.4 9.4-8 10-4.6-.6-8-5-8-10V7z"/><path d="M9 12l2 2 4-4"/></svg>`;
-    case "inbox":
-      return `<svg class="ico" viewBox="0 0 24 24" ${common}><path d="M4 4h16v12H4z"/><path d="M4 16l4 4h8l4-4"/><path d="M8 12h8"/></svg>`;
-    case "box":
-      return `<svg class="ico" viewBox="0 0 24 24" ${common}><path d="M21 16V8a2 2 0 0 0-1-1.73L12 2 4 6.27A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73L12 22l8-4.27A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg>`;
-    case "spark":
-      return `<svg class="ico" viewBox="0 0 24 24" ${common}><path d="M12 2l1.5 6L20 10l-6.5 2L12 22l-1.5-10L4 10l6.5-2z"/></svg>`;
-    case "clock":
-      return `<svg class="ico" viewBox="0 0 24 24" ${common}><circle cx="12" cy="12" r="9"/><path d="M12 7v6l4 2"/></svg>`;
-    case "users":
-      return `<svg class="ico" viewBox="0 0 24 24" ${common}><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`;
-    case "code":
-      return `<svg class="ico" viewBox="0 0 24 24" ${common}><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/><path d="M14 4l-4 16"/></svg>`;
-    case "logout":
-      return `<svg class="ico" viewBox="0 0 24 24" ${common}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>`;
-    case "bell":
-      return `<svg class="ico" viewBox="0 0 24 24" ${common}><path d="M18 8a6 6 0 10-12 0c0 7-3 7-3 7h18s-3 0-3-7"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>`;
-    default:
-      return `<svg class="ico" viewBox="0 0 24 24" ${common}><circle cx="12" cy="12" r="9"/></svg>`;
-  }
-}
-
-
-
-function pageShell({ title, user, body, activePath }) {
+function pageShell({ title, user, body }) {
   const u = user ? `${htmlEscape(user.username)} · ${htmlEscape(user.tenantId)} · ${htmlEscape(user.role)}` : "";
-  const isApp = !!user;
-  const initials = user?.username ? String(user.username).slice(0, 2).toUpperCase() : "AS";
-  const isAdmin = String(user?.role || "") === "admin" || String(user?.role || "") === "superadmin";
-
-  const nav = (() => {
-    if (!isApp) return "";
-    const links = [
-      { label: "Inicio", href: "/app", icon: "home" },
-      { label: "Conversaciones", href: "/admin", icon: "shield" },
-      { label: "Inbox", href: "/admin/inbox", icon: "inbox" },
-      { label: "Productos", href: "/productos", icon: "box" },
-      { label: "Comportamiento", href: "/comportamiento", icon: "spark" },
-      { label: "Horarios", href: "/horarios", icon: "clock" },
-      { label: "APIs", href: "/api/logs/conversations", icon: "code" },
-    ];
-    if (isAdmin) links.splice(2, 0, { label: "Usuarios", href: "/admin/users", icon: "users" });
-
-    const isActive = (href) => {
-      const p = String(activePath || "");
-      if (!p) return false;
-      if (href === "/api/logs/conversations") return p.startsWith("/api");
-      if (href === "/admin/inbox") return p.startsWith("/admin/inbox");
-      if (href.startsWith("/admin")) return p.startsWith("/admin");
-      return p === href;
-    };
-
-    return links.map(l => `
-      <a class="navLink ${isActive(l.href) ? "active" : ""}" href="${htmlEscape(l.href)}">
-        ${iconSvg(l.icon)}
-        <span>${htmlEscape(l.label)}</span>
-      </a>
-    `).join("");
-  })();
-
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -288,14 +223,10 @@ function pageShell({ title, user, body, activePath }) {
       margin:0;
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
       background: radial-gradient(1200px 700px at 20% 10%, rgba(33,140,255,.12), transparent 60%),
-                radial-gradient(900px 500px at 70% 80%, rgba(0,210,160,.10), transparent 55%),
-                linear-gradient(180deg, var(--bg), var(--bg2));
+                  radial-gradient(900px 500px at 70% 80%, rgba(0,210,160,.10), transparent 55%),
+                  linear-gradient(180deg, var(--bg), var(--bg2));
       min-height:100vh;
       color:#fff;
-    }
-    body.appMode{
-      background: #d9dee6;
-      color: var(--text);
     }
     a{color:inherit}
     .wrap{min-height:100vh; display:flex; align-items:center; justify-content:center; padding:28px;}
@@ -311,16 +242,22 @@ function pageShell({ title, user, body, activePath }) {
     }
     .brand{
       border-radius: var(--radius);
-      padding:34px 30px;
+      padding:0;
       position:relative;
       overflow:hidden;
       background: rgba(255,255,255,.04);
       border:1px solid rgba(255,255,255,.06);
+      display:flex;
+      align-items:center;
+      justify-content:center;
     }
-    .brand .logo{display:flex; gap:14px; align-items:center;}
-    .brand img{width:54px; height:54px; object-fit:contain; filter: drop-shadow(0 8px 16px rgba(0,0,0,.25));}
-    .brand h1{margin:0; font-size:56px; font-weight:800; letter-spacing:-.02em}
-    .brand p{margin:10px 0 0; color:rgba(255,255,255,.72); font-size:18px}
+    .brand .brandHero{
+      width:100%;
+      height:100%;
+      object-fit:contain;
+      padding:18px;
+      filter: drop-shadow(0 8px 16px rgba(0,0,0,.25));
+    }
     .card{
       background: var(--card);
       color: var(--text);
@@ -355,175 +292,45 @@ function pageShell({ title, user, body, activePath }) {
     }
     .btn:hover{background: var(--primary2)}
     .link{color:#475467; font-size:13px; text-decoration:none}
-    .appWrap{
-      min-height:100vh;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      padding: 30px;
-    }
-    .appFrame{
-      width:min(1260px, 100%);
-      height: min(760px, calc(100vh - 60px));
-      background: #eef1f6;
-      border-radius: 22px;
-      overflow:hidden;
-      box-shadow: 0 30px 90px rgba(10,18,30,.25);
-      border: 1px solid rgba(16,24,40,.12);
-      display:grid;
-      grid-template-columns: 290px 1fr;
-    }
-    @media (max-width: 900px){
-      .appFrame{grid-template-columns: 1fr; height:auto; min-height: calc(100vh - 60px);}
-      .sidebar{border-bottom: 1px solid rgba(255,255,255,.10);}
-    }
-    .sidebar{
-      background: linear-gradient(180deg, var(--bg), var(--bg2));
-      color:#fff;
-      padding: 18px 18px 16px;
-      display:flex;
-      flex-direction:column;
-      gap:16px;
-    }
-    .sideBrand{
-      display:flex;
-      align-items:center;
-      gap:10px;
-      font-weight: 900;
-      font-size: 22px;
-      letter-spacing:-.01em;
-    }
-    .sideBrand img{width:34px; height:34px; object-fit:contain}
-    .userBox{
-      display:flex;
-      align-items:center;
-      gap:10px;
-      padding: 10px 12px;
-      border-radius: 16px;
-      background: rgba(255,255,255,.06);
-      border: 1px solid rgba(255,255,255,.08);
-    }
-    .avatar{
-      width:38px; height:38px;
-      border-radius: 999px;
-      background: rgba(255,255,255,.14);
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      font-weight: 900;
-      letter-spacing:.02em;
-    }
-    .userMeta .name{font-weight:800; line-height:1.1}
-    .userMeta .sub{font-size:12px; color:rgba(255,255,255,.70)}
-    .nav{
-      display:flex;
-      flex-direction:column;
-      gap:6px;
-    }
-    .navLink{
-      display:flex;
-      align-items:center;
-      gap:10px;
-      padding: 10px 12px;
-      border-radius: 14px;
-      text-decoration:none;
-      color: rgba(255,255,255,.85);
-    }
-    .navLink .ico{width:18px; height:18px; opacity:.92}
-    .navLink:hover, .navLink.active{
-      background: rgba(255,255,255,.10);
-      color:#fff;
-    }
-    .sideBottom{
-      margin-top:auto;
-      display:flex;
-      flex-direction:column;
-      gap:10px;
-    }
-    .logoutBtn{
-      width:100%;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      gap:10px;
-      border:1px solid rgba(255,255,255,.18);
-      background: rgba(255,255,255,.06);
-      color:#fff;
-      padding: 10px 12px;
-      border-radius: 14px;
-      cursor:pointer;
-      font-weight: 750;
-    }
-    .logoutBtn:hover{background: rgba(255,255,255,.10)}
-    .main{
-      display:flex;
-      flex-direction:column;
-      background: #f4f6fa;
-      color: var(--text);
-    }
-    .mainHeader{
-      height:58px;
-      display:flex;
-      align-items:center;
-      justify-content:flex-end;
-      gap:10px;
-      padding: 12px 16px;
-      border-bottom: 1px solid rgba(16,24,40,.08);
-      background: rgba(255,255,255,.55);
+    .topbar{
+      position:fixed; left:0; right:0; top:0;
+      display:flex; align-items:center; justify-content:space-between;
+      padding: 16px 18px;
+      background: rgba(8,16,28,.20);
       backdrop-filter: blur(10px);
+      border-bottom: 1px solid rgba(255,255,255,.06);
     }
-    .iconBtn{
-      width:36px; height:36px;
-      border-radius: 12px;
-      border: 1px solid rgba(16,24,40,.10);
-      background: #fff;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-    }
-    .iconBtn .ico{width:18px; height:18px; color:#344054}
-    .mainBody{
+    .pill{display:inline-flex; gap:10px; align-items:center; color:rgba(255,255,255,.86); font-size:13px}
+    .pill strong{color:#fff}
+    .content{padding-top:74px;}
+    .app{
+      width:min(1100px, 100%);
+      margin: 0 auto;
       padding: 22px;
-      overflow:auto;
     }
-    .dashTitle{font-size:28px; margin:0 0 6px; letter-spacing:-.02em}
-    .dashSub{margin:0 0 18px; color:#667085}
-    .dashGrid{
+    .cards{
       display:grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
+      gap: 14px;
     }
-    @media (max-width: 900px){
-      .dashGrid{grid-template-columns: 1fr;}
+    @media (max-width: 700px){
+      .cards{grid-template-columns: 1fr;}
     }
-    .tileCard{
+    .tile{
       background:#fff;
-      border:1px solid rgba(16,24,40,.10);
-      border-radius: 18px;
-      padding: 16px 16px;
+      color:#0b1726;
+      border:1px solid rgba(16,24,40,.08);
+      border-radius: 16px;
+      padding:16px;
       text-decoration:none;
       display:flex;
       align-items:center;
       justify-content:space-between;
-      gap:14px;
-      box-shadow: 0 10px 26px rgba(0,0,0,.10);
+      gap:12px;
     }
-    .tileCard:hover{transform: translateY(-1px); box-shadow: 0 14px 34px rgba(0,0,0,.14)}
-    .tileLeft{display:flex; align-items:center; gap:12px}
-    .tileIcon{
-      width:46px; height:46px;
-      border-radius: 16px;
-      background: rgba(14,107,102,.10);
-      border: 1px solid rgba(14,107,102,.18);
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      color: var(--primary);
-      flex: 0 0 auto;
-    }
-    .tileIcon .ico{width:22px; height:22px}
-    .tileText h3{margin:0; font-size:16px}
-    .tileText p{margin:6px 0 0; color:#667085; font-size:13px}
+    .tile:hover{transform: translateY(-1px); box-shadow: 0 10px 26px rgba(0,0,0,.14)}
+    .tile h3{margin:0; font-size:16px}
+    .tile p{margin:6px 0 0; color:#667085; font-size:13px}
     .badge{
       font-size:12px;
       padding: 6px 10px;
@@ -571,52 +378,25 @@ function pageShell({ title, user, body, activePath }) {
     .btnDanger{border-color: rgba(240,68,56,.32); color:#b42318}
     .btnOk{border-color: rgba(14,107,102,.28); color: var(--primary)}
     .small{font-size:12px; color:#667085}
-    code{background: rgba(16,24,40,.05); border:1px solid rgba(16,24,40,.10); padding:2px 6px; border-radius:8px}
   </style>
 </head>
-<body class="${isApp ? "appMode" : ""}">
-  ${isApp ? `
-    <div class="appWrap">
-      <div class="appFrame">
-        <aside class="sidebar">
-          <div class="sideBrand">
-            <img src="/static/logo.png" alt="Asisto"/>
-            <span>Asisto</span>
-          </div>
-
-          <div class="userBox">
-            <div class="avatar">${htmlEscape(initials)}</div>
-            <div class="userMeta">
-              <div class="name">${htmlEscape(user.username)}</div>
-              <div class="sub">${htmlEscape(user.tenantId)} · ${htmlEscape(user.role)}</div>
-            </div>
-          </div>
-
-          <nav class="nav">
-            ${nav}
-          </nav>
-
-          <div class="sideBottom">
-            <form method="POST" action="/logout" style="margin:0">
-              <button class="logoutBtn" type="submit">${iconSvg("logout")}<span>Cerrar sesión</span></button>
-            </form>
-          </div>
-        </aside>
-
-        <main class="main">
-          <div class="mainHeader">
-            <div class="iconBtn" title="Notificaciones">${iconSvg("bell")}</div>
-            <div class="iconBtn" title="${htmlEscape(u)}">${iconSvg("users")}</div>
-          </div>
-          <div class="mainBody">
-            ${body}
-          </div>
-        </main>
-      </div>
+<body>
+  ${user ? `
+  <div class="topbar">
+    <div class="pill">
+      <img src="/static/logo.png" alt="Asisto" style="width:28px;height:28px;object-fit:contain"/>
+      <strong>Asisto</strong>
+      <span>·</span>
+      <span>${u}</span>
     </div>
-  ` : `
+    <form method="POST" action="/logout" style="margin:0">
+      <button class="btn2" type="submit">Cerrar sesión</button>
+    </form>
+  </div>` : ``}
+
+  <div class="${user ? "content" : ""}">
     ${body}
-  `}
+  </div>
 </body>
 </html>`;
 }
@@ -630,11 +410,7 @@ function loginPage({ error, to }) {
     <div class="wrap">
       <div class="grid">
         <div class="brand">
-          <div class="logo">
-            <img src="/static/logo.png" alt="Asisto"/>
-            <h1>Asisto</h1>
-          </div>
-          <p>lo hace por vos…</p>
+          <img class="brandHero" src="/static/logo.png" alt="Asisto"/>
         </div>
         <div class="card">
           <h2>Iniciar sesión</h2>
@@ -662,57 +438,34 @@ function loginPage({ error, to }) {
 }
 
 function appMenuPage({ user, routes }) {
-  const isAdmin = (user.role === "admin" || user.role === "superadmin");
-
-  // “Accesos principales” (lo que pediste: /admin /admin/inbox /productos /comportamiento)
-  const primary = [
-    { title: "Conversaciones", href: "/admin", badge: "Admin UI", desc: "Panel de conversaciones", icon: "shield" },
-    { title: "Inbox", href: "/admin/inbox", badge: "Admin UI", desc: "Bandeja de conversaciones", icon: "inbox" },
-    { title: "Productos", href: "/productos", badge: "UI", desc: "Catálogo del tenant", icon: "box" },
-    { title: "Comportamiento", href: "/comportamiento", badge: "UI", desc: "Behavior prompt/config", icon: "spark" },
-  ];
-
-  const extra = routes
-    .filter(r => !primary.some(p => p.href === r.href))
-    .map(r => ({ ...r, icon: r.icon || "code" }));
-
-  if (isAdmin) {
-    extra.unshift({ title: "Usuarios", href: "/admin/users", badge: "Admin", desc: "Alta/baja y reseteo de contraseñas", icon: "users" });
-  }
-
-  const renderTile = (r) => `
-    <a class="tileCard" href="${htmlEscape(r.href)}">
-      <div class="tileLeft">
-        <div class="tileIcon">${iconSvg(r.icon)}</div>
-        <div class="tileText">
-          <h3>${htmlEscape(r.title)}</h3>
-          <p>${htmlEscape(r.desc || "")}</p>
-        </div>
+  const tiles = routes.map(r => `
+    <a class="tile" href="${htmlEscape(r.href)}">
+      <div>
+        <h3>${htmlEscape(r.title)}</h3>
+        <p>${htmlEscape(r.desc || "")}</p>
       </div>
       <span class="badge">${htmlEscape(r.badge || "")}</span>
     </a>
-  `;
+  `).join("");
+
+  const adminTiles = (user.role === "admin" || user.role === "superadmin")
+    ? `<a class="tile" href="/admin/users">
+         <div><h3>Usuarios</h3><p>Alta/baja y reseteo de contraseñas</p></div>
+         <span class="badge">Admin</span>
+       </a>` : "";
 
   return pageShell({
     title: "Inicio · Asisto",
     user,
-    activePath: "/app",
     body: `
-      <h1 class="dashTitle">Bienvenido, ${htmlEscape(user.username)}</h1>
-      <p class="dashSub">Elegí una opción para gestionar Asisto.</p>
-
-      <div class="dashGrid">
-        ${primary.map(renderTile).join("")}
+    <div class="app">
+      <h2 style="margin:0 0 6px">Bienvenido, ${htmlEscape(user.username)}</h2>
+      <div class="small" style="margin-bottom:18px">Elegí una opción para gestionar Asisto.</div>
+      <div class="cards">
+        ${adminTiles}
+        ${tiles}
       </div>
-
-      ${extra.length ? `
-        <div style="margin-top:18px">
-          <div class="small" style="margin-bottom:10px">Más accesos</div>
-          <div class="dashGrid">
-            ${extra.map(renderTile).join("")}
-          </div>
-        </div>
-      ` : ``}
+    </div>
     `,
   });
 }
@@ -804,7 +557,6 @@ function usersAdminPage({ user, users, msg, err }) {
   return pageShell({
     title: "Usuarios · Asisto",
     user,
-    activePath: "/admin/users",
     body: `
     <div class="app">
       <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px">
@@ -925,7 +677,6 @@ if (!verifyPassword(password, user.password)) {
   // menú
   app.get("/app", requireAuth, (req, res) => {
     const routes = [
-      { title: "Conversaciones", href: "/admin", badge: "Admin UI", desc: "Panel administrativo" },
       { title: "Inbox", href: "/admin/inbox", badge: "Admin UI", desc: "Bandeja de conversaciones" },
       { title: "Panel Admin", href: "/admin", badge: "Admin UI", desc: "Dashboard y herramientas" },
       { title: "Productos", href: "/productos", badge: "UI", desc: "Catálogo del tenant" },
@@ -1164,7 +915,7 @@ function protectRoutes(app) {
 
     // Rutas que queremos con login
     const protectedPrefixes = ["/admin", "/api"];
-    const protectedExact = ["/app", "/admin", "/productos", "/horarios", "/comportamiento"];
+    const protectedExact = ["/app", "/productos", "/horarios", "/comportamiento"];
 
     if (protectedExact.includes(p) || protectedPrefixes.some(pref => p.startsWith(pref))) {
       return requireAuth(req, res, next);
