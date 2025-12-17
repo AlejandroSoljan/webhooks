@@ -1,8 +1,10 @@
 // seed_user.js
+// Crea un usuario inicial en MongoDB (colección "users").
+//
 // Uso:
 //   node seed_user.js --username admin --password "TuClave" --tenant default --role admin
 //
-// Crea/actualiza el usuario en la colección "users" (MongoDB).
+// Requiere: MONGODB_URI (y opcional MONGODB_DBNAME)
 
 require("dotenv").config();
 const { getDb } = require("./db");
@@ -10,41 +12,44 @@ const { hashPassword } = require("./auth_ui");
 
 function arg(name, def = "") {
   const idx = process.argv.indexOf(`--${name}`);
-  if (idx >= 0 && process.argv[idx + 1]) return process.argv[idx + 1];
-  return def;
+  if (idx === -1) return def;
+  return process.argv[idx + 1] ?? def;
 }
 
 (async () => {
-  const username = String(arg("username")).trim().toLowerCase();
-  const password = String(arg("password")).trim();
-  const tenantId = String(arg("tenant", "default")).trim();
+  const username = String(arg("username", "")).trim();
+  const password = String(arg("password", ""));
+  const tenantId = String(arg("tenant", "default")).trim() || "default";
   const role = String(arg("role", "admin")).trim();
 
   if (!username || !password) {
-    console.log("Faltan parámetros. Ejemplo:");
-    console.log('  node seed_user.js --username admin --password "TuClave" --tenant default --role admin');
+    console.error("Faltan parámetros: --username y --password");
     process.exit(1);
   }
 
   const db = await getDb();
-  const doc = {
+
+  const exists = await db.collection("users").findOne({ username });
+  if (exists) {
+    console.error("El usuario ya existe:", username);
+    process.exit(2);
+  }
+
+  const passwordDoc = hashPassword(password);
+
+  await db.collection("users").insertOne({
     username,
-    password: hashPassword(password),
     tenantId,
-    role,
-    active: true,
+    role: ["user","admin","superadmin"].includes(role) ? role : "admin",
+    password: passwordDoc,
+    createdAt: new Date(),
     updatedAt: new Date(),
-  };
+    isLocked: false,
+  });
 
-  const res = await db.collection("users").updateOne(
-    { username },
-    { $set: doc, $setOnInsert: { createdAt: new Date() } },
-    { upsert: true }
-  );
-
-  console.log("OK. Usuario listo:", { username, tenantId, role, upserted: !!res.upsertedId, modified: res.modifiedCount });
+  console.log("✅ Usuario creado:", { username, tenantId, role });
   process.exit(0);
 })().catch((e) => {
-  console.error("seed_user error:", e);
-  process.exit(1);
+  console.error("Error:", e);
+  process.exit(99);
 });

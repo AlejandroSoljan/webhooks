@@ -6,10 +6,6 @@ require("dotenv").config();
 const express = require("express");
 const app = express();
 
-// 🔐 Auth UI (login + sesión firmada)
-const { mountAuthRoutes, attachUser, requireAuth } = require("./auth_ui");
-
-
 const crypto = require("crypto");
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOKEN;
 
@@ -31,57 +27,19 @@ const STORE_HOURS_DAYS = [
 ];
 // ⬇️ Para páginas y formularios simples (admin)
 const path = require("path");
+
+// ⬇️ Auth UI (login + sesiones + admin usuarios)
+const auth = require("./auth_ui");
+// Servir assets estáticos locales (logo.png)
+app.use("/static", express.static(path.join(__dirname)));
+// Necesario para formularios HTML (login / admin users)
 app.use(express.urlencoded({ extended: true }));
-// --- Auth middleware ---
-app.use(attachUser);
-
-// --- Rutas de autenticación + menú ---
-mountAuthRoutes(app, {
-  // Lista de endpoints existentes (se usa para renderizar el menú)
-  endpoints: [
-    { label: "Inbox (WhatsApp Web)", method: "GET", path: "/admin/inbox" },
-    { label: "Panel (tabla)", method: "GET", path: "/admin" },
-    { label: "Productos (UI)", method: "GET", path: "/productos" },
-    { label: "Horarios (UI)", method: "GET", path: "/horarios" },
-    { label: "Comportamiento (UI)", method: "GET", path: "/comportamiento" },
-
-    { label: "Logs: conversaciones", method: "GET", path: "/api/logs/conversations" },
-    { label: "Logs: mensajes", method: "GET", path: "/api/logs/messages?convId=..." },
-    { label: "Logs: pedido", method: "GET", path: "/api/logs/pedido?convId=..." },
-
-    { label: "Productos (API)", method: "GET", path: "/api/products" },
-    { label: "Behavior (API)", method: "GET", path: "/api/behavior" },
-    { label: "Hours (API)", method: "GET", path: "/api/hours" },
-
-    { label: "Health", method: "GET", path: "/healthz" },
-  ],
-});
-
-// --- Guard global: protegemos UI/admin y casi toda la API ---
-app.use((req, res, next) => {
-  const p = req.path || "";
-
-  // Públicos
-  if (p === "/" || p === "/healthz") return next();
-  if (p.startsWith("/webhook")) return next();
-  if (p.startsWith("/cache/")) return next();
-
-  // Auth/UI
-  if (p === "/login" || p === "/logout") return next();
-  if (p.startsWith("/static/")) return next();
-  if (p === "/app") return requireAuth(req, res, next);
-
-  // Proteger UI admin y endpoints sensibles
-  if (p.startsWith("/admin")) return requireAuth(req, res, next);
-  if (p === "/productos" || p === "/horarios" || p === "/comportamiento") return requireAuth(req, res, next);
-
-  // Proteger todo /api (excepto si quisieras dejar alguno público)
-  if (p.startsWith("/api/")) return requireAuth(req, res, next);
-
-  return next();
-});
-
-
+// Adjunta req.user desde cookie de sesión (si existe)
+app.use(auth.attachUser);
+// Rutas: /login, /logout, /app, /admin/users...
+auth.mountAuthRoutes(app);
+// Protege rutas sensibles (admin/api/ui) detrás de login
+auth.protectRoutes(app);
 
 const {
   loadBehaviorTextFromMongo,
@@ -97,57 +55,6 @@ const {
 } = require("./logic");
 
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
-app.use(express.urlencoded({ extended: true }));
-// --- Auth middleware ---
-app.use(attachUser);
-
-// --- Rutas de autenticación + menú ---
-mountAuthRoutes(app, {
-  // Lista de endpoints existentes (se usa para renderizar el menú)
-  endpoints: [
-    { label: "Inbox (WhatsApp Web)", method: "GET", path: "/admin/inbox" },
-    { label: "Panel (tabla)", method: "GET", path: "/admin" },
-    { label: "Productos (UI)", method: "GET", path: "/productos" },
-    { label: "Horarios (UI)", method: "GET", path: "/horarios" },
-    { label: "Comportamiento (UI)", method: "GET", path: "/comportamiento" },
-
-    { label: "Logs: conversaciones", method: "GET", path: "/api/logs/conversations" },
-    { label: "Logs: mensajes", method: "GET", path: "/api/logs/messages?convId=..." },
-    { label: "Logs: pedido", method: "GET", path: "/api/logs/pedido?convId=..." },
-
-    { label: "Productos (API)", method: "GET", path: "/api/products" },
-    { label: "Behavior (API)", method: "GET", path: "/api/behavior" },
-    { label: "Hours (API)", method: "GET", path: "/api/hours" },
-
-    { label: "Health", method: "GET", path: "/healthz" },
-  ],
-});
-
-// --- Guard global: protegemos UI/admin y casi toda la API ---
-app.use((req, res, next) => {
-  const p = req.path || "";
-
-  // Públicos
-  if (p === "/" || p === "/healthz") return next();
-  if (p.startsWith("/webhook")) return next();
-  if (p.startsWith("/cache/")) return next();
-
-  // Auth/UI
-  if (p === "/login" || p === "/logout") return next();
-  if (p.startsWith("/static/")) return next();
-  if (p === "/app") return requireAuth(req, res, next);
-
-  // Proteger UI admin y endpoints sensibles
-  if (p.startsWith("/admin")) return requireAuth(req, res, next);
-  if (p === "/productos" || p === "/horarios" || p === "/comportamiento") return requireAuth(req, res, next);
-
-  // Proteger todo /api (excepto si quisieras dejar alguno público)
-  if (p.startsWith("/api/")) return requireAuth(req, res, next);
-
-  return next();
-});
-
-
 
 function isValidSignature(req) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
@@ -160,19 +67,7 @@ function isValidSignature(req) {
 }
 
 function resolveTenantId(req) {
-  // Prioridad:
-  // 1) tenant del usuario logueado (sesión)
-  // 2) querystring (?tenant=)
-  // 3) header x-tenant-id
-  // 4) env TENANT_ID
-  // 5) DEFAULT_TENANT_ID
-  return (
-    (req.user && req.user.tenantId) ||
-    req.query.tenant ||
-    req.headers["x-tenant-id"] ||
-    process.env.TENANT_ID ||
-    DEFAULT_TENANT_ID
-  ).toString().trim();
+  return auth.resolveTenantId(req, { defaultTenantId: DEFAULT_TENANT_ID, envTenantId: process.env.TENANT_ID });
 }
 
 // Health
