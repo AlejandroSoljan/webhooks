@@ -238,7 +238,7 @@ function pageShell({ title, user, body, activePath }) {
     if (!isApp) return "";
     const links = [
       { label: "Inicio", href: "/app", icon: "home" },
-      { label: "Adm", href: "/adm", icon: "shield" },
+      { label: "Conversaciones", href: "/admin", icon: "shield" },
       { label: "Inbox", href: "/admin/inbox", icon: "inbox" },
       { label: "Productos", href: "/productos", icon: "box" },
       { label: "Comportamiento", href: "/comportamiento", icon: "spark" },
@@ -664,9 +664,9 @@ function loginPage({ error, to }) {
 function appMenuPage({ user, routes }) {
   const isAdmin = (user.role === "admin" || user.role === "superadmin");
 
-  // “Accesos principales” (lo que pediste: /adm /admin/inbox /productos /comportamiento)
+  // “Accesos principales” (lo que pediste: /admin /admin/inbox /productos /comportamiento)
   const primary = [
-    { title: "Adm", href: "/adm", badge: "Admin UI", desc: "Panel administrativo", icon: "shield" },
+    { title: "Conversaciones", href: "/admin", badge: "Admin UI", desc: "Panel de conversaciones", icon: "shield" },
     { title: "Inbox", href: "/admin/inbox", badge: "Admin UI", desc: "Bandeja de conversaciones", icon: "inbox" },
     { title: "Productos", href: "/productos", badge: "UI", desc: "Catálogo del tenant", icon: "box" },
     { title: "Comportamiento", href: "/comportamiento", badge: "UI", desc: "Behavior prompt/config", icon: "spark" },
@@ -925,7 +925,7 @@ if (!verifyPassword(password, user.password)) {
   // menú
   app.get("/app", requireAuth, (req, res) => {
     const routes = [
-      { title: "Adm", href: "/adm", badge: "Admin UI", desc: "Panel administrativo" },
+      { title: "Conversaciones", href: "/admin", badge: "Admin UI", desc: "Panel administrativo" },
       { title: "Inbox", href: "/admin/inbox", badge: "Admin UI", desc: "Bandeja de conversaciones" },
       { title: "Panel Admin", href: "/admin", badge: "Admin UI", desc: "Dashboard y herramientas" },
       { title: "Productos", href: "/productos", badge: "UI", desc: "Catálogo del tenant" },
@@ -1164,7 +1164,7 @@ function protectRoutes(app) {
 
     // Rutas que queremos con login
     const protectedPrefixes = ["/admin", "/api"];
-    const protectedExact = ["/app", "/adm", "/productos", "/horarios", "/comportamiento"];
+    const protectedExact = ["/app", "/admin", "/productos", "/horarios", "/comportamiento"];
 
     if (protectedExact.includes(p) || protectedPrefixes.some(pref => p.startsWith(pref))) {
       return requireAuth(req, res, next);
