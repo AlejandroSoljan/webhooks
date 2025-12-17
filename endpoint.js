@@ -38,6 +38,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use(auth.attachUser);
 // Rutas: /login, /logout, /app, /admin/users...
 auth.mountAuthRoutes(app);
+// Asegura que el shell /ui quede protegido (aunque cambie protectRoutes)
+app.use("/ui", auth.requireAuth);
 // Protege rutas sensibles (admin/api/ui) detrás de login
 auth.protectRoutes(app);
 
