@@ -108,6 +108,27 @@ const withTenant = (q = {}, tenantId) => {
   return out;
 };
 
+// Normaliza el estado para mostrarlo en /admin (ej: CANCELLED -> CANCELADA).
+// Importante: si el registro ya trae un status explícito, ese status debe
+// prevalecer (aunque finalized=true), porque puede ser una conversación
+// finalizada por cancelación del usuario.
+function adminStatusLabel(conv) {
+  const raw = String(conv?.status || "").trim();
+  const up = raw.toUpperCase();
+
+  // Cancelaciones (aceptamos variantes)
+  if (up === "CANCELLED" || up === "CANCELED" || up === "CANCELADA" || up === "CANCELADO") {
+    return "CANCELADA";
+  }
+
+  // Si hay status persistido, lo devolvemos tal cual (en mayúsculas típicas)
+  if (raw) return up;
+
+  // Fallback si no hay status explícito
+  return conv?.finalized ? "COMPLETED" : "OPEN";
+}
+
+
 async function saveLog(entry) {
   try {
     const db = await getDb();
@@ -520,7 +541,7 @@ async function listConversations(limit = 50, tenantId) {
       _id: String(c._id),
       waId: c.waId,
       contactName: c.contactName || "-",
-      status: c.finalized ? "COMPLETED" : (c.status || "OPEN"),
+      status: adminStatusLabel(c),
       manualOpen: !!c.manualOpen,
       lastAt: c.lastUserTs || c.lastAssistantTs || c.updatedAt || c.closedAt || c.openedAt
     };
@@ -644,7 +665,7 @@ app.get("/api/admin/conversation-meta", async (req, res) => {
       convId: String(conv._id),
       waId: conv.waId,
       contactName: conv.contactName || "",
-      status: conv.finalized ? "COMPLETED" : (conv.status || "OPEN"),
+      status: adminStatusLabel(conv),
       manualOpen: !!conv.manualOpen,
     });
   } catch (e) {
@@ -3540,8 +3561,31 @@ console.log("[convId] "+ convId);
    // 🔹 Mantener snapshot del asistente
 setAssistantPedidoSnapshot(tenant, from, pedido, estado);
 
+   // 🔹 Mantener snapshot del asistente
+	setAssistantPedidoSnapshot(tenant, from, pedido, estado);
+
+	// 🔎 Heurística: si el usuario pidió cancelar, forzamos CANCELLED para el cierre
+	// (esto evita que el /admin muestre COMPLETED cuando el modelo respondió mal el estado)
+	const _tNorm = String(text || "")
+	  .toLowerCase()
+	  .normalize("NFD")
+	  .replace(/[\u0300-\u036f]/g, "");
+	const userWantsCancelRaw =
+	  /\b(cancel|anul)(ar|o|a|e|en|ado|ada)?\b/.test(_tNorm) ||
+	  /\bdar de baja\b/.test(_tNorm);
+	const userCancelNeg =
+	  /\bno\s+(quiero\s+)?cancel/.test(_tNorm) ||
+	  /\bno\s+(quiero\s+)?anul/.test(_tNorm);
+	const userCancelled = !!(userWantsCancelRaw && !userCancelNeg);
+
+	// ¿Cerramos como COMPLETED aunque el modelo no lo haya puesto?
+	const userConfirmsFast =
+	  /\bconfirm(ar|o|a)\b/i.test(String(text || "")) ||
+	  /^s(i|í)\b.*confirm/i.test(String(text || ""));
+	const willComplete = !!(estado === "COMPLETED" || (userConfirmsFast && isPedidoCompleto(pedido)));
+
 // 🔹 Persistir pedido definitivo en MongoDB SOLO si está COMPLETED
-if (estado === "COMPLETED" && pedido && convId) {
+if (willComplete && pedido && convId) {
   try {
     const db = await getDb();
     await db.collection("orders").insertOne({
@@ -3550,7 +3594,7 @@ if (estado === "COMPLETED" && pedido && convId) {
       // vinculamos el pedido con la conversación para poder recuperar el ticket
       conversationId: convId ? new ObjectId(String(convId)) : null,
       pedido,
-      estado,
+      estado: "COMPLETED",
       distancia_km: typeof pedido?.distancia_km === "number" ? pedido.distancia_km : distKm ?? null,
       createdAt: new Date(),
     });
@@ -3560,18 +3604,20 @@ if (estado === "COMPLETED" && pedido && convId) {
 }
     } catch {}
     try {
-            const userConfirms =
-        /\bconfirm(ar|o|a)\b/i.test(text) || /^s(i|í)\b.*confirm/i.test(text);
+	      // Cerramos si:
+	      // 1) el usuario canceló explícitamente, o
+	      // 2) el flujo terminó (COMPLETED) o
+	      // 3) el usuario confirmó explícitamente y el pedido está completo.
+	      const closeStatus =
+	        (userCancelled || estado === "CANCELLED")
+	          ? "CANCELLED"
+	          : (willComplete ? "COMPLETED" : null);
 
-
-      // Cerramos si:
-      // 1) el flujo terminó (COMPLETED) o fue cancelado, o
-      // 2) el usuario confirmó explícitamente y el pedido está completo.
-      if (estado === "CANCELLED" || estado === "COMPLETED" || (userConfirms && isPedidoCompleto(pedido))) {
-     await closeConversation(convId, estado);
-        // 🧹 limpiar sesión en memoria para que el próximo msg empiece conversación nueva
-        markSessionEnded(tenant, from);
-      }
+	      if (closeStatus) {
+	        await closeConversation(convId, closeStatus);
+	        // 🧹 limpiar sesión en memoria para que el próximo msg empiece conversación nueva
+	        markSessionEnded(tenant, from);
+	      }
     } catch {}
 
     res.sendStatus(200);
