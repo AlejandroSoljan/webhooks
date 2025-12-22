@@ -3366,7 +3366,7 @@ console.log("[convId] "+ convId);
               pedido = pedidoCorr;
             } catch {}
 
-            responseText = "📍 No pude ubicar *exactamente* esa dirección en Google Maps.\n\nPor favor escribila nuevamente con *calle y número*, y si podés agregá *barrio/localidad*.\nEj: *Moreno 2862, Venado Tuerto*";
+            responseText = "📍 No pude ubicar *exactamente* esa dirección en Google Maps.\n\nPor favor escribila nuevamente con *calle y número*, y si podés agregá *barrio/localidad*.\nEj: *Moreno 247, Venado Tuerto*";
           }
         }
       }
@@ -3464,7 +3464,8 @@ console.log("[convId] "+ convId);
                 pedido.Domicilio.lon = lon;
                 console.log(`[geo] OK lat=${lat}, lon=${lon}`);
               } else {
-                 const reason = geo ? `inexacto (partial=${geo.partial_match}, type=${geo.location_type})` : "sin resultado";
+                
+                const reason = geo ? `inexacto (partial=${geo.partial_match}, type=${geo.location_type})` : "sin resultado";
                 console.warn(`[geo] Geocoding ${reason}. No uso coords para distancia/envío.`);
  
               }

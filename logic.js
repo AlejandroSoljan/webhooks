@@ -906,30 +906,31 @@ async function geocodeAddress(address) {
     const url = "https://maps.googleapis.com/maps/api/geocode/json";
     const { data } = await axios.get(url, { params: { address, key: GOOGLE_MAPS_API_KEY } });
 
+
     const result0 = data?.results?.[0];
     const hit = result0?.geometry?.location;
     if (!hit) return null;
 
     // Google Geocoding puede devolver resultados aproximados.
-    // Señales útiles:
-    //  - partial_match: true => coincidencia parcial
-    //  - geometry.location_type: ROOFTOP / RANGE_INTERPOLATED suelen ser las más precisas
-    const partialMatch = Boolean(result0?.partial_match);
+    // ✅ Regla nueva:
+    // - Válida si es ROOFTOP (siempre)
+    // - O válida si NO es partial_match y el tipo sugiere dirección puntual (street_address/premise/subpremise)
     const locationType = String(result0?.geometry?.location_type || "").toUpperCase();
+    const partialMatch = Boolean(result0?.partial_match);
     const types = Array.isArray(result0?.types) ? result0.types.map(String) : [];
-    const isPrecise =  locationType === "RANGE_INTERPOLATED";
-    //const isPrecise = locationType === "ROOFTOP" || locationType === "RANGE_INTERPOLATED";
-    const isAddressType = types.some(t => ["street_address", "premise", "subpremise"].includes(String(t || "")));
-    const exact = Boolean(isPrecise && isAddressType && !partialMatch);
+    const isAddressType = types.some(t =>
+      ["street_address", "premise", "subpremise"].includes(String(t || ""))
+    );
+    const exactByMatch = isAddressType && !partialMatch;
+    const exact = (locationType === "ROOFTOP") || exactByMatch;
 
-    // Backwards-compatible: sigue trayendo lat/lon como antes, y agrega metadata + exactness
     return {
       lat: hit.lat,
       lon: hit.lng,
       exact,
-      formatted_address: result0?.formatted_address || null,
-      partial_match: partialMatch,
       location_type: locationType || null,
+      partial_match: partialMatch,
+      formatted_address: result0?.formatted_address || null,
       place_id: result0?.place_id || null,
       types,
       status: data?.status || null,
