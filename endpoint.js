@@ -1483,6 +1483,25 @@ app.get("/admin", async (req, res) => {
     .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:6px; cursor:pointer}
     .actions{display:flex; gap:8px}
 
+
+    /* ===== Estado (badge) ===== */
+    .status-badge{
+      display:inline-block;
+      padding:2px 8px;
+      border-radius:999px;
+      font-size:12px;
+      font-weight:700;
+      letter-spacing:.2px;
+      border:1px solid transparent;
+      line-height:1.4;
+      white-space:nowrap;
+    }
+    .st-open{background:#eef2ff;color:#1e3a8a;border-color:#c7d2fe;}
+    .st-progress{background:#fff7ed;color:#9a3412;border-color:#fed7aa;}
+    .st-completed{background:#ecfdf5;color:#065f46;border-color:#a7f3d0;}
+    .st-cancelled{background:#fef2f2;color:#991b1b;border-color:#fecaca;}
+
+
       /* ===== Modal de ticket ===== */
       .ticket-modal-backdrop {
         position: fixed;
@@ -1646,6 +1665,44 @@ app.get("/admin", async (req, res) => {
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
   }
+
+
+  // Normaliza cualquier estado a un set canónico para poder colorear.
+  function normalizeStatus(raw){
+    const s = String(raw || '').trim().toUpperCase();
+    if (!s) return 'OPEN';
+    if (['CANCELLED','CANCELED','CANCELADA','CANCELADO'].includes(s)) return 'CANCELLED';
+    if (['COMPLETED','COMPLETADA','FINALIZADA','FINALIZADO'].includes(s)) return 'COMPLETED';
+    if (['OPEN','ABIERTA','ABIERTO'].includes(s)) return 'OPEN';
+    if (['IN_PROGRESS','EN CURSO','PROCESANDO'].includes(s)) return 'IN_PROGRESS';
+    return s;
+  }
+
+  function statusLabelEs(raw){
+    const st = normalizeStatus(raw);
+    if (st === 'CANCELLED') return 'CANCELADA';
+    if (st === 'COMPLETED') return 'COMPLETADA';
+    if (st === 'IN_PROGRESS') return 'EN CURSO';
+    if (st === 'OPEN') return 'ABIERTA';
+    return String(raw || st || '').trim();
+  }
+
+  function statusClass(raw){
+    const st = normalizeStatus(raw);
+    if (st === 'CANCELLED') return 'st-cancelled';
+    if (st === 'COMPLETED') return 'st-completed';
+    if (st === 'IN_PROGRESS') return 'st-progress';
+    return 'st-open';
+  }
+
+  function renderStatusBadge(raw){
+    const label = statusLabelEs(raw);
+    const cls = statusClass(raw);
+    return '<span class="status-badge ' + cls + '">' + escHtml(label) + '</span>';
+  }
+ 
+
+
 
   function formatMoney(n) {
     const num = Number(n || 0);
@@ -2015,7 +2072,7 @@ app.get("/admin", async (req, res) => {
           '<td>' + ((c.distanceKm !== undefined && c.distanceKm !== null) ? escHtml(c.distanceKm) : '-') + '</td>' +
           '<td>' + escHtml(c.fechaEntrega || '-') + '</td>' +
           '<td>' + escHtml(c.horaEntrega || '-') + '</td>' +
-          '<td>' + escHtml(c.status || '-') + '</td>' +
+          '<td>' + renderStatusBadge(c.status) + '</td>' +
           '<td>' +
             '<div class="actions">' +
               '<button class="btn" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
