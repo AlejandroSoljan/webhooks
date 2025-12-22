@@ -905,9 +905,34 @@ async function geocodeAddress(address) {
     if (!GOOGLE_MAPS_API_KEY || !address) return null;
     const url = "https://maps.googleapis.com/maps/api/geocode/json";
     const { data } = await axios.get(url, { params: { address, key: GOOGLE_MAPS_API_KEY } });
-    const hit = data?.results?.[0]?.geometry?.location;
+
+    const result0 = data?.results?.[0];
+    const hit = result0?.geometry?.location;
     if (!hit) return null;
-    return { lat: hit.lat, lon: hit.lng };
+
+    // Google Geocoding puede devolver resultados aproximados.
+    // Señales útiles:
+    //  - partial_match: true => coincidencia parcial
+    //  - geometry.location_type: ROOFTOP / RANGE_INTERPOLATED suelen ser las más precisas
+    const partialMatch = Boolean(result0?.partial_match);
+    const locationType = String(result0?.geometry?.location_type || "").toUpperCase();
+    const types = Array.isArray(result0?.types) ? result0.types.map(String) : [];
+    const isPrecise = locationType === "ROOFTOP" || locationType === "RANGE_INTERPOLATED";
+    const isAddressType = types.some(t => ["street_address", "premise", "subpremise"].includes(String(t || "")));
+    const exact = Boolean(isPrecise && isAddressType && !partialMatch);
+
+    // Backwards-compatible: sigue trayendo lat/lon como antes, y agrega metadata + exactness
+    return {
+      lat: hit.lat,
+      lon: hit.lng,
+      exact,
+      formatted_address: result0?.formatted_address || null,
+      partial_match: partialMatch,
+      location_type: locationType || null,
+      place_id: result0?.place_id || null,
+      types,
+      status: data?.status || null,
+    };
   } catch (e) {
     console.error("geocodeAddress error:", e?.response?.data || e.message);
     return null;
@@ -1026,7 +1051,7 @@ async function ensureEnvioSmart(pedido, tenantId) {
     let distKm = null;
     if (store && address) {
       const geo = await geocodeAddress(address);
-      if (geo) {
+      if (geo && geo.exact) {
         const { lat, lon } = geo;
         pedido.Domicilio.lat = lat;
         pedido.Domicilio.lon = lon;
@@ -1034,7 +1059,10 @@ async function ensureEnvioSmart(pedido, tenantId) {
         pedido.distancia_km = distKm;
         console.log(`[envio] ensureEnvioSmart address='${address}', distancia=${distKm} km`);
       } else {
-        console.warn("[envio] ensureEnvioSmart: geocoding sin resultado");
+        // Si hay resultado pero no es exacto, no fijamos coords ni distancia.
+       // De esta forma el envío queda por fallback (Infinity) y el endpoint puede pedir reintento.
+        const reason = geo ? `inexacto (partial=${geo.partial_match}, type=${geo.location_type})` : "sin resultado";
+        console.warn(`[envio] ensureEnvioSmart: geocoding ${reason}`);
       }
     }
 

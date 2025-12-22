@@ -3313,6 +3313,71 @@ console.log("[convId] "+ convId);
     //await require("./logic").sendWhatsAppMessage(from, responseText);
         // 1) Enviar EXACTAMENTE el texto final (post-fallback/normalizaciones)
     //    ⚠️ Garantía: nunca mandar vacío a WhatsApp
+
+
+    // ==============================
+    // ✅ Validación de dirección exacta (Google Maps)
+    // Si el geocoding NO es exacto, pedimos al cliente que reescriba la dirección.
+    // Importante: limpiamos `Pedido.Domicilio.direccion` para que NO cierre la conversación.
+    // ==============================
+    try {
+      if (pedido?.Entrega?.toLowerCase() === "domicilio" && pedido?.Domicilio) {
+        const dom = (typeof pedido.Domicilio === "string")
+          ? { direccion: pedido.Domicilio }
+          : (pedido.Domicilio || {});
+        pedido.Domicilio = dom;
+
+        const addrParts = [
+          dom.direccion,
+          [dom.calle, dom.numero].filter(Boolean).join(" "),
+          dom.barrio,
+          dom.ciudad || dom.localidad,
+          dom.provincia,
+          dom.cp
+        ].filter(Boolean);
+        const address = addrParts.join(", ").trim();
+        if (address) {
+          const DEF_CITY = process.env.DEFAULT_CITY || "Venado Tuerto";
+          const DEF_PROVINCE = process.env.DEFAULT_PROVINCE || "Santa Fe";
+          const DEF_COUNTRY = process.env.DEFAULT_COUNTRY || "Argentina";
+          const addressFinal = /,/.test(address)
+            ? address
+            : [address, DEF_CITY, DEF_PROVINCE, DEF_COUNTRY].filter(Boolean).join(", ");
+
+          const geo = await geocodeAddress(addressFinal);
+          const exact = Boolean(geo && geo.exact);
+
+          if (!exact) {
+            // Evitar cierre por pedido "completo" y evitar envío/distance incorrectos
+            estado = "IN_PROGRESS";
+            pedido.distancia_km = null;
+            if (pedido.Domicilio && typeof pedido.Domicilio === "object") {
+              delete pedido.Domicilio.lat;
+              delete pedido.Domicilio.lon;
+              pedido.Domicilio.direccion = "";
+            }
+            // Quitar item de envío si ya fue agregado por ensureEnvioSmart
+            if (Array.isArray(pedido.items)) {
+              pedido.items = pedido.items.filter(i => !/env[ií]o/i.test(String(i?.descripcion || "")));
+            }
+            // Recalcular total
+            try {
+              const { pedidoCorr } = recalcAndDetectMismatch(pedido);
+              pedido = pedidoCorr;
+            } catch {}
+
+            responseText = "📍 No pude ubicar *exactamente* esa dirección en Google Maps.\n\nPor favor escribila nuevamente con *calle y número*, y si podés agregá *barrio/localidad*.\nEj: *Moreno 2862, Venado Tuerto*";
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[geo] Validación de dirección exacta falló:", e?.message || e);
+    }
+
+
+
+
+
     const responseTextSafe = String(responseText || "").trim()
       || (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length
           ? buildBackendSummary(pedido, { showEnvio: wantsDetail })
@@ -3393,14 +3458,15 @@ console.log("[convId] "+ convId);
               console.log(`[geo] Direccion compilada='${addressFinal}'`);
              
               const geo = await geocodeAddress(addressFinal);
-              if (geo) {
+              if (geo && geo.exact) {
                 lat = geo.lat; lon = geo.lon;
                 pedido.Domicilio.lat = lat;
                 pedido.Domicilio.lon = lon;
                 console.log(`[geo] OK lat=${lat}, lon=${lon}`);
               } else {
-                console.warn("[geo] No hubo resultado de geocoding (¿API key/billing/localidad?)");
-          
+                 const reason = geo ? `inexacto (partial=${geo.partial_match}, type=${geo.location_type})` : "sin resultado";
+                console.warn(`[geo] Geocoding ${reason}. No uso coords para distancia/envío.`);
+ 
               }
             }
           }
