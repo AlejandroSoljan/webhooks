@@ -917,7 +917,8 @@ async function geocodeAddress(address) {
     const partialMatch = Boolean(result0?.partial_match);
     const locationType = String(result0?.geometry?.location_type || "").toUpperCase();
     const types = Array.isArray(result0?.types) ? result0.types.map(String) : [];
-    const isPrecise = locationType === "ROOFTOP" || locationType === "RANGE_INTERPOLATED";
+    const isPrecise =  locationType === "RANGE_INTERPOLATED";
+    //const isPrecise = locationType === "ROOFTOP" || locationType === "RANGE_INTERPOLATED";
     const isAddressType = types.some(t => ["street_address", "premise", "subpremise"].includes(String(t || "")));
     const exact = Boolean(isPrecise && isAddressType && !partialMatch);
 
