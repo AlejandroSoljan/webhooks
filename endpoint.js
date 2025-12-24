@@ -2511,7 +2511,7 @@ app.get("/api/products", async (req, res) => {
 app.post("/api/products", async (req, res) => {
   try {
     const db = await getDb();
-    let { descripcion, importe, observacion, active } = req.body || {};
+    let { descripcion, importe, cantidad, observacion, active } = req.body || {};
     descripcion = String(descripcion || "").trim();
     observacion = String(observacion || "").trim();
     if (typeof active !== "boolean") active = !!active;
@@ -2521,10 +2521,18 @@ app.post("/api/products", async (req, res) => {
       const n = Number(importe.replace(/[^\d.,-]/g, "").replace(",", "."));
       imp = Number.isFinite(n) ? n : null;
     }
+     let qty = null;
+    if (typeof cantidad === "number") qty = Number.isFinite(cantidad) ? cantidad : null;
+    else if (typeof cantidad === "string") {
+      const n = Number(cantidad.replace(/[^\d.,-]/g, "").replace(",", "."));
+      qty = Number.isFinite(n) ? n : null;
+    }
+
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
     const now = new Date();
     const doc = { tenantId: (TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
-  if (imp !== null) doc.importe = imp;
+     if (qty !== null) doc.cantidad = qty;
+    if (imp !== null) doc.importe = imp;
     const ins = await db.collection("products").insertOne(doc);
     res.json({ ok: true, _id: String(ins.insertedId) });
   } catch (e) {
@@ -2539,12 +2547,19 @@ app.put("/api/products/:id", async (req, res) => {
     const db = await getDb();
     const { id } = req.params;
     const upd = {};
-    ["descripcion","observacion","active","importe"].forEach(k => {
+    ["descripcion","observacion","active","importe","cantidad"].forEach(k => {
       if (req.body[k] !== undefined) upd[k] = req.body[k];
     });
     if (upd.importe !== undefined && typeof upd.importe === "string") {
       const n = Number(upd.importe.replace(/[^\d.,-]/g, "").replace(",", "."));
       upd.importe = Number.isFinite(n) ? n : undefined;
+    }
+     if (upd.cantidad !== undefined && typeof upd.cantidad === "string") {
+      const n = Number(upd.cantidad.replace(/[^\d.,-]/g, "").replace(",", "."));
+      upd.cantidad = Number.isFinite(n) ? n : undefined;
+    }
+    if (upd.cantidad !== undefined && typeof upd.cantidad === "number" && !Number.isFinite(upd.cantidad)) {
+      upd.cantidad = undefined;
     }
     if (Object.keys(upd).length === 0) return res.status(400).json({ error: "no_fields" });
     upd.updatedAt = new Date();
@@ -2627,10 +2642,11 @@ app.get("/productos", async (req, res) => {
       <h1>Productos</h1>
       <div class="row"><a class="btn" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a> <button id="btnAdd" class="btn">Agregar</button> <button id="btnReload" class="btn">Recargar</button></div>
       <p></p>
-      <table id="tbl"><thead><tr><th>Descripción</th><th>Importe</th><th>Obs.</th><th>Activo</th><th>Acciones</th></tr></thead>
+      <table id="tbl"><thead><tr><th>Descripción</th><th>Importe</th><th>Cantidad</th><th>Obs.</th><th>Activo</th><th>Acciones</th></tr></thead>
       <tbody>${productos.map(p => `<tr data-id="${p._id}">
         <td><input class="descripcion" type="text" value="${(p.descripcion||'').replace(/\"/g,'&quot;')}" /></td>
         <td><input class="importe" type="number" step="0.01" value="${p.importe ?? ''}" /></td>
+        <td><input class="cantidad" type="number" step="1" value="${p.cantidad ?? ''}" /></td>
         <td><textarea class="observacion">${(p.observacion||'').replace(/</g,'&lt;')}</textarea></td>
         <td><input class="active" type="checkbox" ${p.active!==false?'checked':''} /></td>
         <td><button class="save btn">Guardar</button><button class="del btn">Eliminar</button><button class="toggle btn">${p.active!==false?'Inactivar':'Reactivar'}</button></td>
@@ -2638,6 +2654,7 @@ app.get("/productos", async (req, res) => {
       <template id="row-tpl"><tr data-id="">
         <td><input class="descripcion" type="text" /></td>
         <td><input class="importe" type="number" step="0.01" /></td>
+        <td><input class="cantidad" type="number" step="1" /></td>
         <td><textarea class="observacion"></textarea></td>
         <td><input class="active" type="checkbox" checked /></td>
         <td><button class="save btn">Guardar</button><button class="del btn">Eliminar</button><button class="toggle btn">Inactivar</button></td>
@@ -2645,9 +2662,9 @@ app.get("/productos", async (req, res) => {
       <script>
         function q(s,c){return (c||document).querySelector(s)}function all(s,c){return Array.from((c||document).querySelectorAll(s))}
         async function j(url,opts){const r=await fetch(url,opts||{});if(!r.ok)throw new Error('HTTP '+r.status);const ct=r.headers.get('content-type')||'';return ct.includes('application/json')?r.json():r.text()}
-        async function reload(){const url=new URL(location.href);const allFlag=url.searchParams.get('all')==='true';const data=await j('/api/products'+(allFlag?'?all=true':''));const tb=q('#tbl tbody');tb.innerHTML='';for(const it of data){const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);tr.dataset.id=it._id||'';q('.descripcion',tr).value=it.descripcion||'';q('.importe',tr).value=typeof it.importe==='number'?it.importe:(it.importe||'');q('.observacion',tr).value=it.observacion||'';q('.active',tr).checked=it.active!==false;q('.toggle',tr).textContent=(it.active!==false)?'Inactivar':'Reactivar';bindRow(tr);tb.appendChild(tr);}if(!data.length){const r=document.createElement('tr');r.innerHTML='<td colspan="5" style="text-align:center;color:#666">Sin productos para mostrar</td>';tb.appendChild(r);}}
-        async function saveRow(tr){const id=tr.dataset.id;const payload={descripcion:q('.descripcion',tr).value.trim(),importe:q('.importe',tr).value.trim(),observacion:q('.observacion',tr).value.trim(),active:q('.active',tr).checked};if(!payload.descripcion){alert('Descripción requerida');return;}if(id){await j('/api/products/'+encodeURIComponent(id),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else{await j('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}await reload();}
-        async function deleteRow(tr){const id=tr.dataset.id;if(!id){tr.remove();return;}if(!confirm('¿Eliminar definitivamente?'))return;await j('/api/products/'+encodeURIComponent(id),{method:'DELETE'});await reload();}
+        async function reload(){const url=new URL(location.href);const allFlag=url.searchParams.get('all')==='true';const data=await j('/api/products'+(allFlag?'?all=true':''));const tb=q('#tbl tbody');tb.innerHTML='';for(const it of data){const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);tr.dataset.id=it._id||'';q('.descripcion',tr).value=it.descripcion||'';q('.importe',tr).value=typeof it.importe==='number'?it.importe:(it.importe||'');q('.cantidad',tr).value=typeof it.cantidad==='number'?it.cantidad:(it.cantidad||'');q('.observacion',tr).value=it.observacion||'';q('.active',tr).checked=it.active!==false;q('.toggle',tr).textContent=(it.active!==false)?'Inactivar':'Reactivar';bindRow(tr);tb.appendChild(tr);}if(!data.length){const r=document.createElement('tr');r.innerHTML='<td colspan="6" style="text-align:center;color:#666">Sin productos para mostrar</td>';tb.appendChild(r);}}
++        async function saveRow(tr){const id=tr.dataset.id;const payload={descripcion:q('.descripcion',tr).value.trim(),importe:q('.importe',tr).value.trim(),cantidad:q('.cantidad',tr).value.trim(),observacion:q('.observacion',tr).value.trim(),active:q('.active',tr).checked};if(!payload.descripcion){alert('Descripción requerida');return;}if(id){await j('/api/products/'+encodeURIComponent(id),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else{await j('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}await reload();}
+         async function deleteRow(tr){const id=tr.dataset.id;if(!id){tr.remove();return;}if(!confirm('¿Eliminar definitivamente?'))return;await j('/api/products/'+encodeURIComponent(id),{method:'DELETE'});await reload();}
         async function toggleRow(tr){const id=tr.dataset.id;if(!id){alert('Primero guardá el nuevo producto.');return;}const active=q('.active',tr).checked;const path=active?('/api/products/'+encodeURIComponent(id)+'/inactivate'):('/api/products/'+encodeURIComponent(id)+'/reactivate');await j(path,{method:'POST'});await reload();}
         function bindRow(tr){q('.save',tr).addEventListener('click',()=>saveRow(tr));q('.del',tr).addEventListener('click',()=>deleteRow(tr));q('.toggle',tr).addEventListener('click',()=>toggleRow(tr));}
         document.getElementById('btnReload').addEventListener('click',reload);
