@@ -1521,13 +1521,14 @@ app.get("/admin", async (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Admin | Conversaciones</title>
   <style>
-    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin:20px;}
+     html,body{width:100%;height:100%}
++    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin:0; padding:12px; overflow:auto;}
      header{display:flex; align-items:center; gap:12px; margin-bottom:16px;}
-     input,button,select{font-size:14px; padding:6px 8px;}
+     input,button,select{font-size:13px; padding:5px 7px;}
      table{border-collapse:collapse; width:100%}
-     th,td{border:1px solid #ddd; padding:8px; vertical-align:top}
+    th,td{border:1px solid #ddd; padding:6px; vertical-align:top; font-size:13px}
      th{background:#f5f5f5; text-align:left}
-     .row{display:flex; gap:16px; align-items:center}
+     .row{display:flex; gap:16px; align-items:center; flex-wrap:wrap}
      .muted{color:#666}
      .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:4px; cursor:pointer}
     /* ===== Modal simple ===== */
@@ -1554,10 +1555,12 @@ app.get("/admin", async (req, res) => {
     .chat-actions{display:flex;align-items:center;gap:8px;justify-content:flex-end}
 
     table{border-collapse:collapse; width:100%; margin-top:12px}
-    th,td{border:1px solid #ddd; padding:8px; vertical-align:top; font-size:14px}
+    th,td{border:1px solid #ddd; padding:6px; vertical-align:top; font-size:13px}
     th{background:#f7f7f7; text-align:left}
-    .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:6px; cursor:pointer}
-    .actions{display:flex; gap:8px}
+    .btn{padding:5px 9px; border:1px solid #333; background:#fff; border-radius:6px; cursor:pointer; font-size:13px}
+    .actions{display:flex; gap:8px; flex-wrap:wrap}
+    .table-wrap{width:100%; overflow-x:auto}
+    #tbl{min-width:1200px}
 
 
     /* ===== Estado (badge) ===== */
@@ -1646,6 +1649,7 @@ app.get("/admin", async (req, res) => {
      <button class="btn" id="btnReload">Recargar tabla</button>
    </div>
    <p></p>
+   <div class="table-wrap">
    <table id="tbl">
      <thead>
        <tr>
@@ -1664,6 +1668,7 @@ app.get("/admin", async (req, res) => {
      </thead>
      <tbody></tbody>
    </table>
+   </div>
     <!-- Modal -->
    <div id="modalRoot" class="modal-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
      <div class="modal" role="document">
@@ -1721,6 +1726,20 @@ app.get("/admin", async (req, res) => {
     </div>
 
   <script>
+  // Tenant helper (mantiene el tenant en llamadas fetch y links)
+  // =========================
+  const __tenant = new URLSearchParams(window.location.search).get('tenant') || '';
+  function api(path){
+    try{
+      if (!__tenant) return path;
+      const u = new URL(path, window.location.origin);
+      u.searchParams.set('tenant', __tenant);
+      return u.pathname + u.search;
+    }catch{ return path; }
+  }
+
+
+
   // =========================
   // Helpers DOM
   // =========================
@@ -1865,7 +1884,7 @@ app.get("/admin", async (req, res) => {
   async function loadModalMeta(){
     if (!currentConvId) return;
     try {
-      const r = await fetch('/api/admin/conversation-meta?convId=' + encodeURIComponent(currentConvId));
+      const r = await fetch(api('/api/admin/conversation-meta?convId=' + encodeURIComponent(currentConvId));
       if (!r.ok) return;
       const j = await r.json().catch(()=>null);
       modalManualOpen = !!(j && j.manualOpen);
@@ -1883,7 +1902,7 @@ app.get("/admin", async (req, res) => {
     let r = null;
 
     try {
-      r = await fetch('/api/admin/conversation-manual', {
+      r = await fetch(api('/api/admin/conversation-manual'), {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ convId: currentConvId, manualOpen: !modalManualOpen })
@@ -1923,7 +1942,7 @@ app.get("/admin", async (req, res) => {
     if (!text) return;
 
     try {
-      const r = await fetch('/api/admin/send-message', {
+      const r = await fetch(api('/api/admin/send-message'), {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ convId: currentConvId, text })
@@ -1957,7 +1976,7 @@ app.get("/admin", async (req, res) => {
       ? (target.scrollHeight - target.scrollTop - target.clientHeight) < 120
       : true;
 
-    const r = await fetch('/api/logs/messages?convId=' + encodeURIComponent(currentConvId));
+    const r = await fetch(api('/api/logs/messages?convId=' + encodeURIComponent(currentConvId));
     if (!r.ok) return;
 
     const data = await r.json().catch(()=>[]);
@@ -2108,7 +2127,7 @@ app.get("/admin", async (req, res) => {
       pedidoModalBackdrop.style.display = 'flex';
       pedidoModalBackdrop.setAttribute('aria-hidden', 'false');
 
-      const r = await fetch('/api/logs/pedido?convId=' + encodeURIComponent(convId));
+      const r = await fetch(api('/api/logs/pedido?convId=' + encodeURIComponent(convId));
       if (!r.ok) {
         pedidoModalBody.innerHTML = '<p class="muted">No se encontró un pedido para esta conversación.</p>';
         return;
@@ -2131,7 +2150,7 @@ app.get("/admin", async (req, res) => {
   function openTicketModal(conversationId) {
     const backdrop = document.getElementById('ticketModalBackdrop');
     const frame = document.getElementById('ticketFrame');
-    if (frame) frame.src = '/admin/ticket/' + conversationId;
+    if (frame) frame.src = api('/admin/ticket/' + conversationId);
     if (backdrop) backdrop.style.display = 'flex';
   }
 
@@ -2234,7 +2253,7 @@ app.get("/admin", async (req, res) => {
   // Buscar
   // =========================
   function openDetailByWaId(wa){
-    window.open('/admin/conversation?waId='+encodeURIComponent(wa),'_blank');
+    window.open(api('/admin/conversation?waId='+encodeURIComponent(wa)),'_blank');
   }
 
   // =========================
@@ -2299,7 +2318,8 @@ app.get("/admin", async (req, res) => {
        <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
        <title>Detalle de conversación</title>
        <style>
-         body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin:20px;}
+          html,body{width:100%;height:100%}
+    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin:0; padding:12px; overflow:auto;}
          .msg{border:1px solid #ddd;border-radius:8px;padding:10px;margin-bottom:10px}
          .role-user{background:#f0fafc}
          .role-assistant{background:#f8f6ff}
@@ -2387,7 +2407,7 @@ app.get("/admin", async (req, res) => {
            else if (CONV_ID) payload.convId = CONV_ID;
            else if (WA_ID) payload.waId = WA_ID;
 
-           const r = await fetch('/api/admin/conversation-manual', {
+           const r = await fetch(api('/api/admin/conversation-manual'), {
              method: 'POST',
              headers: { 'Content-Type': 'application/json' },
              body: JSON.stringify(payload)
@@ -2410,7 +2430,7 @@ app.get("/admin", async (req, res) => {
            else if (CONV_ID) payload.convId = CONV_ID;
            else if (WA_ID) payload.waId = WA_ID;
 
-           const r = await fetch('/api/admin/send-message', {
+           const r = await fetch(api('/api/admin/send-message'), {
              method: 'POST',
              headers: { 'Content-Type': 'application/json' },
              body: JSON.stringify(payload)
