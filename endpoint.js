@@ -1522,7 +1522,7 @@ app.get("/admin", async (req, res) => {
   <title>Admin | Conversaciones</title>
   <style>
      html,body{width:100%;height:100%}
-+    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin:0; padding:12px; overflow:auto;}
+    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin:0; padding:12px; overflow:auto;}
      header{display:flex; align-items:center; gap:12px; margin-bottom:16px;}
      input,button,select{font-size:13px; padding:5px 7px;}
      table{border-collapse:collapse; width:100%}
@@ -1560,7 +1560,20 @@ app.get("/admin", async (req, res) => {
     .btn{padding:5px 9px; border:1px solid #333; background:#fff; border-radius:6px; cursor:pointer; font-size:13px}
     .actions{display:flex; gap:8px; flex-wrap:wrap}
     .table-wrap{width:100%; overflow-x:auto}
-    #tbl{min-width:1200px}
+       #tbl{width:100%; table-layout:fixed}
+    #tbl th, #tbl td{word-break:break-word}
+    /* Anchos sugeridos (ajustá si querés) */
+    #tbl th:nth-child(1), #tbl td:nth-child(1){width:150px}
+    #tbl th:nth-child(2), #tbl td:nth-child(2){width:120px}
+    #tbl th:nth-child(3), #tbl td:nth-child(3){width:150px}
+    #tbl th:nth-child(4), #tbl td:nth-child(4){width:75px}
+    #tbl th:nth-child(6), #tbl td:nth-child(6){width:90px}
+    #tbl th:nth-child(7), #tbl td:nth-child(7){width:90px}
+    #tbl th:nth-child(8), #tbl td:nth-child(8){width:70px}
+    #tbl th:nth-child(9), #tbl td:nth-child(9){width:115px}
+    #tbl th:nth-child(10), #tbl td:nth-child(10){width:110px}
+    #tbl th:nth-child(11), #tbl td:nth-child(11){width:185px}
+ 
 
 
     /* ===== Estado (badge) ===== */
@@ -1594,6 +1607,14 @@ app.get("/admin", async (req, res) => {
     .deliv-no{background:#fff7ed;color:#9a3412;border-color:#fed7aa;}
     .deliv-yes{background:#ecfdf5;color:#065f46;border-color:#a7f3d0;}
 
+    .deliv-toggle{
+      border:none;
+      background:transparent;
+      padding:0;
+      cursor:pointer;
+    }
+    .deliv-toggle:focus{outline:2px solid #93c5fd; outline-offset:2px; border-radius:999px;}
+ |
     /* ===== Modal de ticket ===== */
       .ticket-modal-backdrop {
         position: fixed;
@@ -1822,7 +1843,7 @@ app.get("/admin", async (req, res) => {
   }
 
   async function setDelivered(convId, delivered){
-    const r = await fetch('/api/admin/conversation-delivered', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ convId, delivered: !!delivered }) });
+    const r = await fetch(api('/api/admin/conversation-delivered'), { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ convId, delivered: !!delivered }) });
     const j = await r.json().catch(()=>({}));
     if (!r.ok || !j.ok) throw new Error('delivered_update_failed');
     return j;
@@ -2182,7 +2203,7 @@ app.get("/admin", async (req, res) => {
        const filterSel = document.getElementById('deliveredFilter');
       const fval = (filterSel ? String(filterSel.value || 'false') : 'false');
       const url = '/api/logs/conversations?limit=200&order=delivery' + (fval === 'all' ? '' : ('&delivered=' + encodeURIComponent(fval)));
-      const r = await fetch(url);
+      const r = await fetch(api(url));
    
       const data = await r.json().catch(()=>[]);
       const tb = document.querySelector('#tbl tbody');
@@ -2201,15 +2222,18 @@ app.get("/admin", async (req, res) => {
           '<td>' + ((c.distanceKm !== undefined && c.distanceKm !== null) ? escHtml(c.distanceKm) : '-') + '</td>' +
           '<td>' + escHtml(c.fechaEntrega || '-') + '</td>' +
           '<td>' + escHtml(c.horaEntrega || '-') + '</td>' +
-          '<td>' + renderDeliveredBadge(c.delivered, c.deliveredAt) + '</td>' +
+                 '<td>' +
+            '<button class="deliv-toggle" data-deliv="' + escHtml(c._id) + '" data-val="' + (c.delivered ? '1' : '0') + '" title="Cambiar estado de entrega">' +
+              renderDeliveredBadge(c.delivered, c.deliveredAt) +
+            '</button>' +
+          '</td>' +
           '<td>' + renderStatusBadge(c.status) + '</td>' +
           '<td>' +
             '<div class="actions">' +
               '<button class="btn" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
               '<button class="btn" data-pedido="' + escHtml(c._id) + '">Pedido</button>' +
               '<button class="btn" data-print="' + escHtml(c._id) + '">🖨️ Imprimir</button>' +
-              '<button class="btn" data-deliv="' + escHtml(c._id) + '" data-val="' + (c.delivered ? '1' : '0') + '">' + (c.delivered ? '↩️ No entregado' : '✅ Entregado') + '</button>' +
-            '</div>' +
+               '</div>' +
           '</td>';
         tb.appendChild(tr);
       }
