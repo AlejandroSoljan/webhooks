@@ -505,10 +505,25 @@ async function _getLastPedidoSummary(db, convId, tenantId) {
 }
 
 // Listado de conversaciones reales (colección `conversations`)
-async function listConversations(limit = 50, tenantId) {
+function _deliverySortKey(fechaEntrega, horaEntrega) {
+  // Key numérica YYYYMMDDHHMM para ordenar sin depender de TZ
+  const f = String(fechaEntrega || "").trim();
+  const h = String(horaEntrega || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) return 999999999999;
+  if (!/^\d{2}:\d{2}$/.test(h)) return 999999999999;
+  return Number(f.replace(/-/g, "") + h.replace(":", ""));
+}
+
+async function listConversations(limit = 50, tenantId, opts = {}) {
   const db = await getDb();
   const q = withTenant({}, tenantId);
 
+  // Filtro entregados / no entregados
+  // opts.delivered: true | false | undefined (todos)
+  if (opts && typeof opts.delivered === "boolean") {
+    if (opts.delivered) q.delivered = true;
+    else q.delivered = { $ne: true };
+  }
   // 1) Traer conversaciones
   const rows = await db.collection("conversations")
     .find(q)
@@ -543,6 +558,8 @@ async function listConversations(limit = 50, tenantId) {
       contactName: c.contactName || "-",
       status: adminStatusLabel(c),
       manualOpen: !!c.manualOpen,
+       delivered: !!c.delivered,
+      deliveredAt: c.deliveredAt || null,
       lastAt: c.lastUserTs || c.lastAssistantTs || c.updatedAt || c.closedAt || c.openedAt
     };
 
@@ -567,16 +584,34 @@ async function listConversations(limit = 50, tenantId) {
         direccion: c.pedidoDireccion || "-",
         ...(distanceKm !== null ? { distanceKm } : {})
       };
-      out.push({ ...base, ...extra });
+      const sortKey = _deliverySortKey(extra.fechaEntrega, extra.horaEntrega);
+      out.push({ ...base, ...extra, deliverySortKey: sortKey });
     } else {
       const extra = await _getLastPedidoSummary(db, c._id, tenantId);
-      out.push({
-        ...base,
-        ...extra,
-        ...(distanceKm !== null ? { distanceKm } : {})
-      });
+      const sortKey = _deliverySortKey(extra.fechaEntrega, extra.horaEntrega);
+      out.push({ ...base, ...extra, deliverySortKey: sortKey, ...(distanceKm !== null ? { distanceKm } : {}) });
+
     }
   }
+
+  // Orden opcional: primero NO entregados, luego por fecha/hora de entrega (más próximo arriba)
+  // Tie-breaker: lastAt desc
+  if (opts && opts.orderByDelivery) {
+    out.sort((a, b) => {
+      const ad = a.delivered ? 1 : 0;
+      const bd = b.delivered ? 1 : 0;
+      if (ad !== bd) return ad - bd;
+      const ak = Number.isFinite(a.deliverySortKey) ? a.deliverySortKey : 999999999999;
+      const bk = Number.isFinite(b.deliverySortKey) ? b.deliverySortKey : 999999999999;
+      if (ak !== bk) return ak - bk;
+      const at = a.lastAt ? new Date(a.lastAt).getTime() : 0;
+      const bt = b.lastAt ? new Date(b.lastAt).getTime() : 0;
+      return bt - at;
+    });
+  }
+
+
+
   return out;
 }
 
@@ -603,7 +638,13 @@ async function getConversationMessagesByWaId(waId, limit = 500, tenantId) {
 app.get("/api/logs/conversations", async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(parseInt(req.query.limit || "50", 10), 500));
-    const rows = await listConversations(limit, resolveTenantId(req));
+    // delivered=true|false|all
+    const deliveredRaw = String(req.query.delivered || "").trim().toLowerCase();
+    const deliveredOpt = deliveredRaw === "true" ? true : deliveredRaw === "false" ? false : undefined;
+    const order = String(req.query.order || "delivery").trim().toLowerCase();
+    const orderByDelivery = (order === "delivery" || order === "entrega");
+    const rows = await listConversations(limit, resolveTenantId(req), { delivered: deliveredOpt, orderByDelivery });
+  
     res.json(rows);
   } catch (e) {
     console.error("GET /api/logs/conversations error:", e);
@@ -667,6 +708,8 @@ app.get("/api/admin/conversation-meta", async (req, res) => {
       contactName: conv.contactName || "",
       status: adminStatusLabel(conv),
       manualOpen: !!conv.manualOpen,
+      delivered: !!conv.delivered,
+      deliveredAt: conv.deliveredAt || null,
     });
   } catch (e) {
     console.error("GET /api/admin/conversation-meta error:", e);
@@ -1247,6 +1290,39 @@ app.post("/api/admin/conversation-manual", async (req, res) => {
   }
 });
 
+// ---------- Marcar conversación/pedido como ENTREGADO / NO ENTREGADO ----------
+app.post("/api/admin/conversation-delivered", async (req, res) => {
+  try {
+    const { convId, waId, delivered } = req.body || {};
+    if (!convId && !waId) {
+      return res.status(400).json({ error: "convId_or_waId_required" });
+    }
+    const tenant = resolveTenantId(req);
+    const db = await getDb();
+
+    let filter;
+    if (convId) filter = withTenant({ _id: new ObjectId(String(convId)) }, tenant);
+    else filter = withTenant({ waId: String(waId) }, tenant);
+
+    const now = new Date();
+    const isDelivered = !!delivered;
+
+    const result = await db.collection("conversations").findOneAndUpdate(
+      filter,
+      { $set: { delivered: isDelivered, deliveredAt: isDelivered ? now : null, updatedAt: now } },
+      { returnDocument: "after" }
+    );
+
+    const conv = result.value;
+    if (!conv) return res.status(404).json({ error: "conv_not_found" });
+
+    res.json({ ok: true, convId: String(conv._id), delivered: !!conv.delivered, deliveredAt: conv.deliveredAt || null });
+  } catch (e) {
+    console.error("POST /api/admin/conversation-delivered error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
 
 // ---------- Enviar mensaje manual al cliente desde /admin ----------
 app.post("/api/admin/send-message", async (req, res) => {
@@ -1501,8 +1577,21 @@ app.get("/admin", async (req, res) => {
     .st-completed{background:#ecfdf5;color:#065f46;border-color:#a7f3d0;}
     .st-cancelled{background:#fef2f2;color:#991b1b;border-color:#fecaca;}
 
+    /* ===== Entregado (badge) ===== */
+    .deliv-badge{
+      display:inline-block;
+      padding:2px 8px;
+      border-radius:999px;
+      font-size:12px;
+      font-weight:700;
+      border:1px solid transparent;
+      line-height:1.4;
+      white-space:nowrap;
+    }
+    .deliv-no{background:#fff7ed;color:#9a3412;border-color:#fed7aa;}
+    .deliv-yes{background:#ecfdf5;color:#065f46;border-color:#a7f3d0;}
 
-      /* ===== Modal de ticket ===== */
+    /* ===== Modal de ticket ===== */
       .ticket-modal-backdrop {
         position: fixed;
         inset: 0;
@@ -1552,6 +1641,8 @@ app.get("/admin", async (req, res) => {
     <div class="row" style="gap:8px">
      <label>Buscar por waId:&nbsp;<input id="waIdI" placeholder="5493..."/></label>
      <button class="btn" id="btnBuscar">Buscar</button>
+     <label>Mostrar:&nbsp;<select id="deliveredFilter"><option value="false" selected>No entregados</option><option value="true">Entregados</option><option value="all">Todos</option></select></label>
+
      <button class="btn" id="btnReload">Recargar tabla</button>
    </div>
    <p></p>
@@ -1566,6 +1657,7 @@ app.get("/admin", async (req, res) => {
           <th>Distancia (km)</th>
           <th>Día</th>
          <th>Hora</th>
+         <th>Entregado</th>
          <th>Estado</th>
          <th>Acciones</th>
        </tr>
@@ -1702,6 +1794,20 @@ app.get("/admin", async (req, res) => {
   }
  
 
+  function renderDeliveredBadge(delivered, deliveredAt){
+    const yes = !!delivered;
+    const cls = yes ? 'deliv-yes' : 'deliv-no';
+    const label = yes ? 'ENTREGADO' : 'PENDIENTE';
+    const title = yes && deliveredAt ? ('Entregado: ' + fmt(deliveredAt)) : '';
+    return '<span class="deliv-badge ' + cls + '"' + (title ? (' title="' + escHtml(title) + '"') : '') + '>' + escHtml(label) + '</span>';
+  }
+
+  async function setDelivered(convId, delivered){
+    const r = await fetch('/api/admin/conversation-delivered', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ convId, delivered: !!delivered }) });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok || !j.ok) throw new Error('delivered_update_failed');
+    return j;
+  }
 
 
   function formatMoney(n) {
@@ -2054,7 +2160,11 @@ app.get("/admin", async (req, res) => {
   // =========================
   async function loadTable(){
     try{
-      const r = await fetch('/api/logs/conversations?limit=200');
+       const filterSel = document.getElementById('deliveredFilter');
+      const fval = (filterSel ? String(filterSel.value || 'false') : 'false');
+      const url = '/api/logs/conversations?limit=200&order=delivery' + (fval === 'all' ? '' : ('&delivered=' + encodeURIComponent(fval)));
+      const r = await fetch(url);
+   
       const data = await r.json().catch(()=>[]);
       const tb = document.querySelector('#tbl tbody');
       if (!tb) return;
@@ -2072,12 +2182,14 @@ app.get("/admin", async (req, res) => {
           '<td>' + ((c.distanceKm !== undefined && c.distanceKm !== null) ? escHtml(c.distanceKm) : '-') + '</td>' +
           '<td>' + escHtml(c.fechaEntrega || '-') + '</td>' +
           '<td>' + escHtml(c.horaEntrega || '-') + '</td>' +
+          '<td>' + renderDeliveredBadge(c.delivered, c.deliveredAt) + '</td>' +
           '<td>' + renderStatusBadge(c.status) + '</td>' +
           '<td>' +
             '<div class="actions">' +
               '<button class="btn" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
               '<button class="btn" data-pedido="' + escHtml(c._id) + '">Pedido</button>' +
               '<button class="btn" data-print="' + escHtml(c._id) + '">🖨️ Imprimir</button>' +
+              '<button class="btn" data-deliv="' + escHtml(c._id) + '" data-val="' + (c.delivered ? '1' : '0') + '">' + (c.delivered ? '↩️ No entregado' : '✅ Entregado') + '</button>' +
             '</div>' +
           '</td>';
         tb.appendChild(tr);
@@ -2093,10 +2205,23 @@ app.get("/admin", async (req, res) => {
       tb.querySelectorAll('button[data-print]').forEach(b=>{
         b.addEventListener('click',()=>openTicketModal(b.getAttribute('data-print')));
       });
+      tb.querySelectorAll('button[data-deliv]').forEach(b=>{
+        b.addEventListener('click', async ()=>{
+          const id = b.getAttribute('data-deliv');
+          const cur = b.getAttribute('data-val') === '1';
+          try{
+            await setDelivered(id, !cur);
+            await loadTable();
+          }catch(e){
+            alert('No se pudo actualizar el estado de entrega.');
+          }
+        });
+      });
+
 
       if(!data.length){
         const tr = document.createElement('tr');
-       tr.innerHTML = '<td colspan="10" style="text-align:center;color:#666">Sin conversaciones</td>';
+       tr.innerHTML = '<td colspan="11" style="text-align:center;color:#666">Sin conversaciones</td>';
        tb.appendChild(tr);
       }
 
@@ -2115,7 +2240,7 @@ app.get("/admin", async (req, res) => {
   // =========================
   // Bind general
   // =========================
-  document.getElementById('btnReload')?.addEventListener('click', loadTable);
+  document.getElementById('deliveredFilter')?.addEventListener('change', loadTable);
 
   document.getElementById('btnBuscar')?.addEventListener('click', ()=>{
     const v=(document.getElementById('waIdI')?.value||'').trim();
