@@ -652,6 +652,46 @@ app.get("/api/logs/conversations", async (req, res) => {
   }
 });
 
+
+// Marcar conversación como entregada / no entregada
+app.post("/api/logs/conversations/:id/delivered", async (req, res) => {
+  try {
+    const tenant = resolveTenantId(req);
+   const id = String(req.params.id || "");
+    if (!id) return res.status(400).json({ ok: false, error: "id_required" });
+
+    const delivered = !!(req.body && req.body.delivered);
+    const db = await getDb();
+
+    let _id = null;
+    try { _id = new ObjectId(id); }
+    catch { return res.status(400).json({ ok: false, error: "invalid_id" }); }
+
+    const now = new Date();
+    const update = { $set: { delivered, updatedAt: now } };
+    if (delivered) update.$set.deliveredAt = now;
+   else update.$unset = { deliveredAt: "" };
+
+    const r = await db.collection("conversations").updateOne(
+      withTenant({ _id }, tenant),
+      update
+    );
+
+   if (!r.matchedCount) return res.status(404).json({ ok: false, error: "not_found" });
+
+    const conv = await db.collection("conversations").findOne(withTenant({ _id }, tenant));
+    res.json({
+      ok: true,
+      delivered: !!(conv && conv.delivered),
+      deliveredAt: conv ? (conv.deliveredAt || null) : null
+    });
+  } catch (e) {
+    console.error("POST /api/logs/conversations/:id/delivered error:", e);
+    res.status(500).json({ ok: false, error: "internal" });
+  }
+});
+
+
 // Mensajes de una conversación
 app.get("/api/logs/messages", async (req, res) => {
   try {
@@ -1528,7 +1568,23 @@ app.get("/admin", async (req, res) => {
      table{border-collapse:collapse; width:100%}
     th,td{border:1px solid #ddd; padding:6px; vertical-align:top; font-size:13px}
      th{background:#f5f5f5; text-align:left}
-     .row{display:flex; gap:16px; align-items:center; flex-wrap:wrap}
+     .row{display:flex; gap:16px; align-items:center}
+     .table-wrap{width:100%; overflow-x:auto; border:1px solid #ddd; border-radius:10px;}
+     #tbl{min-width:1100px;}
+     th,td{font-size:13px; padding:6px;}
+     th{white-space:nowrap;}
+     td:nth-child(5){white-space:normal; overflow-wrap:anywhere;} /* Dirección */
+     td:last-child{white-space:normal;}
+     .actions{display:flex; gap:8px; flex-wrap:wrap}
+     /* badges */
+     .badge-pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap;border:1px solid transparent;line-height:1.4}
+     .st-open{background:#eef2ff;color:#1e3a8a;border-color:#c7d2fe;}
+     .st-progress{background:#fff7ed;color:#9a3412;border-color:#fed7aa;}
+     .st-completed{background:#ecfdf5;color:#065f46;border-color:#a7f3d0;}
+    .st-cancelled{background:#fef2f2;color:#991b1b;border-color:#fecaca;}
+     .deliv-yes{background:#ecfdf5;color:#065f46;border-color:#a7f3d0;}
+     .deliv-no{background:#fff7ed;color:#9a3412;border-color:#fed7aa;}
+
      .muted{color:#666}
      .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:4px; cursor:pointer}
     /* ===== Modal simple ===== */
@@ -1665,13 +1721,18 @@ app.get("/admin", async (req, res) => {
     <div class="row" style="gap:8px">
      <label>Buscar por waId:&nbsp;<input id="waIdI" placeholder="5493..."/></label>
      <button class="btn" id="btnBuscar">Buscar</button>
-     <label>Mostrar:&nbsp;<select id="deliveredFilter"><option value="false" selected>No entregados</option><option value="true">Entregados</option><option value="all">Todos</option></select></label>
-
+     <label>Mostrar:&nbsp;<select id="deliveredFilter">
+       <option value="false" selected>No entregados</option>
+       <option value="true">Entregados</option>
+       <option value="all">Todos</option>
+     </select></label>
      <button class="btn" id="btnReload">Recargar tabla</button>
    </div>
    <p></p>
-   <div class="table-wrap">
-   <table id="tbl">
+  
+  
++  <div class="table-wrap">
++   <table id="tbl">
      <thead>
        <tr>
          <th>Actividad</th>
