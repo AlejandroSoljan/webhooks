@@ -1776,7 +1776,7 @@ app.get("/admin", async (req, res) => {
        <tr>
          <th>Actividad</th>
          <th>Teléfono</th>
-         <th>Nombre y Apellido</th>
+         <th>Nombre</th>
          <th>Entrega</th>
          <th>Dirección</th>
           <th>Distancia (km)</th>
@@ -1970,6 +1970,17 @@ app.get("/admin", async (req, res) => {
       badge.classList.remove('badge-manual');
       badge.classList.add('badge-bot');
       btn.textContent = 'Tomar chat (pausar bot)';
+    }
+  }
+
+  async function verifyDelivered(convId){
+    try{
+      const r = await fetch('/api/admin/conversation-meta?convId=' + encodeURIComponent(convId));
+      if(!r.ok) return null;
+      const j = await r.json();
+      return !!j.delivered;
+    }catch{
+      return null;
     }
   }
 
@@ -2332,12 +2343,24 @@ app.get("/admin", async (req, res) => {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ convId, delivered: flag })
             });
-            if (!rr.ok) throw new Error('http_'+rr.status);
+            let ok = rr.ok;
+
+            // Si el server/proxy devolvió un status raro pero alcanzó a guardar,
+            // verificamos el estado real antes de mostrar error.
+            if (!ok) {
+              const actual = await verifyDelivered(convId);
+              ok = (actual === flag);
+            }
+
+            if (!ok) throw new Error('not_updated');
+
             const tr = chk.closest('tr');
             if (tr) {
               if (flag) tr.classList.add('delivered-row');
               else tr.classList.remove('delivered-row');
             }
+
+
           }catch(e){
             // revertir UI
             chk.checked = !flag;
