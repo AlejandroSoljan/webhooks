@@ -21,6 +21,10 @@ function arg(name, def = "") {
   const password = String(arg("password", ""));
   const tenantId = String(arg("tenant", "default")).trim() || "default";
   const role = String(arg("role", "admin")).trim();
+  const pagesArg = String(arg("pages", "")).trim();
+  const allowedPages = pagesArg
+    ? pagesArg.split(",").map((x) => String(x || "").trim()).filter(Boolean)
+    : undefined;
 
   if (!username || !password) {
     console.error("Faltan parámetros: --username y --password");
@@ -42,6 +46,7 @@ function arg(name, def = "") {
     tenantId,
     role: ["user","admin","superadmin"].includes(role) ? role : "admin",
     password: passwordDoc,
+    ...(allowedPages ? { allowedPages } : {}),
     createdAt: new Date(),
     updatedAt: new Date(),
     isLocked: false,

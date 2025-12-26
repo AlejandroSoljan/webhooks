@@ -14,6 +14,77 @@ const { getDb } = require("./db");
 const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || "asisto_sess";
 const COOKIE_SECRET = process.env.AUTH_COOKIE_SECRET || "dev-unsafe-secret-change-me";
 
+// ===== Accesos por usuario (pantallas/endpoints) =====
+// allowedPages:
+//   - undefined / no existe el campo => acceso completo (compatibilidad)
+//   - [] => sin acceso
+//   - ["admin","inbox",...] => acceso restringido a esas keys
+const ACCESS_PAGES = [
+  { key: "admin", title: "Conversaciones" },
+  { key: "inbox", title: "Inbox" },
+  { key: "productos", title: "Productos" },
+  { key: "horarios", title: "Horarios" },
+  { key: "comportamiento", title: "Comportamiento" },
+  { key: "users", title: "Usuarios" },
+];
+
+function normalizeAllowedPages(value) {
+  if (!value) return [];
+  const arr = Array.isArray(value) ? value : [value];
+  const clean = arr.map(v => String(v || "").trim()).filter(Boolean);
+  const allowedKeys = new Set(ACCESS_PAGES.map(p => p.key));
+  return clean.filter(k => allowedKeys.has(k));
+}
+
+function hasAccess(user, ...keys) {
+  const role = String(user?.role || "");
+  if (role === "superadmin") return true;
+
+  // compat: si el campo no existe => acceso completo
+  const hasField = user && Object.prototype.hasOwnProperty.call(user, "allowedPages");
+  if (!hasField) return true;
+
+  // si existe pero no es array, por seguridad de compatibilidad => acceso completo
+  if (!Array.isArray(user.allowedPages)) return true;
+
+  const pages = user.allowedPages;
+  if (pages.length === 0) return false;
+  return keys.some(k => pages.includes(k));
+}
+
+function requiredAccessForPath(p) {
+  const path = String(p || "");
+  if (path === "/app") return [];
+
+  // Admin de usuarios
+  if (path.startsWith("/admin/users")) return ["users"];
+
+  // UI wrapper
+  if (path.startsWith("/ui/")) {
+    const seg = path.split("/")[2] || "";
+    if (["admin", "inbox", "productos", "horarios", "comportamiento"].includes(seg)) return [seg];
+  }
+
+  // Pantallas directas
+  if (path === "/admin" || path.startsWith("/admin/conversation") || path.startsWith("/admin/ticket")) return ["admin"];
+  if (path.startsWith("/admin/inbox")) return ["inbox"];
+  if (path === "/productos" || path.startsWith("/api/products")) return ["productos"];
+  if (path === "/horarios" || path.startsWith("/api/hours")) return ["horarios"];
+  if (path === "/comportamiento" || path.startsWith("/api/behavior")) return ["comportamiento"];
+
+  // Logs (si querés separar aún más fino, se puede)
+  if (path.startsWith("/api/logs/conversations") || path.startsWith("/api/logs/pedido")) return ["admin"];
+  if (path.startsWith("/api/logs/messages")) return ["inbox"];
+
+  // Acciones admin (entrega, enviar mensaje, etc.)
+  if (path.startsWith("/api/admin/")) return ["admin", "inbox"];
+
+  return [];
+}
+
+
+
+
 function base64urlEncode(buf) {
   return Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
@@ -59,6 +130,7 @@ function makeSessionPayload(user) {
     username: String(user.username),
     role: String(user.role || "user"),
     tenantId: String(user.tenantId || "default"),
+    allowedPages: Array.isArray(user.allowedPages) ? user.allowedPages : undefined,
     iat: Date.now(),
   };
 }
@@ -137,7 +209,7 @@ async function attachUser(req, res, next) {
     if (ObjectId.isValid(uid)) {
       userDoc = await db.collection("users").findOne(
         { _id: new ObjectId(uid) },
-        { projection: { username: 1, role: 1, tenantId: 1, isLocked: 1 } }
+        { projection: { username: 1, role: 1, tenantId: 1, allowedPages: 1, isLocked: 1 } }
       );
     }
 
@@ -145,7 +217,7 @@ async function attachUser(req, res, next) {
     if (!userDoc && sess.username) {
       userDoc = await db.collection("users").findOne(
         { username: String(sess.username) },
-        { projection: { username: 1, role: 1, tenantId: 1, isLocked: 1 } }
+        { projection: { username: 1, role: 1, tenantId: 1, allowedPages: 1, isLocked: 1 } }
       );
     }
 
@@ -482,15 +554,13 @@ function pageShell({ title, user, body }) {
 // ===== App layout (sidebar + content) =====
 function getNavItemsForUser(user) {
   const isAdmin = user && (user.role === "admin" || user.role === "superadmin");
-  const items = [
-    { key: "home", title: "Inicio", href: "/app" },
-    { key: "admin", title: "Conversaciones", href: "/ui/admin" },
-    { key: "inbox", title: "Inbox", href: "/ui/inbox" },
-    { key: "productos", title: "Productos", href: "/ui/productos" },
-    { key: "horarios", title: "Horarios", href: "/ui/horarios" },
-    { key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" },
-  ];
-  if (isAdmin) items.push({ key: "users", title: "Usuarios", href: "/admin/users" });
+  const items = [{ key: "home", title: "Inicio", href: "/app" }];
+  if (hasAccess(user, "admin")) items.push({ key: "admin", title: "Conversaciones", href: "/ui/admin" });
+  if (hasAccess(user, "inbox")) items.push({ key: "inbox", title: "Inbox", href: "/ui/inbox" });
+  if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
+  if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
+  if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
+  if (isAdmin && hasAccess(user, "users")) items.push({ key: "users", title: "Usuarios", href: "/admin/users" });
   return items;
 }
 
@@ -575,7 +645,7 @@ function appMenuPage({ user, routes }) {
     </a>
   `).join("");
 
-  const adminTiles = (user.role === "admin" || user.role === "superadmin")
+  const adminTiles = (user.role === "admin" || user.role === "superadmin") && hasAccess(user, "users")
     ? `<a class="tile" href="/admin/users">
          <div><h3>Usuarios</h3><p>Alta/baja y reseteo de contraseñas</p></div>
          <span class="badge">Admin</span>
@@ -599,6 +669,14 @@ function appMenuPage({ user, routes }) {
 }
 
 function usersAdminPage({ user, users, msg, err }) {
+  const defaultCreatePages = ACCESS_PAGES.filter(p => p.key !== "users").map(p => p.key);
+  const createAccessCheckboxes = ACCESS_PAGES
+    .filter(p => p.key !== "users")
+    .map(p => `<label class="small" style="display:inline-flex;align-items:center;gap:6px">
+      <input type="checkbox" name="allowedPages" value="${p.key}" ${defaultCreatePages.includes(p.key) ? "checked" : ""}/>
+      ${htmlEscape(p.title)}
+    </label>`).join("");
+
   const message = msg ? `<div class="msg">${htmlEscape(msg)}</div>` : "";
   const error = err ? `<div class="msg err">${htmlEscape(err)}</div>` : "";
 
@@ -656,6 +734,11 @@ function usersAdminPage({ user, users, msg, err }) {
         </td>
         <td>${htmlEscape(tenantId)}</td>
         <td>${htmlEscape(role)}</td>
+        <td>
+          <div class="small" style="color:#111827">
+            ${htmlEscape(accessLabel)}
+          </div>
+        </td>
         <td>${locked ? "Bloqueado" : "Activo"}</td>
         <td class="actions">
           <form method="POST" action="/admin/users/update" style="margin:0 0 8px 0">
@@ -663,6 +746,9 @@ function usersAdminPage({ user, users, msg, err }) {
             ${tenantInput}
             ${roleSelect}
             ${lockToggle}
+            <div style="margin:8px 0 10px; display:flex; flex-wrap:wrap; gap:10px">
+              ${accessCheckboxes}
+            </div>
             <button class="btn2 btnOk" type="submit" ${saveDisabled}>Guardar</button>
             ${isSelf ? `<div class="small" style="margin-top:6px">No se permite cambiar tu rol/tenant/bloqueo desde acá.</div>` : ``}
           </form>
@@ -744,12 +830,13 @@ function usersAdminPage({ user, users, msg, err }) {
               <th>Usuario</th>
               <th>Tenant</th>
               <th>Rol</th>
+              <th>Acceso</th>
               <th>Estado</th>
               <th>Acciones</th>
             </tr>
           </thead>
           <tbody>
-            ${rows || `<tr><td colspan="5" class="small">No hay usuarios cargados.</td></tr>`}
+           ${rows || `<tr><td colspan="6" class="small">No hay usuarios cargados.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -817,13 +904,20 @@ if (!verifyPassword(password, user.password)) {
       { title: "Hours API", href: "/api/hours", badge: "API", desc: "Get/Set store hours" },
       { title: "Products API", href: "/api/products", badge: "API", desc: "CRUD de productos" },
     ];
-    return res.status(200).send(appMenuPage({ user: req.user, routes }));
+     const filtered = (routes || []).filter(r => {
+      const reqKeys = requiredAccessForPath(r.href);
+      return reqKeys.length === 0 || hasAccess(req.user, ...reqKeys);
+    });
+    return res.status(200).send(appMenuPage({ user: req.user, routes: filtered }));
   });
 
 
   // wrappers UI con menú lateral (mantienen el layout al navegar endpoints)
   app.get("/ui/:page", requireAuth, (req, res) => {
-    const page = String(req.params.page || "").trim();
+      const users = await db.collection("users")
+        .find(filter, { projection: { username: 1, tenantId: 1, role: 1, isLocked: 1, allowedPages: 1, createdAt: 1 } })
+        .sort({ createdAt: -1 }).toArray();
+
     const map = {
       admin: { title: "Conversaciones", src: "/admin", active: "admin" },
       inbox: { title: "Inbox", src: "/admin/inbox", active: "inbox" },
@@ -903,13 +997,14 @@ if (actorRole !== "superadmin") {
   if (finalRole === "superadmin") finalRole = "admin";
 }
 
-const passwordDoc = hashPassword(password);
+const allowedPages = normalizeAllowedPages(req.body?.allowedPages);
       
 await db.collection("users").insertOne({
   username,
   tenantId: finalTenantId,
   role: finalRole,
   isLocked: !!isLocked,
+  allowedPages,
   password: passwordDoc,
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -928,7 +1023,7 @@ await db.collection("users").insertOne({
     const tenantId = String(req.body?.tenantId || "").trim();
     const role = String(req.body?.role || "").trim();
     const isLocked = !!req.body?.isLocked;
-
+const allowedPages = normalizeAllowedPages(req.body?.allowedPages);
     if (!ObjectId.isValid(userId)) return res.redirect("/admin/users?err=" + encodeURIComponent("userId inválido."));
     if (String(req.user?.uid) === userId) {
       return res.redirect("/admin/users?err=" + encodeURIComponent("No se permite editar tu propio rol/tenant/bloqueo."));
@@ -969,7 +1064,7 @@ await db.collection("users").insertOne({
 
     await db.collection("users").updateOne(
       { _id: new ObjectId(userId) },
-      { $set: { tenantId: finalTenantId, role: finalRole, isLocked: !!isLocked, updatedAt: new Date() } }
+      { $set: { tenantId: finalTenantId, role: finalRole, isLocked: !!isLocked, allowedPages, updatedAt: new Date() } }
     );
 
     return res.redirect("/admin/users?msg=" + encodeURIComponent("Usuario actualizado."));
@@ -1078,7 +1173,14 @@ function protectRoutes(app) {
     const protectedExact = ["/app", "/productos", "/horarios", "/comportamiento"];
 
     if (protectedExact.includes(p) || protectedPrefixes.some(pref => p.startsWith(pref))) {
-      return requireAuth(req, res, next);
+      return requireAuth(req, res, () => {
+        const required = requiredAccessForPath(p);
+        if (required.length && !hasAccess(req.user, ...required)) {
+          if (p.startsWith("/api")) return res.status(403).json({ error: "forbidden" });
+          return res.status(403).send("403 - No autorizado");
+        }
+        return next();
+      });
     }
     return next();
   });
