@@ -925,17 +925,23 @@ function mountAuthRoutes(app) {
 
   // menú
   app.get("/app", requireAuth, (req, res) => {
+
+    const role = String(req.user?.role || "");
+    const isAdmin = (role === "admin" || role === "superadmin");
     const routes = [
       { title: "Inbox", href: "/ui/inbox", badge: "Admin UI", desc: "Bandeja de conversaciones" },
       { title: "Conversaciones", href: "/ui/admin", badge: "Admin UI", desc: "Panel de conversaciones" },
       { title: "Productos", href: "/ui/productos", badge: "UI", desc: "Catálogo del tenant" },
       { title: "Horarios", href: "/ui/horarios", badge: "UI", desc: "Configuración de horarios" },
       { title: "Comportamiento", href: "/ui/comportamiento", badge: "UI", desc: "Behavior prompt/config" },
-      { title: "Logs Conversaciones", href: "/api/logs/conversations", badge: "API", desc: "Listado de conversaciones" },
-      { title: "Logs Mensajes", href: "/api/logs/messages", badge: "API", desc: "Mensajes por conversación" },
-      { title: "Behavior API", href: "/api/behavior", badge: "API", desc: "Get/Set behavior" },
-      { title: "Hours API", href: "/api/hours", badge: "API", desc: "Get/Set store hours" },
-      { title: "Products API", href: "/api/products", badge: "API", desc: "CRUD de productos" },
+      // APIs solo para admin/superadmin:
+      ...(isAdmin ? [
+        { title: "Logs Conversaciones", href: "/api/logs/conversations", badge: "API", desc: "Listado de conversaciones" },
+        { title: "Logs Mensajes", href: "/api/logs/messages", badge: "API", desc: "Mensajes por conversación" },
+        { title: "Behavior API", href: "/api/behavior", badge: "API", desc: "Get/Set behavior" },
+        { title: "Hours API", href: "/api/hours", badge: "API", desc: "Get/Set store hours" },
+        { title: "Products API", href: "/api/products", badge: "API", desc: "CRUD de productos" },
+      ] : []),
     ];
 
     const filtered = (routes || []).filter((r) => {
