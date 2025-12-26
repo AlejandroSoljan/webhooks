@@ -139,6 +139,60 @@ function parseDeliveredFilter(raw) {
   return null;
 }
 
+// ===== Orden "próximos a entregar" (AR -03:00) =====
+function _toMs(v) {
+  const ms = Date.parse(v);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+// Convierte fechaEntrega (YYYY-MM-DD) + horaEntrega (HH:MM) a ms.
+// Si falta hora, usamos 23:59 para que quede "más tarde" dentro del mismo día.
+function pedidoEntregaMs(fechaEntrega, horaEntrega) {
+  const f = String(fechaEntrega || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) return null;
+  const h = /^\d{2}:\d{2}$/.test(String(horaEntrega || "").trim())
+    ? String(horaEntrega).trim()
+   : "23:59";
+  // Argentina (Córdoba): -03:00
+  const iso = `${f}T${h}:00-03:00`;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function compareConvsForEntrega(a, b) {
+  const aHasPedido = a?.fechaEntrega && a.fechaEntrega !== "-";
+  const bHasPedido = b?.fechaEntrega && b.fechaEntrega !== "-";
+
+  const aPending = aHasPedido && a?.delivered !== true;
+  const bPending = bHasPedido && b?.delivered !== true;
+
+  // 1) Pendientes arriba
+  if (aPending !== bPending) return aPending ? -1 : 1;
+
+  const aPedidoMs = aHasPedido ? pedidoEntregaMs(a.fechaEntrega, a.horaEntrega) : null;
+  const bPedidoMs = bHasPedido ? pedidoEntregaMs(b.fechaEntrega, b.horaEntrega) : null;
+
+  // 2) Si ambos pendientes: más próximos primero
+  if (aPending && bPending) {
+    if (aPedidoMs !== null && bPedidoMs !== null && aPedidoMs !== bPedidoMs) return aPedidoMs - bPedidoMs;
+    if (aPedidoMs !== null && bPedidoMs === null) return -1;
+    if (aPedidoMs === null && bPedidoMs !== null) return 1;
+    return _toMs(b.lastAt) - _toMs(a.lastAt);
+  }
+
+  // 3) No pendientes: primero los que tienen pedido
+  if (aHasPedido !== bHasPedido) return aHasPedido ? -1 : 1;
+
+  // 4) Entregadas / resto: por fecha/hora del pedido (más reciente primero)
+  if (aHasPedido && bHasPedido) {
+    const am = aPedidoMs ?? 0, bm = bPedidoMs ?? 0;
+    if (am !== bm) return bm - am;
+  }
+
+  // 5) Fallback por actividad reciente
+  return _toMs(b.lastAt) - _toMs(a.lastAt);
+}
+
 
 async function saveLog(entry) {
   try {
@@ -603,6 +657,9 @@ async function listConversations(limit = 50, tenantId, deliveredFilter = null) {
       });
     }
   }
+ 
+  // Orden final: pendientes arriba y más próximos a entregar
+  out.sort(compareConvsForEntrega);
   return out;
 }
 
