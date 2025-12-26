@@ -1596,7 +1596,29 @@ app.get("/admin", async (req, res) => {
 
     th{background:#f7f7f7; text-align:left}
     .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:6px; cursor:pointer}
-      .actions{display:flex; gap:6px; flex-wrap:wrap}
+    .actions{
+      display:flex;
+      gap:6px;
+      flex-wrap:nowrap;          /* una sola fila */
+      white-space:nowrap;
+      align-items:center;
+    }
+    .actions .btn{
+      padding:4px 6px;
+      font-size:11px;
+      line-height:1.1;
+      white-space:nowrap;
+    }
+
+    /* Ajuste de anchos (sin scroll horizontal) */
+    .adminTable{table-layout:fixed}
+    .adminTable th{white-space:nowrap}
+    .adminTable td{overflow:hidden; text-overflow:ellipsis}
+    .adminTable col.c-entrega{width:88px}    /* más chico */
+    .adminTable col.c-hora{width:66px}       /* más chico */
+    .adminTable col.c-ent{width:44px}        /* más chico */
+    .adminTable col.c-estado{width:140px}    /* un poquito más grande */
+    .adminTable col.c-acciones{width:240px}  /* asegura que entren los botones */
     .delivered-row{opacity:.85}
     .delivChk{cursor:pointer}
 
@@ -1679,7 +1701,20 @@ app.get("/admin", async (req, res) => {
      </label>
    </div>
    <p></p>
-   <table id="tbl">
+   <table id="tbl" class="adminTable">
+     <colgroup>
+       <col class="c-actividad"/>
+       <col class="c-telefono"/>
+       <col class="c-nombre"/>
+       <col class="c-entrega"/>
+       <col class="c-direccion"/>
+       <col class="c-dist"/>
+       <col class="c-dia"/>
+       <col class="c-hora"/>
+       <col class="c-estado"/>
+       <col class="c-ent"/>
+       <col class="c-acciones"/>
+     </colgroup>
      <thead>
        <tr>
          <th>Actividad</th>
