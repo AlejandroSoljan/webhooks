@@ -3,11 +3,14 @@
 // Requiere MongoDB (getDb) y la colección "users".
 //
 // Documento esperado en "users":
-// { username, role: 'admin'|'user'|'superadmin', tenantId, password: { salt, hash }, createdAt }
+// { username, role: 'admin'|'user'|'superadmin', tenantId, password: { salt, hash }, createdAt, allowedPages? }
+//
+// allowedPages:
+//   - undefined / no existe el campo => acceso completo (compatibilidad)
+//   - [] => sin acceso
+//   - ["admin","inbox",...] => acceso restringido a esas keys
 
 const crypto = require("crypto");
-const path = require("path");
-const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
 
@@ -15,10 +18,6 @@ const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || "asisto_sess";
 const COOKIE_SECRET = process.env.AUTH_COOKIE_SECRET || "dev-unsafe-secret-change-me";
 
 // ===== Accesos por usuario (pantallas/endpoints) =====
-// allowedPages:
-//   - undefined / no existe el campo => acceso completo (compatibilidad)
-//   - [] => sin acceso
-//   - ["admin","inbox",...] => acceso restringido a esas keys
 const ACCESS_PAGES = [
   { key: "admin", title: "Conversaciones" },
   { key: "inbox", title: "Inbox" },
@@ -31,9 +30,9 @@ const ACCESS_PAGES = [
 function normalizeAllowedPages(value) {
   if (!value) return [];
   const arr = Array.isArray(value) ? value : [value];
-  const clean = arr.map(v => String(v || "").trim()).filter(Boolean);
-  const allowedKeys = new Set(ACCESS_PAGES.map(p => p.key));
-  return clean.filter(k => allowedKeys.has(k));
+  const clean = arr.map((v) => String(v || "").trim()).filter(Boolean);
+  const allowedKeys = new Set(ACCESS_PAGES.map((p) => p.key));
+  return clean.filter((k) => allowedKeys.has(k));
 }
 
 function hasAccess(user, ...keys) {
@@ -44,14 +43,15 @@ function hasAccess(user, ...keys) {
   const hasField = user && Object.prototype.hasOwnProperty.call(user, "allowedPages");
   if (!hasField) return true;
 
-  // si existe pero no es array, por seguridad de compatibilidad => acceso completo
+  // si existe pero no es array => compat: acceso completo
   if (!Array.isArray(user.allowedPages)) return true;
 
   const pages = user.allowedPages;
   if (pages.length === 0) return false;
-  return keys.some(k => pages.includes(k));
+  return keys.some((k) => pages.includes(k));
 }
 
+// Devuelve qué "keys" de acceso requiere una ruta
 function requiredAccessForPath(p) {
   const path = String(p || "");
   if (path === "/app") return [];
@@ -72,7 +72,7 @@ function requiredAccessForPath(p) {
   if (path === "/horarios" || path.startsWith("/api/hours")) return ["horarios"];
   if (path === "/comportamiento" || path.startsWith("/api/behavior")) return ["comportamiento"];
 
-  // Logs (si querés separar aún más fino, se puede)
+  // Logs
   if (path.startsWith("/api/logs/conversations") || path.startsWith("/api/logs/pedido")) return ["admin"];
   if (path.startsWith("/api/logs/messages")) return ["inbox"];
 
@@ -82,9 +82,7 @@ function requiredAccessForPath(p) {
   return [];
 }
 
-
-
-
+// ===== utils cookie signing =====
 function base64urlEncode(buf) {
   return Buffer.from(buf).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
@@ -93,12 +91,10 @@ function base64urlDecode(str) {
   const pad = s.length % 4 ? "=".repeat(4 - (s.length % 4)) : "";
   return Buffer.from(s + pad, "base64");
 }
-
 function sign(value) {
   const mac = crypto.createHmac("sha256", COOKIE_SECRET).update(value).digest();
   return base64urlEncode(mac);
 }
-
 function timingSafeEq(a, b) {
   try {
     const ab = Buffer.from(String(a));
@@ -109,7 +105,6 @@ function timingSafeEq(a, b) {
     return false;
   }
 }
-
 function parseCookies(req) {
   const header = req.headers?.cookie || "";
   const out = {};
@@ -124,6 +119,7 @@ function parseCookies(req) {
   return out;
 }
 
+// ===== session =====
 function makeSessionPayload(user) {
   return {
     uid: String(user._id),
@@ -146,17 +142,16 @@ function setSessionCookie(res, payload) {
     maxAge: 1000 * 60 * 60 * 24 * 7, // 7 días
   });
 }
-
 function clearSessionCookie(res) {
   res.clearCookie(COOKIE_NAME, { path: "/" });
 }
-
 function readSession(req) {
   const cookies = parseCookies(req);
   const token = cookies[COOKIE_NAME];
   if (!token) return null;
   const [b64, sig] = token.split(".");
   if (!b64 || !sig) return null;
+
   let json;
   try {
     json = base64urlDecode(b64).toString("utf8");
@@ -165,6 +160,7 @@ function readSession(req) {
   }
   const expected = sign(json);
   if (!timingSafeEq(sig, expected)) return null;
+
   try {
     const payload = JSON.parse(json);
     if (!payload?.uid) return null;
@@ -201,7 +197,7 @@ async function attachUser(req, res, next) {
       return next();
     }
 
-    // Refrescamos desde DB para que cambios (rol/tenant/bloqueo) impacten al instante.
+    // refresca desde DB para cambios inmediatos
     const db = await getDb();
     let userDoc = null;
 
@@ -213,7 +209,7 @@ async function attachUser(req, res, next) {
       );
     }
 
-    // Fallback por username si no hay uid válido (por compatibilidad)
+    // fallback por username
     if (!userDoc && sess.username) {
       userDoc = await db.collection("users").findOne(
         { username: String(sess.username) },
@@ -223,11 +219,12 @@ async function attachUser(req, res, next) {
 
     if (!userDoc || userDoc.isLocked) {
       req.user = null;
-      try { clearSessionCookie(res); } catch {}
+      try {
+        clearSessionCookie(res);
+      } catch {}
       return next();
     }
 
-    // Usamos el snapshot de DB como fuente de verdad.
     req.user = makeSessionPayload(userDoc);
     return next();
   } catch {
@@ -254,7 +251,7 @@ function resolveTenantId(req, { defaultTenantId = "default", envTenantId = "" } 
   const role = String(req.user?.role || "");
   const userTenant = (req.user?.tenantId || "").toString().trim();
 
-  const pick = (req.query?.tenant || req.headers?.["x-tenant-id"] || envTenantId || defaultTenantId);
+  const pick = req.query?.tenant || req.headers?.["x-tenant-id"] || envTenantId || defaultTenantId;
   const picked = (pick || defaultTenantId).toString().trim();
 
   if (role === "superadmin") return picked;
@@ -265,8 +262,11 @@ function resolveTenantId(req, { defaultTenantId = "default", envTenantId = "" } 
 // ===== HTML helpers =====
 function htmlEscape(s) {
   return String(s || "")
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function pageShell({ title, user, body }) {
@@ -450,7 +450,7 @@ function pageShell({ title, user, body }) {
     .btnDanger{border-color: rgba(240,68,56,.32); color:#b42318}
     .btnOk{border-color: rgba(14,107,102,.28); color: var(--primary)}
     .small{font-size:12px; color:#667085}
-  
+
     /* ===== App layout (sidebar) ===== */
     .layout{
       width:min(1400px, 100%);
@@ -526,7 +526,6 @@ function pageShell({ title, user, body }) {
       background:#fff;
       display:block;
     }
-
   </style>
 </head>
 <body>
@@ -542,7 +541,6 @@ function pageShell({ title, user, body }) {
       <button class="btn2" type="submit">Cerrar sesión</button>
     </form>
   </div>` : ``}
-
   <div class="${user ? "content" : ""}">
     ${body}
   </div>
@@ -550,25 +548,30 @@ function pageShell({ title, user, body }) {
 </html>`;
 }
 
-
 // ===== App layout (sidebar + content) =====
 function getNavItemsForUser(user) {
   const isAdmin = user && (user.role === "admin" || user.role === "superadmin");
   const items = [{ key: "home", title: "Inicio", href: "/app" }];
+
   if (hasAccess(user, "admin")) items.push({ key: "admin", title: "Conversaciones", href: "/ui/admin" });
   if (hasAccess(user, "inbox")) items.push({ key: "inbox", title: "Inbox", href: "/ui/inbox" });
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
+
   if (isAdmin && hasAccess(user, "users")) items.push({ key: "users", title: "Usuarios", href: "/admin/users" });
   return items;
 }
 
 function sidebarHtml(user, activeKey) {
-  const items = getNavItemsForUser(user).map((it) => {
-    const active = it.key === activeKey ? "active" : "";
-    return `<a class="navItem ${active}" href="${htmlEscape(it.href)}"><span class="navDot"></span><span>${htmlEscape(it.title)}</span></a>`;
-  }).join("");
+  const items = getNavItemsForUser(user)
+    .map((it) => {
+      const active = it.key === activeKey ? "active" : "";
+      return `<a class="navItem ${active}" href="${htmlEscape(it.href)}"><span class="navDot"></span><span>${htmlEscape(
+        it.title
+      )}</span></a>`;
+    })
+    .join("");
 
   return `
     <aside class="sidebar">
@@ -596,7 +599,6 @@ function appShell({ title, user, active, main }) {
     `,
   });
 }
-
 
 function loginPage({ error, to }) {
   const err = error ? `<div class="msg err">${htmlEscape(error)}</div>` : "";
@@ -635,7 +637,9 @@ function loginPage({ error, to }) {
 }
 
 function appMenuPage({ user, routes }) {
-  const tiles = routes.map(r => `
+  const tiles = (routes || [])
+    .map(
+      (r) => `
     <a class="tile" href="${htmlEscape(r.href)}">
       <div>
         <h3>${htmlEscape(r.title)}</h3>
@@ -643,13 +647,17 @@ function appMenuPage({ user, routes }) {
       </div>
       <span class="badge">${htmlEscape(r.badge || "")}</span>
     </a>
-  `).join("");
+  `
+    )
+    .join("");
 
-  const adminTiles = (user.role === "admin" || user.role === "superadmin") && hasAccess(user, "users")
-    ? `<a class="tile" href="/admin/users">
-         <div><h3>Usuarios</h3><p>Alta/baja y reseteo de contraseñas</p></div>
-         <span class="badge">Admin</span>
-       </a>` : "";
+  const adminTiles =
+    (user.role === "admin" || user.role === "superadmin") && hasAccess(user, "users")
+      ? `<a class="tile" href="/admin/users">
+          <div><h3>Usuarios</h3><p>Alta/baja y reseteo de contraseñas</p></div>
+          <span class="badge">Admin</span>
+        </a>`
+      : "";
 
   return appShell({
     title: "Inicio · Asisto",
@@ -669,13 +677,15 @@ function appMenuPage({ user, routes }) {
 }
 
 function usersAdminPage({ user, users, msg, err }) {
-  const defaultCreatePages = ACCESS_PAGES.filter(p => p.key !== "users").map(p => p.key);
-  const createAccessCheckboxes = ACCESS_PAGES
-    .filter(p => p.key !== "users")
-    .map(p => `<label class="small" style="display:inline-flex;align-items:center;gap:6px">
+  const defaultCreatePages = ACCESS_PAGES.filter((p) => p.key !== "users").map((p) => p.key);
+  const createAccessCheckboxes = ACCESS_PAGES.filter((p) => p.key !== "users")
+    .map(
+      (p) => `<label class="small" style="display:inline-flex;align-items:center;gap:6px">
       <input type="checkbox" name="allowedPages" value="${p.key}" ${defaultCreatePages.includes(p.key) ? "checked" : ""}/>
       ${htmlEscape(p.title)}
-    </label>`).join("");
+    </label>`
+    )
+    .join("");
 
   const message = msg ? `<div class="msg">${htmlEscape(msg)}</div>` : "";
   const error = err ? `<div class="msg err">${htmlEscape(err)}</div>` : "";
@@ -691,42 +701,65 @@ function usersAdminPage({ user, users, msg, err }) {
     ? `<input name="tenantId" required placeholder="default"/>`
     : `<input name="tenantId" required value="${htmlEscape(myTenant)}" readonly/>`;
 
-  const rows = (users || []).map(u => {
-    const id = String(u._id);
-    const username = String(u.username || "");
-    const tenantId = String(u.tenantId || "");
-    const role = String(u.role || "user");
-    const locked = !!u.isLocked;
-    const isSelf = String(user?.uid) === id;
+  const rows = (users || [])
+    .map((u) => {
+      const id = String(u._id);
+      const username = String(u.username || "");
+      const tenantId = String(u.tenantId || "");
+      const role = String(u.role || "user");
+      const locked = !!u.isLocked;
+      const isSelf = String(user?.uid) === id;
 
-    const canEditTenant = isSuper;
-    const canEditRole = isSuper;
-    const canEditLock = !isSelf; // evitamos que se bloquee solo desde UI
+      const canEditTenant = isSuper;
+      const canEditRole = isSuper;
+      const canEditLock = !isSelf;
 
-    const roleSelect = (() => {
-      // Admin sólo ve user/admin (y no debería ver superadmins por server-side, pero por si acaso)
-      const opts = isSuper
-        ? ["user", "admin", "superadmin"]
-        : ["user", "admin"];
-      const options = opts.map(r => `<option value="${r}" ${r === role ? "selected" : ""}>${r}</option>`).join("");
-      const disabled = (!isSuper && role === "superadmin") ? "disabled" : "";
-      return `<select name="role" ${disabled} style="width:120px; display:inline-block; margin-right:6px">${options}</select>`;
-    })();
+      // ===== Accesos (label + checkboxes) =====
+      const hasAllowedPagesField = Object.prototype.hasOwnProperty.call(u, "allowedPages");
+      const currentPages = Array.isArray(u.allowedPages)
+        ? u.allowedPages
+        : hasAllowedPagesField
+          ? []
+          : ACCESS_PAGES.map((p) => p.key); // legacy => completo
 
-    const tenantInput = canEditTenant
-      ? `<input name="tenantId" value="${htmlEscape(tenantId)}" style="width:140px; display:inline-block; margin-right:6px" />`
-      : `<input name="tenantId" value="${htmlEscape(tenantId)}" readonly style="width:140px; display:inline-block; margin-right:6px" />`;
+      const accessLabel = !hasAllowedPagesField
+        ? "Completo (legacy)"
+        : currentPages.length
+          ? currentPages.join(", ")
+          : "Sin acceso";
 
-    const lockToggle = canEditLock
-      ? `<label class="small" style="display:inline-flex; align-items:center; gap:6px; margin-right:8px">
-           <input type="checkbox" name="isLocked" value="1" ${locked ? "checked" : ""}/>
-           Bloqueado
-         </label>`
-      : `<span class="small" style="margin-right:8px">${locked ? "Bloqueado" : "Activo"} (vos)</span>`;
+      const editablePages = ACCESS_PAGES.filter((p) => (isSuper ? true : p.key !== "users"));
+      const accessCheckboxes = editablePages
+        .map((p) => {
+          const checked = currentPages.includes(p.key) ? "checked" : "";
+          return `<label class="small" style="display:inline-flex;align-items:center;gap:6px">
+            <input type="checkbox" name="allowedPages" value="${p.key}" ${checked}/>
+            ${htmlEscape(p.title)}
+          </label>`;
+        })
+        .join("");
 
-    const saveDisabled = isSelf ? "disabled" : "";
+      const roleSelect = (() => {
+        const opts = isSuper ? ["user", "admin", "superadmin"] : ["user", "admin"];
+        const options = opts.map((r) => `<option value="${r}" ${r === role ? "selected" : ""}>${r}</option>`).join("");
+        const disabled = !canEditRole ? "disabled" : "";
+        return `<select name="role" ${disabled} style="width:120px; display:inline-block; margin-right:6px">${options}</select>`;
+      })();
 
-    return `
+      const tenantInput = canEditTenant
+        ? `<input name="tenantId" value="${htmlEscape(tenantId)}" style="width:140px; display:inline-block; margin-right:6px" />`
+        : `<input name="tenantId" value="${htmlEscape(tenantId)}" readonly style="width:140px; display:inline-block; margin-right:6px" />`;
+
+      const lockToggle = canEditLock
+        ? `<label class="small" style="display:inline-flex; align-items:center; gap:6px; margin-right:8px">
+             <input type="checkbox" name="isLocked" value="1" ${locked ? "checked" : ""}/>
+             Bloqueado
+           </label>`
+        : `<span class="small" style="margin-right:8px">${locked ? "Bloqueado" : "Activo"} (vos)</span>`;
+
+      const saveDisabled = isSelf ? "disabled" : "";
+
+      return `
       <tr>
         <td>
           <strong>${htmlEscape(username)}</strong>
@@ -734,11 +767,7 @@ function usersAdminPage({ user, users, msg, err }) {
         </td>
         <td>${htmlEscape(tenantId)}</td>
         <td>${htmlEscape(role)}</td>
-        <td>
-          <div class="small" style="color:#111827">
-            ${htmlEscape(accessLabel)}
-          </div>
-        </td>
+        <td><div class="small" style="color:#111827">${htmlEscape(accessLabel)}</div></td>
         <td>${locked ? "Bloqueado" : "Activo"}</td>
         <td class="actions">
           <form method="POST" action="/admin/users/update" style="margin:0 0 8px 0">
@@ -764,9 +793,9 @@ function usersAdminPage({ user, users, msg, err }) {
             <button class="btn2 btnDanger" type="submit" ${isSelf ? "disabled" : ""}>Eliminar</button>
           </form>
         </td>
-      </tr>
-    `;
-  }).join("");
+      </tr>`;
+    })
+    .join("");
 
   return appShell({
     title: "Usuarios · Asisto",
@@ -792,7 +821,7 @@ function usersAdminPage({ user, users, msg, err }) {
           <div class="row">
             <div style="flex:1" class="field">
               <label>Usuario</label>
-              <input name="username" required placeholder="ej: tenai"/>
+              <input name="username" required placeholder="ej: juan"/>
             </div>
             <div style="flex:1" class="field">
               <label>Contraseña</label>
@@ -806,17 +835,24 @@ function usersAdminPage({ user, users, msg, err }) {
             </div>
             <div style="flex:1" class="field">
               <label>Rol</label>
-              <select name="role">
-                ${roleOptionsForCreate}
-              </select>
+              <select name="role">${roleOptionsForCreate}</select>
             </div>
           </div>
+
           <div class="field">
             <label style="display:flex; align-items:center; gap:10px">
               <input type="checkbox" name="isLocked" value="1" style="width:auto"/>
               Crear como “bloqueado” (no podrá iniciar sesión)
             </label>
           </div>
+
+          <div class="field">
+            <label>Acceso a pantallas</label>
+            <div style="display:flex; flex-wrap:wrap; gap:10px">
+              ${createAccessCheckboxes}
+            </div>
+          </div>
+
           <button class="btn" type="submit">Crear usuario</button>
           <div class="small" style="margin-top:10px">Tip: el <code>tenantId</code> del usuario define el tenant de los endpoints (salvo <code>superadmin</code>).</div>
         </form>
@@ -836,7 +872,7 @@ function usersAdminPage({ user, users, msg, err }) {
             </tr>
           </thead>
           <tbody>
-           ${rows || `<tr><td colspan="6" class="small">No hay usuarios cargados.</td></tr>`}
+            ${rows || `<tr><td colspan="6" class="small">No hay usuarios cargados.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -844,7 +880,6 @@ function usersAdminPage({ user, users, msg, err }) {
     `,
   });
 }
-
 
 // ===== Routes mounting =====
 function mountAuthRoutes(app) {
@@ -866,12 +901,10 @@ function mountAuthRoutes(app) {
       const user = await db.collection("users").findOne({ username });
       if (!user) return res.status(401).send(loginPage({ error: "Usuario o contraseña inválidos.", to }));
 
-      
-if (!verifyPassword(password, user.password)) {
+      if (!verifyPassword(password, user.password)) {
         return res.status(401).send(loginPage({ error: "Usuario o contraseña inválidos.", to }));
       }
 
-      // Si está bloqueado, no permitimos login aunque la contraseña sea correcta.
       if (user.isLocked) {
         return res.status(403).send(loginPage({ error: "Usuario bloqueado. Contactá al administrador.", to }));
       }
@@ -904,19 +937,21 @@ if (!verifyPassword(password, user.password)) {
       { title: "Hours API", href: "/api/hours", badge: "API", desc: "Get/Set store hours" },
       { title: "Products API", href: "/api/products", badge: "API", desc: "CRUD de productos" },
     ];
-     const filtered = (routes || []).filter(r => {
+
+    const filtered = (routes || []).filter((r) => {
       const reqKeys = requiredAccessForPath(r.href);
       return reqKeys.length === 0 || hasAccess(req.user, ...reqKeys);
     });
+
     return res.status(200).send(appMenuPage({ user: req.user, routes: filtered }));
   });
 
-
   // wrappers UI con menú lateral (mantienen el layout al navegar endpoints)
   app.get("/ui/:page", requireAuth, (req, res) => {
-      const users = await db.collection("users")
-        .find(filter, { projection: { username: 1, tenantId: 1, role: 1, isLocked: 1, allowedPages: 1, createdAt: 1 } })
-        .sort({ createdAt: -1 }).toArray();
+    const page = String(req.params.page || "").trim();
+    if (!hasAccess(req.user, page)) {
+      return res.status(403).send("403 - No autorizado");
+    }
 
     const map = {
       admin: { title: "Conversaciones", src: "/admin", active: "admin" },
@@ -925,35 +960,43 @@ if (!verifyPassword(password, user.password)) {
       horarios: { title: "Horarios", src: "/horarios", active: "horarios" },
       comportamiento: { title: "Comportamiento", src: "/comportamiento", active: "comportamiento" },
     };
+
     const conf = map[page];
     if (!conf) return res.status(404).send("404 - No existe esa pantalla");
 
     // Conservamos querystring (por ej: ?tenant=xxx o convId=...)
     const original = String(req.originalUrl || "");
     const qs = original.includes("?") ? original.split("?").slice(1).join("?") : "";
-    const src = conf.src + (qs ? ("?" + qs) : "");
+    const src = conf.src + (qs ? "?" + qs : "");
 
-    return res.status(200).send(appShell({
-      title: conf.title + " · Asisto",
-      user: req.user,
-      active: conf.active,
-      main: `
+    return res.status(200).send(
+      appShell({
+        title: conf.title + " · Asisto",
+        user: req.user,
+        active: conf.active,
+        main: `
         <div class="frameWrap">
           <iframe class="frame" src="${htmlEscape(src)}"></iframe>
         </div>
       `,
-    }));
+      })
+    );
   });
 
   // Admin usuarios
   app.get("/admin/users", requireAuth, requireAdmin, async (req, res) => {
     try {
       const db = await getDb();
-      
-const isSuper = String(req.user?.role || "") === "superadmin";
-const filter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
-// Admin ve sólo su tenant. Superadmin ve todo.
-const users = await db.collection("users").find(filter).sort({ createdAt: -1 }).toArray();
+
+      const isSuper = String(req.user?.role || "") === "superadmin";
+      const filter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+
+      const users = await db
+        .collection("users")
+        .find(filter, { projection: { username: 1, tenantId: 1, role: 1, isLocked: 1, allowedPages: 1, createdAt: 1 } })
+        .sort({ createdAt: -1 })
+        .toArray();
+
       const msg = req.query?.msg ? String(req.query.msg) : "";
       const err = req.query?.err ? String(req.query.err) : "";
       return res.status(200).send(usersAdminPage({ user: req.user, users, msg, err }));
@@ -968,12 +1011,12 @@ const users = await db.collection("users").find(filter).sort({ createdAt: -1 }).
       const username = String(req.body?.username || "").trim();
       const password = String(req.body?.password || "");
       const tenantId = String(req.body?.tenantId || "").trim() || "default";
-      
-const role = String(req.body?.role || "user").trim();
-const isLocked = !!req.body?.isLocked;
 
-const actorRole = String(req.user?.role || "");
-const actorTenant = String(req.user?.tenantId || "default");
+      const role = String(req.body?.role || "user").trim();
+      const isLocked = !!req.body?.isLocked;
+
+      const actorRole = String(req.user?.role || "");
+      const actorTenant = String(req.user?.tenantId || "default");
 
       if (!username || !password) return res.redirect("/admin/users?err=" + encodeURIComponent("Faltan datos."));
       if (!/^[a-zA-Z0-9._-]{3,40}$/.test(username)) {
@@ -985,30 +1028,30 @@ const actorTenant = String(req.user?.tenantId || "default");
       const exists = await db.collection("users").findOne({ username });
       if (exists) return res.redirect("/admin/users?err=" + encodeURIComponent("El usuario ya existe."));
 
-      
-// Reglas:
-// - admin: sólo puede crear usuarios en su tenant y no puede crear superadmin
-// - superadmin: puede elegir tenant/rol libremente
-let finalTenantId = tenantId || "default";
-let finalRole = ["user", "admin", "superadmin"].includes(role) ? role : "user";
+      // Reglas:
+      // - admin: sólo puede crear usuarios en su tenant y no puede crear superadmin
+      // - superadmin: puede elegir tenant/rol libremente
+      let finalTenantId = tenantId || "default";
+      let finalRole = ["user", "admin", "superadmin"].includes(role) ? role : "user";
 
-if (actorRole !== "superadmin") {
-  finalTenantId = actorTenant;
-  if (finalRole === "superadmin") finalRole = "admin";
-}
+      if (actorRole !== "superadmin") {
+        finalTenantId = actorTenant;
+        if (finalRole === "superadmin") finalRole = "admin";
+      }
 
-const allowedPages = normalizeAllowedPages(req.body?.allowedPages);
-      
-await db.collection("users").insertOne({
-  username,
-  tenantId: finalTenantId,
-  role: finalRole,
-  isLocked: !!isLocked,
-  allowedPages,
-  password: passwordDoc,
-  createdAt: new Date(),
-  updatedAt: new Date(),
-});
+      const passwordDoc = hashPassword(password);
+      const allowedPages = normalizeAllowedPages(req.body?.allowedPages);
+
+      await db.collection("users").insertOne({
+        username,
+        tenantId: finalTenantId,
+        role: finalRole,
+        isLocked: !!isLocked,
+        allowedPages,
+        password: passwordDoc,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
 
       return res.redirect("/admin/users?msg=" + encodeURIComponent("Usuario creado."));
     } catch (e) {
@@ -1018,90 +1061,90 @@ await db.collection("users").insertOne({
   });
 
   app.post("/admin/users/update", requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const userId = String(req.body?.userId || "").trim();
-    const tenantId = String(req.body?.tenantId || "").trim();
-    const role = String(req.body?.role || "").trim();
-    const isLocked = !!req.body?.isLocked;
-const allowedPages = normalizeAllowedPages(req.body?.allowedPages);
-    if (!ObjectId.isValid(userId)) return res.redirect("/admin/users?err=" + encodeURIComponent("userId inválido."));
-    if (String(req.user?.uid) === userId) {
-      return res.redirect("/admin/users?err=" + encodeURIComponent("No se permite editar tu propio rol/tenant/bloqueo."));
-    }
+    try {
+      const userId = String(req.body?.userId || "").trim();
+      const tenantId = String(req.body?.tenantId || "").trim();
+      const role = String(req.body?.role || "").trim();
+      const isLocked = !!req.body?.isLocked;
+      const allowedPages = normalizeAllowedPages(req.body?.allowedPages);
 
-    const db = await getDb();
-
-    const actorRole = String(req.user?.role || "");
-    const actorTenant = String(req.user?.tenantId || "default");
-
-    const target = await db.collection("users").findOne(
-      { _id: new ObjectId(userId) },
-      { projection: { role: 1, tenantId: 1, username: 1 } }
-    );
-    if (!target) return res.redirect("/admin/users?err=" + encodeURIComponent("Usuario no encontrado."));
-
-    // Permisos
-    if (actorRole !== "superadmin") {
-      if (String(target.tenantId || "") !== actorTenant) {
-        return res.redirect("/admin/users?err=" + encodeURIComponent("No autorizado para ese tenant."));
+      if (!ObjectId.isValid(userId)) return res.redirect("/admin/users?err=" + encodeURIComponent("userId inválido."));
+      if (String(req.user?.uid) === userId) {
+        return res.redirect("/admin/users?err=" + encodeURIComponent("No se permite editar tu propio rol/tenant/bloqueo."));
       }
-      if (String(target.role || "") === "superadmin") {
-        return res.redirect("/admin/users?err=" + encodeURIComponent("No podés modificar un superadmin."));
+
+      const db = await getDb();
+
+      const actorRole = String(req.user?.role || "");
+      const actorTenant = String(req.user?.tenantId || "default");
+
+      const target = await db.collection("users").findOne(
+        { _id: new ObjectId(userId) },
+        { projection: { role: 1, tenantId: 1, username: 1 } }
+      );
+      if (!target) return res.redirect("/admin/users?err=" + encodeURIComponent("Usuario no encontrado."));
+
+      // Permisos
+      if (actorRole !== "superadmin") {
+        if (String(target.tenantId || "") !== actorTenant) {
+          return res.redirect("/admin/users?err=" + encodeURIComponent("No autorizado para ese tenant."));
+        }
+        if (String(target.role || "") === "superadmin") {
+          return res.redirect("/admin/users?err=" + encodeURIComponent("No podés modificar un superadmin."));
+        }
       }
+
+      // Normalización + restricciones
+      let finalTenantId = String(target.tenantId || "default");
+      let finalRole = String(target.role || "user");
+
+      if (actorRole === "superadmin") {
+        if (tenantId) finalTenantId = tenantId;
+        if (["user", "admin", "superadmin"].includes(role)) finalRole = role;
+      } else {
+        // admin: tenant fijo y sin superadmin
+        if (["user", "admin"].includes(role)) finalRole = role;
+      }
+
+      await db.collection("users").updateOne(
+        { _id: new ObjectId(userId) },
+        { $set: { tenantId: finalTenantId, role: finalRole, isLocked: !!isLocked, allowedPages, updatedAt: new Date() } }
+      );
+
+      return res.redirect("/admin/users?msg=" + encodeURIComponent("Usuario actualizado."));
+    } catch (e) {
+      console.error("[auth] update user error:", e);
+      return res.redirect("/admin/users?err=" + encodeURIComponent("Error actualizando usuario."));
     }
+  });
 
-    // Normalización + restricciones
-    let finalTenantId = String(target.tenantId || "default");
-    let finalRole = String(target.role || "user");
-
-    if (actorRole === "superadmin") {
-      if (tenantId) finalTenantId = tenantId;
-      if (["user", "admin", "superadmin"].includes(role)) finalRole = role;
-    } else {
-      // admin: tenant fijo y sin superadmin
-      if (["user", "admin"].includes(role)) finalRole = role;
-    }
-
-    await db.collection("users").updateOne(
-      { _id: new ObjectId(userId) },
-      { $set: { tenantId: finalTenantId, role: finalRole, isLocked: !!isLocked, allowedPages, updatedAt: new Date() } }
-    );
-
-    return res.redirect("/admin/users?msg=" + encodeURIComponent("Usuario actualizado."));
-  } catch (e) {
-    console.error("[auth] update user error:", e);
-    return res.redirect("/admin/users?err=" + encodeURIComponent("Error actualizando usuario."));
-  }
-});
-
-app.post("/admin/users/reset-password", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/admin/users/reset-password", requireAuth, requireAdmin, async (req, res) => {
     try {
       const userId = String(req.body?.userId || "").trim();
       const newPassword = String(req.body?.newPassword || "");
       if (!ObjectId.isValid(userId)) return res.redirect("/admin/users?err=" + encodeURIComponent("userId inválido."));
       if (newPassword.length < 4) return res.redirect("/admin/users?err=" + encodeURIComponent("Contraseña muy corta (mín 4)."));
 
-      
-const db = await getDb();
+      const db = await getDb();
 
-const actorRole = String(req.user?.role || "");
-const actorTenant = String(req.user?.tenantId || "default");
-const target = await db.collection("users").findOne(
-  { _id: new ObjectId(userId) },
-  { projection: { role: 1, tenantId: 1 } }
-);
+      const actorRole = String(req.user?.role || "");
+      const actorTenant = String(req.user?.tenantId || "default");
+      const target = await db.collection("users").findOne(
+        { _id: new ObjectId(userId) },
+        { projection: { role: 1, tenantId: 1 } }
+      );
 
-if (!target) return res.redirect("/admin/users?err=" + encodeURIComponent("Usuario no encontrado."));
-if (actorRole !== "superadmin") {
-  if (String(target.tenantId || "") !== actorTenant) {
-    return res.redirect("/admin/users?err=" + encodeURIComponent("No autorizado para ese tenant."));
-  }
-  if (String(target.role || "") === "superadmin") {
-    return res.redirect("/admin/users?err=" + encodeURIComponent("No podés modificar un superadmin."));
-  }
-}
+      if (!target) return res.redirect("/admin/users?err=" + encodeURIComponent("Usuario no encontrado."));
+      if (actorRole !== "superadmin") {
+        if (String(target.tenantId || "") !== actorTenant) {
+          return res.redirect("/admin/users?err=" + encodeURIComponent("No autorizado para ese tenant."));
+        }
+        if (String(target.role || "") === "superadmin") {
+          return res.redirect("/admin/users?err=" + encodeURIComponent("No podés modificar un superadmin."));
+        }
+      }
 
-const passwordDoc = hashPassword(newPassword);
+      const passwordDoc = hashPassword(newPassword);
       await db.collection("users").updateOne(
         { _id: new ObjectId(userId) },
         { $set: { password: passwordDoc, updatedAt: new Date() } }
@@ -1118,33 +1161,33 @@ const passwordDoc = hashPassword(newPassword);
     try {
       const userId = String(req.body?.userId || "").trim();
       if (!ObjectId.isValid(userId)) return res.redirect("/admin/users?err=" + encodeURIComponent("userId inválido."));
+
       // Evitar auto-borrado
       if (String(req.user?.uid) === userId) {
         return res.redirect("/admin/users?err=" + encodeURIComponent("No podés eliminar tu propio usuario."));
       }
 
-      
-const db = await getDb();
+      const db = await getDb();
 
-const actorRole = String(req.user?.role || "");
-const actorTenant = String(req.user?.tenantId || "default");
+      const actorRole = String(req.user?.role || "");
+      const actorTenant = String(req.user?.tenantId || "default");
 
-const target = await db.collection("users").findOne(
-  { _id: new ObjectId(userId) },
-  { projection: { role: 1, tenantId: 1, username: 1 } }
-);
-if (!target) return res.redirect("/admin/users?err=" + encodeURIComponent("Usuario no encontrado."));
+      const target = await db.collection("users").findOne(
+        { _id: new ObjectId(userId) },
+        { projection: { role: 1, tenantId: 1, username: 1 } }
+      );
+      if (!target) return res.redirect("/admin/users?err=" + encodeURIComponent("Usuario no encontrado."));
 
-if (actorRole !== "superadmin") {
-  if (String(target.tenantId || "") !== actorTenant) {
-    return res.redirect("/admin/users?err=" + encodeURIComponent("No autorizado para ese tenant."));
-  }
-  if (String(target.role || "") === "superadmin") {
-    return res.redirect("/admin/users?err=" + encodeURIComponent("No podés eliminar un superadmin."));
-  }
-}
+      if (actorRole !== "superadmin") {
+        if (String(target.tenantId || "") !== actorTenant) {
+          return res.redirect("/admin/users?err=" + encodeURIComponent("No autorizado para ese tenant."));
+        }
+        if (String(target.role || "") === "superadmin") {
+          return res.redirect("/admin/users?err=" + encodeURIComponent("No podés eliminar un superadmin."));
+        }
+      }
 
-await db.collection("users").deleteOne({ _id: new ObjectId(userId) });
+      await db.collection("users").deleteOne({ _id: new ObjectId(userId) });
       return res.redirect("/admin/users?msg=" + encodeURIComponent("Usuario eliminado."));
     } catch (e) {
       console.error("[auth] delete user error:", e);
@@ -1153,11 +1196,12 @@ await db.collection("users").deleteOne({ _id: new ObjectId(userId) });
   });
 }
 
-// Middleware protector por prefijo
+// Middleware protector por prefijo + permisos
 function protectRoutes(app) {
   app.use((req, res, next) => {
     const p = req.path || "";
-    // Rutas públicas
+
+    // públicas
     if (
       p === "/" ||
       p === "/healthz" ||
@@ -1168,11 +1212,11 @@ function protectRoutes(app) {
       p.startsWith("/cache/")
     ) return next();
 
-    // Rutas que queremos con login
+    // requiere login
     const protectedPrefixes = ["/admin", "/api", "/ui"];
     const protectedExact = ["/app", "/productos", "/horarios", "/comportamiento"];
 
-    if (protectedExact.includes(p) || protectedPrefixes.some(pref => p.startsWith(pref))) {
+    if (protectedExact.includes(p) || protectedPrefixes.some((pref) => p.startsWith(pref))) {
       return requireAuth(req, res, () => {
         const required = requiredAccessForPath(p);
         if (required.length && !hasAccess(req.user, ...required)) {
@@ -1182,6 +1226,7 @@ function protectRoutes(app) {
         return next();
       });
     }
+
     return next();
   });
 }
