@@ -505,25 +505,10 @@ async function _getLastPedidoSummary(db, convId, tenantId) {
 }
 
 // Listado de conversaciones reales (colección `conversations`)
-function _deliverySortKey(fechaEntrega, horaEntrega) {
-  // Key numérica YYYYMMDDHHMM para ordenar sin depender de TZ
-  const f = String(fechaEntrega || "").trim();
-  const h = String(horaEntrega || "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(f)) return 999999999999;
-  if (!/^\d{2}:\d{2}$/.test(h)) return 999999999999;
-  return Number(f.replace(/-/g, "") + h.replace(":", ""));
-}
-
-async function listConversations(limit = 50, tenantId, opts = {}) {
+async function listConversations(limit = 50, tenantId) {
   const db = await getDb();
   const q = withTenant({}, tenantId);
 
-  // Filtro entregados / no entregados
-  // opts.delivered: true | false | undefined (todos)
-  if (opts && typeof opts.delivered === "boolean") {
-    if (opts.delivered) q.delivered = true;
-    else q.delivered = { $ne: true };
-  }
   // 1) Traer conversaciones
   const rows = await db.collection("conversations")
     .find(q)
@@ -558,8 +543,6 @@ async function listConversations(limit = 50, tenantId, opts = {}) {
       contactName: c.contactName || "-",
       status: adminStatusLabel(c),
       manualOpen: !!c.manualOpen,
-       delivered: !!c.delivered,
-      deliveredAt: c.deliveredAt || null,
       lastAt: c.lastUserTs || c.lastAssistantTs || c.updatedAt || c.closedAt || c.openedAt
     };
 
@@ -584,34 +567,16 @@ async function listConversations(limit = 50, tenantId, opts = {}) {
         direccion: c.pedidoDireccion || "-",
         ...(distanceKm !== null ? { distanceKm } : {})
       };
-      const sortKey = _deliverySortKey(extra.fechaEntrega, extra.horaEntrega);
-      out.push({ ...base, ...extra, deliverySortKey: sortKey });
+      out.push({ ...base, ...extra });
     } else {
       const extra = await _getLastPedidoSummary(db, c._id, tenantId);
-      const sortKey = _deliverySortKey(extra.fechaEntrega, extra.horaEntrega);
-      out.push({ ...base, ...extra, deliverySortKey: sortKey, ...(distanceKm !== null ? { distanceKm } : {}) });
-
+      out.push({
+        ...base,
+        ...extra,
+        ...(distanceKm !== null ? { distanceKm } : {})
+      });
     }
   }
-
-  // Orden opcional: primero NO entregados, luego por fecha/hora de entrega (más próximo arriba)
-  // Tie-breaker: lastAt desc
-  if (opts && opts.orderByDelivery) {
-    out.sort((a, b) => {
-      const ad = a.delivered ? 1 : 0;
-      const bd = b.delivered ? 1 : 0;
-      if (ad !== bd) return ad - bd;
-      const ak = Number.isFinite(a.deliverySortKey) ? a.deliverySortKey : 999999999999;
-      const bk = Number.isFinite(b.deliverySortKey) ? b.deliverySortKey : 999999999999;
-      if (ak !== bk) return ak - bk;
-      const at = a.lastAt ? new Date(a.lastAt).getTime() : 0;
-      const bt = b.lastAt ? new Date(b.lastAt).getTime() : 0;
-      return bt - at;
-    });
-  }
-
-
-
   return out;
 }
 
@@ -638,59 +603,13 @@ async function getConversationMessagesByWaId(waId, limit = 500, tenantId) {
 app.get("/api/logs/conversations", async (req, res) => {
   try {
     const limit = Math.max(1, Math.min(parseInt(req.query.limit || "50", 10), 500));
-    // delivered=true|false|all
-    const deliveredRaw = String(req.query.delivered || "").trim().toLowerCase();
-    const deliveredOpt = deliveredRaw === "true" ? true : deliveredRaw === "false" ? false : undefined;
-    const order = String(req.query.order || "delivery").trim().toLowerCase();
-    const orderByDelivery = (order === "delivery" || order === "entrega");
-    const rows = await listConversations(limit, resolveTenantId(req), { delivered: deliveredOpt, orderByDelivery });
-  
+    const rows = await listConversations(limit, resolveTenantId(req));
     res.json(rows);
   } catch (e) {
     console.error("GET /api/logs/conversations error:", e);
     res.status(500).json({ error: "internal" });
   }
 });
-
-
-// Marcar conversación como entregada / no entregada
-app.post("/api/logs/conversations/:id/delivered", async (req, res) => {
-  try {
-    const tenant = resolveTenantId(req);
-   const id = String(req.params.id || "");
-    if (!id) return res.status(400).json({ ok: false, error: "id_required" });
-
-    const delivered = !!(req.body && req.body.delivered);
-    const db = await getDb();
-
-    let _id = null;
-    try { _id = new ObjectId(id); }
-    catch { return res.status(400).json({ ok: false, error: "invalid_id" }); }
-
-    const now = new Date();
-    const update = { $set: { delivered, updatedAt: now } };
-    if (delivered) update.$set.deliveredAt = now;
-   else update.$unset = { deliveredAt: "" };
-
-    const r = await db.collection("conversations").updateOne(
-      withTenant({ _id }, tenant),
-      update
-    );
-
-   if (!r.matchedCount) return res.status(404).json({ ok: false, error: "not_found" });
-
-    const conv = await db.collection("conversations").findOne(withTenant({ _id }, tenant));
-    res.json({
-      ok: true,
-      delivered: !!(conv && conv.delivered),
-      deliveredAt: conv ? (conv.deliveredAt || null) : null
-    });
-  } catch (e) {
-    console.error("POST /api/logs/conversations/:id/delivered error:", e);
-    res.status(500).json({ ok: false, error: "internal" });
-  }
-});
-
 
 // Mensajes de una conversación
 app.get("/api/logs/messages", async (req, res) => {
@@ -748,8 +667,6 @@ app.get("/api/admin/conversation-meta", async (req, res) => {
       contactName: conv.contactName || "",
       status: adminStatusLabel(conv),
       manualOpen: !!conv.manualOpen,
-      delivered: !!conv.delivered,
-      deliveredAt: conv.deliveredAt || null,
     });
   } catch (e) {
     console.error("GET /api/admin/conversation-meta error:", e);
@@ -1330,39 +1247,6 @@ app.post("/api/admin/conversation-manual", async (req, res) => {
   }
 });
 
-// ---------- Marcar conversación/pedido como ENTREGADO / NO ENTREGADO ----------
-app.post("/api/admin/conversation-delivered", async (req, res) => {
-  try {
-    const { convId, waId, delivered } = req.body || {};
-    if (!convId && !waId) {
-      return res.status(400).json({ error: "convId_or_waId_required" });
-    }
-    const tenant = resolveTenantId(req);
-    const db = await getDb();
-
-    let filter;
-    if (convId) filter = withTenant({ _id: new ObjectId(String(convId)) }, tenant);
-    else filter = withTenant({ waId: String(waId) }, tenant);
-
-    const now = new Date();
-    const isDelivered = !!delivered;
-
-    const result = await db.collection("conversations").findOneAndUpdate(
-      filter,
-      { $set: { delivered: isDelivered, deliveredAt: isDelivered ? now : null, updatedAt: now } },
-      { returnDocument: "after" }
-    );
-
-    const conv = result.value;
-    if (!conv) return res.status(404).json({ error: "conv_not_found" });
-
-    res.json({ ok: true, convId: String(conv._id), delivered: !!conv.delivered, deliveredAt: conv.deliveredAt || null });
-  } catch (e) {
-    console.error("POST /api/admin/conversation-delivered error:", e);
-    res.status(500).json({ error: "internal" });
-  }
-});
-
 
 // ---------- Enviar mensaje manual al cliente desde /admin ----------
 app.post("/api/admin/send-message", async (req, res) => {
@@ -1561,30 +1445,13 @@ app.get("/admin", async (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Admin | Conversaciones</title>
   <style>
-     html,body{width:100%;height:100%}
-    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin:0; padding:12px; overflow:auto;}
+    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin:20px;}
      header{display:flex; align-items:center; gap:12px; margin-bottom:16px;}
-     input,button,select{font-size:13px; padding:5px 7px;}
+     input,button,select{font-size:14px; padding:6px 8px;}
      table{border-collapse:collapse; width:100%}
-     th,td{border:1px solid #ddd; padding:6px; vertical-align:top; font-size:13px}
+     th,td{border:1px solid #ddd; padding:8px; vertical-align:top}
      th{background:#f5f5f5; text-align:left}
      .row{display:flex; gap:16px; align-items:center}
-     .table-wrap{width:100%; overflow-x:auto; border:1px solid #ddd; border-radius:10px;}
-     #tbl{width:100%; min-width:1100px; table-layout:fixed;}
-     th,td{font-size:13px; padding:6px;}
-     th{white-space:nowrap;}
-     #tbl td:nth-child(5){white-space:normal; overflow-wrap:anywhere;} /* Dirección */
-     #tbl td:last-child{white-space:normal;} /* Acciones */
-     .actions{display:flex; gap:8px; flex-wrap:wrap}
-     /* badges */
-     .badge-pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap;border:1px solid transparent;line-height:1.4}
-     .st-open{background:#eef2ff;color:#1e3a8a;border-color:#c7d2fe;}
-     .st-progress{background:#fff7ed;color:#9a3412;border-color:#fed7aa;}
-     .st-completed{background:#ecfdf5;color:#065f46;border-color:#a7f3d0;}
-    .st-cancelled{background:#fef2f2;color:#991b1b;border-color:#fecaca;}
-     .deliv-yes{background:#ecfdf5;color:#065f46;border-color:#a7f3d0;}
-     .deliv-no{background:#fff7ed;color:#9a3412;border-color:#fed7aa;}
-
      .muted{color:#666}
      .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:4px; cursor:pointer}
     /* ===== Modal simple ===== */
@@ -1610,21 +1477,11 @@ app.get("/admin", async (req, res) => {
     #modalReplyText{width:100%;min-height:70px;font-family:inherit;font-size:14px;padding:6px 8px}
     .chat-actions{display:flex;align-items:center;gap:8px;justify-content:flex-end}
 
-    /* Evitar reglas duplicadas que pisan estilos de tabla/botones */
-    #tbl th, #tbl td{word-break:break-word}
-    /* Anchos sugeridos (ajustá si querés) */
-    #tbl th:nth-child(1), #tbl td:nth-child(1){width:150px}
-    #tbl th:nth-child(2), #tbl td:nth-child(2){width:120px}
-    #tbl th:nth-child(3), #tbl td:nth-child(3){width:150px}
-    #tbl th:nth-child(4), #tbl td:nth-child(4){width:75px}
-    #tbl th:nth-child(5), #tbl td:nth-child(5){width:280px} /* Dirección */
-    #tbl th:nth-child(6), #tbl td:nth-child(6){width:90px}
-    #tbl th:nth-child(7), #tbl td:nth-child(7){width:90px}
-    #tbl th:nth-child(8), #tbl td:nth-child(8){width:70px}
-    #tbl th:nth-child(9), #tbl td:nth-child(9){width:115px}
-    #tbl th:nth-child(10), #tbl td:nth-child(10){width:110px}
-    #tbl th:nth-child(11), #tbl td:nth-child(11){width:185px}
- 
+    table{border-collapse:collapse; width:100%; margin-top:12px}
+    th,td{border:1px solid #ddd; padding:8px; vertical-align:top; font-size:14px}
+    th{background:#f7f7f7; text-align:left}
+    .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:6px; cursor:pointer}
+    .actions{display:flex; gap:8px}
 
 
     /* ===== Estado (badge) ===== */
@@ -1644,29 +1501,8 @@ app.get("/admin", async (req, res) => {
     .st-completed{background:#ecfdf5;color:#065f46;border-color:#a7f3d0;}
     .st-cancelled{background:#fef2f2;color:#991b1b;border-color:#fecaca;}
 
-    /* ===== Entregado (badge) ===== */
-    .deliv-badge{
-      display:inline-block;
-      padding:2px 8px;
-      border-radius:999px;
-      font-size:12px;
-      font-weight:700;
-      border:1px solid transparent;
-      line-height:1.4;
-      white-space:nowrap;
-    }
-    .deliv-no{background:#fff7ed;color:#9a3412;border-color:#fed7aa;}
-    .deliv-yes{background:#ecfdf5;color:#065f46;border-color:#a7f3d0;}
 
-    .deliv-toggle{
-      border:none;
-      background:transparent;
-      padding:0;
-      cursor:pointer;
-    }
-    .deliv-toggle:focus{outline:2px solid #93c5fd; outline-offset:2px; border-radius:999px;}
- 
-    /* ===== Modal de ticket ===== */
+      /* ===== Modal de ticket ===== */
       .ticket-modal-backdrop {
         position: fixed;
         inset: 0;
@@ -1716,17 +1552,9 @@ app.get("/admin", async (req, res) => {
     <div class="row" style="gap:8px">
      <label>Buscar por waId:&nbsp;<input id="waIdI" placeholder="5493..."/></label>
      <button class="btn" id="btnBuscar">Buscar</button>
-     <label>Mostrar:&nbsp;<select id="deliveredFilter">
-       <option value="false" selected>No entregados</option>
-       <option value="true">Entregados</option>
-       <option value="all">Todos</option>
-     </select></label>
      <button class="btn" id="btnReload">Recargar tabla</button>
    </div>
    <p></p>
-  
-  
-  <div class="table-wrap">
    <table id="tbl">
      <thead>
        <tr>
@@ -1738,14 +1566,12 @@ app.get("/admin", async (req, res) => {
           <th>Distancia (km)</th>
           <th>Día</th>
          <th>Hora</th>
-         <th>Entregado</th>
          <th>Estado</th>
          <th>Acciones</th>
        </tr>
      </thead>
      <tbody></tbody>
    </table>
-   </div>
     <!-- Modal -->
    <div id="modalRoot" class="modal-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
      <div class="modal" role="document">
@@ -1803,20 +1629,6 @@ app.get("/admin", async (req, res) => {
     </div>
 
   <script>
-  // Tenant helper (mantiene el tenant en llamadas fetch y links)
-  // =========================
-  const __tenant = new URLSearchParams(window.location.search).get('tenant') || '';
-  function api(path){
-    try{
-      if (!__tenant) return path;
-      const u = new URL(path, window.location.origin);
-      u.searchParams.set('tenant', __tenant);
-      return u.pathname + u.search;
-    }catch{ return path; }
-  }
-
-
-
   // =========================
   // Helpers DOM
   // =========================
@@ -1890,20 +1702,6 @@ app.get("/admin", async (req, res) => {
   }
  
 
-  function renderDeliveredBadge(delivered, deliveredAt){
-    const yes = !!delivered;
-    const cls = yes ? 'deliv-yes' : 'deliv-no';
-    const label = yes ? 'ENTREGADO' : 'PENDIENTE';
-    const title = yes && deliveredAt ? ('Entregado: ' + fmt(deliveredAt)) : '';
-    return '<span class="deliv-badge ' + cls + '"' + (title ? (' title="' + escHtml(title) + '"') : '') + '>' + escHtml(label) + '</span>';
-  }
-
-  async function setDelivered(convId, delivered){
-    const r = await fetch(api('/api/admin/conversation-delivered'), { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ convId, delivered: !!delivered }) });
-    const j = await r.json().catch(()=>({}));
-    if (!r.ok || !j.ok) throw new Error('delivered_update_failed');
-    return j;
-  }
 
 
   function formatMoney(n) {
@@ -1961,7 +1759,7 @@ app.get("/admin", async (req, res) => {
   async function loadModalMeta(){
     if (!currentConvId) return;
     try {
-      const r = await fetch(api('/api/admin/conversation-meta?convId=' + encodeURIComponent(currentConvId));
+      const r = await fetch('/api/admin/conversation-meta?convId=' + encodeURIComponent(currentConvId));
       if (!r.ok) return;
       const j = await r.json().catch(()=>null);
       modalManualOpen = !!(j && j.manualOpen);
@@ -1979,7 +1777,7 @@ app.get("/admin", async (req, res) => {
     let r = null;
 
     try {
-      r = await fetch(api('/api/admin/conversation-manual'), {
+      r = await fetch('/api/admin/conversation-manual', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ convId: currentConvId, manualOpen: !modalManualOpen })
@@ -2019,7 +1817,7 @@ app.get("/admin", async (req, res) => {
     if (!text) return;
 
     try {
-      const r = await fetch(api('/api/admin/send-message'), {
+      const r = await fetch('/api/admin/send-message', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ convId: currentConvId, text })
@@ -2053,7 +1851,7 @@ app.get("/admin", async (req, res) => {
       ? (target.scrollHeight - target.scrollTop - target.clientHeight) < 120
       : true;
 
-    const r = await fetch(api('/api/logs/messages?convId=' + encodeURIComponent(currentConvId));
+    const r = await fetch('/api/logs/messages?convId=' + encodeURIComponent(currentConvId));
     if (!r.ok) return;
 
     const data = await r.json().catch(()=>[]);
@@ -2204,7 +2002,7 @@ app.get("/admin", async (req, res) => {
       pedidoModalBackdrop.style.display = 'flex';
       pedidoModalBackdrop.setAttribute('aria-hidden', 'false');
 
-      const r = await fetch(api('/api/logs/pedido?convId=' + encodeURIComponent(convId));
+      const r = await fetch('/api/logs/pedido?convId=' + encodeURIComponent(convId));
       if (!r.ok) {
         pedidoModalBody.innerHTML = '<p class="muted">No se encontró un pedido para esta conversación.</p>';
         return;
@@ -2227,7 +2025,7 @@ app.get("/admin", async (req, res) => {
   function openTicketModal(conversationId) {
     const backdrop = document.getElementById('ticketModalBackdrop');
     const frame = document.getElementById('ticketFrame');
-    if (frame) frame.src = api('/admin/ticket/' + conversationId);
+    if (frame) frame.src = '/admin/ticket/' + conversationId;
     if (backdrop) backdrop.style.display = 'flex';
   }
 
@@ -2256,11 +2054,7 @@ app.get("/admin", async (req, res) => {
   // =========================
   async function loadTable(){
     try{
-       const filterSel = document.getElementById('deliveredFilter');
-      const fval = (filterSel ? String(filterSel.value || 'false') : 'false');
-      const url = '/api/logs/conversations?limit=200&order=delivery' + (fval === 'all' ? '' : ('&delivered=' + encodeURIComponent(fval)));
-      const r = await fetch(api(url));
-   
+      const r = await fetch('/api/logs/conversations?limit=200');
       const data = await r.json().catch(()=>[]);
       const tb = document.querySelector('#tbl tbody');
       if (!tb) return;
@@ -2278,18 +2072,13 @@ app.get("/admin", async (req, res) => {
           '<td>' + ((c.distanceKm !== undefined && c.distanceKm !== null) ? escHtml(c.distanceKm) : '-') + '</td>' +
           '<td>' + escHtml(c.fechaEntrega || '-') + '</td>' +
           '<td>' + escHtml(c.horaEntrega || '-') + '</td>' +
-                 '<td>' +
-            '<button class="deliv-toggle" data-deliv="' + escHtml(c._id) + '" data-val="' + (c.delivered ? '1' : '0') + '" title="Cambiar estado de entrega">' +
-              renderDeliveredBadge(c.delivered, c.deliveredAt) +
-            '</button>' +
-          '</td>' +
           '<td>' + renderStatusBadge(c.status) + '</td>' +
           '<td>' +
             '<div class="actions">' +
               '<button class="btn" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
               '<button class="btn" data-pedido="' + escHtml(c._id) + '">Pedido</button>' +
               '<button class="btn" data-print="' + escHtml(c._id) + '">🖨️ Imprimir</button>' +
-               '</div>' +
+            '</div>' +
           '</td>';
         tb.appendChild(tr);
       }
@@ -2304,23 +2093,10 @@ app.get("/admin", async (req, res) => {
       tb.querySelectorAll('button[data-print]').forEach(b=>{
         b.addEventListener('click',()=>openTicketModal(b.getAttribute('data-print')));
       });
-      tb.querySelectorAll('button[data-deliv]').forEach(b=>{
-        b.addEventListener('click', async ()=>{
-          const id = b.getAttribute('data-deliv');
-          const cur = b.getAttribute('data-val') === '1';
-          try{
-            await setDelivered(id, !cur);
-            await loadTable();
-          }catch(e){
-            alert('No se pudo actualizar el estado de entrega.');
-          }
-        });
-      });
-
 
       if(!data.length){
         const tr = document.createElement('tr');
-       tr.innerHTML = '<td colspan="11" style="text-align:center;color:#666">Sin conversaciones</td>';
+       tr.innerHTML = '<td colspan="10" style="text-align:center;color:#666">Sin conversaciones</td>';
        tb.appendChild(tr);
       }
 
@@ -2333,13 +2109,13 @@ app.get("/admin", async (req, res) => {
   // Buscar
   // =========================
   function openDetailByWaId(wa){
-    window.open(api('/admin/conversation?waId='+encodeURIComponent(wa)),'_blank');
+    window.open('/admin/conversation?waId='+encodeURIComponent(wa),'_blank');
   }
 
   // =========================
   // Bind general
   // =========================
-  document.getElementById('deliveredFilter')?.addEventListener('change', loadTable);
+  document.getElementById('btnReload')?.addEventListener('click', loadTable);
 
   document.getElementById('btnBuscar')?.addEventListener('click', ()=>{
     const v=(document.getElementById('waIdI')?.value||'').trim();
@@ -2398,8 +2174,7 @@ app.get("/admin", async (req, res) => {
        <meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
        <title>Detalle de conversación</title>
        <style>
-          html,body{width:100%;height:100%}
-    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin:0; padding:12px; overflow:auto;}
+         body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin:20px;}
          .msg{border:1px solid #ddd;border-radius:8px;padding:10px;margin-bottom:10px}
          .role-user{background:#f0fafc}
          .role-assistant{background:#f8f6ff}
@@ -2487,7 +2262,7 @@ app.get("/admin", async (req, res) => {
            else if (CONV_ID) payload.convId = CONV_ID;
            else if (WA_ID) payload.waId = WA_ID;
 
-           const r = await fetch(api('/api/admin/conversation-manual'), {
+           const r = await fetch('/api/admin/conversation-manual', {
              method: 'POST',
              headers: { 'Content-Type': 'application/json' },
              body: JSON.stringify(payload)
@@ -2510,7 +2285,7 @@ app.get("/admin", async (req, res) => {
            else if (CONV_ID) payload.convId = CONV_ID;
            else if (WA_ID) payload.waId = WA_ID;
 
-           const r = await fetch(api('/api/admin/send-message'), {
+           const r = await fetch('/api/admin/send-message', {
              method: 'POST',
              headers: { 'Content-Type': 'application/json' },
              body: JSON.stringify(payload)
