@@ -1566,15 +1566,15 @@ app.get("/admin", async (req, res) => {
      header{display:flex; align-items:center; gap:12px; margin-bottom:16px;}
      input,button,select{font-size:13px; padding:5px 7px;}
      table{border-collapse:collapse; width:100%}
-    th,td{border:1px solid #ddd; padding:6px; vertical-align:top; font-size:13px}
+     th,td{border:1px solid #ddd; padding:6px; vertical-align:top; font-size:13px}
      th{background:#f5f5f5; text-align:left}
      .row{display:flex; gap:16px; align-items:center}
      .table-wrap{width:100%; overflow-x:auto; border:1px solid #ddd; border-radius:10px;}
-     #tbl{min-width:1100px;}
+     #tbl{width:100%; min-width:1100px; table-layout:fixed;}
      th,td{font-size:13px; padding:6px;}
      th{white-space:nowrap;}
-     td:nth-child(5){white-space:normal; overflow-wrap:anywhere;} /* Dirección */
-     td:last-child{white-space:normal;}
+     #tbl td:nth-child(5){white-space:normal; overflow-wrap:anywhere;} /* Dirección */
+     #tbl td:last-child{white-space:normal;} /* Acciones */
      .actions{display:flex; gap:8px; flex-wrap:wrap}
      /* badges */
      .badge-pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap;border:1px solid transparent;line-height:1.4}
@@ -1610,19 +1610,14 @@ app.get("/admin", async (req, res) => {
     #modalReplyText{width:100%;min-height:70px;font-family:inherit;font-size:14px;padding:6px 8px}
     .chat-actions{display:flex;align-items:center;gap:8px;justify-content:flex-end}
 
-    table{border-collapse:collapse; width:100%; margin-top:12px}
-    th,td{border:1px solid #ddd; padding:6px; vertical-align:top; font-size:13px}
-    th{background:#f7f7f7; text-align:left}
-    .btn{padding:5px 9px; border:1px solid #333; background:#fff; border-radius:6px; cursor:pointer; font-size:13px}
-    .actions{display:flex; gap:8px; flex-wrap:wrap}
-    .table-wrap{width:100%; overflow-x:auto}
-       #tbl{width:100%; table-layout:fixed}
+    /* Evitar reglas duplicadas que pisan estilos de tabla/botones */
     #tbl th, #tbl td{word-break:break-word}
     /* Anchos sugeridos (ajustá si querés) */
     #tbl th:nth-child(1), #tbl td:nth-child(1){width:150px}
     #tbl th:nth-child(2), #tbl td:nth-child(2){width:120px}
     #tbl th:nth-child(3), #tbl td:nth-child(3){width:150px}
     #tbl th:nth-child(4), #tbl td:nth-child(4){width:75px}
+    #tbl th:nth-child(5), #tbl td:nth-child(5){width:280px} /* Dirección */
     #tbl th:nth-child(6), #tbl td:nth-child(6){width:90px}
     #tbl th:nth-child(7), #tbl td:nth-child(7){width:90px}
     #tbl th:nth-child(8), #tbl td:nth-child(8){width:70px}
@@ -1670,7 +1665,7 @@ app.get("/admin", async (req, res) => {
       cursor:pointer;
     }
     .deliv-toggle:focus{outline:2px solid #93c5fd; outline-offset:2px; border-radius:999px;}
- |
+ 
     /* ===== Modal de ticket ===== */
       .ticket-modal-backdrop {
         position: fixed;
@@ -1731,8 +1726,8 @@ app.get("/admin", async (req, res) => {
    <p></p>
   
   
-+  <div class="table-wrap">
-+   <table id="tbl">
+  <div class="table-wrap">
+   <table id="tbl">
      <thead>
        <tr>
          <th>Actividad</th>
