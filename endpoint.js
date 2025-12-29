@@ -73,7 +73,15 @@ function resolveTenantId(req) {
 }
 
 // Health
-app.get("/", (_req, res) => res.send("OK"));
+// Root: en Render queremos que abra la UI (/app) en lugar de responder "OK".
+// Conserva querystring si lo hubiera.
+app.get("/", (req, res) => {
+  const original = String(req.originalUrl || "/");
+  const qs = original.includes("?") ? original.split("?").slice(1).join("?") : "";
+  return res.redirect(302, "/app" + (qs ? `?${qs}` : ""));
+});
+
+
 app.get("/healthz", (_req, res) => res.json({ ok: true }));
 
 // Cache público (audio)
