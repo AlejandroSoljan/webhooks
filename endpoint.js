@@ -480,7 +480,7 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
     }
 
     const doc = {
-      tenantId: (tenantId ?? TENANT_ID ?? null),
+      tenantId: String(tenantId || TENANT_ID || DEFAULT_TENANT_ID || "default").trim(),
       conversationId: convObjectId,
       waId: String(waId || ""),
       role: String(role),
