@@ -397,6 +397,11 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
         const j = JSON.parse(s);
         if (!j || !j.Pedido || !Array.isArray(j.Pedido.items)) return;
         const pedido = j.Pedido || {};
+ 
+        // Estado del flujo (IN_PROGRESS | COMPLETED | CANCELLED | PENDIENTE)
+        const estadoStr = String(j.estado || "").trim().toUpperCase();
+        const isFinalEstado = (estadoStr === "COMPLETED" || estadoStr === "CANCELLED");
+
 
         // 🧾 Nombre y apellido directo desde el Pedido (toma prioridad sobre heurísticas de texto)
         const nombreFromPedido = String(
@@ -463,7 +468,10 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
               ...(direccion ? { pedidoDireccion: direccion } : {}),
               ...(fechaEntrega ? { pedidoFecha: fechaEntrega } : {}),
               ...(horaEntrega  ? { pedidoHora:  horaEntrega  } : {}),
-              ...(nombreFromPedido ? { contactName: nombreFromPedido } : {})
+              ...(nombreFromPedido ? { contactName: nombreFromPedido } : {}),
+              ...(estadoStr ? { pedidoEstado: estadoStr } : {}),
+              ...(isFinalEstado ? { finalized: true, status: estadoStr, closedAt: now } : {})
+    
             }
           }
         );
@@ -3960,22 +3968,33 @@ setAssistantPedidoSnapshot(tenant, from, pedido, estado);
 	  /^s(i|í)\b.*confirm/i.test(String(text || ""));
 	const willComplete = !!(estado === "COMPLETED" || (userConfirmsFast && isPedidoCompleto(pedido)));
 
-// 🔹 Persistir pedido definitivo en MongoDB SOLO si está COMPLETED
+// 🔹 Persistir pedido definitivo en MongoDB (upsert por conversationId) cuando está COMPLETED
 if (willComplete && pedido && convId) {
   try {
     const db = await getDb();
-    await db.collection("orders").insertOne({
-      tenantId: (tenant || null),
-      from,
-      // vinculamos el pedido con la conversación para poder recuperar el ticket
-      conversationId: convId ? new ObjectId(String(convId)) : null,
-      pedido,
-      estado: "COMPLETED",
-      distancia_km: typeof pedido?.distancia_km === "number" ? pedido.distancia_km : distKm ?? null,
-      createdAt: new Date(),
-    });
+    const nowOrder = new Date();
+    const convObjectId = new ObjectId(String(convId));
+    const filter = { conversationId: convObjectId, ...(tenant ? { tenantId: tenant } : {}) };
+
+    await db.collection("orders").updateOne(
+      filter,
+      {
+        $set: {
+          tenantId: (tenant || null),
+          from,
+          conversationId: convObjectId,
+          pedido,
+          estado: "COMPLETED",
+          status: "COMPLETED",
+          distancia_km: typeof pedido?.distancia_km === "number" ? pedido.distancia_km : (distKm ?? null),
+          updatedAt: nowOrder,
+        },
+        $setOnInsert: { createdAt: nowOrder }
+      },
+      { upsert: true }
+    );
   } catch (e) {
-    console.error("[orders] error insert COMPLETED:", e?.message || e);
+    console.error("[orders] error upsert COMPLETED:", e?.message || e);
   }
 }
     } catch {}
@@ -3991,6 +4010,32 @@ if (willComplete && pedido && convId) {
 
 	      if (closeStatus) {
 	        await closeConversation(convId, closeStatus);
+          
+	        // 🔄 Mantener estado del pedido en orders (si existe) / crear si no existe
+	        try {
+	          const db = await getDb();
+	          const nowOrder = new Date();
+	          const convObjectId = new ObjectId(String(convId));
+	          await db.collection("orders").updateOne(
+	            { conversationId: convObjectId, ...(tenant ? { tenantId: tenant } : {}) },
+	            {
+	              $set: {
+	                tenantId: (tenant || null),
+	                from,
+	                conversationId: convObjectId,
+	                ...(pedido ? { pedido } : {}),
+	                estado: closeStatus,
+	                status: closeStatus,
+	                updatedAt: nowOrder,
+	              },
+	              $setOnInsert: { createdAt: nowOrder }
+	            },
+	            { upsert: true }
+	          );
+	        } catch (e) {
+	          console.error("[orders] error upsert closeStatus:", e?.message || e);
+	        }
+
 	        // 🧹 limpiar sesión en memoria para que el próximo msg empiece conversación nueva
 	        markSessionEnded(tenant, from);
 	      }
