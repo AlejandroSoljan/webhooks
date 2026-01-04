@@ -248,18 +248,12 @@ async function closeConversation(convId, status = "COMPLETED", extra = {}) {
   try {
     const db = await getDb();
     const now = new Date();
-    const r = await db.collection("conversations").updateOne(
+    await db.collection("conversations").updateOne(
       { _id: new ObjectId(String(convId)) },
       { $set: { finalized: true, status, closedAt: now, updatedAt: now, ...extra } }
-       );
-    if (!r?.matchedCount) {
-      console.warn("[conv] closeConversation: no matched doc for _id", { convId: String(convId), status });
-    }
-    return r;
-   
+    );
   } catch (e) {
     console.error("closeConversation error:", e?.message || e);
-    return null;
   }
 }
 
@@ -486,7 +480,7 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
     }
 
     const doc = {
-      tenantId: String(tenantId || TENANT_ID || DEFAULT_TENANT_ID || "default").trim(),
+      tenantId: (tenantId ?? TENANT_ID ?? null),
       conversationId: convObjectId,
       waId: String(waId || ""),
       role: String(role),
@@ -3966,40 +3960,25 @@ setAssistantPedidoSnapshot(tenant, from, pedido, estado);
 	  /^s(i|í)\b.*confirm/i.test(String(text || ""));
 	const willComplete = !!(estado === "COMPLETED" || (userConfirmsFast && isPedidoCompleto(pedido)));
 
-      // 🔹 Persistir pedido definitivo en MongoDB SOLO si está COMPLETED
-      // ✅ Idempotente (evita E11000 si WhatsApp reintenta el webhook)
-      if (willComplete && pedido && convId) {
-        try {
-          const db = await getDb();
-          const now = new Date();
-          const convObjectId = new ObjectId(String(convId));
-          await db.collection("orders").updateOne(
-            { conversationId: convObjectId },
-            {
-              $setOnInsert: {
-                createdAt: now,
-                conversationId: convObjectId,
-              },
-              $set: {
-                updatedAt: now,
-                tenantId: (tenant || null),
-                from,
-                pedido,
-                estado: "COMPLETED",
-                distancia_km: typeof pedido?.distancia_km === "number"
-                  ? pedido.distancia_km
-                  : (distKm ?? null),
-              }
-            },
-            { upsert: true }
-          );
-        } catch (e) {
-          console.error("[orders] error upsert COMPLETED:", e?.message || e);
-        }
-      }
-    } catch (e) {
-      console.error("[webhook] post-processing block error:", e?.message || e);
-    }
+// 🔹 Persistir pedido definitivo en MongoDB SOLO si está COMPLETED
+if (willComplete && pedido && convId) {
+  try {
+    const db = await getDb();
+    await db.collection("orders").insertOne({
+      tenantId: (tenant || null),
+      from,
+      // vinculamos el pedido con la conversación para poder recuperar el ticket
+      conversationId: convId ? new ObjectId(String(convId)) : null,
+      pedido,
+      estado: "COMPLETED",
+      distancia_km: typeof pedido?.distancia_km === "number" ? pedido.distancia_km : distKm ?? null,
+      createdAt: new Date(),
+    });
+  } catch (e) {
+    console.error("[orders] error insert COMPLETED:", e?.message || e);
+  }
+}
+    } catch {}
     try {
 	      // Cerramos si:
 	      // 1) el usuario canceló explícitamente, o
@@ -4011,36 +3990,11 @@ setAssistantPedidoSnapshot(tenant, from, pedido, estado);
 	          : (willComplete ? "COMPLETED" : null);
 
 	      if (closeStatus) {
-          // ✅ Cierre fuerte: primero por _id; si no matchea, fallback por waId+tenant
-	        const r = await closeConversation(convId, closeStatus);
-          if (!r?.matchedCount) {
-            try {
-              const db = await getDb();
-              const now = new Date();
-              const filter = {
-                waId: String(from),
-                tenantId: String(tenant || TENANT_ID || DEFAULT_TENANT_ID || "default"),
-                finalized: { $ne: true },
-                status: { $nin: ["COMPLETED", "CANCELLED"] }
-              };
-              const upd = { $set: { finalized: true, status: closeStatus, closedAt: now, updatedAt: now } };
-              const opts = { sort: { updatedAt: -1, openedAt: -1 }, returnDocument: "after" };
-              const fr = await db.collection("conversations").findOneAndUpdate(filter, upd, opts);
-              if (!fr?.value) {
-                console.warn("[conv] fallback close: no open conversation found for waId/tenant", { from, tenant, closeStatus });
-              } else {
-                console.log("[conv] fallback close ok:", { convId: String(fr.value._id), closeStatus });
-              }
-            } catch (e2) {
-              console.error("[conv] fallback close error:", e2?.message || e2);
-            }
-          }
+	        await closeConversation(convId, closeStatus);
 	        // 🧹 limpiar sesión en memoria para que el próximo msg empiece conversación nueva
 	        markSessionEnded(tenant, from);
 	      }
-    } catch (e) {
-      console.error("[webhook] closeConversation wrapper error:", e?.message || e);
-    }
+    } catch {}
 
     res.sendStatus(200);
   } catch (e) {

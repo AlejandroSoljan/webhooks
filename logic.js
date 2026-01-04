@@ -283,38 +283,13 @@ async function sendWhatsAppMessage(to, text) {
       console.error("WhatsApp: intento de envío con text.body vacío. Se omite el envío.");
       return;
     }
-     if (!WHATSAPP_TOKEN || !PHONE_NUMBER_ID) {
-       console.error("[wa] Faltan envs:", {
-         hasToken: !!WHATSAPP_TOKEN,
-         phoneId: PHONE_NUMBER_ID
-       });
-       return;
-     }
     await axios.post(
       `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
-        {
-         messaging_product: "whatsapp",
-         to: String(to || "").replace(/\D/g, ""),
-         type: "text",
-         text: { body }
-       },
-       {
-         headers: {
-           Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-           "Content-Type": "application/json"
-         },
-         timeout: 15000
-       }
-        
+      { messaging_product: "whatsapp", to, text: { body } },
+      { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" } }
     );
   } catch (error) {
-     const status = error?.response?.status;
-     const data = error?.response?.data;
-     console.error("[wa] Error enviando WhatsApp:", {
-       status,
-       data,
-       msg: error?.message
-     });
+    console.error("Error enviando WhatsApp:", error.response?.data || error.message);
   }
 }
 
