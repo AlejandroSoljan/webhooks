@@ -244,6 +244,7 @@ async function loadStoreHoursBlockFromMongo(tenantId = DEFAULT_TENANT_ID) {
 const chatHistories = {};       // standard mode: { [tenant-from]: [{role,content}, ...] }
 const userOnlyHistories = {};   // minimal mode: { [tenant-from]: [{role:'user',content}, ...] }
 const assistantPedidoSnapshot = {}; // minimal mode: { [tenant-from]: string(JSON del Pedido) }
+const currentConversationIds = {}; // { [tenant-from]: string(convId) }
 
 function k(tenantId, from) { return `${tenantId}::${from}`; }
 
@@ -267,7 +268,34 @@ function markSessionEnded(tenantId, from) {
   delete chatHistories[id];
   delete userOnlyHistories[id];
   delete assistantPedidoSnapshot[id];
+  delete currentConversationIds[id];
   endedSessions[id] = { endedAt: Date.now() };
+}
+
+
+/**
+ * Sincroniza el historial en memoria con el conversationId actual.
+ * Si el backend creó una conversación nueva (convId distinto), reseteamos
+ * el historial de ChatGPT para que el próximo pedido arranque de cero.
+ */
+function syncSessionConversation(tenantId, from, convId) {
+  try {
+    if (!tenantId || !from || !convId) return;
+    const id = k(tenantId, from);
+    const curr = String(convId);
+    const prev = currentConversationIds[id];
+
+    if (prev && prev !== curr) {
+      // 🔁 Conversación nueva => arrancar historial desde cero
+      delete chatHistories[id];
+      delete userOnlyHistories[id];
+      delete assistantPedidoSnapshot[id];
+      // Si quedó flag de sesión terminada, lo limpiamos
+      delete endedSessions[id];
+    }
+
+    currentConversationIds[id] = curr;
+  } catch {}
 }
 
 function clearEndedFlag(tenantId, from) {
@@ -1119,6 +1147,7 @@ module.exports = {
   // session
   hasActiveEndedFlag,
   markSessionEnded,
+  syncSessionConversation,
   isPoliteClosingMessage,
 
   // whatsapp + media + stt

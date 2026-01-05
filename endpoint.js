@@ -48,6 +48,7 @@ const {
   loadBehaviorConfigFromMongo,
   invalidateBehaviorCache,
   getGPTReply, hasActiveEndedFlag, markSessionEnded, isPoliteClosingMessage,
+  syncSessionConversation,
   START_FALLBACK, buildBackendSummary, coalesceResponse, recalcAndDetectMismatch,
   hydratePricesFromCatalog,
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
@@ -3376,6 +3377,10 @@ app.post("/webhook", async (req, res) => {
 
    
 console.log("[convId] "+ convId);
+
+    // ✅ Si se creó una conversación nueva, reseteamos historial del LLM
+    // para que un nuevo pedido no arrastre contexto del pedido anterior.
+    if (convId) syncSessionConversation(tenant, from, convId);
 
        if (convId) {
       console.log("[messages] about to save USER message", { convId, from, type: msg.type, textPreview: String(text).slice(0,80) });
