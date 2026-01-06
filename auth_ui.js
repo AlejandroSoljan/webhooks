@@ -710,7 +710,7 @@ function loginSeoHead({ baseUrl }) {
   <link rel="canonical" href="${htmlEscape(canonical)}"/>
   <meta name="description" content="${htmlEscape(desc)}"/>
   <meta property="og:type" content="website"/>
- <meta property="og:title" content="Asisto — Gestión de pedidos por WhatsApp"/>
+ <meta property="og:title" content="Asisto — IA - Whatsapp"/>
   <meta property="og:description" content="${htmlEscape(desc)}"/>
   <meta property="og:url" content="${htmlEscape(canonical)}"/>
   <meta property="og:image" content="${htmlEscape(ogImage)}"/>
