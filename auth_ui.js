@@ -599,59 +599,6 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
       background:#fff;
       display:block;
     }
-
-
-      .msg.ok{border-color: rgba(70, 200, 140, .35); background: rgba(70, 200, 140, .10)}
-
-      /* ===== Landing /login (marketing) ===== */
-      .lp{min-height:100vh; padding:24px; background: radial-gradient(1200px 700px at 30% 10%, rgba(255,255,255,0.07), transparent 60%);}
-      .lpTop{max-width:1100px; margin:0 auto 18px; display:flex; align-items:center; justify-content:space-between; gap:16px}
-      .lpBrand{display:flex; align-items:center; gap:10px; color:#fff; text-decoration:none; font-weight:800; letter-spacing:.2px}
-      .lpBrand img{width:36px; height:36px; border-radius:10px}
-      .lpNav{display:flex; gap:14px; align-items:center; flex-wrap:wrap}
-      .lpNav a{color:rgba(255,255,255,.85); text-decoration:none; font-size:14px}
-      .lpNav a:hover{color:#fff}
-      .lpCta{padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.06)}
-      .lpCta:hover{background: rgba(255,255,255,.10)}
-
-      .lpHero{max-width:1100px; margin:0 auto; display:grid; grid-template-columns: 1.2fr .8fr; gap:18px; align-items:start}
-      .lpPitch{padding:18px 6px}
-      .lpPitch h1{margin:0 0 10px; font-size:40px; line-height:1.05; color:#fff}
-      .lpLead{margin:0 0 12px; color:rgba(255,255,255,.80); font-size:16px; line-height:1.5}
-      .lpBullets{margin:14px 0 0; padding:0; list-style:none; display:grid; gap:10px}
-      .lpBullets li{color:rgba(255,255,255,.86); background: rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12); padding:10px 12px; border-radius:14px}
-
-      .lpCard .card{margin-top:6px}
-
-      .lpMarqueeWrap{margin-top:18px; padding:14px; border-radius:16px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.10)}
-      .lpMarqueeTitle{color:rgba(255,255,255,.9); font-weight:700; margin-bottom:10px}
-      .lpMarquee{overflow:hidden; border-radius:14px}
-      .lpMarqueeTrack{display:flex; gap:14px; align-items:center; width:max-content; animation: lpScroll 22s linear infinite}
-      .clientBadge{opacity:.95}
-      .lpMarqueeHint{margin-top:10px; color:rgba(255,255,255,.65); font-size:12px}
-      @keyframes lpScroll{from{transform:translateX(0)} to{transform:translateX(-50%)}}
-
-      .lpSection{max-width:1100px; margin:22px auto 0; padding:18px; border-radius:18px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.10)}
-      .lpSection h2{margin:0 0 10px; color:#fff; font-size:22px}
-      .lpLeadSmall{margin:0 0 14px; color:rgba(255,255,255,.78)}
-
-      .lpSteps{display:grid; grid-template-columns: repeat(3, 1fr); gap:12px}
-      .lpStep{padding:14px; border-radius:16px; border:1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.04)}
-      .lpStep h3{margin:0 0 6px; color:#fff; font-size:16px}
-      .lpStep p{margin:0; color:rgba(255,255,255,.78); line-height:1.4}
-
-      .lpContact{display:block}
-      .lpForm textarea{width:100%; resize:vertical}
-      .lpRow{display:grid; grid-template-columns: 1fr 1fr; gap:12px}
-
-      .lpFooter{max-width:1100px; margin:18px auto 0; padding:14px 6px; color:rgba(255,255,255,.55); font-size:12px; text-align:center}
-
-      @media (max-width: 980px){
-        .lpHero{grid-template-columns:1fr}
-        .lpPitch h1{font-size:32px}
-        .lpSteps{grid-template-columns:1fr}
-        .lpRow{grid-template-columns:1fr}
-      }
   </style>
 </head>
 <body>
@@ -781,21 +728,8 @@ function loginSeoHead({ baseUrl }) {
   `;
 }
 
-function loginPage({ error, msg, to, baseUrl }) {
+function loginPage({ error, to, baseUrl }) {
   const err = error ? `<div class="msg err">${htmlEscape(error)}</div>` : "";
-  const ok = msg ? `<div class="msg ok">${htmlEscape(msg)}</div>` : "";
-
-  // “logos” placeholders en SVG (reemplazables por logos reales)
-  const clientBadge = (txt) => `
-    <div class="clientBadge" title="${htmlEscape(txt)}" aria-label="${htmlEscape(txt)}">
-      <svg width="120" height="32" viewBox="0 0 120 32" role="img" aria-hidden="true">
-        <rect x="1" y="1" width="118" height="30" rx="10" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
-        <text x="60" y="21" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial"
-              font-size="12" fill="rgba(255,255,255,0.9)">${htmlEscape(txt)}</text>
-      </svg>
-    </div>
-  `;
-
   return pageShell({
     title: "Login · Asisto",
     user: null,
@@ -803,133 +737,31 @@ function loginPage({ error, msg, to, baseUrl }) {
     robots: "index,follow",
     head: loginSeoHead({ baseUrl }),
     body: `
-    <div class="lp">
-      <header class="lpTop">
-        <a class="lpBrand" href="/login">
-          <img src="/static/logo.png" alt="Asisto"/>
-          <span>Asisto</span>
-        </a>
-        <nav class="lpNav">
-          <a href="#como">Cómo funciona</a>
-          <a href="#clientes">Clientes</a>
-          <a class="lpCta" href="#contacto">Solicitar demo</a>
-        </nav>
-      </header>
-
-      <main class="lpHero">
-        <section class="lpPitch">
-          <h1>IA para vender y atender por WhatsApp</h1>
-          <p class="lpLead">
-            Automatizá conversaciones, tomá pedidos y centralizá todo en un panel.
-            Menos tiempo respondiendo, más tiempo facturando.
-          </p>
-          <ul class="lpBullets">
-            <li>✅ Respuestas automáticas + seguimiento de pedidos</li>
-            <li>✅ Panel de conversaciones y control por tenant</li>
-            <li>✅ Integración simple y puesta en marcha rápida</li>
-          </ul>
-
-          <div class="lpMarqueeWrap" id="clientes">
-            <div class="lpMarqueeTitle">Ya lo usan equipos que venden todos los días</div>
-            <div class="lpMarquee" aria-label="Clientes">
-              <div class="lpMarqueeTrack">
-                ${clientBadge("Cliente 01")}
-                ${clientBadge("Cliente 02")}
-               ${clientBadge("Cliente 03")}
-                ${clientBadge("Cliente 04")}
-                ${clientBadge("Cliente 05")}
-                ${clientBadge("Cliente 06")}
-                ${clientBadge("Cliente 01")}
-                ${clientBadge("Cliente 02")}
-               ${clientBadge("Cliente 03")}
-                ${clientBadge("Cliente 04")}
-                ${clientBadge("Cliente 05")}
-                ${clientBadge("Cliente 06")}
-              </div>
-            </div>
-            <div class="lpMarqueeHint">Tip: reemplazá “Cliente 01..” por logos reales cuando los tengas.</div>
-         </div>
-        </section>
-
-        <aside class="lpCard">
-          <div class="card">
-            <h2>Iniciar sesión</h2>
-            ${ok}
-            ${err}
-            <form method="POST" action="/login">
-              <input type="hidden" name="to" value="${htmlEscape(to || "/app")}"/>
-              <div class="field">
-                <label>Usuario</label>
-                <input name="username" autocomplete="username" placeholder="usuario" required/>
-              </div>
-              <div class="field">
-                <label>Contraseña</label>
-               <input name="password" type="password" autocomplete="current-password" placeholder="••••••••" required/>
-              </div>
-              <button class="btn" type="submit">Iniciar sesión</button>
-            </form>
-            <div style="margin-top:12px">
-              <span class="link small">Si no tenés usuario, pedile acceso al administrador.</span>
-            </div>
-          </div>
-        </aside>
-      </main>
-
-      <section class="lpSection" id="como">
-        <h2>Cómo funciona</h2>
-       <div class="lpSteps">
-          <div class="lpStep">
-            <h3>1) Conectás tu WhatsApp</h3>
-            <p>Asisto atiende y registra datos clave del pedido en tiempo real.</p>
-          </div>
-          <div class="lpStep">
-            <h3>2) IA + reglas de negocio</h3>
-            <p>Responde con tu tono, respeta horarios, catálogo y políticas.</p>
-          </div>
-          <div class="lpStep">
-            <h3>3) Panel de control</h3>
-            <p>Gestioná conversaciones, estados y reportes desde el admin.</p>
-          </div>
+    <div class="wrap">
+      <div class="grid">
+        <div class="brand">
+          <img class="brandHero" src="/static/logo.png" alt="Asisto"/>
         </div>
-      </section>
-
-      <section class="lpSection" id="contacto">
-        <h2>Contacto</h2>
-        <p class="lpLeadSmall">Contanos tu negocio y te mostramos una demo.</p>
-        <div class="lpContact">
-          <form class="lpForm" method="POST" action="/contact">
-            <div class="lpRow">
-              <div class="field">
-                <label>Nombre</label>
-                <input name="name" placeholder="Tu nombre" required/>
-              </div>
-              <div class="field">
-                <label>Email</label>
-                <input name="email" type="email" placeholder="tu@email.com" required/>
-              </div>
-            </div>
-            <div class="lpRow">
-              <div class="field">
-                <label>Empresa (opcional)</label>
-                <input name="company" placeholder="Tu empresa"/>
-              </div>
-              <div class="field">
-                <label>Teléfono (opcional)</label>
-                <input name="phone" placeholder="+54 ..."/>
-              </div>
+        <div class="card">
+          <h2>Iniciar sesión</h2>
+          ${err}
+          <form method="POST" action="/login">
+            <input type="hidden" name="to" value="${htmlEscape(to || "/app")}"/>
+            <div class="field">
+              <label>Usuario</label>
+              <input name="username" autocomplete="username" placeholder="usuario" required/>
             </div>
             <div class="field">
-              <label>Mensaje</label>
-              <textarea name="message" rows="4" placeholder="Quiero automatizar pedidos por WhatsApp, tengo X sucursales, etc." required></textarea>
+              <label>Contraseña</label>
+              <input name="password" type="password" autocomplete="current-password" placeholder="••••••••" required/>
             </div>
-            <button class="btn" type="submit">Enviar</button>
+            <button class="btn" type="submit">Iniciar sesión</button>
           </form>
+          <div style="margin-top:12px">
+            <span class="link small">Si no tenés usuario, pedile acceso al administrador.</span>
+          </div>
         </div>
-      </section>
-
-      <footer class="lpFooter">
-        <div>© ${new Date().getFullYear()} Asisto — IA para WhatsApp</div>
-      </footer>
+      </div>
     </div>
     `,
   });
@@ -1185,47 +1017,11 @@ function mountAuthRoutes(app) {
   // login
   app.get("/login", (req, res) => {
     const to = req.query?.to || "/app";
-    const msg = String(req.query?.msg || "");
-    const err = String(req.query?.err || "");
     const baseUrl =
       PUBLIC_BASE_URL ||
       `${req.protocol}://${req.get("host")}`; // si usás proxy, seteá trust proxy en tu app principal
-    return res.status(200).send(loginPage({ to, baseUrl, msg, error: err || "" }));
+    return res.status(200).send(loginPage({ to, baseUrl }));
   });
-
-
-  // Lead / contacto (público)
-  app.post("/contact", async (req, res) => {
-   try {
-      const name = String(req.body?.name || "").trim();
-      const email = String(req.body?.email || "").trim();
-      const company = String(req.body?.company || "").trim();
-      const phone = String(req.body?.phone || "").trim();
-      const message = String(req.body?.message || "").trim();
-
-      if (!name || !email || !message) {
-        return res.redirect("/login?err=" + encodeURIComponent("Completá nombre, email y mensaje.") + "#contacto");
-      }
-      // validación liviana
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-        return res.redirect("/login?err=" + encodeURIComponent("Email inválido.") + "#contacto");
-      }
-
-      const db = await getDb();
-      await db.collection("leads").insertOne({
-        name, email, company, phone, message,
-        createdAt: new Date(),
-        ip: req.headers["x-forwarded-for"] || req.socket?.remoteAddress || null,
-        ua: req.headers["user-agent"] || null,
-        page: "/login"
-      });
-      return res.redirect("/login?msg=" + encodeURIComponent("¡Gracias! Te vamos a contactar a la brevedad.") + "#contacto");
-    } catch (e) {
-      console.error("[contact] error:", e);
-      return res.redirect("/login?err=" + encodeURIComponent("No pudimos enviar el mensaje. Probá de nuevo.") + "#contacto");
-    }
-  });
-
 
   app.post("/login", async (req, res) => {
     try {
@@ -1599,21 +1395,12 @@ function protectRoutes(app) {
       p === "/robots.txt" ||
       p === "/sitemap.xml" ||
       p === "/login" ||
-      p === "/contact" ||
       p === "/logout" ||
       p.startsWith("/static/") ||
       p.startsWith("/webhook") ||
       p.startsWith("/cache/")
     ) return next();
 
-// =============================
-// LEGACY DUPLICATES (renamed)
-// (evita que pisen las versiones SEO + drawer)
-// =============================
-function appShellLegacy() { /* legacy */ }
-function loginPageLegacy() { /* legacy */ }
-function mountAuthRoutesLegacy() { /* legacy */ }
-function protectRoutesLegacy() { /* legacy */ }
     // requiere login
     const protectedPrefixes = ["/admin", "/api", "/ui"];
     const protectedExact = ["/app", "/productos", "/horarios", "/comportamiento"];
