@@ -850,8 +850,7 @@ function loginPage({ error, msg, to, baseUrl }) {
         <section class="lpLeft" aria-label="Marca Asisto">
           <div class="lpLogoBox">
             <img class="lpLogo" src="/static/logo.png" alt="Asisto"/>
-            <div class="lpTagline">Lo hace por vos.</div>
-            <div class="lpSubtag">IA para automatizar conversaciones y pedidos por WhatsApp.</div>
+            
           </div>
         </section>
 
@@ -886,12 +885,12 @@ function loginPage({ error, msg, to, baseUrl }) {
             ${sliderHtml}
           </div>
         </div>
-        <div class="lpSliderHint">Tip: reemplazá “Cliente 01..” por logos reales cuando los tengas.</div>
+        
       </section>
 
       <section class="lpSection" id="contacto">
         <h2>Contacto</h2>
-        <p class="lpLeadSmall">Contanos tu negocio y te mostramos una demo.</p>
+        <p class="lpLeadSmall">Contanos tu negocio y te contactaremos.</p>
         <div class="lpContact">
           <form class="lpForm" method="POST" action="/contact">
             <div class="lpRow">
