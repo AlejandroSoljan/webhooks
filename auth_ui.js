@@ -842,7 +842,7 @@ function loginPage({ error, msg, to, baseUrl }) {
       
         <nav class="lpNav">
           
-        <a class="lpCta" href="#contacto">Contacto</a>
+        
         </nav>
       </header>
 
@@ -923,7 +923,7 @@ function loginPage({ error, msg, to, baseUrl }) {
       </section>
 
       <footer class="lpFooter">
-        <div>© ${new Date().getFullYear()} Asisto — IA para WhatsApp</div>
+        <div>© ${new Date().getFullYear()} Asisto — lo hace por voz...</div>
       </footer>
     </div>
     `,
