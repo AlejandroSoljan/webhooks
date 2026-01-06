@@ -839,9 +839,7 @@ function loginPage({ error, msg, to, baseUrl }) {
     <div class="lp">
       <header class="lpTop">
         
-      <div class="lpLogoOnly">
-            <img class="lpLogo" src="/static/logo.png" alt="Asisto"/>
-          </div>
+      
         <nav class="lpNav">
           
         <a class="lpCta" href="#contacto">Contacto</a>
