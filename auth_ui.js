@@ -13,6 +13,8 @@
 const crypto = require("crypto");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://wwww.asistobot.com.ar"; // ej: https://tudominio.com
+
 
 const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || "asisto_sess";
 const COOKIE_SECRET = process.env.AUTH_COOKIE_SECRET || "dev-unsafe-secret-change-me";
@@ -269,14 +271,34 @@ function htmlEscape(s) {
     .replace(/'/g, "&#039;");
 }
 
-function pageShell({ title, user, body }) {
+function absUrl(baseUrl, path) {
+  const b = String(baseUrl || "").trim();
+  const p = String(path || "/").startsWith("/") ? String(path || "/") : `/${path}`;
+  if (b) return b.replace(/\/+$/g, "") + p;
+  return p; // fallback relativo
+}
+
+function pageShell({ title, user, body, head = "", robots = "" }) {
   const u = user ? `${htmlEscape(user.username)} · ${htmlEscape(user.tenantId)} · ${htmlEscape(user.role)}` : "";
+  // Importante para SEO:
+  // - si hay user => pantalla privada => noindex
+  // - si NO hay user => por defecto index (a menos que se pase robots explícito)
+  const robotsMeta =
+    robots
+      ? `<meta name="robots" content="${htmlEscape(robots)}"/>`
+      : (user ? `<meta name="robots" content="noindex,nofollow"/>` : `<meta name="robots" content="index,follow"/>`);
+
+  
+  
   return `<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>${htmlEscape(title || "Asisto")}</title>
+   ${robotsMeta}
+  ${head || ""}
+ 
   <style>
     :root{
       --bg:#0f2741;
@@ -679,11 +701,41 @@ function appShell({ title, user, active, main }) {
   });
 }
 
-function loginPage({ error, to }) {
+function loginSeoHead({ baseUrl }) {
+  const canonical = absUrl(baseUrl, "/login");
+  const ogImage = absUrl(baseUrl, "/static/logo.png");
+  // Ajustá el texto si querés apuntar a un nicho (heladería/rotisería/super, etc.)
+  const desc = "Asisto centraliza conversaciones y pedidos por WhatsApp: panel operativo, seguimiento y gestión.";
+  return `
+  <link rel="canonical" href="${htmlEscape(canonical)}"/>
+  <meta name="description" content="${htmlEscape(desc)}"/>
+  <meta property="og:type" content="website"/>
+ <meta property="og:title" content="Asisto — Gestión de pedidos por WhatsApp"/>
+  <meta property="og:description" content="${htmlEscape(desc)}"/>
+  <meta property="og:url" content="${htmlEscape(canonical)}"/>
+  <meta property="og:image" content="${htmlEscape(ogImage)}"/>
+  <meta name="twitter:card" content="summary_large_image"/>
+  <script type="application/ld+json">
+ {
+    "@context":"https://schema.org",
+    "@type":"SoftwareApplication",
+    "name":"Asisto",
+    "applicationCategory":"BusinessApplication",
+   "operatingSystem":"Web",
+    "description":"${desc.replace(/"/g, '\\"')}"
+  }
+  </script>
+  `;
+}
+
+function loginPage({ error, to, baseUrl }) {
   const err = error ? `<div class="msg err">${htmlEscape(error)}</div>` : "";
   return pageShell({
     title: "Login · Asisto",
     user: null,
+    // /login es tu página pública principal => indexable
+    robots: "index,follow",
+    head: loginSeoHead({ baseUrl }),
     body: `
     <div class="wrap">
       <div class="grid">
@@ -965,7 +1017,10 @@ function mountAuthRoutes(app) {
   // login
   app.get("/login", (req, res) => {
     const to = req.query?.to || "/app";
-    return res.status(200).send(loginPage({ to }));
+    const baseUrl =
+      PUBLIC_BASE_URL ||
+      `${req.protocol}://${req.get("host")}`; // si usás proxy, seteá trust proxy en tu app principal
+    return res.status(200).send(loginPage({ to, baseUrl }));
   });
 
   app.post("/login", async (req, res) => {
@@ -974,28 +1029,75 @@ function mountAuthRoutes(app) {
       const password = String(req.body?.password || "");
       const to = String(req.body?.to || req.query?.to || "/app");
 
-      if (!username || !password) return res.status(400).send(loginPage({ error: "Completa usuario y contraseña.", to }));
+      const baseUrl =
+        PUBLIC_BASE_URL ||
+        `${req.protocol}://${req.get("host")}`;
+
+      if (!username || !password) {
+        return res.status(400).send(loginPage({ error: "Completa usuario y contraseña.", to, baseUrl }));
+      }
 
       const db = await getDb();
       const user = await db.collection("users").findOne({ username });
-      if (!user) return res.status(401).send(loginPage({ error: "Usuario o contraseña inválidos.", to }));
-
+      if (!user) return res.status(401).send(loginPage({ error: "Usuario o contraseña inválidos.", to, baseUrl }));
+ 
       if (!verifyPassword(password, user.password)) {
-        return res.status(401).send(loginPage({ error: "Usuario o contraseña inválidos.", to }));
-      }
+           return res.status(401).send(loginPage({ error: "Usuario o contraseña inválidos.", to, baseUrl }));
+    }
 
       if (user.isLocked) {
-        return res.status(403).send(loginPage({ error: "Usuario bloqueado. Contactá al administrador.", to }));
-      }
+         return res.status(403).send(loginPage({ error: "Usuario bloqueado. Contactá al administrador.", to, baseUrl }));
+     }
 
       const payload = makeSessionPayload(user);
       setSessionCookie(res, payload);
       return res.redirect(to.startsWith("/") ? to : "/app");
     } catch (e) {
       console.error("[auth] login error:", e);
-      return res.status(500).send(loginPage({ error: "Error interno de login.", to: "/app" }));
+           const baseUrl =
+        PUBLIC_BASE_URL ||
+        `${req.protocol}://${req.get("host")}`;
+      return res.status(500).send(loginPage({ error: "Error interno de login.", to: "/app", baseUrl }));
+
     }
   });
+
+  // SEO: robots + sitemap
+  app.get("/robots.txt", (req, res) => {
+    const baseUrl =
+      PUBLIC_BASE_URL ||
+      `${req.protocol}://${req.get("host")}`;
+    const sitemapUrl = absUrl(baseUrl, "/sitemap.xml");
+    res.set("Content-Type", "text/plain; charset=utf-8");
+    return res.status(200).send(
+      [
+        "User-agent: *",
+        "Allow: /login",
+        "Allow: /static/",
+        "Disallow: /app",
+        "Disallow: /ui/",
+        "Disallow: /admin",
+        "Disallow: /api/",
+        `Sitemap: ${sitemapUrl}`,
+        "",
+      ].join("\n")
+    );
+  });
+
+  app.get("/sitemap.xml", (req, res) => {
+    const baseUrl =
+      PUBLIC_BASE_URL ||
+      `${req.protocol}://${req.get("host")}`;
+    const loginUrl = absUrl(baseUrl, "/login");
+    res.set("Content-Type", "application/xml; charset=utf-8");
+    return res.status(200).send(
+      `<?xml version="1.0" encoding="UTF-8"?>\n` +
+      `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+      `  <url><loc>${loginUrl}</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>\n` +
+      `</urlset>\n`
+    );
+  });
+
 
   app.post("/logout", (req, res) => {
     clearSessionCookie(res);
@@ -1290,6 +1392,8 @@ function protectRoutes(app) {
     if (
       p === "/" ||
       p === "/healthz" ||
+      p === "/robots.txt" ||
+      p === "/sitemap.xml" ||
       p === "/login" ||
       p === "/logout" ||
       p.startsWith("/static/") ||
@@ -1303,6 +1407,8 @@ function protectRoutes(app) {
 
     if (protectedExact.includes(p) || protectedPrefixes.some((pref) => p.startsWith(pref))) {
       return requireAuth(req, res, () => {
+         // defensa extra: aunque alguien tenga sesión, no queremos indexar pantallas privadas
+        try { res.set("X-Robots-Tag", "noindex, nofollow"); } catch {}
         const required = requiredAccessForPath(p);
         if (required.length && !hasAccess(req.user, ...required)) {
           if (p.startsWith("/api")) return res.status(403).json({ error: "forbidden" });
