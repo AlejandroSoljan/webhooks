@@ -705,7 +705,7 @@ function loginSeoHead({ baseUrl }) {
   const canonical = absUrl(baseUrl, "/login");
   const ogImage = absUrl(baseUrl, "/static/logo.png");
   // Ajustá el texto si querés apuntar a un nicho (heladería/rotisería/super, etc.)
-  const desc = "Asisto centraliza conversaciones y pedidos por WhatsApp: panel operativo, seguimiento y gestión.";
+  const desc = "Asisto Bot, Asistente con Inteligencia artificial, automatiza tus conversaciones por whatsapp y tu sistema de gestión.";
   return `
   <link rel="canonical" href="${htmlEscape(canonical)}"/>
   <meta name="description" content="${htmlEscape(desc)}"/>
