@@ -603,7 +603,7 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
 
       .msg.ok{border-color: rgba(70, 200, 140, .35); background: rgba(70, 200, 140, .10)}
 
-      /* ===== Landing /login (marketing) ===== */
+      /* ===== /login (clean 50/50) ===== */
       .lp{min-height:100vh; padding:24px; background: radial-gradient(1200px 700px at 30% 10%, rgba(255,255,255,0.07), transparent 60%);}
       .lpTop{max-width:1100px; margin:0 auto 18px; display:flex; align-items:center; justify-content:space-between; gap:16px}
       .lpBrand{display:flex; align-items:center; gap:10px; color:#fff; text-decoration:none; font-weight:800; letter-spacing:.2px}
@@ -614,43 +614,71 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
       .lpCta{padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.06)}
       .lpCta:hover{background: rgba(255,255,255,.10)}
 
-      .lpHero{max-width:1100px; margin:0 auto; display:grid; grid-template-columns: 1.2fr .8fr; gap:18px; align-items:start}
-      .lpPitch{padding:18px 6px}
-      .lpPitch h1{margin:0 0 10px; font-size:40px; line-height:1.05; color:#fff}
-      .lpLead{margin:0 0 12px; color:rgba(255,255,255,.80); font-size:16px; line-height:1.5}
-      .lpBullets{margin:14px 0 0; padding:0; list-style:none; display:grid; gap:10px}
-      .lpBullets li{color:rgba(255,255,255,.86); background: rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.12); padding:10px 12px; border-radius:14px}
+      .lpMain{
+        max-width:1100px;
+        margin:0 auto;
+        display:grid;
+        grid-template-columns: 1fr 1fr;
+        gap:22px;
+       align-items:stretch;
+        min-height: calc(100vh - 140px);
+      }
+      .lpLeft{
+        border-radius: 18px;
+        border:1px solid rgba(255,255,255,.10);
+        background: rgba(255,255,255,.05);
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        padding: 24px;
+        overflow:hidden;
+      }
+      .lpLogoBox{
+        width: min(420px, 90%);
+        text-align:center;
+      }
+      .lpLogo{
+        width: min(420px, 80%);
+        height:auto;
+        object-fit:contain;
+        filter: drop-shadow(0 10px 18px rgba(0,0,0,.28));
+      }
+      .lpTagline{
+        margin-top: 14px;
+        font-weight: 900;
+        font-size: 28px;
+        letter-spacing: .2px;
+        color: rgba(255,255,255,.95);
+      }
+      .lpSubtag{
+        margin-top: 8px;
+        color: rgba(255,255,255,.75);
+        font-size: 14px;
+        line-height: 1.45;
+      }
+      .lpRight{
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        padding: 10px;
+      }
+      .lpRight .card{
+        width: min(460px, 100%);
+      }
 
-      .lpCard .card{margin-top:6px}
-
-      .lpMarqueeWrap{margin-top:18px; padding:14px; border-radius:16px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.10)}
-      .lpMarqueeTitle{color:rgba(255,255,255,.9); font-weight:700; margin-bottom:10px}
-      .lpMarquee{overflow:hidden; border-radius:14px}
-      .lpMarqueeTrack{display:flex; gap:14px; align-items:center; width:max-content; animation: lpScroll 22s linear infinite}
-      .clientBadge{opacity:.95}
-      .lpMarqueeHint{margin-top:10px; color:rgba(255,255,255,.65); font-size:12px}
-      @keyframes lpScroll{from{transform:translateX(0)} to{transform:translateX(-50%)}}
-
-      .lpSection{max-width:1100px; margin:22px auto 0; padding:18px; border-radius:18px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.10)}
+      .lpSection{max-width:1100px; margin:18px auto 0; padding:18px; border-radius:18px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.10)}
       .lpSection h2{margin:0 0 10px; color:#fff; font-size:22px}
       .lpLeadSmall{margin:0 0 14px; color:rgba(255,255,255,.78)}
-
-      .lpSteps{display:grid; grid-template-columns: repeat(3, 1fr); gap:12px}
-      .lpStep{padding:14px; border-radius:16px; border:1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.04)}
-      .lpStep h3{margin:0 0 6px; color:#fff; font-size:16px}
-      .lpStep p{margin:0; color:rgba(255,255,255,.78); line-height:1.4}
-
       .lpContact{display:block}
       .lpForm textarea{width:100%; resize:vertical}
       .lpRow{display:grid; grid-template-columns: 1fr 1fr; gap:12px}
-
       .lpFooter{max-width:1100px; margin:18px auto 0; padding:14px 6px; color:rgba(255,255,255,.55); font-size:12px; text-align:center}
 
       @media (max-width: 980px){
-        .lpHero{grid-template-columns:1fr}
-        .lpPitch h1{font-size:32px}
-        .lpSteps{grid-template-columns:1fr}
+        .lpMain{grid-template-columns:1fr; min-height:auto}
+        .lpLeft{min-height:240px}
         .lpRow{grid-template-columns:1fr}
+        .lpTagline{font-size:24px}
       }
   </style>
 </head>
@@ -785,17 +813,7 @@ function loginPage({ error, msg, to, baseUrl }) {
   const err = error ? `<div class="msg err">${htmlEscape(error)}</div>` : "";
   const ok = msg ? `<div class="msg ok">${htmlEscape(msg)}</div>` : "";
 
-  // “logos” placeholders en SVG (reemplazables por logos reales)
-  const clientBadge = (txt) => `
-    <div class="clientBadge" title="${htmlEscape(txt)}" aria-label="${htmlEscape(txt)}">
-      <svg width="120" height="32" viewBox="0 0 120 32" role="img" aria-hidden="true">
-        <rect x="1" y="1" width="118" height="30" rx="10" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
-        <text x="60" y="21" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial"
-              font-size="12" fill="rgba(255,255,255,0.9)">${htmlEscape(txt)}</text>
-      </svg>
-    </div>
-  `;
-
+ 
   return pageShell({
     title: "Login · Asisto",
     user: null,
@@ -811,48 +829,20 @@ function loginPage({ error, msg, to, baseUrl }) {
         </a>
         <nav class="lpNav">
           
-          <a href="#clientes">Clientes</a>
-          <a class="lpCta" href="#contacto">Solicitar demo</a>
-           <a class="lpCta" href="#ingresar">Ingresar</a>
+        <a class="lpCta" href="#contacto">Contacto</a>
         </nav>
       </header>
 
-      <main class="lpHero">
-        <section class="lpPitch">
-          <h1>IA para vender y atender por WhatsApp</h1>
-          <p class="lpLead">
-            Automatizá conversaciones, tomá pedidos y centralizá todo en un panel.
-            Menos tiempo respondiendo, más tiempo facturando.
-          </p>
-          <ul class="lpBullets">
-            <li>✅ Respuestas automáticas + seguimiento de pedidos</li>
-            <li>✅ Panel de conversaciones y control por tenant</li>
-            <li>✅ Integración simple y puesta en marcha rápida</li>
-          </ul>
-
-          <div class="lpMarqueeWrap" id="clientes">
-            <div class="lpMarqueeTitle">Ya lo usan equipos que venden todos los días</div>
-            <div class="lpMarquee" aria-label="Clientes">
-              <div class="lpMarqueeTrack">
-                ${clientBadge("Cliente 01")}
-                ${clientBadge("Cliente 02")}
-               ${clientBadge("Cliente 03")}
-                ${clientBadge("Cliente 04")}
-                ${clientBadge("Cliente 05")}
-                ${clientBadge("Cliente 06")}
-                ${clientBadge("Cliente 01")}
-                ${clientBadge("Cliente 02")}
-               ${clientBadge("Cliente 03")}
-                ${clientBadge("Cliente 04")}
-                ${clientBadge("Cliente 05")}
-                ${clientBadge("Cliente 06")}
-              </div>
-            </div>
-            <div class="lpMarqueeHint">Tip: reemplazá “Cliente 01..” por logos reales cuando los tengas.</div>
-         </div>
+      <main class="lpMain">
+        <section class="lpLeft" aria-label="Marca Asisto">
+          <div class="lpLogoBox">
+            <img class="lpLogo" src="/static/logo.png" alt="Asisto"/>
+            <div class="lpTagline">Lo hace por vos.</div>
+            <div class="lpSubtag">IA para automatizar conversaciones y pedidos por WhatsApp.</div>
+          </div>
         </section>
 
-        <aside class="lpCard" id="ingresar">
+        <aside class="lpRight" aria-label="Ingreso">
           <div class="card">
             <h2>Iniciar sesión</h2>
             ${ok}
