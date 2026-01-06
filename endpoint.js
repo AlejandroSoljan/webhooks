@@ -1751,6 +1751,73 @@ app.get("/admin", async (req, res) => {
       white-space:nowrap;
     }
 
+@media (max-width: 720px){
+  body{ margin: 12px; }
+  header{ flex-wrap: wrap; }
+
+  /* Ocultamos encabezados y colgroup */
+  .adminTable colgroup,
+  .adminTable thead{
+    display:none;
+  }
+
+  /* Tabla → lista de cards */
+  .adminTable,
+  .adminTable tbody,
+  .adminTable tr,
+  .adminTable td{
+    display:block;
+    width:100%;
+  }
+
+  .adminTable{
+    border:0;
+  }
+
+  .adminTable tr{
+    border:1px solid #ddd;
+    border-radius:12px;
+    padding:10px 12px;
+    margin:10px 0;
+    background:#fff;
+  }
+
+  /* Cada “fila” (td) con etiqueta a la izquierda */
+  .adminTable td{
+    border:none;
+    padding:6px 0;
+    overflow:visible;
+    text-overflow:unset;
+    display:flex;
+    gap:10px;
+    justify-content:space-between;
+    align-items:flex-start;
+  }
+
+  .adminTable td::before{
+    content: attr(data-label);
+    font-weight:700;
+    color:#475467;
+    min-width:42%;
+    max-width:42%;
+  }
+
+  /* Acciones: que ocupen toda la línea y permitan wrap */
+  .adminTable td[data-label="Acciones"]{
+    display:block;
+    padding-top:10px;
+  }
+  .adminTable td[data-label="Acciones"]::before{
+    display:none;
+  }
+  .adminTable td[data-label="Acciones"] .actions{
+    flex-wrap:wrap;
+    white-space:normal;
+    gap:8px;
+  }
+}
+
+
     /* Ajuste de anchos (sin scroll horizontal) */
     .adminTable{table-layout:fixed}
     .adminTable th{white-space:nowrap}
