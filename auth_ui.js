@@ -460,9 +460,60 @@ function pageShell({ title, user, body }) {
       gap: 18px;
       align-items: stretch;
     }
+    
+    /* ===== Mobile drawer ===== */
+    .menuBtn{
+      display:none;
+      border:1px solid rgba(255,255,255,.18);
+      background: rgba(255,255,255,.08);
+      color:#fff;
+      border-radius: 12px;
+      padding: 8px 10px;
+      font-size:18px;
+      cursor:pointer;
+    }
+
+    .drawerBackdrop{
+      position:fixed;
+      inset:0;
+      background: rgba(0,0,0,.45);
+      display:none;
+      z-index:2000;
+    }
+    .drawer{
+      position:fixed;
+      top:0; bottom:0; left:0;
+      width: min(320px, 86vw);
+      transform: translateX(-110%);
+      transition: transform .18s ease;
+      z-index:2001;
+      padding: 14px;
+    }
+    /* el aside real está dentro, lo dejamos ocupar */
+    .sidebar--drawer{
+      width:100%;
+      position:static;
+      top:auto;
+      height: auto;
+      max-height: calc(100vh - 28px);
+    }
+
+    body.drawerOpen{ overflow:hidden; }
+    body.drawerOpen .drawerBackdrop{ display:block; }
+    body.drawerOpen .drawer{ transform: translateX(0); }
+
     @media (max-width: 980px){
-      .layout{flex-direction: column;}
-      .sidebar{width:100%; position:static; top:auto;}
+      .menuBtn{ display:inline-flex; align-items:center; justify-content:center; }
+      .layout{ padding: 14px; }
+      /* ocultamos el sidebar “fijo” del layout en mobile */
+      .layout > .sidebar{ display:none; }
+      /* el drawer sí se usa */
+      .drawer{ display:block; }
+    }
+
+    @media (min-width: 981px){
+      /* en desktop no necesitamos drawer */
+      .drawerBackdrop, .drawer{ display:none; }
     }
     .sidebar{
       width: 260px;
@@ -531,6 +582,7 @@ function pageShell({ title, user, body }) {
 <body>
   ${user ? `
   <div class="topbar">
+  <button type="button" class="menuBtn" id="menuBtn" aria-label="Abrir menú">☰</button>
     <div class="pill">
       <img src="/static/logo.png" alt="Asisto" style="width:28px;height:28px;object-fit:contain"/>
       <strong>Asisto</strong>
@@ -544,6 +596,29 @@ function pageShell({ title, user, body }) {
   <div class="${user ? "content" : ""}">
     ${body}
   </div>
+  ${user ? `
+  <script>
+  (function () {
+    const btn = document.getElementById("menuBtn");
+    const backdrop = document.getElementById("drawerBackdrop");
+   const drawer = document.getElementById("drawer");
+
+    function openDrawer(){ document.body.classList.add("drawerOpen"); }
+    function closeDrawer(){ document.body.classList.remove("drawerOpen"); }
+    function toggleDrawer(){
+      if (document.body.classList.contains("drawerOpen")) closeDrawer();
+      else openDrawer();
+    }
+
+    if (!btn || !backdrop || !drawer) return;
+
+    btn.addEventListener("click", toggleDrawer);
+    backdrop.addEventListener("click", closeDrawer);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
+    drawer.addEventListener("click", (e) => { if (e.target.closest("a")) closeDrawer(); });
+  })();
+  </script>` : ``}
+
 </body>
 </html>`;
 }
@@ -592,6 +667,10 @@ function appShell({ title, user, active, main }) {
     title,
     user,
     body: `
+    <div class="drawerBackdrop" id="drawerBackdrop"></div>
+      <aside class="drawer" id="drawer">
+        ${sidebarHtml(user, active).replace('class="sidebar"', 'class="sidebar sidebar--drawer"')}
+      </aside>
       <div class="layout">
         ${sidebarHtml(user, active)}
         <main class="main">${main || ""}</main>
