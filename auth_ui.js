@@ -604,9 +604,8 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
       .msg.ok{border-color: rgba(70, 200, 140, .35); background: rgba(70, 200, 140, .10)}
 
       /* ===== /login (clean 50/50) ===== */
-      .lp{min-height:100vh; padding:24px; background: radial-gradient(1200px 700px at 30% 10%, rgba(255,255,255,0.07), transparent 60%);}
-      .lpTop{max-width:1100px; margin:0 auto 18px; display:flex; align-items:center; justify-content:space-between; gap:16px}
-      .lpBrand{display:flex; align-items:center; gap:10px; color:#fff; text-decoration:none; font-weight:800; letter-spacing:.2px}
+      .lpTop{max-width:1100px; margin:0 auto 18px; display:flex; align-items:center; justify-content:flex-end; gap:16px}
+ 
       .lpBrand img{width:36px; height:36px; border-radius:10px}
       .lpNav{display:flex; gap:14px; align-items:center; flex-wrap:wrap}
       .lpNav a{color:rgba(255,255,255,.85); text-decoration:none; font-size:14px}
@@ -620,8 +619,7 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
         display:grid;
         grid-template-columns: 1fr 1fr;
         gap:22px;
-       align-items:stretch;
-        min-height: calc(100vh - 140px);
+      align-items:stretch;
       }
       .lpLeft{
         border-radius: 18px;
@@ -633,38 +631,35 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
         padding: 24px;
         overflow:hidden;
       }
-      .lpLogoBox{
-        width: min(420px, 90%);
-        text-align:center;
-      }
+      
       .lpLogo{
-        width: min(420px, 80%);
+        width: min(420px, 70%);
         height:auto;
         object-fit:contain;
         filter: drop-shadow(0 10px 18px rgba(0,0,0,.28));
       }
-      .lpTagline{
-        margin-top: 14px;
-        font-weight: 900;
-        font-size: 28px;
-        letter-spacing: .2px;
-        color: rgba(255,255,255,.95);
-      }
-      .lpSubtag{
-        margin-top: 8px;
-        color: rgba(255,255,255,.75);
-        font-size: 14px;
-        line-height: 1.45;
-      }
+      
       .lpRight{
         display:flex;
-        align-items:center;
+        align-items:stretch;
         justify-content:center;
         padding: 10px;
       }
       .lpRight .card{
         width: min(460px, 100%);
+         height:100%;
+        display:flex;
+        flex-direction:column;
+        justify-content:center;
       }
+      /* ===== Slider clientes ===== */
+      .lpSliderWrap{max-width:1100px; margin:18px auto 0; padding:16px; border-radius:18px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.10)}
+      .lpSliderTitle{color:rgba(255,255,255,.90); font-weight:800; margin-bottom:10px}
+      .lpSlider{overflow:hidden; border-radius:14px}
+      .lpSliderTrack{display:flex; gap:14px; align-items:center; width:max-content; animation: lpScroll 22s linear infinite}
+      .clientBadge{opacity:.95}
+      .lpSliderHint{margin-top:10px; color:rgba(255,255,255,.65); font-size:12px}
+      @keyframes lpScroll{from{transform:translateX(0)} to{transform:translateX(-50%)}}
 
       .lpSection{max-width:1100px; margin:18px auto 0; padding:18px; border-radius:18px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.10)}
       .lpSection h2{margin:0 0 10px; color:#fff; font-size:22px}
@@ -678,7 +673,7 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
         .lpMain{grid-template-columns:1fr; min-height:auto}
         .lpLeft{min-height:240px}
         .lpRow{grid-template-columns:1fr}
-        .lpTagline{font-size:24px}
+        
       }
   </style>
 </head>
@@ -813,8 +808,28 @@ function loginPage({ error, msg, to, baseUrl }) {
   const err = error ? `<div class="msg err">${htmlEscape(error)}</div>` : "";
   const ok = msg ? `<div class="msg ok">${htmlEscape(msg)}</div>` : "";
 
- 
-  return pageShell({
+   // placeholders de "empresas" (reemplazables por logos reales)
+  const clientBadge = (txt) => `
+    <div class="clientBadge" title="${htmlEscape(txt)}" aria-label="${htmlEscape(txt)}">
+      <svg width="140" height="36" viewBox="0 0 140 36" role="img" aria-hidden="true">
+        <rect x="1" y="1" width="138" height="34" rx="12" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
+        <text x="70" y="23" text-anchor="middle"
+          font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial"
+          font-size="12" fill="rgba(255,255,255,0.92)">${htmlEscape(txt)}</text>
+      </svg>
+    </div>
+  `;
+
+  const sliderBadges = [
+    "Cliente 01","Cliente 02","Cliente 03","Cliente 04","Cliente 05","Cliente 06"
+  ];
+  const sliderHtml = sliderBadges
+    .concat(sliderBadges) // duplicado para loop suave
+    .map(clientBadge)
+    .join("");
+
+
+    return pageShell({
     title: "Login · Asisto",
     user: null,
     // /login es tu página pública principal => indexable
@@ -823,10 +838,10 @@ function loginPage({ error, msg, to, baseUrl }) {
     body: `
     <div class="lp">
       <header class="lpTop">
-        <a class="lpBrand" href="/login">
-          <img src="/static/logo.png" alt="Asisto"/>
-          <span>Asisto</span>
-        </a>
+        
+      <div class="lpLogoOnly">
+            <img class="lpLogo" src="/static/logo.png" alt="Asisto"/>
+          </div>
         <nav class="lpNav">
           
         <a class="lpCta" href="#contacto">Contacto</a>
@@ -866,7 +881,15 @@ function loginPage({ error, msg, to, baseUrl }) {
         </aside>
       </main>
 
-      
+       <section class="lpSliderWrap" id="clientes" aria-label="Clientes">
+        <div class="lpSliderTitle">Empresas que confían en Asisto</div>
+        <div class="lpSlider">
+          <div class="lpSliderTrack">
+            ${sliderHtml}
+          </div>
+        </div>
+        <div class="lpSliderHint">Tip: reemplazá “Cliente 01..” por logos reales cuando los tengas.</div>
+      </section>
 
       <section class="lpSection" id="contacto">
         <h2>Contacto</h2>
