@@ -662,7 +662,12 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
       }
       /* ===== Slider clientes ===== */
       .lpSliderWrap{max-width:1100px; margin:18px auto 0; padding:16px; border-radius:18px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.10)}
-      .lpSliderTitle{color:rgba(255,255,255,.90); font-weight:800; margin-bottom:10px}
+      .lpSliderTitle{
+  margin: 0 0 10px;
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+}
       .lpSlider{overflow:hidden; border-radius:14px}
       .lpSliderTrack{display:flex; gap:14px; align-items:center; width:max-content; animation: lpScroll 22s linear infinite}
       .clientBadge{opacity:.95}
