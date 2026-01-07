@@ -26,6 +26,7 @@ const ACCESS_PAGES = [
   { key: "productos", title: "Productos" },
   { key: "horarios", title: "Horarios" },
   { key: "comportamiento", title: "Comportamiento" },
+  { key: "leads", title: "Leads" },
   { key: "users", title: "Usuarios" },
 ];
 
@@ -60,6 +61,8 @@ function requiredAccessForPath(p) {
 
   // Admin de usuarios
   if (path.startsWith("/admin/users")) return ["users"];
+  // Leads (contacto)
+  if (path.startsWith("/admin/leads")) return ["leads"];
 
   // UI wrapper
   if (path.startsWith("/ui/")) {
@@ -70,6 +73,7 @@ function requiredAccessForPath(p) {
   // Pantallas directas
   if (path === "/admin" || path.startsWith("/admin/conversation") || path.startsWith("/admin/ticket")) return ["admin"];
   if (path.startsWith("/admin/inbox")) return ["inbox"];
+   if (path.startsWith("/api/leads")) return ["leads"];
   if (path === "/productos" || path.startsWith("/api/products")) return ["productos"];
   if (path === "/horarios" || path.startsWith("/api/hours")) return ["horarios"];
   if (path === "/comportamiento" || path.startsWith("/api/behavior")) return ["comportamiento"];
@@ -77,6 +81,10 @@ function requiredAccessForPath(p) {
   // Logs
   if (path.startsWith("/api/logs/conversations") || path.startsWith("/api/logs/pedido")) return ["admin"];
   if (path.startsWith("/api/logs/messages")) return ["inbox"];
+
+
+  // Leads / contacto desde /login
+  if (path.startsWith("/api/leads")) return ["admin"];
 
   // Acciones admin (entrega, enviar mensaje, etc.)
   if (path.startsWith("/api/admin/")) return ["admin", "inbox"];
@@ -751,7 +759,7 @@ function getNavItemsForUser(user) {
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
-
+if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
   if (isAdmin && hasAccess(user, "users")) items.push({ key: "users", title: "Usuarios", href: "/admin/users" });
   return items;
 }
@@ -966,12 +974,22 @@ function appMenuPage({ user, routes }) {
     )
     .join("");
 
-  const adminTiles =
-    (user.role === "admin" || user.role === "superadmin") && hasAccess(user, "users")
-      ? `<a class="tile" href="/admin/users">
-          <div><h3>Usuarios</h3><p>Alta/baja y reseteo de contraseñas</p></div>
-          <span class="badge">Admin</span>
-        </a>`
+ const adminTiles =
+    user && (user.role === "admin" || user.role === "superadmin")
+      ? [
+          hasAccess(user, "leads")
+            ? `<a class="tile" href="/admin/leads">
+                <div><h3>Leads</h3><p>Mensajes recibidos desde el formulario de contacto</p></div>
+                <span class="badge">Admin</span>
+              </a>`
+            : "",
+          hasAccess(user, "users")
+            ? `<a class="tile" href="/admin/users">
+                <div><h3>Usuarios</h3><p>Alta/baja y reseteo de contraseñas</p></div>
+                <span class="badge">Admin</span>
+              </a>`
+            : "",
+        ].join("")
       : "";
 
   return appShell({
@@ -1242,6 +1260,80 @@ function mountAuthRoutes(app) {
     }
   });
 
+
+
+  // =============================
+  // Leads (mensajes del formulario de contacto en /login)
+  // =============================
+  app.get("/api/leads", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const db = await getDb();
+
+      const limitRaw = parseInt(String(req.query?.limit || "50"), 10);
+      const skipRaw = parseInt(String(req.query?.skip || "0"), 10);
+      const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 200) : 50;
+      const skip = Number.isFinite(skipRaw) ? Math.max(skipRaw, 0) : 0;
+
+      const q = String(req.query?.q || "").trim();
+      const filter = {};
+      if (q) {
+        const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+        filter.$or = [{ name: rx }, { email: rx }, { company: rx }, { phone: rx }, { message: rx }];
+      }
+
+      const items = await db
+        .collection("leads")
+        .find(filter, {
+          projection: { name: 1, email: 1, company: 1, phone: 1, message: 1, createdAt: 1, ip: 1, ua: 1, page: 1 },
+        })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray();
+
+      const total = await db.collection("leads").countDocuments(filter);
+
+      return res.json({ ok: true, total, limit, skip, items });
+    } catch (e) {
+      console.error("[leads] list error:", e);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+  });
+
+  app.get("/api/leads/:id", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const id = String(req.params.id || "").trim();
+      if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: "invalid_id" });
+
+      const db = await getDb();
+      const item = await db.collection("leads").findOne(
+        { _id: new ObjectId(id) },
+        { projection: { name: 1, email: 1, company: 1, phone: 1, message: 1, createdAt: 1, ip: 1, ua: 1, page: 1 } }
+      );
+     if (!item) return res.status(404).json({ ok: false, error: "not_found" });
+     return res.json({ ok: true, item });
+    } catch (e) {
+      console.error("[leads] get error:", e);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+  });
+
+  // Opcional: borrar un lead (limpieza)
+  app.delete("/api/leads/:id", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const id = String(req.params.id || "").trim();
+      if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: "invalid_id" });
+
+      const db = await getDb();
+      const r = await db.collection("leads").deleteOne({ _id: new ObjectId(id) });
+      if (!r?.deletedCount) return res.status(404).json({ ok: false, error: "not_found" });
+
+      return res.json({ ok: true });
+    } catch (e) {
+      console.error("[leads] delete error:", e);
+      return res.status(500).json({ ok: false, error: "internal_error" });
+    }
+  });
 
   app.post("/login", async (req, res) => {
     try {
@@ -1599,6 +1691,190 @@ function mountAuthRoutes(app) {
     } catch (e) {
       console.error("[auth] delete user error:", e);
       return res.redirect("/admin/users?err=" + encodeURIComponent("Error eliminando usuario."));
+    }
+  });
+
+
+  // ============================
+  // ========== LEADS ===========
+  // ============================
+
+  function leadRowHtml(lead) {
+    const id = String(lead?._id || "");
+    const createdAt = lead?.createdAt ? new Date(lead.createdAt) : null;
+    const createdLabel = createdAt ? createdAt.toISOString().replace("T", " ").slice(0, 16) : "-";
+
+    const name = htmlEscape(String(lead?.name || ""));
+    const email = htmlEscape(String(lead?.email || ""));
+    const company = htmlEscape(String(lead?.company || ""));
+    const phone = htmlEscape(String(lead?.phone || ""));
+    const message = htmlEscape(String(lead?.message || ""));
+    const ua = htmlEscape(String(lead?.ua || ""));
+    const ip = htmlEscape(String(lead?.ip || ""));
+    const page = htmlEscape(String(lead?.page || ""));
+
+    const meta = [company, phone].filter(Boolean).join(" · ");
+
+    return `
+      <tr>
+        <td>
+          <div style="font-weight:600">${name || "-"}</div>
+          <div class="small">${email || "-"}</div>
+          ${meta ? `<div class="small">${meta}</div>` : ``}
+        </td>
+        <td style="white-space:nowrap">${createdLabel}</td>
+        <td style="max-width:520px">
+          <div style="white-space:pre-wrap">${message || "-"}</div>
+          <div class="small" style="margin-top:8px">page: ${page || "-"} · ip: ${ip || "-"} · ua: ${ua || "-"}</div>
+        </td>
+        <td class="actions" style="white-space:nowrap">
+          <form method="POST" action="/admin/leads/delete" style="margin:0" onsubmit="return confirm('¿Eliminar este lead?')">
+            <input type="hidden" name="leadId" value="${htmlEscape(id)}"/>
+            <button class="btn2 btnDanger" type="submit">Eliminar</button>
+          </form>
+        </td>
+      </tr>
+    `;
+  }
+
+  // UI: listado de leads (mensajes del formulario /login#contacto)
+  app.get("/admin/leads", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const db = await getDb();
+
+      const q = String(req.query?.q || "").trim();
+      const limit = Math.max(1, Math.min(200, parseInt(String(req.query?.limit || "50"), 10) || 50));
+
+      const filter = q
+        ? {
+            $or: [
+              { name: { $regex: q, $options: "i" } },
+              { email: { $regex: q, $options: "i" } },
+              { company: { $regex: q, $options: "i" } },
+              { phone: { $regex: q, $options: "i" } },
+              { message: { $regex: q, $options: "i" } },
+            ],
+          }
+        : {};
+
+      const leads = await db.collection("leads").find(filter).sort({ createdAt: -1 }).limit(limit).toArray();
+
+      const rows = (leads || []).map(leadRowHtml).join("");
+      const empty = `<tr><td colspan="4" class="small">No hay leads todavía.</td></tr>`;
+
+      const msg = String(req.query?.msg || "").trim();
+      const err = String(req.query?.err || "").trim();
+      const message = msg ? `<div class="msg ok">${htmlEscape(msg)}</div>` : "";
+      const error = err ? `<div class="msg err">${htmlEscape(err)}</div>` : "";
+
+      return res.status(200).send(
+        appShell({
+          title: "Leads · Asisto",
+          user: req.user,
+          active: "leads",
+          main: `
+            <div class="app">
+              <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap">
+                <div>
+                  <h2 style="margin:0 0 6px">Leads</h2>
+                  <div class="small">Mensajes recibidos desde el formulario de contacto en <code>/login</code> (colección <code>leads</code>).</div>
+                </div>
+                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+                  <form method="GET" action="/admin/leads" style="display:flex; gap:8px; align-items:center; margin:0">
+                    <input name="q" value="${htmlEscape(q)}" placeholder="buscar..." style="width:220px"/>
+                    <input name="limit" value="${htmlEscape(String(limit))}" style="width:90px" title="límite" />
+                    <button class="btn2" type="submit">Buscar</button>
+                    ${q ? `<a class="btn2" href="/admin/leads" style="text-decoration:none">Limpiar</a>` : ``}
+                  </form>
+                  <a class="btn2" href="/app" style="text-decoration:none">Volver</a>
+                </div>
+              </div>
+
+              ${message}
+              ${error}
+
+              <div class="card" style="margin-top:14px">
+                <h2 style="font-size:18px; margin:0 0 10px">Listado</h2>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Contacto</th>
+                      <th>Fecha</th>
+                      <th>Mensaje</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${rows || empty}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          `,
+        })
+      );
+    } catch (e) {
+      console.error("[auth] leads ui error:", e);
+      return res.status(500).send("Error cargando leads.");
+    }
+  });
+
+  // UI: borrar lead
+  app.post("/admin/leads/delete", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const leadId = String(req.body?.leadId || "").trim();
+      if (!ObjectId.isValid(leadId)) return res.redirect("/admin/leads?err=" + encodeURIComponent("leadId inválido."));
+
+      const db = await getDb();
+      await db.collection("leads").deleteOne({ _id: new ObjectId(leadId) });
+      return res.redirect("/admin/leads?msg=" + encodeURIComponent("Lead eliminado."));
+    } catch (e) {
+      console.error("[auth] leads delete error:", e);
+      return res.redirect("/admin/leads?err=" + encodeURIComponent("Error eliminando lead."));
+    }
+  });
+
+  // API: listar leads (JSON)
+  app.get("/api/leads", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const db = await getDb();
+      const limit = Math.max(1, Math.min(500, parseInt(String(req.query?.limit || "100"), 10) || 100));
+      const leads = await db.collection("leads").find({}).sort({ createdAt: -1 }).limit(limit).toArray();
+      return res.json({ ok: true, items: leads });
+    } catch (e) {
+      console.error("[api] leads list error:", e);
+      return res.status(500).json({ ok: false, error: "Error listando leads" });
+    }
+  });
+
+  // API: obtener lead
+  app.get("/api/leads/:id", requireAuth, requireAdmin, async (req, res) => {
+   try {
+      const id = String(req.params.id || "").trim();
+      if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: "id inválido" });
+
+      const db = await getDb();
+      const lead = await db.collection("leads").findOne({ _id: new ObjectId(id) });
+      if (!lead) return res.status(404).json({ ok: false, error: "No encontrado" });
+      return res.json({ ok: true, item: lead });
+    } catch (e) {
+      console.error("[api] lead get error:", e);
+      return res.status(500).json({ ok: false, error: "Error obteniendo lead" });
+    }
+  });
+
+  // API: borrar lead
+  app.delete("/api/leads/:id", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const id = String(req.params.id || "").trim();
+      if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: "id inválido" });
+
+      const db = await getDb();
+      const r = await db.collection("leads").deleteOne({ _id: new ObjectId(id) });
+      return res.json({ ok: true, deletedCount: r?.deletedCount || 0 });
+    } catch (e) {
+      console.error("[api] lead delete error:", e);
+      return res.status(500).json({ ok: false, error: "Error eliminando lead" });
     }
   });
 }
