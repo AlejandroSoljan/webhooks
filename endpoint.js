@@ -31,6 +31,10 @@ const path = require("path");
 // ⬇️ Auth UI (login + sesiones + admin usuarios)
 const auth = require("./auth_ui");
 // Servir assets estáticos locales (logo.png)
+// Servir assets estáticos:
+// 1) Logos del slider en /static/clientes -> <proyecto>/static/clientes
+app.use("/static/clientes", express.static(path.join(__dirname, "static", "clientes")));
+// 2) Mantener compatibilidad con /static/logo.png si está en la raíz del proyecto
 app.use("/static", express.static(path.join(__dirname)));
 // Necesario para formularios HTML (login / admin users)
 app.use(express.urlencoded({ extended: true }));
