@@ -944,7 +944,7 @@ function loginPage({ error, msg, to, baseUrl }) {
       </section>
 
       <footer class="lpFooter">
-        <div>© ${new Date().getFullYear()} Asisto — lo hace por voz...</div>
+        <div>© ${new Date().getFullYear()} Asisto — lo hace por vos...</div>
       </footer>
     </div>
     `,
