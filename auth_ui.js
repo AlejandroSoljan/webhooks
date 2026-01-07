@@ -13,7 +13,7 @@
 const crypto = require("crypto");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
-const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://wwww.asistobot.com.ar"; // ej: https://tudominio.com
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://www.asistobot.com.ar"; // ej: https://tudominio.com
 
 
 const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || "asisto_sess";
@@ -660,7 +660,27 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
       .clientBadge{opacity:.95}
       .lpSliderHint{margin-top:10px; color:rgba(255,255,255,.65); font-size:12px}
       @keyframes lpScroll{from{transform:translateX(0)} to{transform:translateX(-50%)}}
+.clientBadge{
+  height: 44px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding: 6px 12px;
+  border-radius: 12px;
+  border:1px solid rgba(255,255,255,0.16);
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.90);
+  font-size: 13px;
+  white-space: nowrap;
+}
 
+.clientLogoImg{
+  height: 26px;
+  width: auto;
+  max-width: 170px;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 10px rgba(0,0,0,.18));
+}
       .lpSection{max-width:1100px; margin:18px auto 0; padding:18px; border-radius:18px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.10)}
       .lpSection h2{margin:0 0 10px; color:#fff; font-size:22px}
       .lpLeadSmall{margin:0 0 14px; color:rgba(255,255,255,.78)}
@@ -808,29 +828,26 @@ function loginPage({ error, msg, to, baseUrl }) {
   const err = error ? `<div class="msg err">${htmlEscape(error)}</div>` : "";
   const ok = msg ? `<div class="msg ok">${htmlEscape(msg)}</div>` : "";
 
-   // placeholders de "empresas" (reemplazables por logos reales)
-  const clientBadge = (txt) => `
-    <div class="clientBadge" title="${htmlEscape(txt)}" aria-label="${htmlEscape(txt)}">
-      <svg width="140" height="36" viewBox="0 0 140 36" role="img" aria-hidden="true">
-        <rect x="1" y="1" width="138" height="34" rx="12" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.16)"/>
-        <text x="70" y="23" text-anchor="middle"
-          font-family="system-ui, -apple-system, Segoe UI, Roboto, Arial"
-          font-size="12" fill="rgba(255,255,255,0.92)">${htmlEscape(txt)}</text>
-      </svg>
-    </div>
-  `;
-
+   // Logos reales (reemplazá name/src por los tuyos)
+  const clientLogo = ({ name, src }) => {
+    // fallback si no hay logo real
+    if (!src) {
+      return `<div class="clientBadge" title="${htmlEscape(name)}">${htmlEscape(name)}</div>`;
+    }
+    return `
+      <div class="clientBadge" title="${htmlEscape(name)}" aria-label="${htmlEscape(name)}">
+        <img class="clientLogoImg" src="${htmlEscape(src)}" alt="${htmlEscape(name)}" loading="lazy"/>
+      </div>
+    `;
+  };
   const logos = [
-  { name: "", src: "/static/clientes/chiarotto.pngg" },
-  { name: "", src: "/static/clientes/fleming.png" },
-  { name: "", src: "/static/clientes/tecnovet.png" },
-  { name: "", src: "/static/clientes/caryco.svg" },
-];
+    { name: "Chiarotto", src: "/static/clientes/chiarotto.png" },  // <- corregí pngg -> png
+    { name: "Fleming",   src: "/static/clientes/fleming.png" },
+    { name: "TecnoVet",  src: "/static/clientes/tecnovet.png" },
+    { name: "Caryco",    src: "/static/clientes/carico.svg" },    // ojo: que el nombre del archivo exista
+  ];
 
-const sliderHtml = logos
-  .concat(logos) // duplicado para loop suave
-  .map(clientLogo)
-  .join("");
+  const sliderHtml = logos.concat(logos).map(clientLogo).join("");
 
 
     return pageShell({
