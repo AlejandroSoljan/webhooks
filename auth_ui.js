@@ -669,12 +669,12 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
       .lpSliderHint{margin-top:10px; color:rgba(255,255,255,.65); font-size:12px}
       @keyframes lpScroll{from{transform:translateX(0)} to{transform:translateX(-50%)}}
 .clientBadge{
-  height: 44px;
+  height: 58px;                 /* antes 44px */
   display:flex;
   align-items:center;
   justify-content:center;
-  padding: 6px 12px;
-  border-radius: 12px;
+  padding: 10px 16px;           /* antes 6px 12px */
+  border-radius: 14px;
   border:1px solid rgba(255,255,255,0.16);
   background: rgba(255,255,255,0.06);
   color: rgba(255,255,255,0.90);
@@ -683,12 +683,13 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
 }
 
 .clientLogoImg{
-  height: 26px;
+  height: 38px;                 /* antes 26px */
   width: auto;
-  max-width: 170px;
+  max-width: 220px;             /* antes 170px */
   object-fit: contain;
   filter: drop-shadow(0 6px 10px rgba(0,0,0,.18));
 }
+
       .lpSection{max-width:1100px; margin:18px auto 0; padding:18px; border-radius:18px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.10)}
       .lpSection h2{margin:0 0 10px; color:#fff; font-size:22px}
       .lpLeadSmall{margin:0 0 14px; color:rgba(255,255,255,.78)}
@@ -853,6 +854,7 @@ function loginPage({ error, msg, to, baseUrl }) {
     { name: "Fleming",   src: "/static/clientes/fleming.png" },
     { name: "TecnoVet",  src: "/static/clientes/tecnovet.png" },
     { name: "Caryco",    src: "/static/clientes/carico.png" },    // ojo: que el nombre del archivo exista
+     { name: "Provemix",    src: "/static/clientes/provemix.png" },    // ojo: que el nombre del archivo exista
   ];
 
   const sliderHtml = logos.concat(logos).map(clientLogo).join("");
