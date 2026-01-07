@@ -820,13 +820,17 @@ function loginPage({ error, msg, to, baseUrl }) {
     </div>
   `;
 
-  const sliderBadges = [
-    "Cliente 01","Cliente 02","Cliente 03","Cliente 04","Cliente 05","Cliente 06"
-  ];
-  const sliderHtml = sliderBadges
-    .concat(sliderBadges) // duplicado para loop suave
-    .map(clientBadge)
-    .join("");
+  const logos = [
+  { name: "", src: "/static/clientes/chiarotto.pngg" },
+  { name: "", src: "/static/clientes/fleming.png" },
+  { name: "", src: "/static/clientes/tecnovet.png" },
+  { name: "", src: "/static/clientes/caryco.svg" },
+];
+
+const sliderHtml = logos
+  .concat(logos) // duplicado para loop suave
+  .map(clientLogo)
+  .join("");
 
 
     return pageShell({
