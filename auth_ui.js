@@ -844,7 +844,7 @@ function loginPage({ error, msg, to, baseUrl }) {
     { name: "Chiarotto", src: "/static/clientes/chiarotto.png" },  // <- corregí pngg -> png
     { name: "Fleming",   src: "/static/clientes/fleming.png" },
     { name: "TecnoVet",  src: "/static/clientes/tecnovet.png" },
-    { name: "Caryco",    src: "/static/clientes/carico.svg" },    // ojo: que el nombre del archivo exista
+    { name: "Caryco",    src: "/static/clientes/carico.png" },    // ojo: que el nombre del archivo exista
   ];
 
   const sliderHtml = logos.concat(logos).map(clientLogo).join("");
