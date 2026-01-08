@@ -47,6 +47,7 @@ let lastQrDataUrl = null;
 let lastQrAt = null;
 let mongoReady = false;
 let LockModel = null;
+let ActionModel = null;
 let heartbeatTimer = null;
 let pollTimer = null;
 var a = 0;
@@ -152,13 +153,11 @@ async function ensureMongo() {
     if (!mongoose.connection.db) {
       await new Promise((resolve, reject) => {
         const t = setTimeout(() => reject(new Error("mongo_db_not_ready")), 15000);
-       mongoose.connection.once("connected", () => { clearTimeout(t); resolve(); });
+        mongoose.connection.once("connected", () => { clearTimeout(t); resolve(); });
         mongoose.connection.once("open",      () => { clearTimeout(t); resolve(); });
       });
     }
-    if (!mongoose.connection.db) {
-      throw new Error("mongo_db_still_undefined");
-    }
+    if (!mongoose.connection.db) throw new Error("mongo_db_still_undefined");
 
     mongoReady = true;
 
@@ -177,6 +176,22 @@ async function ensureMongo() {
       { collection: "wa_locks" }
     );
     LockModel = mongoose.models.WaLock || mongoose.model("WaLock", LockSchema);
+
+const ActionSchema = new mongoose.Schema(
+  {
+    lockId: { type: String, index: true },
+    action: { type: String },          // restart | release | resetAuth
+    reason: { type: String },
+    requestedBy: { type: String },
+    requestedAt: { type: Date, default: Date.now, index: true },
+    doneAt: { type: Date, index: true },
+    doneBy: { type: String },
+    result: { type: String }
+  },
+  { collection: "wa_actions" }
+);
+ActionModel = mongoose.models.WaAction || mongoose.model("WaAction", ActionSchema);
+
     return true;
   } catch (e) {
     console.log("Mongo connect error:", e?.message || e);
@@ -400,33 +415,15 @@ function startHeartbeat() {
 }
 
 function startClientInitialize() {
-  // OJO: esta función SOLO debe inicializar el cliente (no volver a bootstraper el lock)
-  // para evitar recursión infinita.
   if (clientStarted) return;
-
-  // Para RemoteAuth + wwebjs-mongo, Mongo DEBE estar conectado antes del initialize()
-  // Si no hay mongo, NO iniciamos (porque la sesión no podría guardarse/recuperarse).
-  // (Si quisieras fallback a LocalAuth, lo armamos aparte.)
-  ensureMongo()
-    .then((ok) => {
-      if (!ok) {
-        console.log("ERROR: No se pudo conectar a Mongo. No se inicia WhatsApp (RemoteAuth).");
-        EscribirLog("ERROR: No se pudo conectar a Mongo. No se inicia WhatsApp (RemoteAuth).", "error");
-        return;
-      }
-
-      clientStarted = true;
-      console.log("LOCK OK -> inicializando WhatsApp...");
-      EscribirLog("LOCK OK -> inicializando WhatsApp...", "event");
-      updateLockStateSafe("starting").catch(() => {});
-
-      // recién acá inicializamos
-      client.initialize();
-    })
-    .catch((e) => {
-      console.log("startClientInitialize error:", e?.message || e);
-      EscribirLog("startClientInitialize error: " + String(e?.message || e), "error");
-    });
+  clientStarted = true;
+  console.log("LOCK OK -> inicializando WhatsApp...");
+  EscribirLog("LOCK OK -> inicializando WhatsApp...", "event");
+  updateLockStateSafe("starting").catch(()=>{});
+  bootstrapWithLock().catch(e => {
+  console.log('bootstrapWithLock error:', e?.message || e);
+  EscribirLog('bootstrapWithLock error: ' + String(e?.message || e), 'error');
+});
 }
 
 async function bootstrapWithLock() {
@@ -435,6 +432,7 @@ async function bootstrapWithLock() {
   if (ok) {
     isOwner = true;
     startHeartbeat();
+    startActionPoller();
     startClientInitialize();
     return;
   }
@@ -451,6 +449,7 @@ async function bootstrapWithLock() {
           console.log("LOCK TOMADO (otra PC cayó) -> iniciando...");
           EscribirLog("LOCK TOMADO (otra PC cayó) -> iniciando...", "event");
           startHeartbeat();
+          startActionPoller();
           startClientInitialize();
         }
       } catch {}
@@ -479,6 +478,93 @@ async function releaseLock() {
     );
   } catch {}
 }
+
+
+
+let actionTimer = null;
+let actionBusy = false;
+
+async function handleActionDoc(doc) {
+  const action = String(doc?.action || "").toLowerCase();
+  const reason = String(doc?.reason || "");
+  try {
+    if (action === "release") {
+      EscribirLog(`Accion RELEASE recibida: ${reason}`, "event");
+      await updateLockStateSafe("release_requested");
+
+      // apagar WA en esta PC y dejar el lock como offline (otra PC lo tomará por lease)
+      try { if (client) await client.destroy(); } catch {}
+      clientStarted = false;
+      isOwner = false;
+      await releaseLock();
+
+      return "released";
+    }
+
+    if (action === "restart") {
+      EscribirLog(`Accion RESTART recibida: ${reason}`, "event");
+      await updateLockStateSafe("restarting");
+
+      try { if (client) await client.destroy(); } catch {}
+      clientStarted = false;
+
+      // si seguimos siendo owner, reiniciamos
+      isOwner = true;
+      startClientInitialize();
+      return "restarted";
+    }
+
+    if (action === "resetauth") {
+      // La limpieza de auth remota (GridFS) normalmente se hace del lado servidor admin,
+      // acá solo liberamos para forzar nuevo QR en la próxima inicialización.
+      EscribirLog(`Accion RESET AUTH recibida: ${reason}`, "event");
+      await updateLockStateSafe("reset_auth_requested");
+      try { if (client) await client.destroy(); } catch {}
+      clientStarted = false;
+      isOwner = false;
+      await releaseLock();
+      return "reset_auth_requested";
+    }
+
+    return "ignored";
+  } catch (e) {
+    EscribirLog(`Error manejando accion ${action}: ${e?.message || e}`, "error");
+    return "error";
+  }
+}
+
+async function pollActionsOnce() {
+  if (actionBusy) return;
+  if (!isOwner) return;
+  if (!lockId) return;
+  if (!await ensureMongo()) return;
+  if (!ActionModel) return;
+
+  actionBusy = true;
+  try {
+    // Tomar 1 acción pendiente (doneAt no seteado), por lockId
+    const doc = await ActionModel.findOneAndUpdate(
+      { lockId, doneAt: { $exists: false } },
+      { $set: { doneAt: new Date(), doneBy: instanceId } },
+      { sort: { requestedAt: 1 }, new: true }
+    ).lean();
+
+    if (!doc) return;
+
+    const result = await handleActionDoc(doc);
+    await ActionModel.updateOne({ _id: doc._id }, { $set: { result } });
+  } catch (e) {
+    // si algo falló, liberamos busy y seguimos
+  } finally {
+    actionBusy = false;
+  }
+}
+
+function startActionPoller() {
+  if (actionTimer) return;
+  actionTimer = setInterval(pollActionsOnce, 4000);
+}
+
 
 process.on("SIGINT", async () => { await releaseLock(); process.exit(0); });
 process.on("SIGTERM", async () => { await releaseLock(); process.exit(0); });
@@ -875,14 +961,8 @@ EscribirLog(message.from +' '+message.to+' '+message.type+' '+message.body ,"eve
 */
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// INICIO CONTROLADO POR LOCK:
-// - Si esta PC es owner -> inicializa WhatsApp
-// - Si no -> standby (y toma control cuando la otra PC caiga)
-bootstrapWithLock().catch((e) => {
-  console.log("bootstrapWithLock error:", e?.message || e);
-  EscribirLog("bootstrapWithLock error: " + String(e?.message || e), "error");
-});
- 
+client.initialize();
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////
 /// ENVIO DE LOG A APLICACION CLIENTE
