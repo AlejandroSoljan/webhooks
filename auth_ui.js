@@ -27,6 +27,7 @@ const ACCESS_PAGES = [
   { key: "horarios", title: "Horarios" },
   { key: "comportamiento", title: "Comportamiento" },
   { key: "leads", title: "Leads" },
+  { key: "wweb", title: "Sesiones WhatsApp Web" },
   { key: "users", title: "Usuarios" },
 ];
 
@@ -63,6 +64,9 @@ function requiredAccessForPath(p) {
   if (path.startsWith("/admin/users")) return ["users"];
   // Leads (contacto)
   if (path.startsWith("/admin/leads")) return ["leads"];
+
+  // Sesiones WhatsApp Web (whatsapp-web.js)
+  if (path.startsWith("/admin/wweb") || path.startsWith("/api/wweb")) return ["wweb"];
 
   // UI wrapper
   if (path.startsWith("/ui/")) {
@@ -765,8 +769,11 @@ function getNavItemsForUser(user) {
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
-if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
+
+  if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
+  if (isAdmin && hasAccess(user, "wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
   if (isAdmin && hasAccess(user, "users")) items.push({ key: "users", title: "Usuarios", href: "/admin/users" });
+
   return items;
 }
 
@@ -1221,7 +1228,175 @@ function usersAdminPage({ user, users, msg, err }) {
   });
 }
 
-// ===== Routes mounting =====
+
+function wwebSessionsAdminPage({ user }) {
+  const isSuper = String(user?.role || "") === "superadmin";
+  return appShell({
+    title: "Sesiones WhatsApp Web · Asisto",
+    user,
+    active: "wweb",
+    main: `
+    <div class="app">
+      <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap">
+        <div>
+          <h2 style="margin:0 0 6px">Sesiones WhatsApp Web</h2>
+          <div class="small">Muestra las sesiones activas de <code>whatsapp-web.js</code> por tenant/número (colección <code>wa_locks</code>).</div>
+          <div class="small">Acciones: <strong>Liberar</strong> borra el lock (la PC actual se desconecta en el próximo heartbeat). <strong>Reset Auth</strong> además borra la sesión guardada (requiere nuevo QR).</div>
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap">
+          <button class="btn2" type="button" onclick="window.__wwebReload && window.__wwebReload()">Actualizar</button>
+          <a class="btn2" href="/app" style="text-decoration:none">Volver</a>
+        </div>
+      </div>
+
+      <div id="wwebMsg" class="small" style="margin-top:10px"></div>
+
+      <div class="card" style="margin-top:14px">
+        <div style="overflow:auto">
+          <table class="table" style="min-width:980px">
+            <thead>
+              <tr>
+                <th>Tenant</th>
+                <th>Número</th>
+                <th>Estado</th>
+                <th>Holder</th>
+                <th>Host</th>
+                <th>Inicio</th>
+                <th>Último heartbeat</th>
+                <th style="width:240px">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="wwebBody">
+              <tr><td colspan="8" class="small">Cargando…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <script>
+    (function(){
+      var IS_SUPER = ${isSuper ? "true" : "false"};
+      var body = document.getElementById('wwebBody');
+      var msg = document.getElementById('wwebMsg');
+
+      function fmtDate(v){
+        if(!v) return "";
+        try { return new Date(v).toLocaleString(); } catch (e) { return String(v); }
+      }
+
+      function escapeHtml(s){
+        return String(s == null ? "" : s)
+          .replace(/&/g,"&amp;")
+          .replace(/</g,"&lt;")
+          .replace(/>/g,"&gt;")
+          .replace(/"/g,"&quot;")
+          .replace(/'/g,"&#39;");
+      }
+
+      function api(path, opts){
+        opts = opts || {};
+        opts.headers = Object.assign({ "Content-Type":"application/json" }, (opts.headers||{}));
+        return fetch(path, opts).then(function(r){
+          return r.text().then(function(t){
+            var data = null;
+            try { data = t ? JSON.parse(t) : null; } catch(e) {}
+            if(!r.ok){
+              var err = (data && (data.error || data.message)) ? (data.error || data.message) : ("HTTP " + r.status);
+              throw new Error(err);
+            }
+            return data || {};
+          });
+        });
+      }
+
+      function renderRow(lock, nowMs){
+        var last = lock.lastSeenAt ? new Date(lock.lastSeenAt).getTime() : 0;
+        var ageSec = last ? Math.round((nowMs - last)/1000) : null;
+        var active = last && (nowMs - last) <= 30000; // 30s
+
+        var stateBadge = active
+          ? '<span class="badge badgeOk">Activa</span>'
+          : '<span class="badge badgeWarn">Inactiva</span>';
+
+        var actions = ''
+          + '<button class="btn2 btnDanger" type="button" data-action="release" data-id="' + escapeHtml(lock._id) + '">Liberar</button>'
+          + (IS_SUPER ? '<button class="btn2" type="button" data-action="reset" data-id="' + escapeHtml(lock._id) + '">Reset Auth</button>' : '');
+
+        var ageHtml = (ageSec !== null) ? ('<div class="small">hace ' + ageSec + 's</div>') : '';
+
+        return ''
+          + '<tr>'
+          + '<td>' + escapeHtml(lock.tenantId || "") + '</td>'
+          + '<td>' + escapeHtml(lock.numero || lock.number || "") + '</td>'
+          + '<td>' + stateBadge + ageHtml + '</td>'
+          + '<td>' + escapeHtml(lock.holderId || lock.instanceId || "") + '</td>'
+          + '<td>' + escapeHtml(lock.host || lock.hostname || "") + '</td>'
+          + '<td>' + escapeHtml(fmtDate(lock.startedAt)) + '</td>'
+          + '<td>' + escapeHtml(fmtDate(lock.lastSeenAt)) + '</td>'
+          + '<td>' + actions + '</td>'
+          + '</tr>';
+      }
+
+      function load(){
+        msg.textContent = "";
+        body.innerHTML = '<tr><td colspan="8" class="small">Cargando…</td></tr>';
+        return api('/api/wweb/locks', { method:'GET' })
+          .then(function(data){
+            var locks = Array.isArray(data.locks) ? data.locks : [];
+            var nowMs = data.now ? new Date(data.now).getTime() : Date.now();
+
+            if(!locks.length){
+              body.innerHTML = '<tr><td colspan="8" class="small">No hay sesiones registradas.</td></tr>';
+              return;
+            }
+            body.innerHTML = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
+          })
+          .catch(function(e){
+            body.innerHTML = '<tr><td colspan="8" class="small">Error: ' + escapeHtml(e.message || e) + '</td></tr>';
+          });
+      }
+
+      function doRelease(id, resetAuth){
+        var txt = resetAuth
+          ? '¿Resetear autenticación? Esto borrará la sesión guardada y pedirá QR de nuevo.'
+          : '¿Liberar lock? (la PC actual se desconectará en el próximo heartbeat)';
+        if(!confirm(txt)) return;
+
+        api('/api/wweb/release', { method:'POST', body: JSON.stringify({ lockId: id, resetAuth: !!resetAuth }) })
+          .then(function(){
+            msg.textContent = resetAuth ? 'Sesión reseteada.' : 'Lock liberado.';
+            return load();
+          })
+          .catch(function(e){
+            alert('Error: ' + (e.message || e));
+          });
+      }
+
+      body.addEventListener('click', function(e){
+        var btn = e.target && e.target.closest ? e.target.closest('button[data-action]') : null;
+        if(!btn) return;
+        var act = btn.getAttribute('data-action');
+        var id = btn.getAttribute('data-id');
+        if(act === 'release') return doRelease(id, false);
+        if(act === 'reset') return doRelease(id, true);
+      });
+
+      window.__wwebReload = load;
+      load();
+      setInterval(load, 8000);
+    })();
+    </script>
+
+    <style>
+      .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700}
+      .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
+      .badgeWarn{background:#b453091a; color:#b45309; border:1px solid #b4530955}
+      .table td, .table th{white-space:nowrap}
+    </style>
+    `,
+  });
+}
 function mountAuthRoutes(app) {
   // login
   app.get("/login", (req, res) => {
@@ -1884,6 +2059,95 @@ function mountAuthRoutes(app) {
       return res.status(500).json({ ok: false, error: "Error eliminando lead" });
     }
   });
+
+  // =============================
+  // Admin: Sesiones WhatsApp Web (whatsapp-web.js)
+  // =============================
+  app.get("/admin/wweb", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      return res.status(200).send(wwebSessionsAdminPage({ user: req.user }));
+    } catch (e) {
+      console.error("[wweb] page error:", e);
+      return res.status(500).send("Error cargando la pantalla de sesiones.");
+    }
+  });
+
+  // Listado de locks activos/inactivos (colección: wa_locks)
+  app.get("/api/wweb/locks", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const db = await getDb();
+      const isSuper = String(req.user?.role || "") === "superadmin";
+      const filter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+
+      const locks = await db
+        .collection("wa_locks")
+        .find(filter)
+        .sort({ lastSeenAt: -1 })
+        .limit(500)
+        .toArray();
+
+      const out = locks.map((l) => ({
+        _id: String(l._id),
+        tenantId: l.tenantId,
+        numero: l.numero || l.number || l.phone,
+        holderId: l.holderId || l.instanceId,
+        host: l.host || l.hostname,
+        startedAt: l.startedAt || l.createdAt,
+        lastSeenAt: l.lastSeenAt || l.updatedAt,
+        raw: undefined,
+      }));
+
+      return res.status(200).json({ now: new Date(), locks: out });
+    } catch (e) {
+      console.error("[wweb] locks list error:", e);
+      return res.status(500).json({ error: "Error leyendo locks." });
+    }
+  });
+
+  // Libera un lock. Si resetAuth=true, además borra la sesión persistida de wwebjs-mongo (requiere QR de nuevo).
+  app.post("/api/wweb/release", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const lockId = String(req.body?.lockId || "").trim();
+      const resetAuth = !!req.body?.resetAuth;
+
+      if (!ObjectId.isValid(lockId)) return res.status(400).json({ error: "lockId inválido." });
+
+      const db = await getDb();
+      const isSuper = String(req.user?.role || "") === "superadmin";
+      const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+      if (resetAuth && !isSuper) return res.status(403).json({ error: "forbidden" });
+
+      const _id = new ObjectId(lockId);
+      const lock = await db.collection("wa_locks").findOne({ _id, ...tenantFilter });
+      if (!lock) return res.status(404).json({ error: "Lock no encontrado (o no autorizado)." });
+
+      const del = await db.collection("wa_locks").deleteOne({ _id, ...tenantFilter });
+
+      const dropped = [];
+      if (resetAuth) {
+        // wwebjs-mongo usa GridFS bucket "whatsapp-<sessionName>" => collections: whatsapp-<sessionName>.files/.chunks
+        const tenantId = String(lock.tenantId || "");
+        const numero = String(lock.numero || lock.number || lock.phone || "");
+        const sessionName = String(lock.sessionName || lock.session || lock.clientId || ("asisto_" + tenantId + "_" + numero));
+        const bucket = `whatsapp-${sessionName}`;
+
+        for (const coll of [`${bucket}.files`, `${bucket}.chunks`]) {
+          try {
+            await db.collection(coll).drop();
+            dropped.push(coll);
+          } catch (e) {
+            // si no existe, drop falla: ignoramos
+          }
+        }
+      }
+
+      return res.status(200).json({ ok: true, deletedCount: del?.deletedCount || 0, resetAuth, dropped });
+    } catch (e) {
+      console.error("[wweb] release error:", e);
+      return res.status(500).json({ error: "Error liberando sesión." });
+    }
+  });
+
 }
 
 // Middleware protector por prefijo + permisos

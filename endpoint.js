@@ -31,13 +31,12 @@ const path = require("path");
 // ⬇️ Auth UI (login + sesiones + admin usuarios)
 const auth = require("./auth_ui");
 // Servir assets estáticos locales (logo.png)
-// Servir assets estáticos:
-// 1) Logos del slider en /static/clientes -> <proyecto>/static/clientes
-app.use("/static/clientes", express.static(path.join(__dirname, "static", "clientes")));
-// 2) Mantener compatibilidad con /static/logo.png si está en la raíz del proyecto
 app.use("/static", express.static(path.join(__dirname)));
 // Necesario para formularios HTML (login / admin users)
 app.use(express.urlencoded({ extended: true }));
+
+// JSON body (también para endpoints del panel/auth)
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 // Adjunta req.user desde cookie de sesión (si existe)
 app.use(auth.attachUser);
 // Rutas: /login, /logout, /app, /admin/users...
@@ -61,7 +60,6 @@ const {
   ensureEnvioSmart,hasContext,
 } = require("./logic");
 
-app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
 function isValidSignature(req) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
@@ -1029,73 +1027,6 @@ app.get("/admin/inbox", async (req, res) => {
       border:1px solid var(--border);
       color:var(--muted);
     }
-
-    @media (max-width: 720px){
-  body{ margin: 12px; }
-  header{ flex-wrap: wrap; }
-
-  /* Ocultamos encabezados y colgroup */
-  .adminTable colgroup,
-  .adminTable thead{
-    display:none;
-  }
-
-  /* Tabla → lista de cards */
-  .adminTable,
-  .adminTable tbody,
-  .adminTable tr,
-  .adminTable td{
-    display:block;
-    width:100%;
-  }
-
-  .adminTable{
-    border:0;
-  }
-
-  .adminTable tr{
-    border:1px solid #ddd;
-    border-radius:12px;
-    padding:10px 12px;
-    margin:10px 0;
-    background:#fff;
-  }
-
-  /* Cada “fila” (td) con etiqueta a la izquierda */
-  .adminTable td{
-    border:none;
-    padding:6px 0;
-    overflow:visible;          /* evita “celdas” altísimas por ellipsis */
-    text-overflow:unset;
-    display:flex;
-    gap:10px;
-    justify-content:space-between;
-    align-items:flex-start;
-  }
-
-  .adminTable td::before{
-    content: attr(data-label);
-    font-weight:700;
-    color:#475467;
-    min-width:42%;
-    max-width:42%;
-  }
-
-  /* Acciones: que ocupen toda la línea y permitan wrap */
-  .adminTable td[data-label="Acciones"]{
-    display:block;
-    padding-top:10px;
-  }
-  .adminTable td[data-label="Acciones"]::before{
-    display:none;
-  }
-  .adminTable td[data-label="Acciones"] .actions{
-    flex-wrap:wrap;
-    white-space:normal;
-    gap:8px;
-  }
-}
-
   </style>
 </head>
 <body>
@@ -1755,73 +1686,6 @@ app.get("/admin", async (req, res) => {
       white-space:nowrap;
     }
 
-@media (max-width: 720px){
-  body{ margin: 12px; }
-  header{ flex-wrap: wrap; }
-
-  /* Ocultamos encabezados y colgroup */
-  .adminTable colgroup,
-  .adminTable thead{
-    display:none;
-  }
-
-  /* Tabla → lista de cards */
-  .adminTable,
-  .adminTable tbody,
-  .adminTable tr,
-  .adminTable td{
-    display:block;
-    width:100%;
-  }
-
-  .adminTable{
-    border:0;
-  }
-
-  .adminTable tr{
-    border:1px solid #ddd;
-    border-radius:12px;
-    padding:10px 12px;
-    margin:10px 0;
-    background:#fff;
-  }
-
-  /* Cada “fila” (td) con etiqueta a la izquierda */
-  .adminTable td{
-    border:none;
-    padding:6px 0;
-    overflow:visible;
-    text-overflow:unset;
-    display:flex;
-    gap:10px;
-    justify-content:space-between;
-    align-items:flex-start;
-  }
-
-  .adminTable td::before{
-    content: attr(data-label);
-    font-weight:700;
-    color:#475467;
-    min-width:42%;
-    max-width:42%;
-  }
-
-  /* Acciones: que ocupen toda la línea y permitan wrap */
-  .adminTable td[data-label="Acciones"]{
-    display:block;
-    padding-top:10px;
-  }
-  .adminTable td[data-label="Acciones"]::before{
-    display:none;
-  }
-  .adminTable td[data-label="Acciones"] .actions{
-    flex-wrap:wrap;
-    white-space:normal;
-    gap:8px;
-  }
-}
-
-
     /* Ajuste de anchos (sin scroll horizontal) */
     .adminTable{table-layout:fixed}
     .adminTable th{white-space:nowrap}
@@ -2453,29 +2317,25 @@ app.get("/admin", async (req, res) => {
         const tr = document.createElement('tr');
         if (c.delivered) tr.classList.add('delivered-row');
         tr.innerHTML =
-  '<td data-label="Actividad">' + fmt(c.lastAt) + '</td>' +
-  '<td data-label="Teléfono">' + escHtml(c.waId || '-') + '</td>' +
-  '<td data-label="Nombre">' + escHtml(c.contactName || '-') + '</td>' +
-  '<td data-label="Entrega">' + escHtml(c.entregaLabel || '-') + '</td>' +
-  '<td data-label="Dirección">' + escHtml(c.direccion || '-') + '</td>' +
-  '<td data-label="Distancia (km)">' +
-    ((c.distanceKm !== undefined && c.distanceKm !== null) ? escHtml(c.distanceKm) : '-') +
-  '</td>' +
-  '<td data-label="Día">' + escHtml(c.fechaEntrega || '-') + '</td>' +
-  '<td data-label="Hora">' + escHtml(c.horaEntrega || '-') + '</td>' +
-  '<td data-label="Estado">' + renderStatusBadge(c.status) + '</td>' +
-  '<td data-label="Ent." style="text-align:center">' +
-    '<input class="delivChk" type="checkbox" data-id="' + escHtml(c._id) + '" ' +
-    (c.delivered ? 'checked' : '') + ' title="Entregado" />' +
-  '</td>' +
-  '<td data-label="Acciones">' +
-    '<div class="actions">' +
-      '<button class="btn" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
-      '<button class="btn" data-pedido="' + escHtml(c._id) + '">Pedido</button>' +
-      '<button class="btn" data-print="' + escHtml(c._id) + '">🖨️ Imprimir</button>' +
-    '</div>' +
-  '</td>';
-
+          '<td>' + fmt(c.lastAt) + '</td>' +
+          '<td>' + escHtml(c.waId || '-') + '</td>' +
+          '<td>' + escHtml(c.contactName || '-') + '</td>' +
+          '<td>' + escHtml(c.entregaLabel || '-') + '</td>' +
+          '<td>' + escHtml(c.direccion || '-') + '</td>' +
+          '<td>' + ((c.distanceKm !== undefined && c.distanceKm !== null) ? escHtml(c.distanceKm) : '-') + '</td>' +
+          '<td>' + escHtml(c.fechaEntrega || '-') + '</td>' +
+          '<td>' + escHtml(c.horaEntrega || '-') + '</td>' +
+          '<td>' + renderStatusBadge(c.status) + '</td>' +
+          '<td style="text-align:center">' +
+            '<input class="delivChk" type="checkbox" data-id="' + escHtml(c._id) + '" ' + (c.delivered ? 'checked' : '') + ' title="Entregado" />' +
+          '</td>' +
+          '<td>' +
+            '<div class="actions">' +
+              '<button class="btn" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
+              '<button class="btn" data-pedido="' + escHtml(c._id) + '">Pedido</button>' +
+              '<button class="btn" data-print="' + escHtml(c._id) + '">🖨️ Imprimir</button>' +
+            '</div>' +
+          '</td>';
         tb.appendChild(tr);
       }
 
