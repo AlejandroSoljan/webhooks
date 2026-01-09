@@ -38,6 +38,10 @@ async function getDb() {
   if (!_client) {
     _client = new MongoClient(uri, {
       serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true },
+      // Evita que el server quede colgado intentando conectar (especialmente en redes con DNS/firewall)
+      serverSelectionTimeoutMS: Number(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS || 8000),
+      connectTimeoutMS: Number(process.env.MONGODB_CONNECT_TIMEOUT_MS || 8000),
+      socketTimeoutMS: Number(process.env.MONGODB_SOCKET_TIMEOUT_MS || 20000),
     });
   }
 
