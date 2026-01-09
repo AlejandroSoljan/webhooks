@@ -446,6 +446,27 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
       border: 1px solid rgba(14,107,102,.18);
       white-space:nowrap;
     }
+     .badgeOk{
+      background: rgba(70, 200, 140, .12);
+      border-color: rgba(70, 200, 140, .35);
+      color: #067647;
+    }
+    .badgeWarn{
+      background: rgba(240,68,56,.10);
+      border-color: rgba(240,68,56,.25);
+      color:#b42318;
+    }
+
+    .appWide{ width:100%; max-width:none; }
+    .toolbar{display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap}
+   .toolbarActions{display:flex; gap:10px; flex-wrap:wrap}
+    .tableWrap{overflow:auto; max-width:100%; -webkit-overflow-scrolling:touch}
+    .tableWrap[data-loading="1"]{opacity:.75}
+    .wwebTable{min-width:980px}
+    .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:1}
+    .wwebTable td, .wwebTable th{white-space:nowrap}
+    .wwebTable tbody tr:nth-child(even){background: rgba(16,24,40,.02)}
+     .msg{
     .msg{
       background: rgba(14,107,102,.08);
       border: 1px solid rgba(14,107,102,.18);
@@ -1242,24 +1263,24 @@ function wwebSessionsAdminPage({ user }) {
     user,
     active: "wweb",
     main: `
-    <div class="app">
-      <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap">
-        <div>
+    <div class="app appWide">
+      <div class="toolbar">
+     <div>
           <h2 style="margin:0 0 6px">Sesiones WhatsApp Web</h2>
           <div class="small">Muestra las sesiones activas de <code>whatsapp-web.js</code> por tenant/número (colección <code>wa_locks</code>).</div>
           <div class="small">Acciones: <strong>Liberar</strong> borra el lock (la PC actual se desconecta en el próximo heartbeat). <strong>Reset Auth</strong> además borra la sesión guardada (requiere nuevo QR).</div>
         </div>
-        <div style="display:flex; gap:10px; flex-wrap:wrap">
+        <div class="toolbarActions">
           <button class="btn2" type="button" onclick="window.__wwebReload && window.__wwebReload()">Actualizar</button>
           <a class="btn2" href="/app" style="text-decoration:none">Volver</a>
         </div>
       </div>
 
-      <div id="wwebMsg" class="small" style="margin-top:10px"></div>
+      <div id="wwebMsg" class="small" style="margin-top:10px" aria-live="polite"></div>
 
       <div class="card" style="margin-top:14px">
-        <div style="overflow:auto">
-          <table class="table" style="min-width:980px">
+        <div class="tableWrap" id="wwebTableWrap">
+          <table class="table wwebTable">
             <thead>
               <tr>
                 <th>Tenant</th>
@@ -1285,8 +1306,8 @@ function wwebSessionsAdminPage({ user }) {
     (function(){
       var IS_SUPER = ${isSuper ? "true" : "false"};
       var body = document.getElementById('wwebBody');
-      var msg = document.getElementById('wwebMsg');
-
+       var tableWrap = document.getElementById('wwebTableWrap');
+      var inflight = false;
       function fmtDate(v){
         if(!v) return "";
         try { return new Date(v).toLocaleString(); } catch (e) { return String(v); }
@@ -1465,8 +1486,16 @@ function wwebSessionsAdminPage({ user }) {
       });
 
       window.__wwebReload = load;
-      load();
-      setInterval(load, 8000);
+
+      var pollMs = 8000;
+      setInterval(function(){
+        if(document.hidden) return;
+        load();
+      }, pollMs);
+      document.addEventListener('visibilitychange', function(){
+        if(!document.hidden) load();
+      });
+      load({ initial:true });
     })();
     </script>
 
