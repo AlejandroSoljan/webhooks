@@ -481,6 +481,12 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
       font-weight: 650;
       margin-right: 6px;
     }
+.actionsWrap{
+      display:flex;
+      flex-wrap:wrap;
+      gap:6px;
+      justify-content:flex-end;
+    }
     .btnDanger{border-color: rgba(240,68,56,.32); color:#b42318}
     .btnOk{border-color: rgba(14,107,102,.28); color: var(--primary)}
     .small{font-size:12px; color:#667085}
@@ -1263,11 +1269,12 @@ function wwebSessionsAdminPage({ user }) {
                 <th>Host</th>
                 <th>Inicio</th>
                 <th>Último heartbeat</th>
+                <th>Política</th>
                 <th style="width:240px">Acciones</th>
               </tr>
             </thead>
             <tbody id="wwebBody">
-              <tr><td colspan="8" class="small">Cargando…</td></tr>
+              <tr><td colspan="9" class="small">Cargando…</td></tr>
             </tbody>
           </table>
         </div>
@@ -1319,41 +1326,74 @@ function wwebSessionsAdminPage({ user }) {
           ? '<span class="badge badgeOk">Activa</span>'
           : '<span class="badge badgeWarn">Inactiva</span>';
 
-        var actions = ''
-          + '<button class="btn2 btnDanger" type="button" data-action="release" data-id="' + escapeHtml(lock._id) + '">Liberar</button>'
-          + (IS_SUPER ? '<button class="btn2" type="button" data-action="reset" data-id="' + escapeHtml(lock._id) + '">Reset Auth</button>' : '');
+        var tenantId = String(lock.tenantId || "");
+        var numero = String(lock.numero || lock.number || "");
+        var host = String(lock.host || lock.hostname || "");
+
+        var pol = lock.policy || {};
+        var mode = String(pol.mode || "any");
+        var pinnedHost = String(pol.pinnedHost || "");
+        var blockedHosts = Array.isArray(pol.blockedHosts) ? pol.blockedHosts.map(function(x){ return String(x); }) : [];
+        var isBlocked = host && blockedHosts.indexOf(host) >= 0;
+
+        var policyHtml = (mode === "pinned")
+          ? ('<div><b>Solo:</b> ' + escapeHtml(pinnedHost || '-') + '</div>')
+          : '<div>Cualquiera</div>';
+        if (blockedHosts.length) policyHtml += '<div class="small">Bloqueadas: ' + blockedHosts.length + '</div>';
+
+        var actions = '';
+        actions += '<button class="btn2" type="button" data-action="history" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Historial</button>';
+
+        // Modo: fijar o permitir cualquiera
+        if (mode !== "pinned" || pinnedHost !== host) {
+          actions += '<button class="btn2" type="button" data-action="pin" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Fijar a esta PC</button>';
+        } else {
+          actions += '<button class="btn2" type="button" data-action="any" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Permitir cualquiera</button>';
+        }
+
+        // Bloqueo por host
+        if (host) {
+          actions += isBlocked
+            ? '<button class="btn2" type="button" data-action="unblock" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Desbloquear PC</button>'
+            : '<button class="btn2" type="button" data-action="block" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Bloquear PC</button>';
+        }
+
+        // Acciones sobre el lock
+        actions += '<button class="btn2 btnDanger" type="button" data-action="release" data-id="' + escapeHtml(lock._id) + '">Liberar</button>';
+        actions += (IS_SUPER ? '<button class="btn2" type="button" data-action="reset" data-id="' + escapeHtml(lock._id) + '">Reset Auth</button>' : '');
 
         var ageHtml = (ageSec !== null) ? ('<div class="small">hace ' + ageSec + 's</div>') : '';
 
         return ''
           + '<tr>'
-          + '<td>' + escapeHtml(lock.tenantId || "") + '</td>'
-          + '<td>' + escapeHtml(lock.numero || lock.number || "") + '</td>'
+          + '<td>' + escapeHtml(tenantId) + '</td>'
+          + '<td>' + escapeHtml(numero) + '</td>'
           + '<td>' + stateBadge + ageHtml + '</td>'
           + '<td>' + escapeHtml(lock.holderId || lock.instanceId || "") + '</td>'
-          + '<td>' + escapeHtml(lock.host || lock.hostname || "") + '</td>'
+          + '<td>' + escapeHtml(host) + '</td>'
           + '<td>' + escapeHtml(fmtDate(lock.startedAt)) + '</td>'
           + '<td>' + escapeHtml(fmtDate(lock.lastSeenAt)) + '</td>'
-          + '<td>' + actions + '</td>'
+          + '<td>' + policyHtml + '</td>'
+          + '<td><div class="actionsWrap">' + actions + '</div></td>'
           + '</tr>';
       }
 
       function load(){
         msg.textContent = "";
-        body.innerHTML = '<tr><td colspan="8" class="small">Cargando…</td></tr>';
+        body.innerHTML = '<tr><td colspan="9" class="small">Cargando…</td></tr>';
         return api('/api/wweb/locks', { method:'GET' })
           .then(function(data){
             var locks = Array.isArray(data.locks) ? data.locks : [];
             var nowMs = data.now ? new Date(data.now).getTime() : Date.now();
 
             if(!locks.length){
-              body.innerHTML = '<tr><td colspan="8" class="small">No hay sesiones registradas.</td></tr>';
+              body.innerHTML = '<tr><td colspan="9" class="small">No hay sesiones registradas.</td></tr>';
               return;
             }
             body.innerHTML = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
           })
           .catch(function(e){
-            body.innerHTML = '<tr><td colspan="8" class="small">Error: ' + escapeHtml(e.message || e) + '</td></tr>';
+            body.innerHTML = '<tr><td colspan="9" class="small">Error: ' + escapeHtml(e.message || e) + '</td></tr>';
           });
       }
 
@@ -1378,8 +1418,54 @@ function wwebSessionsAdminPage({ user }) {
         if(!btn) return;
         var act = btn.getAttribute('data-action');
         var id = btn.getAttribute('data-id');
+
+        var tenant = btn.getAttribute('data-tenant') || "";
+        var numero = btn.getAttribute('data-numero') || "";
+        var host = btn.getAttribute('data-host') || "";
+
         if(act === 'release') return doRelease(id, false);
         if(act === 'reset') return doRelease(id, true);
+
+        if(act === 'pin'){
+          if(!confirm('¿Configurar para que esta sesión SOLO inicie en esta PC?
+PC: ' + host)) return;
+          return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, mode: 'pinned', pinnedHost: host }) })
+            .then(function(){ load(); })
+            .catch(function(e){ alert('Error: ' + (e.message || e)); });
+        }
+        if(act === 'any'){
+          if(!confirm('¿Permitir que inicie en CUALQUIER PC?')) return;
+          return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, mode: 'any' }) })
+            .then(function(){ load(); })
+            .catch(function(e){ alert('Error: ' + (e.message || e)); });
+        }
+        if(act === 'block'){
+          if(!confirm('¿Bloquear esta PC para esta sesión?
+PC: ' + host)) return;
+          return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, blockHost: host }) })
+            .then(function(){ load(); })
+            .catch(function(e){ alert('Error: ' + (e.message || e)); });
+        }
+        if(act === 'unblock'){
+          if(!confirm('¿Desbloquear esta PC?
+PC: ' + host)) return;
+          return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, unblockHost: host }) })
+            .then(function(){ load(); })
+            .catch(function(e){ alert('Error: ' + (e.message || e)); });
+        }
+        if(act === 'history'){
+          return api('/api/wweb/history?tenantId=' + encodeURIComponent(tenant) + '&numero=' + encodeURIComponent(numero))
+            .then(function(items){
+              if(!items || !items.length) return alert('Sin historial.');
+              var lines = items.map(function(it){
+                var t = it.at ? new Date(it.at).toLocaleString() : '';
+                return t + ' | ' + (it.event || '') + ' | ' + (it.host || '') + ' | ' + (it.by || '');
+              });
+              alert(lines.join('
+'));
+            })
+            .catch(function(e){ alert('Error: ' + (e.message || e)); });
+        }
       });
 
       window.__wwebReload = load;
@@ -2086,21 +2172,46 @@ function mountAuthRoutes(app) {
         .limit(500)
         .toArray();
 
-      const out = locks.map((l) => ({
-        _id: String(l._id),
-        tenantId: l.tenantId,
-        numero: l.numero || l.number || l.phone,
-        holderId: l.holderId || l.instanceId,
-        host: l.host || l.hostname,
-        startedAt: l.startedAt || l.createdAt,
-        lastSeenAt: l.lastSeenAt || l.updatedAt,
-        raw: undefined,
-      }));
+      // Políticas por sesión (tenantId+numero)
+      const policies = await db
+        .collection("wa_wweb_policies")
+        .find(filter)
+        .limit(2000)
+        .toArray();
+
+      const polMap = new Map();
+      for (const p of (policies || [])) {
+        const tid = String(p.tenantId || "");
+        const num = String(p.numero || "");
+        polMap.set(tid + "::" + num, {
+          mode: p.mode || "any",
+          pinnedHost: p.pinnedHost || "",
+          blockedHosts: Array.isArray(p.blockedHosts) ? p.blockedHosts : [],
+          updatedAt: p.updatedAt || p.createdAt || null,
+          updatedBy: p.updatedBy || null,
+        });
+      }
+
+      const out = locks.map((l) => {
+        const tid = String(l.tenantId || "");
+        const num = String(l.numero || l.number || l.phone || "");
+        const policy = polMap.get(tid + "::" + num) || { mode: "any", pinnedHost: "", blockedHosts: [] };
+        return {
+          _id: String(l._id),
+          tenantId: tid,
+          numero: num,
+          holderId: l.holderId || l.instanceId,
+          host: l.host || l.hostname,
+          startedAt: l.startedAt || l.createdAt,
+          lastSeenAt: l.lastSeenAt || l.updatedAt,
+          policy,
+        };
+      });
 
       return res.status(200).json({ now: new Date(), locks: out });
     } catch (e) {
-      console.error("[wweb] locks list error:", e);
-      return res.status(500).json({ error: "Error leyendo locks." });
+      console.error("api/wweb/locks error:", e);
+      return res.status(500).json({ ok: false, error: "Error leyendo locks." });
     }
   });
 
@@ -2145,6 +2256,135 @@ function mountAuthRoutes(app) {
     } catch (e) {
       console.error("[wweb] release error:", e);
       return res.status(500).json({ error: "Error liberando sesión." });
+    }
+  });
+
+  // Configuración de política de sesión (permitir cualquiera / fijar host / bloquear hosts)
+  app.post("/api/wweb/policy", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const db = await getDb();
+      const isSuper = String(req.user?.role || "") === "superadmin";
+      const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+
+      const tenantId = String(req.body?.tenantId || (tenantFilter.tenantId || "")).trim();
+      const numero = String(req.body?.numero || "").trim();
+      if (!tenantId || !numero) return res.status(400).json({ error: "tenantId y numero requeridos" });
+      if (!isSuper && tenantId !== tenantFilter.tenantId) return res.status(403).json({ error: "forbidden" });
+
+      const mode = String(req.body?.mode || "").trim(); // 'any' | 'pinned'
+      const pinnedHost = String(req.body?.pinnedHost || "").trim();
+      const blockHost = String(req.body?.blockHost || "").trim();
+      const unblockHost = String(req.body?.unblockHost || "").trim();
+
+      const now = new Date();
+      const update = { $setOnInsert: { createdAt: now }, $set: { updatedAt: now, updatedBy: String(req.user?.email || req.user?.user || req.user?.username || "") } };
+
+      if (mode === "any") {
+        update.$set.mode = "any";
+        update.$set.pinnedHost = "";
+      } else if (mode === "pinned") {
+        update.$set.mode = "pinned";
+        update.$set.pinnedHost = pinnedHost || "";
+      }
+
+      if (blockHost) update.$addToSet = { blockedHosts: blockHost };
+      if (unblockHost) update.$pull = { blockedHosts: unblockHost };
+
+      await db.collection("wa_wweb_policies").updateOne({ tenantId, numero }, update, { upsert: true });
+
+      // Historial
+      await db.collection("wa_wweb_history").insertOne({
+        tenantId, numero,
+        event: "policy_update",
+        mode: mode || null,
+        pinnedHost: (mode === "pinned") ? (pinnedHost || null) : null,
+        blockHost: blockHost || null,
+        unblockHost: unblockHost || null,
+        by: String(req.user?.email || req.user?.user || req.user?.username || ""),
+        at: now,
+      });
+
+      return res.status(200).json({ ok: true });
+    } catch (e) {
+      console.error("api/wweb/policy error:", e);
+      return res.status(500).json({ ok: false, error: "Error guardando política." });
+    }
+  });
+
+  // Historial de eventos (admin actions)
+  app.get("/api/wweb/history", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const db = await getDb();
+      const isSuper = String(req.user?.role || "") === "superadmin";
+      const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+
+      const tenantId = String(req.query?.tenantId || "").trim();
+      const numero = String(req.query?.numero || "").trim();
+      if (!tenantId || !numero) return res.status(400).json({ error: "tenantId y numero requeridos" });
+      if (!isSuper && tenantId !== tenantFilter.tenantId) return res.status(403).json({ error: "forbidden" });
+
+      const items = await db.collection("wa_wweb_history")
+        .find({ tenantId, numero })
+        .sort({ at: -1 })
+        .limit(100)
+        .toArray();
+
+      const out = (items || []).map((x) => ({
+        at: x.at || x.createdAt || null,
+        event: x.event || "",
+        host: x.host || "",
+        by: x.by || "",
+      }));
+
+      return res.status(200).json(out);
+    } catch (e) {
+      console.error("api/wweb/history error:", e);
+      return res.status(500).json({ ok: false, error: "Error leyendo historial." });
+    }
+  });
+
+  // Encola una acción para que el script de whatsapp-web.js la tome (si lo tenés polling)
+  app.post("/api/wweb/action", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const lockId = String(req.body?.lockId || "").trim();
+      const action = String(req.body?.action || "").trim(); // e.g. 'restart' | 'logout' | 'release'
+      const reason = String(req.body?.reason || "").trim();
+      if (!ObjectId.isValid(lockId)) return res.status(400).json({ error: "lockId inválido." });
+      if (!action) return res.status(400).json({ error: "action requerida." });
+
+      const db = await getDb();
+      const isSuper = String(req.user?.role || "") === "superadmin";
+      const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+
+      const _id = new ObjectId(lockId);
+      const lock = await db.collection("wa_locks").findOne({ _id, ...tenantFilter });
+      if (!lock) return res.status(404).json({ error: "Lock no encontrado (o no autorizado)." });
+
+      const now = new Date();
+      await db.collection("wa_actions").insertOne({
+        tenantId: lock.tenantId,
+        numero: lock.numero || lock.number || lock.phone,
+        lockId: String(_id),
+        action,
+        reason,
+        requestedBy: String(req.user?.email || req.user?.user || req.user?.username || ""),
+        createdAt: now,
+        status: "PENDING",
+      });
+
+      await db.collection("wa_wweb_history").insertOne({
+        tenantId: lock.tenantId,
+        numero: lock.numero || lock.number || lock.phone,
+        event: "action_" + action,
+        host: lock.host || lock.hostname || "",
+        by: String(req.user?.email || req.user?.user || req.user?.username || ""),
+        at: now,
+      });
+
+      return res.status(200).json({ ok: true });
+    } catch (e) {
+      console.error("api/wweb/action error:", e);
+      return res.status(500).json({ ok: false, error: "Error creando acción." });
     }
   });
 
