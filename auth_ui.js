@@ -446,28 +446,6 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
       border: 1px solid rgba(14,107,102,.18);
       white-space:nowrap;
     }
-     .badgeOk{
-      background: rgba(70, 200, 140, .12);
-      border-color: rgba(70, 200, 140, .35);
-      color: #067647;
-    }
-    .badgeWarn{
-      background: rgba(240,68,56,.10);
-      border-color: rgba(240,68,56,.25);
-      color:#b42318;
-    }
-
-    .appWide{ width:100%; max-width:none; }
-    .toolbar{display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap}
-    .toolbarActions{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
-    .tableWrap{overflow:auto; max-width:100%; -webkit-overflow-scrolling:touch}
-    .tableWrap[data-loading="1"]{opacity:.75}
-    .wwebTable{width:100%; min-width:860px}
-    .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:1}
-    .wwebTable td, .wwebTable th{white-space:nowrap}
-    .wwebTable td:nth-child(4), .wwebTable td:nth-child(5){max-width:260px; white-space:normal; word-break:break-word}
-    .wwebTable td:last-child{white-space:normal}
-    .wwebTable tbody tr:nth-child(even){background: rgba(16,24,40,.02)}
     .msg{
       background: rgba(14,107,102,.08);
       border: 1px solid rgba(14,107,102,.18);
@@ -1039,7 +1017,7 @@ function appMenuPage({ user, routes }) {
     user,
     active: "home",
     main: `
-    <div class="app">
+    <div class="app appWide">
       <h2 style="margin:0 0 6px">Bienvenido, ${htmlEscape(user.username)}</h2>
       <div class="small" style="margin-bottom:18px">Elegí una opción para gestionar Asisto.</div>
       <div class="cards">
@@ -1177,7 +1155,7 @@ function usersAdminPage({ user, users, msg, err }) {
     user,
     active: "users",
     main: `
-    <div class="app">
+    <div class="app appWide">
       <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px">
         <div>
           <h2 style="margin:0 0 6px">Usuarios</h2>
@@ -1266,7 +1244,7 @@ function wwebSessionsAdminPage({ user }) {
     main: `
     <div class="app appWide">
       <div class="toolbar">
-     <div>
+        <div>
           <h2 style="margin:0 0 6px">Sesiones WhatsApp Web</h2>
           <div class="small">Muestra las sesiones activas de <code>whatsapp-web.js</code> por tenant/número (colección <code>wa_locks</code>).</div>
           <div class="small">Acciones: <strong>Liberar</strong> borra el lock (la PC actual se desconecta en el próximo heartbeat). <strong>Reset Auth</strong> además borra la sesión guardada (requiere nuevo QR).</div>
@@ -1278,7 +1256,7 @@ function wwebSessionsAdminPage({ user }) {
         </div>
       </div>
 
-      <div id="wwebMsg" class="small" style="margin-top:10px" aria-live="polite"></div>
+      <div id="wwebMsg" class="small" style="margin-top:10px"></div>
 
       <div class="card" style="margin-top:14px">
         <div class="tableWrap" id="wwebTableWrap">
@@ -1307,13 +1285,14 @@ function wwebSessionsAdminPage({ user }) {
     <script>
     (function(){
       var IS_SUPER = ${isSuper ? "true" : "false"};
+      var body = document.getElementById('wwebBody');
       var msg = document.getElementById('wwebMsg');
       var statusEl = document.getElementById('wwebStatus');
-      var body = document.getElementById('wwebBody');
       var tableWrap = document.getElementById('wwebTableWrap');
       var inflight = false;
       var lastHtml = null;
-function fmtDate(v){
+
+      function fmtDate(v){
         if(!v) return "";
         try { return new Date(v).toLocaleString(); } catch (e) { return String(v); }
       }
@@ -1404,19 +1383,27 @@ function fmtDate(v){
           + '</tr>';
       }
 
+      function setLoading(on){
+        if(!tableWrap) return;
+        if(on) tableWrap.setAttribute('data-loading','1');
+        else tableWrap.removeAttribute('data-loading');
+      }
+
       function load(opts){
         opts = opts || {};
-        var initial = !!(opts && (opts.initial || opts === true));
+        var initial = !!opts.initial;
 
+        if(document.hidden && !opts.force) return;
         if(inflight) return;
         inflight = true;
-        if(tableWrap) tableWrap.setAttribute('data-loading', '1');
 
+        // Solo mostramos "Cargando…" en la primera carga real (evita parpadeo)
         if(initial && body && !body.__didInitial){
           body.innerHTML = '<tr><td colspan="9" class="small">Cargando…</td></tr>';
           body.__didInitial = true;
         }
 
+        setLoading(true);
         return api('/api/wweb/locks', { method:'GET' })
           .then(function(data){
             var locks = Array.isArray(data.locks) ? data.locks : [];
@@ -1429,7 +1416,7 @@ function fmtDate(v){
               html = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
             }
 
-            // Evita parpadeo: solo actualiza si cambió el HTML
+            // Evita parpadeo: solo repinta si cambió
             if(html !== lastHtml){
               var sx = tableWrap ? tableWrap.scrollLeft : 0;
               var sy = tableWrap ? tableWrap.scrollTop : 0;
@@ -1442,25 +1429,23 @@ function fmtDate(v){
             }
 
             if(statusEl){
-              statusEl.textContent = 'Última actualización: ' + new Date().toLocaleTimeString();
+              statusEl.textContent = 'Última actualización: ' + new Date(nowMs).toLocaleTimeString();
             }
+            if(msg) msg.textContent = '';
           })
           .catch(function(e){
             if(statusEl){
               statusEl.textContent = 'Error actualizando: ' + (e.message || e);
             }
-            // No pisamos la tabla con "Error" para no parpadear; queda lo último válido.
+            // Si nunca cargó nada, mostramos error en la tabla
+            if(lastHtml == null){
+              body.innerHTML = '<tr><td colspan="9" class="small">Error: ' + escapeHtml(e.message || e) + '</td></tr>';
+              lastHtml = body.innerHTML;
+            }
           })
-          .then(function(){
+          .finally(function(){
             inflight = false;
-            if(tableWrap) tableWrap.removeAttribute('data-loading');
-          });
-      }
-
-            body.innerHTML = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
-          })
-          .catch(function(e){
-            body.innerHTML = '<tr><td colspan="9" class="small">Error: ' + escapeHtml(e.message || e) + '</td></tr>';
+            setLoading(false);
           });
       }
 
@@ -1526,25 +1511,43 @@ function fmtDate(v){
                 return t + ' | ' + (it.event || '') + ' | ' + (it.host || '') + ' | ' + (it.by || '');
               });
               alert(lines.join('\n'));
+              
             })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
         }
       });
 
-      window.__wwebReload = load;
-
-      var pollMs = 8000;
-      setInterval(function(){
-        if(document.hidden) return;
-        load();
-      }, pollMs);
-      document.addEventListener('visibilitychange', function(){
-        if(!document.hidden) load();
-      });
+      window.__wwebReload = function(){ return load({ force:true }); };
       load({ initial:true });
+      setInterval(function(){ if(document.hidden) return; load(); }, 8000);
+      document.addEventListener('visibilitychange', function(){ if(!document.hidden) load(); });
     })();
     </script>
-`,
+
+    <style>
+      /* Ajustes específicos de /admin/wweb */
+      .appWide{width:100%; max-width:none;}
+      .toolbar{display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap}
+      .toolbarActions{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+
+      .tableWrap{overflow:auto; max-width:100%; -webkit-overflow-scrolling:touch}
+      .tableWrap[data-loading="1"]{opacity:.75}
+
+      .wwebTable{width:100%; min-width:860px}
+      .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:1}
+      .wwebTable tbody tr:nth-child(even){background: rgba(16,24,40,.02)}
+
+      /* Por defecto compacto; permitimos wrap en columnas largas */
+      .wwebTable td, .wwebTable th{white-space:nowrap}
+      .wwebTable td:nth-child(4), .wwebTable td:nth-child(5){max-width:260px; white-space:normal; word-break:break-word}
+      .wwebTable td:nth-child(8){white-space:normal}
+      .wwebTable td:last-child{white-space:normal; min-width:240px}
+
+      .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700}
+      .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
+      .badgeWarn{background:#b453091a; color:#b45309; border:1px solid #b4530955}
+    </style>>
+    `,
   });
 }
 function mountAuthRoutes(app) {
