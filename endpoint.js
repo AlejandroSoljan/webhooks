@@ -31,12 +31,13 @@ const path = require("path");
 // ⬇️ Auth UI (login + sesiones + admin usuarios)
 const auth = require("./auth_ui");
 // Servir assets estáticos locales (logo.png)
+// Servir assets estáticos:
+// 1) Logos del slider en /static/clientes -> <proyecto>/static/clientes
+app.use("/static/clientes", express.static(path.join(__dirname, "static", "clientes")));
+// 2) Mantener compatibilidad con /static/logo.png si está en la raíz del proyecto
 app.use("/static", express.static(path.join(__dirname)));
 // Necesario para formularios HTML (login / admin users)
 app.use(express.urlencoded({ extended: true }));
-
-// JSON body (también para endpoints del panel/auth)
-app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 // Adjunta req.user desde cookie de sesión (si existe)
 app.use(auth.attachUser);
 // Rutas: /login, /logout, /app, /admin/users...
@@ -45,6 +46,198 @@ auth.mountAuthRoutes(app);
 app.use("/ui", auth.requireAuth);
 // Protege rutas sensibles (admin/api/ui) detrás de login
 auth.protectRoutes(app);
+
+// ===================== WhatsApp Web Sessions Control (WWeb) =====================
+// Admin API para controlar políticas (allow any / pinned host / blocked hosts),
+// ver estado de locks y leer historial.
+// Requiere sesión (login) y rol admin.
+app.use("/api/wweb", auth.requireAdmin);
+
+async function wwebCollections(db) {
+  return {
+    locks: db.collection("wa_locks"),
+    policies: db.collection("wa_wweb_policies"),
+    history: db.collection("wa_wweb_history"),
+    actions: db.collection("wa_wweb_actions"),
+  };
+}
+
+function wwebLockId(tenantId, numero) {
+  return `${String(tenantId || "").trim()}:${String(numero || "").trim()}`;
+}
+
+function wwebHostFromReq(req) {
+  // quien hace el request (admin panel)
+  return String(req.headers["x-hostname"] || req.headers["x-pc-name"] || req.ip || "").trim();
+}
+
+async function wwebLog(db, entry) {
+  try {
+    const { history } = await wwebCollections(db);
+    await history.insertOne({
+      lockId: entry.lockId || null,
+      tenantId: entry.tenantId || null,
+      numero: entry.numero || null,
+      event: String(entry.event || "event"),
+      host: entry.host || null,
+      by: entry.by || (req?.user?.email || req?.user?.username || "admin"), // best-effort
+      detail: entry.detail || null,
+      at: new Date(),
+    });
+  } catch {}
+}
+
+// GET /api/wweb/sessions  -> lista estado (locks + policies) para el panel
+app.get("/api/wweb/sessions", async (req, res) => {
+  try {
+    const tenantId = resolveTenantId(req);
+    const db = await getDb();
+    const { locks, policies } = await wwebCollections(db);
+
+    const [lockDocs, policyDocs] = await Promise.all([
+      locks.find(tenantId ? { _id: new RegExp("^" + tenantId + ":") } : {}).toArray(),
+      policies.find(tenantId ? { tenantId } : {}).toArray(),
+    ]);
+
+    const policyById = new Map(policyDocs.map(p => [p._id, p]));
+    const sessions = lockDocs.map(l => {
+      const [tid, num] = String(l._id || "").split(":");
+      const pol = policyById.get(l._id) || null;
+      return {
+        lockId: l._id,
+        tenantId: tid,
+        numero: num,
+        state: l.state || null,
+        holderId: l.holderId || null,
+        host: l.host || l.hostname || null,
+        pid: l.pid || null,
+        lastSeenAt: l.lastSeenAt || l.updatedAt || null,
+        policy: pol ? {
+          mode: pol.mode || "any",
+          pinnedHost: pol.pinnedHost || null,
+          blockedHosts: Array.isArray(pol.blockedHosts) ? pol.blockedHosts : [],
+          updatedAt: pol.updatedAt || null,
+          updatedBy: pol.updatedBy || null,
+        } : { mode: "any", pinnedHost: null, blockedHosts: [] },
+      };
+    });
+
+    // incluir policies sin lock (por si querés preconfigurar)
+    for (const p of policyDocs) {
+      if (sessions.some(s => s.lockId === p._id)) continue;
+      sessions.push({
+        lockId: p._id,
+        tenantId: p.tenantId,
+        numero: p.numero,
+        state: null,
+        holderId: null,
+        host: null,
+        pid: null,
+        lastSeenAt: null,
+        policy: {
+          mode: p.mode || "any",
+          pinnedHost: p.pinnedHost || null,
+          blockedHosts: Array.isArray(p.blockedHosts) ? p.blockedHosts : [],
+          updatedAt: p.updatedAt || null,
+          updatedBy: p.updatedBy || null,
+        },
+      });
+    }
+
+    sessions.sort((a,b)=> String(a.lockId).localeCompare(String(b.lockId)));
+    return res.json({ ok: true, sessions });
+  } catch (e) {
+    return res.status(500).json({ ok:false, error: String(e?.message || e) });
+  }
+});
+
+// POST /api/wweb/policy
+// body: { tenantId?, numero, mode: "any"|"pinned", pinnedHost?, blockHost?, unblockHost? }
+app.post("/api/wweb/policy", async (req, res) => {
+  try {
+    const tenantId = String(req.body?.tenantId || resolveTenantId(req) || "").trim();
+    const numero = String(req.body?.numero || "").trim();
+    if (!tenantId || !numero) return res.status(400).json({ ok:false, error:"tenantId_numero_required" });
+
+    const id = wwebLockId(tenantId, numero);
+    const mode = String(req.body?.mode || "").trim().toLowerCase();
+    const pinnedHost = String(req.body?.pinnedHost || "").trim();
+    const blockHost = String(req.body?.blockHost || "").trim();
+    const unblockHost = String(req.body?.unblockHost || "").trim();
+
+    const db = await getDb();
+    const { policies, history } = await wwebCollections(db);
+
+    const update = { $setOnInsert: { _id: id, tenantId, numero }, $set: { updatedAt: new Date(), updatedBy: (req.user?.email || req.user?.username || "admin") } };
+    if (mode === "any" || mode === "pinned") update.$set.mode = mode;
+    if (mode === "pinned") update.$set.pinnedHost = pinnedHost || wwebHostFromReq(req) || null;
+    if (mode === "any") update.$set.pinnedHost = null;
+
+    if (blockHost) update.$addToSet = { ...(update.$addToSet||{}), blockedHosts: blockHost };
+    if (unblockHost) update.$pull = { ...(update.$pull||{}), blockedHosts: unblockHost };
+
+    const r = await policies.updateOne({ _id: id }, update, { upsert: true });
+
+    await history.insertOne({
+      lockId: id, tenantId, numero,
+      event: "policy_update",
+      host: wwebHostFromReq(req) || null,
+      by: (req.user?.email || req.user?.username || "admin"),
+      detail: { mode: update.$set.mode, pinnedHost: update.$set.pinnedHost, blockHost, unblockHost },
+      at: new Date(),
+    });
+
+    return res.json({ ok:true, lockId: id, modified: r.modifiedCount, upserted: !!r.upsertedId });
+  } catch (e) {
+    return res.status(500).json({ ok:false, error: String(e?.message || e) });
+  }
+});
+
+// POST /api/wweb/release  body: { tenantId?, numero }
+app.post("/api/wweb/release", async (req, res) => {
+  try {
+    const tenantId = String(req.body?.tenantId || resolveTenantId(req) || "").trim();
+    const numero = String(req.body?.numero || "").trim();
+    if (!tenantId || !numero) return res.status(400).json({ ok:false, error:"tenantId_numero_required" });
+
+    const id = wwebLockId(tenantId, numero);
+    const db = await getDb();
+    const { locks, actions, history } = await wwebCollections(db);
+
+    // borrar lock para que otra PC pueda tomarlo
+    await locks.deleteOne({ _id: id });
+
+    // opcional: encolar acción para que el script (si lo implementaste) la procese
+    await actions.insertOne({ lockId: id, tenantId, numero, action: "release", requestedBy: (req.user?.email || req.user?.username || "admin"), at: new Date() });
+
+    await history.insertOne({ lockId:id, tenantId, numero, event:"release_requested", host: wwebHostFromReq(req)||null, by:(req.user?.email||req.user?.username||"admin"), detail:null, at:new Date() });
+    return res.json({ ok:true, lockId:id });
+  } catch (e) {
+    return res.status(500).json({ ok:false, error: String(e?.message || e) });
+  }
+});
+
+// GET /api/wweb/history?tenantId=&numero=&limit=100
+app.get("/api/wweb/history", async (req, res) => {
+  try {
+    const tenantId = String(req.query?.tenantId || "").trim();
+    const numero = String(req.query?.numero || "").trim();
+    const limit = Math.min(200, Math.max(1, Number(req.query?.limit || 100)));
+
+    const db = await getDb();
+    const { history } = await wwebCollections(db);
+
+    const q = {};
+    if (tenantId) q.tenantId = tenantId;
+    if (numero) q.numero = numero;
+
+    const items = await history.find(q).sort({ at: -1 }).limit(limit).toArray();
+    return res.json({ ok:true, items });
+  } catch (e) {
+    return res.status(500).json({ ok:false, error: String(e?.message || e) });
+  }
+});
+
 
 const {
   loadBehaviorTextFromMongo,
@@ -60,6 +253,7 @@ const {
   ensureEnvioSmart,hasContext,
 } = require("./logic");
 
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
 function isValidSignature(req) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
@@ -1027,6 +1221,73 @@ app.get("/admin/inbox", async (req, res) => {
       border:1px solid var(--border);
       color:var(--muted);
     }
+
+    @media (max-width: 720px){
+  body{ margin: 12px; }
+  header{ flex-wrap: wrap; }
+
+  /* Ocultamos encabezados y colgroup */
+  .adminTable colgroup,
+  .adminTable thead{
+    display:none;
+  }
+
+  /* Tabla → lista de cards */
+  .adminTable,
+  .adminTable tbody,
+  .adminTable tr,
+  .adminTable td{
+    display:block;
+    width:100%;
+  }
+
+  .adminTable{
+    border:0;
+  }
+
+  .adminTable tr{
+    border:1px solid #ddd;
+    border-radius:12px;
+    padding:10px 12px;
+    margin:10px 0;
+    background:#fff;
+  }
+
+  /* Cada “fila” (td) con etiqueta a la izquierda */
+  .adminTable td{
+    border:none;
+    padding:6px 0;
+    overflow:visible;          /* evita “celdas” altísimas por ellipsis */
+    text-overflow:unset;
+    display:flex;
+    gap:10px;
+    justify-content:space-between;
+    align-items:flex-start;
+  }
+
+  .adminTable td::before{
+    content: attr(data-label);
+    font-weight:700;
+    color:#475467;
+    min-width:42%;
+    max-width:42%;
+  }
+
+  /* Acciones: que ocupen toda la línea y permitan wrap */
+  .adminTable td[data-label="Acciones"]{
+    display:block;
+    padding-top:10px;
+  }
+  .adminTable td[data-label="Acciones"]::before{
+    display:none;
+  }
+  .adminTable td[data-label="Acciones"] .actions{
+    flex-wrap:wrap;
+    white-space:normal;
+    gap:8px;
+  }
+}
+
   </style>
 </head>
 <body>
@@ -1686,6 +1947,73 @@ app.get("/admin", async (req, res) => {
       white-space:nowrap;
     }
 
+@media (max-width: 720px){
+  body{ margin: 12px; }
+  header{ flex-wrap: wrap; }
+
+  /* Ocultamos encabezados y colgroup */
+  .adminTable colgroup,
+  .adminTable thead{
+    display:none;
+  }
+
+  /* Tabla → lista de cards */
+  .adminTable,
+  .adminTable tbody,
+  .adminTable tr,
+  .adminTable td{
+    display:block;
+    width:100%;
+  }
+
+  .adminTable{
+    border:0;
+  }
+
+  .adminTable tr{
+    border:1px solid #ddd;
+    border-radius:12px;
+    padding:10px 12px;
+    margin:10px 0;
+    background:#fff;
+  }
+
+  /* Cada “fila” (td) con etiqueta a la izquierda */
+  .adminTable td{
+    border:none;
+    padding:6px 0;
+    overflow:visible;
+    text-overflow:unset;
+    display:flex;
+    gap:10px;
+    justify-content:space-between;
+    align-items:flex-start;
+  }
+
+  .adminTable td::before{
+    content: attr(data-label);
+    font-weight:700;
+    color:#475467;
+    min-width:42%;
+    max-width:42%;
+  }
+
+  /* Acciones: que ocupen toda la línea y permitan wrap */
+  .adminTable td[data-label="Acciones"]{
+    display:block;
+    padding-top:10px;
+  }
+  .adminTable td[data-label="Acciones"]::before{
+    display:none;
+  }
+  .adminTable td[data-label="Acciones"] .actions{
+    flex-wrap:wrap;
+    white-space:normal;
+    gap:8px;
+  }
+}
+
+
     /* Ajuste de anchos (sin scroll horizontal) */
     .adminTable{table-layout:fixed}
     .adminTable th{white-space:nowrap}
@@ -2317,25 +2645,29 @@ app.get("/admin", async (req, res) => {
         const tr = document.createElement('tr');
         if (c.delivered) tr.classList.add('delivered-row');
         tr.innerHTML =
-          '<td>' + fmt(c.lastAt) + '</td>' +
-          '<td>' + escHtml(c.waId || '-') + '</td>' +
-          '<td>' + escHtml(c.contactName || '-') + '</td>' +
-          '<td>' + escHtml(c.entregaLabel || '-') + '</td>' +
-          '<td>' + escHtml(c.direccion || '-') + '</td>' +
-          '<td>' + ((c.distanceKm !== undefined && c.distanceKm !== null) ? escHtml(c.distanceKm) : '-') + '</td>' +
-          '<td>' + escHtml(c.fechaEntrega || '-') + '</td>' +
-          '<td>' + escHtml(c.horaEntrega || '-') + '</td>' +
-          '<td>' + renderStatusBadge(c.status) + '</td>' +
-          '<td style="text-align:center">' +
-            '<input class="delivChk" type="checkbox" data-id="' + escHtml(c._id) + '" ' + (c.delivered ? 'checked' : '') + ' title="Entregado" />' +
-          '</td>' +
-          '<td>' +
-            '<div class="actions">' +
-              '<button class="btn" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
-              '<button class="btn" data-pedido="' + escHtml(c._id) + '">Pedido</button>' +
-              '<button class="btn" data-print="' + escHtml(c._id) + '">🖨️ Imprimir</button>' +
-            '</div>' +
-          '</td>';
+  '<td data-label="Actividad">' + fmt(c.lastAt) + '</td>' +
+  '<td data-label="Teléfono">' + escHtml(c.waId || '-') + '</td>' +
+  '<td data-label="Nombre">' + escHtml(c.contactName || '-') + '</td>' +
+  '<td data-label="Entrega">' + escHtml(c.entregaLabel || '-') + '</td>' +
+  '<td data-label="Dirección">' + escHtml(c.direccion || '-') + '</td>' +
+  '<td data-label="Distancia (km)">' +
+    ((c.distanceKm !== undefined && c.distanceKm !== null) ? escHtml(c.distanceKm) : '-') +
+  '</td>' +
+  '<td data-label="Día">' + escHtml(c.fechaEntrega || '-') + '</td>' +
+  '<td data-label="Hora">' + escHtml(c.horaEntrega || '-') + '</td>' +
+  '<td data-label="Estado">' + renderStatusBadge(c.status) + '</td>' +
+  '<td data-label="Ent." style="text-align:center">' +
+    '<input class="delivChk" type="checkbox" data-id="' + escHtml(c._id) + '" ' +
+    (c.delivered ? 'checked' : '') + ' title="Entregado" />' +
+  '</td>' +
+  '<td data-label="Acciones">' +
+    '<div class="actions">' +
+      '<button class="btn" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
+      '<button class="btn" data-pedido="' + escHtml(c._id) + '">Pedido</button>' +
+      '<button class="btn" data-print="' + escHtml(c._id) + '">🖨️ Imprimir</button>' +
+    '</div>' +
+  '</td>';
+
         tb.appendChild(tr);
       }
 
