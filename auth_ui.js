@@ -1445,7 +1445,7 @@ function wwebSessionsAdminPage({ user }) {
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
         }
         if(act === 'unblock'){
-          if(!confirm('¿Desbloquear esta PC?\nPC: ' + host)) return;
+          if(!confirm('¿Desbloquear esta PC? PC: ' + host)) return;
           return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, unblockHost: host }) })
             .then(function(){ load(); })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
