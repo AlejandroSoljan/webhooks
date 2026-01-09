@@ -459,14 +459,15 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
 
     .appWide{ width:100%; max-width:none; }
     .toolbar{display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap}
-   .toolbarActions{display:flex; gap:10px; flex-wrap:wrap}
+    .toolbarActions{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
     .tableWrap{overflow:auto; max-width:100%; -webkit-overflow-scrolling:touch}
     .tableWrap[data-loading="1"]{opacity:.75}
-    .wwebTable{min-width:980px}
+    .wwebTable{width:100%; min-width:860px}
     .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:1}
     .wwebTable td, .wwebTable th{white-space:nowrap}
+    .wwebTable td:nth-child(4), .wwebTable td:nth-child(5){max-width:260px; white-space:normal; word-break:break-word}
+    .wwebTable td:last-child{white-space:normal}
     .wwebTable tbody tr:nth-child(even){background: rgba(16,24,40,.02)}
-     .msg{
     .msg{
       background: rgba(14,107,102,.08);
       border: 1px solid rgba(14,107,102,.18);
@@ -1272,6 +1273,7 @@ function wwebSessionsAdminPage({ user }) {
         </div>
         <div class="toolbarActions">
           <button class="btn2" type="button" onclick="window.__wwebReload && window.__wwebReload()">Actualizar</button>
+          <span id="wwebStatus" class="small" style="opacity:.85"></span>
           <a class="btn2" href="/app" style="text-decoration:none">Volver</a>
         </div>
       </div>
@@ -1305,10 +1307,13 @@ function wwebSessionsAdminPage({ user }) {
     <script>
     (function(){
       var IS_SUPER = ${isSuper ? "true" : "false"};
+      var msg = document.getElementById('wwebMsg');
+      var statusEl = document.getElementById('wwebStatus');
       var body = document.getElementById('wwebBody');
-       var tableWrap = document.getElementById('wwebTableWrap');
+      var tableWrap = document.getElementById('wwebTableWrap');
       var inflight = false;
-      function fmtDate(v){
+      var lastHtml = null;
+function fmtDate(v){
         if(!v) return "";
         try { return new Date(v).toLocaleString(); } catch (e) { return String(v); }
       }
@@ -1399,18 +1404,59 @@ function wwebSessionsAdminPage({ user }) {
           + '</tr>';
       }
 
-      function load(){
-        msg.textContent = "";
-        body.innerHTML = '<tr><td colspan="9" class="small">Cargando…</td></tr>';
+      function load(opts){
+        opts = opts || {};
+        var initial = !!(opts && (opts.initial || opts === true));
+
+        if(inflight) return;
+        inflight = true;
+        if(tableWrap) tableWrap.setAttribute('data-loading', '1');
+
+        if(initial && body && !body.__didInitial){
+          body.innerHTML = '<tr><td colspan="9" class="small">Cargando…</td></tr>';
+          body.__didInitial = true;
+        }
+
         return api('/api/wweb/locks', { method:'GET' })
           .then(function(data){
             var locks = Array.isArray(data.locks) ? data.locks : [];
             var nowMs = data.now ? new Date(data.now).getTime() : Date.now();
 
+            var html = '';
             if(!locks.length){
-              body.innerHTML = '<tr><td colspan="9" class="small">No hay sesiones registradas.</td></tr>';
-              return;
+              html = '<tr><td colspan="9" class="small">No hay sesiones registradas.</td></tr>';
+            } else {
+              html = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
             }
+
+            // Evita parpadeo: solo actualiza si cambió el HTML
+            if(html !== lastHtml){
+              var sx = tableWrap ? tableWrap.scrollLeft : 0;
+              var sy = tableWrap ? tableWrap.scrollTop : 0;
+              body.innerHTML = html;
+              if(tableWrap){
+                tableWrap.scrollLeft = sx;
+                tableWrap.scrollTop = sy;
+              }
+              lastHtml = html;
+            }
+
+            if(statusEl){
+              statusEl.textContent = 'Última actualización: ' + new Date().toLocaleTimeString();
+            }
+          })
+          .catch(function(e){
+            if(statusEl){
+              statusEl.textContent = 'Error actualizando: ' + (e.message || e);
+            }
+            // No pisamos la tabla con "Error" para no parpadear; queda lo último válido.
+          })
+          .then(function(){
+            inflight = false;
+            if(tableWrap) tableWrap.removeAttribute('data-loading');
+          });
+      }
+
             body.innerHTML = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
           })
           .catch(function(e){
@@ -1479,7 +1525,7 @@ function wwebSessionsAdminPage({ user }) {
                 var t = it.at ? new Date(it.at).toLocaleString() : '';
                 return t + ' | ' + (it.event || '') + ' | ' + (it.host || '') + ' | ' + (it.by || '');
               });
-              
+              alert(lines.join('\n'));
             })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
         }
@@ -1498,14 +1544,7 @@ function wwebSessionsAdminPage({ user }) {
       load({ initial:true });
     })();
     </script>
-
-    <style>
-      .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700}
-      .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
-      .badgeWarn{background:#b453091a; color:#b45309; border:1px solid #b4530955}
-      .table td, .table th{white-space:nowrap}
-    </style>
-    `,
+`,
   });
 }
 function mountAuthRoutes(app) {
