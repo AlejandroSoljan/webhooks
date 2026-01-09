@@ -1427,7 +1427,7 @@ function wwebSessionsAdminPage({ user }) {
         if(act === 'reset') return doRelease(id, true);
 
         if(act === 'pin'){
-          if(!confirm('¿Configurar para que esta sesión SOLO inicie en esta PC?\nPC: ' + host)) return;
+          if(!confirm('¿Configurar para que esta sesión SOLO inicie en esta PC? PC: ' + host)) return;
           return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, mode: 'pinned', pinnedHost: host }) })
             .then(function(){ load(); })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
@@ -1439,7 +1439,7 @@ function wwebSessionsAdminPage({ user }) {
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
         }
         if(act === 'block'){
-          if(!confirm('¿Bloquear esta PC para esta sesión?\nPC: ' + host)) return;
+          if(!confirm('¿Bloquear esta PC para esta sesión? PC: ' + host)) return;
           return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, blockHost: host }) })
             .then(function(){ load(); })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
