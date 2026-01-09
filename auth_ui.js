@@ -1458,7 +1458,7 @@ function wwebSessionsAdminPage({ user }) {
                 var t = it.at ? new Date(it.at).toLocaleString() : '';
                 return t + ' | ' + (it.event || '') + ' | ' + (it.host || '') + ' | ' + (it.by || '');
               });
-              alert(lines.join('\n'));
+              alert(lines.join(' '));
             })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
         }
