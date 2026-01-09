@@ -446,6 +446,27 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
       border: 1px solid rgba(14,107,102,.18);
       white-space:nowrap;
     }
+     .badgeOk{
+      background: rgba(70, 200, 140, .12);
+      border-color: rgba(70, 200, 140, .35);
+      color: #067647;
+    }
+    .badgeWarn{
+      background: rgba(240,68,56,.10);
+      border-color: rgba(240,68,56,.25);
+      color:#b42318;
+    }
+
+    .appWide{ width:100%; max-width:none; }
+    .toolbar{display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap}
+   .toolbarActions{display:flex; gap:10px; flex-wrap:wrap}
+    .tableWrap{overflow:auto; max-width:100%; -webkit-overflow-scrolling:touch}
+    .tableWrap[data-loading="1"]{opacity:.75}
+    .wwebTable{min-width:980px}
+    .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:1}
+    .wwebTable td, .wwebTable th{white-space:nowrap}
+    .wwebTable tbody tr:nth-child(even){background: rgba(16,24,40,.02)}
+     .msg{
     .msg{
       background: rgba(14,107,102,.08);
       border: 1px solid rgba(14,107,102,.18);
@@ -1017,7 +1038,7 @@ function appMenuPage({ user, routes }) {
     user,
     active: "home",
     main: `
-    <div class="app appWide">
+    <div class="app">
       <h2 style="margin:0 0 6px">Bienvenido, ${htmlEscape(user.username)}</h2>
       <div class="small" style="margin-bottom:18px">Elegí una opción para gestionar Asisto.</div>
       <div class="cards">
@@ -1155,7 +1176,7 @@ function usersAdminPage({ user, users, msg, err }) {
     user,
     active: "users",
     main: `
-    <div class="app appWide">
+    <div class="app">
       <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px">
         <div>
           <h2 style="margin:0 0 6px">Usuarios</h2>
@@ -1244,19 +1265,18 @@ function wwebSessionsAdminPage({ user }) {
     main: `
     <div class="app appWide">
       <div class="toolbar">
-        <div>
+     <div>
           <h2 style="margin:0 0 6px">Sesiones WhatsApp Web</h2>
           <div class="small">Muestra las sesiones activas de <code>whatsapp-web.js</code> por tenant/número (colección <code>wa_locks</code>).</div>
           <div class="small">Acciones: <strong>Liberar</strong> borra el lock (la PC actual se desconecta en el próximo heartbeat). <strong>Reset Auth</strong> además borra la sesión guardada (requiere nuevo QR).</div>
         </div>
         <div class="toolbarActions">
           <button class="btn2" type="button" onclick="window.__wwebReload && window.__wwebReload()">Actualizar</button>
-          <span id="wwebStatus" class="small" style="opacity:.85"></span>
           <a class="btn2" href="/app" style="text-decoration:none">Volver</a>
         </div>
       </div>
 
-      <div id="wwebMsg" class="small" style="margin-top:10px"></div>
+      <div id="wwebMsg" class="small" style="margin-top:10px" aria-live="polite"></div>
 
       <div class="card" style="margin-top:14px">
         <div class="tableWrap" id="wwebTableWrap">
@@ -1286,12 +1306,8 @@ function wwebSessionsAdminPage({ user }) {
     (function(){
       var IS_SUPER = ${isSuper ? "true" : "false"};
       var body = document.getElementById('wwebBody');
-      var msg = document.getElementById('wwebMsg');
-      var statusEl = document.getElementById('wwebStatus');
-      var tableWrap = document.getElementById('wwebTableWrap');
+       var tableWrap = document.getElementById('wwebTableWrap');
       var inflight = false;
-      var lastHtml = null;
-
       function fmtDate(v){
         if(!v) return "";
         try { return new Date(v).toLocaleString(); } catch (e) { return String(v); }
@@ -1364,8 +1380,8 @@ function wwebSessionsAdminPage({ user }) {
         }
 
         // Acciones sobre el lock
-        actions += '<button class="btn2 btnDanger" type="button" data-action="release" data-id="' + escapeHtml(lock._id) + '">Liberar</button>';
-        actions += (IS_SUPER ? '<button class="btn2" type="button" data-action="reset" data-id="' + escapeHtml(lock._id) + '">Reset Auth</button>' : '');
+        actions += '<button class="btn2 btnDanger" type="button" data-action="release" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Liberar</button>';
+        actions += (IS_SUPER ? '<button class="btn2" type="button" data-action="reset" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Reset Auth</button>' : '');
 
         var ageHtml = (ageSec !== null) ? ('<div class="small">hace ' + ageSec + 's</div>') : '';
 
@@ -1383,79 +1399,32 @@ function wwebSessionsAdminPage({ user }) {
           + '</tr>';
       }
 
-      function setLoading(on){
-        if(!tableWrap) return;
-        if(on) tableWrap.setAttribute('data-loading','1');
-        else tableWrap.removeAttribute('data-loading');
-      }
-
-      function load(opts){
-        opts = opts || {};
-        var initial = !!opts.initial;
-
-        if(document.hidden && !opts.force) return;
-        if(inflight) return;
-        inflight = true;
-
-        // Solo mostramos "Cargando…" en la primera carga real (evita parpadeo)
-        if(initial && body && !body.__didInitial){
-          body.innerHTML = '<tr><td colspan="9" class="small">Cargando…</td></tr>';
-          body.__didInitial = true;
-        }
-
-        setLoading(true);
+      function load(){
+        msg.textContent = "";
+        body.innerHTML = '<tr><td colspan="9" class="small">Cargando…</td></tr>';
         return api('/api/wweb/locks', { method:'GET' })
           .then(function(data){
             var locks = Array.isArray(data.locks) ? data.locks : [];
             var nowMs = data.now ? new Date(data.now).getTime() : Date.now();
 
-            var html = '';
             if(!locks.length){
-              html = '<tr><td colspan="9" class="small">No hay sesiones registradas.</td></tr>';
-            } else {
-              html = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
+              body.innerHTML = '<tr><td colspan="9" class="small">No hay sesiones registradas.</td></tr>';
+              return;
             }
-
-            // Evita parpadeo: solo repinta si cambió
-            if(html !== lastHtml){
-              var sx = tableWrap ? tableWrap.scrollLeft : 0;
-              var sy = tableWrap ? tableWrap.scrollTop : 0;
-              body.innerHTML = html;
-              if(tableWrap){
-                tableWrap.scrollLeft = sx;
-                tableWrap.scrollTop = sy;
-              }
-              lastHtml = html;
-            }
-
-            if(statusEl){
-              statusEl.textContent = 'Última actualización: ' + new Date(nowMs).toLocaleTimeString();
-            }
-            if(msg) msg.textContent = '';
+            body.innerHTML = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
           })
           .catch(function(e){
-            if(statusEl){
-              statusEl.textContent = 'Error actualizando: ' + (e.message || e);
-            }
-            // Si nunca cargó nada, mostramos error en la tabla
-            if(lastHtml == null){
-              body.innerHTML = '<tr><td colspan="9" class="small">Error: ' + escapeHtml(e.message || e) + '</td></tr>';
-              lastHtml = body.innerHTML;
-            }
-          })
-          .finally(function(){
-            inflight = false;
-            setLoading(false);
+            body.innerHTML = '<tr><td colspan="9" class="small">Error: ' + escapeHtml(e.message || e) + '</td></tr>';
           });
       }
 
-      function doRelease(id, resetAuth){
+      function doRelease(id, resetAuth, tenant, numero){
         var txt = resetAuth
           ? '¿Resetear autenticación? Esto borrará la sesión guardada y pedirá QR de nuevo.'
           : '¿Liberar lock? (la PC actual se desconectará en el próximo heartbeat)';
         if(!confirm(txt)) return;
 
-        api('/api/wweb/release', { method:'POST', body: JSON.stringify({ lockId: id, resetAuth: !!resetAuth }) })
+        api('/api/wweb/release', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, lockId: id, resetAuth: !!resetAuth }) })
           .then(function(){
             msg.textContent = resetAuth ? 'Sesión reseteada.' : 'Lock liberado.';
             return load();
@@ -1475,8 +1444,8 @@ function wwebSessionsAdminPage({ user }) {
         var numero = btn.getAttribute('data-numero') || "";
         var host = btn.getAttribute('data-host') || "";
 
-        if(act === 'release') return doRelease(id, false);
-        if(act === 'reset') return doRelease(id, true);
+        if(act === 'release') return doRelease(id, false, tenant, numero);
+        if(act === 'reset') return doRelease(id, true, tenant, numero);
 
         if(act === 'pin'){
           if(!confirm('¿Configurar para que esta sesión SOLO inicie en esta PC? PC: ' + host)) return;
@@ -1510,43 +1479,32 @@ function wwebSessionsAdminPage({ user }) {
                 var t = it.at ? new Date(it.at).toLocaleString() : '';
                 return t + ' | ' + (it.event || '') + ' | ' + (it.host || '') + ' | ' + (it.by || '');
               });
-              alert(lines.join('\\n'));
               
             })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
         }
       });
 
-      window.__wwebReload = function(){ return load({ force:true }); };
+      window.__wwebReload = load;
+
+      var pollMs = 8000;
+      setInterval(function(){
+        if(document.hidden) return;
+        load();
+      }, pollMs);
+      document.addEventListener('visibilitychange', function(){
+        if(!document.hidden) load();
+      });
       load({ initial:true });
-      setInterval(function(){ if(document.hidden) return; load(); }, 8000);
-      document.addEventListener('visibilitychange', function(){ if(!document.hidden) load(); });
     })();
     </script>
 
     <style>
-      /* Ajustes específicos de /admin/wweb */
-      .appWide{width:100%; max-width:none;}
-      .toolbar{display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap}
-      .toolbarActions{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
-
-      .tableWrap{overflow:auto; max-width:100%; -webkit-overflow-scrolling:touch}
-      .tableWrap[data-loading="1"]{opacity:.75}
-
-      .wwebTable{width:100%; min-width:860px}
-      .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:1}
-      .wwebTable tbody tr:nth-child(even){background: rgba(16,24,40,.02)}
-
-      /* Por defecto compacto; permitimos wrap en columnas largas */
-      .wwebTable td, .wwebTable th{white-space:nowrap}
-      .wwebTable td:nth-child(4), .wwebTable td:nth-child(5){max-width:260px; white-space:normal; word-break:break-word}
-      .wwebTable td:nth-child(8){white-space:normal}
-      .wwebTable td:last-child{white-space:normal; min-width:240px}
-
       .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700}
       .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
       .badgeWarn{background:#b453091a; color:#b45309; border:1px solid #b4530955}
-    </style>>
+      .table td, .table th{white-space:nowrap}
+    </style>
     `,
   });
 }
