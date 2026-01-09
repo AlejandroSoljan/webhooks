@@ -1427,8 +1427,7 @@ function wwebSessionsAdminPage({ user }) {
         if(act === 'reset') return doRelease(id, true);
 
         if(act === 'pin'){
-          if(!confirm('¿Configurar para que esta sesión SOLO inicie en esta PC?
-PC: ' + host)) return;
+          if(!confirm('¿Configurar para que esta sesión SOLO inicie en esta PC?\nPC: ' + host)) return;
           return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, mode: 'pinned', pinnedHost: host }) })
             .then(function(){ load(); })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
@@ -1440,15 +1439,13 @@ PC: ' + host)) return;
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
         }
         if(act === 'block'){
-          if(!confirm('¿Bloquear esta PC para esta sesión?
-PC: ' + host)) return;
+          if(!confirm('¿Bloquear esta PC para esta sesión?\nPC: ' + host)) return;
           return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, blockHost: host }) })
             .then(function(){ load(); })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
         }
         if(act === 'unblock'){
-          if(!confirm('¿Desbloquear esta PC?
-PC: ' + host)) return;
+          if(!confirm('¿Desbloquear esta PC?\nPC: ' + host)) return;
           return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, unblockHost: host }) })
             .then(function(){ load(); })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
@@ -1461,8 +1458,7 @@ PC: ' + host)) return;
                 var t = it.at ? new Date(it.at).toLocaleString() : '';
                 return t + ' | ' + (it.event || '') + ' | ' + (it.host || '') + ' | ' + (it.by || '');
               });
-              alert(lines.join('
-'));
+              alert(lines.join('\n'));
             })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
         }
