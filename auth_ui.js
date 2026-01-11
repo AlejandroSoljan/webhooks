@@ -1305,9 +1305,12 @@ function wwebSessionsAdminPage({ user }) {
     <script>
     (function(){
       var IS_SUPER = ${isSuper ? "true" : "false"};
+            var msg = document.getElementById('wwebMsg');
       var body = document.getElementById('wwebBody');
-       var tableWrap = document.getElementById('wwebTableWrap');
-      var inflight = false;
+             var tableWrap = document.getElementById('wwebTableWrap');
+            var inflight = false;
+      var didInitial = false;
+      var lastHtml = null;
       function fmtDate(v){
         if(!v) return "";
         try { return new Date(v).toLocaleString(); } catch (e) { return String(v); }
@@ -1399,24 +1402,62 @@ function wwebSessionsAdminPage({ user }) {
           + '</tr>';
       }
 
-      function load(){
-        msg.textContent = "";
-        body.innerHTML = '<tr><td colspan="9" class="small">Cargando…</td></tr>';
-        return api('/api/wweb/locks', { method:'GET' })
-          .then(function(data){
-            var locks = Array.isArray(data.locks) ? data.locks : [];
-            var nowMs = data.now ? new Date(data.now).getTime() : Date.now();
+      function load(opts){
+  opts = opts || {};
+  var initial = !!opts.initial;
 
-            if(!locks.length){
-              body.innerHTML = '<tr><td colspan="9" class="small">No hay sesiones registradas.</td></tr>';
-              return;
-            }
-            body.innerHTML = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
-          })
-          .catch(function(e){
-            body.innerHTML = '<tr><td colspan="9" class="small">Error: ' + escapeHtml(e.message || e) + '</td></tr>';
-          });
+  if(inflight) return;
+  inflight = true;
+
+  // Solo mostramos "Cargando…" la primera vez (evita parpadeo)
+  if(initial || !didInitial){
+    if(!didInitial){
+      body.innerHTML = '<tr><td colspan="9" class="small">Cargando…</td></tr>';
+    }
+    didInitial = true;
+  }
+
+  // guardamos scroll del contenedor
+  var sx = tableWrap ? tableWrap.scrollLeft : 0;
+  var sy = tableWrap ? tableWrap.scrollTop : 0;
+
+  if(msg) msg.textContent = "";
+
+  return api('/api/wweb/locks', { method:'GET' })
+    .then(function(data){
+      var locks = Array.isArray(data.locks) ? data.locks : [];
+      var nowMs = data.now ? new Date(data.now).getTime() : Date.now();
+
+      var html = '';
+      if(!locks.length){
+        html = '<tr><td colspan="9" class="small">No hay sesiones registradas.</td></tr>';
+      } else {
+        html = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
       }
+
+      // Evita re-render si no cambió (reduce "flash" y reflow)
+      if(html !== lastHtml){
+        body.innerHTML = html;
+        lastHtml = html;
+        if(tableWrap){
+          tableWrap.scrollLeft = sx;
+          tableWrap.scrollTop = sy;
+        }
+      }
+
+      if(msg) msg.textContent = 'Última actualización: ' + new Date().toLocaleTimeString();
+    })
+    .catch(function(e){
+      // No pisamos la tabla si ya había contenido válido; solo mostramos error arriba
+      if(!lastHtml){
+        body.innerHTML = '<tr><td colspan="9" class="small">Error: ' + escapeHtml(e.message || e) + '</td></tr>';
+      }
+      if(msg) msg.textContent = 'Error: ' + (e.message || e);
+    })
+    .then(function(){
+      inflight = false;
+    });
+}
 
       function doRelease(id, resetAuth, tenant, numero){
         var txt = resetAuth
@@ -1479,13 +1520,15 @@ function wwebSessionsAdminPage({ user }) {
                 var t = it.at ? new Date(it.at).toLocaleString() : '';
                 return t + ' | ' + (it.event || '') + ' | ' + (it.host || '') + ' | ' + (it.by || '');
               });
+              alert(lines.join('\\n'));
+
               
             })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
         }
       });
 
-      window.__wwebReload = load;
+      window.__wwebReload = function(){ return load({initial:false}); };
 
       var pollMs = 8000;
       setInterval(function(){
