@@ -466,7 +466,7 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
     .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:1}
     .wwebTable td, .wwebTable th{white-space:nowrap}
     .wwebTable tbody tr:nth-child(even){background: rgba(16,24,40,.02)}
-     .msg{
+    
     .msg{
       background: rgba(14,107,102,.08);
       border: 1px solid rgba(14,107,102,.18);
