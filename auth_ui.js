@@ -1368,6 +1368,7 @@ function wwebSessionsAdminPage({ user }) {
         if (blockedHosts.length) policyHtml += '<div class="small">Bloqueadas: ' + blockedHosts.length + '</div>';
 
         var actions = '';
+        actions += '<button class="btn2" type="button" data-action="qr" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">QR</button>';
         actions += '<button class="btn2" type="button" data-action="history" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Historial</button>';
 
         // Modo: fijar o permitir cualquiera
@@ -1439,6 +1440,89 @@ function wwebSessionsAdminPage({ user }) {
           });
       }
 
+
+      var qrModal = null;
+      var qrTimer = null;
+
+      function ensureQrModal(){
+        if(qrModal) return qrModal;
+        var wrap = document.createElement('div');
+        wrap.id = 'qrModal';
+        wrap.style.position = 'fixed';
+        wrap.style.left = '0';
+        wrap.style.top = '0';
+        wrap.style.right = '0';
+        wrap.style.bottom = '0';
+        wrap.style.background = 'rgba(0,0,0,0.45)';
+        wrap.style.display = 'none';
+        wrap.style.alignItems = 'center';
+        wrap.style.justifyContent = 'center';
+        wrap.style.zIndex = '9999';
+
+        wrap.innerHTML = ''
+          + '<div class="card" style="max-width:560px;width:92vw;padding:16px;box-shadow:0 12px 40px rgba(0,0,0,.35)">'
+          + '  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">'
+          + '    <div>'
+          + '      <div style="font-weight:700;font-size:16px">QR de WhatsApp</div>'
+          + '      <div id="qrMeta" class="small" style="margin-top:4px"></div>'
+          + '    </div>'
+          + '    <button id="qrClose" class="btn2" type="button">Cerrar</button>'
+          + '  </div>'
+          + '  <div id="qrBody" style="margin-top:12px;display:flex;flex-direction:column;gap:10px">'
+          + '    <div class="small">Cargando…</div>'
+          + '  </div>'
+          + '</div>';
+
+        document.body.appendChild(wrap);
+        wrap.addEventListener('click', function(ev){
+          if(ev.target === wrap) hideQr();
+        });
+        wrap.querySelector('#qrClose').addEventListener('click', hideQr);
+
+        qrModal = wrap;
+        return wrap;
+      }
+
+      function hideQr(){
+        if(qrTimer){ clearInterval(qrTimer); qrTimer = null; }
+        if(qrModal) qrModal.style.display = 'none';
+      }
+
+      function renderQr(data){
+        var meta = qrModal.querySelector('#qrMeta');
+        var body = qrModal.querySelector('#qrBody');
+
+        var at = data.qrAt ? new Date(data.qrAt).toLocaleString() : '-';
+        meta.textContent = (data.tenantId || '') + ' · ' + (data.numero || '') + ' · estado: ' + (data.state || '-') + ' · qrAt: ' + at;
+
+        if(!data.qrDataUrl){
+          body.innerHTML = '<div class="small">No hay QR disponible ahora. Si el cliente ya está autenticado, esto es normal.</div>';
+          return;
+        }
+
+        body.innerHTML = ''
+          + '<img alt="QR" src="' + data.qrDataUrl + '" style="width:320px;max-width:100%;height:auto;border-radius:10px;border:1px solid rgba(0,0,0,.08);background:#fff;padding:10px;margin:0 auto" />'
+          + '<div class="small">Escanealo con WhatsApp &gt; Dispositivos vinculados.</div>';
+      }
+
+      function showQr(tenant, numero){
+        ensureQrModal();
+        qrModal.style.display = 'flex';
+        qrModal.querySelector('#qrBody').innerHTML = '<div class="small">Cargando…</div>';
+
+        function fetchOnce(){
+          return api('/api/wweb/qr?tenantId=' + encodeURIComponent(tenant) + '&numero=' + encodeURIComponent(numero), { method:'GET' })
+            .then(function(data){ renderQr(data); })
+            .catch(function(e){
+              qrModal.querySelector('#qrBody').innerHTML = '<div class="small">Error: ' + escapeHtml(e.message || e) + '</div>';
+            });
+        }
+
+        if(qrTimer){ clearInterval(qrTimer); qrTimer = null; }
+        fetchOnce();
+        qrTimer = setInterval(fetchOnce, 2500);
+      }
+
       body.addEventListener('click', function(e){
         var btn = e.target && e.target.closest ? e.target.closest('button[data-action]') : null;
         if(!btn) return;
@@ -1448,6 +1532,8 @@ function wwebSessionsAdminPage({ user }) {
         var tenant = btn.getAttribute('data-tenant') || "";
         var numero = btn.getAttribute('data-numero') || "";
         var host = btn.getAttribute('data-host') || "";
+
+        if(act === 'qr') return showQr(tenant, numero);
 
         if(act === 'release') return doRelease(id, false, tenant, numero);
         if(act === 'reset') return doRelease(id, true, tenant, numero);
@@ -2242,6 +2328,48 @@ function mountAuthRoutes(app) {
     } catch (e) {
       console.error("api/wweb/locks error:", e);
       return res.status(500).json({ ok: false, error: "Error leyendo locks." });
+    }
+  });
+
+
+  // Devuelve el último QR persistido en el lock (si existe) para mostrarlo en /admin/wweb.
+  // Requiere que el proceso app_asisto_ws actualice wa_locks.qrDataUrl/qrAt cuando recibe el QR.
+  app.get("/api/wweb/qr", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const db = await getDb();
+      const isSuper = String(req.user?.role || "") === "superadmin";
+
+      // Params
+      const qTenant = String(req.query?.tenantId || req.query?.tenant || "").trim();
+      const qNumero = String(req.query?.numero || req.query?.number || "").trim();
+
+      const tenantId = isSuper ? (qTenant || String(req.user?.tenantId || "")) : String(req.user?.tenantId || "");
+      const numero = qNumero;
+
+      if (!tenantId || !numero) return res.status(400).json({ ok: false, error: "tenantId y numero requeridos" });
+
+      const lockId = tenantId + ":" + numero;
+
+      const doc = await db.collection("wa_locks").findOne(
+        { _id: lockId },
+        { projection: { _id: 1, tenantId: 1, numero: 1, state: 1, host: 1, holderId: 1, lastSeenAt: 1, qrDataUrl: 1, qrAt: 1 } }
+      );
+
+      return res.json({
+        ok: true,
+        tenantId,
+        numero,
+        lockId,
+        state: doc?.state || null,
+        host: doc?.host || null,
+        holderId: doc?.holderId || null,
+        lastSeenAt: doc?.lastSeenAt || null,
+        qrAt: doc?.qrAt || null,
+        qrDataUrl: doc?.qrDataUrl || null
+      });
+    } catch (e) {
+      console.error("api/wweb/qr error:", e);
+      return res.status(500).json({ ok: false, error: "Error leyendo QR." });
     }
   });
 
