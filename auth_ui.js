@@ -1014,6 +1014,12 @@ function appMenuPage({ user, routes }) {
                 <span class="badge">Admin</span>
               </a>`
             : "",
+          hasAccess(user, "config")
+            ? `<a class="tile" href="/admin/config">
+                <div><h3>Configuración</h3><p>Editar configuración por tenant (BD)</p></div>
+                <span class="badge">Admin</span>
+              </a>`
+            : "",
         ].join("")
       : "";
 
@@ -1034,78 +1040,7 @@ function appMenuPage({ user, routes }) {
   });
 }
 
-
-
-function configAdminPage({ user, tenantId, configObj, tenants, msg, err }) {
-  const isSuper = user && user.role === "superadmin";
-  const pretty = (() => {
-    try { return JSON.stringify(configObj || {}, null, 2); } catch { return "{}"; }
-  })();
-
-  const tenantSelect = isSuper
-    ? `<form method="GET" action="/admin/config" style="margin:0; display:flex; gap:10px; align-items:center; flex-wrap:wrap">
-        <label class="small">Tenant:</label>
-        <select name="tenantId" class="input" onchange="this.form.submit()">
-          ${(tenants || [])
-            .map((t) => {
-              const sel = String(t) === String(tenantId) ? "selected" : "";
-              return `<option value="${htmlEscape(String(t))}" ${sel}>${htmlEscape(String(t))}</option>`;
-            })
-            .join("")}
-        </select>
-        <noscript><button class="btn2" type="submit">Ver</button></noscript>
-      </form>`
-    : `<div class="small">Tenant: <strong>${htmlEscape(String(tenantId || ""))}</strong></div>`;
-
-  const deleteBtn = isSuper
-    ? `<form method="POST" action="/admin/config/delete" onsubmit="return confirm('¿Eliminar configuración del tenant ' + ${JSON.stringify(
-        String(tenantId || "")
-      )} + '?');" style="margin:0">
-        <input type="hidden" name="tenantId" value="${htmlEscape(String(tenantId || ""))}"/>
-        <button class="btn2" type="submit" style="border-color:rgba(240,68,56,.35); color:#b42318">Eliminar</button>
-      </form>`
-    : "";
-
-  return appShell({
-    title: "Configuración · Asisto",
-    user,
-    active: "config",
-    main: `
-      <div class="app appWide">
-        <div class="toolbar">
-          <div>
-            <h2 style="margin:0 0 6px">Configuración</h2>
-            <div class="small">La configuración se guarda en Mongo por tenant (colección <code>tenant_config</code> por defecto). En <code>configuracion.json</code> solo queda <code>tenantId</code>.</div>
-          </div>
-          <div class="toolbarActions">
-            ${tenantSelect}
-          </div>
-        </div>
-
-        ${msg ? `<div class="msg">${htmlEscape(msg)}</div>` : ""}
-        ${err ? `<div class="msg" style="border-color:rgba(240,68,56,.25); background:rgba(240,68,56,.08)">${htmlEscape(
-          err
-        )}</div>` : ""}
-
-        <div class="card" style="margin-top:14px">
-          <div class="small" style="margin-bottom:10px">Editá el JSON (sin <code>tenantId</code> ni <code>mongo_uri</code>). Guardar hace upsert.</div>
-          <form method="POST" action="/admin/config/save" style="display:flex; flex-direction:column; gap:10px">
-            <input type="hidden" name="tenantId" value="${htmlEscape(String(tenantId || ""))}"/>
-            <textarea name="json" class="input" style="font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; min-height:360px; white-space:pre">${htmlEscape(
-              pretty
-            )}</textarea>
-            <div style="display:flex; gap:10px; flex-wrap:wrap">
-              <button class="btn" type="submit">Guardar</button>
-              ${deleteBtn}
-              <a class="btn2" href="/admin/config${isSuper ? `?tenantId=${encodeURIComponent(String(tenantId || ""))}` : ""}" style="text-decoration:none">Recargar</a>
-            </div>
-          </form>
-        </div>
-      </div>
-    `,
-  });
-}
-
+function usersAdminPage({ user, users, msg, err }) {
   const defaultCreatePages = ACCESS_PAGES.filter((p) => p.key !== "users").map((p) => p.key);
   const createAccessCheckboxes = ACCESS_PAGES.filter((p) => p.key !== "users")
     .map(
@@ -1308,7 +1243,79 @@ function configAdminPage({ user, tenantId, configObj, tenants, msg, err }) {
     </div>
     `,
   });
+}
 
+
+
+function configAdminPage({ user, tenantId, configObj, tenants, msg, err }) {
+  const isSuper = user && user.role === "superadmin";
+  const pretty = (() => {
+    try { return JSON.stringify(configObj || {}, null, 2); } catch { return "{}"; }
+  })();
+
+  const tenantSelect = isSuper
+    ? `<form method="GET" action="/admin/config" style="margin:0; display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+        <label class="small">Tenant:</label>
+        <select name="tenantId" class="input" onchange="this.form.submit()">
+          ${(tenants || [])
+            .map((t) => {
+              const sel = String(t) === String(tenantId) ? "selected" : "";
+              return `<option value="${htmlEscape(String(t))}" ${sel}>${htmlEscape(String(t))}</option>`;
+            })
+            .join("")}
+        </select>
+        <noscript><button class="btn2" type="submit">Ver</button></noscript>
+      </form>`
+    : `<div class="small">Tenant: <strong>${htmlEscape(String(tenantId || ""))}</strong></div>`;
+
+  const deleteBtn = isSuper
+    ? `<form method="POST" action="/admin/config/delete" onsubmit="return confirm('¿Eliminar configuración del tenant ' + ${JSON.stringify(
+        String(tenantId || "")
+      )} + '?');" style="margin:0">
+        <input type="hidden" name="tenantId" value="${htmlEscape(String(tenantId || ""))}"/>
+        <button class="btn2" type="submit" style="border-color:rgba(240,68,56,.35); color:#b42318">Eliminar</button>
+      </form>`
+    : "";
+
+  return appShell({
+    title: "Configuración · Asisto",
+    user,
+    active: "config",
+    main: `
+      <div class="app appWide">
+        <div class="toolbar">
+          <div>
+            <h2 style="margin:0 0 6px">Configuración</h2>
+            <div class="small">La configuración se guarda en Mongo por tenant (colección <code>tenant_config</code> por defecto). En <code>configuracion.json</code> solo queda <code>tenantId</code>.</div>
+          </div>
+          <div class="toolbarActions">
+            ${tenantSelect}
+          </div>
+        </div>
+
+        ${msg ? `<div class="msg">${htmlEscape(msg)}</div>` : ""}
+        ${err ? `<div class="msg" style="border-color:rgba(240,68,56,.25); background:rgba(240,68,56,.08)">${htmlEscape(
+          err
+        )}</div>` : ""}
+
+        <div class="card" style="margin-top:14px">
+          <div class="small" style="margin-bottom:10px">Editá el JSON (sin <code>tenantId</code> ni <code>mongo_uri</code>). Guardar hace upsert.</div>
+          <form method="POST" action="/admin/config/save" style="display:flex; flex-direction:column; gap:10px">
+            <input type="hidden" name="tenantId" value="${htmlEscape(String(tenantId || ""))}"/>
+            <textarea name="json" class="input" style="font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; min-height:360px; white-space:pre">${htmlEscape(
+              pretty
+            )}</textarea>
+            <div style="display:flex; gap:10px; flex-wrap:wrap">
+              <button class="btn" type="submit">Guardar</button>
+              ${deleteBtn}
+              <a class="btn2" href="/admin/config${isSuper ? `?tenantId=${encodeURIComponent(String(tenantId || ""))}` : ""}" style="text-decoration:none">Recargar</a>
+            </div>
+          </form>
+        </div>
+      </div>
+    `,
+  });
+}
 
 
 function wwebSessionsAdminPage({ user }) {
