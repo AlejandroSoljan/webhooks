@@ -2422,45 +2422,79 @@ function mountAuthRoutes(app) {
 // Admin: Configuración por tenant (en Mongo)
 // =========================
 function configAdminPage({ user, tenantId, configObj, tenants, msg, err }) {
+  const isSuper = String(user?.role || "") === "superadmin";
+
+  const pretty = (() => {
+    try { return JSON.stringify(configObj || {}, null, 2); } catch { return "{}"; }
+  })();
+
+  const tenantSelect = isSuper
+    ? `<form method="GET" action="/admin/config" style="margin:0; display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+        <label class="small">Tenant:</label>
+        <select name="tenantId" class="input" onchange="this.form.submit()">
+          ${(tenants || [])
+            .map((t) => {
+              const sel = String(t) === String(tenantId) ? "selected" : "";
+              return `<option value="${htmlEscape(String(t))}" ${sel}>${htmlEscape(String(t))}</option>`;
+            })
+            .join("")}
+        </select>
+        <noscript><button class="btn2" type="submit">Ver</button></noscript>
+      </form>`
+    : `<div class="small">Tenant: <strong>${htmlEscape(String(tenantId || ""))}</strong></div>`;
+
   const message = msg ? `<div class="msg ok">${htmlEscape(msg)}</div>` : "";
   const error = err ? `<div class="msg err">${htmlEscape(err)}</div>` : "";
 
-  const tenantSelector = Array.isArray(tenants) && tenants.length
-    ? `<form method="GET" action="/admin/config" style="margin:0 0 14px 0; display:flex; gap:10px; align-items:center">
-         <label class="small" style="min-width:82px">Tenant</label>
-         <select name="tenantId" class="input" style="max-width:320px" onchange="this.form.submit()">
-           ${tenants.map(t => `<option value="${htmlEscape(String(t))}" ${String(t)===String(tenantId) ? "selected":""}>${htmlEscape(String(t))}</option>`).join("")}
-         </select>
-         <noscript><button class="btn2" type="submit">Ir</button></noscript>
-       </form>`
-    : ``;
-
-  let jsonText = "{}";
-  try { jsonText = JSON.stringify(configObj || {}, null, 2); } catch { jsonText = "{}"; }
+  // Botón eliminar (solo superadmin)
+  const deleteBtn = isSuper
+    ? `<form method="POST" action="/admin/config/delete" onsubmit="return confirm('¿Eliminar configuración del tenant ' + ${JSON.stringify(
+        String(tenantId || "")
+      )} + '?');" style="margin:0">
+        <input type="hidden" name="tenantId" value="${htmlEscape(String(tenantId || ""))}"/>
+        <button class="btn2" type="submit" style="border-color:rgba(240,68,56,.35); color:#b42318">Eliminar</button>
+      </form>`
+    : "";
 
   return appShell({
-    title: "Configuración",
+    title: "Configuración · Asisto",
     user,
     active: "config",
     main: `
-      <div class="container">
-        <div class="topbar">
-          <h1>Configuración</h1>
-          <div class="small">tenantId: <b>${htmlEscape(String(tenantId || ""))}</b></div>
-        </div>
-        ${message}${error}
-        <div class="card">
-          <div class="cardTitle">Editar configuración (en BD)</div>
-          <div class="small" style="margin:8px 0 14px 0">
-            Se guarda en la colección <code>tenant_config</code> (campo <code>configuracion</code>). <b>No</b> se guardan <code>mongo_uri</code>/<code>mongo_db</code>.
+      <div class="app appWide">
+        <div class="toolbar">
+          <div>
+            <h2 style="margin:0 0 6px">Configuración</h2>
+            <div class="small">
+              La configuración se guarda en Mongo por tenant (colección <code>tenant_config</code> por defecto).
+              En <code>configuracion.json</code> solo queda <code>tenantId</code> + <code>mongo_uri</code>/<code>mongo_db</code>.
+            </div>
           </div>
-          ${tenantSelector}
-          <form method="POST" action="/admin/config/save">
+          <div class="toolbarActions">
+            ${tenantSelect}
+          </div>
+        </div>
+
+        ${message}
+        ${error}
+
+        <div class="card" style="margin-top:14px">
+          <div class="small" style="margin-bottom:10px">
+            Editá el JSON (sin <code>tenantId</code> ni <code>mongo_uri</code>/<code>mongo_db</code>). Guardar hace upsert.
+          </div>
+
+          <form method="POST" action="/admin/config/save" style="display:flex; flex-direction:column; gap:10px">
             <input type="hidden" name="tenantId" value="${htmlEscape(String(tenantId || ""))}"/>
-            <textarea name="json" class="input" style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; min-height:420px; white-space:pre; overflow:auto">${htmlEscape(jsonText)}</textarea>
-            <div style="display:flex; gap:10px; margin-top:12px; align-items:center">
-              <button class="btn2" type="submit">Guardar</button>
-              <a class="btn2" href="/admin/config${(user && user.role === "superadmin") ? `?tenantId=${encodeURIComponent(String(tenantId||""))}` : ""}">Recargar</a>
+            <textarea
+              name="json"
+              class="input"
+              style="font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; min-height:420px; white-space:pre; overflow:auto"
+            >${htmlEscape(pretty)}</textarea>
+
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center">
+              <button class="btn" type="submit">Guardar</button>
+              ${deleteBtn}
+              <a class="btn2" href="/admin/config${isSuper ? `?tenantId=${encodeURIComponent(String(tenantId || ""))}` : ""}" style="text-decoration:none">Recargar</a>
             </div>
           </form>
         </div>
@@ -2488,9 +2522,33 @@ app.get("/admin/config", requireAuth, requireAdmin, async (req, res) => {
 
     const doc = await getTenantConfigDoc(db, tenantId);
     let configObj = (doc && (doc.configuracion || doc.config || doc.data)) || {};
-    if (!configObj || typeof configObj !== "object" || Array.isArray(configObj)) configObj = {};
-
-    let tenants = null;
+// Si viene vacío o no existe, intentamos usar el documento "plano" (campos al root)
+const isPlainObj = (v) => v && typeof v === "object" && !Array.isArray(v);
+if (!isPlainObj(configObj) || !Object.keys(configObj).length) {
+  if (isPlainObj(doc)) {
+    const copy = { ...doc };
+    // removemos metadatos/duplicados
+    delete copy._id;
+    delete copy.tenantId;
+    delete copy.configuracion;
+    delete copy.config;
+    delete copy.data;
+    delete copy.createdAt;
+    delete copy.updatedAt;
+    delete copy.updatedBy;
+    delete copy.__v;
+    // nunca mostramos credenciales
+    delete copy.mongo_uri;
+    delete copy.mongo_db;
+    delete copy.mongoUri;
+    delete copy.mongoDb;
+    configObj = copy;
+  } else {
+    configObj = {};
+  }
+}
+if (!isPlainObj(configObj)) configObj = {};
+let tenants = null;
     if (isSuper) {
       const collName = String(process.env.ASISTO_CONFIG_COLLECTION || "tenant_config").trim() || "tenant_config";
       const coll = db.collection(collName);
