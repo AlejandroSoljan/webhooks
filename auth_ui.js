@@ -1386,10 +1386,12 @@ function wwebSessionsAdminPage({ user }) {
         if (blockedHosts.length) policyHtml += '<div class="small">Bloqueadas: ' + blockedHosts.length + '</div>';
 
         // Acciones: principales + menú "Más"
+        var lockId = String(lock.lockId || lock._id || lock.id || "");
+
         var primary = '';
         primary += '<button class="btn2" type="button" data-action="qr" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">QR</button>';
         primary += '<button class="btn2" type="button" data-action="history" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Historial</button>';
-        primary += '<button class="btn2 btnDanger" type="button" data-action="release" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Liberar</button>';
+        primary += '<button class="btn2 btnDanger" type="button" data-action="release" data-id="' + escapeHtml(lockId) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Liberar</button>';
 
         var extra = '';
 
@@ -1406,10 +1408,10 @@ function wwebSessionsAdminPage({ user }) {
         }
 
         extra += (IS_SUPER
-          ? '<button class="btn2" type="button" data-action="reset" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Reset Auth</button>'
+          ? '<button class="btn2" type="button" data-action="reset" data-id="' + escapeHtml(lockId) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Reset Auth</button>'
           : '');
 
-        var more = '';
+var more = '';
         if (extra) {
           more = ''
             + '<details class="wwebMore">'
