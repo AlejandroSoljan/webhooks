@@ -1634,19 +1634,19 @@ function doRelease(id, resetAuth, tenant, numero){
             .then(function(){ load(); })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
         }
-        if(act === 'history'){
-          return api('/api/wweb/history?tenantId=' + encodeURIComponent(tenant) + '&numero=' + encodeURIComponent(numero))
-            .then(function(items){
-              if(!items || !items.length) return alert('Sin historial.');
-              var lines = items.map(function(it){
-                var t = it.at ? new Date(it.at).toLocaleString() : '';
-                return t + ' | ' + (it.event || '') + ' | ' + (it.host || '') + ' | ' + (it.by || '');
-              });
-              
-            alert(lines.join('\n'));
-            })
-            .catch(function(e){ alert('Error: ' + (e.message || e)); });
-        }
+        if (act === 'history') {
+  return api('/api/wweb/history?tenantId=' + encodeURIComponent(tenant) + '&numero=' + encodeURIComponent(numero))
+    .then(function(items){
+      if(!items || !items.length) return alert('Sin historial.');
+      var lines = items.map(function(it){
+        var t = it.at ? new Date(it.at).toLocaleString() : '';
+        return t + ' | ' + (it.event || '') + ' | ' + (it.host || '') + ' | ' + (it.by || '');
+      });
+
+      alert(lines.join(String.fromCharCode(10))); // 👈 newline seguro
+    })
+    .catch(function(e){ alert('Error: ' + (e.message || e)); });
+}
       });
 
       window.__wwebReload = load;
