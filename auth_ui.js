@@ -28,7 +28,6 @@ const ACCESS_PAGES = [
   { key: "comportamiento", title: "Comportamiento" },
   { key: "leads", title: "Leads" },
   { key: "wweb", title: "Sesiones WhatsApp Web" },
-  { key: "config", title: "Configuración" },
   { key: "users", title: "Usuarios" },
 ];
 
@@ -68,9 +67,6 @@ function requiredAccessForPath(p) {
 
   // Sesiones WhatsApp Web (whatsapp-web.js)
   if (path.startsWith("/admin/wweb") || path.startsWith("/api/wweb")) return ["wweb"];
-
-  // Configuración por tenant
-  if (path.startsWith("/admin/config")) return ["config"];
 
   // UI wrapper
   if (path.startsWith("/ui/")) {
@@ -450,27 +446,6 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
       border: 1px solid rgba(14,107,102,.18);
       white-space:nowrap;
     }
-     .badgeOk{
-      background: rgba(70, 200, 140, .12);
-      border-color: rgba(70, 200, 140, .35);
-      color: #067647;
-    }
-    .badgeWarn{
-      background: rgba(240,68,56,.10);
-      border-color: rgba(240,68,56,.25);
-      color:#b42318;
-    }
-
-    .appWide{ width:100%; max-width:none; }
-    .toolbar{display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap}
-   .toolbarActions{display:flex; gap:10px; flex-wrap:wrap}
-    .tableWrap{overflow:auto; max-width:100%; -webkit-overflow-scrolling:touch}
-    .tableWrap[data-loading="1"]{opacity:.75}
-    .wwebTable{min-width:980px}
-    .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:1}
-    .wwebTable td, .wwebTable th{white-space:nowrap}
-    .wwebTable tbody tr:nth-child(even){background: rgba(16,24,40,.02)}
-    
     .msg{
       background: rgba(14,107,102,.08);
       border: 1px solid rgba(14,107,102,.18);
@@ -803,7 +778,6 @@ function getNavItemsForUser(user) {
 
   if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
   if (isAdmin && hasAccess(user, "wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
-  if (isAdmin && hasAccess(user, "config")) items.push({ key: "config", title: "Configuración", href: "/admin/config" });
   if (isAdmin && hasAccess(user, "users")) items.push({ key: "users", title: "Usuarios", href: "/admin/users" });
 
   return items;
@@ -1043,7 +1017,7 @@ function appMenuPage({ user, routes }) {
     user,
     active: "home",
     main: `
-    <div class="app">
+    <div class="app appWide">
       <h2 style="margin:0 0 6px">Bienvenido, ${htmlEscape(user.username)}</h2>
       <div class="small" style="margin-bottom:18px">Elegí una opción para gestionar Asisto.</div>
       <div class="cards">
@@ -1181,7 +1155,7 @@ function usersAdminPage({ user, users, msg, err }) {
     user,
     active: "users",
     main: `
-    <div class="app">
+    <div class="app appWide">
       <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px">
         <div>
           <h2 style="margin:0 0 6px">Usuarios</h2>
@@ -1193,20 +1167,6 @@ function usersAdminPage({ user, users, msg, err }) {
 
       ${message}
       ${error}
-
-      
-      <style>
-        /* WWEB: evitar scroll horizontal; permitir wrap de columnas largas */
-        .wwebTable { width: 100%; table-layout: fixed; }
-        .wwebTable th, .wwebTable td { white-space: normal; word-break: break-word; overflow-wrap: anywhere; }
-        .wwebTable th:nth-child(4), .wwebTable td:nth-child(4),
-        .wwebTable th:nth-child(5), .wwebTable td:nth-child(5) { max-width: 220px; }
-        .wwebTable th:last-child, .wwebTable td:last-child { width: 220px; }
-        @media (max-width: 980px){
-          .wwebTable th:nth-child(4), .wwebTable td:nth-child(4),
-          .wwebTable th:nth-child(5), .wwebTable td:nth-child(5) { max-width: none; }
-        }
-      </style>
 
       <div class="card" style="margin-top:14px">
         <h2 style="font-size:18px; margin:0 0 10px">Dar de alta usuario</h2>
@@ -1290,20 +1250,34 @@ function wwebSessionsAdminPage({ user }) {
           <div class="small">Acciones: <strong>Liberar</strong> borra el lock (la PC actual se desconecta en el próximo heartbeat). <strong>Reset Auth</strong> además borra la sesión guardada (requiere nuevo QR).</div>
         </div>
         <div class="toolbarActions">
-          <span id="wwebSpin" class="wwebSpin" title="Actualizando…" style="display:none" aria-hidden="true"></span>
-          <span id="wwebLast" class="small" style="color:var(--muted);margin-right:10px"></span>
-          <button class="btn2" type="button" onclick="window.__wwebReload && window.__wwebReload({force:true, showLoading:true})">Actualizar</button>
+          <button class="btn2" type="button" onclick="window.__wwebReload && window.__wwebReload()">Actualizar</button>
+          <span id="wwebStatus" class="small" style="opacity:.85"></span>
           <a class="btn2" href="/app" style="text-decoration:none">Volver</a>
         </div>
       </div>
 
-      <div id="wwebMsg" class="small" style="margin-top:10px" aria-live="polite"></div>
+      <div id="wwebMsg" class="small" style="margin-top:10px"></div>
 
       <div class="card" style="margin-top:14px">
-        <div class="cardInner">
-          <div id="wwebList" class="wwebCards" aria-live="polite">
-            <div class="wwebEmpty small">Cargando…</div>
-          </div>
+        <div class="tableWrap" id="wwebTableWrap">
+          <table class="table wwebTable">
+            <thead>
+              <tr>
+                <th>Tenant</th>
+                <th>Número</th>
+                <th>Estado</th>
+                <th>Holder</th>
+                <th>Host</th>
+                <th>Inicio</th>
+                <th>Último heartbeat</th>
+                <th>Política</th>
+                <th style="width:240px">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="wwebBody">
+              <tr><td colspan="9" class="small">Cargando…</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -1311,15 +1285,12 @@ function wwebSessionsAdminPage({ user }) {
     <script>
     (function(){
       var IS_SUPER = ${isSuper ? "true" : "false"};
-
-      var listEl = document.getElementById('wwebList');
-      var msgEl  = document.getElementById('wwebMsg');
-      var lastEl = document.getElementById('wwebLast');
-      var spin   = document.getElementById('wwebSpin');
+      var body = document.getElementById('wwebBody');
+      var msg = document.getElementById('wwebMsg');
+      var statusEl = document.getElementById('wwebStatus');
+      var tableWrap = document.getElementById('wwebTableWrap');
       var inflight = false;
-      var lastHtml = '';
-
-      if(!listEl) return;
+      var lastHtml = null;
 
       function fmtDate(v){
         if(!v) return "";
@@ -1351,17 +1322,7 @@ function wwebSessionsAdminPage({ user }) {
         });
       }
 
-      function setLoading(on){
-        if(spin) spin.style.display = on ? 'inline-block' : 'none';
-      }
-
-      function setLastUpdated(d){
-        if(!lastEl) return;
-        var dt = d || new Date();
-        lastEl.textContent = 'Última actualización: ' + dt.toLocaleTimeString();
-      }
-
-      function renderCard(lock, nowMs){
+      function renderRow(lock, nowMs){
         var last = lock.lastSeenAt ? new Date(lock.lastSeenAt).getTime() : 0;
         var ageSec = last ? Math.round((nowMs - last)/1000) : null;
         var active = last && (nowMs - last) <= 30000; // 30s
@@ -1385,216 +1346,128 @@ function wwebSessionsAdminPage({ user }) {
           : '<div>Cualquiera</div>';
         if (blockedHosts.length) policyHtml += '<div class="small">Bloqueadas: ' + blockedHosts.length + '</div>';
 
-        // Acciones: principales + menú "Más"
-        var lockId = String(lock.lockId || lock._id || lock.id || "");
+        var actions = '';
+        actions += '<button class="btn2" type="button" data-action="history" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Historial</button>';
 
-        var primary = '';
-        primary += '<button class="btn2" type="button" data-action="qr" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">QR</button>';
-        primary += '<button class="btn2" type="button" data-action="history" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Historial</button>';
-        primary += '<button class="btn2 btnDanger" type="button" data-action="release" data-id="' + escapeHtml(lockId) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Liberar</button>';
-
-        var extra = '';
-
+        // Modo: fijar o permitir cualquiera
         if (mode !== "pinned" || pinnedHost !== host) {
-          extra += '<button class="btn2" type="button" data-action="pin" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Fijar a esta PC</button>';
+          actions += '<button class="btn2" type="button" data-action="pin" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Fijar a esta PC</button>';
         } else {
-          extra += '<button class="btn2" type="button" data-action="any" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Permitir cualquiera</button>';
+          actions += '<button class="btn2" type="button" data-action="any" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Permitir cualquiera</button>';
         }
 
+        // Bloqueo por host
         if (host) {
-          extra += isBlocked
+          actions += isBlocked
             ? '<button class="btn2" type="button" data-action="unblock" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Desbloquear PC</button>'
             : '<button class="btn2" type="button" data-action="block" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Bloquear PC</button>';
         }
 
-        extra += (IS_SUPER
-          ? '<button class="btn2" type="button" data-action="reset" data-id="' + escapeHtml(lockId) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Reset Auth</button>'
-          : '');
+        // Acciones sobre el lock
+        actions += '<button class="btn2 btnDanger" type="button" data-action="release" data-id="' + escapeHtml(lock._id) + '">Liberar</button>';
+        actions += (IS_SUPER ? '<button class="btn2" type="button" data-action="reset" data-id="' + escapeHtml(lock._id) + '">Reset Auth</button>' : '');
 
-var more = '';
-        if (extra) {
-          more = ''
-            + '<details class="wwebMore">'
-            + '  <summary class="btn2 wwebMoreSummary">Más ▾</summary>'
-            + '  <div class="wwebMorePanel">' + extra + '</div>'
-            + '</details>';
-        }
-
-        var ageHtml = (ageSec !== null) ? ('<span class="small wwebAge">hace ' + ageSec + 's</span>') : '';
-
-        var holder = String(lock.holderId || lock.instanceId || "");
-        var startedAt = fmtDate(lock.startedAt);
-        var lastSeenAt = fmtDate(lock.lastSeenAt);
+        var ageHtml = (ageSec !== null) ? ('<div class="small">hace ' + ageSec + 's</div>') : '';
 
         return ''
-          + '<div class="wwebCard">'
-          + '  <div class="wwebCardHeader">'
-          + '    <div class="wwebId">'
-          + '      <div class="wwebTenant">' + escapeHtml(tenantId || '-') + '</div>'
-          + '      <div class="wwebNumero">' + escapeHtml(numero || '-') + '</div>'
-          + '    </div>'
-          + '    <div class="wwebState">' + stateBadge + ' ' + ageHtml + '</div>'
-          + '  </div>'
-          + '  <div class="wwebMeta">'
-          + '    <div class="wwebField"><div class="k">Holder</div><div class="v mono">' + escapeHtml(holder || '-') + '</div></div>'
-          + '    <div class="wwebField"><div class="k">Host</div><div class="v mono">' + escapeHtml(host || '-') + '</div></div>'
-          + '    <div class="wwebField"><div class="k">Inicio</div><div class="v">' + escapeHtml(startedAt || '-') + '</div></div>'
-          + '    <div class="wwebField"><div class="k">Último heartbeat</div><div class="v">' + escapeHtml(lastSeenAt || '-') + '</div></div>'
-          + '    <div class="wwebField wwebPolicy"><div class="k">Política</div><div class="v">' + policyHtml + '</div></div>'
-          + '  </div>'
-          + '  <div class="wwebActions">'
-          + '    <div class="wwebActionsMain">' + primary + more + '</div>'
-          + '  </div>'
-          + '</div>';
+          + '<tr>'
+          + '<td>' + escapeHtml(tenantId) + '</td>'
+          + '<td>' + escapeHtml(numero) + '</td>'
+          + '<td>' + stateBadge + ageHtml + '</td>'
+          + '<td>' + escapeHtml(lock.holderId || lock.instanceId || "") + '</td>'
+          + '<td>' + escapeHtml(host) + '</td>'
+          + '<td>' + escapeHtml(fmtDate(lock.startedAt)) + '</td>'
+          + '<td>' + escapeHtml(fmtDate(lock.lastSeenAt)) + '</td>'
+          + '<td>' + policyHtml + '</td>'
+          + '<td><div class="actionsWrap">' + actions + '</div></td>'
+          + '</tr>';
+      }
+
+      function setLoading(on){
+        if(!tableWrap) return;
+        if(on) tableWrap.setAttribute('data-loading','1');
+        else tableWrap.removeAttribute('data-loading');
       }
 
       function load(opts){
         opts = opts || {};
-        if(inflight) return inflight;
+        var initial = !!opts.initial;
 
-        if(opts.showLoading || opts.initial){
-          listEl.innerHTML = '<div class="wwebEmpty small">Cargando…</div>';
+        if(document.hidden && !opts.force) return;
+        if(inflight) return;
+        inflight = true;
+
+        // Solo mostramos "Cargando…" en la primera carga real (evita parpadeo)
+        if(initial && body && !body.__didInitial){
+          body.innerHTML = '<tr><td colspan="9" class="small">Cargando…</td></tr>';
+          body.__didInitial = true;
         }
 
         setLoading(true);
-        inflight = api('/api/wweb/locks', { method:'GET' })
+        return api('/api/wweb/locks', { method:'GET' })
           .then(function(data){
-            var locks = (data && Array.isArray(data.locks)) ? data.locks : [];
-            var nowMs = data && data.now ? new Date(data.now).getTime() : Date.now();
+            var locks = Array.isArray(data.locks) ? data.locks : [];
+            var nowMs = data.now ? new Date(data.now).getTime() : Date.now();
 
+            var html = '';
             if(!locks.length){
-              var emptyHtml = '<div class="wwebEmpty small">No hay sesiones registradas.</div>';
-              if(emptyHtml !== lastHtml){
-                listEl.innerHTML = emptyHtml;
-                lastHtml = emptyHtml;
-              }
-              setLastUpdated(new Date());
-              return;
+              html = '<tr><td colspan="9" class="small">No hay sesiones registradas.</td></tr>';
+            } else {
+              html = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
             }
 
-            var html = locks.map(function(l){ return renderCard(l, nowMs); }).join('');
+            // Evita parpadeo: solo repinta si cambió
             if(html !== lastHtml){
-              listEl.innerHTML = html;
+              var sx = tableWrap ? tableWrap.scrollLeft : 0;
+              var sy = tableWrap ? tableWrap.scrollTop : 0;
+              body.innerHTML = html;
+              if(tableWrap){
+                tableWrap.scrollLeft = sx;
+                tableWrap.scrollTop = sy;
+              }
               lastHtml = html;
             }
-            setLastUpdated(new Date((data && data.now) || Date.now()));
+
+            if(statusEl){
+              statusEl.textContent = 'Última actualización: ' + new Date(nowMs).toLocaleTimeString();
+            }
+            if(msg) msg.textContent = '';
           })
           .catch(function(e){
-            if(msgEl) msgEl.textContent = 'Error: ' + (e.message || e);
-            if(!lastHtml){
-              var errHtml = '<div class="wwebEmpty small">Error: ' + escapeHtml(e.message || e) + '</div>';
-              listEl.innerHTML = errHtml;
-              lastHtml = errHtml;
+            if(statusEl){
+              statusEl.textContent = 'Error actualizando: ' + (e.message || e);
+            }
+            // Si nunca cargó nada, mostramos error en la tabla
+            if(lastHtml == null){
+              body.innerHTML = '<tr><td colspan="9" class="small">Error: ' + escapeHtml(e.message || e) + '</td></tr>';
+              lastHtml = body.innerHTML;
             }
           })
           .finally(function(){
-            setLoading(false);
             inflight = false;
+            setLoading(false);
           });
-
-        return inflight;
       }
 
-      function doRelease(id, resetAuth, tenant, numero){
+      function doRelease(id, resetAuth){
         var txt = resetAuth
           ? '¿Resetear autenticación? Esto borrará la sesión guardada y pedirá QR de nuevo.'
           : '¿Liberar lock? (la PC actual se desconectará en el próximo heartbeat)';
         if(!confirm(txt)) return;
 
-        api('/api/wweb/release', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, lockId: id, resetAuth: !!resetAuth }) })
+        api('/api/wweb/release', { method:'POST', body: JSON.stringify({ lockId: id, resetAuth: !!resetAuth }) })
           .then(function(){
-            if (msgEl) msgEl.textContent = resetAuth ? 'Sesión reseteada.' : 'Lock liberado.';
+            msg.textContent = resetAuth ? 'Sesión reseteada.' : 'Lock liberado.';
             return load();
           })
-          .catch(function(e){ alert('Error: ' + (e.message || e)); });
+          .catch(function(e){
+            alert('Error: ' + (e.message || e));
+          });
       }
 
-      var qrModal = null;
-      var qrTimer = null;
-
-      function ensureQrModal(){
-        if(qrModal) return qrModal;
-        var wrap = document.createElement('div');
-        wrap.id = 'qrModal';
-        wrap.style.position = 'fixed';
-        wrap.style.left = '0';
-        wrap.style.top = '0';
-        wrap.style.right = '0';
-        wrap.style.bottom = '0';
-        wrap.style.background = 'rgba(0,0,0,0.45)';
-        wrap.style.display = 'none';
-        wrap.style.alignItems = 'center';
-        wrap.style.justifyContent = 'center';
-        wrap.style.zIndex = '9999';
-
-        wrap.innerHTML = ''
-          + '<div class="card" style="max-width:560px;width:92vw;padding:16px;box-shadow:0 12px 40px rgba(0,0,0,.35)">'
-          + '  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">'
-          + '    <div>'
-          + '      <div style="font-weight:700;font-size:16px">QR de WhatsApp</div>'
-          + '      <div id="qrMeta" class="small" style="margin-top:4px"></div>'
-          + '    </div>'
-          + '    <button id="qrClose" class="btn2" type="button">Cerrar</button>'
-          + '  </div>'
-          + '  <div id="qrBody" style="margin-top:12px;display:flex;flex-direction:column;gap:10px">'
-          + '    <div class="small">Cargando…</div>'
-          + '  </div>'
-          + '</div>';
-
-        document.body.appendChild(wrap);
-        wrap.addEventListener('click', function(ev){
-          if(ev.target === wrap) hideQr();
-        });
-        wrap.querySelector('#qrClose').addEventListener('click', hideQr);
-
-        qrModal = wrap;
-        return wrap;
-      }
-
-      function hideQr(){
-        if(qrTimer){ clearInterval(qrTimer); qrTimer = null; }
-        if(qrModal) qrModal.style.display = 'none';
-      }
-
-      function renderQr(data){
-        var meta = qrModal.querySelector('#qrMeta');
-        var body = qrModal.querySelector('#qrBody');
-
-        var at = data.qrAt ? new Date(data.qrAt).toLocaleString() : '-';
-        meta.textContent = (data.tenantId || '') + ' · ' + (data.numero || '') + ' · estado: ' + (data.state || '-') + ' · qrAt: ' + at;
-
-        if(!data.qrDataUrl){
-          body.innerHTML = '<div class="small">No hay QR disponible ahora. Si el cliente ya está autenticado, esto es normal.</div>';
-          return;
-        }
-
-        body.innerHTML = ''
-          + '<img alt="QR" src="' + data.qrDataUrl + '" style="width:320px;max-width:100%;height:auto;border-radius:10px;border:1px solid rgba(0,0,0,.08);background:#fff;padding:10px;margin:0 auto" />'
-          + '<div class="small">Escanealo con WhatsApp &gt; Dispositivos vinculados.</div>';
-      }
-
-      function showQr(tenant, numero){
-        ensureQrModal();
-        qrModal.style.display = 'flex';
-        qrModal.querySelector('#qrBody').innerHTML = '<div class="small">Cargando…</div>';
-
-        function fetchOnce(){
-          return api('/api/wweb/qr?tenantId=' + encodeURIComponent(tenant) + '&numero=' + encodeURIComponent(numero), { method:'GET' })
-            .then(function(data){ renderQr(data); })
-            .catch(function(e){
-              qrModal.querySelector('#qrBody').innerHTML = '<div class="small">Error: ' + escapeHtml(e.message || e) + '</div>';
-            });
-        }
-
-        if(qrTimer){ clearInterval(qrTimer); qrTimer = null; }
-        fetchOnce();
-        qrTimer = setInterval(fetchOnce, 2500);
-      }
-
-      listEl.addEventListener('click', function(e){
+      body.addEventListener('click', function(e){
         var btn = e.target && e.target.closest ? e.target.closest('button[data-action]') : null;
         if(!btn) return;
-
         var act = btn.getAttribute('data-action');
         var id = btn.getAttribute('data-id');
 
@@ -1602,10 +1475,8 @@ var more = '';
         var numero = btn.getAttribute('data-numero') || "";
         var host = btn.getAttribute('data-host') || "";
 
-        if(act === 'qr') return showQr(tenant, numero);
-
-        if(act === 'release') return doRelease(id, false, tenant, numero);
-        if(act === 'reset') return doRelease(id, true, tenant, numero);
+        if(act === 'release') return doRelease(id, false);
+        if(act === 'reset') return doRelease(id, true);
 
         if(act === 'pin'){
           if(!confirm('¿Configurar para que esta sesión SOLO inicie en esta PC? PC: ' + host)) return;
@@ -1639,87 +1510,43 @@ var more = '';
                 var t = it.at ? new Date(it.at).toLocaleString() : '';
                 return t + ' | ' + (it.event || '') + ' | ' + (it.host || '') + ' | ' + (it.by || '');
               });
-              alert(lines.join(String.fromCharCode(10)));
+              alert(lines.join('\\n'));
+              
             })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
         }
       });
 
-      window.__wwebReload = load;
-
-      var pollMs = 8000;
-      setInterval(function(){
-        if(document.hidden) return;
-        load({});
-      }, pollMs);
-      document.addEventListener('visibilitychange', function(){
-        if(!document.hidden) load({});
-      });
-      load({ initial:true, showLoading:true });
+      window.__wwebReload = function(){ return load({ force:true }); };
+      load({ initial:true });
+      setInterval(function(){ if(document.hidden) return; load(); }, 8000);
+      document.addEventListener('visibilitychange', function(){ if(!document.hidden) load(); });
     })();
     </script>
 
     <style>
+      /* Ajustes específicos de /admin/wweb */
+      .appWide{width:100%; max-width:none;}
+      .toolbar{display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap}
+      .toolbarActions{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+
+      .tableWrap{overflow:auto; max-width:100%; -webkit-overflow-scrolling:touch}
+      .tableWrap[data-loading="1"]{opacity:.75}
+
+      .wwebTable{width:100%; min-width:860px}
+      .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:1}
+      .wwebTable tbody tr:nth-child(even){background: rgba(16,24,40,.02)}
+
+      /* Por defecto compacto; permitimos wrap en columnas largas */
+      .wwebTable td, .wwebTable th{white-space:nowrap}
+      .wwebTable td:nth-child(4), .wwebTable td:nth-child(5){max-width:260px; white-space:normal; word-break:break-word}
+      .wwebTable td:nth-child(8){white-space:normal}
+      .wwebTable td:last-child{white-space:normal; min-width:240px}
+
       .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700}
       .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
       .badgeWarn{background:#b453091a; color:#b45309; border:1px solid #b4530955}
-
-      .wwebCards{display:flex; flex-direction:column; gap:12px}
-      .wwebEmpty{padding:14px 12px}
-      .wwebCard{
-        border: 1px solid rgba(16,24,40,.10);
-        background: rgba(255,255,255,.96);
-        border-radius: 14px;
-        overflow:hidden;
-      }
-      .wwebCardHeader{
-        display:flex; align-items:flex-start; justify-content:space-between;
-        gap:12px;
-        padding:12px 12px 10px;
-        border-bottom:1px solid rgba(16,24,40,.08);
-      }
-      .wwebId{display:flex; flex-direction:column; gap:2px}
-      .wwebTenant{font-weight:800; font-size:13px; opacity:.9}
-      .wwebNumero{font-weight:800; font-size:15px}
-      .wwebState{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
-      .wwebAge{opacity:.75}
-      .wwebMeta{
-        display:grid;
-        grid-template-columns: repeat(12, 1fr);
-        gap:10px;
-        padding:12px;
-      }
-      .wwebField{grid-column: span 6; min-width:0}
-      .wwebField .k{font-size:12px; opacity:.7; margin-bottom:2px}
-      .wwebField .v{font-size:13px; overflow-wrap:anywhere; word-break:break-word}
-      .wwebField .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
-      .wwebPolicy{grid-column: span 12}
-      @media (max-width: 860px){
-        .wwebField{grid-column: span 12}
-      }
-      .wwebActions{padding:12px; border-top:1px solid rgba(16,24,40,.08)}
-      .wwebActionsMain{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
-      .wwebMore{position:relative}
-      .wwebMoreSummary{list-style:none; cursor:pointer}
-      .wwebMoreSummary::-webkit-details-marker{display:none}
-      .wwebMorePanel{
-        margin-top:8px;
-        display:flex; flex-wrap:wrap; gap:8px;
-        padding:10px;
-        border:1px solid rgba(16,24,40,.10);
-        border-radius:12px;
-        background: rgba(16,24,40,.03);
-      }
-      .wwebSpin{
-        width:16px; height:16px; border-radius:50%;
-        border:2px solid rgba(255,255,255,.35);
-        border-top-color:#fff;
-        display:inline-block;
-        animation:wwebSpin 0.9s linear infinite;
-        vertical-align:-3px;
-      }
-      @keyframes wwebSpin{to{transform:rotate(360deg)}}
-    </style>
+    </style>>
     `,
   });
 }
@@ -2455,48 +2282,6 @@ function mountAuthRoutes(app) {
     }
   });
 
-
-  // Devuelve el último QR persistido en el lock (si existe) para mostrarlo en /admin/wweb.
-  // Requiere que el proceso app_asisto_ws actualice wa_locks.qrDataUrl/qrAt cuando recibe el QR.
-  app.get("/api/wweb/qr", requireAuth, requireAdmin, async (req, res) => {
-    try {
-      const db = await getDb();
-      const isSuper = String(req.user?.role || "") === "superadmin";
-
-      // Params
-      const qTenant = String(req.query?.tenantId || req.query?.tenant || "").trim();
-      const qNumero = String(req.query?.numero || req.query?.number || "").trim();
-
-      const tenantId = isSuper ? (qTenant || String(req.user?.tenantId || "")) : String(req.user?.tenantId || "");
-      const numero = qNumero;
-
-      if (!tenantId || !numero) return res.status(400).json({ ok: false, error: "tenantId y numero requeridos" });
-
-      const lockId = tenantId + ":" + numero;
-
-      const doc = await db.collection("wa_locks").findOne(
-        { _id: lockId },
-        { projection: { _id: 1, tenantId: 1, numero: 1, state: 1, host: 1, holderId: 1, lastSeenAt: 1, qrDataUrl: 1, qrAt: 1 } }
-      );
-
-      return res.json({
-        ok: true,
-        tenantId,
-        numero,
-        lockId,
-        state: doc?.state || null,
-        host: doc?.host || null,
-        holderId: doc?.holderId || null,
-        lastSeenAt: doc?.lastSeenAt || null,
-        qrAt: doc?.qrAt || null,
-        qrDataUrl: doc?.qrDataUrl || null
-      });
-    } catch (e) {
-      console.error("api/wweb/qr error:", e);
-      return res.status(500).json({ ok: false, error: "Error leyendo QR." });
-    }
-  });
-
   // Libera un lock. Si resetAuth=true, además borra la sesión persistida de wwebjs-mongo (requiere QR de nuevo).
   app.post("/api/wweb/release", requireAuth, requireAdmin, async (req, res) => {
     try {
@@ -2669,227 +2454,6 @@ function mountAuthRoutes(app) {
       return res.status(500).json({ ok: false, error: "Error creando acción." });
     }
   });
-
-// =========================
-// Admin: Configuración por tenant (en Mongo)
-// =========================
-function configAdminPage({ user, tenantId, configObj, tenants, msg, err }) {
-  const isSuper = String(user?.role || "") === "superadmin";
-
-  const pretty = (() => {
-    try { return JSON.stringify(configObj || {}, null, 2); } catch { return "{}"; }
-  })();
-
-  const tenantSelect = isSuper
-    ? `<form method="GET" action="/admin/config" style="margin:0; display:flex; gap:10px; align-items:center; flex-wrap:wrap">
-        <label class="small">Tenant:</label>
-        <select name="tenantId" class="input" onchange="this.form.submit()">
-          ${(tenants || [])
-            .map((t) => {
-              const sel = String(t) === String(tenantId) ? "selected" : "";
-              return `<option value="${htmlEscape(String(t))}" ${sel}>${htmlEscape(String(t))}</option>`;
-            })
-            .join("")}
-        </select>
-        <noscript><button class="btn2" type="submit">Ver</button></noscript>
-      </form>`
-    : `<div class="small">Tenant: <strong>${htmlEscape(String(tenantId || ""))}</strong></div>`;
-
-  const message = msg ? `<div class="msg ok">${htmlEscape(msg)}</div>` : "";
-  const error = err ? `<div class="msg err">${htmlEscape(err)}</div>` : "";
-
-  // Botón eliminar (solo superadmin)
-  const deleteBtn = isSuper
-    ? `<form method="POST" action="/admin/config/delete" onsubmit="return confirm('¿Eliminar configuración del tenant ' + ${JSON.stringify(
-        String(tenantId || "")
-      )} + '?');" style="margin:0">
-        <input type="hidden" name="tenantId" value="${htmlEscape(String(tenantId || ""))}"/>
-        <button class="btn2" type="submit" style="border-color:rgba(240,68,56,.35); color:#b42318">Eliminar</button>
-      </form>`
-    : "";
-
-  return appShell({
-    title: "Configuración · Asisto",
-    user,
-    active: "config",
-    main: `
-      <div class="app appWide">
-        <div class="toolbar">
-          <div>
-            <h2 style="margin:0 0 6px">Configuración</h2>
-            <div class="small">
-              La configuración se guarda en Mongo por tenant (colección <code>tenant_config</code> por defecto).
-              En <code>configuracion.json</code> solo queda <code>tenantId</code> + <code>mongo_uri</code>/<code>mongo_db</code>.
-            </div>
-          </div>
-          <div class="toolbarActions">
-            ${tenantSelect}
-          </div>
-        </div>
-
-        ${message}
-        ${error}
-
-        <div class="card" style="margin-top:14px">
-          <div class="small" style="margin-bottom:10px">
-            Editá el JSON (sin <code>tenantId</code> ni <code>mongo_uri</code>/<code>mongo_db</code>). Guardar hace upsert.
-          </div>
-
-          <form method="POST" action="/admin/config/save" style="display:flex; flex-direction:column; gap:10px">
-            <input type="hidden" name="tenantId" value="${htmlEscape(String(tenantId || ""))}"/>
-            <textarea
-              name="json"
-              class="input"
-              style="font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; min-height:420px; white-space:pre; overflow:auto"
-            >${htmlEscape(pretty)}</textarea>
-
-            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center">
-              <button class="btn" type="submit">Guardar</button>
-              ${deleteBtn}
-              <a class="btn2" href="/admin/config${isSuper ? `?tenantId=${encodeURIComponent(String(tenantId || ""))}` : ""}" style="text-decoration:none">Recargar</a>
-            </div>
-          </form>
-        </div>
-      </div>
-    `,
-  });
-}
-
-async function getTenantConfigDoc(db, tenantId) {
-  const collName = String(process.env.ASISTO_CONFIG_COLLECTION || "tenant_config").trim() || "tenant_config";
-  const coll = db.collection(collName);
-  let doc = await coll.findOne({ _id: tenantId });
-  if (!doc) doc = await coll.findOne({ tenantId: tenantId });
-  return doc;
-}
-
-app.get("/admin/config", requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const db = await getDb();
-    const user = req.user;
-    const isSuper = user && user.role === "superadmin";
-
-    const requestedTenant = String(req.query.tenantId || "").trim();
-    const tenantId = isSuper && requestedTenant ? requestedTenant : user.tenantId;
-
-    const doc = await getTenantConfigDoc(db, tenantId);
-    let configObj = (doc && (doc.configuracion || doc.config || doc.data)) || {};
-// Si viene vacío o no existe, intentamos usar el documento "plano" (campos al root)
-const isPlainObj = (v) => v && typeof v === "object" && !Array.isArray(v);
-if (!isPlainObj(configObj) || !Object.keys(configObj).length) {
-  if (isPlainObj(doc)) {
-    const copy = { ...doc };
-    // removemos metadatos/duplicados
-    delete copy._id;
-    delete copy.tenantId;
-    delete copy.configuracion;
-    delete copy.config;
-    delete copy.data;
-    delete copy.createdAt;
-    delete copy.updatedAt;
-    delete copy.updatedBy;
-    delete copy.__v;
-    // nunca mostramos credenciales
-    delete copy.mongo_uri;
-    delete copy.mongo_db;
-    delete copy.mongoUri;
-    delete copy.mongoDb;
-    configObj = copy;
-  } else {
-    configObj = {};
-  }
-}
-if (!isPlainObj(configObj)) configObj = {};
-let tenants = null;
-    if (isSuper) {
-      const collName = String(process.env.ASISTO_CONFIG_COLLECTION || "tenant_config").trim() || "tenant_config";
-      const coll = db.collection(collName);
-      // OJO: no usamos distinct() porque rompe con Mongo Stable API (apiStrict=true)
-      const rows = await coll.find({}, { projection: { _id: 1 } }).toArray();
-      tenants = (rows || []).map((r) => String(r && r._id ? r._id : "")).filter(Boolean).sort();
-      if (!tenants.length) tenants = [String(tenantId)];
-      if (!tenants.includes(String(tenantId))) tenants.unshift(String(tenantId));
-    }
-
-    return res.send(
-      configAdminPage({
-        user,
-        tenantId,
-        configObj,
-        tenants,
-        msg: req.query.msg ? String(req.query.msg) : "",
-        err: req.query.err ? String(req.query.err) : "",
-      })
-    );
-  } catch (e) {
-    return res.status(500).send("Error cargando configuración: " + htmlEscape(String(e && e.message ? e.message : e)));
-  }
-});
-
-app.post("/admin/config/save", requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const db = await getDb();
-    const user = req.user;
-    const isSuper = user && user.role === "superadmin";
-    const tenantId = String(req.body.tenantId || "").trim();
-
-    if (!tenantId) return res.redirect("/admin/config?err=" + encodeURIComponent("tenantId requerido"));
-    if (!isSuper && tenantId !== user.tenantId) {
-      return res.redirect("/admin/config?err=" + encodeURIComponent("Sin permiso para editar otro tenant"));
-    }
-
-    const raw = String(req.body.json || "").trim();
-    let obj;
-    try {
-      obj = raw ? JSON.parse(raw) : {};
-    } catch (e) {
-      return res.redirect(
-        "/admin/config" +
-          (isSuper ? `?tenantId=${encodeURIComponent(tenantId)}` : "") +
-          "&err=" +
-          encodeURIComponent("JSON inválido: " + String(e && e.message ? e.message : e))
-      );
-    }
-
-    if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
-      return res.redirect(
-        "/admin/config" +
-          (isSuper ? `?tenantId=${encodeURIComponent(tenantId)}` : "") +
-          "&err=" +
-          encodeURIComponent("El JSON debe ser un objeto")
-      );
-    }
-
-    // Nunca persistimos credenciales/DB en este doc
-    delete obj.tenantId;
-    delete obj.mongo_uri;
-    delete obj.mongo_db;
-
-    const collName = String(process.env.ASISTO_CONFIG_COLLECTION || "tenant_config").trim() || "tenant_config";
-    const coll = db.collection(collName);
-
-    const now = new Date();
-    await coll.updateOne(
-      { _id: tenantId },
-      {
-        $setOnInsert: { createdAt: now, tenantId },
-        $set: { tenantId, configuracion: obj, updatedAt: now, updatedBy: String(user?.username || user?.user || user?.email || "") },
-      },
-      { upsert: true }
-    );
-
-    return res.redirect(
-      "/admin/config" +
-        (isSuper ? `?tenantId=${encodeURIComponent(tenantId)}` : "") +
-        "&msg=" +
-        encodeURIComponent("Configuración guardada")
-    );
-  } catch (e) {
-    return res.redirect("/admin/config?err=" + encodeURIComponent(String(e && e.message ? e.message : e)));
-  }
-});
-
-
 
 }
 

@@ -304,17 +304,34 @@ function clearEndedFlag(tenantId, from) {
 }
 
 // ================== WhatsApp ==================
-async function sendWhatsAppMessage(to, text) {
+/**
+ * Envía un mensaje por WhatsApp Cloud API.
+ * Retrocompatible: si no pasás opts, usa variables de entorno (como antes).
+ *
+ * @param {string} to
+ * @param {string} text
+ * @param {{whatsappToken?: string, phoneNumberId?: string}=} opts
+ */
+async function sendWhatsAppMessage(to, text, opts = {}) {
   try {
     const body = String(text ?? "").trim();
     if (!body) {
       console.error("WhatsApp: intento de envío con text.body vacío. Se omite el envío.");
       return;
     }
+
+    const token = String(opts.whatsappToken || WHATSAPP_TOKEN || "").trim();
+    const phoneNumberId = String(opts.phoneNumberId || PHONE_NUMBER_ID || "").trim();
+
+    if (!token || !phoneNumberId) {
+      console.error("WhatsApp: faltan credenciales (token/phoneNumberId).");
+      return;
+    }
+
     await axios.post(
-      `https://graph.facebook.com/${GRAPH_API_VERSION}/${PHONE_NUMBER_ID}/messages`,
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`,
       { messaging_product: "whatsapp", to, text: { body } },
-      { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" } }
+      { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
     );
   } catch (error) {
     console.error("Error enviando WhatsApp:", error.response?.data || error.message);
@@ -322,16 +339,17 @@ async function sendWhatsAppMessage(to, text) {
 }
 
 // ================== Media (audio) ==================
-async function getMediaInfo(mediaId) {
-  const token = WHATSAPP_TOKEN;
+
+async function getMediaInfo(mediaId, opts = {}) {
+  const token = String(opts.whatsappToken || WHATSAPP_TOKEN || "").trim();
   if (!token || !mediaId) throw new Error("media_info_missing");
   const url = `https://graph.facebook.com/${GRAPH_VERSION}/${mediaId}`;
   const resp = await fetch(`${url}?fields=url,mime_type`, { headers: { Authorization: `Bearer ${token}` } });
   if (!resp.ok) throw new Error(`media_info_failed_${resp.status}`);
   return resp.json();
 }
-async function downloadMediaBuffer(mediaUrl) {
-  const token = WHATSAPP_TOKEN;
+async function downloadMediaBuffer(mediaUrl, opts = {}) {
+  const token = String(opts.whatsappToken || WHATSAPP_TOKEN || "").trim();
   const resp = await fetch(mediaUrl, { headers: { Authorization: `Bearer ${token}` } });
   if (!resp.ok) throw new Error(`download_media_failed_${resp.status}`);
   const ab = await resp.arrayBuffer();
@@ -339,7 +357,7 @@ async function downloadMediaBuffer(mediaUrl) {
 }
 
 // ================== STT (externo -> fallback OpenAI) ==================
-async function transcribeAudioExternal({ publicAudioUrl, buffer, mime }) {
+async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApiKey } = {}) {
   const prefer = TRANSCRIBE_API_URL;
   if (prefer && publicAudioUrl) {
     try {
@@ -357,7 +375,8 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime }) {
     }
   }
   try {
-    if (!openai) return { text: "" };
+    const client = getOpenAIClient(openaiApiKey);
+    if (!client) return { text: "" };
     let buf = buffer, mt = mime;
     if (!buf && publicAudioUrl) {
       const r2 = await fetch(publicAudioUrl);
@@ -375,7 +394,7 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime }) {
       const FileCtor = global.File || require("node:buffer").Blob;
       fileObj = new FileCtor([buf], `audio.${ext}`, { type: mt || "audio/ogg" });
     }
-    const r = await openai.audio.transcriptions.create({ file: fileObj, model: TRANSCRIBE_MODEL });
+    const r = await client.audio.transcriptions.create({ file: fileObj, model: TRANSCRIBE_MODEL });
     const text = (r.text || "").trim();
     return { text, usage: r.usage || null, engine: "openai" };
   } catch (e) {
@@ -396,7 +415,7 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime }) {
  * @param {string} params.purpose "payment-proof" | "generic"
  * @returns {{json: object|null, userText: string}}
  */
-async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic" } = {}) {
+async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic", openaiApiKey } = {}) {
   try {
     if (!publicImageUrl) {
       return { json: null, userText: "[imagen]" };
@@ -414,7 +433,10 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic" 
       ? "Analizá esta imagen que probablemente sea un comprobante de pago o transferencia. Extraé los datos visibles."
       : "Describí brevemente la imagen y extraé cualquier texto visible.";
 
-    const resp = await openai.chat.completions.create({
+    const client = getOpenAIClient(openaiApiKey);
+    if (!client) return { json: null, userText: "[imagen]" };
+
+    const resp = await client.chat.completions.create({
       model: VISION_MODEL,
       temperature: 0,
       response_format: { type: "json_object" },
@@ -812,7 +834,7 @@ async function hydratePricesFromCatalog(pedido, tenantId) {
 
 
 // ================== Chat con historial (inyecta comportamiento de Mongo al inicio) ==================
-async function getGPTReply(tenantId, from, userMessage) {
+async function getGPTReply(tenantId, from, userMessage, opts = {}) {
   const id = k(tenantId, from);
   const cfg = await loadBehaviorConfigFromMongo(tenantId);
   const baseText = cfg.text;
@@ -871,7 +893,7 @@ async function getGPTReply(tenantId, from, userMessage) {
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       payload,
-      { headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" } }
+      { headers: { Authorization: `Bearer ${String(opts.openaiApiKey || OPENAI_API_KEY || "").trim()}`, "Content-Type": "application/json" } }
     );
 
     try {

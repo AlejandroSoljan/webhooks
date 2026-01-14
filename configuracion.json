@@ -1,7 +1,7 @@
 {"configuracion":
 {"direccion":"http://localhost",
 "puerto":8002,
- "headless":"false",
+ "headless":"true",
  "seg_desde":600,
  "seg_hasta":1000,
  "dsn":"msm_manager",
@@ -30,10 +30,11 @@
   "tema":".\\theme\\Flat Design Dark",
   "seg_tele":5000,
 
-    "tenantId": "prueba_ws_web",
+    "tenantId": "CARICO",
     "numero": "5493462674128",
     "mongo_uri": "mongodb+srv://info:jmkbxo2hAiK60t6Y@cluster0.rqoqjny.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0",
     "lease_ms": 30000,
-    "heartbeat_ms": 10000
+    "heartbeat_ms": 10000,
+    "mongo_db": "Cluster0"
 }
 }
