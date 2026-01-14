@@ -1298,7 +1298,7 @@ function wwebSessionsAdminPage({ user }) {
       </div>
 
       <div id="wwebMsg" class="small" style="margin-top:10px" aria-live="polite"></div>
-<div id="wwebLast" class="small" style="margin-top:4px;opacity:.8"></div>
+<div id="wwebLastSub" class="small" style="margin-top:4px;opacity:.8"></div>
       <div class="card" style="margin-top:14px">
         <div class="tableWrap" id="wwebTableWrap">
           <table class="table wwebTable">
@@ -1325,17 +1325,15 @@ function wwebSessionsAdminPage({ user }) {
 
     <script>
     (function(){
-             var body = document.getElementById('wwebBody');
-       
-      var msg = document.getElementById('wwebMsg');
-      var last = document.getElementById('wwebLast');
-      var lastHtml = '';
-var tableWrap = document.getElementById('wwebTableWrap');
+      var body = document.getElementById('wwebBody');
       var msg = document.getElementById('wwebMsg');
       var lastEl = document.getElementById('wwebLast');
+      var lastSubEl = document.getElementById('wwebLastSub');
+      var tableWrap = document.getElementById('wwebTableWrap');
       var spin = document.getElementById('wwebSpin');
       var inflight = false;
       var lastHtml = '';
+
       function fmtDate(v){
         if(!v) return "";
         try { return new Date(v).toLocaleString(); } catch (e) { return String(v); }
@@ -1391,28 +1389,44 @@ var tableWrap = document.getElementById('wwebTableWrap');
           : '<div>Cualquiera</div>';
         if (blockedHosts.length) policyHtml += '<div class="small">Bloqueadas: ' + blockedHosts.length + '</div>';
 
-        var actions = '';
-        actions += '<button class="btn2" type="button" data-action="qr" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">QR</button>';
-        actions += '<button class="btn2" type="button" data-action="history" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Historial</button>';
+        
+// ===== Acciones (compactas) =====
+function btn(act, label, extraCls){
+  return '<button class="btn2 ' + (extraCls||'') + '" type="button" data-action="' + act + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">' + label + '</button>';
+}
 
-        // Modo: fijar o permitir cualquiera
-        if (mode !== "pinned" || pinnedHost !== host) {
-          actions += '<button class="btn2" type="button" data-action="pin" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Fijar a esta PC</button>';
-        } else {
-          actions += '<button class="btn2" type="button" data-action="any" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Permitir cualquiera</button>';
-        }
+// Primarias (siempre visibles)
+var primary = '';
+primary += btn('qr', 'QR');
+primary += btn('history', 'Historial');
+primary += btn('release', 'Liberar', 'btnDanger');
 
-        // Bloqueo por host
-        if (host) {
-          actions += isBlocked
-            ? '<button class="btn2" type="button" data-action="unblock" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Desbloquear PC</button>'
-            : '<button class="btn2" type="button" data-action="block" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Bloquear PC</button>';
-        }
+// Secundarias (dentro del menú "Más")
+var more = '';
 
-        // Acciones sobre el lock
-        actions += '<button class="btn2 btnDanger" type="button" data-action="release" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Liberar</button>';
-        actions += (IS_SUPER ? '<button class="btn2" type="button" data-action="reset" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Reset Auth</button>' : '');
+// Modo: fijar o permitir cualquiera
+if (mode !== "pinned" || pinnedHost !== host) {
+  more += btn('pin', 'Fijar a esta PC');
+} else {
+  more += btn('any', 'Permitir cualquiera');
+}
 
+// Bloqueo por host
+if (host) {
+  more += isBlocked ? btn('unblock', 'Desbloquear PC') : btn('block', 'Bloquear PC');
+}
+
+// Reset Auth sólo superadmin
+if (IS_SUPER) more += btn('reset', 'Reset Auth');
+
+// HTML final
+var actions = '<div class="actionsWrap">' + primary;
+if (more) {
+  actions += '<details class="moreMenu"><summary class="btn2">Más ▾</summary><div class="morePanel">' + more + '</div></details>';
+}
+actions += '</div>';
+
+var ageHtml
         var ageHtml = (ageSec !== null) ? ('<div class="small">hace ' + ageSec + 's</div>') : '';
 
         return ''
@@ -1420,12 +1434,12 @@ var tableWrap = document.getElementById('wwebTableWrap');
   + '<td data-label="Tenant">' + escapeHtml(tenantId) + '</td>'
   + '<td data-label="Número">' + escapeHtml(numero) + '</td>'
   + '<td data-label="Estado">' + stateBadge + ageHtml + '</td>'
-  + '<td data-label="Holder">' + escapeHtml(lock.holderId || lock.instanceId || "") + '</td>'
-  + '<td data-label="Host">' + escapeHtml(host) + '</td>'
+  + '<td data-label="Holder"><span class="mono">' + escapeHtml(lock.holderId || lock.instanceId || "") + '</span></td>'
+  + '<td data-label="Host"><span class="mono">' + escapeHtml(host) + '</span></td>'
   + '<td data-label="Inicio">' + escapeHtml(fmtDate(lock.startedAt)) + '</td>'
   + '<td data-label="Último heartbeat">' + escapeHtml(fmtDate(lock.lastSeenAt)) + '</td>'
   + '<td data-label="Política">' + policyHtml + '</td>'
-  + '<td data-label="Acciones"><div class="actionsWrap">' + actions + '</div></td>'
+  + '<td data-label="Acciones">' + actions + '</td>'
   + '</tr>';
       }
 
@@ -1434,9 +1448,9 @@ var tableWrap = document.getElementById('wwebTableWrap');
 }
 
 function setLastUpdated(d){
-  if(!lastEl) return;
   var dt = d || new Date();
-  lastEl.textContent = 'Última actualización: ' + dt.toLocaleTimeString();
+  if(lastEl) lastEl.textContent = 'Última actualización: ' + dt.toLocaleTimeString();
+  if(lastSubEl) lastSubEl.textContent = 'Última actualización: ' + dt.toLocaleString();
 }
 
 function load(opts){
@@ -1669,8 +1683,8 @@ function doRelease(id, resetAuth, tenant, numero){
   .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
   .badgeWarn{background:#b453091a; color:#b45309; border:1px solid #b4530955}
 
-  /* Evitar scroll horizontal: dejar que las celdas se envuelvan */
-  .tableWrap{overflow-x:hidden}
+  /* Tabla: permitir scroll horizontal si hiciera falta (y evitar que se "corte") */
+  .tableWrap{overflow:auto; max-width:100%; -webkit-overflow-scrolling:touch}
   .wwebTable{width:100%; table-layout:fixed}
   .wwebTable th, .wwebTable td{
     white-space:normal;
@@ -1678,18 +1692,42 @@ function doRelease(id, resetAuth, tenant, numero){
     word-break:break-word;
     vertical-align:top;
   }
-  .wwebTable th:nth-child(1){width:90px}
-  .wwebTable th:nth-child(2){width:140px}
-  .wwebTable th:nth-child(3){width:110px}
-  .wwebTable th:nth-child(4){width:230px}
-  .wwebTable th:nth-child(5){width:160px}
-  .wwebTable th:nth-child(6){width:160px}
-  .wwebTable th:nth-child(7){width:160px}
-  .wwebTable th:nth-child(8){width:170px}
-  .wwebTable th:nth-child(9){width:240px}
 
-  .actionsWrap{display:flex; flex-wrap:wrap; gap:8px}
+  /* Ajuste de anchos (menos rigidez = más legible) */
+  .wwebTable th:nth-child(1){width:90px}
+  .wwebTable th:nth-child(2){width:150px}
+  .wwebTable th:nth-child(3){width:120px}
+  .wwebTable th:nth-child(4){width:230px}
+  .wwebTable th:nth-child(5){width:170px}
+  .wwebTable th:nth-child(6){width:170px}
+  .wwebTable th:nth-child(7){width:170px}
+  .wwebTable th:nth-child(8){width:180px}
+  .wwebTable th:nth-child(9){width:220px}
+
+  .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
+
+  /* Acciones compactas: primarias + menú "Más" */
+  .actionsWrap{display:flex; gap:8px; align-items:flex-start; flex-wrap:nowrap}
   .actionsWrap .btn2{white-space:nowrap}
+  .moreMenu{position:relative}
+  .moreMenu > summary{list-style:none; cursor:pointer}
+  .moreMenu > summary::-webkit-details-marker{display:none}
+  .morePanel{
+    position:absolute;
+    right:0;
+    top:40px;
+    background:#fff;
+    border:1px solid rgba(16,24,40,.12);
+    border-radius:12px;
+    padding:10px;
+    box-shadow: 0 10px 26px rgba(0,0,0,.14);
+    min-width: 220px;
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    z-index:50;
+  }
+  .morePanel .btn2{width:100%; text-align:left; margin-right:0}
 
   /* Indicador de carga suave (sin parpadeo de la tabla) */
   .wwebSpin{
@@ -1702,7 +1740,7 @@ function doRelease(id, resetAuth, tenant, numero){
   }
   @keyframes wwebSpin{to{transform:rotate(360deg)}}
 
-  /* Mobile: filas tipo "cards" para no depender de scroll horizontal */
+  /* Mobile: filas tipo "cards" y menú sin popup */
   @media (max-width: 980px){
     .wwebTable thead{display:none}
     .wwebTable, .wwebTable tbody, .wwebTable tr, .wwebTable td{display:block; width:100%}
@@ -1713,6 +1751,14 @@ function doRelease(id, resetAuth, tenant, numero){
       font-weight:700;
       min-width:140px;
       color: var(--muted);
+    }
+    .actionsWrap{flex-wrap:wrap}
+    .morePanel{
+      position:static;
+      box-shadow:none;
+      border:0;
+      padding:0;
+      min-width:auto;
     }
   }
 </style>
