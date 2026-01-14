@@ -26,7 +26,6 @@ const ACCESS_PAGES = [
   { key: "productos", title: "Productos" },
   { key: "horarios", title: "Horarios" },
   { key: "comportamiento", title: "Comportamiento" },
-  { key: "canales", title: "Canales (WhatsApp/OpenAI)" },
   { key: "leads", title: "Leads" },
   { key: "wweb", title: "Sesiones WhatsApp Web" },
   { key: "users", title: "Usuarios" },
@@ -69,9 +68,6 @@ function requiredAccessForPath(p) {
   // Sesiones WhatsApp Web (whatsapp-web.js)
   if (path.startsWith("/admin/wweb") || path.startsWith("/api/wweb")) return ["wweb"];
 
-  // Canales (WhatsApp Cloud / OpenAI por tenant/telefono)
-  if (path.startsWith("/admin/tenant-channels") || path.startsWith("/api/tenant-channels")) return ["canales"];
-
   // UI wrapper
   if (path.startsWith("/ui/")) {
     const seg = path.split("/")[2] || "";
@@ -82,6 +78,7 @@ function requiredAccessForPath(p) {
   if (path === "/admin" || path.startsWith("/admin/conversation") || path.startsWith("/admin/ticket")) return ["admin"];
   if (path.startsWith("/admin/inbox")) return ["inbox"];
    if (path.startsWith("/api/leads")) return ["leads"];
+  if (path === "/canales") return ["canales"];
   if (path === "/productos" || path.startsWith("/api/products")) return ["productos"];
   if (path === "/horarios" || path.startsWith("/api/hours")) return ["horarios"];
   if (path === "/comportamiento" || path.startsWith("/api/behavior")) return ["comportamiento"];
@@ -92,6 +89,8 @@ function requiredAccessForPath(p) {
 
 
   // Leads / contacto desde /login
+  if (path.startsWith("/api/tenant-channels")) return ["canales"];
+
   if (path.startsWith("/api/leads")) return ["admin"];
 
   // Acciones admin (entrega, enviar mensaje, etc.)
@@ -779,8 +778,6 @@ function getNavItemsForUser(user) {
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
-
-  if (isAdmin && hasAccess(user, "canales")) items.push({ key: "canales", title: "Canales", href: "/ui/canales" });
 
   if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
   if (isAdmin && hasAccess(user, "wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
@@ -1556,227 +1553,6 @@ function wwebSessionsAdminPage({ user }) {
     `,
   });
 }
-
-// =============================
-// Admin: Canales (WhatsApp Cloud/OpenAI) por tenant/telefono
-// Colección: tenant_channels
-// =============================
-function tenantChannelsAdminPage({ user }) {
-  const isSuper = String(user?.role || "") === "superadmin";
-  return appShell({
-    title: "Canales · Asisto",
-    user,
-    active: "canales",
-    main: `
-    <div class="app appWide">
-      <div class="toolbar">
-        <div>
-          <h2 style="margin:0 0 6px">Canales (WhatsApp/OpenAI)</h2>
-          <div class="small">Configurá por <code>tenantId</code> y <code>phoneNumberId</code> el token de WhatsApp, verify token y API key de OpenAI (colección <code>tenant_channels</code>).</div>
-          <div class="small">⚠️ Por seguridad, los tokens pueden mostrarse enmascarados si no sos <b>superadmin</b>.</div>
-        </div>
-        <div class="toolbarActions">
-          <button class="btn2" type="button" onclick="window.__tcReload && window.__tcReload()">Actualizar</button>
-          <a class="btn2" href="/app" style="text-decoration:none">Volver</a>
-        </div>
-      </div>
-
-      <div id="tcMsg" class="small" style="margin-top:10px"></div>
-
-      <div class="card" style="margin-top:14px">
-        <div class="grid2" style="gap:12px">
-          <div>
-            <h3 style="margin:0 0 10px">Crear / actualizar</h3>
-            <form id="tcForm" class="form">
-              ${isSuper ? `
-                <label class="lbl">TenantId
-                  <input class="inp" name="tenantId" placeholder="default" />
-                </label>
-              ` : `
-                <input type="hidden" name="tenantId" value="${htmlEscape(String(user?.tenantId || "default"))}" />
-              `}
-              <label class="lbl">Phone Number ID (Meta)
-                <input class="inp" name="phoneNumberId" placeholder="1234567890" required />
-              </label>
-              <label class="lbl">Display phone (opcional)
-                <input class="inp" name="displayPhoneNumber" placeholder="+54 9 ..." />
-              </label>
-              <label class="lbl">WhatsApp Token
-                <input class="inp" name="whatsappToken" placeholder="EAAG..." />
-              </label>
-              <label class="lbl">Verify Token
-                <input class="inp" name="verifyToken" placeholder="mi-token-verificacion" />
-              </label>
-              <label class="lbl">OpenAI API Key
-                <input class="inp" name="openaiApiKey" placeholder="sk-..." />
-              </label>
-
-              <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:8px">
-                <button class="btn" type="submit">Guardar</button>
-                <button class="btn2" type="button" id="tcReset">Limpiar</button>
-              </div>
-              <div class="small" style="margin-top:8px; opacity:.8">
-                Tip: para rotar un token, pegalo de nuevo y guardá.
-              </div>
-            </form>
-          </div>
-          <div>
-            <h3 style="margin:0 0 10px">Canales cargados</h3>
-            <div class="tableWrap" id="tcTableWrap">
-              <table class="table" style="min-width:860px">
-                <thead>
-                  <tr>
-                    <th>Tenant</th>
-                    <th>PhoneNumberId</th>
-                    <th>Display</th>
-                    <th>WhatsApp Token</th>
-                    <th>Verify Token</th>
-                    <th>OpenAI Key</th>
-                    <th>Updated</th>
-                    <th style="width:120px">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody id="tcBody">
-                  <tr><td colspan="8" class="small">Cargando…</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <script>
-    (function(){
-      var IS_SUPER = ${isSuper ? "true" : "false"};
-      var msg = document.getElementById('tcMsg');
-      var body = document.getElementById('tcBody');
-      var form = document.getElementById('tcForm');
-      var resetBtn = document.getElementById('tcReset');
-      var inflight = false;
-
-      function esc(s){
-        return String(s == null ? '' : s)
-          .replace(/&/g,'&amp;')
-          .replace(/</g,'&lt;')
-          .replace(/>/g,'&gt;')
-          .replace(/"/g,'&quot;')
-          .replace(/'/g,'&#39;');
-      }
-      function api(path, opts){
-        opts = opts || {};
-        opts.headers = Object.assign({ 'Content-Type':'application/json' }, (opts.headers||{}));
-        return fetch(path, opts).then(function(r){
-          return r.text().then(function(t){
-            var data = null;
-            try { data = t ? JSON.parse(t) : null; } catch(e) {}
-            if(!r.ok){
-              var err = (data && (data.error || data.message)) ? (data.error || data.message) : ('HTTP ' + r.status);
-              throw new Error(err);
-            }
-            return data || {};
-          });
-        });
-      }
-
-      function render(items){
-        if(!Array.isArray(items) || !items.length){
-          body.innerHTML = '<tr><td colspan="8" class="small">No hay canales cargados.</td></tr>';
-          return;
-        }
-        body.innerHTML = items.map(function(it){
-          var up = it.updatedAt ? new Date(it.updatedAt).toLocaleString() : '';
-          return ''
-            + '<tr>'
-            + '<td>' + esc(it.tenantId || '') + '</td>'
-            + '<td>' + esc(it.phoneNumberId || '') + '</td>'
-            + '<td>' + esc(it.displayPhoneNumber || '') + '</td>'
-            + '<td class="small">' + esc(it.whatsappToken || '') + '</td>'
-            + '<td class="small">' + esc(it.verifyToken || '') + '</td>'
-            + '<td class="small">' + esc(it.openaiApiKey || '') + '</td>'
-            + '<td class="small">' + esc(up) + '</td>'
-            + '<td><button class="btn2" type="button" data-act="edit" data-tenant="' + esc(it.tenantId||'') + '" data-pid="' + esc(it.phoneNumberId||'') + '" data-display="' + esc(it.displayPhoneNumber||'') + '">Editar</button></td>'
-            + '</tr>';
-        }).join('');
-      }
-
-      function load(){
-        if(inflight) return;
-        inflight = true;
-        return api('/api/tenant-channels', { method:'GET' })
-          .then(function(j){ render(j.items || []); })
-          .catch(function(e){ body.innerHTML = '<tr><td colspan="8" class="small">Error: ' + esc(e.message||e) + '</td></tr>'; })
-          .finally(function(){ inflight = false; });
-      }
-
-      function resetForm(){
-        form.reset();
-        if(!IS_SUPER){
-          // no tocar tenantId hidden
-          var t = form.querySelector('input[name=tenantId]');
-          if(t) t.value = ${JSON.stringify(String(user?.tenantId || 'default'))};
-        }
-      }
-
-      resetBtn.addEventListener('click', function(){ resetForm(); msg.textContent=''; });
-
-      form.addEventListener('submit', function(e){
-        e.preventDefault();
-        var fd = new FormData(form);
-        var payload = {};
-        fd.forEach(function(v,k){ payload[k]=String(v||''); });
-        if(!payload.tenantId) payload.tenantId = 'default';
-        payload.tenantId = String(payload.tenantId||'').trim();
-        payload.phoneNumberId = String(payload.phoneNumberId||'').trim();
-        if(!payload.phoneNumberId){ alert('phoneNumberId requerido'); return; }
-
-        // Si los secretos están vacíos, no los enviamos (evita pisar con string vacío)
-        ['whatsappToken','verifyToken','openaiApiKey'].forEach(function(k){
-          if(payload[k] != null && String(payload[k]).trim()==='') delete payload[k];
-        });
-
-        api('/api/tenant-channels', { method:'POST', body: JSON.stringify(payload) })
-          .then(function(){ msg.textContent = 'Guardado.'; resetForm(); return load(); })
-          .catch(function(e){ msg.textContent = 'Error: ' + (e.message||e); });
-      });
-
-      body.addEventListener('click', function(e){
-        var btn = e.target && e.target.closest ? e.target.closest('button[data-act]') : null;
-        if(!btn) return;
-        var act = btn.getAttribute('data-act');
-        if(act !== 'edit') return;
-        var tenantId = btn.getAttribute('data-tenant') || '';
-        var pid = btn.getAttribute('data-pid') || '';
-        var display = btn.getAttribute('data-display') || '';
-
-        var tInp = form.querySelector('input[name=tenantId]');
-        if(tInp && IS_SUPER) tInp.value = tenantId;
-        var pInp = form.querySelector('input[name=phoneNumberId]');
-        if(pInp) pInp.value = pid;
-        var dInp = form.querySelector('input[name=displayPhoneNumber]');
-        if(dInp) dInp.value = display;
-        msg.textContent = 'Editando ' + tenantId + ' / ' + pid + '. (Pegá tokens si querés actualizarlos)';
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      });
-
-      window.__tcReload = load;
-      load();
-    })();
-    </script>
-
-    <style>
-      .appWide{width:100%; max-width:none;}
-      .grid2{display:grid; grid-template-columns: 360px 1fr;}
-      @media (max-width: 980px){ .grid2{grid-template-columns: 1fr;} }
-      .tableWrap{overflow:auto; max-width:100%; -webkit-overflow-scrolling:touch}
-      .lbl{display:block; font-size:12px; opacity:.85; margin-bottom:8px}
-      .inp{width:100%; padding:10px 12px; border:1px solid rgba(0,0,0,.12); border-radius:10px; background:#fff}
-      .form .lbl + .lbl{margin-top:10px}
-    </style>
-    `,
-  });
-}
-
 function mountAuthRoutes(app) {
   // login
   app.get("/login", (req, res) => {
@@ -1989,7 +1765,6 @@ function mountAuthRoutes(app) {
       { title: "Productos", href: "/ui/productos", badge: "UI", desc: "Catálogo del tenant" },
       { title: "Horarios", href: "/ui/horarios", badge: "UI", desc: "Configuración de horarios" },
       { title: "Comportamiento", href: "/ui/comportamiento", badge: "UI", desc: "Behavior prompt/config" },
-      { title: "Canales", href: "/ui/canales", badge: "UI", desc: "WhatsApp/OpenAI por tenant y teléfono" },
       // APIs solo para admin/superadmin:
       ...(isAdmin ? [
         { title: "Logs Conversaciones", href: "/api/logs/conversations", badge: "API", desc: "Listado de conversaciones" },
@@ -1997,7 +1772,6 @@ function mountAuthRoutes(app) {
         { title: "Behavior API", href: "/api/behavior", badge: "API", desc: "Get/Set behavior" },
         { title: "Hours API", href: "/api/hours", badge: "API", desc: "Get/Set store hours" },
         { title: "Products API", href: "/api/products", badge: "API", desc: "CRUD de productos" },
-        { title: "Tenant Channels API", href: "/api/tenant-channels", badge: "API", desc: "WhatsApp/OpenAI por tenant" },
       ] : []),
     ];
 
@@ -2022,7 +1796,7 @@ function mountAuthRoutes(app) {
       productos: { title: "Productos", src: "/productos", active: "productos" },
       horarios: { title: "Horarios", src: "/horarios", active: "horarios" },
       comportamiento: { title: "Comportamiento", src: "/comportamiento", active: "comportamiento" },
-      canales: { title: "Canales", src: "/admin/tenant-channels", active: "canales" },
+      canales: { title: "Canales (WhatsApp/OpenAI)", src: "/canales", active: "canales" },
     };
 
     const conf = map[page];
@@ -2440,18 +2214,6 @@ function mountAuthRoutes(app) {
     } catch (e) {
       console.error("[api] lead delete error:", e);
       return res.status(500).json({ ok: false, error: "Error eliminando lead" });
-    }
-  });
-
-  // =============================
-  // Admin: Canales (WhatsApp/OpenAI por tenant/telefono)
-  // =============================
-  app.get("/admin/tenant-channels", requireAuth, requireAdmin, async (req, res) => {
-    try {
-      return res.status(200).send(tenantChannelsAdminPage({ user: req.user }));
-    } catch (e) {
-      console.error("[tenant-channels] page error:", e);
-      return res.status(500).send("Error cargando la pantalla de canales.");
     }
   });
 

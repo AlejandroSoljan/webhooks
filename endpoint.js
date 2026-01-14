@@ -12,16 +12,8 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOK
 // ⬇️ Para catálogo en Mongo
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
+const tenantRuntime = require("./tenant_runtime");
 const TENANT_ID = (process.env.TENANT_ID || "").trim();
-
-// Runtime per tenant/canal (WhatsApp/OpenAI) desde Mongo.
-// Si no existe o no está configurado, el sistema sigue usando variables de entorno.
-let tenantRuntime = null;
-try {
-  tenantRuntime = require("./tenant_runtime");
-} catch (e) {
-  tenantRuntime = null;
-}
 
 
 // Días de la semana para configuración de horarios
@@ -56,81 +48,75 @@ app.use("/ui", auth.requireAuth);
 // Protege rutas sensibles (admin/api/ui) detrás de login
 auth.protectRoutes(app);
 
-// ===================== Tenant Channels (WhatsApp Cloud + OpenAI) =====================
-// CRUD mínimo para cargar tokens/keys por tenantId y phoneNumberId.
-// 100% retrocompatible: si tenantRuntime no existe o no hay datos en DB, se usan .env.
-app.use("/api/tenant-channels", auth.requireAdmin);
-
-app.get("/api/tenant-channels", async (req, res) => {
+// ===== Tenant Channels API (multi-tenant WhatsApp/OpenAI runtime) =====
+// Admin: listar y upsert de canales (colección tenant_channels)
+app.get("/api/tenant-channels", auth.requireAuth, auth.requireAdmin, async (req, res) => {
   try {
     const db = await getDb();
-    const role = String(req.user?.role || "");
-    const isSuper = role === "superadmin";
+    const isSuper = String(req.user?.role || "") === "superadmin";
+    const tenantId = isSuper ? (String(req.query.tenant || req.headers["x-tenant-id"] || req.user?.tenantId || "default").trim()) : String(req.user?.tenantId || "default");
 
-    const tenantFromQuery = String(req.query?.tenantId || "").trim();
-    const tenantId = isSuper ? (tenantFromQuery || "") : resolveTenantId(req);
+    const items = await db.collection("tenant_channels")
+      .find({ tenantId })
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .toArray();
 
-    const filter = tenantId ? { tenantId } : {};
-    const items = await db.collection("tenant_channels").find(filter).sort({ updatedAt: -1, createdAt: -1 }).limit(2000).toArray();
-
-    const masked = (v) => (v ? "********" : "");
-    const out = (items || []).map((it) => {
-      const doc = {
-        _id: String(it._id),
+    // Si no es superadmin, enmascaramos secretos para evitar exposición
+    const safe = items.map((it) => {
+      const o = {
+        _id: it._id,
         tenantId: it.tenantId,
         phoneNumberId: it.phoneNumberId,
         displayPhoneNumber: it.displayPhoneNumber || "",
-        whatsappToken: isSuper ? (it.whatsappToken || "") : masked(it.whatsappToken),
-        verifyToken: isSuper ? (it.verifyToken || "") : masked(it.verifyToken),
-        openaiApiKey: isSuper ? (it.openaiApiKey || "") : masked(it.openaiApiKey),
-        createdAt: it.createdAt || null,
-        updatedAt: it.updatedAt || null,
+        createdAt: it.createdAt,
+        updatedAt: it.updatedAt,
       };
-      return doc;
+      if (isSuper) {
+        o.whatsappToken = it.whatsappToken || "";
+        o.verifyToken = it.verifyToken || "";
+        o.openaiApiKey = it.openaiApiKey || "";
+      } else {
+        o.whatsappToken = it.whatsappToken ? "****" : "";
+        o.verifyToken = it.verifyToken ? "****" : "";
+        o.openaiApiKey = it.openaiApiKey ? "****" : "";
+      }
+      return o;
     });
 
-    return res.json({ ok: true, items: out });
+    res.json({ ok: true, tenantId, items: safe });
   } catch (e) {
-    console.error("GET /api/tenant-channels error:", e);
-    return res.status(500).json({ ok: false, error: "internal" });
+    res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
 
-app.post("/api/tenant-channels", async (req, res) => {
+app.post("/api/tenant-channels", auth.requireAuth, auth.requireAdmin, express.json({ limit: "2mb" }), async (req, res) => {
   try {
-    if (!tenantRuntime || typeof tenantRuntime.upsertTenantChannel !== "function") {
-      return res.status(400).json({ ok: false, error: "tenant_runtime_not_available" });
-    }
-    const role = String(req.user?.role || "");
-    const isSuper = role === "superadmin";
-
     const body = req.body || {};
-    const tenantId = String(body.tenantId || "").trim() || (isSuper ? "" : resolveTenantId(req));
-    const phoneNumberId = String(body.phoneNumberId || "").trim();
-    if (!tenantId) return res.status(400).json({ ok: false, error: "tenantId_required" });
-    if (!phoneNumberId) return res.status(400).json({ ok: false, error: "phoneNumberId_required" });
+    const isSuper = String(req.user?.role || "") === "superadmin";
+    const tenantId = String(body.tenantId || req.query.tenant || req.headers["x-tenant-id"] || req.user?.tenantId || "default").trim();
+
     if (!isSuper) {
-      const myTenant = resolveTenantId(req);
-      if (tenantId !== myTenant) return res.status(403).json({ ok: false, error: "tenant_mismatch" });
+      const myTenant = String(req.user?.tenantId || "default").trim();
+      if (tenantId !== myTenant) return res.status(403).json({ ok: false, error: "forbidden_tenant" });
     }
 
     const payload = {
       tenantId,
-      phoneNumberId,
+      phoneNumberId: String(body.phoneNumberId || "").trim(),
       displayPhoneNumber: body.displayPhoneNumber,
+      whatsappToken: body.whatsappToken,
+      verifyToken: body.verifyToken,
+      openaiApiKey: body.openaiApiKey,
     };
-    // Sólo setear secretos si vienen en el payload (evita pisar con vacío)
-    if (body.whatsappToken !== undefined) payload.whatsappToken = body.whatsappToken;
-    if (body.verifyToken !== undefined) payload.verifyToken = body.verifyToken;
-    if (body.openaiApiKey !== undefined) payload.openaiApiKey = body.openaiApiKey;
 
     const r = await tenantRuntime.upsertTenantChannel(payload, { allowSecrets: true });
-    return res.json({ ok: true, ...r });
+    res.json({ ok: true, result: r });
   } catch (e) {
-    console.error("POST /api/tenant-channels error:", e);
-    return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    res.status(400).json({ ok: false, error: String(e?.message || e) });
   }
 });
+
+
 
 // ===================== WhatsApp Web Sessions Control (WWeb) =====================
 // Admin API para controlar políticas (allow any / pinned host / blocked hosts),
@@ -1814,17 +1800,8 @@ app.post("/api/admin/send-message", async (req, res) => {
 
     const to = conv.waId;
 
-    // Enviar por WhatsApp (multi-canal: si hay runtime por tenant, usarlo)
-    let rt = null;
-    try {
-      if (tenantRuntime && typeof tenantRuntime.getRuntimeByTenantId === "function") {
-        rt = await tenantRuntime.getRuntimeByTenantId(tenant);
-      }
-    } catch {}
-    await require("./logic").sendWhatsAppMessage(to, body, {
-      phoneNumberId: rt?.phoneNumberId,
-      whatsappToken: rt?.whatsappToken,
-    });
+    // Enviar por WhatsApp
+    await require("./logic").sendWhatsAppMessage(to, body);
 
     const now = new Date();
 
@@ -3362,6 +3339,134 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
 });
 
 // GET /productos  → UI HTML simple para administrar
+
+
+// ===== UI contenido: Canales (WhatsApp/OpenAI) =====
+// Se carga dentro del wrapper /ui/canales (iframe). NO debe incluir layout/sidebars.
+app.get("/canales", async (req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end(`<!doctype html>
+<html><head><meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Canales</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:22px;max-width:1100px}
+    h1{margin:0 0 10px 0}
+    .muted{color:#667085;font-size:13px}
+    .row{display:flex;gap:10px;flex-wrap:wrap}
+    .card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px;box-shadow:0 8px 20px rgba(16,24,40,.08)}
+    label{display:block;font-size:12px;color:#475467;margin:10px 0 6px}
+    input{width:100%;padding:10px;border:1px solid #d0d5dd;border-radius:8px}
+    button{padding:10px 14px;border-radius:10px;border:1px solid #0e6b66;background:#0e6b66;color:#fff;cursor:pointer;font-weight:650}
+    button.secondary{background:#fff;color:#111827;border-color:#d0d5dd}
+    table{border-collapse:collapse;width:100%;margin-top:10px}
+    th,td{border:1px solid #e5e7eb;padding:10px;text-align:left;font-size:14px}
+    th{background:#f9fafb}
+    .actions{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+    .pill{display:inline-block;font-size:12px;padding:4px 8px;border-radius:999px;background:#f2f4f7;color:#344054}
+  </style>
+</head>
+<body>
+  <h1>Canales (WhatsApp/OpenAI)</h1>
+  <div class="muted">Configurá por tenantId y phoneNumberId el token de WhatsApp, verify token y API key de OpenAI (colección <span class="pill">tenant_channels</span>).</div>
+  <div class="row" style="margin-top:14px">
+    <div class="card" style="flex:1;min-width:320px">
+      <h3 style="margin:0 0 8px">Crear / actualizar</h3>
+      <label>TenantId</label>
+      <input id="tenantId" placeholder="default" />
+      <label>Phone Number ID (Meta)</label>
+      <input id="phoneNumberId" placeholder="1234567890" />
+      <label>Display phone (opcional)</label>
+      <input id="displayPhoneNumber" placeholder="+54 9 ..." />
+      <label>WhatsApp Token</label>
+      <input id="whatsappToken" placeholder="EAAG..." />
+      <label>Verify Token</label>
+      <input id="verifyToken" placeholder="mi-token-verificacion" />
+      <label>OpenAI API Key</label>
+      <input id="openaiApiKey" placeholder="sk-..." />
+
+      <div class="actions">
+        <button id="btnSave">Guardar</button>
+        <button class="secondary" id="btnClear" type="button">Limpiar</button>
+        <button class="secondary" id="btnReload" type="button">Actualizar</button>
+      </div>
+      <div id="msg" class="muted" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card" style="flex:1.2;min-width:380px">
+      <h3 style="margin:0 0 8px">Canales cargados</h3>
+      <table>
+        <thead><tr><th>Tenant</th><th>PhoneNumberId</th><th>Display</th><th>Whats</th><th>OpenAI</th></tr></thead>
+        <tbody id="rows"><tr><td colspan="5" class="muted">Cargando...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    function esc(s){ return String(s||"").replace(/[&<>"']/g, m=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m])); }
+    function mask(v){ v=String(v||""); if(!v) return ""; if(v==="****") return "****"; if(v.length<=8) return "***"; return v.slice(0,4)+"..."+v.slice(-4); }
+
+    async function load(){
+      const tenant = document.getElementById("tenantId").value.trim();
+      const q = tenant ? ("?tenant="+encodeURIComponent(tenant)) : "";
+      const res = await fetch("/api/tenant-channels"+q, { credentials: "include" });
+      const data = await res.json().catch(()=>({ok:false}));
+      const tb = document.getElementById("rows");
+      if(!data.ok){ tb.innerHTML = '<tr><td colspan="5" class="muted">No se pudo cargar.</td></tr>'; return; }
+      const items = data.items || [];
+      if(items.length===0){ tb.innerHTML = '<tr><td colspan="5" class="muted">No hay canales cargados.</td></tr>'; return; }
+      tb.innerHTML = items.map(it => (
+        '<tr>'+
+          '<td>'+esc(it.tenantId)+'</td>'+
+          '<td>'+esc(it.phoneNumberId)+'</td>'+
+          '<td>'+esc(it.displayPhoneNumber||"")+'</td>'+
+          '<td>'+esc(mask(it.whatsappToken))+'</td>'+
+          '<td>'+esc(mask(it.openaiApiKey))+'</td>'+
+        '</tr>'
+      )).join("");
+    }
+
+    async function save(){
+      const payload = {
+        tenantId: document.getElementById("tenantId").value.trim() || "default",
+        phoneNumberId: document.getElementById("phoneNumberId").value.trim(),
+        displayPhoneNumber: document.getElementById("displayPhoneNumber").value.trim(),
+        whatsappToken: document.getElementById("whatsappToken").value.trim(),
+        verifyToken: document.getElementById("verifyToken").value.trim(),
+        openaiApiKey: document.getElementById("openaiApiKey").value.trim(),
+      };
+      const msg = document.getElementById("msg");
+      msg.textContent = "Guardando...";
+      const res = await fetch("/api/tenant-channels", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        credentials:"include",
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json().catch(()=>({ok:false}));
+      if(data.ok){ msg.textContent = "✅ Guardado"; await load(); }
+      else { msg.textContent = "❌ Error: "+ (data.error||""); }
+    }
+
+    function clearForm(){
+      document.getElementById("phoneNumberId").value="";
+      document.getElementById("displayPhoneNumber").value="";
+      document.getElementById("whatsappToken").value="";
+      document.getElementById("verifyToken").value="";
+      document.getElementById("openaiApiKey").value="";
+      document.getElementById("msg").textContent="";
+    }
+
+    document.getElementById("btnSave").addEventListener("click", save);
+    document.getElementById("btnReload").addEventListener("click", load);
+    document.getElementById("btnClear").addEventListener("click", clearForm);
+
+    // Auto
+    load();
+  </script>
+</body></html>`);
+});
+
 app.get("/productos", async (req, res) => {
   try {
     const db = await getDb();
@@ -3727,25 +3832,12 @@ app.post("/api/hours", async (req, res) => {
 
 
 // Webhook Verify (GET)
-app.get("/webhook", async (req, res) => {
+app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
-  if (!mode || !token || mode !== "subscribe") return res.sendStatus(403);
-
-  // Compat: token por .env
-  if (token === VERIFY_TOKEN) return res.status(200).send(challenge);
-
-  // Multi-tenant: token por DB (tenant_channels.verifyToken)
-  try {
-    if (tenantRuntime && typeof tenantRuntime.findAnyByVerifyToken === "function") {
-      const rt = await tenantRuntime.findAnyByVerifyToken(token);
-      if (rt && String(rt.verifyToken || "").trim() === String(token).trim()) {
-        return res.status(200).send(challenge);
-      }
-    }
-  } catch (e) {
-    console.warn("[webhook] verifyToken lookup error:", e?.message || e);
+  if (mode && token && mode === "subscribe" && token === VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
   }
   return res.sendStatus(403);
 });
@@ -3757,29 +3849,13 @@ app.post("/webhook", async (req, res) => {
       if (process.env.NODE_ENV === "production") return res.sendStatus(403);
       console.warn("⚠️ Webhook: firma inválida (ignorada en dev).");
     }
+    const tenant = resolveTenantId(req);
+
     // ✅ PARSEO CORRECTO DEL PAYLOAD WHATSAPP
     const change = req.body?.entry?.[0]?.changes?.[0];
     const value  = change?.value;
     const msg    = value?.messages?.[0];   // mensaje entrante (texto/audio/etc.)
     const status = value?.statuses?.[0];   // (se ignora para persistencia)
-
-    // Multi-canal: mapear tokens/keys por phone_number_id
-    const phoneNumberId = String(value?.metadata?.phone_number_id || "").trim();
-    let runtime = null;
-    try {
-      if (phoneNumberId && tenantRuntime && typeof tenantRuntime.getRuntimeByPhoneNumberId === "function") {
-        runtime = await tenantRuntime.getRuntimeByPhoneNumberId(phoneNumberId);
-      }
-    } catch (e) {
-      console.warn("[webhook] runtime lookup error:", e?.message || e);
-    }
-
-    const tenant = String(runtime?.tenantId || "").trim() || resolveTenantId(req);
-    const waOpts = {
-      phoneNumberId: String(runtime?.phoneNumberId || phoneNumberId || "").trim() || undefined,
-      whatsappToken: String(runtime?.whatsappToken || "").trim() || undefined,
-    };
-    const openaiOpts = { openaiApiKey: String(runtime?.openaiApiKey || "").trim() || undefined };
     if (!msg) {
       console.warn("[webhook] evento sin messages; se ignora");
       return res.sendStatus(200);
@@ -3793,11 +3869,11 @@ app.post("/webhook", async (req, res) => {
       text = msg.text.body;
     } else if (msg.type === "audio" && msg.audio?.id) {
       try {
-        const info = await getMediaInfo(msg.audio.id, waOpts);
-        const buf = await downloadMediaBuffer(info.url, waOpts);
+        const info = await getMediaInfo(msg.audio.id);
+        const buf = await downloadMediaBuffer(info.url);
         const id = putInCache(buf, info.mime_type || "audio/ogg");
         const publicAudioUrl = `${req.protocol}://${req.get("host")}/cache/audio/${id}`;
-        const tr = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type, ...openaiOpts });
+        const tr = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type });
         text = String(tr?.text || "").trim() || "(audio sin texto)";
       } catch (e) {
         console.error("Audio/transcripción:", e.message);
@@ -3805,16 +3881,15 @@ app.post("/webhook", async (req, res) => {
       }
      } else if (msg.type === "image" && msg.image?.id) {
       try {
-        const info = await getMediaInfo(msg.image.id, waOpts);
-        const buf = await downloadMediaBuffer(info.url, waOpts);
+        const info = await getMediaInfo(msg.image.id);
+        const buf = await downloadMediaBuffer(info.url);
         const id = putInCache(buf, info.mime_type || "image/jpeg");
         const publicImageUrl = `${req.protocol}://${req.get("host")}/cache/media/${id}`;
 
         const img = await analyzeImageExternal({
           publicImageUrl,
           mime: info.mime_type,
-          purpose: "payment-proof",
-          ...openaiOpts
+          purpose: "payment-proof"
         });
 
         // Texto que alimenta al modelo conversacional
@@ -3871,8 +3946,7 @@ console.log("[convId] "+ convId);
       if (isPoliteClosingMessage(text)) {
         await require("./logic").sendWhatsAppMessage(
           from,
-          "¡Gracias! 😊 Cuando quieras hacemos otro pedido.",
-          waOpts
+          "¡Gracias! 😊 Cuando quieras hacemos otro pedido."
         );
         return res.sendStatus(200);
       }
@@ -3890,7 +3964,7 @@ console.log("[convId] "+ convId);
       try { snapshot = JSON.parse(require("./logic").__proto__ ? "{}" : "{}"); } catch {}
       // En minimal guardamos snapshot siempre; si no lo tenés a mano, seguimos y dejamos que el modelo lo complete
     }
-    const gptReply = await getGPTReply(tenant, from, text, openaiOpts);
+    const gptReply = await getGPTReply(tenant, from, text);
     // También dispara si el usuario pide "total" o está en fase de confirmar
    const wantsDetail = /\b(detalle|detall|resumen|desglose|total|confirm(a|o|ar))\b/i
       .test(String(text || ""));
@@ -4251,7 +4325,7 @@ console.log("[convId] "+ convId);
       || (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length
           ? buildBackendSummary(pedido, { showEnvio: wantsDetail })
           : "Perfecto, sigo acá. ¿Querés confirmar o cambiar algo?");
-    await require("./logic").sendWhatsAppMessage(from, responseTextSafe, waOpts);
+    await require("./logic").sendWhatsAppMessage(from, responseTextSafe);
     
     
     
