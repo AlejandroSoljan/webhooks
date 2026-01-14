@@ -1600,12 +1600,22 @@ function doRelease(id, resetAuth, tenant, numero){
         if(act === 'release') return doRelease(id, false, tenant, numero);
         if(act === 'reset') return doRelease(id, true, tenant, numero);
 
-        if(act === 'pin'){
-          if(!confirm('¿Configurar para que esta sesión SOLO inicie en esta PC? PC: ' + host)) return;
-          return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, mode: 'pinned', pinnedHost: host }) })
-            .then(function(){ load(); })
-            .catch(function(e){ alert('Error: ' + (e.message || e)); });
-        }
+        if (act === 'pin') {
+  var msg = '¿Configurar para que esta sesión SOLO inicie en esta PC? PC: ' + host;
+  if (!confirm(msg)) return;
+
+  return api('/api/wweb/policy', {
+    method: 'POST',
+    body: JSON.stringify({
+      tenantId: tenant,
+      numero: numero,
+      mode: 'pinned',
+      pinnedHost: host
+    })
+  })
+  .then(function () { load(); })
+  .catch(function (e) { alert('Error: ' + (e.message || e)); });
+}
         if(act === 'any'){
           if(!confirm('¿Permitir que inicie en CUALQUIER PC?')) return;
           return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, mode: 'any' }) })
