@@ -1276,7 +1276,9 @@ function wwebSessionsAdminPage({ user }) {
           <div class="small">Acciones: <strong>Liberar</strong> borra el lock (la PC actual se desconecta en el próximo heartbeat). <strong>Reset Auth</strong> además borra la sesión guardada (requiere nuevo QR).</div>
         </div>
         <div class="toolbarActions">
-          <button class="btn2" type="button" onclick="window.__wwebReload && window.__wwebReload()">Actualizar</button>
+          <span id="wwebSpin" class="wwebSpin" title="Actualizando…" style="display:none" aria-hidden="true"></span>
+          <span id="wwebLast" class="small" style="color:var(--muted);margin-right:10px"></span>
+          <button class="btn2" type="button" onclick="window.__wwebReload && window.__wwebReload({force:true, showLoading:true})">Actualizar</button>
           <a class="btn2" href="/app" style="text-decoration:none">Volver</a>
         </div>
       </div>
@@ -1311,9 +1313,12 @@ function wwebSessionsAdminPage({ user }) {
     (function(){
       var IS_SUPER = ${isSuper ? "true" : "false"};
       var body = document.getElementById('wwebBody');
+      var tableWrap = document.getElementById('wwebTableWrap');
       var msg = document.getElementById('wwebMsg');
-       var tableWrap = document.getElementById('wwebTableWrap');
+      var lastEl = document.getElementById('wwebLast');
+      var spin = document.getElementById('wwebSpin');
       var inflight = false;
+      var lastHtml = '';
       function fmtDate(v){
         if(!v) return "";
         try { return new Date(v).toLocaleString(); } catch (e) { return String(v); }
@@ -1393,39 +1398,78 @@ function wwebSessionsAdminPage({ user }) {
         var ageHtml = (ageSec !== null) ? ('<div class="small">hace ' + ageSec + 's</div>') : '';
 
         return ''
-          + '<tr>'
-          + '<td>' + escapeHtml(tenantId) + '</td>'
-          + '<td>' + escapeHtml(numero) + '</td>'
-          + '<td>' + stateBadge + ageHtml + '</td>'
-          + '<td>' + escapeHtml(lock.holderId || lock.instanceId || "") + '</td>'
-          + '<td>' + escapeHtml(host) + '</td>'
-          + '<td>' + escapeHtml(fmtDate(lock.startedAt)) + '</td>'
-          + '<td>' + escapeHtml(fmtDate(lock.lastSeenAt)) + '</td>'
-          + '<td>' + policyHtml + '</td>'
-          + '<td><div class="actionsWrap">' + actions + '</div></td>'
-          + '</tr>';
+  + '<tr>'
+  + '<td data-label="Tenant">' + escapeHtml(tenantId) + '</td>'
+  + '<td data-label="Número">' + escapeHtml(numero) + '</td>'
+  + '<td data-label="Estado">' + stateBadge + ageHtml + '</td>'
+  + '<td data-label="Holder">' + escapeHtml(lock.holderId || lock.instanceId || "") + '</td>'
+  + '<td data-label="Host">' + escapeHtml(host) + '</td>'
+  + '<td data-label="Inicio">' + escapeHtml(fmtDate(lock.startedAt)) + '</td>'
+  + '<td data-label="Último heartbeat">' + escapeHtml(fmtDate(lock.lastSeenAt)) + '</td>'
+  + '<td data-label="Política">' + policyHtml + '</td>'
+  + '<td data-label="Acciones"><div class="actionsWrap">' + actions + '</div></td>'
+  + '</tr>';
       }
 
-      function load(){
-        if (msg) msg.textContent = "";
-        body.innerHTML = '<tr><td colspan="9" class="small">Cargando…</td></tr>';
-        return api('/api/wweb/locks', { method:'GET' })
-          .then(function(data){
-            var locks = Array.isArray(data.locks) ? data.locks : [];
-            var nowMs = data.now ? new Date(data.now).getTime() : Date.now();
+      function setLoading(on){
+  if(spin) spin.style.display = on ? 'inline-block' : 'none';
+}
 
-            if(!locks.length){
-              body.innerHTML = '<tr><td colspan="9" class="small">No hay sesiones registradas.</td></tr>';
-              return;
-            }
-            body.innerHTML = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
-          })
-          .catch(function(e){
-            body.innerHTML = '<tr><td colspan="9" class="small">Error: ' + escapeHtml(e.message || e) + '</td></tr>';
-          });
+function setLastUpdated(d){
+  if(!lastEl) return;
+  var dt = d || new Date();
+  lastEl.textContent = 'Última actualización: ' + dt.toLocaleTimeString();
+}
+
+function load(opts){
+  opts = opts || {};
+  if(inflight) return inflight;
+  setLoading(true);
+
+  // Solo mostrar "Cargando…" la primera vez o cuando se pide explícitamente
+  if(opts.showLoading || opts.initial){
+    body.innerHTML = '<tr><td colspan="9" class="small">Cargando…</td></tr>';
+  }
+
+  inflight = api('/api/wweb/locks', { method:'GET' })
+    .then(function(data){
+      var locks = Array.isArray(data.locks) ? data.locks : [];
+      var nowMs = data.now ? new Date(data.now).getTime() : Date.now();
+
+      if(!locks.length){
+        var emptyHtml = '<tr><td colspan="9" class="small">No hay sesiones registradas.</td></tr>';
+        if(emptyHtml !== lastHtml){
+          body.innerHTML = emptyHtml;
+          lastHtml = emptyHtml;
+        }
+        setLastUpdated(new Date());
+        return;
       }
 
-      function doRelease(id, resetAuth, tenant, numero){
+      var html = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
+      if(html !== lastHtml){
+        body.innerHTML = html;
+        lastHtml = html;
+      }
+      setLastUpdated(new Date(data.now || Date.now()));
+    })
+    .catch(function(e){
+      if(msg) msg.textContent = 'Error: ' + (e.message || e);
+      // no reemplazamos la tabla si ya había datos, para evitar "parpadeo"
+      if(!lastHtml){
+        body.innerHTML = '<tr><td colspan="9" class="small">Error: ' + escapeHtml(e.message || e) + '</td></tr>';
+        lastHtml = body.innerHTML;
+      }
+    })
+    .finally(function(){
+      setLoading(false);
+      inflight = false;
+    });
+
+  return inflight;
+}
+
+function doRelease(id, resetAuth, tenant, numero){
         var txt = resetAuth
           ? '¿Resetear autenticación? Esto borrará la sesión guardada y pedirá QR de nuevo.'
           : '¿Liberar lock? (la PC actual se desconectará en el próximo heartbeat)';
@@ -1571,7 +1615,8 @@ function wwebSessionsAdminPage({ user }) {
                 var t = it.at ? new Date(it.at).toLocaleString() : '';
                 return t + ' | ' + (it.event || '') + ' | ' + (it.host || '') + ' | ' + (it.by || '');
               });
-              alert(lines.join('\n'));
+              
+            alert(lines.join('\n'));
             })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
         }
@@ -1582,21 +1627,67 @@ function wwebSessionsAdminPage({ user }) {
       var pollMs = 8000;
       setInterval(function(){
         if(document.hidden) return;
-        load();
+        load({});
       }, pollMs);
       document.addEventListener('visibilitychange', function(){
-        if(!document.hidden) load();
+        if(!document.hidden) load({});
       });
-      load({ initial:true });
+      load({ initial:true, showLoading:true });
     })();
     </script>
 
     <style>
-      .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700}
-      .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
-      .badgeWarn{background:#b453091a; color:#b45309; border:1px solid #b4530955}
-      .table td, .table th{white-space:nowrap}
-    </style>
+  .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700}
+  .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
+  .badgeWarn{background:#b453091a; color:#b45309; border:1px solid #b4530955}
+
+  /* Evitar scroll horizontal: dejar que las celdas se envuelvan */
+  .tableWrap{overflow-x:hidden}
+  .wwebTable{width:100%; table-layout:fixed}
+  .wwebTable th, .wwebTable td{
+    white-space:normal;
+    overflow-wrap:anywhere;
+    word-break:break-word;
+    vertical-align:top;
+  }
+  .wwebTable th:nth-child(1){width:90px}
+  .wwebTable th:nth-child(2){width:140px}
+  .wwebTable th:nth-child(3){width:110px}
+  .wwebTable th:nth-child(4){width:230px}
+  .wwebTable th:nth-child(5){width:160px}
+  .wwebTable th:nth-child(6){width:160px}
+  .wwebTable th:nth-child(7){width:160px}
+  .wwebTable th:nth-child(8){width:170px}
+  .wwebTable th:nth-child(9){width:240px}
+
+  .actionsWrap{display:flex; flex-wrap:wrap; gap:8px}
+  .actionsWrap .btn2{white-space:nowrap}
+
+  /* Indicador de carga suave (sin parpadeo de la tabla) */
+  .wwebSpin{
+    width:12px;height:12px;border-radius:50%;
+    border:2px solid rgba(255,255,255,.35);
+    border-top-color:rgba(255,255,255,.9);
+    animation:wwebSpin 0.9s linear infinite;
+    display:inline-block;
+    margin-right:8px;
+  }
+  @keyframes wwebSpin{to{transform:rotate(360deg)}}
+
+  /* Mobile: filas tipo "cards" para no depender de scroll horizontal */
+  @media (max-width: 980px){
+    .wwebTable thead{display:none}
+    .wwebTable, .wwebTable tbody, .wwebTable tr, .wwebTable td{display:block; width:100%}
+    .wwebTable tr{padding:10px 0; border-bottom:1px solid rgba(0,0,0,.08)}
+    .wwebTable td{padding:6px 12px; display:flex; gap:10px; align-items:flex-start}
+    .wwebTable td::before{
+      content: attr(data-label);
+      font-weight:700;
+      min-width:140px;
+      color: var(--muted);
+    }
+  }
+</style>
     `,
   });
 }
