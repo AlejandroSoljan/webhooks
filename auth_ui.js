@@ -1367,6 +1367,7 @@ var tableWrap = document.getElementById('wwebTableWrap');
       }
 
       function renderRow(lock, nowMs){
+      var IS_SUPER = (typeof window !== 'undefined' && window.IS_SUPER === true);
         var last = lock.lastSeenAt ? new Date(lock.lastSeenAt).getTime() : 0;
         var ageSec = last ? Math.round((nowMs - last)/1000) : null;
         var active = last && (nowMs - last) <= 30000; // 30s
