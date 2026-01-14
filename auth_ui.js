@@ -1194,6 +1194,20 @@ function usersAdminPage({ user, users, msg, err }) {
       ${message}
       ${error}
 
+      
+      <style>
+        /* WWEB: evitar scroll horizontal; permitir wrap de columnas largas */
+        .wwebTable { width: 100%; table-layout: fixed; }
+        .wwebTable th, .wwebTable td { white-space: normal; word-break: break-word; overflow-wrap: anywhere; }
+        .wwebTable th:nth-child(4), .wwebTable td:nth-child(4),
+        .wwebTable th:nth-child(5), .wwebTable td:nth-child(5) { max-width: 220px; }
+        .wwebTable th:last-child, .wwebTable td:last-child { width: 220px; }
+        @media (max-width: 980px){
+          .wwebTable th:nth-child(4), .wwebTable td:nth-child(4),
+          .wwebTable th:nth-child(5), .wwebTable td:nth-child(5) { max-width: none; }
+        }
+      </style>
+
       <div class="card" style="margin-top:14px">
         <h2 style="font-size:18px; margin:0 0 10px">Dar de alta usuario</h2>
         <form method="POST" action="/admin/users/create">
@@ -1284,7 +1298,7 @@ function wwebSessionsAdminPage({ user }) {
       </div>
 
       <div id="wwebMsg" class="small" style="margin-top:10px" aria-live="polite"></div>
-
+<div id="wwebLast" class="small" style="margin-top:4px;opacity:.8"></div>
       <div class="card" style="margin-top:14px">
         <div class="tableWrap" id="wwebTableWrap">
           <table class="table wwebTable">
@@ -1311,9 +1325,12 @@ function wwebSessionsAdminPage({ user }) {
 
     <script>
     (function(){
-      var IS_SUPER = ${isSuper ? "true" : "false"};
-      var body = document.getElementById('wwebBody');
-      var tableWrap = document.getElementById('wwebTableWrap');
+             var body = document.getElementById('wwebBody');
+       
+      var msg = document.getElementById('wwebMsg');
+      var last = document.getElementById('wwebLast');
+      var lastHtml = '';
+var tableWrap = document.getElementById('wwebTableWrap');
       var msg = document.getElementById('wwebMsg');
       var lastEl = document.getElementById('wwebLast');
       var spin = document.getElementById('wwebSpin');
