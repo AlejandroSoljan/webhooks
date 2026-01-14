@@ -784,7 +784,7 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
     drawer.addEventListener("click", (e) => { if (e.target.closest("a")) closeDrawer(); });
   })();
-  <\/script>` : ``}
+  </script>` : ``}
 
 </body>
 </html>`;
@@ -873,7 +873,7 @@ function loginSeoHead({ baseUrl }) {
    "operatingSystem":"Web",
     "description":"${desc.replace(/"/g, '\\"')}"
   }
-  <\/script>
+  </script>
   `;
 }
 
@@ -1284,7 +1284,7 @@ function wwebSessionsAdminPage({ user }) {
     main: `
     <div class="app appWide">
       <div class="toolbar">
-     <div>
+        <div>
           <h2 style="margin:0 0 6px">Sesiones WhatsApp Web</h2>
           <div class="small">Muestra las sesiones activas de <code>whatsapp-web.js</code> por tenant/número (colección <code>wa_locks</code>).</div>
           <div class="small">Acciones: <strong>Liberar</strong> borra el lock (la PC actual se desconecta en el próximo heartbeat). <strong>Reset Auth</strong> además borra la sesión guardada (requiere nuevo QR).</div>
@@ -1298,7 +1298,7 @@ function wwebSessionsAdminPage({ user }) {
       </div>
 
       <div id="wwebMsg" class="small" style="margin-top:10px" aria-live="polite"></div>
-<div id="wwebLast" class="small" style="margin-top:4px;opacity:.8"></div>
+
       <div class="card" style="margin-top:14px">
         <div class="cardInner">
           <div id="wwebList" class="wwebCards" aria-live="polite">
@@ -1310,15 +1310,18 @@ function wwebSessionsAdminPage({ user }) {
 
     <script>
     (function(){
+      var IS_SUPER = ${isSuper ? "true" : "false"};
+
       var listEl = document.getElementById('wwebList');
-      var msgEl = document.getElementById('wwebMsg');
+      var msgEl  = document.getElementById('wwebMsg');
       var lastEl = document.getElementById('wwebLast');
-      var spin = document.getElementById('wwebSpin');
+      var spin   = document.getElementById('wwebSpin');
       var inflight = false;
       var lastHtml = '';
 
       if(!listEl) return;
-function fmtDate(v){
+
+      function fmtDate(v){
         if(!v) return "";
         try { return new Date(v).toLocaleString(); } catch (e) { return String(v); }
       }
@@ -1348,22 +1351,17 @@ function fmtDate(v){
         });
       }
 
+      function setLoading(on){
+        if(spin) spin.style.display = on ? 'inline-block' : 'none';
+      }
+
+      function setLastUpdated(d){
+        if(!lastEl) return;
+        var dt = d || new Date();
+        lastEl.textContent = 'Última actualización: ' + dt.toLocaleTimeString();
+      }
+
       function renderCard(lock, nowMs){
-      var IS_SUPER = (typeof window !== 'undefined' && window.IS_SUPER === true);
-        var last = lock.lastSeenAt ? new Date(lock.lastSeenAt).getTime() : 0;
-        var ageSec = last ? Math.round((nowMs - last)/1000) : null;
-        var active = last && (nowMs - last) <= 30000; // 30s
-
-        var stateBadge = active
-          ? '<span class="badge badgeOk">Activa</span>'
-          : '<span class="badge badgeWarn">Inactiva</span>';
-
-        var tenantId = String(lock.tenantId || "");
-        var numero = String(lock.numero || lock.number || "");
-        var host = String(lock.host || lock.hostname || "");
-
-        var pol =function renderCard(lock, nowMs){
-      var IS_SUPER = (typeof window !== 'undefined' && window.IS_SUPER === true);
         var last = lock.lastSeenAt ? new Date(lock.lastSeenAt).getTime() : 0;
         var ageSec = last ? Math.round((nowMs - last)/1000) : null;
         var active = last && (nowMs - last) <= 30000; // 30s
@@ -1391,27 +1389,24 @@ function fmtDate(v){
         var primary = '';
         primary += '<button class="btn2" type="button" data-action="qr" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">QR</button>';
         primary += '<button class="btn2" type="button" data-action="history" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Historial</button>';
-        primary += '<button class="btn2 btnDanger" type="button" data-action="release" data-id="' + escapeHtml(lock._id || lock.id || "") + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Liberar</button>';
+        primary += '<button class="btn2 btnDanger" type="button" data-action="release" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Liberar</button>';
 
         var extra = '';
 
-        // Modo: fijar o permitir cualquiera
         if (mode !== "pinned" || pinnedHost !== host) {
           extra += '<button class="btn2" type="button" data-action="pin" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Fijar a esta PC</button>';
         } else {
           extra += '<button class="btn2" type="button" data-action="any" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Permitir cualquiera</button>';
         }
 
-        // Bloqueo por host
         if (host) {
           extra += isBlocked
             ? '<button class="btn2" type="button" data-action="unblock" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Desbloquear PC</button>'
             : '<button class="btn2" type="button" data-action="block" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Bloquear PC</button>';
         }
 
-        // Reset Auth (super)
         extra += (IS_SUPER
-          ? '<button class="btn2" type="button" data-action="reset" data-id="' + escapeHtml(lock._id || lock.id || "") + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Reset Auth</button>'
+          ? '<button class="btn2" type="button" data-action="reset" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Reset Auth</button>'
           : '');
 
         var more = '';
@@ -1451,43 +1446,54 @@ function fmtDate(v){
           + '</div>';
       }
 
-data.locks : [];
-      var nowMs = data.now ? new Date(data.now).getTime() : Date.now();
+      function load(opts){
+        opts = opts || {};
+        if(inflight) return inflight;
 
-      if(!locks.length){
-        var emptyHtml = '<tr><td colspan="9" class="small">No hay sesiones registradas.</td></tr>';
-        if(emptyHtml !== lastHtml){
-          listEl.innerHTML = emptyHtml;
-          lastHtml = emptyHtml;
+        if(opts.showLoading || opts.initial){
+          listEl.innerHTML = '<div class="wwebEmpty small">Cargando…</div>';
         }
-        setLastUpdated(new Date());
-        return;
+
+        setLoading(true);
+        inflight = api('/api/wweb/locks', { method:'GET' })
+          .then(function(data){
+            var locks = (data && Array.isArray(data.locks)) ? data.locks : [];
+            var nowMs = data && data.now ? new Date(data.now).getTime() : Date.now();
+
+            if(!locks.length){
+              var emptyHtml = '<div class="wwebEmpty small">No hay sesiones registradas.</div>';
+              if(emptyHtml !== lastHtml){
+                listEl.innerHTML = emptyHtml;
+                lastHtml = emptyHtml;
+              }
+              setLastUpdated(new Date());
+              return;
+            }
+
+            var html = locks.map(function(l){ return renderCard(l, nowMs); }).join('');
+            if(html !== lastHtml){
+              listEl.innerHTML = html;
+              lastHtml = html;
+            }
+            setLastUpdated(new Date((data && data.now) || Date.now()));
+          })
+          .catch(function(e){
+            if(msgEl) msgEl.textContent = 'Error: ' + (e.message || e);
+            if(!lastHtml){
+              var errHtml = '<div class="wwebEmpty small">Error: ' + escapeHtml(e.message || e) + '</div>';
+              listEl.innerHTML = errHtml;
+              lastHtml = errHtml;
+            }
+          })
+          .finally(function(){
+            setLoading(false);
+            inflight = false;
+          });
+
+        return inflight;
       }
 
-      var html = locks.map(function(l){ return renderCard(l, nowMs); }).join('');
-      if(html !== lastHtml){
-        listEl.innerHTML = html;
-        lastHtml = html;
-      }
-      setLastUpdated(new Date(data.now || Date.now()));
-    })
-    .catch(function(e){
-      if (msgEl) msgEl.textContent = 'Error: ' + (e.message || e);
-      // no reemplazamos la tabla si ya había datos, para evitar "parpadeo"
-      if(!lastHtml){
-        listEl.innerHTML = '<tr><td colspan="9" class="small">Error: ' + escapeHtml(e.message || e) + '</td></tr>';
-        lastHtml = listEl.innerHTML;
-      }
-    })
-    .finally(function(){
-      setLoading(false);
-      inflight = false;
-    });
-
-  return inflight;
-}
-
-function doRelease(id, resetAuth, tenant, numero){
+      function doRelease(id, resetAuth, tenant, numero){
         var txt = resetAuth
           ? '¿Resetear autenticación? Esto borrará la sesión guardada y pedirá QR de nuevo.'
           : '¿Liberar lock? (la PC actual se desconectará en el próximo heartbeat)';
@@ -1498,11 +1504,8 @@ function doRelease(id, resetAuth, tenant, numero){
             if (msgEl) msgEl.textContent = resetAuth ? 'Sesión reseteada.' : 'Lock liberado.';
             return load();
           })
-          .catch(function(e){
-            alert('Error: ' + (e.message || e));
-          });
+          .catch(function(e){ alert('Error: ' + (e.message || e)); });
       }
-
 
       var qrModal = null;
       var qrTimer = null;
@@ -1559,11 +1562,11 @@ function doRelease(id, resetAuth, tenant, numero){
         meta.textContent = (data.tenantId || '') + ' · ' + (data.numero || '') + ' · estado: ' + (data.state || '-') + ' · qrAt: ' + at;
 
         if(!data.qrDataUrl){
-          listEl.innerHTML = '<div class="small">No hay QR disponible ahora. Si el cliente ya está autenticado, esto es normal.</div>';
+          body.innerHTML = '<div class="small">No hay QR disponible ahora. Si el cliente ya está autenticado, esto es normal.</div>';
           return;
         }
 
-        listEl.innerHTML = ''
+        body.innerHTML = ''
           + '<img alt="QR" src="' + data.qrDataUrl + '" style="width:320px;max-width:100%;height:auto;border-radius:10px;border:1px solid rgba(0,0,0,.08);background:#fff;padding:10px;margin:0 auto" />'
           + '<div class="small">Escanealo con WhatsApp &gt; Dispositivos vinculados.</div>';
       }
@@ -1589,6 +1592,7 @@ function doRelease(id, resetAuth, tenant, numero){
       listEl.addEventListener('click', function(e){
         var btn = e.target && e.target.closest ? e.target.closest('button[data-action]') : null;
         if(!btn) return;
+
         var act = btn.getAttribute('data-action');
         var id = btn.getAttribute('data-id');
 
@@ -1601,22 +1605,12 @@ function doRelease(id, resetAuth, tenant, numero){
         if(act === 'release') return doRelease(id, false, tenant, numero);
         if(act === 'reset') return doRelease(id, true, tenant, numero);
 
-        if (act === 'pin') {
-  var msg = '¿Configurar para que esta sesión SOLO inicie en esta PC? PC: ' + host;
-  if (!confirm(msg)) return;
-
-  return api('/api/wweb/policy', {
-    method: 'POST',
-    body: JSON.stringify({
-      tenantId: tenant,
-      numero: numero,
-      mode: 'pinned',
-      pinnedHost: host
-    })
-  })
-  .then(function () { load(); })
-  .catch(function (e) { alert('Error: ' + (e.message || e)); });
-}
+        if(act === 'pin'){
+          if(!confirm('¿Configurar para que esta sesión SOLO inicie en esta PC? PC: ' + host)) return;
+          return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, mode: 'pinned', pinnedHost: host }) })
+            .then(function(){ load(); })
+            .catch(function(e){ alert('Error: ' + (e.message || e)); });
+        }
         if(act === 'any'){
           if(!confirm('¿Permitir que inicie en CUALQUIER PC?')) return;
           return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, mode: 'any' }) })
@@ -1635,19 +1629,18 @@ function doRelease(id, resetAuth, tenant, numero){
             .then(function(){ load(); })
             .catch(function(e){ alert('Error: ' + (e.message || e)); });
         }
-        if (act === 'history') {
-  return api('/api/wweb/history?tenantId=' + encodeURIComponent(tenant) + '&numero=' + encodeURIComponent(numero))
-    .then(function(items){
-      if(!items || !items.length) return alert('Sin historial.');
-      var lines = items.map(function(it){
-        var t = it.at ? new Date(it.at).toLocaleString() : '';
-        return t + ' | ' + (it.event || '') + ' | ' + (it.host || '') + ' | ' + (it.by || '');
-      });
-
-      alert(lines.join(String.fromCharCode(10))); // 👈 newline seguro
-    })
-    .catch(function(e){ alert('Error: ' + (e.message || e)); });
-}
+        if(act === 'history'){
+          return api('/api/wweb/history?tenantId=' + encodeURIComponent(tenant) + '&numero=' + encodeURIComponent(numero))
+            .then(function(items){
+              if(!items || !items.length) return alert('Sin historial.');
+              var lines = items.map(function(it){
+                var t = it.at ? new Date(it.at).toLocaleString() : '';
+                return t + ' | ' + (it.event || '') + ' | ' + (it.host || '') + ' | ' + (it.by || '');
+              });
+              alert(lines.join(String.fromCharCode(10)));
+            })
+            .catch(function(e){ alert('Error: ' + (e.message || e)); });
+        }
       });
 
       window.__wwebReload = load;
@@ -1662,54 +1655,69 @@ function doRelease(id, resetAuth, tenant, numero){
       });
       load({ initial:true, showLoading:true });
     })();
-    <\/script>
+    </script>
 
     <style>
-  .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; line-height:1.4; border:1px solid rgba(0,0,0,.08)}
-  .badgeOk{background:rgba(34,197,94,.12)}
-  .badgeWarn{background:rgba(245,158,11,.14)}
-  .btn2{background:#fff; border:1px solid rgba(0,0,0,.12); border-radius:10px; padding:6px 10px; cursor:pointer; font-size:13px; line-height:1.2}
-  .btn2:hover{border-color:rgba(0,0,0,.22)}
-  .btnDanger{border-color:rgba(220,38,38,.35)}
-  .btnDanger:hover{border-color:rgba(220,38,38,.6)}
-  .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace}
+      .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700}
+      .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
+      .badgeWarn{background:#b453091a; color:#b45309; border:1px solid #b4530955}
 
-  .wwebCards{display:flex; flex-direction:column; gap:12px}
-  .wwebCard{border:1px solid rgba(0,0,0,.10); border-radius:16px; padding:12px 14px; background:#fff}
-  .wwebCardHeader{display:flex; justify-content:space-between; align-items:flex-start; gap:14px}
-  .wwebId{display:flex; flex-direction:column; gap:2px}
-  .wwebTenant{font-weight:800; font-size:13px; letter-spacing:.2px}
-  .wwebNumero{font-size:14px; opacity:.9}
-  .wwebState{display:flex; flex-direction:column; align-items:flex-end; gap:6px}
-  .wwebAge{opacity:.75}
-
-  .wwebMeta{display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap:10px; margin-top:10px}
-  .wwebField{padding:10px; border:1px solid rgba(0,0,0,.06); border-radius:12px; background:rgba(0,0,0,.02); min-width:0}
-  .wwebField .k{font-size:12px; opacity:.7; margin-bottom:4px}
-  .wwebField .v{font-size:13px; word-break:break-word}
-  .wwebPolicy{grid-column: span 3}
-  .wwebActions{margin-top:10px}
-  .wwebActionsMain{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
-
-  /* Details "Más" como botón */
-  .wwebMore{position:relative}
-  .wwebMoreSummary{list-style:none}
-  .wwebMoreSummary::-webkit-details-marker{display:none}
-  .wwebMore[open] .wwebMorePanel{display:flex}
-  .wwebMorePanel{display:none; flex-wrap:wrap; gap:8px; padding:10px; margin-top:8px; border:1px solid rgba(0,0,0,.10); border-radius:12px; background:#fff}
-
-  .wwebEmpty{padding:14px; border:1px dashed rgba(0,0,0,.18); border-radius:14px; text-align:center}
-
-  @media (max-width: 980px){
-    .wwebMeta{grid-template-columns: repeat(2, minmax(0, 1fr))}
-    .wwebPolicy{grid-column: span 2}
-    .wwebState{align-items:flex-start}
-  }
-  @media (max-width: 620px){
-    .wwebMeta{grid-template-columns: 1fr}
-    .wwebPolicy{grid-column: span 1}
-  }
-</style>
+      .wwebCards{display:flex; flex-direction:column; gap:12px}
+      .wwebEmpty{padding:14px 12px}
+      .wwebCard{
+        border: 1px solid rgba(16,24,40,.10);
+        background: rgba(255,255,255,.96);
+        border-radius: 14px;
+        overflow:hidden;
+      }
+      .wwebCardHeader{
+        display:flex; align-items:flex-start; justify-content:space-between;
+        gap:12px;
+        padding:12px 12px 10px;
+        border-bottom:1px solid rgba(16,24,40,.08);
+      }
+      .wwebId{display:flex; flex-direction:column; gap:2px}
+      .wwebTenant{font-weight:800; font-size:13px; opacity:.9}
+      .wwebNumero{font-weight:800; font-size:15px}
+      .wwebState{display:flex; align-items:center; gap:8px; flex-wrap:wrap}
+      .wwebAge{opacity:.75}
+      .wwebMeta{
+        display:grid;
+        grid-template-columns: repeat(12, 1fr);
+        gap:10px;
+        padding:12px;
+      }
+      .wwebField{grid-column: span 6; min-width:0}
+      .wwebField .k{font-size:12px; opacity:.7; margin-bottom:2px}
+      .wwebField .v{font-size:13px; overflow-wrap:anywhere; word-break:break-word}
+      .wwebField .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
+      .wwebPolicy{grid-column: span 12}
+      @media (max-width: 860px){
+        .wwebField{grid-column: span 12}
+      }
+      .wwebActions{padding:12px; border-top:1px solid rgba(16,24,40,.08)}
+      .wwebActionsMain{display:flex; flex-wrap:wrap; gap:8px; align-items:center}
+      .wwebMore{position:relative}
+      .wwebMoreSummary{list-style:none; cursor:pointer}
+      .wwebMoreSummary::-webkit-details-marker{display:none}
+      .wwebMorePanel{
+        margin-top:8px;
+        display:flex; flex-wrap:wrap; gap:8px;
+        padding:10px;
+        border:1px solid rgba(16,24,40,.10);
+        border-radius:12px;
+        background: rgba(16,24,40,.03);
+      }
+      .wwebSpin{
+        width:16px; height:16px; border-radius:50%;
+        border:2px solid rgba(255,255,255,.35);
+        border-top-color:#fff;
+        display:inline-block;
+        animation:wwebSpin 0.9s linear infinite;
+        vertical-align:-3px;
+      }
+      @keyframes wwebSpin{to{transform:rotate(360deg)}}
+    </style>
     `,
   });
 }
