@@ -1032,6 +1032,9 @@ app.get("/api/admin/conversation-meta", async (req, res) => {
       manualOpen: !!conv.manualOpen,
       delivered: !!conv.delivered,
       deliveredAt: conv.deliveredAt || null,
+       // Canal/telefono del negocio por el que entró la conversación
+       phoneNumberId: conv.phoneNumberId || null,
+       displayPhoneNumber: conv.displayPhoneNumber || null,
     });
   } catch (e) {
     console.error("GET /api/admin/conversation-meta error:", e);
@@ -1576,7 +1579,10 @@ app.get("/admin/inbox", async (req, res) => {
       const name = meta.contactName || meta.waId || "Chat";
       chatAvatar.textContent = initials(name);
       chatName.textContent = name;
-      chatSub.textContent = meta.waId ? ("WhatsApp: " + meta.waId) : "";
+       const ch = (meta.displayPhoneNumber || meta.phoneNumberId || "");
+       chatSub.textContent = meta.waId
+         ? ("WhatsApp: " + meta.waId + (ch ? (" · Canal: " + ch) : ""))
+         : "";
       chatStatus.textContent = meta.status || "";
       if (deliveredToggle) deliveredToggle.checked = !!meta.delivered;
 
@@ -2901,6 +2907,7 @@ app.get("/admin", async (req, res) => {
          <button class="btn" onclick="window.print()">Imprimir</button>
          <button class="btn" onclick="location.reload()">Recargar</button>
          <span id="manualBadge" class="badge badge-bot">Cargando estado…</span>
+         <span id="channelInfo" class="muted" style="margin-left:8px"></span>
          <button class="btn" id="toggleManualBtn">Tomar chat (pausar bot)</button>
        </div>
        <div id="root"></div>
@@ -2960,6 +2967,11 @@ app.get("/admin", async (req, res) => {
            meta = await r.json();
            manualOpen = !!(meta && meta.manualOpen);
            updateManualUI();
+           const ch = (meta && (meta.displayPhoneNumber || meta.phoneNumberId))
+             ? (meta.displayPhoneNumber || meta.phoneNumberId)
+             : "";
+           const chEl = document.getElementById('channelInfo');
+           if (chEl) chEl.textContent = ch ? ('Canal: ' + ch) : '';
          }
 
          async function toggleManual(){
@@ -4019,12 +4031,15 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
 
         // Asegurar conversación y guardar mensaje de usuario
     let conv = null;
+     try {
+       // Guardamos el canal/telefono por el que entró el mensaje para poder verlo en Admin UI
+       conv = await upsertConversation(from, {
+         phoneNumberId: waOpts?.phoneNumberId || null,
+         displayPhoneNumber: runtime?.displayPhoneNumber || null,
+       }, tenant);
+     } catch (e) { console.error("upsertConversation:", e?.message); }
      // Guardamos phoneNumberId para poder responder/operar por el mismo canal luego (admin, etc.)
- try {
-      conv = await upsertConversation(from, { phoneNumberId: waOpts.phoneNumberId }, tenant);
-    } catch (e) {
-      console.error("upsertConversation:", e?.message);
-    }
+ 
     const convId = conv?._id;
 
    
