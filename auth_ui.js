@@ -26,6 +26,7 @@ const ACCESS_PAGES = [
   { key: "productos", title: "Productos" },
   { key: "horarios", title: "Horarios" },
   { key: "comportamiento", title: "Comportamiento" },
+  { key: "canales", title: "Canales" },
   { key: "leads", title: "Leads" },
   { key: "wweb", title: "Sesiones WhatsApp Web" },
   { key: "users", title: "Usuarios" },
@@ -78,10 +79,10 @@ function requiredAccessForPath(p) {
   if (path === "/admin" || path.startsWith("/admin/conversation") || path.startsWith("/admin/ticket")) return ["admin"];
   if (path.startsWith("/admin/inbox")) return ["inbox"];
    if (path.startsWith("/api/leads")) return ["leads"];
-  if (path === "/canales") return ["canales"];
   if (path === "/productos" || path.startsWith("/api/products")) return ["productos"];
   if (path === "/horarios" || path.startsWith("/api/hours")) return ["horarios"];
   if (path === "/comportamiento" || path.startsWith("/api/behavior")) return ["comportamiento"];
+  if (path === "/canales" || path.startsWith("/api/tenant-channels")) return ["canales"];
 
   // Logs
   if (path.startsWith("/api/logs/conversations") || path.startsWith("/api/logs/pedido")) return ["admin"];
@@ -89,8 +90,6 @@ function requiredAccessForPath(p) {
 
 
   // Leads / contacto desde /login
-  if (path.startsWith("/api/tenant-channels")) return ["canales"];
-
   if (path.startsWith("/api/leads")) return ["admin"];
 
   // Acciones admin (entrega, enviar mensaje, etc.)
@@ -778,6 +777,7 @@ function getNavItemsForUser(user) {
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
+  if (hasAccess(user, "canales")) items.push({ key: "canales", title: "Canales", href: "/ui/canales" });
 
   if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
   if (isAdmin && hasAccess(user, "wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
@@ -1765,6 +1765,7 @@ function mountAuthRoutes(app) {
       { title: "Productos", href: "/ui/productos", badge: "UI", desc: "Catálogo del tenant" },
       { title: "Horarios", href: "/ui/horarios", badge: "UI", desc: "Configuración de horarios" },
       { title: "Comportamiento", href: "/ui/comportamiento", badge: "UI", desc: "Behavior prompt/config" },
+        { title: "Canales", href: "/ui/canales", badge: "UI", desc: "WhatsApp/OpenAI por tenant" },
       // APIs solo para admin/superadmin:
       ...(isAdmin ? [
         { title: "Logs Conversaciones", href: "/api/logs/conversations", badge: "API", desc: "Listado de conversaciones" },
@@ -1796,7 +1797,7 @@ function mountAuthRoutes(app) {
       productos: { title: "Productos", src: "/productos", active: "productos" },
       horarios: { title: "Horarios", src: "/horarios", active: "horarios" },
       comportamiento: { title: "Comportamiento", src: "/comportamiento", active: "comportamiento" },
-      canales: { title: "Canales (WhatsApp/OpenAI)", src: "/canales", active: "canales" },
+      canales: { title: "Canales", src: "/canales", active: "canales" },
     };
 
     const conf = map[page];
@@ -2490,7 +2491,7 @@ function mountAuthRoutesLegacy() { /* legacy */ }
 function protectRoutesLegacy() { /* legacy */ }
     // requiere login
     const protectedPrefixes = ["/admin", "/api", "/ui"];
-    const protectedExact = ["/app", "/productos", "/horarios", "/comportamiento"];
+    const protectedExact = ["/app", "/productos", "/horarios", "/comportamiento", "/canales"];
 
     if (protectedExact.includes(p) || protectedPrefixes.some((pref) => p.startsWith(pref))) {
       return requireAuth(req, res, () => {

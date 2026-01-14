@@ -12,7 +12,7 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOK
 // ⬇️ Para catálogo en Mongo
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
-const tenantRuntime = require("./tenant_runtime");
+const { getRuntimeByPhoneNumberId, findAnyByVerifyToken, upsertTenantChannel } = require("./tenant_runtime");
 const TENANT_ID = (process.env.TENANT_ID || "").trim();
 
 
@@ -48,74 +48,68 @@ app.use("/ui", auth.requireAuth);
 // Protege rutas sensibles (admin/api/ui) detrás de login
 auth.protectRoutes(app);
 
-// ===== Tenant Channels API (multi-tenant WhatsApp/OpenAI runtime) =====
-// Admin: listar y upsert de canales (colección tenant_channels)
-app.get("/api/tenant-channels", auth.requireAuth, auth.requireAdmin, async (req, res) => {
+
+// ===================== Tenant Channels (WhatsApp/OpenAI por tenant/canal) =====================
+// Permite definir por tenant (y por teléfono) los valores que antes estaban en .env:
+// - phoneNumberId, whatsappToken, verifyToken, openaiApiKey
+// Nota: el webhook usa esta colección para enrutar multi-teléfono.
+//
+// Requiere rol admin.
+app.get("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
   try {
     const db = await getDb();
-    const isSuper = String(req.user?.role || "") === "superadmin";
-    const tenantId = isSuper ? (String(req.query.tenant || req.headers["x-tenant-id"] || req.user?.tenantId || "default").trim()) : String(req.user?.tenantId || "default");
+    const tenant = String(req.query.tenantId || resolveTenantId(req) || "").trim();
 
-    const items = await db.collection("tenant_channels")
-      .find({ tenantId })
-      .sort({ updatedAt: -1, createdAt: -1 })
-      .toArray();
+    const q = {};
+    if (tenant) q.tenantId = tenant;
 
-    // Si no es superadmin, enmascaramos secretos para evitar exposición
-    const safe = items.map((it) => {
-      const o = {
-        _id: it._id,
-        tenantId: it.tenantId,
-        phoneNumberId: it.phoneNumberId,
-        displayPhoneNumber: it.displayPhoneNumber || "",
-        createdAt: it.createdAt,
-        updatedAt: it.updatedAt,
-      };
-      if (isSuper) {
-        o.whatsappToken = it.whatsappToken || "";
-        o.verifyToken = it.verifyToken || "";
-        o.openaiApiKey = it.openaiApiKey || "";
-      } else {
-        o.whatsappToken = it.whatsappToken ? "****" : "";
-        o.verifyToken = it.verifyToken ? "****" : "";
-        o.openaiApiKey = it.openaiApiKey ? "****" : "";
-      }
-      return o;
-    });
+    const rows = await db.collection("tenant_channels").find(q).sort({ updatedAt: -1, createdAt: -1 }).toArray();
 
-    res.json({ ok: true, tenantId, items: safe });
+    // Por seguridad, si NO sos superadmin, enmascaramos secretos al listar
+    const isSuper = String(req.user?.role || "").toLowerCase() === "superadmin";
+
+    const safe = rows.map(r => ({
+      _id: String(r._id),
+      tenantId: r.tenantId || null,
+      phoneNumberId: r.phoneNumberId || null,
+      displayPhoneNumber: r.displayPhoneNumber || null,
+      updatedAt: r.updatedAt || null,
+      createdAt: r.createdAt || null,
+      whatsappToken: isSuper ? (r.whatsappToken || null) : (r.whatsappToken ? "********" : null),
+      verifyToken: isSuper ? (r.verifyToken || null) : (r.verifyToken ? "********" : null),
+      openaiApiKey: isSuper ? (r.openaiApiKey || null) : (r.openaiApiKey ? "********" : null),
+    }));
+
+    res.json({ ok: true, tenant: tenant || null, items: safe });
   } catch (e) {
-    res.status(500).json({ ok: false, error: String(e?.message || e) });
+    console.error("GET /api/tenant-channels error:", e?.message || e);
+    res.status(500).json({ error: "internal" });
   }
 });
 
-app.post("/api/tenant-channels", auth.requireAuth, auth.requireAdmin, express.json({ limit: "2mb" }), async (req, res) => {
+app.post("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
   try {
     const body = req.body || {};
-    const isSuper = String(req.user?.role || "") === "superadmin";
-    const tenantId = String(body.tenantId || req.query.tenant || req.headers["x-tenant-id"] || req.user?.tenantId || "default").trim();
-
-    if (!isSuper) {
-      const myTenant = String(req.user?.tenantId || "default").trim();
-      if (tenantId !== myTenant) return res.status(403).json({ ok: false, error: "forbidden_tenant" });
-    }
+    // Si NO es superadmin, forzamos tenantId al del usuario (no puede escribir otros tenants)
+    const isSuper = String(req.user?.role || "").toLowerCase() === "superadmin";
+    const tenantForced = resolveTenantId(req);
 
     const payload = {
-      tenantId,
-      phoneNumberId: String(body.phoneNumberId || "").trim(),
+      tenantId: isSuper ? (body.tenantId || tenantForced) : tenantForced,
+      phoneNumberId: body.phoneNumberId,
       displayPhoneNumber: body.displayPhoneNumber,
       whatsappToken: body.whatsappToken,
       verifyToken: body.verifyToken,
       openaiApiKey: body.openaiApiKey,
     };
 
-    const r = await tenantRuntime.upsertTenantChannel(payload, { allowSecrets: true });
+    const r = await upsertTenantChannel(payload, { allowSecrets: true });
     res.json({ ok: true, result: r });
   } catch (e) {
-    res.status(400).json({ ok: false, error: String(e?.message || e) });
+    console.error("POST /api/tenant-channels error:", e?.message || e);
+    res.status(400).json({ error: e?.message || "bad_request" });
   }
 });
-
 
 
 // ===================== WhatsApp Web Sessions Control (WWeb) =====================
@@ -3195,8 +3189,9 @@ app.get("/admin/ticket/:convId", async (req, res) => {
 app.get("/api/products", async (req, res) => {
   try {
     const db = await getDb();
+    const tenant = resolveTenantId(req);
     const q = req.query.all === "true" ? {} : { active: { $ne: false } };
-    if (TENANT_ID) q.tenantId = TENANT_ID;
+    if (tenant) q.tenantId = tenant; else if (TENANT_ID) q.tenantId = TENANT_ID;
     const items = await db.collection("products")
       .find(q).sort({ createdAt: -1, descripcion: 1 }).toArray();
     res.json(items.map(it => ({ ...it, _id: String(it._id) })));
@@ -3237,7 +3232,8 @@ app.post("/api/products", async (req, res) => {
 
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
     const now = new Date();
-    const doc = { tenantId: (TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
+    const tenant = resolveTenantId(req);
+    const doc = { tenantId: (tenant || TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
      if (qty !== null) doc.cantidad = qty;
     if (imp !== null) doc.importe = imp;
     const ins = await db.collection("products").insertOne(doc);
@@ -3279,8 +3275,9 @@ app.put("/api/products/:id", async (req, res) => {
     }
     if (Object.keys(upd).length === 0) return res.status(400).json({ error: "no_fields" });
     upd.updatedAt = new Date();
+    const tenant = resolveTenantId(req);
     const filter = { _id: new ObjectId(String(id)) };
-    if (TENANT_ID) filter.tenantId = TENANT_ID;
+    if (tenant) filter.tenantId = tenant; else if (TENANT_ID) filter.tenantId = TENANT_ID;
     const result = await db.collection("products").updateOne(filter, { $set: upd });
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
     res.json({ ok: true });
@@ -3295,8 +3292,9 @@ app.delete("/api/products/:id", async (req, res) => {
   try {
     const db = await getDb();
     const { id } = req.params;
+    const tenant = resolveTenantId(req);
     const filter = { _id: new ObjectId(String(id)) };
-    if (TENANT_ID) filter.tenantId = TENANT_ID;
+    if (tenant) filter.tenantId = tenant; else if (TENANT_ID) filter.tenantId = TENANT_ID;
     const result = await db.collection("products").deleteOne(filter);
     if (!result.deletedCount) return res.status(404).json({ error: "not_found" });
     res.json({ ok: true });
@@ -3311,8 +3309,9 @@ app.post("/api/products/:id/inactivate", async (req, res) => {
   try {
     const db = await getDb();
     const { id } = req.params;
+    const tenant = resolveTenantId(req);
     const filter = { _id: new ObjectId(String(id)) };
-    if (TENANT_ID) filter.tenantId = TENANT_ID;
+    if (tenant) filter.tenantId = tenant; else if (TENANT_ID) filter.tenantId = TENANT_ID;
     const result = await db.collection("products").updateOne(filter, { $set: { active: false, updatedAt: new Date() } });
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
     res.json({ ok: true });
@@ -3327,8 +3326,9 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
   try {
     const db = await getDb();
     const { id } = req.params;
+    const tenant = resolveTenantId(req);
     const filter = { _id: new ObjectId(String(id)) };
-    if (TENANT_ID) filter.tenantId = TENANT_ID;
+    if (tenant) filter.tenantId = tenant; else if (TENANT_ID) filter.tenantId = TENANT_ID;
     const result = await db.collection("products").updateOne(filter, { $set: { active: true, updatedAt: new Date() } });
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
     res.json({ ok: true });
@@ -3339,140 +3339,13 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
 });
 
 // GET /productos  → UI HTML simple para administrar
-
-
-// ===== UI contenido: Canales (WhatsApp/OpenAI) =====
-// Se carga dentro del wrapper /ui/canales (iframe). NO debe incluir layout/sidebars.
-app.get("/canales", async (req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`<!doctype html>
-<html><head><meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Canales</title>
-  <style>
-    body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:22px;max-width:1100px}
-    h1{margin:0 0 10px 0}
-    .muted{color:#667085;font-size:13px}
-    .row{display:flex;gap:10px;flex-wrap:wrap}
-    .card{background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px;box-shadow:0 8px 20px rgba(16,24,40,.08)}
-    label{display:block;font-size:12px;color:#475467;margin:10px 0 6px}
-    input{width:100%;padding:10px;border:1px solid #d0d5dd;border-radius:8px}
-    button{padding:10px 14px;border-radius:10px;border:1px solid #0e6b66;background:#0e6b66;color:#fff;cursor:pointer;font-weight:650}
-    button.secondary{background:#fff;color:#111827;border-color:#d0d5dd}
-    table{border-collapse:collapse;width:100%;margin-top:10px}
-    th,td{border:1px solid #e5e7eb;padding:10px;text-align:left;font-size:14px}
-    th{background:#f9fafb}
-    .actions{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
-    .pill{display:inline-block;font-size:12px;padding:4px 8px;border-radius:999px;background:#f2f4f7;color:#344054}
-  </style>
-</head>
-<body>
-  <h1>Canales (WhatsApp/OpenAI)</h1>
-  <div class="muted">Configurá por tenantId y phoneNumberId el token de WhatsApp, verify token y API key de OpenAI (colección <span class="pill">tenant_channels</span>).</div>
-  <div class="row" style="margin-top:14px">
-    <div class="card" style="flex:1;min-width:320px">
-      <h3 style="margin:0 0 8px">Crear / actualizar</h3>
-      <label>TenantId</label>
-      <input id="tenantId" placeholder="default" />
-      <label>Phone Number ID (Meta)</label>
-      <input id="phoneNumberId" placeholder="1234567890" />
-      <label>Display phone (opcional)</label>
-      <input id="displayPhoneNumber" placeholder="+54 9 ..." />
-      <label>WhatsApp Token</label>
-      <input id="whatsappToken" placeholder="EAAG..." />
-      <label>Verify Token</label>
-      <input id="verifyToken" placeholder="mi-token-verificacion" />
-      <label>OpenAI API Key</label>
-      <input id="openaiApiKey" placeholder="sk-..." />
-
-      <div class="actions">
-        <button id="btnSave">Guardar</button>
-        <button class="secondary" id="btnClear" type="button">Limpiar</button>
-        <button class="secondary" id="btnReload" type="button">Actualizar</button>
-      </div>
-      <div id="msg" class="muted" style="margin-top:10px"></div>
-    </div>
-
-    <div class="card" style="flex:1.2;min-width:380px">
-      <h3 style="margin:0 0 8px">Canales cargados</h3>
-      <table>
-        <thead><tr><th>Tenant</th><th>PhoneNumberId</th><th>Display</th><th>Whats</th><th>OpenAI</th></tr></thead>
-        <tbody id="rows"><tr><td colspan="5" class="muted">Cargando...</td></tr></tbody>
-      </table>
-    </div>
-  </div>
-
-  <script>
-    function esc(s){ return String(s||"").replace(/[&<>"']/g, m=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m])); }
-    function mask(v){ v=String(v||""); if(!v) return ""; if(v==="****") return "****"; if(v.length<=8) return "***"; return v.slice(0,4)+"..."+v.slice(-4); }
-
-    async function load(){
-      const tenant = document.getElementById("tenantId").value.trim();
-      const q = tenant ? ("?tenant="+encodeURIComponent(tenant)) : "";
-      const res = await fetch("/api/tenant-channels"+q, { credentials: "include" });
-      const data = await res.json().catch(()=>({ok:false}));
-      const tb = document.getElementById("rows");
-      if(!data.ok){ tb.innerHTML = '<tr><td colspan="5" class="muted">No se pudo cargar.</td></tr>'; return; }
-      const items = data.items || [];
-      if(items.length===0){ tb.innerHTML = '<tr><td colspan="5" class="muted">No hay canales cargados.</td></tr>'; return; }
-      tb.innerHTML = items.map(it => (
-        '<tr>'+
-          '<td>'+esc(it.tenantId)+'</td>'+
-          '<td>'+esc(it.phoneNumberId)+'</td>'+
-          '<td>'+esc(it.displayPhoneNumber||"")+'</td>'+
-          '<td>'+esc(mask(it.whatsappToken))+'</td>'+
-          '<td>'+esc(mask(it.openaiApiKey))+'</td>'+
-        '</tr>'
-      )).join("");
-    }
-
-    async function save(){
-      const payload = {
-        tenantId: document.getElementById("tenantId").value.trim() || "default",
-        phoneNumberId: document.getElementById("phoneNumberId").value.trim(),
-        displayPhoneNumber: document.getElementById("displayPhoneNumber").value.trim(),
-        whatsappToken: document.getElementById("whatsappToken").value.trim(),
-        verifyToken: document.getElementById("verifyToken").value.trim(),
-        openaiApiKey: document.getElementById("openaiApiKey").value.trim(),
-      };
-      const msg = document.getElementById("msg");
-      msg.textContent = "Guardando...";
-      const res = await fetch("/api/tenant-channels", {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        credentials:"include",
-        body: JSON.stringify(payload)
-      });
-      const data = await res.json().catch(()=>({ok:false}));
-      if(data.ok){ msg.textContent = "✅ Guardado"; await load(); }
-      else { msg.textContent = "❌ Error: "+ (data.error||""); }
-    }
-
-    function clearForm(){
-      document.getElementById("phoneNumberId").value="";
-      document.getElementById("displayPhoneNumber").value="";
-      document.getElementById("whatsappToken").value="";
-      document.getElementById("verifyToken").value="";
-      document.getElementById("openaiApiKey").value="";
-      document.getElementById("msg").textContent="";
-    }
-
-    document.getElementById("btnSave").addEventListener("click", save);
-    document.getElementById("btnReload").addEventListener("click", load);
-    document.getElementById("btnClear").addEventListener("click", clearForm);
-
-    // Auto
-    load();
-  </script>
-</body></html>`);
-});
-
 app.get("/productos", async (req, res) => {
   try {
     const db = await getDb();
     const verTodos = req.query.all === "true";
+    const tenant = resolveTenantId(req);
     const filtro = verTodos ? {} : { active: { $ne: false } };
-    if (TENANT_ID) filtro.tenantId = TENANT_ID;
+    if (tenant) filtro.tenantId = tenant; else if (TENANT_ID) filtro.tenantId = TENANT_ID;
     const productos = await db.collection("products").find(filtro).sort({ createdAt: -1 }).toArray();
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html><html><head><meta charset="utf-8" /><title>Productos</title>
@@ -3708,6 +3581,200 @@ app.get("/comportamiento", async (req, res) => {
   } catch (e) { console.error("/comportamiento error:", e); res.status(500).send("internal"); }
 });
 
+
+// ===================================================================
+// ===============          Canales (WA/OpenAI)        ===============
+// ===================================================================
+// UI simple (sin sidebar) para administrar tenant_channels.
+// Se usa dentro de /ui/canales (appShell) para evitar duplicar el menú.
+app.get("/canales", async (req, res) => {
+  try {
+    const tenant = resolveTenantId(req);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Canales (${tenant})</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1100px}
+    h1{margin:0 0 8px}
+    .muted{color:#666;font-size:13px}
+    .row{display:flex;gap:14px;flex-wrap:wrap}
+    .card{border:1px solid #ddd;border-radius:10px;padding:14px;flex:1;min-width:320px}
+    label{display:block;font-size:12px;color:#333;margin:10px 0 6px}
+    input{width:100%;padding:10px 12px;border:1px solid #ccc;border-radius:8px}
+    button{padding:10px 14px;border:0;border-radius:8px;background:#0f766e;color:#fff;font-weight:600;cursor:pointer}
+    button.secondary{background:#e5e7eb;color:#111827}
+    table{width:100%;border-collapse:collapse;margin-top:10px}
+    th,td{border-bottom:1px solid #eee;padding:10px;text-align:left;font-size:13px;vertical-align:top}
+    th{font-size:12px;color:#374151}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid #cbd5e1;border-radius:999px;font-size:12px;color:#0f172a;background:#f8fafc}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}
+    .msg{margin:10px 0;padding:10px 12px;border-radius:8px}
+    .msg.ok{background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46}
+    .msg.err{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
+    code{background:#f3f4f6;padding:2px 6px;border-radius:6px}
+  </style>
+</head>
+<body>
+  <h1>Canales (WhatsApp/OpenAI)</h1>
+  <div class="muted">Configurá por <b>tenantId</b> y <b>phoneNumberId</b> el token de WhatsApp, verify token y API key de OpenAI (colección <code>tenant_channels</code>).</div>
+
+  <div id="msg"></div>
+
+  <div class="row" style="margin-top:14px">
+    <div class="card">
+      <h3 style="margin:0 0 8px">Crear / actualizar</h3>
+      <form id="f">
+        <label>TenantId</label>
+        <input name="tenantId" value="${String(tenant||'').replace(/"/g,'&quot;')}" placeholder="default"/>
+
+        <label>Phone Number ID (Meta)</label>
+        <input name="phoneNumberId" placeholder="1234567890" required/>
+
+        <label>Display phone (opcional)</label>
+        <input name="displayPhoneNumber" placeholder="+54 9 ..."/>
+
+        <label>WhatsApp Token</label>
+        <input name="whatsappToken" placeholder="EAAG..." />
+
+        <label>Verify Token</label>
+        <input name="verifyToken" placeholder="mi-token-verificacion" />
+
+        <label>OpenAI API Key</label>
+        <input name="openaiApiKey" placeholder="sk-..." />
+
+        <div class="actions" style="margin-top:12px">
+          <button type="submit">Guardar</button>
+          <button type="button" class="secondary" id="btnClear">Limpiar</button>
+          <button type="button" class="secondary" id="btnReload">Actualizar</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 8px">Canales cargados</h3>
+      <div class="muted">Tip: hacé click en “Editar” para cargar los campos.</div>
+      <div style="overflow:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>Tenant</th>
+              <th>PhoneNumberId</th>
+              <th>Display</th>
+              <th>Updated</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tbody">
+            <tr><td colspan="5" class="muted">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const msgEl = document.getElementById('msg');
+  const form = document.getElementById('f');
+  const tbody = document.getElementById('tbody');
+  const btnClear = document.getElementById('btnClear');
+  const btnReload = document.getElementById('btnReload');
+
+  function esc(s){
+    return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function setMsg(type, text){
+    if(!text){ msgEl.innerHTML=''; return; }
+    msgEl.innerHTML = '<div class="msg '+(type==='ok'?'ok':'err')+'">'+esc(text)+'</div>';
+  }
+
+  async function load(){
+    setMsg('', '');
+    tbody.innerHTML = '<tr><td colspan="5" class="muted">Cargando...</td></tr>';
+    const tenantId = (form.tenantId.value||'').trim();
+    const qs = tenantId ? ('?tenantId='+encodeURIComponent(tenantId)) : '';
+    const r = await fetch('/api/tenant-channels'+qs, { headers: { 'Accept':'application/json' }});
+    if(!r.ok){
+      tbody.innerHTML = '<tr><td colspan="5">No se pudo cargar.</td></tr>';
+      return;
+    }
+    const j = await r.json();
+    const items = Array.isArray(j.items) ? j.items : [];
+    if(!items.length){
+      tbody.innerHTML = '<tr><td colspan="5" class="muted">No hay canales cargados.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = items.map(it => {
+      return '<tr>'+
+        '<td><span class="pill">'+esc(it.tenantId||'')+'</span></td>'+
+        '<td>'+esc(it.phoneNumberId||'')+'</td>'+
+        '<td>'+esc(it.displayPhoneNumber||'')+'</td>'+
+        '<td class="muted">'+esc(it.updatedAt||it.createdAt||'')+'</td>'+
+        '<td><button type="button" class="secondary" data-edit="'+esc(it._id)+'">Editar</button></td>'+
+      '</tr>';
+    }).join('');
+
+    // wire edit buttons
+    tbody.querySelectorAll('button[data-edit]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const id = btn.getAttribute('data-edit');
+        const it = items.find(x => String(x._id)===String(id));
+        if(!it) return;
+        form.tenantId.value = it.tenantId || '';
+        form.phoneNumberId.value = it.phoneNumberId || '';
+        form.displayPhoneNumber.value = it.displayPhoneNumber || '';
+        // secretos pueden venir enmascarados si no sos superadmin; igual dejamos el valor actual por si querés reescribir
+        form.whatsappToken.value = (it.whatsappToken && it.whatsappToken !== '********') ? it.whatsappToken : '';
+        form.verifyToken.value = (it.verifyToken && it.verifyToken !== '********') ? it.verifyToken : '';
+        form.openaiApiKey.value = (it.openaiApiKey && it.openaiApiKey !== '********') ? it.openaiApiKey : '';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    });
+  }
+
+  form.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    setMsg('', '');
+    const data = new URLSearchParams(new FormData(form));
+    const r = await fetch('/api/tenant-channels', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/x-www-form-urlencoded' },
+      body: data
+    });
+    const j = await r.json().catch(()=>null);
+    if(!r.ok){
+      setMsg('err', (j && j.error) ? j.error : 'Error guardando.');
+      return;
+    }
+    setMsg('ok', 'Guardado OK.');
+    await load();
+  });
+
+  btnClear.addEventListener('click', ()=>{
+    const keepTenant = form.tenantId.value;
+    form.reset();
+    form.tenantId.value = keepTenant;
+    setMsg('', '');
+  });
+
+  btnReload.addEventListener('click', load);
+
+  load();
+})();
+</script>
+</body>
+</html>`);
+  } catch (e) {
+    console.error("GET /canales error:", e?.message || e);
+    res.status(500).send("Error");
+  }
+});
+
 app.get("/api/behavior", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
@@ -3832,13 +3899,28 @@ app.post("/api/hours", async (req, res) => {
 
 
 // Webhook Verify (GET)
-app.get("/webhook", (req, res) => {
+// Retrocompatible: acepta VERIFY_TOKEN de .env como siempre,
+// y además acepta cualquier verifyToken guardado en tenant_channels.
+app.get("/webhook", async (req, res) => {
   const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
+  const token = String(req.query["hub.verify_token"] || "").trim();
   const challenge = req.query["hub.challenge"];
-  if (mode && token && mode === "subscribe" && token === VERIFY_TOKEN) {
+
+  if (!mode || mode !== "subscribe" || !token) return res.sendStatus(403);
+
+  // 1) modo legacy (solo .env)
+  if (token && token === String(VERIFY_TOKEN || "").trim()) {
     return res.status(200).send(challenge);
   }
+
+  // 2) modo multi-tenant (DB)
+  try {
+    const rt = await findAnyByVerifyToken(token);
+    if (rt) return res.status(200).send(challenge);
+  } catch (e) {
+    console.error("[webhook] verify db error:", e?.message || e);
+  }
+
   return res.sendStatus(403);
 });
 
@@ -3849,11 +3931,28 @@ app.post("/webhook", async (req, res) => {
       if (process.env.NODE_ENV === "production") return res.sendStatus(403);
       console.warn("⚠️ Webhook: firma inválida (ignorada en dev).");
     }
-    const tenant = resolveTenantId(req);
+// ✅ PARSEO CORRECTO DEL PAYLOAD WHATSAPP
 
-    // ✅ PARSEO CORRECTO DEL PAYLOAD WHATSAPP
     const change = req.body?.entry?.[0]?.changes?.[0];
     const value  = change?.value;
+const phoneNumberIdInbound =
+  value?.metadata?.phone_number_id ||
+  value?.metadata?.phoneNumberId ||
+  value?.metadata?.phone_number ||
+  null;
+
+// Runtime por canal (WhatsApp/OpenAI) desde Mongo.
+// Si no existe, cae a .env (100% retrocompatible).
+let runtime = null;
+try { runtime = await getRuntimeByPhoneNumberId(phoneNumberIdInbound); } catch {}
+const tenant = String(runtime?.tenantId || DEFAULT_TENANT_ID || TENANT_ID || "default").trim();
+
+const waOpts = {
+  whatsappToken: runtime?.whatsappToken || null,
+  phoneNumberId: runtime?.phoneNumberId || phoneNumberIdInbound || null,
+};
+const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
+
     const msg    = value?.messages?.[0];   // mensaje entrante (texto/audio/etc.)
     const status = value?.statuses?.[0];   // (se ignora para persistencia)
     if (!msg) {
@@ -3869,11 +3968,11 @@ app.post("/webhook", async (req, res) => {
       text = msg.text.body;
     } else if (msg.type === "audio" && msg.audio?.id) {
       try {
-        const info = await getMediaInfo(msg.audio.id);
-        const buf = await downloadMediaBuffer(info.url);
+        const info = await getMediaInfo(msg.audio.id, waOpts);
+        const buf = await downloadMediaBuffer(info.url, waOpts);
         const id = putInCache(buf, info.mime_type || "audio/ogg");
         const publicAudioUrl = `${req.protocol}://${req.get("host")}/cache/audio/${id}`;
-        const tr = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type });
+        const tr = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type, ...aiOpts });
         text = String(tr?.text || "").trim() || "(audio sin texto)";
       } catch (e) {
         console.error("Audio/transcripción:", e.message);
@@ -3881,15 +3980,16 @@ app.post("/webhook", async (req, res) => {
       }
      } else if (msg.type === "image" && msg.image?.id) {
       try {
-        const info = await getMediaInfo(msg.image.id);
-        const buf = await downloadMediaBuffer(info.url);
+        const info = await getMediaInfo(msg.image.id, waOpts);
+        const buf = await downloadMediaBuffer(info.url, waOpts);
         const id = putInCache(buf, info.mime_type || "image/jpeg");
         const publicImageUrl = `${req.protocol}://${req.get("host")}/cache/media/${id}`;
 
         const img = await analyzeImageExternal({
           publicImageUrl,
           mime: info.mime_type,
-          purpose: "payment-proof"
+          purpose: "payment-proof",
+          ...aiOpts
         });
 
         // Texto que alimenta al modelo conversacional
@@ -3946,7 +4046,8 @@ console.log("[convId] "+ convId);
       if (isPoliteClosingMessage(text)) {
         await require("./logic").sendWhatsAppMessage(
           from,
-          "¡Gracias! 😊 Cuando quieras hacemos otro pedido."
+          "¡Gracias! 😊 Cuando quieras hacemos otro pedido.",
+          waOpts
         );
         return res.sendStatus(200);
       }
@@ -3964,7 +4065,7 @@ console.log("[convId] "+ convId);
       try { snapshot = JSON.parse(require("./logic").__proto__ ? "{}" : "{}"); } catch {}
       // En minimal guardamos snapshot siempre; si no lo tenés a mano, seguimos y dejamos que el modelo lo complete
     }
-    const gptReply = await getGPTReply(tenant, from, text);
+    const gptReply = await getGPTReply(tenant, from, text, aiOpts);
     // También dispara si el usuario pide "total" o está en fase de confirmar
    const wantsDetail = /\b(detalle|detall|resumen|desglose|total|confirm(a|o|ar))\b/i
       .test(String(text || ""));
@@ -4031,7 +4132,7 @@ console.log("[convId] "+ convId);
         ].join("\n");
 
         for (let attempt = 1; attempt <= (Number(process.env.CALC_FIX_MAX_RETRIES || 3)); attempt++) {
-          const fixReply = await getGPTReply(tenant, from, `${baseCorrection}\n[INTENTO:${attempt}/${process.env.CALC_FIX_MAX_RETRIES || 3}]`);
+          const fixReply = await getGPTReply(tenant, from, `${baseCorrection}\n[INTENTO:${attempt}/${process.env.CALC_FIX_MAX_RETRIES || 3}]`, aiOpts);
           console.log(`[fix][${attempt}] assistant.content =>\n${fixReply}`);
           try {
             const parsedFix = JSON.parse(fixReply);
@@ -4040,7 +4141,7 @@ console.log("[convId] "+ convId);
 
             let pedidoFix = parsedFix.Pedido || { items: [] };
              // 💰 Rehidratar también en el ciclo de fix
-            try { pedidoFix = await hydratePricesFromCatalog(pedidoFix, TENANT_ID || null); } catch {}
+            try { pedidoFix = await hydratePricesFromCatalog(pedidoFix, tenant || null); } catch {}
          
             const { pedidoCorr: pedidoFixCorr, mismatch: mismatchFix, hasItems: hasItemsFix } = recalcAndDetectMismatch(pedidoFix);
             pedido = pedidoFixCorr;
@@ -4423,7 +4524,7 @@ console.log("[convId] "+ convId);
 
             // Buscar producto de Envío según km
             const db = await getDb();
-            const envioProd = await pickEnvioProductByDistance(db, TENANT_ID || null, distKm);
+            const envioProd = await pickEnvioProductByDistance(db, tenant || null, distKm);
             if (envioProd && typeof envioProd.importe === "number") {
                  console.log(`[envio] Seleccionado por distancia: '${envioProd.descripcion}' @ ${envioProd.importe}`);
             
