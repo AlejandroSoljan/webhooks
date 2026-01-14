@@ -1311,6 +1311,7 @@ function wwebSessionsAdminPage({ user }) {
     (function(){
       var IS_SUPER = ${isSuper ? "true" : "false"};
       var body = document.getElementById('wwebBody');
+      var msg = document.getElementById('wwebMsg');
        var tableWrap = document.getElementById('wwebTableWrap');
       var inflight = false;
       function fmtDate(v){
