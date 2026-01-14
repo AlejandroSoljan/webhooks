@@ -784,7 +784,7 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
     drawer.addEventListener("click", (e) => { if (e.target.closest("a")) closeDrawer(); });
   })();
-  </script>` : ``}
+  <\/script>` : ``}
 
 </body>
 </html>`;
@@ -873,7 +873,7 @@ function loginSeoHead({ baseUrl }) {
    "operatingSystem":"Web",
     "description":"${desc.replace(/"/g, '\\"')}"
   }
-  </script>
+  <\/script>
   `;
 }
 
@@ -1662,7 +1662,7 @@ function doRelease(id, resetAuth, tenant, numero){
       });
       load({ initial:true, showLoading:true });
     })();
-    </script>
+    <\/script>
 
     <style>
   .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; line-height:1.4; border:1px solid rgba(0,0,0,.08)}
