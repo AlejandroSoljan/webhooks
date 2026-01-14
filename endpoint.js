@@ -1794,8 +1794,22 @@ app.post("/api/admin/send-message", async (req, res) => {
 
     const to = conv.waId;
 
-    // Enviar por WhatsApp
-    await require("./logic").sendWhatsAppMessage(to, body);
+     // Enviar por WhatsApp (multi-phone): usar el mismo canal (phoneNumberId) de la conversación
+    const convPhoneNumberId = conv.phoneNumberId || null;
+    let rt = null;
+    try {
+      if (convPhoneNumberId) {
+        rt = await getRuntimeByPhoneNumberId(convPhoneNumberId);
+      }
+    } catch {}
+
+    const waOpts = {
+      whatsappToken: rt?.whatsappToken || null,
+      phoneNumberId: rt?.phoneNumberId || convPhoneNumberId || null,
+    };
+
+    // Enviar por WhatsApp (si waOpts no tiene token/phoneNumberId, logic.js cae a .env => retrocompatible)
+    await require("./logic").sendWhatsAppMessage(to, body, waOpts);
 
     const now = new Date();
 
@@ -4005,7 +4019,12 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
 
         // Asegurar conversación y guardar mensaje de usuario
     let conv = null;
-    try { conv = await upsertConversation(from, {}, tenant); } catch (e) { console.error("upsertConversation:", e?.message); }
+     // Guardamos phoneNumberId para poder responder/operar por el mismo canal luego (admin, etc.)
+ try {
+      conv = await upsertConversation(from, { phoneNumberId: waOpts.phoneNumberId }, tenant);
+    } catch (e) {
+      console.error("upsertConversation:", e?.message);
+    }
     const convId = conv?._id;
 
    
@@ -4426,7 +4445,7 @@ console.log("[convId] "+ convId);
       || (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length
           ? buildBackendSummary(pedido, { showEnvio: wantsDetail })
           : "Perfecto, sigo acá. ¿Querés confirmar o cambiar algo?");
-    await require("./logic").sendWhatsAppMessage(from, responseTextSafe);
+    await require("./logic").sendWhatsAppMessage(from, responseTextSafe, waOpts);
     
     
     
