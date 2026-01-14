@@ -12,8 +12,16 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOK
 // ⬇️ Para catálogo en Mongo
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
-const { getRuntimeByPhoneNumberId, findAnyByVerifyToken, upsertTenantChannel } = require("./tenant_runtime");
 const TENANT_ID = (process.env.TENANT_ID || "").trim();
+
+// Runtime per tenant/canal (WhatsApp/OpenAI) desde Mongo.
+// Si no existe o no está configurado, el sistema sigue usando variables de entorno.
+let tenantRuntime = null;
+try {
+  tenantRuntime = require("./tenant_runtime");
+} catch (e) {
+  tenantRuntime = null;
+}
 
 
 // Días de la semana para configuración de horarios
@@ -48,69 +56,81 @@ app.use("/ui", auth.requireAuth);
 // Protege rutas sensibles (admin/api/ui) detrás de login
 auth.protectRoutes(app);
 
+// ===================== Tenant Channels (WhatsApp Cloud + OpenAI) =====================
+// CRUD mínimo para cargar tokens/keys por tenantId y phoneNumberId.
+// 100% retrocompatible: si tenantRuntime no existe o no hay datos en DB, se usan .env.
+app.use("/api/tenant-channels", auth.requireAdmin);
 
-// ===================== Tenant Channels (WhatsApp/OpenAI por tenant/canal) =====================
-// Permite definir por tenant (y por teléfono) los valores que antes estaban en .env:
-// - phoneNumberId, whatsappToken, verifyToken, openaiApiKey
-// Nota: el webhook usa esta colección para enrutar multi-teléfono.
-//
-// Requiere rol admin.
-app.get("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
+app.get("/api/tenant-channels", async (req, res) => {
   try {
     const db = await getDb();
-    const tenant = String(req.query.tenantId || resolveTenantId(req) || "").trim();
+    const role = String(req.user?.role || "");
+    const isSuper = role === "superadmin";
 
-    const q = {};
-    if (tenant) q.tenantId = tenant;
+    const tenantFromQuery = String(req.query?.tenantId || "").trim();
+    const tenantId = isSuper ? (tenantFromQuery || "") : resolveTenantId(req);
 
-    const rows = await db.collection("tenant_channels").find(q).sort({ updatedAt: -1, createdAt: -1 }).toArray();
+    const filter = tenantId ? { tenantId } : {};
+    const items = await db.collection("tenant_channels").find(filter).sort({ updatedAt: -1, createdAt: -1 }).limit(2000).toArray();
 
-    // Por seguridad, si NO sos superadmin, enmascaramos secretos al listar
-    const isSuper = String(req.user?.role || "").toLowerCase() === "superadmin";
+    const masked = (v) => (v ? "********" : "");
+    const out = (items || []).map((it) => {
+      const doc = {
+        _id: String(it._id),
+        tenantId: it.tenantId,
+        phoneNumberId: it.phoneNumberId,
+        displayPhoneNumber: it.displayPhoneNumber || "",
+        whatsappToken: isSuper ? (it.whatsappToken || "") : masked(it.whatsappToken),
+        verifyToken: isSuper ? (it.verifyToken || "") : masked(it.verifyToken),
+        openaiApiKey: isSuper ? (it.openaiApiKey || "") : masked(it.openaiApiKey),
+        createdAt: it.createdAt || null,
+        updatedAt: it.updatedAt || null,
+      };
+      return doc;
+    });
 
-    const safe = rows.map(r => ({
-      _id: String(r._id),
-      tenantId: r.tenantId || null,
-      phoneNumberId: r.phoneNumberId || null,
-      displayPhoneNumber: r.displayPhoneNumber || null,
-      updatedAt: r.updatedAt || null,
-      createdAt: r.createdAt || null,
-      whatsappToken: isSuper ? (r.whatsappToken || null) : (r.whatsappToken ? "********" : null),
-      verifyToken: isSuper ? (r.verifyToken || null) : (r.verifyToken ? "********" : null),
-      openaiApiKey: isSuper ? (r.openaiApiKey || null) : (r.openaiApiKey ? "********" : null),
-    }));
-
-    res.json({ ok: true, tenant: tenant || null, items: safe });
+    return res.json({ ok: true, items: out });
   } catch (e) {
-    console.error("GET /api/tenant-channels error:", e?.message || e);
-    res.status(500).json({ error: "internal" });
+    console.error("GET /api/tenant-channels error:", e);
+    return res.status(500).json({ ok: false, error: "internal" });
   }
 });
 
-app.post("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
+app.post("/api/tenant-channels", async (req, res) => {
   try {
+    if (!tenantRuntime || typeof tenantRuntime.upsertTenantChannel !== "function") {
+      return res.status(400).json({ ok: false, error: "tenant_runtime_not_available" });
+    }
+    const role = String(req.user?.role || "");
+    const isSuper = role === "superadmin";
+
     const body = req.body || {};
-    // Si NO es superadmin, forzamos tenantId al del usuario (no puede escribir otros tenants)
-    const isSuper = String(req.user?.role || "").toLowerCase() === "superadmin";
-    const tenantForced = resolveTenantId(req);
+    const tenantId = String(body.tenantId || "").trim() || (isSuper ? "" : resolveTenantId(req));
+    const phoneNumberId = String(body.phoneNumberId || "").trim();
+    if (!tenantId) return res.status(400).json({ ok: false, error: "tenantId_required" });
+    if (!phoneNumberId) return res.status(400).json({ ok: false, error: "phoneNumberId_required" });
+    if (!isSuper) {
+      const myTenant = resolveTenantId(req);
+      if (tenantId !== myTenant) return res.status(403).json({ ok: false, error: "tenant_mismatch" });
+    }
 
     const payload = {
-      tenantId: isSuper ? (body.tenantId || tenantForced) : tenantForced,
-      phoneNumberId: body.phoneNumberId,
+      tenantId,
+      phoneNumberId,
       displayPhoneNumber: body.displayPhoneNumber,
-      whatsappToken: body.whatsappToken,
-      verifyToken: body.verifyToken,
-      openaiApiKey: body.openaiApiKey,
     };
+    // Sólo setear secretos si vienen en el payload (evita pisar con vacío)
+    if (body.whatsappToken !== undefined) payload.whatsappToken = body.whatsappToken;
+    if (body.verifyToken !== undefined) payload.verifyToken = body.verifyToken;
+    if (body.openaiApiKey !== undefined) payload.openaiApiKey = body.openaiApiKey;
 
-    const r = await upsertTenantChannel(payload, { allowSecrets: true });
-    res.json({ ok: true, result: r });
+    const r = await tenantRuntime.upsertTenantChannel(payload, { allowSecrets: true });
+    return res.json({ ok: true, ...r });
   } catch (e) {
-    console.error("POST /api/tenant-channels error:", e?.message || e);
-    res.status(400).json({ error: e?.message || "bad_request" });
+    console.error("POST /api/tenant-channels error:", e);
+    return res.status(500).json({ ok: false, error: String(e?.message || e) });
   }
 });
-
 
 // ===================== WhatsApp Web Sessions Control (WWeb) =====================
 // Admin API para controlar políticas (allow any / pinned host / blocked hosts),
@@ -1794,8 +1814,17 @@ app.post("/api/admin/send-message", async (req, res) => {
 
     const to = conv.waId;
 
-    // Enviar por WhatsApp
-    await require("./logic").sendWhatsAppMessage(to, body);
+    // Enviar por WhatsApp (multi-canal: si hay runtime por tenant, usarlo)
+    let rt = null;
+    try {
+      if (tenantRuntime && typeof tenantRuntime.getRuntimeByTenantId === "function") {
+        rt = await tenantRuntime.getRuntimeByTenantId(tenant);
+      }
+    } catch {}
+    await require("./logic").sendWhatsAppMessage(to, body, {
+      phoneNumberId: rt?.phoneNumberId,
+      whatsappToken: rt?.whatsappToken,
+    });
 
     const now = new Date();
 
@@ -3189,9 +3218,8 @@ app.get("/admin/ticket/:convId", async (req, res) => {
 app.get("/api/products", async (req, res) => {
   try {
     const db = await getDb();
-    const tenant = resolveTenantId(req);
     const q = req.query.all === "true" ? {} : { active: { $ne: false } };
-    if (tenant) q.tenantId = tenant; else if (TENANT_ID) q.tenantId = TENANT_ID;
+    if (TENANT_ID) q.tenantId = TENANT_ID;
     const items = await db.collection("products")
       .find(q).sort({ createdAt: -1, descripcion: 1 }).toArray();
     res.json(items.map(it => ({ ...it, _id: String(it._id) })));
@@ -3232,8 +3260,7 @@ app.post("/api/products", async (req, res) => {
 
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
     const now = new Date();
-    const tenant = resolveTenantId(req);
-    const doc = { tenantId: (tenant || TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
+    const doc = { tenantId: (TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
      if (qty !== null) doc.cantidad = qty;
     if (imp !== null) doc.importe = imp;
     const ins = await db.collection("products").insertOne(doc);
@@ -3275,9 +3302,8 @@ app.put("/api/products/:id", async (req, res) => {
     }
     if (Object.keys(upd).length === 0) return res.status(400).json({ error: "no_fields" });
     upd.updatedAt = new Date();
-    const tenant = resolveTenantId(req);
     const filter = { _id: new ObjectId(String(id)) };
-    if (tenant) filter.tenantId = tenant; else if (TENANT_ID) filter.tenantId = TENANT_ID;
+    if (TENANT_ID) filter.tenantId = TENANT_ID;
     const result = await db.collection("products").updateOne(filter, { $set: upd });
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
     res.json({ ok: true });
@@ -3292,9 +3318,8 @@ app.delete("/api/products/:id", async (req, res) => {
   try {
     const db = await getDb();
     const { id } = req.params;
-    const tenant = resolveTenantId(req);
     const filter = { _id: new ObjectId(String(id)) };
-    if (tenant) filter.tenantId = tenant; else if (TENANT_ID) filter.tenantId = TENANT_ID;
+    if (TENANT_ID) filter.tenantId = TENANT_ID;
     const result = await db.collection("products").deleteOne(filter);
     if (!result.deletedCount) return res.status(404).json({ error: "not_found" });
     res.json({ ok: true });
@@ -3309,9 +3334,8 @@ app.post("/api/products/:id/inactivate", async (req, res) => {
   try {
     const db = await getDb();
     const { id } = req.params;
-    const tenant = resolveTenantId(req);
     const filter = { _id: new ObjectId(String(id)) };
-    if (tenant) filter.tenantId = tenant; else if (TENANT_ID) filter.tenantId = TENANT_ID;
+    if (TENANT_ID) filter.tenantId = TENANT_ID;
     const result = await db.collection("products").updateOne(filter, { $set: { active: false, updatedAt: new Date() } });
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
     res.json({ ok: true });
@@ -3326,9 +3350,8 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
   try {
     const db = await getDb();
     const { id } = req.params;
-    const tenant = resolveTenantId(req);
     const filter = { _id: new ObjectId(String(id)) };
-    if (tenant) filter.tenantId = tenant; else if (TENANT_ID) filter.tenantId = TENANT_ID;
+    if (TENANT_ID) filter.tenantId = TENANT_ID;
     const result = await db.collection("products").updateOne(filter, { $set: { active: true, updatedAt: new Date() } });
     if (!result.matchedCount) return res.status(404).json({ error: "not_found" });
     res.json({ ok: true });
@@ -3343,9 +3366,8 @@ app.get("/productos", async (req, res) => {
   try {
     const db = await getDb();
     const verTodos = req.query.all === "true";
-    const tenant = resolveTenantId(req);
     const filtro = verTodos ? {} : { active: { $ne: false } };
-    if (tenant) filtro.tenantId = tenant; else if (TENANT_ID) filtro.tenantId = TENANT_ID;
+    if (TENANT_ID) filtro.tenantId = TENANT_ID;
     const productos = await db.collection("products").find(filtro).sort({ createdAt: -1 }).toArray();
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html><html><head><meta charset="utf-8" /><title>Productos</title>
@@ -3705,28 +3727,26 @@ app.post("/api/hours", async (req, res) => {
 
 
 // Webhook Verify (GET)
-// Retrocompatible: acepta VERIFY_TOKEN de .env como siempre,
-// y además acepta cualquier verifyToken guardado en tenant_channels.
 app.get("/webhook", async (req, res) => {
   const mode = req.query["hub.mode"];
-  const token = String(req.query["hub.verify_token"] || "").trim();
+  const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
+  if (!mode || !token || mode !== "subscribe") return res.sendStatus(403);
 
-  if (!mode || mode !== "subscribe" || !token) return res.sendStatus(403);
+  // Compat: token por .env
+  if (token === VERIFY_TOKEN) return res.status(200).send(challenge);
 
-  // 1) modo legacy (solo .env)
-  if (token && token === String(VERIFY_TOKEN || "").trim()) {
-    return res.status(200).send(challenge);
-  }
-
-  // 2) modo multi-tenant (DB)
+  // Multi-tenant: token por DB (tenant_channels.verifyToken)
   try {
-    const rt = await findAnyByVerifyToken(token);
-    if (rt) return res.status(200).send(challenge);
+    if (tenantRuntime && typeof tenantRuntime.findAnyByVerifyToken === "function") {
+      const rt = await tenantRuntime.findAnyByVerifyToken(token);
+      if (rt && String(rt.verifyToken || "").trim() === String(token).trim()) {
+        return res.status(200).send(challenge);
+      }
+    }
   } catch (e) {
-    console.error("[webhook] verify db error:", e?.message || e);
+    console.warn("[webhook] verifyToken lookup error:", e?.message || e);
   }
-
   return res.sendStatus(403);
 });
 
@@ -3737,30 +3757,29 @@ app.post("/webhook", async (req, res) => {
       if (process.env.NODE_ENV === "production") return res.sendStatus(403);
       console.warn("⚠️ Webhook: firma inválida (ignorada en dev).");
     }
-// ✅ PARSEO CORRECTO DEL PAYLOAD WHATSAPP
-
+    // ✅ PARSEO CORRECTO DEL PAYLOAD WHATSAPP
     const change = req.body?.entry?.[0]?.changes?.[0];
     const value  = change?.value;
-const phoneNumberIdInbound =
-  value?.metadata?.phone_number_id ||
-  value?.metadata?.phoneNumberId ||
-  value?.metadata?.phone_number ||
-  null;
-
-// Runtime por canal (WhatsApp/OpenAI) desde Mongo.
-// Si no existe, cae a .env (100% retrocompatible).
-let runtime = null;
-try { runtime = await getRuntimeByPhoneNumberId(phoneNumberIdInbound); } catch {}
-const tenant = String(runtime?.tenantId || DEFAULT_TENANT_ID || TENANT_ID || "default").trim();
-
-const waOpts = {
-  whatsappToken: runtime?.whatsappToken || null,
-  phoneNumberId: runtime?.phoneNumberId || phoneNumberIdInbound || null,
-};
-const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
-
     const msg    = value?.messages?.[0];   // mensaje entrante (texto/audio/etc.)
     const status = value?.statuses?.[0];   // (se ignora para persistencia)
+
+    // Multi-canal: mapear tokens/keys por phone_number_id
+    const phoneNumberId = String(value?.metadata?.phone_number_id || "").trim();
+    let runtime = null;
+    try {
+      if (phoneNumberId && tenantRuntime && typeof tenantRuntime.getRuntimeByPhoneNumberId === "function") {
+        runtime = await tenantRuntime.getRuntimeByPhoneNumberId(phoneNumberId);
+      }
+    } catch (e) {
+      console.warn("[webhook] runtime lookup error:", e?.message || e);
+    }
+
+    const tenant = String(runtime?.tenantId || "").trim() || resolveTenantId(req);
+    const waOpts = {
+      phoneNumberId: String(runtime?.phoneNumberId || phoneNumberId || "").trim() || undefined,
+      whatsappToken: String(runtime?.whatsappToken || "").trim() || undefined,
+    };
+    const openaiOpts = { openaiApiKey: String(runtime?.openaiApiKey || "").trim() || undefined };
     if (!msg) {
       console.warn("[webhook] evento sin messages; se ignora");
       return res.sendStatus(200);
@@ -3778,7 +3797,7 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
         const buf = await downloadMediaBuffer(info.url, waOpts);
         const id = putInCache(buf, info.mime_type || "audio/ogg");
         const publicAudioUrl = `${req.protocol}://${req.get("host")}/cache/audio/${id}`;
-        const tr = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type, ...aiOpts });
+        const tr = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type, ...openaiOpts });
         text = String(tr?.text || "").trim() || "(audio sin texto)";
       } catch (e) {
         console.error("Audio/transcripción:", e.message);
@@ -3795,7 +3814,7 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
           publicImageUrl,
           mime: info.mime_type,
           purpose: "payment-proof",
-          ...aiOpts
+          ...openaiOpts
         });
 
         // Texto que alimenta al modelo conversacional
@@ -3871,7 +3890,7 @@ console.log("[convId] "+ convId);
       try { snapshot = JSON.parse(require("./logic").__proto__ ? "{}" : "{}"); } catch {}
       // En minimal guardamos snapshot siempre; si no lo tenés a mano, seguimos y dejamos que el modelo lo complete
     }
-    const gptReply = await getGPTReply(tenant, from, text, aiOpts);
+    const gptReply = await getGPTReply(tenant, from, text, openaiOpts);
     // También dispara si el usuario pide "total" o está en fase de confirmar
    const wantsDetail = /\b(detalle|detall|resumen|desglose|total|confirm(a|o|ar))\b/i
       .test(String(text || ""));
@@ -3938,7 +3957,7 @@ console.log("[convId] "+ convId);
         ].join("\n");
 
         for (let attempt = 1; attempt <= (Number(process.env.CALC_FIX_MAX_RETRIES || 3)); attempt++) {
-          const fixReply = await getGPTReply(tenant, from, `${baseCorrection}\n[INTENTO:${attempt}/${process.env.CALC_FIX_MAX_RETRIES || 3}]`, aiOpts);
+          const fixReply = await getGPTReply(tenant, from, `${baseCorrection}\n[INTENTO:${attempt}/${process.env.CALC_FIX_MAX_RETRIES || 3}]`);
           console.log(`[fix][${attempt}] assistant.content =>\n${fixReply}`);
           try {
             const parsedFix = JSON.parse(fixReply);
@@ -3947,7 +3966,7 @@ console.log("[convId] "+ convId);
 
             let pedidoFix = parsedFix.Pedido || { items: [] };
              // 💰 Rehidratar también en el ciclo de fix
-            try { pedidoFix = await hydratePricesFromCatalog(pedidoFix, tenant || null); } catch {}
+            try { pedidoFix = await hydratePricesFromCatalog(pedidoFix, TENANT_ID || null); } catch {}
          
             const { pedidoCorr: pedidoFixCorr, mismatch: mismatchFix, hasItems: hasItemsFix } = recalcAndDetectMismatch(pedidoFix);
             pedido = pedidoFixCorr;
@@ -4232,7 +4251,7 @@ console.log("[convId] "+ convId);
       || (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length
           ? buildBackendSummary(pedido, { showEnvio: wantsDetail })
           : "Perfecto, sigo acá. ¿Querés confirmar o cambiar algo?");
-    await require("./logic").sendWhatsAppMessage(from, responseTextSafe);
+    await require("./logic").sendWhatsAppMessage(from, responseTextSafe, waOpts);
     
     
     
@@ -4330,7 +4349,7 @@ console.log("[convId] "+ convId);
 
             // Buscar producto de Envío según km
             const db = await getDb();
-            const envioProd = await pickEnvioProductByDistance(db, tenant || null, distKm);
+            const envioProd = await pickEnvioProductByDistance(db, TENANT_ID || null, distKm);
             if (envioProd && typeof envioProd.importe === "number") {
                  console.log(`[envio] Seleccionado por distancia: '${envioProd.descripcion}' @ ${envioProd.importe}`);
             

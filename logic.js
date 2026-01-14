@@ -33,6 +33,7 @@ const { getDb } = require("./db");
 
 // ================== OpenAI client (para fallback STT) ==================
 let openai = null;
+const openaiByKey = new Map();
 try {
   if (OPENAI_API_KEY) {
     openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -40,6 +41,21 @@ try {
   }
 } catch (e) {
   console.error("OpenAI init error:", e.message);
+}
+
+function getOpenAIClient(apiKey) {
+  const key = String(apiKey || "").trim();
+  if (!key) return openai;
+  if (key === OPENAI_API_KEY) return openai;
+  const cached = openaiByKey.get(key);
+  if (cached) return cached;
+  try {
+    const client = new OpenAI({ apiKey: key });
+    openaiByKey.set(key, client);
+    return client;
+  } catch {
+    return openai;
+  }
 }
 
 // ================== Utils de serialización segura ==================
@@ -304,14 +320,6 @@ function clearEndedFlag(tenantId, from) {
 }
 
 // ================== WhatsApp ==================
-/**
- * Envía un mensaje por WhatsApp Cloud API.
- * Retrocompatible: si no pasás opts, usa variables de entorno (como antes).
- *
- * @param {string} to
- * @param {string} text
- * @param {{whatsappToken?: string, phoneNumberId?: string}=} opts
- */
 async function sendWhatsAppMessage(to, text, opts = {}) {
   try {
     const body = String(text ?? "").trim();
@@ -319,17 +327,13 @@ async function sendWhatsAppMessage(to, text, opts = {}) {
       console.error("WhatsApp: intento de envío con text.body vacío. Se omite el envío.");
       return;
     }
-
+    const pid = String(opts.phoneNumberId || PHONE_NUMBER_ID || "").trim();
     const token = String(opts.whatsappToken || WHATSAPP_TOKEN || "").trim();
-    const phoneNumberId = String(opts.phoneNumberId || PHONE_NUMBER_ID || "").trim();
-
-    if (!token || !phoneNumberId) {
-      console.error("WhatsApp: faltan credenciales (token/phoneNumberId).");
-      return;
-    }
+    if (!pid) throw new Error("missing_phone_number_id");
+    if (!token) throw new Error("missing_whatsapp_token");
 
     await axios.post(
-      `https://graph.facebook.com/${GRAPH_API_VERSION}/${phoneNumberId}/messages`,
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/${pid}/messages`,
       { messaging_product: "whatsapp", to, text: { body } },
       { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
     );
@@ -339,7 +343,6 @@ async function sendWhatsAppMessage(to, text, opts = {}) {
 }
 
 // ================== Media (audio) ==================
-
 async function getMediaInfo(mediaId, opts = {}) {
   const token = String(opts.whatsappToken || WHATSAPP_TOKEN || "").trim();
   if (!token || !mediaId) throw new Error("media_info_missing");
@@ -434,7 +437,7 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
       : "Describí brevemente la imagen y extraé cualquier texto visible.";
 
     const client = getOpenAIClient(openaiApiKey);
-    if (!client) return { json: null, userText: "[imagen]" };
+    if (!client) throw new Error("openai_not_configured");
 
     const resp = await client.chat.completions.create({
       model: VISION_MODEL,
@@ -882,8 +885,10 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
   }
 
   try {
+    const apiKey = String(opts.openaiApiKey || OPENAI_API_KEY || "").trim();
+    const model = String(opts.chatModel || CHAT_MODEL || "gpt-4o-mini").trim();
     const payload = {
-      model: CHAT_MODEL,
+      model,
       messages: sanitizeMessages(messages),
       temperature: CHAT_TEMPERATURE,
       response_format: { type: "json_object" }
@@ -893,7 +898,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       payload,
-      { headers: { Authorization: `Bearer ${String(opts.openaiApiKey || OPENAI_API_KEY || "").trim()}`, "Content-Type": "application/json" } }
+      { headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" } }
     );
 
     try {
