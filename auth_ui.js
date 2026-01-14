@@ -1406,7 +1406,7 @@ function wwebSessionsAdminPage({ user }) {
       }
 
       function load(){
-        msg.textContent = "";
+        if (msg) msg.textContent = "";
         body.innerHTML = '<tr><td colspan="9" class="small">Cargando…</td></tr>';
         return api('/api/wweb/locks', { method:'GET' })
           .then(function(data){
@@ -1432,7 +1432,7 @@ function wwebSessionsAdminPage({ user }) {
 
         api('/api/wweb/release', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, lockId: id, resetAuth: !!resetAuth }) })
           .then(function(){
-            msg.textContent = resetAuth ? 'Sesión reseteada.' : 'Lock liberado.';
+            if (msg) msg.textContent = resetAuth ? 'Sesión reseteada.' : 'Lock liberado.';
             return load();
           })
           .catch(function(e){
