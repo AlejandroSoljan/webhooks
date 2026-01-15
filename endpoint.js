@@ -82,6 +82,7 @@ app.get("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
       phoneNumberId: r.phoneNumberId || null,
       displayPhoneNumber: r.displayPhoneNumber || null,
       isDefault: !!r.isDefault,
+      messageDebounceMs: r.messageDebounceMs ?? 0,
       updatedAt: r.updatedAt || null,
       createdAt: r.createdAt || null,
       whatsappToken: isSuper ? (r.whatsappToken || null) : (r.whatsappToken ? "********" : null),
