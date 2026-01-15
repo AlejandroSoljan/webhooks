@@ -3746,6 +3746,8 @@ app.get("/canales", async (req, res) => {
   async function load(){
     setMsg('', '');
     tbody.innerHTML = '<tr><td colspan="6" class="muted">Cargando...</td></tr>';
+
+    let items = [];
     try {
       const tenantId = (form.tenantId.value||'').trim();
       const qs = tenantId ? ('?tenantId='+encodeURIComponent(tenantId)) : '';
@@ -3769,66 +3771,76 @@ app.get("/canales", async (req, res) => {
       }
 
       const j = await r.json();
-      const items = Array.isArray(j.items) ? j.items : [];
+      items = Array.isArray(j.items) ? j.items : [];
       if(!items.length){
         tbody.innerHTML = '<tr><td colspan="6" class="muted">No hay canales cargados.</td></tr>';
         return;
       }
 
-
       tbody.innerHTML = items.map(it => {
         const def = (it && it.isDefault) ? '✅' : '';
-      return '<tr>'+
-        '<td><span class="pill">'+esc(it.tenantId||'')+'</span></td>'+
-        '<td>'+esc(it.phoneNumberId||'')+'</td>'+
-        '<td>'+esc(it.displayPhoneNumber||'')+'</td>'+
-        '<td>'+def+'</td>'+
-        '<td class="muted">'+esc(it.updatedAt||it.createdAt||'')+'</td>'+
-        '<td class="actions">'+
-          '<button type="button" class="secondary" data-edit="'+esc(it._id)+'">Editar</button>'+
-          '<button type="button" class="secondary" data-make-default="1" data-tenant="'+esc(it.tenantId||'')+'" data-phone="'+esc(it.phoneNumberId||'')+'">Hacer default</button>'+
-        '</td>'+
-      '</tr>';
+        const btnDefault = it.isDefault ? '' :
+          '<button type="button" class="secondary" data-make-default="1" data-tenant="'+esc(it.tenantId||'')+'" data-phone="'+esc(it.phoneNumberId||'')+'">Hacer default</button>';
+
+        return '<tr>'+
+          '<td><span class="pill">'+esc(it.tenantId||'')+'</span></td>'+
+          '<td>'+esc(it.phoneNumberId||'')+'</td>'+
+          '<td>'+esc(it.displayPhoneNumber||'')+'</td>'+
+          '<td>'+def+'</td>'+
+          '<td class="muted">'+esc(it.updatedAt||it.createdAt||'')+'</td>'+
+          '<td class="actions">'+
+            '<button type="button" class="secondary" data-edit="'+esc(it._id)+'">Editar</button>'+
+            btnDefault +
+          '</td>'+
+        '</tr>';
       }).join('');
 
-      // wire edit buttons (igual que antes)
+      // Editar
       tbody.querySelectorAll('button[data-edit]').forEach(btn=>{
         btn.addEventListener('click', ()=>{
           const id = btn.getAttribute('data-edit');
           const it = items.find(x => String(x._id)===String(id));
           if(!it) return;
+
           form.tenantId.value = it.tenantId || '';
           form.phoneNumberId.value = it.phoneNumberId || '';
           form.displayPhoneNumber.value = it.displayPhoneNumber || '';
+
+          // secretos pueden venir enmascarados si no sos superadmin
           form.whatsappToken.value = (it.whatsappToken && it.whatsappToken !== '********') ? it.whatsappToken : '';
-          form.verifyToken.value = (it.verifyToken && it.verifyToken !== '********') ? it.verifyToken : '';
-          form.openaiApiKey.value = (it.openaiApiKey && it.openaiApiKey !== '********') ? it.openaiApiKey : '';
+          form.verifyToken.value   = (it.verifyToken && it.verifyToken !== '********') ? it.verifyToken : '';
+          form.openaiApiKey.value  = (it.openaiApiKey && it.openaiApiKey !== '********') ? it.openaiApiKey : '';
+
           const cb = form.querySelector('input[name="isDefault"]');
           if (cb) cb.checked = !!it.isDefault;
+
           window.scrollTo({ top: 0, behavior: 'smooth' });
         });
       });
 
-      // wire make-default buttons (igual que antes)
+      // Hacer default
       tbody.querySelectorAll('button[data-make-default]').forEach(btn=>{
         btn.addEventListener('click', async ()=>{
           const t = btn.getAttribute('data-tenant') || '';
           const p = btn.getAttribute('data-phone') || '';
           if(!t || !p) return;
+
           setMsg('', '');
           const data = new URLSearchParams();
           data.set('tenantId', t);
           data.set('phoneNumberId', p);
           data.set('isDefault', '1');
-          const r = await fetch('/api/tenant-channels', {
+
+          const rr = await fetch('/api/tenant-channels', {
             method: 'POST',
             headers: { 'Content-Type':'application/x-www-form-urlencoded' },
             credentials: 'same-origin',
             body: data
           });
-          const j = await r.json().catch(()=>null);
-          if(!r.ok){
-            setMsg('err', (j && j.error) ? j.error : 'Error seteando default.');
+
+          const jj = await rr.json().catch(()=>null);
+          if(!rr.ok){
+            setMsg('err', (jj && jj.error) ? jj.error : 'Error seteando default.');
             return;
           }
           setMsg('ok', 'Default actualizado ✅');
@@ -3840,61 +3852,21 @@ app.get("/canales", async (req, res) => {
       console.error('[canales] load error:', e);
       tbody.innerHTML = '<tr><td colspan="6">Error cargando canales: '+esc(e?.message || String(e))+'</td></tr>';
     }
-
-    // wire edit buttons
-    tbody.querySelectorAll('button[data-edit]').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        const id = btn.getAttribute('data-edit');
-        const it = items.find(x => String(x._id)===String(id));
-        if(!it) return;
-        form.tenantId.value = it.tenantId || '';
-        form.phoneNumberId.value = it.phoneNumberId || '';
-        form.displayPhoneNumber.value = it.displayPhoneNumber || '';
-        // secretos pueden venir enmascarados si no sos superadmin; igual dejamos el valor actual por si querés reescribir
-        form.whatsappToken.value = (it.whatsappToken && it.whatsappToken !== '********') ? it.whatsappToken : '';
-        form.verifyToken.value = (it.verifyToken && it.verifyToken !== '********') ? it.verifyToken : '';
-        form.openaiApiKey.value = (it.openaiApiKey && it.openaiApiKey !== '********') ? it.openaiApiKey : '';
-          const cb = form.querySelector('input[name="isDefault"]');
-          if (cb) cb.checked = !!it.isDefault;
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      });
-    });
   }
 
-      // wire make-default buttons (no toca tokens, solo marca isDefault)
-      tbody.querySelectorAll('button[data-make-default]').forEach(btn=>{
-        btn.addEventListener('click', async ()=>{
-          const t = btn.getAttribute('data-tenant') || '';
-          const p = btn.getAttribute('data-phone') || '';
-          if(!t || !p) return;
-          setMsg('', '');
-          const data = new URLSearchParams();
-          data.set('tenantId', t);
-          data.set('phoneNumberId', p);
-          data.set('isDefault', '1');
-          const r = await fetch('/api/tenant-channels', {
-            method: 'POST',
-            headers: { 'Content-Type':'application/x-www-form-urlencoded' },
-            body: data
-          });
-          const j = await r.json().catch(()=>null);
-          if(!r.ok){
-            setMsg('err', (j && j.error) ? j.error : 'Error seteando default.');
-            return;
-          }
-          setMsg('ok', 'Default actualizado ✅');
-          await load();
-        });
-      });
+  // Guardar (upsert)
   form.addEventListener('submit', async (e)=>{
     e.preventDefault();
     setMsg('', '');
     const data = new URLSearchParams(new FormData(form));
+
     const r = await fetch('/api/tenant-channels', {
       method: 'POST',
       headers: { 'Content-Type':'application/x-www-form-urlencoded' },
+      credentials: 'same-origin',
       body: data
     });
+
     const j = await r.json().catch(()=>null);
     if(!r.ok){
       setMsg('err', (j && j.error) ? j.error : 'Error guardando.');
@@ -3916,6 +3888,7 @@ app.get("/canales", async (req, res) => {
   load();
 })();
 </script>
+
 </body>
 </html>`);
   } catch (e) {
