@@ -3746,20 +3746,37 @@ app.get("/canales", async (req, res) => {
   async function load(){
     setMsg('', '');
     tbody.innerHTML = '<tr><td colspan="6" class="muted">Cargando...</td></tr>';
-    const tenantId = (form.tenantId.value||'').trim();
-    const qs = tenantId ? ('?tenantId='+encodeURIComponent(tenantId)) : '';
-    const r = await fetch('/api/tenant-channels'+qs, { headers: { 'Accept':'application/json' }});
-    if(!r.ok){
-      tbody.innerHTML = '<tr><td colspan="5">No se pudo cargar.</td></tr>';
-      return;
-    }
-    const j = await r.json();
-    const items = Array.isArray(j.items) ? j.items : [];
-    if(!items.length){
-      tbody.innerHTML = '<tr><td colspan="6" class="muted">No hay canales cargados.</td></tr>';
-      return;
-    }
-    tbody.innerHTML = items.map(it => {
+    try {
+      const tenantId = (form.tenantId.value||'').trim();
+      const qs = tenantId ? ('?tenantId='+encodeURIComponent(tenantId)) : '';
+
+      const r = await fetch('/api/tenant-channels'+qs, {
+        headers: { 'Accept':'application/json' },
+        credentials: 'same-origin',
+      });
+
+      if(!r.ok){
+        const jErr = await r.json().catch(()=>null);
+        const msg = (jErr && (jErr.error || jErr.message)) ? (jErr.error || jErr.message) : ('HTTP ' + r.status);
+        tbody.innerHTML = '<tr><td colspan="6">No se pudo cargar: '+esc(msg)+'</td></tr>';
+        return;
+      }
+
+      const ct = String(r.headers.get('content-type') || '').toLowerCase();
+      if(!ct.includes('application/json')){
+        tbody.innerHTML = '<tr><td colspan="6">No se pudo cargar (respuesta no JSON). Probable sesión vencida/redirección a login. Refrescá o volvé a iniciar sesión.</td></tr>';
+        return;
+      }
+
+      const j = await r.json();
+      const items = Array.isArray(j.items) ? j.items : [];
+      if(!items.length){
+        tbody.innerHTML = '<tr><td colspan="6" class="muted">No hay canales cargados.</td></tr>';
+        return;
+      }
+
+
+      tbody.innerHTML = items.map(it => {
       return '<tr>'+
         '<td><span class="pill">'+esc(it.tenantId||'')+'</span></td>'+
         '<td>'+esc(it.phoneNumberId||'')+'</td>'+
@@ -3771,7 +3788,57 @@ app.get("/canales", async (req, res) => {
           '<button type="button" class="secondary" data-make-default="1" data-tenant="'+esc(it.tenantId||'')+'" data-phone="'+esc(it.phoneNumberId||'')+'">Hacer default</button>'+
         '</td>'+
       '</tr>';
-    }).join('');
+      }).join('');
+
+      // wire edit buttons (igual que antes)
+      tbody.querySelectorAll('button[data-edit]').forEach(btn=>{
+        btn.addEventListener('click', ()=>{
+          const id = btn.getAttribute('data-edit');
+          const it = items.find(x => String(x._id)===String(id));
+          if(!it) return;
+          form.tenantId.value = it.tenantId || '';
+          form.phoneNumberId.value = it.phoneNumberId || '';
+          form.displayPhoneNumber.value = it.displayPhoneNumber || '';
+          form.whatsappToken.value = (it.whatsappToken && it.whatsappToken !== '********') ? it.whatsappToken : '';
+          form.verifyToken.value = (it.verifyToken && it.verifyToken !== '********') ? it.verifyToken : '';
+          form.openaiApiKey.value = (it.openaiApiKey && it.openaiApiKey !== '********') ? it.openaiApiKey : '';
+          const cb = form.querySelector('input[name="isDefault"]');
+          if (cb) cb.checked = !!it.isDefault;
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+      });
+
+      // wire make-default buttons (igual que antes)
+      tbody.querySelectorAll('button[data-make-default]').forEach(btn=>{
+        btn.addEventListener('click', async ()=>{
+          const t = btn.getAttribute('data-tenant') || '';
+          const p = btn.getAttribute('data-phone') || '';
+          if(!t || !p) return;
+          setMsg('', '');
+          const data = new URLSearchParams();
+          data.set('tenantId', t);
+          data.set('phoneNumberId', p);
+          data.set('isDefault', '1');
+          const r = await fetch('/api/tenant-channels', {
+            method: 'POST',
+            headers: { 'Content-Type':'application/x-www-form-urlencoded' },
+            credentials: 'same-origin',
+            body: data
+          });
+          const j = await r.json().catch(()=>null);
+          if(!r.ok){
+            setMsg('err', (j && j.error) ? j.error : 'Error seteando default.');
+            return;
+          }
+          setMsg('ok', 'Default actualizado ✅');
+          await load();
+        });
+      });
+
+    } catch (e) {
+      console.error('[canales] load error:', e);
+      tbody.innerHTML = '<tr><td colspan="6">Error cargando canales: '+esc(e?.message || String(e))+'</td></tr>';
+    }
 
     // wire edit buttons
     tbody.querySelectorAll('button[data-edit]').forEach(btn=>{
