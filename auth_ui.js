@@ -2178,14 +2178,16 @@ function mountAuthRoutes(app) {
 
         function addRow(key='', value=''){
           const tr = document.createElement('tr');
-          tr.innerHTML = `
-            <td><input class="inp" data-k value="${esc(key)}" placeholder="campo"/></td>
-            <td><input class="inp" data-v value="${esc(value)}" placeholder="valor"/></td>
-            <td><button class="btn2" type="button" data-rm>✕</button></td>
-          `;
+          // OJO: no usar backticks acá porque este JS vive dentro de un template literal del backend.
+          // Si quedan backticks anidados, el archivo puede romperse al compilar (Unexpected token '<').
+          tr.innerHTML =
+            '<td><input class="inp" data-k value="' + esc(key) + '" placeholder="campo"/></td>' +
+            '<td><input class="inp" data-v value="' + esc(value) + '" placeholder="valor"/></td>' +
+            '<td><button class="btn2" type="button" data-rm>✕</button></td>';
           tr.querySelector('[data-rm]').addEventListener('click', ()=> tr.remove());
           fieldsEl.appendChild(tr);
         }
+
 
         function setFieldsFromDoc(doc){
           fieldsEl.innerHTML = '';
