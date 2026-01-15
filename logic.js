@@ -1077,10 +1077,27 @@ async function ensureEnvioSmart(pedido, tenantId) {
     const entrega = String(pedido?.Entrega || "").toLowerCase();
     if (entrega !== "domicilio") return pedido;
 
-    // ¿ya hay envío?
-    const idx = (pedido.items || []).findIndex(i =>
-      String(i?.descripcion || "").toLowerCase().includes("envio")
-    );
+    // Helper: detectar items de envío, tolerando "envío" con tilde
+    const isEnvioItem = (i) => {
+      const raw = String(i?.descripcion || "").toLowerCase();
+      const norm = raw.normalize("NFD").replace(/[\u0300-\u036f]/g, ""); // quita tildes
+      return norm.includes("envio");
+    };
+
+    // ¿ya hay envío? (puede haber más de uno; vamos a dejar uno solo)
+    const itemsArr = Array.isArray(pedido.items) ? pedido.items : [];
+    const envioIdxs = [];
+    for (let k = 0; k < itemsArr.length; k++) {
+      if (isEnvioItem(itemsArr[k])) envioIdxs.push(k);
+    }
+
+    // Si hay más de un envío, eliminar extras (de atrás hacia adelante)
+    if (envioIdxs.length > 1) {
+      for (let n = envioIdxs.length - 1; n >= 1; n--) {
+        itemsArr.splice(envioIdxs[n], 1);
+      }
+    }
+    const idx = envioIdxs.length ? envioIdxs[0] : -1;
 
         // Preparar dirección
     const DEF_CITY = process.env.DEFAULT_CITY || "Venado Tuerto";
@@ -1136,7 +1153,9 @@ async function ensureEnvioSmart(pedido, tenantId) {
 
     // Insertar o actualizar
     if (idx >= 0) {
-      const cantidad = Number(pedido.items[idx].cantidad || 1);
+      //const cantidad = Number(pedido.items[idx].cantidad || 1);
+      // Envío siempre debe ser 1 unidad (evita que se acumule por errores previos)
+      const cantidad = 1;
       pedido.items[idx].id = envioProd._id || pedido.items[idx].id || 0;
       pedido.items[idx].descripcion = envioProd.descripcion;
       pedido.items[idx].importe_unitario = Number(envioProd.importe || 0);
