@@ -4185,7 +4185,10 @@ console.log("[convId] "+ convId);
     // - Si >0: junta varios mensajes text y llama al LLM una sola vez
     const debounceMs = clampInt(runtime?.messageDebounceMs ?? runtime?.debounceMs ?? 0, 0, 30000);
     if (debounceMs > 0 && msg.type === "text") {
-      const key = `${tenant}:${waOpts?.phoneNumberId || "env"}:${from}:${convId || "noConv"}`;
+       // key estable: convId si existe; si no, tenant+canal+from
+      const key = convId
+        ? `${tenant}:${waOpts?.phoneNumberId || "env"}:${convId}`
+        : `${tenant}:${waOpts?.phoneNumberId || "env"}:${from}`;
       let batch = pendingTextBatches.get(key);
       if (!batch) {
        batch = { texts: [], leader: false, createdAt: Date.now() };
@@ -4194,7 +4197,11 @@ console.log("[convId] "+ convId);
 
       // guardamos el texto de este mensaje
       const t = String(text || "").trim();
-      if (t) batch.texts.push(t);
+       if (t) {
+        // dedupe simple: no agregar si es igual al último
+        const last = batch.texts.length ? batch.texts[batch.texts.length - 1] : null;
+        if (last !== t) batch.texts.push(t);
+      }
 
       // si ya hay otro request “líder” esperando, este request termina acá (Meta recibe 200)
       if (batch.leader) {
@@ -4210,9 +4217,17 @@ console.log("[convId] "+ convId);
       pendingTextBatches.delete(key);
       const parts = Array.isArray(finalBatch?.texts) ? finalBatch.texts : [];
 
+
+      // dedupe extra (caso típico: "hola" al inicio y repetido al final)
+      if (parts.length >= 2 && parts[0] === parts[parts.length - 1]) {
+        parts.pop();
+      }
+      // limpiar vacíos
+      const clean = parts.map(x => String(x||"").trim()).filter(Boolean);
+
       // unir como pidió el usuario: separados por coma
       // ejemplo: "hola", "quiero 2", "y 1" => "hola, quiero 2, y 1"
-      text = parts.join(", ");
+      text = clean.join(", ");
     }
 
     // Si el mensaje NO es solo un cierre de cortesía, limpiamos el flag de sesión terminada
