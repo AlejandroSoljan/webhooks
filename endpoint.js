@@ -14,7 +14,15 @@ const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
 const { getRuntimeByPhoneNumberId, findAnyByVerifyToken, upsertTenantChannel } = require("./tenant_runtime");
 const TENANT_ID = (process.env.TENANT_ID || "").trim();
+// ================== Debounce de textos (por tenant+canal+waId+convId) ==================
+const pendingTextBatches = new Map();
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+function clampInt(v, min, max) {
+  const n = Number.parseInt(v, 10);
+  if (Number.isNaN(n)) return min;
+  return Math.max(min, Math.min(max, n));
+}
 
 // Días de la semana para configuración de horarios
 const STORE_HOURS_DAYS = [
@@ -111,6 +119,7 @@ app.post("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
       whatsappToken: body.whatsappToken,
       verifyToken: body.verifyToken,
       openaiApiKey: body.openaiApiKey,
+      messageDebounceMs: clampInt(req.body?.messageDebounceMs ?? 0, 0, 30000),
     };
 
     const r = await upsertTenantChannel(payload, { allowSecrets: true });
@@ -3691,6 +3700,10 @@ app.get("/canales", async (req, res) => {
         <label>OpenAI API Key</label>
         <input name="openaiApiKey" placeholder="sk-..." />
 
+        <label>Espera antes de procesar (ms)</label>
+        <input name="messageDebounceMs" placeholder="0 = sin espera (ej: 1200)" />
+        <div class="muted">Si el cliente manda varios textos seguidos, se juntan y se envían a ChatGPT como uno solo, separados por coma.</div>
+
         <label style="display:flex;gap:10px;align-items:center;margin-top:12px">
           <input type="checkbox" name="isDefault" value="1" style="width:auto"/>
           <span>Canal default (por tenant)</span>
@@ -3810,7 +3823,7 @@ app.get("/canales", async (req, res) => {
           form.whatsappToken.value = (it.whatsappToken && it.whatsappToken !== '********') ? it.whatsappToken : '';
           form.verifyToken.value   = (it.verifyToken && it.verifyToken !== '********') ? it.verifyToken : '';
           form.openaiApiKey.value  = (it.openaiApiKey && it.openaiApiKey !== '********') ? it.openaiApiKey : '';
-
+          if (form.messageDebounceMs) form.messageDebounceMs.value = String(it.messageDebounceMs ?? '');
           const cb = form.querySelector('input[name="isDefault"]');
           if (cb) cb.checked = !!it.isDefault;
 
@@ -4166,6 +4179,40 @@ console.log("[convId] "+ convId);
       return res.sendStatus(200);
    }
 
+    // ================== Debounce configurable (solo mensajes text) ==================
+    // - Retrocompatible: si messageDebounceMs=0 => no cambia nada
+    // - Si >0: junta varios mensajes text y llama al LLM una sola vez
+    const debounceMs = clampInt(runtime?.messageDebounceMs ?? runtime?.debounceMs ?? 0, 0, 30000);
+    if (debounceMs > 0 && msg.type === "text") {
+      const key = `${tenant}:${waOpts?.phoneNumberId || "env"}:${from}:${convId || "noConv"}`;
+      let batch = pendingTextBatches.get(key);
+      if (!batch) {
+       batch = { texts: [], leader: false, createdAt: Date.now() };
+        pendingTextBatches.set(key, batch);
+      }
+
+      // guardamos el texto de este mensaje
+      const t = String(text || "").trim();
+      if (t) batch.texts.push(t);
+
+      // si ya hay otro request “líder” esperando, este request termina acá (Meta recibe 200)
+      if (batch.leader) {
+        return res.sendStatus(200);
+      }
+
+      // este request se convierte en líder: espera y luego procesa todo junto
+      batch.leader = true;
+      await sleep(debounceMs);
+
+      // recuperar lote final y liberarlo
+      const finalBatch = pendingTextBatches.get(key);
+      pendingTextBatches.delete(key);
+      const parts = Array.isArray(finalBatch?.texts) ? finalBatch.texts : [];
+
+      // unir como pidió el usuario: separados por coma
+      // ejemplo: "hola", "quiero 2", "y 1" => "hola, quiero 2, y 1"
+      text = parts.join(", ");
+    }
 
     // Si el mensaje NO es solo un cierre de cortesía, limpiamos el flag de sesión terminada
     if (!isPoliteClosingMessage(text)) {

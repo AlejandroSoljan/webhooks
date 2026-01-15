@@ -4,6 +4,7 @@
 
 const { getDb } = require("./db");
 
+const clampInt = (v, min, max) => Math.max(min, Math.min(max, Number.parseInt(v, 10) || 0));
 const DEFAULT_CACHE_TTL_MS = Number(process.env.TENANT_RUNTIME_CACHE_TTL_MS || 30_000);
 
 // cache simple: key -> { value, expiresAt }
@@ -32,6 +33,8 @@ function _normalizeRuntime(doc) {
     phoneNumberId: String(doc.phoneNumberId || "").trim() || null,
     displayPhoneNumber: String(doc.displayPhoneNumber || "").trim() || null,
     isDefault: !!doc.isDefault,
+    // NUEVO: debounce por canal (ms). 0 = sin espera (retrocompatible)
+    messageDebounceMs: clampInt(doc.messageDebounceMs ?? doc.debounceMs ?? 0, 0, 30000),
     whatsappToken: String(doc.whatsappToken || "").trim() || null,
     verifyToken: String(doc.verifyToken || "").trim() || null,
     openaiApiKey: String(doc.openaiApiKey || "").trim() || null,
@@ -100,6 +103,7 @@ async function upsertTenantChannel(payload, { allowSecrets = true } = {}) {
   const phoneNumberId = String(p.phoneNumberId || "").trim();
   if (!tenantId) throw new Error("tenantId_required");
   if (!phoneNumberId) throw new Error("phoneNumberId_required");
+  const messageDebounceMs = clampInt(p.messageDebounceMs ?? p.debounceMs ?? 0, 0, 30000);
 
   const update = {
     $setOnInsert: { tenantId, phoneNumberId, createdAt: new Date() },
@@ -130,6 +134,7 @@ async function upsertTenantChannel(payload, { allowSecrets = true } = {}) {
 
 module.exports = {
   getRuntimeByPhoneNumberId,
+  messageDebounceMs,
   getRuntimeByTenantId,
   findAnyByVerifyToken,
   upsertTenantChannel,
