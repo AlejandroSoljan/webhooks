@@ -2374,31 +2374,33 @@ function mountAuthRoutes(app) {
   // UI
   app.get("/admin/tenant-config", requireAuth, requireAdmin, async (req, res) => {
     try {
-     // Si viene embed=1 => devolver SOLO el contenido (sin shell/menú),
-    // porque lo carga el iframe del /ui/tenant_config.
-    const embed = String(req.query?.embed || "") === "1";
+          const initialTenantId = String(req.query?.tenantId || req.query?.tenant || "").trim() || String(req.user?.tenantId || "default");
+      const embed = String(req.query?.embed || "") === "1";
 
     // tenantConfigInnerPage() debe ser el HTML del panel (sin <html>, sin sidebar).
     // Si hoy tu handler arma todo inline, separá en 2: inner + shell.
+      if (embed) {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        return res.status(200).send(
+          pageShell({
+            title: "Tenant Config · Asisto",
+            user: req.user,
+            body: `<div class="content"><div class="app">${inner}</div></div>`,
+          })
+        );
+      }
 
-      if (!hasAccess(req.user, "tenant_config")) return res.status(403).send("403 - No autorizado");
-      const initialTenantId = String(req.query?.tenantId || req.user?.tenantId || "default");
-      const html = tenantConfigAdminPage({ user: req.user, initialTenantId });
-     const inner = tenantConfigInnerPage({ user, tenant });
-    if (embed) {
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.status(200).send(inner);
-    }
-    return res.status(200).send(
-      auth.appShell({
-        title: "Tenant Config · Asisto",
-        user,
-        active: "tenant_config",
-        main: inner,
-      })
-    );
+      return res.status(200).send(
+        appShell({
+          title: "Tenant Config · Asisto",
+          user: req.user,
+          active: "tenant_config",
+          main: inner,
+        })
+      );
+     
     } catch (e) {
-      console.error("[tenant_config] UI error:", e);
+      console.error("[tenant-config] page error:", e);
       return res.status(500).send("Error");
     }
   });
