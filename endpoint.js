@@ -3777,6 +3777,7 @@ app.get("/canales", async (req, res) => {
 
 
       tbody.innerHTML = items.map(it => {
+        const def = (it && it.isDefault) ? '✅' : '';
       return '<tr>'+
         '<td><span class="pill">'+esc(it.tenantId||'')+'</span></td>'+
         '<td>'+esc(it.phoneNumberId||'')+'</td>'+
