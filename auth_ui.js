@@ -27,10 +27,11 @@ const ACCESS_PAGES = [
   { key: "horarios", title: "Horarios" },
   { key: "comportamiento", title: "Comportamiento" },
   { key: "canales", title: "Canales" },
+  { key: "tenant_config", title: "Tenant Config" },
   { key: "leads", title: "Leads" },
   { key: "wweb", title: "Sesiones WhatsApp Web" },
   { key: "users", title: "Usuarios" },
-  { key:"tenant_config", title:"Tenant Config (MongoDB)" },
+ 
 ];
 
 function normalizeAllowedPages(value) {
@@ -73,7 +74,8 @@ function requiredAccessForPath(p) {
   // UI wrapper
   if (path.startsWith("/ui/")) {
     const seg = path.split("/")[2] || "";
-    if (["admin", "inbox", "productos", "horarios", "comportamiento", "canales"].includes(seg)) return [seg];
+    if (["admin", "inbox", "productos", "horarios", "comportamiento", "canales", "tenant_config"].includes(seg)) return [seg];
+   
   }
 
   // Pantallas directas
@@ -1791,6 +1793,21 @@ function mountAuthRoutes(app) {
     const page = String(req.params.page || "").trim();
     if (!hasAccess(req.user, page)) {
       return res.status(403).send("403 - No autorizado");
+     }
+
+    // Tenant Config se renderiza directo (sin iframe) para evitar doble layout
+    // y problemas de contenido en blanco dentro del panel.
+    if (page === "tenant_config") {
+      const tenantId = resolveTenantId(req) || "";
+      const html = tenantConfigAdminPage({ user: req.user, initialTenantId: tenantId });
+      return res.status(200).send(
+        appShell({
+          title: "Tenant Config · Asisto",
+          user: req.user,
+          active: "tenant_config",
+          main: html,
+        })
+      );
     }
 
     const map = {
