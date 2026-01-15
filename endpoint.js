@@ -73,6 +73,7 @@ app.get("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
       tenantId: r.tenantId || null,
       phoneNumberId: r.phoneNumberId || null,
       displayPhoneNumber: r.displayPhoneNumber || null,
+      isDefault: !!r.isDefault,
       updatedAt: r.updatedAt || null,
       createdAt: r.createdAt || null,
       whatsappToken: isSuper ? (r.whatsappToken || null) : (r.whatsappToken ? "********" : null),
@@ -98,12 +99,30 @@ app.post("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
       tenantId: isSuper ? (body.tenantId || tenantForced) : tenantForced,
       phoneNumberId: body.phoneNumberId,
       displayPhoneNumber: body.displayPhoneNumber,
+      // isDefault puede venir como "1" / "true" / "on"
+      isDefault:
+        body.isDefault === "1" ||
+        body.isDefault === "true" ||
+        body.isDefault === "on" ||
+        body.isDefault === 1 ||
+        body.isDefault === true
+          ? true
+          : undefined,
       whatsappToken: body.whatsappToken,
       verifyToken: body.verifyToken,
       openaiApiKey: body.openaiApiKey,
     };
 
     const r = await upsertTenantChannel(payload, { allowSecrets: true });
+
+    // Si se marcó default, desmarcar cualquier otro canal default del mismo tenant
+    if (payload.isDefault === true) {
+      const db = await getDb();
+      await db.collection("tenant_channels").updateMany(
+        { tenantId: String(payload.tenantId), phoneNumberId: { $ne: String(payload.phoneNumberId) } },
+        { $set: { isDefault: false, updatedAt: new Date() } }
+      );
+    }
     res.json({ ok: true, result: r });
   } catch (e) {
     console.error("POST /api/tenant-channels error:", e?.message || e);
@@ -3646,7 +3665,7 @@ app.get("/canales", async (req, res) => {
 </head>
 <body>
   <h1>Canales (WhatsApp/OpenAI)</h1>
-  <div class="muted">Configurá por <b>tenantId</b> y <b>phoneNumberId</b> el token de WhatsApp, verify token y API key de OpenAI (colección <code>tenant_channels</code>).</div>
+  <div class="muted">Configurá por <b>tenantId</b> y <b>phoneNumberId</b> el token de WhatsApp, verify token y API key de OpenAI (colección <code>tenant_channels</code>). Podés marcar un canal como <b>Default</b> por tenant.</div>
 
   <div id="msg"></div>
 
@@ -3672,7 +3691,11 @@ app.get("/canales", async (req, res) => {
         <label>OpenAI API Key</label>
         <input name="openaiApiKey" placeholder="sk-..." />
 
-        <div class="actions" style="margin-top:12px">
+        <label style="display:flex;gap:10px;align-items:center;margin-top:12px">
+          <input type="checkbox" name="isDefault" value="1" style="width:auto"/>
+          <span>Canal default (por tenant)</span>
+        </label>
+       <div class="actions" style="margin-top:12px">
           <button type="submit">Guardar</button>
           <button type="button" class="secondary" id="btnClear">Limpiar</button>
           <button type="button" class="secondary" id="btnReload">Actualizar</button>
@@ -3690,12 +3713,13 @@ app.get("/canales", async (req, res) => {
               <th>Tenant</th>
               <th>PhoneNumberId</th>
               <th>Display</th>
+              <th>Default</th>
               <th>Updated</th>
               <th></th>
             </tr>
           </thead>
           <tbody id="tbody">
-            <tr><td colspan="5" class="muted">Cargando...</td></tr>
+            <tr><td colspan="6" class="muted">Cargando...</td></tr>
           </tbody>
         </table>
       </div>
@@ -3721,7 +3745,7 @@ app.get("/canales", async (req, res) => {
 
   async function load(){
     setMsg('', '');
-    tbody.innerHTML = '<tr><td colspan="5" class="muted">Cargando...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="muted">Cargando...</td></tr>';
     const tenantId = (form.tenantId.value||'').trim();
     const qs = tenantId ? ('?tenantId='+encodeURIComponent(tenantId)) : '';
     const r = await fetch('/api/tenant-channels'+qs, { headers: { 'Accept':'application/json' }});
@@ -3732,7 +3756,7 @@ app.get("/canales", async (req, res) => {
     const j = await r.json();
     const items = Array.isArray(j.items) ? j.items : [];
     if(!items.length){
-      tbody.innerHTML = '<tr><td colspan="5" class="muted">No hay canales cargados.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="muted">No hay canales cargados.</td></tr>';
       return;
     }
     tbody.innerHTML = items.map(it => {
@@ -3740,8 +3764,12 @@ app.get("/canales", async (req, res) => {
         '<td><span class="pill">'+esc(it.tenantId||'')+'</span></td>'+
         '<td>'+esc(it.phoneNumberId||'')+'</td>'+
         '<td>'+esc(it.displayPhoneNumber||'')+'</td>'+
+        '<td>'+def+'</td>'+
         '<td class="muted">'+esc(it.updatedAt||it.createdAt||'')+'</td>'+
-        '<td><button type="button" class="secondary" data-edit="'+esc(it._id)+'">Editar</button></td>'+
+        '<td class="actions">'+
+          '<button type="button" class="secondary" data-edit="'+esc(it._id)+'">Editar</button>'+
+          '<button type="button" class="secondary" data-make-default="1" data-tenant="'+esc(it.tenantId||'')+'" data-phone="'+esc(it.phoneNumberId||'')+'">Hacer default</button>'+
+        '</td>'+
       '</tr>';
     }).join('');
 
@@ -3758,11 +3786,38 @@ app.get("/canales", async (req, res) => {
         form.whatsappToken.value = (it.whatsappToken && it.whatsappToken !== '********') ? it.whatsappToken : '';
         form.verifyToken.value = (it.verifyToken && it.verifyToken !== '********') ? it.verifyToken : '';
         form.openaiApiKey.value = (it.openaiApiKey && it.openaiApiKey !== '********') ? it.openaiApiKey : '';
+          const cb = form.querySelector('input[name="isDefault"]');
+          if (cb) cb.checked = !!it.isDefault;
         window.scrollTo({ top: 0, behavior: 'smooth' });
       });
     });
   }
 
+      // wire make-default buttons (no toca tokens, solo marca isDefault)
+      tbody.querySelectorAll('button[data-make-default]').forEach(btn=>{
+        btn.addEventListener('click', async ()=>{
+          const t = btn.getAttribute('data-tenant') || '';
+          const p = btn.getAttribute('data-phone') || '';
+          if(!t || !p) return;
+          setMsg('', '');
+          const data = new URLSearchParams();
+          data.set('tenantId', t);
+          data.set('phoneNumberId', p);
+          data.set('isDefault', '1');
+          const r = await fetch('/api/tenant-channels', {
+            method: 'POST',
+            headers: { 'Content-Type':'application/x-www-form-urlencoded' },
+            body: data
+          });
+          const j = await r.json().catch(()=>null);
+          if(!r.ok){
+            setMsg('err', (j && j.error) ? j.error : 'Error seteando default.');
+            return;
+          }
+          setMsg('ok', 'Default actualizado ✅');
+          await load();
+        });
+      });
   form.addEventListener('submit', async (e)=>{
     e.preventDefault();
     setMsg('', '');

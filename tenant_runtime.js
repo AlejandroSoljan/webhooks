@@ -31,6 +31,7 @@ function _normalizeRuntime(doc) {
     tenantId: String(doc.tenantId || "").trim() || null,
     phoneNumberId: String(doc.phoneNumberId || "").trim() || null,
     displayPhoneNumber: String(doc.displayPhoneNumber || "").trim() || null,
+    isDefault: !!doc.isDefault,
     whatsappToken: String(doc.whatsappToken || "").trim() || null,
     verifyToken: String(doc.verifyToken || "").trim() || null,
     openaiApiKey: String(doc.openaiApiKey || "").trim() || null,
@@ -59,12 +60,19 @@ async function getRuntimeByTenantId(tenantId) {
   if (cached) return cached;
 
   const db = await getDb();
-  // si un tenant tiene varios teléfonos, por defecto elegimos el más reciente
-  const doc = await db.collection("tenant_channels")
-    .find({ tenantId: tid })
-    .sort({ updatedAt: -1, createdAt: -1 })
-    .limit(1)
-    .next();
+  // 1) si hay canal default, usarlo
+  let doc = await db.collection("tenant_channels").findOne(
+    { tenantId: tid, isDefault: true },
+    { sort: { updatedAt: -1, createdAt: -1 } }
+  );
+  // 2) fallback: si un tenant tiene varios teléfonos, elegimos el más reciente
+  if (!doc) {
+    doc = await db.collection("tenant_channels")
+      .find({ tenantId: tid })
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .limit(1)
+      .next();
+  }
 
   const val = _normalizeRuntime(doc);
   if (val) _cacheSet(ck, val);
@@ -98,7 +106,7 @@ async function upsertTenantChannel(payload, { allowSecrets = true } = {}) {
     $set: { updatedAt: new Date() },
   };
 
-  if (p.displayPhoneNumber !== undefined) update.$set.displayPhoneNumber = String(p.displayPhoneNumber || "").trim();
+ if (p.isDefault !== undefined) update.$set.isDefault = !!p.isDefault;
 
   if (allowSecrets) {
     if (p.whatsappToken !== undefined) update.$set.whatsappToken = String(p.whatsappToken || "").trim();
