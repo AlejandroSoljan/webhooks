@@ -26,12 +26,10 @@ const ACCESS_PAGES = [
   { key: "productos", title: "Productos" },
   { key: "horarios", title: "Horarios" },
   { key: "comportamiento", title: "Comportamiento" },
-  { key: "canales", title: "Canales" },
-  { key: "tenant_config", title: "Tenant Config" },
   { key: "leads", title: "Leads" },
   { key: "wweb", title: "Sesiones WhatsApp Web" },
   { key: "users", title: "Usuarios" },
- 
+  { key: "tenant_config", title: "Tenant Config" },
 ];
 
 function normalizeAllowedPages(value) {
@@ -65,6 +63,8 @@ function requiredAccessForPath(p) {
 
   // Admin de usuarios
   if (path.startsWith("/admin/users")) return ["users"];
+  // Tenant Config
+  if (path.startsWith("/admin/tenant-config") || path.startsWith("/api/tenant-config")) return ["tenant_config"];
   // Leads (contacto)
   if (path.startsWith("/admin/leads")) return ["leads"];
 
@@ -74,8 +74,7 @@ function requiredAccessForPath(p) {
   // UI wrapper
   if (path.startsWith("/ui/")) {
     const seg = path.split("/")[2] || "";
-    if (["admin", "inbox", "productos", "horarios", "comportamiento", "canales", "tenant_config"].includes(seg)) return [seg];
-   
+    if (["admin", "inbox", "productos", "horarios", "comportamiento", "tenant_config"].includes(seg)) return [seg];
   }
 
   // Pantallas directas
@@ -85,7 +84,6 @@ function requiredAccessForPath(p) {
   if (path === "/productos" || path.startsWith("/api/products")) return ["productos"];
   if (path === "/horarios" || path.startsWith("/api/hours")) return ["horarios"];
   if (path === "/comportamiento" || path.startsWith("/api/behavior")) return ["comportamiento"];
-  if (path === "/canales" || path.startsWith("/api/tenant-channels")) return ["canales"];
 
   // Logs
   if (path.startsWith("/api/logs/conversations") || path.startsWith("/api/logs/pedido")) return ["admin"];
@@ -780,12 +778,12 @@ function getNavItemsForUser(user) {
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
-  if (hasAccess(user, "canales")) items.push({ key: "canales", title: "Canales", href: "/ui/canales" });
 
   if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
   if (isAdmin && hasAccess(user, "wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
   if (isAdmin && hasAccess(user, "users")) items.push({ key: "users", title: "Usuarios", href: "/admin/users" });
-  if (isAdmin && hasAccess(user, "users")) items.push({ key:"tenant_config", title:"Tenant Config", href:"/ui/tenant_config" });
+  if (isAdmin && hasAccess(user, "tenant_config")) items.push({ key: "tenant_config", title: "Tenant Config", href: "/ui/tenant_config" });
+
   return items;
 }
 
@@ -1763,15 +1761,18 @@ function mountAuthRoutes(app) {
     const role = String(req.user?.role || "");
     const isAdmin = (role === "admin" || role === "superadmin");
     const routes = [
+      { title: "Inicio", href: "/app", badge: "", desc: "Panel principal" },
       { title: "Inbox", href: "/ui/inbox", badge: "Admin UI", desc: "Bandeja de conversaciones" },
       { title: "Conversaciones", href: "/ui/admin", badge: "Admin UI", desc: "Panel de conversaciones" },
       { title: "Productos", href: "/ui/productos", badge: "UI", desc: "Catálogo del tenant" },
       { title: "Horarios", href: "/ui/horarios", badge: "UI", desc: "Configuración de horarios" },
       { title: "Comportamiento", href: "/ui/comportamiento", badge: "UI", desc: "Behavior prompt/config" },
-        { title: "Canales", href: "/ui/canales", badge: "UI", desc: "WhatsApp/OpenAI por tenant" },
-        { title:"Tenant Config", href:"/ui/tenant_config", badge:"UI", desc:"Configuración general por tenant (tenant_config)" },
       // APIs solo para admin/superadmin:
       ...(isAdmin ? [
+        { title: "Leads", href: "/admin/leads", badge: "Admin", desc: "Mensajes del formulario de contacto" },
+        { title: "Sesiones WhatsApp Web", href: "/admin/wweb", badge: "Admin", desc: "Control de sesiones (wwebjs)" },
+        { title: "Usuarios", href: "/admin/users", badge: "Admin", desc: "Alta/baja y reseteo de contraseñas" },
+        { title: "Tenant Config", href: "/ui/tenant_config", badge: "Admin", desc: "Configuración por tenant" },
         { title: "Logs Conversaciones", href: "/api/logs/conversations", badge: "API", desc: "Listado de conversaciones" },
         { title: "Logs Mensajes", href: "/api/logs/messages", badge: "API", desc: "Mensajes por conversación" },
         { title: "Behavior API", href: "/api/behavior", badge: "API", desc: "Get/Set behavior" },
@@ -1793,21 +1794,6 @@ function mountAuthRoutes(app) {
     const page = String(req.params.page || "").trim();
     if (!hasAccess(req.user, page)) {
       return res.status(403).send("403 - No autorizado");
-     }
-
-    // Tenant Config se renderiza directo (sin iframe) para evitar doble layout
-    // y problemas de contenido en blanco dentro del panel.
-    if (page === "tenant_config") {
-      const tenantId = resolveTenantId(req) || "";
-      const html = tenantConfigAdminPage({ user: req.user, initialTenantId: tenantId });
-      return res.status(200).send(
-        appShell({
-          title: "Tenant Config · Asisto",
-          user: req.user,
-          active: "tenant_config",
-          main: html,
-        })
-      );
     }
 
     const map = {
@@ -1815,9 +1801,8 @@ function mountAuthRoutes(app) {
       inbox: { title: "Inbox", src: "/admin/inbox", active: "inbox" },
       productos: { title: "Productos", src: "/productos", active: "productos" },
       horarios: { title: "Horarios", src: "/horarios", active: "horarios" },
-       comportamiento: { title: "Comportamiento", src: "/comportamiento", active: "comportamiento" },
+      comportamiento: { title: "Comportamiento", src: "/comportamiento", active: "comportamiento" },
       tenant_config: { title: "Tenant Config", src: "/admin/tenant-config", active: "tenant_config" },
-      canales: { title: "Canales", src: "/canales", active: "canales" },
     };
 
     const conf = map[page];
@@ -2055,6 +2040,434 @@ function mountAuthRoutes(app) {
   });
 
 
+  // ================================
+  // ======== TENANT CONFIG =========
+  // ================================
+
+  function stripTenantConfigDoc(doc) {
+    if (!doc || typeof doc !== "object") return {};
+    const out = {};
+    for (const [k, v] of Object.entries(doc)) {
+      if (k === "_id" || k === "createdAt" || k === "updatedAt") continue;
+      out[k] = v;
+    }
+    return out;
+  }
+
+  function tenantConfigAdminPage({ user, initialTenantId }) {
+    const role = String(user?.role || "");
+    const isSuper = role === "superadmin";
+    const tenantId = String(initialTenantId || user?.tenantId || "default");
+
+    return `
+      <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:12px">
+        <div>
+          <h1 style="margin:0 0 4px">Tenant Config</h1>
+          <div class="small">Editá la colección <code>tenant_config</code>. Cada documento usa <code>_id = tenantId</code>. Podés agregar campos libres.</div>
+        </div>
+        <div class="small">${isSuper ? "Superadmin" : "Admin"} · tenant: <b>${htmlEscape(tenantId)}</b></div>
+      </div>
+
+      <div id="tc_msg" style="margin:10px 0"></div>
+
+      <div class="grid2" style="grid-template-columns: 1fr 1fr; gap:14px">
+        <div class="card">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px">
+            <h3 style="margin:0">Crear / editar</h3>
+            <div class="actions" style="gap:8px">
+              <button class="btn2" type="button" id="tc_btnReload">Actualizar</button>
+              <button class="btn2" type="button" id="tc_btnNew">Nuevo</button>
+              ${isSuper ? `<button class="btn2 btnDanger" type="button" id="tc_btnDelete">Eliminar</button>` : ``}
+            </div>
+          </div>
+
+          <form id="tc_form">
+            <label class="small">TenantId</label>
+            <input class="inp" id="tc_tenant" name="tenantId" value="${htmlEscape(tenantId)}" ${isSuper ? "" : "readonly"} placeholder="default"/>
+
+            <div class="small" style="margin-top:10px; color:#64748b">Campos</div>
+            <div style="overflow:auto; border:1px solid rgba(148,163,184,.35); border-radius:12px">
+              <table class="tbl" style="margin:0">
+                <thead>
+                  <tr>
+                    <th style="width:34%">Campo</th>
+                    <th>Valor</th>
+                    <th style="width:1%"></th>
+                  </tr>
+                </thead>
+                <tbody id="tc_fields"></tbody>
+              </table>
+            </div>
+
+            <div class="actions" style="margin-top:12px">
+              <button class="btn" type="submit" id="tc_btnSave">Guardar</button>
+              <button class="btn2" type="button" id="tc_btnAdd">Agregar campo</button>
+              <button class="btn2" type="button" id="tc_btnClear">Limpiar</button>
+            </div>
+
+            <div class="small" id="tc_meta" style="margin-top:10px; color:#64748b"></div>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3 style="margin:0 0 8px">Tenants</h3>
+          <div class="small">Tip: hacé click en “Editar” para cargar la config.</div>
+          <div style="overflow:auto; border:1px solid rgba(148,163,184,.35); border-radius:12px; margin-top:10px">
+            <table class="tbl" style="margin:0">
+              <thead>
+                <tr>
+                  <th>Tenant</th>
+                  <th>Empresa</th>
+                  <th>Número</th>
+                  <th>Updated</th>
+                  <th style="width:1%"></th>
+                </tr>
+              </thead>
+              <tbody id="tc_list">
+                <tr><td colspan="5" class="small">Cargando...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <script>
+      (function(){
+        const isSuper = ${isSuper ? "true" : "false"};
+        const msgEl = document.getElementById('tc_msg');
+        const form = document.getElementById('tc_form');
+        const tenantEl = document.getElementById('tc_tenant');
+        const fieldsEl = document.getElementById('tc_fields');
+        const listEl = document.getElementById('tc_list');
+        const metaEl = document.getElementById('tc_meta');
+        const btnAdd = document.getElementById('tc_btnAdd');
+        const btnClear = document.getElementById('tc_btnClear');
+        const btnReload = document.getElementById('tc_btnReload');
+        const btnNew = document.getElementById('tc_btnNew');
+        const btnDelete = document.getElementById('tc_btnDelete');
+
+        let currentId = null;
+        let currentDocMeta = null;
+
+        function esc(s){
+          return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+        function setMsg(type, text){
+          if(!text){ msgEl.innerHTML=''; return; }
+          msgEl.innerHTML = '<div class="msg '+(type==='ok'?'ok':'err')+'">'+esc(text)+'</div>';
+        }
+
+        function normalizeValueForInput(v){
+          if (v === null || v === undefined) return '';
+          if (typeof v === 'string') return v;
+          try { return JSON.stringify(v); } catch { return String(v); }
+        }
+
+        function parseValue(raw){
+          const s = String(raw ?? '').trim();
+          if (s === '') return '';
+          if (/^(true|false)$/i.test(s)) return /^true$/i.test(s);
+          if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
+          // si parece JSON, intentamos parsear
+          if ((s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']')) || (s.startsWith('"') && s.endsWith('"')))
+          {
+            try { return JSON.parse(s); } catch {}
+          }
+          return s;
+        }
+
+        function addRow(key='', value=''){
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td><input class="inp" data-k value="${esc(key)}" placeholder="campo"/></td>
+            <td><input class="inp" data-v value="${esc(value)}" placeholder="valor"/></td>
+            <td><button class="btn2" type="button" data-rm>✕</button></td>
+          `;
+          tr.querySelector('[data-rm]').addEventListener('click', ()=> tr.remove());
+          fieldsEl.appendChild(tr);
+        }
+
+        function setFieldsFromDoc(doc){
+          fieldsEl.innerHTML = '';
+          const entries = Object.entries(doc || {});
+          if (!entries.length) addRow('', '');
+          for (const [k,v] of entries) addRow(k, normalizeValueForInput(v));
+        }
+
+        function collectDoc(){
+          const doc = {};
+          const keys = new Set();
+          const rows = Array.from(fieldsEl.querySelectorAll('tr'));
+          for (const r of rows) {
+            const k = String(r.querySelector('[data-k]')?.value || '').trim();
+            const vRaw = r.querySelector('[data-v]')?.value;
+            if (!k) continue;
+            if (keys.has(k)) throw new Error('Campo duplicado: ' + k);
+            keys.add(k);
+            doc[k] = parseValue(vRaw);
+          }
+          return doc;
+        }
+
+        async function apiList(){
+          const r = await fetch('/api/tenant-config', { headers: { 'Accept':'application/json' }, credentials: 'same-origin' });
+          const j = await r.json().catch(()=>null);
+          if(!r.ok) throw new Error((j && (j.error||j.message)) || ('HTTP '+r.status));
+          return j;
+        }
+
+        async function apiGet(tenantId){
+          const r = await fetch('/api/tenant-config?tenantId='+encodeURIComponent(tenantId), { headers: { 'Accept':'application/json' }, credentials: 'same-origin' });
+          const j = await r.json().catch(()=>null);
+          if(!r.ok) throw new Error((j && (j.error||j.message)) || ('HTTP '+r.status));
+          return j;
+        }
+
+        async function apiSave(tenantId, doc){
+          const body = new URLSearchParams();
+          body.set('tenantId', tenantId);
+          body.set('data', JSON.stringify(doc||{}));
+          const r = await fetch('/api/tenant-config', {
+            method: 'POST',
+            headers: { 'Content-Type':'application/x-www-form-urlencoded', 'Accept':'application/json' },
+            credentials: 'same-origin',
+            body
+          });
+          const j = await r.json().catch(()=>null);
+          if(!r.ok) throw new Error((j && (j.error||j.message)) || ('HTTP '+r.status));
+          return j;
+        }
+
+        async function apiDelete(tenantId){
+          const body = new URLSearchParams();
+          body.set('tenantId', tenantId);
+          const r = await fetch('/api/tenant-config', {
+            method: 'DELETE',
+            headers: { 'Content-Type':'application/x-www-form-urlencoded', 'Accept':'application/json' },
+            credentials: 'same-origin',
+            body
+          });
+          const j = await r.json().catch(()=>null);
+          if(!r.ok) throw new Error((j && (j.error||j.message)) || ('HTTP '+r.status));
+          return j;
+        }
+
+        function renderMeta(meta){
+          currentDocMeta = meta || null;
+          if (!meta) { metaEl.textContent = ''; return; }
+          const parts = [];
+          if (meta.createdAt) parts.push('createdAt: ' + meta.createdAt);
+          if (meta.updatedAt) parts.push('updatedAt: ' + meta.updatedAt);
+          metaEl.textContent = parts.join(' · ');
+        }
+
+        async function loadList(){
+          try {
+            const j = await apiList();
+            const items = Array.isArray(j.items) ? j.items : [];
+            if (!items.length) {
+              listEl.innerHTML = '<tr><td colspan="5" class="small">No hay registros.</td></tr>';
+              return;
+            }
+            listEl.innerHTML = items.map(it => {
+              return '<tr>'+
+                '<td><span class="pill">'+esc(it._id||'')+'</span></td>'+
+                '<td>'+esc(it.nom_emp||'')+'</td>'+
+                '<td>'+esc(it.numero||'')+'</td>'+
+                '<td class="small">'+esc(it.updatedAt||it.createdAt||'')+'</td>'+
+                '<td><button class="btn2" type="button" data-edit="'+esc(it._id||'')+'">Editar</button></td>'+
+              '</tr>';
+            }).join('');
+
+            listEl.querySelectorAll('button[data-edit]').forEach(btn=>{
+              btn.addEventListener('click', async ()=>{
+                const tid = btn.getAttribute('data-edit');
+                if(!tid) return;
+                tenantEl.value = tid;
+                await loadCurrent();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              });
+            });
+          } catch (e) {
+            console.error('[tenant_config] list error:', e);
+            listEl.innerHTML = '<tr><td colspan="5" class="small">Error: '+esc(e?.message||String(e))+'</td></tr>';
+          }
+        }
+
+        async function loadCurrent(){
+          setMsg('', '');
+          const tid = String(tenantEl.value||'').trim();
+          if (!tid) {
+            currentId = null;
+            renderMeta(null);
+            setFieldsFromDoc({});
+            return;
+          }
+          try {
+            const j = await apiGet(tid);
+            currentId = j?.item?._id || tid;
+            const doc = j?.item || null;
+            if (!doc) {
+              renderMeta(null);
+              setFieldsFromDoc({});
+              setMsg('err', 'No existe configuración para ese tenant. Podés crearla con Guardar.');
+              return;
+            }
+            renderMeta({ createdAt: doc.createdAt, updatedAt: doc.updatedAt });
+            setFieldsFromDoc(doc.data || {});
+          } catch (e) {
+            console.error('[tenant_config] get error:', e);
+            setMsg('err', e?.message || String(e));
+            setFieldsFromDoc({});
+            renderMeta(null);
+          }
+        }
+
+        btnAdd.addEventListener('click', ()=> addRow('', ''));
+        btnClear.addEventListener('click', ()=> { setMsg('', ''); renderMeta(null); setFieldsFromDoc({}); currentId = null; });
+        btnReload.addEventListener('click', async ()=> { await loadList(); await loadCurrent(); });
+        btnNew.addEventListener('click', ()=> { setMsg('', ''); renderMeta(null); currentId = null; if(isSuper) tenantEl.value = ''; setFieldsFromDoc({}); });
+
+        if (btnDelete) {
+          btnDelete.addEventListener('click', async ()=>{
+            try {
+              const tid = String(tenantEl.value||'').trim();
+              if (!tid) return;
+              if (!confirm('¿Eliminar la config del tenant '+tid+'?')) return;
+              await apiDelete(tid);
+              setMsg('ok', 'Eliminado ✅');
+              currentId = null;
+              renderMeta(null);
+              setFieldsFromDoc({});
+              await loadList();
+            } catch (e) {
+              setMsg('err', e?.message || String(e));
+            }
+          });
+        }
+
+        form.addEventListener('submit', async (e)=>{
+          e.preventDefault();
+          setMsg('', '');
+          try {
+            const tid = String(tenantEl.value||'').trim();
+            if (!tid) throw new Error('tenantId requerido');
+            const doc = collectDoc();
+            await apiSave(tid, doc);
+            setMsg('ok', 'Guardado ✅');
+            currentId = tid;
+            await loadList();
+            await loadCurrent();
+          } catch (e) {
+            setMsg('err', e?.message || String(e));
+          }
+        });
+
+        // init
+        setFieldsFromDoc({});
+        loadList();
+        loadCurrent();
+      })();
+      </script>
+    `;
+  }
+
+  // UI
+  app.get("/admin/tenant-config", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      if (!hasAccess(req.user, "tenant_config")) return res.status(403).send("403 - No autorizado");
+      const initialTenantId = String(req.query?.tenantId || req.user?.tenantId || "default");
+      const html = tenantConfigAdminPage({ user: req.user, initialTenantId });
+      return res.status(200).send(
+        appShell({
+          title: "Tenant Config · Asisto",
+          user: req.user,
+          active: "tenant_config",
+          main: html,
+        })
+      );
+    } catch (e) {
+      console.error("[tenant_config] UI error:", e);
+      return res.status(500).send("Error");
+    }
+  });
+
+  // API
+  app.get("/api/tenant-config", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      if (!hasAccess(req.user, "tenant_config")) return res.status(403).json({ ok:false, error:"forbidden" });
+      const db = await getDb();
+      const isSuper = String(req.user?.role || "") === "superadmin";
+      const requested = String(req.query?.tenantId || "").trim();
+      const tenantId = requested || (isSuper ? "" : String(req.user?.tenantId || "default"));
+      const col = db.collection("tenant_config");
+
+      if (tenantId) {
+        const doc = await col.findOne({ _id: tenantId });
+        if (!doc) return res.json({ ok:true, item: null });
+        return res.json({ ok:true, item: { _id: doc._id, createdAt: doc.createdAt || null, updatedAt: doc.updatedAt || null, data: stripTenantConfigDoc(doc) } });
+      }
+
+      // listado (superadmin)
+      const items = await col
+        .find({}, { projection: { _id: 1, nom_emp: 1, numero: 1, createdAt: 1, updatedAt: 1 } })
+        .sort({ _id: 1 })
+        .limit(500)
+        .toArray();
+      return res.json({ ok:true, items });
+    } catch (e) {
+      return res.status(500).json({ ok:false, error: String(e?.message || e) });
+    }
+  });
+
+  app.post("/api/tenant-config", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      if (!hasAccess(req.user, "tenant_config")) return res.status(403).json({ ok:false, error:"forbidden" });
+      const isSuper = String(req.user?.role || "") === "superadmin";
+      const tenantIdRaw = String(req.body?.tenantId || "").trim();
+      const tenantId = tenantIdRaw || (isSuper ? "" : String(req.user?.tenantId || "default"));
+      if (!tenantId) return res.status(400).json({ ok:false, error:"tenantId_required" });
+      if (!isSuper && tenantId !== String(req.user?.tenantId || "default")) return res.status(403).json({ ok:false, error:"forbidden_tenant" });
+
+      let data = req.body?.data;
+      if (typeof data === "string") {
+        try { data = JSON.parse(data); } catch { data = {}; }
+      }
+      if (!data || typeof data !== "object" || Array.isArray(data)) data = {};
+
+      const db = await getDb();
+      const col = db.collection("tenant_config");
+      const now = new Date();
+      await col.updateOne(
+        { _id: tenantId },
+        {
+          $setOnInsert: { createdAt: now },
+          $set: { ...data, updatedAt: now },
+        },
+        { upsert: true }
+      );
+      return res.json({ ok:true });
+    } catch (e) {
+      return res.status(500).json({ ok:false, error: String(e?.message || e) });
+    }
+  });
+
+  app.delete("/api/tenant-config", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      if (!hasAccess(req.user, "tenant_config")) return res.status(403).json({ ok:false, error:"forbidden" });
+      const isSuper = String(req.user?.role || "") === "superadmin";
+      if (!isSuper) return res.status(403).json({ ok:false, error:"superadmin_only" });
+      const tenantId = String(req.body?.tenantId || req.query?.tenantId || "").trim();
+      if (!tenantId) return res.status(400).json({ ok:false, error:"tenantId_required" });
+      const db = await getDb();
+      await db.collection("tenant_config").deleteOne({ _id: tenantId });
+      return res.json({ ok:true });
+    } catch (e) {
+      return res.status(500).json({ ok:false, error: String(e?.message || e) });
+    }
+  });
+
+
   // ============================
   // ========== LEADS ===========
   // ============================
@@ -2096,340 +2509,6 @@ function mountAuthRoutes(app) {
       </tr>
     `;
   }
-
-  // =========================
-  // Tenant Config (tenant_config)
-  // Colección: tenant_config (1 doc por tenant, _id = tenantId)
-  // =========================
-
-  function tenantConfigAdminPage({ user, initialTenantId }) {
-    const isSuper = String(user?.role || "") === "superadmin";
-    const tenantIdSafe = htmlEscape(String(initialTenantId || ""));
-    return `
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap">
-        <div>
-          <h1 style="margin:0 0 6px">Tenant Config</h1>
-          <div class="small">Editá la colección <code>tenant_config</code>. Un documento por tenant (campo <code>_id</code>).</div>
-        </div>
-      </div>
-
-      <div id="tc_msg" style="margin-top:12px"></div>
-
-      <div class="row" style="margin-top:14px">
-        <div class="card" style="flex:1;min-width:360px">
-          <h3 style="margin:0 0 8px">Editar / Guardar</h3>
-
-          <label>TenantId</label>
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-            <input id="tc_tenant" value="${tenantIdSafe}" ${isSuper ? "" : "readonly"} placeholder="CARICO" style="flex:1;min-width:220px"/>
-            <button class="btn2" id="tc_load" type="button">Cargar</button>
-            <button class="btn2" id="tc_new" type="button">Nuevo</button>
-          </div>
-          ${isSuper ? `<div class="small" style="margin-top:6px;color:#6b7280">Superadmin: podés cargar cualquier tenant. Admin: solo tu tenant.</div>` : ``}
-
-          <label style="margin-top:12px">JSON del documento (sin _id)</label>
-          <textarea id="tc_json" rows="18" style="width:100%;padding:10px 12px;border:1px solid #ccc;border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px"></textarea>
-
-          <div class="actions" style="margin-top:12px">
-            <button class="btn2 btnPrimary" id="tc_save" type="button">Guardar</button>
-            <button class="btn2" id="tc_pretty" type="button">Formatear</button>
-            ${isSuper ? `<button class="btn2 btnDanger" id="tc_delete" type="button">Eliminar</button>` : ``}
-          </div>
-
-          <div class="small" id="tc_meta" style="margin-top:10px;color:#6b7280"></div>
-        </div>
-
-        <div class="card" style="flex:1;min-width:360px">
-          <h3 style="margin:0 0 8px">Tenants cargados</h3>
-          <div class="small" style="color:#6b7280;margin-bottom:8px">
-            ${isSuper ? "Lista de configs disponibles (click para editar)." : "Solo ves tu tenant."}
-          </div>
-          <div style="overflow:auto;max-height:520px">
-            <table style="width:100%;border-collapse:collapse">
-              <thead>
-                <tr>
-                  <th style="text-align:left;border-bottom:1px solid #eee;padding:8px;font-size:12px;color:#374151">Tenant</th>
-                  <th style="text-align:left;border-bottom:1px solid #eee;padding:8px;font-size:12px;color:#374151">Updated</th>
-                  <th style="border-bottom:1px solid #eee;padding:8px"></th>
-                </tr>
-              </thead>
-              <tbody id="tc_list">
-                <tr><td colspan="3" class="small" style="color:#6b7280;padding:10px">Cargando...</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <script>
-      (function(){
-        const msgEl = document.getElementById('tc_msg');
-        const listEl = document.getElementById('tc_list');
-        const tenantEl = document.getElementById('tc_tenant');
-        const jsonEl = document.getElementById('tc_json');
-        const metaEl = document.getElementById('tc_meta');
-        const btnLoad = document.getElementById('tc_load');
-        const btnNew = document.getElementById('tc_new');
-        const btnSave = document.getElementById('tc_save');
-        const btnPretty = document.getElementById('tc_pretty');
-        const btnDelete = document.getElementById('tc_delete');
-
-        function esc(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-        function setMsg(ok, text){
-          if(!text){ msgEl.innerHTML=''; return; }
-          msgEl.innerHTML = '<div class="msg '+(ok?'ok':'err')+'">'+esc(text)+'</div>';
-        }
-
-        function setMeta(it){
-          if(!it){ metaEl.textContent=''; return; }
-          const ca = it.createdAt ? String(it.createdAt) : '';
-          const ua = it.updatedAt ? String(it.updatedAt) : '';
-          metaEl.textContent = [ca ? ('createdAt: '+ca) : '', ua ? ('updatedAt: '+ua) : ''].filter(Boolean).join(' · ');
-        }
-
-        function stripDoc(it){
-          if(!it || typeof it !== 'object') return {};
-          const copy = Object.assign({}, it);
-          delete copy._id;
-          return copy;
-        }
-
-        async function apiGet(tenantId){
-          const qs = tenantId ? ('?tenantId='+encodeURIComponent(tenantId)) : '';
-          const r = await fetch('/api/tenant-config'+qs, { headers:{'Accept':'application/json'}, credentials:'same-origin' });
-          const j = await r.json().catch(()=>null);
-          if(!r.ok) throw new Error((j && (j.error||j.message)) ? (j.error||j.message) : ('HTTP '+r.status));
-          return j;
-        }
-
-        async function apiList(){
-          const r = await fetch('/api/tenant-config?list=1', { headers:{'Accept':'application/json'}, credentials:'same-origin' });
-          const j = await r.json().catch(()=>null);
-          if(!r.ok) throw new Error((j && (j.error||j.message)) ? (j.error||j.message) : ('HTTP '+r.status));
-          return j;
-        }
-
-        async function apiSave(tenantId, doc){
-          const r = await fetch('/api/tenant-config', {
-            method:'POST',
-            headers:{'Content-Type':'application/json','Accept':'application/json'},
-            credentials:'same-origin',
-            body: JSON.stringify({ tenantId, data: doc })
-          });
-          const j = await r.json().catch(()=>null);
-          if(!r.ok) throw new Error((j && (j.error||j.message)) ? (j.error||j.message) : ('HTTP '+r.status));
-          return j;
-        }
-
-        async function apiDelete(tenantId){
-          const r = await fetch('/api/tenant-config?tenantId='+encodeURIComponent(tenantId), {
-            method:'DELETE',
-            headers:{'Accept':'application/json'},
-            credentials:'same-origin'
-          });
-          const j = await r.json().catch(()=>null);
-          if(!r.ok) throw new Error((j && (j.error||j.message)) ? (j.error||j.message) : ('HTTP '+r.status));
-          return j;
-        }
-
-        async function loadCurrent(){
-          setMsg(true,'');
-          const t = (tenantEl.value||'').trim();
-          if(!t){ setMsg(false,'TenantId requerido.'); return; }
-          const j = await apiGet(t);
-          const it = j && j.item ? j.item : null;
-          jsonEl.value = JSON.stringify(stripDoc(it) || {}, null, 2);
-          setMeta(it);
-          setMsg(true, it ? 'Config cargada ✅' : 'No existe config: creando nueva (guardá para crear).');
-        }
-
-        async function loadList(){
-          try{
-            // si no es superadmin, mostramos solo el tenant actual
-            ${String(user?.role||"") === "superadmin" ? "" : `
-            const t = (tenantEl.value||'').trim();
-            listEl.innerHTML = '<tr><td class="small" style="color:#6b7280;padding:10px">'+esc(t||'-')+'</td><td class="small" style="color:#6b7280;padding:10px">-</td><td style="padding:10px"></td></tr>';
-            return;
-            `}
-            const j = await apiList();
-            const items = Array.isArray(j.items) ? j.items : [];
-            if(!items.length){
-              listEl.innerHTML = '<tr><td colspan="3" class="small" style="color:#6b7280;padding:10px">Sin registros.</td></tr>';
-              return;
-            }
-            listEl.innerHTML = items.map(it=>{
-              const id = esc(it._id||'');
-              const upd = esc(it.updatedAt||it.createdAt||'');
-              return '<tr>'+
-                '<td style="border-bottom:1px solid #eee;padding:8px"><code>'+id+'</code></td>'+
-                '<td style="border-bottom:1px solid #eee;padding:8px" class="small">'+upd+'</td>'+
-                '<td style="border-bottom:1px solid #eee;padding:8px;text-align:right">'+
-                  '<button type="button" class="btn2" data-open="'+id+'">Editar</button>'+
-                '</td>'+
-              '</tr>';
-            }).join('');
-            listEl.querySelectorAll('button[data-open]').forEach(btn=>{
-              btn.addEventListener('click', async ()=>{
-                tenantEl.value = btn.getAttribute('data-open') || '';
-                await loadCurrent();
-              });
-            });
-          }catch(e){
-            listEl.innerHTML = '<tr><td colspan="3" class="small" style="color:#991b1b;padding:10px">Error: '+esc(e.message||String(e))+'</td></tr>';
-          }
-        }
-
-        btnLoad.addEventListener('click', ()=>loadCurrent().catch(e=>setMsg(false,e.message||String(e))));
-        btnNew.addEventListener('click', ()=>{
-          setMsg(true,'');
-          jsonEl.value = JSON.stringify({}, null, 2);
-          setMeta(null);
-          if(${String(user?.role||"") === "superadmin" ? "true" : "false"}){
-            // en superadmin dejamos el tenant editable
-          }
-        });
-        btnPretty.addEventListener('click', ()=>{
-          try{
-            const obj = JSON.parse(jsonEl.value||'{}');
-            jsonEl.value = JSON.stringify(obj, null, 2);
-            setMsg(true,'Formateado ✅');
-          }catch(e){
-            setMsg(false,'JSON inválido: '+(e.message||String(e)));
-          }
-        });
-        btnSave.addEventListener('click', async ()=>{
-          try{
-            setMsg(true,'');
-            const t = (tenantEl.value||'').trim();
-            if(!t){ setMsg(false,'TenantId requerido.'); return; }
-            let obj = {};
-            try{ obj = JSON.parse(jsonEl.value||'{}'); }catch(e){ setMsg(false,'JSON inválido: '+e.message); return; }
-            await apiSave(t, obj);
-            setMsg(true,'Guardado ✅');
-            await loadCurrent();
-            await loadList();
-          }catch(e){
-            setMsg(false, e.message||String(e));
-          }
-        });
-        if(btnDelete){
-          btnDelete.addEventListener('click', async ()=>{
-            try{
-              const t = (tenantEl.value||'').trim();
-              if(!t) return;
-              if(!confirm('¿Eliminar config '+t+'?')) return;
-              await apiDelete(t);
-              setMsg(true,'Eliminado ✅');
-              jsonEl.value = JSON.stringify({}, null, 2);
-              setMeta(null);
-              await loadList();
-            }catch(e){
-              setMsg(false, e.message||String(e));
-            }
-         });
-        }
-
-        // init
-        loadList();
-        if((tenantEl.value||'').trim()){
-          loadCurrent().catch(()=>{});
-        } else {
-          jsonEl.value = JSON.stringify({}, null, 2);
-        }
-      })();
-      </script>
-    `;
-  }
-
-  // Página admin real (se embebe via /ui/tenant_config)
-  app.get("/admin/tenant-config", requireAuth, requireAdmin, async (req, res) => {
-    try {
-      const tenantId = resolveTenantId(req) || "";
-      const html = tenantConfigAdminPage({ user: req.user, initialTenantId: tenantId });
-      res.setHeader("Content-Type", "text/html; charset=utf-8");
-      res.end(appShell({ user: req.user, title: "Tenant Config", active: "tenant_config", content: html }));
-    } catch (e) {
-      console.error("GET /admin/tenant-config:", e?.message || e);
-      res.status(500).send("Error");
-    }
-  });
-
-  // API: GET item / list, POST upsert, DELETE (solo superadmin)
-  app.get("/api/tenant-config", requireAuth, requireAdmin, async (req, res) => {
-    try {
-      const db = await getDb();
-      const isSuper = String(req.user?.role || "") === "superadmin";
-      const list = String(req.query?.list || "") === "1";
-
-      if (list) {
-        if (!isSuper) return res.status(403).json({ error: "forbidden" });
-        const items = await db.collection("tenant_config").find({}).sort({ _id: 1 }).limit(500).toArray();
-        return res.json({ ok: true, items });
-      }
-
-      const tenantId = (isSuper ? String(req.query?.tenantId || resolveTenantId(req) || "") : String(resolveTenantId(req) || "")).trim();
-      if (!tenantId) return res.status(400).json({ error: "tenantId requerido" });
-      const item = await db.collection("tenant_config").findOne({ _id: tenantId });
-      return res.json({ ok: true, item: item || null });
-    } catch (e) {
-      console.error("GET /api/tenant-config:", e?.message || e);
-      res.status(500).json({ error: "error" });
-    }
-  });
-
-  app.post("/api/tenant-config", requireAuth, requireAdmin, async (req, res) => {
-    try {
-      const db = await getDb();
-      const isSuper = String(req.user?.role || "") === "superadmin";
-
-     const tenantIdRaw = String((req.body?.tenantId || req.query?.tenantId || "")).trim();
-      const tenantId = (isSuper ? (tenantIdRaw || String(resolveTenantId(req) || "")) : String(resolveTenantId(req) || "")).trim();
-      if (!tenantId) return res.status(400).json({ error: "tenantId requerido" });
-
-      let data = req.body?.data;
-      if (typeof data === "string") {
-        try { data = JSON.parse(data); } catch {}
-      }
-      // si no viene data, interpretamos body como doc (excepto tenantId)
-      if (!data || typeof data !== "object") {
-        data = Object.assign({}, req.body || {});
-        delete data.tenantId;
-      }
-      if (!data || typeof data !== "object") data = {};
-
-      const now = new Date();
-      const setDoc = Object.assign({}, data);
-      delete setDoc._id;
-      setDoc.updatedAt = now;
-
-      await db.collection("tenant_config").updateOne(
-        { _id: tenantId },
-        { $set: setDoc, $setOnInsert: { createdAt: now } },
-        { upsert: true }
-      );
-
-      res.json({ ok: true });
-    } catch (e) {
-      console.error("POST /api/tenant-config:", e?.message || e);
-      res.status(500).json({ error: "error" });
-   }
-  });
-
-  app.delete("/api/tenant-config", requireAuth, requireAdmin, async (req, res) => {
-    try {
-      const isSuper = String(req.user?.role || "") === "superadmin";
-      if (!isSuper) return res.status(403).json({ error: "forbidden" });
-      const db = await getDb();
-      const tenantId = String(req.query?.tenantId || "").trim();
-      if (!tenantId) return res.status(400).json({ error: "tenantId requerido" });
-      await db.collection("tenant_config").deleteOne({ _id: tenantId });
-      res.json({ ok: true });
-    } catch (e) {
-      console.error("DELETE /api/tenant-config:", e?.message || e);
-      res.status(500).json({ error: "error" });
-    }
-  });
-
 
   // UI: listado de leads (mensajes del formulario /login#contacto)
   app.get("/admin/leads", requireAuth, requireAdmin, async (req, res) => {
@@ -2845,7 +2924,7 @@ function mountAuthRoutesLegacy() { /* legacy */ }
 function protectRoutesLegacy() { /* legacy */ }
     // requiere login
     const protectedPrefixes = ["/admin", "/api", "/ui"];
-    const protectedExact = ["/app", "/productos", "/horarios", "/comportamiento", "/canales"];
+    const protectedExact = ["/app", "/productos", "/horarios", "/comportamiento"];
 
     if (protectedExact.includes(p) || protectedPrefixes.some((pref) => p.startsWith(pref))) {
       return requireAuth(req, res, () => {
