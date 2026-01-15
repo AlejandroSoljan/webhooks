@@ -111,6 +111,10 @@ async function upsertTenantChannel(payload, { allowSecrets = true } = {}) {
   };
 
  if (p.isDefault !== undefined) update.$set.isDefault = !!p.isDefault;
+  // NUEVO: persistir debounce ms (0..30000)
+  if (p.messageDebounceMs !== undefined || p.debounceMs !== undefined) {
+    update.$set.messageDebounceMs = messageDebounceMs;
+  }
 
   if (allowSecrets) {
     if (p.whatsappToken !== undefined) update.$set.whatsappToken = String(p.whatsappToken || "").trim();
@@ -134,7 +138,7 @@ async function upsertTenantChannel(payload, { allowSecrets = true } = {}) {
 
 module.exports = {
   getRuntimeByPhoneNumberId,
-  messageDebounceMs,
+ 
   getRuntimeByTenantId,
   findAnyByVerifyToken,
   upsertTenantChannel,
