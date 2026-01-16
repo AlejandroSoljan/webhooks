@@ -2374,19 +2374,27 @@ function mountAuthRoutes(app) {
   // UI
   app.get("/admin/tenant-config", requireAuth, requireAdmin, async (req, res) => {
     try {
-          const initialTenantId = String(req.query?.tenantId || req.query?.tenant || "").trim() || String(req.user?.tenantId || "default");
+      const role = String(req.user?.role || "");
+      const isSuper = role === "superadmin";
+      const initialTenantId = String(req.query?.tenantId || req.query?.tenant || "").trim() || String(req.user?.tenantId || "default");
+
       const embed = String(req.query?.embed || "") === "1";
 
-    // tenantConfigInnerPage() debe ser el HTML del panel (sin <html>, sin sidebar).
-    // Si hoy tu handler arma todo inline, separá en 2: inner + shell.
+      const inner = tenantConfigAdminPage({
+        user: req.user,
+        initialTenantId: isSuper ? initialTenantId : String(req.user?.tenantId || "default"),
+      });
+
+
       if (embed) {
         res.setHeader("Content-Type", "text/html; charset=utf-8");
         return res.status(200).send(
           pageShell({
             title: "Tenant Config · Asisto",
             user: req.user,
-            body: `<div class="content"><div class="app">${inner}</div></div>`,
-          })
+            body: `<div class="layout"><main class="main" style="padding:24px; max-width:none; width:100%">${inner}</main></div>`,
+           })
+          
         );
       }
 
