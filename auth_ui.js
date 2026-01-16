@@ -1591,9 +1591,11 @@ function wwebSessionsAdminPage({ user }) {
           : '¿Liberar lock? (la PC actual se desconectará en el próximo heartbeat)';
         if(!confirm(txt)) return;
 
-        api('/api/wweb/release', { method:'POST', body: JSON.stringify({ lockId: id, resetAuth: !!resetAuth }) })
+         api('/api/wweb/release', { method:'POST', body: JSON.stringify({ lockId: id, resetAuth: !!resetAuth, reason: 'admin_panel' }) })
           .then(function(){
-            msg.textContent = resetAuth ? 'Sesión reseteada.' : 'Lock liberado.';
+            msg.textContent = resetAuth
+              ? 'Reset enviado. La PC dueña se desconectará y pedirá QR nuevamente.'
+              : 'Liberación enviada. La PC dueña se desconectará en el próximo heartbeat.';
             return load();
           })
           .catch(function(e){
@@ -2940,13 +2942,15 @@ function mountAuthRoutes(app) {
   });
 
 
-  // Libera un lock. Si resetAuth=true, además borra la sesión persistida de wwebjs-mongo (requiere QR de nuevo).
+  // Libera un lock (enviando una acción al owner).
+  // Si resetAuth=true, además borra el backup remoto de LocalAuth (GridFS bucket: wa_localauth) para forzar QR.
+  // IMPORTANTE: el worker usa _id string: "<tenantId>:<numero>" (no ObjectId).
   app.post("/api/wweb/release", requireAuth, requireAdmin, async (req, res) => {
     try {
       const lockId = String(req.body?.lockId || "").trim();
       const resetAuth = !!req.body?.resetAuth;
+      const reason = String(req.body?.reason || "admin_panel").trim();
 
-       // El worker usa _id string: "<tenantId>:<numero>"
       if (!lockId) return res.status(400).json({ error: "lockId inválido." });
 
       const db = await getDb();
@@ -2954,36 +2958,62 @@ function mountAuthRoutes(app) {
       const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
       if (resetAuth && !isSuper) return res.status(403).json({ error: "forbidden" });
 
-       const _id = lockId;
+      const _id = lockId;
       const lock = await db.collection("wa_locks").findOne({ _id, ...tenantFilter });
       if (!lock) return res.status(404).json({ error: "Lock no encontrado (o no autorizado)." });
 
-      const del = await db.collection("wa_locks").deleteOne({ _id, ...tenantFilter });
+      // Marcar estado en el lock para que el panel muestre que se envió la acción.
+      try {
+        await db.collection("wa_locks").updateOne(
+          { _id, ...tenantFilter },
+          { $set: { state: resetAuth ? "reset_auth_requested" : "release_requested", lastAdminAt: new Date() } }
+        );
+      } catch {}
+      // Encolar acción para el owner (el proceso que tenga el lock).
+      const action = resetAuth ? "resetauth" : "release";
+      try {
+        await db.collection("wa_wweb_actions").insertOne({
+          lockId: _id,
+          action,
+          reason,
+          requestedBy: String(req.user?.email || req.user?.user || req.user?.username || ""),
+          requestedAt: new Date(),
+        });
+      } catch (e) {
+        return res.status(500).json({ error: "No se pudo encolar la acción." });
+      }
 
+      // Reset Auth: borrar el backup remoto mínimo (LocalAuth zip en GridFS wa_localauth)
       const dropped = [];
       if (resetAuth) {
-        // wwebjs-mongo usa GridFS bucket "whatsapp-<sessionName>" => collections: whatsapp-<sessionName>.files/.chunks
         const tenantId = String(lock.tenantId || "");
         const numero = String(lock.numero || lock.number || lock.phone || "");
-        const sessionName = String(lock.sessionName || lock.session || lock.clientId || ("asisto_" + tenantId + "_" + numero));
-        const bucket = `whatsapp-${sessionName}`;
+        const clientId = `asisto_${tenantId}_${numero}`;
+        const filename = `LocalAuth-${clientId}.zip`;
 
-        for (const coll of [`${bucket}.files`, `${bucket}.chunks`]) {
-          try {
-            await db.collection(coll).drop();
-            dropped.push(coll);
-          } catch (e) {
-            // si no existe, drop falla: ignoramos
+        // GridFS native (bucketName: wa_localauth)
+        // Collections: wa_localauth.files / wa_localauth.chunks
+        try {
+          const filesColl = db.collection("wa_localauth.files");
+          const chunksColl = db.collection("wa_localauth.chunks");
+          const files = await filesColl.find({ filename }).toArray();
+          for (const f of files) {
+            try { await chunksColl.deleteMany({ files_id: f._id }); } catch {}
+            try { await filesColl.deleteOne({ _id: f._id }); } catch {}
           }
+          if (files?.length) dropped.push(`wa_localauth:${filename}`);
+        } catch (e) {
+          // no es fatal: la acción igual se envió
         }
       }
 
-      return res.status(200).json({ ok: true, deletedCount: del?.deletedCount || 0, resetAuth, dropped });
+      return res.status(200).json({ ok: true, enqueued: true, action, resetAuth, dropped });
     } catch (e) {
       console.error("[wweb] release error:", e);
       return res.status(500).json({ error: "Error liberando sesión." });
     }
   });
+
 
   // Configuración de política de sesión (permitir cualquiera / fijar host / bloquear hosts)
   app.post("/api/wweb/policy", requireAuth, requireAdmin, async (req, res) => {
