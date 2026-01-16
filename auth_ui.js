@@ -56,7 +56,7 @@ function normalizeAllowedPages(value) {
 }
 
 function hasAccess(user, ...keys) {
-  const role = String(user?.role || "");
+  const role = String(user?.role || "").toLowerCase();
   if (role === "superadmin") return true;
 
   // compat: si el campo no existe => acceso completo
@@ -1994,7 +1994,8 @@ function mountAuthRoutes(app) {
     try {
       const db = await getDb();
 
-      const isSuper = String(req.user?.role || "") === "superadmin";
+            const role = String(req.user?.role || "").toLowerCase();
+     const isSuper = role === "superadmin";
       const filter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
 
       const users = await db
@@ -2587,7 +2588,8 @@ function mountAuthRoutes(app) {
     try {
       if (!hasAccess(req.user, "tenant_config")) return res.status(403).json({ ok:false, error:"forbidden" });
       const db = await getDb();
-      const isSuper = String(req.user?.role || "") === "superadmin";
+      const role = String(req.user?.role || "").toLowerCase();
+      const isSuper = role === "superadmin";
       const requested = String(req.query?.tenantId || "").trim();
       const tenantId = requested || (isSuper ? "" : String(req.user?.tenantId || "default"));
       const col = db.collection("tenant_config");
@@ -2613,7 +2615,8 @@ function mountAuthRoutes(app) {
   app.post("/api/tenant-config", requireAuth, requireAdmin, async (req, res) => {
     try {
       if (!hasAccess(req.user, "tenant_config")) return res.status(403).json({ ok:false, error:"forbidden" });
-      const isSuper = String(req.user?.role || "") === "superadmin";
+       const role = String(req.user?.role || "").toLowerCase();
+      const isSuper = role === "superadmin";
       const tenantIdRaw = String(req.body?.tenantId || "").trim();
       const tenantId = tenantIdRaw || (isSuper ? "" : String(req.user?.tenantId || "default"));
       if (!tenantId) return res.status(400).json({ ok:false, error:"tenantId_required" });
@@ -2645,7 +2648,8 @@ function mountAuthRoutes(app) {
   app.delete("/api/tenant-config", requireAuth, requireAdmin, async (req, res) => {
     try {
       if (!hasAccess(req.user, "tenant_config")) return res.status(403).json({ ok:false, error:"forbidden" });
-      const isSuper = String(req.user?.role || "") === "superadmin";
+      const role = String(req.user?.role || "").toLowerCase();
+      const isSuper = role === "superadmin";
       if (!isSuper) return res.status(403).json({ ok:false, error:"superadmin_only" });
       const tenantId = String(req.body?.tenantId || req.query?.tenantId || "").trim();
       if (!tenantId) return res.status(400).json({ ok:false, error:"tenantId_required" });
@@ -2857,7 +2861,8 @@ function mountAuthRoutes(app) {
   app.get("/api/wweb/locks", requireAuth, requireAdmin, async (req, res) => {
     try {
       const db = await getDb();
-      const isSuper = String(req.user?.role || "") === "superadmin";
+      const role = String(req.user?.role || "").toLowerCase();
+      const isSuper = role === "superadmin";
       const filter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
 
       const locks = await db
@@ -2923,7 +2928,8 @@ function mountAuthRoutes(app) {
       if (!lockId) return res.status(400).json({ ok: false, error: "lockId requerido" });
 
       const db = await getDb();
-      const isSuper = String(req.user?.role || "") === "superadmin";
+      const role = String(req.user?.role || "").toLowerCase();
+      const isSuper = role === "superadmin";
       const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
 
       const lock = await db.collection("wa_locks").findOne(
@@ -2970,7 +2976,8 @@ function mountAuthRoutes(app) {
       if (!lockId) return res.status(400).json({ error: "lockId inválido." });
 
       const db = await getDb();
-      const isSuper = String(req.user?.role || "") === "superadmin";
+      const role = String(req.user?.role || "").toLowerCase();
+      const isSuper = role === "superadmin";
       const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
       if (resetAuth && !isSuper) return res.status(403).json({ error: "forbidden" });
 
@@ -3035,7 +3042,8 @@ function mountAuthRoutes(app) {
   app.post("/api/wweb/policy", requireAuth, requireAdmin, async (req, res) => {
     try {
       const db = await getDb();
-      const isSuper = String(req.user?.role || "") === "superadmin";
+      const role = String(req.user?.role || "").toLowerCase();
+      const isSuper = role === "superadmin";
       const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
 
       const tenantId = String(req.body?.tenantId || (tenantFilter.tenantId || "")).trim();
@@ -3087,7 +3095,8 @@ function mountAuthRoutes(app) {
   app.get("/api/wweb/history", requireAuth, requireAdmin, async (req, res) => {
     try {
       const db = await getDb();
-      const isSuper = String(req.user?.role || "") === "superadmin";
+       const role = String(req.user?.role || "").toLowerCase();
+      const isSuper = role === "superadmin";
       const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
 
       const tenantId = String(req.query?.tenantId || "").trim();
@@ -3119,29 +3128,26 @@ function mountAuthRoutes(app) {
   app.post("/api/wweb/action", requireAuth, requireAdmin, async (req, res) => {
     try {
       const lockId = String(req.body?.lockId || "").trim();
-      const action = String(req.body?.action || "").trim(); // e.g. 'restart' | 'logout' | 'release'
+      const action = String(req.body?.action || "").trim().toLowerCase(); // 'restart' | 'resetauth' | 'release'
       const reason = String(req.body?.reason || "").trim();
-      if (!ObjectId.isValid(lockId)) return res.status(400).json({ error: "lockId inválido." });
+      if (!lockId) return res.status(400).json({ error: "lockId requerido." });
       if (!action) return res.status(400).json({ error: "action requerida." });
 
       const db = await getDb();
-      const isSuper = String(req.user?.role || "") === "superadmin";
+      const role = String(req.user?.role || "").toLowerCase();
+      const isSuper = role === "superadmin";
       const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
 
-      const _id = new ObjectId(lockId);
-      const lock = await db.collection("wa_locks").findOne({ _id, ...tenantFilter });
+      const lock = await db.collection("wa_locks").findOne({ _id: lockId, ...tenantFilter });
       if (!lock) return res.status(404).json({ error: "Lock no encontrado (o no autorizado)." });
 
       const now = new Date();
-      await db.collection("wa_actions").insertOne({
-        tenantId: lock.tenantId,
-        numero: lock.numero || lock.number || lock.phone,
-        lockId: String(_id),
+      await db.collection("wa_wweb_actions").insertOne({
+        lockId: String(lockId),
         action,
         reason,
         requestedBy: String(req.user?.email || req.user?.user || req.user?.username || ""),
-        createdAt: now,
-        status: "PENDING",
+        requestedAt: now,
       });
 
       await db.collection("wa_wweb_history").insertOne({
