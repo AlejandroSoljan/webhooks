@@ -1802,7 +1802,7 @@ function mountAuthRoutes(app) {
       productos: { title: "Productos", src: "/productos", active: "productos" },
       horarios: { title: "Horarios", src: "/horarios", active: "horarios" },
       comportamiento: { title: "Comportamiento", src: "/comportamiento", active: "comportamiento" },
-      tenant_config: { title: "Tenant Config", src: "/admin/tenant-config?embed=1", active: "tenant_config" },
+       tenant_config: { title: "Tenant Config", src: "/admin/tenant-config?embed=1", active: "tenant_config" },
     };
 
     const conf = map[page];
@@ -1811,7 +1811,7 @@ function mountAuthRoutes(app) {
     // Conservamos querystring (por ej: ?tenant=xxx o convId=...)
     const original = String(req.originalUrl || "");
     const qs = original.includes("?") ? original.split("?").slice(1).join("?") : "";
-    const src = conf.src + (qs ? "?" + qs : "");
+    const src = conf.src + (qs ? ((conf.src.includes("?") ? "&" : "?") + qs) : "");
 
     return res.status(200).send(
       appShell({
@@ -2387,14 +2387,21 @@ function mountAuthRoutes(app) {
 
 
       if (embed) {
+        // IMPORTANTE: en embed NO usamos appShell (evita sidebar duplicado)
         res.setHeader("Content-Type", "text/html; charset=utf-8");
         return res.status(200).send(
           pageShell({
             title: "Tenant Config · Asisto",
-            user: req.user,
-            body: `<div class="layout"><main class="main" style="padding:24px; max-width:none; width:100%">${inner}</main></div>`,
-           })
-          
+            body: `
+              <style>
+                body { background: transparent !important; }
+                .content { padding: 0 !important; max-width: 100% !important; }
+              </style>
+              <div class="content" style="padding:16px">
+                ${inner}
+              </div>
+            `,
+          })
         );
       }
 
