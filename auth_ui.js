@@ -11,6 +11,7 @@
 //   - ["admin","inbox",...] => acceso restringido a esas keys
 
 const crypto = require("crypto");
+const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://www.asistobot.com.ar"; // ej: https://tudominio.com
@@ -18,6 +19,20 @@ const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://www.asistobot.co
 
 const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || "asisto_sess";
 const COOKIE_SECRET = process.env.AUTH_COOKIE_SECRET || "dev-unsafe-secret-change-me";
+
+// ===== Body parsers (para endpoints JSON del panel) =====
+// Nota: muchos endpoints del panel (/api/wweb/*) usan JSON.
+// Si el app principal no tiene express.json(), req.body llega vacío y se rompe (ej: lockId inválido).
+function ensureBodyParsers(app) {
+  if (app.__asistoBodyParsersMounted) return;
+  app.__asistoBodyParsersMounted = true;
+  try {
+    app.use(express.urlencoded({ extended: true }));
+  } catch {}
+  try {
+    app.use(express.json({ limit: "2mb" }));
+  } catch {}
+}
 
 // ===== Accesos por usuario (pantallas/endpoints) =====
 const ACCESS_PAGES = [
@@ -1702,6 +1717,7 @@ function wwebSessionsAdminPage({ user }) {
 }
 function mountAuthRoutes(app) {
   // login
+  ensureBodyParsers(app);
   app.get("/login", (req, res) => {
     const to = req.query?.to || "/app";
     const msg = String(req.query?.msg || "");
