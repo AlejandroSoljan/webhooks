@@ -1687,6 +1687,7 @@ function wwebSessionsAdminPage({ user }) {
       /* Modal QR */
       body.modalOpen{overflow:hidden}
       .modal{position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; padding:16px}
+      .modal[hidden]{display:none !important}
       .modalBackdrop{position:absolute; inset:0; background:rgba(0,0,0,.55)}
       .modalCard{position:relative; width:min(560px, 95vw); background:#fff; border-radius:16px; padding:14px 14px 16px; box-shadow:0 20px 60px rgba(0,0,0,.35)}
       .modalHeader{display:flex; justify-content:space-between; align-items:flex-start; gap:10px}
