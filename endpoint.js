@@ -883,8 +883,24 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
       return;
     }
 
+    // Dedupe: WhatsApp puede reintentar el webhook y enviar el mismo mensaje más de una vez.
+    // Si viene un id de WhatsApp (meta.raw.id), evitamos insertar duplicados en la misma conversación.
+    const effectiveTenantId = (tenantId ?? TENANT_ID ?? null);
+    const waMsgId = (meta && meta.raw && meta.raw.id) ? String(meta.raw.id) : "";
+    if (waMsgId) {
+      const dup = await db.collection("messages").findOne(
+        withTenant({ conversationId: convObjectId, "meta.raw.id": waMsgId }, effectiveTenantId),
+        { projection: { _id: 1 } }
+      );
+      if (dup) {
+        console.log("[messages] duplicate wa msg ignored:", waMsgId);
+        return;
+      }
+    }
+
+
     const doc = {
-      tenantId: (tenantId ?? TENANT_ID ?? null),
+      tenantId: effectiveTenantId,
       conversationId: convObjectId,
       waId: String(waId || ""),
       role: String(role),
