@@ -838,6 +838,28 @@ async function hydratePricesFromCatalog(pedido, tenantId) {
 
 // ================== Chat con historial (inyecta comportamiento de Mongo al inicio) ==================
 async function getGPTReply(tenantId, from, userMessage, opts = {}) {
+  // Limpieza defensiva: cuando el cliente manda varios mensajes juntos (debounce),
+  // a veces llega el primer segmento repetido al final (ej: 'hola, ..., hola').
+  // Evitamos que eso se propague al historial y al panel de conversaciones.
+  try {
+    const _raw = String(userMessage ?? '').trim();
+    if (_raw.includes(',')) {
+      const parts = _raw.split(',').map(p => p.trim()).filter(Boolean);
+      const norm = (t) => String(t || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+      // si el primer y último segmento son iguales (ignorando puntuación/espacios), quitamos el último
+      if (parts.length >= 2 && norm(parts[0]) && norm(parts[0]) === norm(parts[parts.length - 1])) {
+        parts.pop();
+      }
+      // también evitamos duplicado exacto consecutivo al final
+      if (parts.length >= 2 && norm(parts[parts.length - 2]) && norm(parts[parts.length - 2]) == norm(parts[parts.length - 1])) {
+        parts.pop();
+      }
+      userMessage = parts.join(', ');
+    } else {
+      userMessage = _raw;
+    }
+  } catch {}
+
   const id = k(tenantId, from);
   const cfg = await loadBehaviorConfigFromMongo(tenantId);
   const baseText = cfg.text;
