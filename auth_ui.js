@@ -1616,7 +1616,7 @@ function wwebSessionsAdminPage({ user }) {
       function doToggle(tenantId, numero, currentlyDisabled){
         var nextDisabled = !currentlyDisabled;
         var label = nextDisabled ? 'bloquear' : 'habilitar';
-        if(!confirm('¿' + label.toUpperCase() + ' esta sesión?\n\n' + tenantId + ' · ' + numero)) return;
+        if(!confirm('¿' + label.toUpperCase() + ' esta sesión?' + tenantId + ' · ' + numero)) return;
         api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenantId, numero: numero, disabled: nextDisabled }) })
           .then(function(){ msg.textContent = nextDisabled ? 'Sesión bloqueada.' : 'Sesión habilitada.'; return load(); })
           .catch(function(e){ alert('Error: ' + (e.message || e)); });
