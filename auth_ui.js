@@ -1493,13 +1493,22 @@ function wwebSessionsAdminPage({ user }) {
 
 
         var actions = '';
-        actions += '<button class="btn2 btnMini" type="button" data-action="restart" data-id="' + escapeHtml(lock._id) + '" title="Reiniciar">Reiniciar</button>';
-        actions += '<button class="btn2 btnMini" type="button" data-action="toggle" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-disabled="' + (isDisabled ? '1' : '0') + '" title="' + (isDisabled ? 'Habilitar' : 'Bloquear') + '">' + (isDisabled ? 'Habilitar' : 'Bloquear') + '</button>';
-        actions += '<button class="btn2 btnMini" type="button" data-action="resetauth" data-id="' + escapeHtml(lock._id) + '" title="Reset Auth">Reset</button>';
-        actions += '<button class="btn2 btnMini" type="button" data-action="log" data-id="' + escapeHtml(lock._id) + '" title="Log">Log</button>';
-
+        var menuId = 'm_' + String(lock._id || '').replace(/[^a-zA-Z0-9_-]/g,'') + '_' + Math.floor(Math.random()*1e6);
         var canQr = (st === 'qr') || !!lock.hasQr;
-         actions += '<button class="btn2 btnMini" type="button" data-action="qr" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '"' + (canQr ? '' : ' disabled') + ' title="QR">QR</button>';
+
+        // Dropdown + QR separado (QR queda "como está", pero más compacto)
+        actions += ''
+          + '<div class="menuWrap">'
+          +   '<button class="btn2 btnMenu" type="button" data-action="menu" data-menu="' + escapeHtml(menuId) + '" aria-haspopup="true" aria-expanded="false" title="Acciones">Acciones <span class="caret">▾</span></button>'
+          +   '<div class="menu" id="' + escapeHtml(menuId) + '" role="menu" aria-hidden="true">'
+          +     '<button class="menuItem" type="button" role="menuitem" data-action="restart" data-id="' + escapeHtml(lock._id) + '">Reiniciar</button>'
+          +     '<button class="menuItem" type="button" role="menuitem" data-action="toggle" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-disabled="' + (isDisabled ? '1' : '0') + '">' + (isDisabled ? 'Habilitar' : 'Bloquear') + '</button>'
+          +     '<div class="menuSep"></div>'
+          +     '<button class="menuItem" type="button" role="menuitem" data-action="resetauth" data-id="' + escapeHtml(lock._id) + '">Reset Auth</button>'
+          +     '<button class="menuItem" type="button" role="menuitem" data-action="log" data-id="' + escapeHtml(lock._id) + '">Log</button>'
+          +   '</div>'
+          + '</div>'
+          + '<button class="btn2 btnQr" type="button" data-action="qr" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '"' + (canQr ? '' : ' disabled') + ' title="QR">QR</button>';
 
         var ageHtml = (ageSec !== null) ? ('<div class="small">hace ' + ageSec + 's</div>') : '';
 
@@ -1653,6 +1662,16 @@ function wwebSessionsAdminPage({ user }) {
         var disabledFlag = btn.getAttribute('data-disabled');
         var currentlyDisabled = (disabledFlag === '1' || disabledFlag === 'true');
 
+        // Dropdown open/close
+        if(act === 'menu'){
+          var menuId = btn.getAttribute('data-menu') || '';
+          if(!menuId) return;
+          toggleMenu(menuId, btn);
+          e.preventDefault();
+          return;
+        }
+
+
         if(act === 'restart') return doRestart(id);
         if(act === 'toggle') return doToggle(tenant, numero, currentlyDisabled);
         if(act === 'resetauth') return doResetAuth(id);
@@ -1660,6 +1679,36 @@ function wwebSessionsAdminPage({ user }) {
         if(act === 'qr') return openQr(id, tenant, numero);
 
             });
+
+
+      // Menú: helpers
+      function closeAllMenus(){
+        document.querySelectorAll('.menu[aria-hidden="false"]').forEach(function(m){
+          m.setAttribute('aria-hidden','true');
+          m.style.display = 'none';
+        });
+        document.querySelectorAll('button[data-action="menu"][aria-expanded="true"]').forEach(function(b){
+         b.setAttribute('aria-expanded','false');
+        });
+      }
+      function toggleMenu(menuId, btn){
+        var m = document.getElementById(menuId);
+        if(!m) return;
+        var isOpen = (m.getAttribute('aria-hidden') === 'false');
+        closeAllMenus();
+        if(isOpen) return;
+        m.setAttribute('aria-hidden','false');
+        m.style.display = 'block';
+        btn.setAttribute('aria-expanded','true');
+      }
+      document.addEventListener('click', function(e){
+        // click afuera -> cerrar
+        var inside = e.target && e.target.closest ? e.target.closest('.menuWrap') : null;
+        if(!inside) closeAllMenus();
+      });
+      document.addEventListener('keydown', function(e){
+        if(e.key === 'Escape') closeAllMenus();
+      });
 
       window.__wwebReload = function(){ return load({ force:true }); };
       load({ initial:true });
@@ -1698,22 +1747,43 @@ function wwebSessionsAdminPage({ user }) {
 
       /* Barra de acciones: siempre “junta” y prolija */
       .actionBar{
-        display:grid;
-        grid-template-columns: repeat(5, minmax(0, 1fr));
-        gap:8px;
-        align-items:stretch;
+        display:flex;
+        gap:10px;
+        align-items:center;
+        justify-content:flex-start;
       }
-      .btnMini{
-        padding:8px 10px;
-        font-size:13px;
-        line-height:1;
-        border-radius:10px;
+      .btnMenu{padding:8px 12px; border-radius:12px; white-space:nowrap}
+      .btnQr{padding:8px 12px; border-radius:12px; white-space:nowrap}
+      .caret{opacity:.7; margin-left:6px}
+
+      /* Dropdown */
+      .menuWrap{position:relative; display:inline-block}
+      .menu{
+        position:absolute;
+        right:0;
+        top: calc(100% + 8px);
+        min-width: 200px;
+        background:#fff;
+        border:1px solid rgba(15,23,42,.12);
+        box-shadow: 0 12px 28px rgba(2,8,23,.18);
+        border-radius:14px;
+       padding:8px;
+        display:none;
+        z-index:50;
+      }
+      .menuItem{
         width:100%;
-        text-align:center;
-        white-space:nowrap;
-        overflow:hidden;
-        text-overflow:ellipsis;
+        text-align:left;
+        padding:10px 12px;
+        border:0;
+        background:transparent;
+        border-radius:10px;
+        cursor:pointer;
+        font-size:14px;
       }
+      .menuItem:hover{background: rgba(15,23,42,.06)}
+      .menuSep{height:1px; background: rgba(15,23,42,.10); margin:8px 6px}
+  
 
       .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700}
       .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
