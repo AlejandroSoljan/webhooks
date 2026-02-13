@@ -1266,8 +1266,7 @@ function wwebSessionsAdminPage({ user }) {
         <div>
           <h2 style="margin:0 0 6px">Sesiones WhatsApp Web</h2>
           <div class="small">Muestra las sesiones activas de <code>whatsapp-web.js</code> por tenant/número (colección <code>wa_locks</code>).</div>
-          <div class="small">Acciones: <strong>Liberar</strong> borra el lock (la PC actual se desconecta en el próximo heartbeat). <strong>Reset Auth</strong> además borra la sesión guardada (requiere nuevo QR).</div>
-        </div>
+          <div class="small">Acciones: <strong>Reiniciar</strong> reinicia la sesión de WhatsApp en la PC dueña. <strong>Bloquear/Habilitar</strong> pausa o permite el inicio de WhatsApp. <strong>Reset Auth</strong> fuerza pedir QR nuevamente (y si sos superadmin también limpia el backup remoto).</div>
         <div class="toolbarActions">
           <button class="btn2" type="button" onclick="window.__wwebReload && window.__wwebReload()">Actualizar</button>
           <span id="wwebStatus" class="small" style="opacity:.85"></span>
@@ -1290,7 +1289,7 @@ function wwebSessionsAdminPage({ user }) {
                 <th>Inicio</th>
                 <th>Último heartbeat</th>
                 <th>Política</th>
-                <th style="width:240px">Acciones</th>
+                <th style="width:280px">Acciones</th>
               </tr>
             </thead>
             <tbody id="wwebBody">
@@ -1483,35 +1482,35 @@ function wwebSessionsAdminPage({ user }) {
         var pinnedHost = String(pol.pinnedHost || "");
         var blockedHosts = Array.isArray(pol.blockedHosts) ? pol.blockedHosts.map(function(x){ return String(x); }) : [];
         var isBlocked = host && blockedHosts.indexOf(host) >= 0;
+        var isDisabled = !!pol.disabled;
 
-        var policyHtml = (mode === "pinned")
-          ? ('<div><b>Solo:</b> ' + escapeHtml(pinnedHost || '-') + '</div>')
-          : '<div>Cualquiera</div>';
-        if (blockedHosts.length) policyHtml += '<div class="small">Bloqueadas: ' + blockedHosts.length + '</div>';
+        var policyHtml = '';
+        policyHtml += isDisabled
+          ? '<div><span class="badge badgeWarn">Bloqueada</span></div>'
+          : '<div><span class="badge badgeOk">Habilitada</span></div>';
+        policyHtml += (mode === "pinned")
+          ? ('<div class="small"><b>Solo:</b> ' + escapeHtml(pinnedHost || '-') + '</div>')
+          : '<div class="small">Cualquiera</div>';
+         if (blockedHosts.length) policyHtml += '<div class="small">Hosts bloqueados: ' + blockedHosts.length + '</div>';
+
+        var policyHtml = '';
+        policyHtml += isDisabled
+          ? '<div><span class="badge badgeWarn">Bloqueada</span></div>'
+          : '<div><span class="badge badgeOk">Habilitada</span></div>';
+        policyHtml += (mode === "pinned")
+          ? ('<div class="small"><b>Solo:</b> ' + escapeHtml(pinnedHost || '-') + '</div>')
+          : '<div class="small">Cualquiera</div>';
+        if (blockedHosts.length) policyHtml += '<div class="small">Hosts bloqueados: ' + blockedHosts.length + '</div>';
+
 
         var actions = '';
-        actions += '<button class="btn2" type="button" data-action="history" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Historial</button>';
+        actions += '<button class="btn2" type="button" data-action="restart" data-id="' + escapeHtml(lock._id) + '">Reiniciar</button>';
+        actions += '<button class="btn2" type="button" data-action="toggle" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-disabled="' + (isDisabled ? '1' : '0') + '">' + (isDisabled ? 'Habilitar' : 'Bloquear') + '</button>';
+        actions += '<button class="btn2" type="button" data-action="resetauth" data-id="' + escapeHtml(lock._id) + '">Reset Auth</button>';
+        actions += '<button class="btn2" type="button" data-action="log" data-id="' + escapeHtml(lock._id) + '">Log</button>';
 
         var canQr = (st === 'qr') || !!lock.hasQr;
-        actions += '<button class="btn2" type="button" data-action="qr" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '"' + (canQr ? '' : ' disabled') + '>Ver QR</button>';
-
-        // Modo: fijar o permitir cualquiera
-        if (mode !== "pinned" || pinnedHost !== host) {
-          actions += '<button class="btn2" type="button" data-action="pin" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Fijar a esta PC</button>';
-        } else {
-          actions += '<button class="btn2" type="button" data-action="any" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Permitir cualquiera</button>';
-        }
-
-        // Bloqueo por host
-        if (host) {
-          actions += isBlocked
-            ? '<button class="btn2" type="button" data-action="unblock" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Desbloquear PC</button>'
-            : '<button class="btn2" type="button" data-action="block" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-host="' + escapeHtml(host) + '">Bloquear PC</button>';
-        }
-
-        // Acciones sobre el lock
-        actions += '<button class="btn2 btnDanger" type="button" data-action="release" data-id="' + escapeHtml(lock._id) + '">Liberar</button>';
-        actions += (IS_SUPER ? '<button class="btn2" type="button" data-action="reset" data-id="' + escapeHtml(lock._id) + '">Reset Auth</button>' : '');
+        actions += '<button class="btn2" type="button" data-action="qr" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '"' + (canQr ? '' : ' disabled') + '>QR</button>';
 
         var ageHtml = (ageSec !== null) ? ('<div class="small">hace ' + ageSec + 's</div>') : '';
 
@@ -1600,22 +1599,45 @@ function wwebSessionsAdminPage({ user }) {
           });
       }
 
-      function doRelease(id, resetAuth){
-        var txt = resetAuth
-          ? '¿Resetear autenticación? Esto borrará la sesión guardada y pedirá QR de nuevo.'
-          : '¿Liberar lock? (la PC actual se desconectará en el próximo heartbeat)';
+      function doAction(lockId, action, reason){
+        return api('/api/wweb/action', {
+          method:'POST',
+          body: JSON.stringify({ lockId: String(lockId||''), action: String(action||''), reason: reason || 'admin_panel' })
+        });
+      }
+
+      function doRestart(lockId){
+        if(!confirm('¿Reiniciar la sesión de WhatsApp en la PC dueña?')) return;
+        doAction(lockId, 'restart', 'admin_restart')
+          .then(function(){ msg.textContent = 'Reinicio solicitado.'; return load(); })
+          .catch(function(e){ alert('Error: ' + (e.message || e)); });
+      }
+
+      function doToggle(tenantId, numero, currentlyDisabled){
+        var nextDisabled = !currentlyDisabled;
+        var label = nextDisabled ? 'bloquear' : 'habilitar';
+        if(!confirm('¿' + label.toUpperCase() + ' esta sesión?\n\n' + tenantId + ' · ' + numero)) return;
+        api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenantId, numero: numero, disabled: nextDisabled }) })
+          .then(function(){ msg.textContent = nextDisabled ? 'Sesión bloqueada.' : 'Sesión habilitada.'; return load(); })
+          .catch(function(e){ alert('Error: ' + (e.message || e)); });
+      }
+
+      function doResetAuth(lockId){
+        var txt = IS_SUPER
+          ? '¿Reset Auth? Esto borrará el backup remoto (si existe) y pedirá QR nuevamente.'
+          : '¿Reset Auth? Pedirá QR nuevamente en la PC dueña.';
         if(!confirm(txt)) return;
 
-         api('/api/wweb/release', { method:'POST', body: JSON.stringify({ lockId: id, resetAuth: !!resetAuth, reason: 'admin_panel' }) })
-          .then(function(){
-            msg.textContent = resetAuth
-              ? 'Reset enviado. La PC dueña se desconectará y pedirá QR nuevamente.'
-              : 'Liberación enviada. La PC dueña se desconectará en el próximo heartbeat.';
+        // Si es superadmin usamos el endpoint existente que además limpia GridFS.
+        var p = IS_SUPER
+          ? api('/api/wweb/release', { method:'POST', body: JSON.stringify({ lockId: lockId, resetAuth: true, reason: 'admin_panel' }) })
+          : doAction(lockId, 'resetauth', 'admin_resetauth');
+
+        p.then(function(){
+            msg.textContent = 'Reset Auth solicitado. Esperando nuevo QR.';
             return load();
           })
-          .catch(function(e){
-            alert('Error: ' + (e.message || e));
-          });
+          .catch(function(e){ alert('Error: ' + (e.message || e)); });
       }
 
       body.addEventListener('click', function(e){
@@ -1627,49 +1649,16 @@ function wwebSessionsAdminPage({ user }) {
         var tenant = btn.getAttribute('data-tenant') || "";
         var numero = btn.getAttribute('data-numero') || "";
         var host = btn.getAttribute('data-host') || "";
+        var disabledFlag = btn.getAttribute('data-disabled');
+        var currentlyDisabled = (disabledFlag === '1' || disabledFlag === 'true');
 
-        if(act === 'release') return doRelease(id, false);
-        if(act === 'reset') return doRelease(id, true);
+        if(act === 'restart') return doRestart(id);
+        if(act === 'toggle') return doToggle(tenant, numero, currentlyDisabled);
+        if(act === 'resetauth') return doResetAuth(id);
+        if(act === 'log') return alert('Log: lo definimos después.');
         if(act === 'qr') return openQr(id, tenant, numero);
 
-        if(act === 'pin'){
-          if(!confirm('¿Configurar para que esta sesión SOLO inicie en esta PC? PC: ' + host)) return;
-          return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, mode: 'pinned', pinnedHost: host }) })
-            .then(function(){ load(); })
-            .catch(function(e){ alert('Error: ' + (e.message || e)); });
-        }
-        if(act === 'any'){
-          if(!confirm('¿Permitir que inicie en CUALQUIER PC?')) return;
-          return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, mode: 'any' }) })
-            .then(function(){ load(); })
-            .catch(function(e){ alert('Error: ' + (e.message || e)); });
-        }
-        if(act === 'block'){
-          if(!confirm('¿Bloquear esta PC para esta sesión? PC: ' + host)) return;
-          return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, blockHost: host }) })
-            .then(function(){ load(); })
-            .catch(function(e){ alert('Error: ' + (e.message || e)); });
-        }
-        if(act === 'unblock'){
-          if(!confirm('¿Desbloquear esta PC? PC: ' + host)) return;
-          return api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenant, numero: numero, unblockHost: host }) })
-            .then(function(){ load(); })
-            .catch(function(e){ alert('Error: ' + (e.message || e)); });
-        }
-        if(act === 'history'){
-          return api('/api/wweb/history?tenantId=' + encodeURIComponent(tenant) + '&numero=' + encodeURIComponent(numero))
-            .then(function(items){
-              if(!items || !items.length) return alert('Sin historial.');
-              var lines = items.map(function(it){
-                var t = it.at ? new Date(it.at).toLocaleString() : '';
-                return t + ' | ' + (it.event || '') + ' | ' + (it.host || '') + ' | ' + (it.by || '');
-              });
-              alert(lines.join('\\n'));
-              
-            })
-            .catch(function(e){ alert('Error: ' + (e.message || e)); });
-        }
-      });
+            });
 
       window.__wwebReload = function(){ return load({ force:true }); };
       load({ initial:true });
@@ -1684,18 +1673,27 @@ function wwebSessionsAdminPage({ user }) {
       .toolbar{display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap}
       .toolbarActions{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
 
+      /* Sin scroll horizontal: hacemos wrap + fixed layout */
       .tableWrap{overflow:auto; max-width:100%; -webkit-overflow-scrolling:touch}
       .tableWrap[data-loading="1"]{opacity:.75}
 
-      .wwebTable{width:100%; min-width:860px}
+      .wwebTable{width:100%; table-layout:fixed}
       .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:1}
       .wwebTable tbody tr:nth-child(even){background: rgba(16,24,40,.02)}
 
-      /* Por defecto compacto; permitimos wrap en columnas largas */
-      .wwebTable td, .wwebTable th{white-space:nowrap}
-      .wwebTable td:nth-child(4), .wwebTable td:nth-child(5){max-width:260px; white-space:normal; word-break:break-word}
-      .wwebTable td:nth-child(8){white-space:normal}
-      .wwebTable td:last-child{white-space:normal; min-width:240px}
+      /* Permitimos wrap en toda la tabla para evitar scroll horizontal */
+      .wwebTable td, .wwebTable th{white-space:normal; word-break:break-word; vertical-align:top}
+      .wwebTable th:nth-child(1){width:110px}
+      .wwebTable th:nth-child(2){width:150px}
+      .wwebTable th:nth-child(3){width:170px}
+      .wwebTable th:nth-child(4){width:220px}
+     .wwebTable th:nth-child(5){width:180px}
+      .wwebTable th:nth-child(6){width:155px}
+      .wwebTable th:nth-child(7){width:165px}
+      .wwebTable th:nth-child(8){width:160px}
+     .wwebTable th:nth-child(9){width:280px}
+
+      .actionsWrap{display:flex; flex-wrap:wrap; gap:8px}
 
       .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700}
       .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
@@ -2887,6 +2885,8 @@ function mountAuthRoutes(app) {
           mode: p.mode || "any",
           pinnedHost: p.pinnedHost || "",
           blockedHosts: Array.isArray(p.blockedHosts) ? p.blockedHosts : [],
+          // Nuevo: deshabilitar sesión (no inicializa WhatsApp aunque el script esté vivo)
+          disabled: !!p.disabled,
           updatedAt: p.updatedAt || p.createdAt || null,
           updatedBy: p.updatedBy || null,
         });
@@ -2895,7 +2895,7 @@ function mountAuthRoutes(app) {
       const out = locks.map((l) => {
         const tid = String(l.tenantId || "");
         const num = String(l.numero || l.number || l.phone || "");
-        const policy = polMap.get(tid + "::" + num) || { mode: "any", pinnedHost: "", blockedHosts: [] };
+        const policy = polMap.get(tid + "::" + num) || { mode: "any", pinnedHost: "", blockedHosts: [], disabled: false };
         return {
           _id: String(l._id),
           tenantId: tid,
@@ -3055,6 +3055,12 @@ function mountAuthRoutes(app) {
       const pinnedHost = String(req.body?.pinnedHost || "").trim();
       const blockHost = String(req.body?.blockHost || "").trim();
       const unblockHost = String(req.body?.unblockHost || "").trim();
+      const disabledRaw = req.body?.disabled;
+      const disabled = (disabledRaw === true || disabledRaw === false)
+        ? !!disabledRaw
+        : (String(disabledRaw || "").trim()
+          ? (String(disabledRaw).trim().toLowerCase() === "true" || String(disabledRaw).trim() === "1")
+          : null);
 
       const now = new Date();
       const update = { $setOnInsert: { createdAt: now }, $set: { updatedAt: now, updatedBy: String(req.user?.email || req.user?.user || req.user?.username || "") } };
@@ -3069,6 +3075,7 @@ function mountAuthRoutes(app) {
 
       if (blockHost) update.$addToSet = { blockedHosts: blockHost };
       if (unblockHost) update.$pull = { blockedHosts: unblockHost };
+      if (disabled !== null) update.$set.disabled = !!disabled;
 
       await db.collection("wa_wweb_policies").updateOne({ tenantId, numero }, update, { upsert: true });
 
@@ -3080,6 +3087,7 @@ function mountAuthRoutes(app) {
         pinnedHost: (mode === "pinned") ? (pinnedHost || null) : null,
         blockHost: blockHost || null,
         unblockHost: unblockHost || null,
+        disabled: (disabled !== null) ? !!disabled : null,
         by: String(req.user?.email || req.user?.user || req.user?.username || ""),
         at: now,
       });
