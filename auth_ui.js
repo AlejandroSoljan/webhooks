@@ -1709,7 +1709,7 @@ function wwebSessionsAdminPage({ user }) {
       .qrWrap{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; min-height:340px}
       #qrImg{max-width:100%; height:auto; display:none}
 
-    </style>>
+    </style>
     `,
   });
 }
@@ -3199,10 +3199,7 @@ function protectRoutes(app) {
 // LEGACY DUPLICATES (renamed)
 // (evita que pisen las versiones SEO + drawer)
 // =============================
-function appShellLegacy() { /* legacy */ }
-function loginPageLegacy() { /* legacy */ }
-function mountAuthRoutesLegacy() { /* legacy */ }
-function protectRoutesLegacy() { /* legacy */ }
+
     // requiere login
     const protectedPrefixes = ["/admin", "/api", "/ui"];
     const protectedExact = ["/app", "/productos", "/horarios", "/comportamiento"];
