@@ -1281,15 +1281,12 @@ function wwebSessionsAdminPage({ user }) {
           <table class="table wwebTable">
             <thead>
               <tr>
-                <th>Tenant</th>
-                <th>Número</th>
+                <th>Sesión</th>
                 <th>Estado</th>
-                <th>Holder</th>
-                <th>Host</th>
-                <th>Inicio</th>
-                <th>Último heartbeat</th>
+                <th>Dueño</th>
+                <th>Tiempos</th>
                 <th>Política</th>
-                <th style="width:280px">Acciones</th>
+                <th style="width:360px">Acciones</th>
               </tr>
             </thead>
             <tbody id="wwebBody">
@@ -1491,45 +1488,49 @@ function wwebSessionsAdminPage({ user }) {
         policyHtml += (mode === "pinned")
           ? ('<div class="small"><b>Solo:</b> ' + escapeHtml(pinnedHost || '-') + '</div>')
           : '<div class="small">Cualquiera</div>';
-         if (blockedHosts.length) policyHtml += '<div class="small">Hosts bloqueados: ' + blockedHosts.length + '</div>';
-
-        var policyHtml = '';
-        policyHtml += isDisabled
-          ? '<div><span class="badge badgeWarn">Bloqueada</span></div>'
-          : '<div><span class="badge badgeOk">Habilitada</span></div>';
-        policyHtml += (mode === "pinned")
-          ? ('<div class="small"><b>Solo:</b> ' + escapeHtml(pinnedHost || '-') + '</div>')
-          : '<div class="small">Cualquiera</div>';
         if (blockedHosts.length) policyHtml += '<div class="small">Hosts bloqueados: ' + blockedHosts.length + '</div>';
 
 
+
         var actions = '';
-        actions += '<button class="btn2" type="button" data-action="restart" data-id="' + escapeHtml(lock._id) + '">Reiniciar</button>';
-        actions += '<button class="btn2" type="button" data-action="toggle" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-disabled="' + (isDisabled ? '1' : '0') + '">' + (isDisabled ? 'Habilitar' : 'Bloquear') + '</button>';
-        actions += '<button class="btn2" type="button" data-action="resetauth" data-id="' + escapeHtml(lock._id) + '">Reset Auth</button>';
-        actions += '<button class="btn2" type="button" data-action="log" data-id="' + escapeHtml(lock._id) + '">Log</button>';
+        actions += '<button class="btn2 btnMini" type="button" data-action="restart" data-id="' + escapeHtml(lock._id) + '" title="Reiniciar">Reiniciar</button>';
+        actions += '<button class="btn2 btnMini" type="button" data-action="toggle" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-disabled="' + (isDisabled ? '1' : '0') + '" title="' + (isDisabled ? 'Habilitar' : 'Bloquear') + '">' + (isDisabled ? 'Habilitar' : 'Bloquear') + '</button>';
+        actions += '<button class="btn2 btnMini" type="button" data-action="resetauth" data-id="' + escapeHtml(lock._id) + '" title="Reset Auth">Reset</button>';
+        actions += '<button class="btn2 btnMini" type="button" data-action="log" data-id="' + escapeHtml(lock._id) + '" title="Log">Log</button>';
 
         var canQr = (st === 'qr') || !!lock.hasQr;
-        actions += '<button class="btn2" type="button" data-action="qr" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '"' + (canQr ? '' : ' disabled') + '>QR</button>';
+         actions += '<button class="btn2 btnMini" type="button" data-action="qr" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '"' + (canQr ? '' : ' disabled') + ' title="QR">QR</button>';
 
         var ageHtml = (ageSec !== null) ? ('<div class="small">hace ' + ageSec + 's</div>') : '';
 
         var stHtml = st ? ('<div class="small" style="margin-top:4px; opacity:.9">estado: ' + escapeHtml(st) + '</div>') : '';
         var qrAgeHtml = lock.lastQrAt ? ('<div class="small" style="margin-top:4px; opacity:.85">QR: ' + escapeHtml(String(lock.lastQrAt)) + '</div>') : '';
 
- 
+        var sessionHtml = ''
+          + '<div class="cellMain">' + escapeHtml(tenantId) + '</div>'
+          + '<div class="cellSub">' + escapeHtml(numero) + '</div>';
+
+        var ownerHtml = ''
+          + '<div class="cellMain">' + escapeHtml(host || '-') + '</div>'
+          + '<div class="cellSub mono" title="' + escapeHtml(String(lock.holderId || lock.instanceId || "")) + '">'
+          + escapeHtml(String(lock.holderId || lock.instanceId || "-"))
+          + '</div>';
+
+        var timesHtml = ''
+          + '<div class="cellSub"><b>Inicio:</b> ' + escapeHtml(fmtDate(lock.startedAt) || '-') + '</div>'
+          + '<div class="cellSub"><b>Heartbeat:</b> ' + escapeHtml(fmtDate(lock.lastSeenAt) || '-') + '</div>';
+
+
 
         return ''
           + '<tr>'
-          + '<td>' + escapeHtml(tenantId) + '</td>'
-          + '<td>' + escapeHtml(numero) + '</td>'
+          + '<td>' + sessionHtml + '</td>'
           + '<td>' + stateBadge + ageHtml + stHtml + qrAgeHtml + '</td>'
-          + '<td>' + escapeHtml(lock.holderId || lock.instanceId || "") + '</td>'
-          + '<td>' + escapeHtml(host) + '</td>'
-          + '<td>' + escapeHtml(fmtDate(lock.startedAt)) + '</td>'
-          + '<td>' + escapeHtml(fmtDate(lock.lastSeenAt)) + '</td>'
+          + '<td>' + ownerHtml + '</td>'
+          + '<td>' + timesHtml + '</td>'
           + '<td>' + policyHtml + '</td>'
-          + '<td><div class="actionsWrap">' + actions + '</div></td>'
+          + '<td><div class="actionBar">' + actions + '</div></td>'
+
           + '</tr>';
       }
 
@@ -1549,8 +1550,8 @@ function wwebSessionsAdminPage({ user }) {
 
         // Solo mostramos "Cargando…" en la primera carga real (evita parpadeo)
         if(initial && body && !body.__didInitial){
-          body.innerHTML = '<tr><td colspan="9" class="small">Cargando…</td></tr>';
-          body.__didInitial = true;
+          body.innerHTML = '<tr><td colspan="6" class="small">Cargando…</td></tr>';
+        body.__didInitial = true;
         }
 
         setLoading(true);
@@ -1561,7 +1562,7 @@ function wwebSessionsAdminPage({ user }) {
 
             var html = '';
             if(!locks.length){
-              html = '<tr><td colspan="9" class="small">No hay sesiones registradas.</td></tr>';
+              html = '<tr><td colspan="6" class="small">No hay sesiones registradas.</td></tr>';
             } else {
               html = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
             }
@@ -1669,7 +1670,8 @@ function wwebSessionsAdminPage({ user }) {
 
     <style>
       /* Ajustes específicos de /admin/wweb */
-      .appWide{width:100%; max-width:none;}
+      /* Centrado + ancho máximo: evita “pantalla infinita” */
+      .appWide{width:100%; max-width:1240px; margin:0 auto;}
       .toolbar{display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap}
       .toolbarActions{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
 
@@ -1681,19 +1683,37 @@ function wwebSessionsAdminPage({ user }) {
       .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:1}
       .wwebTable tbody tr:nth-child(even){background: rgba(16,24,40,.02)}
 
-      /* Permitimos wrap en toda la tabla para evitar scroll horizontal */
+      /* Compacto + legible */
       .wwebTable td, .wwebTable th{white-space:normal; word-break:break-word; vertical-align:top}
-      .wwebTable th:nth-child(1){width:110px}
-      .wwebTable th:nth-child(2){width:150px}
-      .wwebTable th:nth-child(3){width:170px}
+      .wwebTable th:nth-child(1){width:160px}
+      .wwebTable th:nth-child(2){width:190px}
+      .wwebTable th:nth-child(3){width:240px}
       .wwebTable th:nth-child(4){width:220px}
-     .wwebTable th:nth-child(5){width:180px}
-      .wwebTable th:nth-child(6){width:155px}
-      .wwebTable th:nth-child(7){width:165px}
-      .wwebTable th:nth-child(8){width:160px}
-     .wwebTable th:nth-child(9){width:280px}
+      .wwebTable th:nth-child(5){width:170px}
+      .wwebTable th:nth-child(6){width:360px}
 
-      .actionsWrap{display:flex; flex-wrap:wrap; gap:8px}
+      .cellMain{font-weight:700}
+      .cellSub{font-size:12px; opacity:.85; margin-top:2px}
+      .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
+
+      /* Barra de acciones: siempre “junta” y prolija */
+      .actionBar{
+        display:grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap:8px;
+        align-items:stretch;
+      }
+      .btnMini{
+        padding:8px 10px;
+        font-size:13px;
+        line-height:1;
+        border-radius:10px;
+        width:100%;
+        text-align:center;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+      }
 
       .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700}
       .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
