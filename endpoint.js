@@ -4304,7 +4304,7 @@ console.log("[convId] "+ convId);
     // ================== Debounce configurable (solo mensajes text) ==================
     // - Retrocompatible: si messageDebounceMs=0 => no cambia nada
     // - Si >0: junta varios mensajes text y llama al LLM una sola vez
-    const debounceMs = clampInt(runtime?.messageDebounceMs ?? runtime?.debounceMs ?? 0, 0, 30000);
+    const debounceMs = clampInt(runtime?.messageDebounceMs ?? runtime?.debounceMs ?? 0, 0, 5000);
     if (debounceMs > 0 && msg.type === "text") {
        // key estable: convId si existe; si no, tenant+canal+from
       const key = convId
