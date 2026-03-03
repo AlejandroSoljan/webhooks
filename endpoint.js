@@ -2,9 +2,6 @@
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
 
-
-
-
 require("dotenv").config();
 const express = require("express");
 const app = express();
@@ -20,186 +17,6 @@ const TENANT_ID = (process.env.TENANT_ID || "").trim();
 // ================== Debounce de textos (por tenant+canal+waId+convId) ==================
 const pendingTextBatches = new Map();
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-// ---------- Media proxy (para ver/descargar adjuntos en /admin y /admin/inbox) ----------
-function _safeFileName(name) {
-  const s = String(name || "").trim() || "archivo";
-  // quitar caracteres peligrosos para header
-  return s.replace(/[\r\n"]/g, "").slice(0, 180) || "archivo";
-}
-function _extFromMime(mime) {
-  const mt = String(mime || "").toLowerCase();
-  if (mt.includes("jpeg")) return "jpg";
-  if (mt.includes("png")) return "png";
-  if (mt.includes("webp")) return "webp";
-  if (mt.includes("gif")) return "gif";
-  if (mt.includes("pdf")) return "pdf";
-  if (mt.includes("mp3")) return "mp3";
-  if (mt.includes("wav")) return "wav";
-  if (mt.includes("ogg") || mt.includes("opus")) return "ogg";
-  if (mt.includes("mp4")) return "mp4";
-  return "";
-}
-function buildMediaDescriptorForAdmin(m) {
-  try {
-    const raw = (m && m.meta && m.meta.raw) ? m.meta.raw : null;
-    const type = String(m?.type || raw?.type || "").trim().toLowerCase();
-    let mediaId = null;
-    let filename = "";
-    let mime = "";
-    let caption = "";
-
-    if (type === "image") {
-      mediaId = raw?.image?.id || null;
-      mime = raw?.image?.mime_type || "";
-      caption = String(raw?.image?.caption || "").trim();
-      filename = "imagen";
-    } else if (type === "audio") {
-      mediaId = raw?.audio?.id || null;
-      mime = raw?.audio?.mime_type || "";
-      filename = "audio";
-    } else if (type === "document") {
-      mediaId = raw?.document?.id || null;
-      filename = String(raw?.document?.filename || raw?.document?.file_name || "archivo").trim();
-      mime = raw?.document?.mime_type || "";
-      caption = String(raw?.document?.caption || "").trim();
-    } else if (type === "video") {
-      mediaId = raw?.video?.id || null;
-      mime = raw?.video?.mime_type || "";
-      caption = String(raw?.video?.caption || "").trim();
-      filename = "video";
-    } else if (type === "sticker") {
-      mediaId = raw?.sticker?.id || null;
-      mime = raw?.sticker?.mime_type || "";
-      filename = "sticker";
-    }
-
-    // fallback: cache de webhook (por si existiera)
-    const cachedPublicUrl = m?.meta?.media?.publicUrl || null;
-    const cachedCacheId = m?.meta?.media?.cacheId || null;
-    const cachedUrl = cachedPublicUrl || (cachedCacheId ? (`/cache/media/${cachedCacheId}`) : null);
-
-    const url = mediaId ? (`/api/media/${String(m._id)}`) : cachedUrl;
-    if (!url) return null;
-
-    return {
-      kind: type || (m?.meta?.media?.kind) || "file",
-      url,
-      mime: mime || (m?.meta?.media?.mime) || null,
-      filename: filename || (m?.meta?.media?.filename) || null,
-      caption: caption || null,
-    };
-  } catch {
-    return null;
-  }
-}
-
-// GET /api/media/:msgId  -> proxy seguro (requiere login) para descargar/ver media desde WhatsApp
-app.get("/api/media/:msgId", async (req, res) => {
-  try {
-    const tenant = resolveTenantId(req);
-    const msgId = String(req.params.msgId || "").trim();
-    if (!ObjectId.isValid(msgId)) return res.status(400).send("invalid_id");
-
-    const db = await getDb();
-    const msgDoc = await db.collection("messages").findOne(
-      withTenant({ _id: new ObjectId(msgId) }, tenant)
-    );
-    if (!msgDoc) return res.status(404).send("not_found");
-
-    const raw = msgDoc?.meta?.raw || {};
-    const type = String(msgDoc?.type || raw?.type || "").trim().toLowerCase();
-
-    let mediaId = null;
-    let filename = "";
-    let mimeHint = "";
-
-    if (type === "image") {
-      mediaId = raw?.image?.id || null;
-      mimeHint = raw?.image?.mime_type || "";
-      filename = "imagen";
-    } else if (type === "audio") {
-      mediaId = raw?.audio?.id || null;
-      mimeHint = raw?.audio?.mime_type || "";
-      filename = "audio";
-    } else if (type === "document") {
-      mediaId = raw?.document?.id || null;
-      mimeHint = raw?.document?.mime_type || "";
-      filename = String(raw?.document?.filename || raw?.document?.file_name || "archivo").trim();
-    } else if (type === "video") {
-      mediaId = raw?.video?.id || null;
-      mimeHint = raw?.video?.mime_type || "";
-      filename = "video";
-    } else if (type === "sticker") {
-      mediaId = raw?.sticker?.id || null;
-      mimeHint = raw?.sticker?.mime_type || "";
-      filename = "sticker";
-    }
-
-    // fallback: si el webhook guardó cacheId/publicUrl (ej imagen analizada), usamos eso
-    if (!mediaId) {
-      const cached = msgDoc?.meta?.media?.cacheId || null;
-      if (cached) {
-        const item = getFromCache(cached);
-        if (item) {
-          res.setHeader("Content-Type", item.mime || "application/octet-stream");
-          res.setHeader("Cache-Control", "no-store");
-          res.setHeader("Content-Disposition", `inline; filename="${_safeFileName(filename || ("archivo." + (_extFromMime(item.mime) || "bin")))}"`);
-          return res.send(item.buffer);
-        }
-      }
-      return res.status(400).send("no_media");
-    }
-
-    // Obtener token correcto (multi-phone) leyendo la conversación
-    let convPhoneNumberId = null;
-    try {
-      if (msgDoc.conversationId) {
-        const conv = await db.collection("conversations").findOne(
-          withTenant({ _id: msgDoc.conversationId }, tenant),
-          { projection: { phoneNumberId: 1 } }
-        );
-        convPhoneNumberId = conv?.phoneNumberId || null;
-      }
-    } catch {}
-
-    let rt = null;
-    try {
-      if (convPhoneNumberId) rt = await getRuntimeByPhoneNumberId(convPhoneNumberId);
-    } catch {}
-
-    const waOpts = {
-      whatsappToken: rt?.whatsappToken || null,
-      phoneNumberId: rt?.phoneNumberId || convPhoneNumberId || null,
-    };
-
-    const info = await getMediaInfo(mediaId, waOpts);
-    const buf = await downloadMediaBuffer(info.url, waOpts);
-    const mime = String(info?.mime_type || mimeHint || "application/octet-stream");
-
-    let finalName = _safeFileName(filename || "archivo");
-    const ext = _extFromMime(mime);
-    if (ext && !finalName.toLowerCase().endsWith("." + ext)) {
-      finalName += "." + ext;
-    }
-
-    const forceDl = String(req.query?.download || "") === "1";
-    const inlinePreferred =
-      !forceDl && (
-        mime.startsWith("image/") ||
-        mime.startsWith("audio/") ||
-        mime.startsWith("video/") ||
-        mime.includes("pdf")
-      );
-
-    res.setHeader("Content-Type", mime);
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("Content-Disposition", `${inlinePreferred ? "inline" : "attachment"}; filename="${finalName}"`);
-    return res.send(buf);
-  } catch (e) {
-    console.error("GET /api/media error:", e?.message || e);
-    return res.status(500).send("internal");
-  }
-});
 
 function clampInt(v, min, max) {
   const n = Number.parseInt(v, 10);
@@ -1308,6 +1125,223 @@ app.get("/api/logs/conversations", async (req, res) => {
 });
 
 // Mensajes de una conversación
+
+// ---------- Media proxy (para ver/descargar adjuntos en /admin y /admin/inbox) ----------
+function _safeFileName(name) {
+  const s = String(name || "").trim() || "archivo";
+  // quitar caracteres peligrosos para header
+  return s.replace(/[\r\n"]/g, "").slice(0, 180) || "archivo";
+}
+function _extFromMime(mime) {
+  const mt = String(mime || "").toLowerCase();
+  if (mt.includes("jpeg")) return "jpg";
+  if (mt.includes("png")) return "png";
+  if (mt.includes("webp")) return "webp";
+  if (mt.includes("gif")) return "gif";
+  if (mt.includes("pdf")) return "pdf";
+  if (mt.includes("mp3")) return "mp3";
+  if (mt.includes("wav")) return "wav";
+  if (mt.includes("ogg") || mt.includes("opus")) return "ogg";
+  if (mt.includes("mp4")) return "mp4";
+  return "";
+}
+function _appendTenantParam(url, tenantId) {
+  const t = String(tenantId || "").trim();
+  if (!t) return url;
+  const u0 = String(url || "");
+  // No tocar URLs absolutas externas
+  if (/^https?:\/\//i.test(u0)) return u0;
+  try {
+    const u = new URL(u0, "http://localhost");
+    u.searchParams.set("tenant", t);
+    return u.pathname + (u.search || "") + (u.hash || "");
+  } catch {
+    // fallback simple
+    if (!u0) return u0;
+    return u0.includes("?")
+      ? (u0 + "&tenant=" + encodeURIComponent(t))
+      : (u0 + "?tenant=" + encodeURIComponent(t));
+  }
+}
+
+function buildMediaDescriptorForAdmin(m, tenantId) {
+  try {
+    const raw = (m && m.meta && m.meta.raw) ? m.meta.raw : null;
+    const type = String(m?.type || raw?.type || "").trim().toLowerCase();
+
+    let mediaId = null;
+    let filename = "";
+    let mime = "";
+    let caption = "";
+
+    if (type === "image") {
+      mediaId = raw?.image?.id || null;
+      mime = raw?.image?.mime_type || "";
+      caption = String(raw?.image?.caption || "").trim();
+      filename = "imagen";
+    } else if (type === "audio") {
+      mediaId = raw?.audio?.id || null;
+      mime = raw?.audio?.mime_type || "";
+      filename = "audio";
+    } else if (type === "document") {
+      mediaId = raw?.document?.id || null;
+      filename = String(raw?.document?.filename || raw?.document?.file_name || "archivo").trim();
+      mime = raw?.document?.mime_type || "";
+      caption = String(raw?.document?.caption || "").trim();
+    } else if (type === "video") {
+      mediaId = raw?.video?.id || null;
+      mime = raw?.video?.mime_type || "";
+      caption = String(raw?.video?.caption || "").trim();
+      filename = "video";
+    } else if (type === "sticker") {
+      mediaId = raw?.sticker?.id || null;
+      mime = raw?.sticker?.mime_type || "";
+      filename = "sticker";
+    }
+
+    // fallback: cache de webhook (por si existiera)
+    const cachedPublicUrl = m?.meta?.media?.publicUrl || null;
+    const cachedCacheId = m?.meta?.media?.cacheId || null;
+    const cachedUrl = cachedPublicUrl || (cachedCacheId ? (`/cache/media/${cachedCacheId}`) : null);
+
+    let url = mediaId ? (`/api/media/${String(m._id)}`) : cachedUrl;
+    if (!url) return null;
+
+    url = _appendTenantParam(url, tenantId);
+
+    const mimeFinal = (mime || (m?.meta?.media?.mime) || "").toLowerCase();
+    const filenameFinal = filename || (m?.meta?.media?.filename) || null;
+
+    // infer kind por mime si ayuda (ej: image/pdf enviado como "document")
+    let kind = type || (m?.meta?.media?.kind) || "file";
+    if (mimeFinal.startsWith("image/")) kind = "image";
+    else if (mimeFinal.startsWith("audio/")) kind = "audio";
+    else if (mimeFinal.startsWith("video/")) kind = "video";
+    else if (mimeFinal.includes("pdf")) kind = "pdf";
+    else if (type === "document") kind = "document";
+
+    return {
+      kind,
+      url,
+      mime: mimeFinal || null,
+      filename: filenameFinal,
+      caption: caption || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+
+// GET /api/media/:msgId  -> proxy seguro (requiere login) para descargar/ver media desde WhatsApp
+app.get("/api/media/:msgId", async (req, res) => {
+  try {
+    const tenant = resolveTenantId(req);
+    const msgId = String(req.params.msgId || "").trim();
+    if (!ObjectId.isValid(msgId)) return res.status(400).send("invalid_id");
+
+    const db = await getDb();
+    const msgDoc = await db.collection("messages").findOne(
+      withTenant({ _id: new ObjectId(msgId) }, tenant)
+    );
+    if (!msgDoc) return res.status(404).send("not_found");
+
+    const raw = msgDoc?.meta?.raw || {};
+    const type = String(msgDoc?.type || raw?.type || "").trim().toLowerCase();
+
+    let mediaId = null;
+    let filename = "";
+    let mimeHint = "";
+
+    if (type === "image") {
+      mediaId = raw?.image?.id || null;
+      mimeHint = raw?.image?.mime_type || "";
+      filename = "imagen";
+    } else if (type === "audio") {
+      mediaId = raw?.audio?.id || null;
+      mimeHint = raw?.audio?.mime_type || "";
+      filename = "audio";
+    } else if (type === "document") {
+      mediaId = raw?.document?.id || null;
+      mimeHint = raw?.document?.mime_type || "";
+      filename = String(raw?.document?.filename || raw?.document?.file_name || "archivo").trim();
+    } else if (type === "video") {
+      mediaId = raw?.video?.id || null;
+      mimeHint = raw?.video?.mime_type || "";
+      filename = "video";
+    } else if (type === "sticker") {
+      mediaId = raw?.sticker?.id || null;
+      mimeHint = raw?.sticker?.mime_type || "";
+      filename = "sticker";
+    }
+
+    // fallback: si el webhook guardó cacheId/publicUrl (ej imagen analizada), usamos eso
+    if (!mediaId) {
+      const cached = msgDoc?.meta?.media?.cacheId || null;
+      if (cached) {
+        const item = getFromCache(cached);
+        if (item) {
+          res.setHeader("Content-Type", item.mime || "application/octet-stream");
+          res.setHeader("Cache-Control", "no-store");
+          res.setHeader("Content-Disposition", `inline; filename="${_safeFileName(filename || ("archivo." + (_extFromMime(item.mime) || "bin")))}"`);
+          return res.send(item.buffer);
+        }
+      }
+      return res.status(400).send("no_media");
+    }
+
+    // Obtener token correcto (multi-phone) leyendo la conversación
+    let convPhoneNumberId = null;
+    try {
+      if (msgDoc.conversationId) {
+        const conv = await db.collection("conversations").findOne(
+          withTenant({ _id: msgDoc.conversationId }, tenant),
+          { projection: { phoneNumberId: 1 } }
+        );
+        convPhoneNumberId = conv?.phoneNumberId || null;
+      }
+    } catch {}
+
+    let rt = null;
+    try {
+      if (convPhoneNumberId) rt = await getRuntimeByPhoneNumberId(convPhoneNumberId);
+    } catch {}
+
+    const waOpts = {
+      whatsappToken: rt?.whatsappToken || null,
+      phoneNumberId: rt?.phoneNumberId || convPhoneNumberId || null,
+    };
+
+    const info = await getMediaInfo(mediaId, waOpts);
+    const buf = await downloadMediaBuffer(info.url, waOpts);
+    const mime = String(info?.mime_type || mimeHint || "application/octet-stream");
+
+    let finalName = _safeFileName(filename || "archivo");
+    const ext = _extFromMime(mime);
+    if (ext && !finalName.toLowerCase().endsWith("." + ext)) {
+      finalName += "." + ext;
+    }
+
+    const forceDl = String(req.query?.download || "") === "1";
+    const inlinePreferred =
+      !forceDl && (
+        mime.startsWith("image/") ||
+        mime.startsWith("audio/") ||
+        mime.startsWith("video/") ||
+        mime.includes("pdf")
+      );
+
+    res.setHeader("Content-Type", mime);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Content-Disposition", `${inlinePreferred ? "inline" : "attachment"}; filename="${finalName}"`);
+    return res.send(buf);
+  } catch (e) {
+    console.error("GET /api/media error:", e?.message || e);
+    return res.status(500).send("internal");
+  }
+});
+
+
 app.get("/api/logs/messages", async (req, res) => {
   try {
     const { convId, waId } = req.query;
@@ -1321,7 +1355,7 @@ app.get("/api/logs/messages", async (req, res) => {
       role: m.role,                     // "user" | "assistant" | "system"
       content: m.content,
       type: m.type,
-      media: buildMediaDescriptorForAdmin(m),
+      media: buildMediaDescriptorForAdmin(m, t),
       createdAt: m.ts || m.createdAt
     })));
   } catch (e) {
@@ -1877,35 +1911,56 @@ app.get("/admin/inbox", async (req, res) => {
     chatBody.innerHTML = "";
     const frag = document.createDocumentFragment();
 
-    function buildMediaNode(m){
+        function buildMediaNode(m){
       const md = m && m.media;
       if (!md || !md.url) return null;
 
       const url = api(md.url);
       const kind = String(md.kind || "").toLowerCase();
+      const mime = String(md.mime || "").toLowerCase();
       const filename = String(md.filename || "archivo").trim() || "archivo";
+      const fnameLower = filename.toLowerCase();
+
+      const isImage = (kind === "image") || mime.startsWith("image/");
+      const isAudio = (kind === "audio") || mime.startsWith("audio/");
+      const isVideo = (kind === "video") || mime.startsWith("video/");
+      const isPdf = (kind === "pdf") || mime.includes("pdf") || fnameLower.endsWith(".pdf");
 
       const wrap = document.createElement("div");
       wrap.style.marginTop = "6px";
 
       // helper: download link
       const dlUrl = url + (url.includes("?") ? "&" : "?") + "download=1";
+
+      const links = document.createElement("div");
+      links.style.display = "flex";
+      links.style.gap = "10px";
+      links.style.marginTop = "4px";
+      links.style.alignItems = "center";
+
+      const open = document.createElement("a");
+      open.href = url;
+      open.textContent = "Abrir";
+      open.target = "_blank";
+      open.rel = "noopener";
+      open.style.fontSize = "11px";
+      open.style.color = "rgba(255,255,255,.82)";
+      open.style.textDecoration = "underline";
+
       const dl = document.createElement("a");
       dl.href = dlUrl;
       dl.textContent = "Descargar";
-      dl.style.display = "inline-block";
-      dl.style.marginTop = "4px";
       dl.style.fontSize = "11px";
       dl.style.color = "rgba(255,255,255,.82)";
       dl.style.textDecoration = "underline";
 
-      if (kind === "image") {
+      if (isImage) {
         const a = document.createElement("a");
         a.href = url;
         a.target = "_blank";
         a.rel = "noopener";
 
-       const img = document.createElement("img");
+        const img = document.createElement("img");
         img.src = url;
         img.alt = filename;
         img.loading = "lazy";
@@ -1915,22 +1970,27 @@ app.get("/admin/inbox", async (req, res) => {
 
         a.appendChild(img);
         wrap.appendChild(a);
-        wrap.appendChild(dl);
+
+        links.appendChild(dl);
+        wrap.appendChild(links);
         return wrap;
       }
 
-      if (kind === "audio") {
+      if (isAudio) {
         const audio = document.createElement("audio");
         audio.controls = true;
         audio.src = url;
         audio.style.maxWidth = "320px";
         audio.style.display = "block";
         wrap.appendChild(audio);
-        wrap.appendChild(dl);
+
+        links.appendChild(open);
+        links.appendChild(dl);
+        wrap.appendChild(links);
         return wrap;
       }
 
-      if (kind === "video") {
+      if (isVideo) {
         const video = document.createElement("video");
         video.controls = true;
         video.src = url;
@@ -1938,7 +1998,27 @@ app.get("/admin/inbox", async (req, res) => {
         video.style.borderRadius = "10px";
         video.style.display = "block";
         wrap.appendChild(video);
-        wrap.appendChild(dl);
+
+        links.appendChild(open);
+        links.appendChild(dl);
+        wrap.appendChild(links);
+        return wrap;
+      }
+
+      if (isPdf) {
+        const frame = document.createElement("iframe");
+        frame.src = url;
+        frame.style.width = "320px";
+        frame.style.maxWidth = "100%";
+        frame.style.height = "380px";
+        frame.style.border = "0";
+        frame.style.borderRadius = "10px";
+        frame.style.display = "block";
+        wrap.appendChild(frame);
+
+        links.appendChild(open);
+        links.appendChild(dl);
+        wrap.appendChild(links);
         return wrap;
       }
 
@@ -1950,8 +2030,13 @@ app.get("/admin/inbox", async (req, res) => {
       a.style.textDecoration = "underline";
       a.style.fontSize = "13px";
       wrap.appendChild(a);
+
+      links.appendChild(open);
+      links.appendChild(dl);
+      wrap.appendChild(links);
       return wrap;
     }
+
 
     msgs.forEach(m => {
       const row = document.createElement("div");
@@ -1982,6 +2067,7 @@ app.get("/admin/inbox", async (req, res) => {
     chatBody.appendChild(frag);
     chatBody.scrollTop = chatBody.scrollHeight;
   }
+
 
   async function selectConversation(convId){
     activeConvId = convId;
@@ -2794,10 +2880,53 @@ app.get("/admin", async (req, res) => {
       return;
     }
 
+    function mediaHtml(m){
+      const md = m && m.media;
+      if (!md || !md.url) return '';
+      const kind = String(md.kind || '').toLowerCase();
+      const filename = escHtml(String(md.filename || 'archivo'));
+      const url = escHtml(String(md.url || ''));
+      const dl = url + (url.includes('?') ? '&' : '?') + 'download=1';
+
+      if (kind === 'image') {
+        return (
+          '<div style="margin-top:6px">' +
+            '<a href="'+url+'" target="_blank" rel="noopener">' +
+              '<img src="'+url+'" alt="'+filename+'" style="max-width:320px;border-radius:10px;display:block"/>' +
+            '</a>' +
+            '<a href="'+dl+'" style="display:inline-block;margin-top:4px;font-size:11px;text-decoration:underline">Descargar</a>' +
+          '</div>'
+        );
+      }
+      if (kind === 'audio') {
+        return (
+          '<div style="margin-top:6px">' +
+            '<audio controls src="'+url+'" style="max-width:340px;display:block"></audio>' +
+            '<a href="'+dl+'" style="display:inline-block;margin-top:4px;font-size:11px;text-decoration:underline">Descargar</a>' +
+          '</div>'
+        );
+      }
+      if (kind === 'video') {
+        return (
+          '<div style="margin-top:6px">' +
+            '<video controls src="'+url+'" style="max-width:340px;border-radius:10px;display:block"></video>' +
+            '<a href="'+dl+'" style="display:inline-block;margin-top:4px;font-size:11px;text-decoration:underline">Descargar</a>' +
+          '</div>'
+        );
+      }
+      // documentos u otros
+      return (
+        '<div style="margin-top:6px">' +
+          '<a href="'+dl+'" style="text-decoration:underline">📎 '+(filename || 'Archivo')+'</a>' +
+        '</div>'
+      );
+    }
+
     target.innerHTML = list.map(m => (
       '<div class="msg role-'+escHtml(m.role)+'">'+
         '<small>['+new Date(m.createdAt).toLocaleString()+'] '+escHtml(m.role)+'</small>'+
         '<pre>'+escHtml(m.content||'')+'</pre>'+
+        mediaHtml(m) +
       '</div>'
     )).join('');
   }
@@ -3343,7 +3472,7 @@ app.get("/admin", async (req, res) => {
          let meta = null;
          let manualOpen = false;
 
-        async function loadMessages(){
+         async function loadMessages(){
            const r = await fetch('/api/logs/messages?' + QS);
           const data = await r.json();
            const root = document.getElementById('root');
@@ -3360,13 +3489,43 @@ app.get("/admin", async (req, res) => {
              pre.textContent = (m.content||'');
              d.appendChild(pre);
 
-             // media
+                          // media
              try {
-               if (m.media && m.media.url) {
-                 const kind = String(m.media.kind||'').toLowerCase();
-                 const url = String(m.media.url||'');
+               const md = m.media;
+               if (md && md.url) {
+                 const kind = String(md.kind||'').toLowerCase();
+                 const mime = String(md.mime||'').toLowerCase();
+                 const filename = String(md.filename || 'Archivo').trim() || 'Archivo';
+                 const fnameLower = filename.toLowerCase();
+                 const url = String(md.url||'');
                  const dl = url + (url.includes('?') ? '&' : '?') + 'download=1';
-                 if (kind === 'image') {
+
+                 const isImage = (kind === 'image') || mime.startsWith('image/');
+                 const isAudio = (kind === 'audio') || mime.startsWith('audio/');
+                 const isVideo = (kind === 'video') || mime.startsWith('video/');
+                 const isPdf = (kind === 'pdf') || mime.includes('pdf') || fnameLower.endsWith('.pdf');
+
+                 const links = document.createElement('div');
+                 links.style.display = 'flex';
+                 links.style.gap = '10px';
+                 links.style.marginTop = '4px';
+                 links.style.alignItems = 'center';
+
+                 const open = document.createElement('a');
+                 open.href = url;
+                 open.textContent = 'Abrir';
+                 open.target = '_blank';
+                 open.rel = 'noopener';
+                 open.style.display = 'inline-block';
+                 open.style.fontSize = '12px';
+
+                 const adl = document.createElement('a');
+                 adl.href = dl;
+                 adl.textContent = 'Descargar';
+                 adl.style.display = 'inline-block';
+                 adl.style.fontSize = '12px';
+
+                 if (isImage) {
                    const a = document.createElement('a');
                    a.href = url; a.target = '_blank'; a.rel = 'noopener';
                    const img = document.createElement('img');
@@ -3378,14 +3537,9 @@ app.get("/admin", async (req, res) => {
                    a.appendChild(img);
                    d.appendChild(a);
 
-                   const adl = document.createElement('a');
-                   adl.href = dl;
-                   adl.textContent = 'Descargar';
-                   adl.style.display = 'inline-block';
-                   adl.style.marginTop = '4px';
-                   adl.style.fontSize = '12px';
-                   d.appendChild(adl);
-                 } else if (kind === 'audio') {
+                   links.appendChild(adl);
+                   d.appendChild(links);
+                 } else if (isAudio) {
                    const audio = document.createElement('audio');
                    audio.controls = true;
                    audio.src = url;
@@ -3393,14 +3547,10 @@ app.get("/admin", async (req, res) => {
                    audio.style.marginTop = '6px';
                    d.appendChild(audio);
 
-                   const adl = document.createElement('a');
-                   adl.href = dl;
-                   adl.textContent = 'Descargar';
-                   adl.style.display = 'inline-block';
-                   adl.style.marginTop = '4px';
-                   adl.style.fontSize = '12px';
-                   d.appendChild(adl);
-                 } else if (kind === 'video') {
+                   links.appendChild(open);
+                   links.appendChild(adl);
+                   d.appendChild(links);
+                 } else if (isVideo) {
                    const video = document.createElement('video');
                    video.controls = true;
                    video.src = url;
@@ -3410,20 +3560,35 @@ app.get("/admin", async (req, res) => {
                    video.style.marginTop = '6px';
                    d.appendChild(video);
 
-                   const adl = document.createElement('a');
-                   adl.href = dl;
-                   adl.textContent = 'Descargar';
-                   adl.style.display = 'inline-block';
-                   adl.style.marginTop = '4px';
-                   adl.style.fontSize = '12px';
-                   d.appendChild(adl);
+                   links.appendChild(open);
+                   links.appendChild(adl);
+                   d.appendChild(links);
+                 } else if (isPdf) {
+                   const frame = document.createElement('iframe');
+                   frame.src = url;
+                   frame.style.width = '360px';
+                   frame.style.maxWidth = '100%';
+                   frame.style.height = '420px';
+                   frame.style.border = '0';
+                   frame.style.borderRadius = '10px';
+                   frame.style.display = 'block';
+                   frame.style.marginTop = '6px';
+                   d.appendChild(frame);
+
+                   links.appendChild(open);
+                   links.appendChild(adl);
+                   d.appendChild(links);
                  } else {
                    const a = document.createElement('a');
                    a.href = dl;
-                   a.textContent = '📎 ' + (m.media.filename || 'Archivo');
+                   a.textContent = '📎 ' + filename;
                    a.style.display = 'inline-block';
                    a.style.marginTop = '6px';
                    d.appendChild(a);
+
+                   links.appendChild(open);
+                   links.appendChild(adl);
+                   d.appendChild(links);
                  }
                }
              } catch {}
@@ -4576,7 +4741,6 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
         text = String(tr?.text || "").trim() || "(audio sin texto)";
         // enriquecemos meta para admin/UI
         msg.__media = { kind: "audio", cacheId: id, publicUrl: publicAudioUrl, mime: info.mime_type || "audio/ogg" };
-
       } catch (e) {
         console.error("Audio/transcripción:", e.message);
         text = "(no se pudo transcribir el audio)";
@@ -4605,6 +4769,7 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
         text = "[imagen recibida]";
       }
     }
+
     else if (msg.type === "document" && msg.document?.id) {
       // Documento/archivo (no analizamos; solo registramos para el panel)
       const fn = String(msg.document?.filename || msg.document?.file_name || "archivo").trim() || "archivo";
@@ -4620,6 +4785,7 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
       text = "[sticker]";
       msg.__media = { kind: "sticker", mime: msg.sticker?.mime_type || null };
     }
+
 
         // Asegurar conversación y guardar mensaje de usuario
     let conv = null;

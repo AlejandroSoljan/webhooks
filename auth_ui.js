@@ -105,6 +105,7 @@ function requiredAccessForPath(p) {
   if (path.startsWith("/api/logs/messages")) return ["inbox"];
   if (path.startsWith("/api/media")) return ["inbox"];
 
+
   // Leads / contacto desde /login
   if (path.startsWith("/api/leads")) return ["admin"];
 
