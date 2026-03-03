@@ -2,6 +2,9 @@
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
 
+
+
+
 require("dotenv").config();
 const express = require("express");
 const app = express();
@@ -17,6 +20,186 @@ const TENANT_ID = (process.env.TENANT_ID || "").trim();
 // ================== Debounce de textos (por tenant+canal+waId+convId) ==================
 const pendingTextBatches = new Map();
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// ---------- Media proxy (para ver/descargar adjuntos en /admin y /admin/inbox) ----------
+function _safeFileName(name) {
+  const s = String(name || "").trim() || "archivo";
+  // quitar caracteres peligrosos para header
+  return s.replace(/[\r\n"]/g, "").slice(0, 180) || "archivo";
+}
+function _extFromMime(mime) {
+  const mt = String(mime || "").toLowerCase();
+  if (mt.includes("jpeg")) return "jpg";
+  if (mt.includes("png")) return "png";
+  if (mt.includes("webp")) return "webp";
+  if (mt.includes("gif")) return "gif";
+  if (mt.includes("pdf")) return "pdf";
+  if (mt.includes("mp3")) return "mp3";
+  if (mt.includes("wav")) return "wav";
+  if (mt.includes("ogg") || mt.includes("opus")) return "ogg";
+  if (mt.includes("mp4")) return "mp4";
+  return "";
+}
+function buildMediaDescriptorForAdmin(m) {
+  try {
+    const raw = (m && m.meta && m.meta.raw) ? m.meta.raw : null;
+    const type = String(m?.type || raw?.type || "").trim().toLowerCase();
+    let mediaId = null;
+    let filename = "";
+    let mime = "";
+    let caption = "";
+
+    if (type === "image") {
+      mediaId = raw?.image?.id || null;
+      mime = raw?.image?.mime_type || "";
+      caption = String(raw?.image?.caption || "").trim();
+      filename = "imagen";
+    } else if (type === "audio") {
+      mediaId = raw?.audio?.id || null;
+      mime = raw?.audio?.mime_type || "";
+      filename = "audio";
+    } else if (type === "document") {
+      mediaId = raw?.document?.id || null;
+      filename = String(raw?.document?.filename || raw?.document?.file_name || "archivo").trim();
+      mime = raw?.document?.mime_type || "";
+      caption = String(raw?.document?.caption || "").trim();
+    } else if (type === "video") {
+      mediaId = raw?.video?.id || null;
+      mime = raw?.video?.mime_type || "";
+      caption = String(raw?.video?.caption || "").trim();
+      filename = "video";
+    } else if (type === "sticker") {
+      mediaId = raw?.sticker?.id || null;
+      mime = raw?.sticker?.mime_type || "";
+      filename = "sticker";
+    }
+
+    // fallback: cache de webhook (por si existiera)
+    const cachedPublicUrl = m?.meta?.media?.publicUrl || null;
+    const cachedCacheId = m?.meta?.media?.cacheId || null;
+    const cachedUrl = cachedPublicUrl || (cachedCacheId ? (`/cache/media/${cachedCacheId}`) : null);
+
+    const url = mediaId ? (`/api/media/${String(m._id)}`) : cachedUrl;
+    if (!url) return null;
+
+    return {
+      kind: type || (m?.meta?.media?.kind) || "file",
+      url,
+      mime: mime || (m?.meta?.media?.mime) || null,
+      filename: filename || (m?.meta?.media?.filename) || null,
+      caption: caption || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// GET /api/media/:msgId  -> proxy seguro (requiere login) para descargar/ver media desde WhatsApp
+app.get("/api/media/:msgId", async (req, res) => {
+  try {
+    const tenant = resolveTenantId(req);
+    const msgId = String(req.params.msgId || "").trim();
+    if (!ObjectId.isValid(msgId)) return res.status(400).send("invalid_id");
+
+    const db = await getDb();
+    const msgDoc = await db.collection("messages").findOne(
+      withTenant({ _id: new ObjectId(msgId) }, tenant)
+    );
+    if (!msgDoc) return res.status(404).send("not_found");
+
+    const raw = msgDoc?.meta?.raw || {};
+    const type = String(msgDoc?.type || raw?.type || "").trim().toLowerCase();
+
+    let mediaId = null;
+    let filename = "";
+    let mimeHint = "";
+
+    if (type === "image") {
+      mediaId = raw?.image?.id || null;
+      mimeHint = raw?.image?.mime_type || "";
+      filename = "imagen";
+    } else if (type === "audio") {
+      mediaId = raw?.audio?.id || null;
+      mimeHint = raw?.audio?.mime_type || "";
+      filename = "audio";
+    } else if (type === "document") {
+      mediaId = raw?.document?.id || null;
+      mimeHint = raw?.document?.mime_type || "";
+      filename = String(raw?.document?.filename || raw?.document?.file_name || "archivo").trim();
+    } else if (type === "video") {
+      mediaId = raw?.video?.id || null;
+      mimeHint = raw?.video?.mime_type || "";
+      filename = "video";
+    } else if (type === "sticker") {
+      mediaId = raw?.sticker?.id || null;
+      mimeHint = raw?.sticker?.mime_type || "";
+      filename = "sticker";
+    }
+
+    // fallback: si el webhook guardó cacheId/publicUrl (ej imagen analizada), usamos eso
+    if (!mediaId) {
+      const cached = msgDoc?.meta?.media?.cacheId || null;
+      if (cached) {
+        const item = getFromCache(cached);
+        if (item) {
+          res.setHeader("Content-Type", item.mime || "application/octet-stream");
+          res.setHeader("Cache-Control", "no-store");
+          res.setHeader("Content-Disposition", `inline; filename="${_safeFileName(filename || ("archivo." + (_extFromMime(item.mime) || "bin")))}"`);
+          return res.send(item.buffer);
+        }
+      }
+      return res.status(400).send("no_media");
+    }
+
+    // Obtener token correcto (multi-phone) leyendo la conversación
+    let convPhoneNumberId = null;
+    try {
+      if (msgDoc.conversationId) {
+        const conv = await db.collection("conversations").findOne(
+          withTenant({ _id: msgDoc.conversationId }, tenant),
+          { projection: { phoneNumberId: 1 } }
+        );
+        convPhoneNumberId = conv?.phoneNumberId || null;
+      }
+    } catch {}
+
+    let rt = null;
+    try {
+      if (convPhoneNumberId) rt = await getRuntimeByPhoneNumberId(convPhoneNumberId);
+    } catch {}
+
+    const waOpts = {
+      whatsappToken: rt?.whatsappToken || null,
+      phoneNumberId: rt?.phoneNumberId || convPhoneNumberId || null,
+    };
+
+    const info = await getMediaInfo(mediaId, waOpts);
+    const buf = await downloadMediaBuffer(info.url, waOpts);
+    const mime = String(info?.mime_type || mimeHint || "application/octet-stream");
+
+    let finalName = _safeFileName(filename || "archivo");
+    const ext = _extFromMime(mime);
+    if (ext && !finalName.toLowerCase().endsWith("." + ext)) {
+      finalName += "." + ext;
+    }
+
+    const forceDl = String(req.query?.download || "") === "1";
+    const inlinePreferred =
+      !forceDl && (
+        mime.startsWith("image/") ||
+        mime.startsWith("audio/") ||
+        mime.startsWith("video/") ||
+        mime.includes("pdf")
+      );
+
+    res.setHeader("Content-Type", mime);
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Content-Disposition", `${inlinePreferred ? "inline" : "attachment"}; filename="${finalName}"`);
+    return res.send(buf);
+  } catch (e) {
+    console.error("GET /api/media error:", e?.message || e);
+    return res.status(500).send("internal");
+  }
+});
 
 function clampInt(v, min, max) {
   const n = Number.parseInt(v, 10);
@@ -1138,6 +1321,7 @@ app.get("/api/logs/messages", async (req, res) => {
       role: m.role,                     // "user" | "assistant" | "system"
       content: m.content,
       type: m.type,
+      media: buildMediaDescriptorForAdmin(m),
       createdAt: m.ts || m.createdAt
     })));
   } catch (e) {
@@ -1693,6 +1877,82 @@ app.get("/admin/inbox", async (req, res) => {
     chatBody.innerHTML = "";
     const frag = document.createDocumentFragment();
 
+    function buildMediaNode(m){
+      const md = m && m.media;
+      if (!md || !md.url) return null;
+
+      const url = api(md.url);
+      const kind = String(md.kind || "").toLowerCase();
+      const filename = String(md.filename || "archivo").trim() || "archivo";
+
+      const wrap = document.createElement("div");
+      wrap.style.marginTop = "6px";
+
+      // helper: download link
+      const dlUrl = url + (url.includes("?") ? "&" : "?") + "download=1";
+      const dl = document.createElement("a");
+      dl.href = dlUrl;
+      dl.textContent = "Descargar";
+      dl.style.display = "inline-block";
+      dl.style.marginTop = "4px";
+      dl.style.fontSize = "11px";
+      dl.style.color = "rgba(255,255,255,.82)";
+      dl.style.textDecoration = "underline";
+
+      if (kind === "image") {
+        const a = document.createElement("a");
+        a.href = url;
+        a.target = "_blank";
+        a.rel = "noopener";
+
+       const img = document.createElement("img");
+        img.src = url;
+        img.alt = filename;
+        img.loading = "lazy";
+        img.style.maxWidth = "280px";
+        img.style.borderRadius = "10px";
+        img.style.display = "block";
+
+        a.appendChild(img);
+        wrap.appendChild(a);
+        wrap.appendChild(dl);
+        return wrap;
+      }
+
+      if (kind === "audio") {
+        const audio = document.createElement("audio");
+        audio.controls = true;
+        audio.src = url;
+        audio.style.maxWidth = "320px";
+        audio.style.display = "block";
+        wrap.appendChild(audio);
+        wrap.appendChild(dl);
+        return wrap;
+      }
+
+      if (kind === "video") {
+        const video = document.createElement("video");
+        video.controls = true;
+        video.src = url;
+        video.style.maxWidth = "320px";
+        video.style.borderRadius = "10px";
+        video.style.display = "block";
+        wrap.appendChild(video);
+        wrap.appendChild(dl);
+        return wrap;
+      }
+
+      // documentos u otros
+      const a = document.createElement("a");
+      a.href = dlUrl;
+      a.textContent = filename ? ("📎 " + filename) : "📎 Archivo";
+      a.style.color = "rgba(255,255,255,.92)";
+      a.style.textDecoration = "underline";
+      a.style.fontSize = "13px";
+      wrap.appendChild(a);
+      return wrap;
+    }
+
     msgs.forEach(m => {
       const row = document.createElement("div");
       row.className = "msg-row";
@@ -1700,7 +1960,15 @@ app.get("/admin/inbox", async (req, res) => {
 
       const bubble = document.createElement("div");
       bubble.className = "msg " + ((m.role === "user") ? "them" : "me");
-      bubble.textContent = String(m.content || "");
+
+      // texto del mensaje (si existe)
+      const txt = document.createElement("div");
+      txt.textContent = String(m.content || "");
+      bubble.appendChild(txt);
+
+      // media preview (si existe)
+      const mediaNode = buildMediaNode(m);
+      if (mediaNode) bubble.appendChild(mediaNode);
 
       const meta = document.createElement("div");
       meta.className = "msg-meta";
@@ -3075,7 +3343,7 @@ app.get("/admin", async (req, res) => {
          let meta = null;
          let manualOpen = false;
 
-         async function loadMessages(){
+        async function loadMessages(){
            const r = await fetch('/api/logs/messages?' + QS);
           const data = await r.json();
            const root = document.getElementById('root');
@@ -3084,7 +3352,82 @@ app.get("/admin", async (req, res) => {
              const d=document.createElement('div');
              d.className='msg role-'+m.role;
              const when = new Date(m.createdAt).toLocaleString();
-             d.innerHTML='<small>['+when+'] '+m.role+'</small><pre>'+(m.content||'')+'</pre>';
+             const small = document.createElement('small');
+             small.textContent = '['+when+'] '+m.role;
+             d.appendChild(small);
+
+             const pre = document.createElement('pre');
+             pre.textContent = (m.content||'');
+             d.appendChild(pre);
+
+             // media
+             try {
+               if (m.media && m.media.url) {
+                 const kind = String(m.media.kind||'').toLowerCase();
+                 const url = String(m.media.url||'');
+                 const dl = url + (url.includes('?') ? '&' : '?') + 'download=1';
+                 if (kind === 'image') {
+                   const a = document.createElement('a');
+                   a.href = url; a.target = '_blank'; a.rel = 'noopener';
+                   const img = document.createElement('img');
+                   img.src = url;
+                   img.style.maxWidth = '360px';
+                   img.style.borderRadius = '10px';
+                   img.style.display = 'block';
+                   img.style.marginTop = '6px';
+                   a.appendChild(img);
+                   d.appendChild(a);
+
+                   const adl = document.createElement('a');
+                   adl.href = dl;
+                   adl.textContent = 'Descargar';
+                   adl.style.display = 'inline-block';
+                   adl.style.marginTop = '4px';
+                   adl.style.fontSize = '12px';
+                   d.appendChild(adl);
+                 } else if (kind === 'audio') {
+                   const audio = document.createElement('audio');
+                   audio.controls = true;
+                   audio.src = url;
+                   audio.style.display = 'block';
+                   audio.style.marginTop = '6px';
+                   d.appendChild(audio);
+
+                   const adl = document.createElement('a');
+                   adl.href = dl;
+                   adl.textContent = 'Descargar';
+                   adl.style.display = 'inline-block';
+                   adl.style.marginTop = '4px';
+                   adl.style.fontSize = '12px';
+                   d.appendChild(adl);
+                 } else if (kind === 'video') {
+                   const video = document.createElement('video');
+                   video.controls = true;
+                   video.src = url;
+                   video.style.maxWidth = '360px';
+                   video.style.borderRadius = '10px';
+                   video.style.display = 'block';
+                   video.style.marginTop = '6px';
+                   d.appendChild(video);
+
+                   const adl = document.createElement('a');
+                   adl.href = dl;
+                   adl.textContent = 'Descargar';
+                   adl.style.display = 'inline-block';
+                   adl.style.marginTop = '4px';
+                   adl.style.fontSize = '12px';
+                   d.appendChild(adl);
+                 } else {
+                   const a = document.createElement('a');
+                   a.href = dl;
+                   a.textContent = '📎 ' + (m.media.filename || 'Archivo');
+                   a.style.display = 'inline-block';
+                   a.style.marginTop = '6px';
+                   d.appendChild(a);
+                 }
+               }
+             } catch {}
+
              root.appendChild(d);
            }
            if(!data.length){ root.innerHTML='<p class="muted">Sin mensajes para mostrar</p>'; }
@@ -4231,6 +4574,9 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
         const publicAudioUrl = `${req.protocol}://${req.get("host")}/cache/audio/${id}`;
         const tr = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type, ...aiOpts });
         text = String(tr?.text || "").trim() || "(audio sin texto)";
+        // enriquecemos meta para admin/UI
+        msg.__media = { kind: "audio", cacheId: id, publicUrl: publicAudioUrl, mime: info.mime_type || "audio/ogg" };
+
       } catch (e) {
         console.error("Audio/transcripción:", e.message);
         text = "(no se pudo transcribir el audio)";
@@ -4258,6 +4604,21 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
         console.error("Imagen/análisis:", e?.message || e);
         text = "[imagen recibida]";
       }
+    }
+    else if (msg.type === "document" && msg.document?.id) {
+      // Documento/archivo (no analizamos; solo registramos para el panel)
+      const fn = String(msg.document?.filename || msg.document?.file_name || "archivo").trim() || "archivo";
+      const cap = String(msg.document?.caption || "").trim();
+      text = cap ? cap : `[archivo: ${fn}]`;
+      if (cap) text += `\n[archivo: ${fn}]`;
+      msg.__media = { kind: "document", filename: fn, mime: msg.document?.mime_type || null };
+    } else if (msg.type === "video" && msg.video?.id) {
+      const cap = String(msg.video?.caption || "").trim();
+      text = cap ? cap : "[video]";
+      msg.__media = { kind: "video", mime: msg.video?.mime_type || null };
+    } else if (msg.type === "sticker" && msg.sticker?.id) {
+      text = "[sticker]";
+      msg.__media = { kind: "sticker", mime: msg.sticker?.mime_type || null };
     }
 
         // Asegurar conversación y guardar mensaje de usuario
@@ -4304,7 +4665,7 @@ console.log("[convId] "+ convId);
     // ================== Debounce configurable (solo mensajes text) ==================
     // - Retrocompatible: si messageDebounceMs=0 => no cambia nada
     // - Si >0: junta varios mensajes text y llama al LLM una sola vez
-    const debounceMs = clampInt(runtime?.messageDebounceMs ?? runtime?.debounceMs ?? 0, 0, 1000);
+    const debounceMs = clampInt(runtime?.messageDebounceMs ?? runtime?.debounceMs ?? 0, 0, 5000);
     if (debounceMs > 0 && msg.type === "text") {
        // key estable: convId si existe; si no, tenant+canal+from
       const key = convId
