@@ -4503,7 +4503,7 @@ app.get("/productos", async (req, res) => {
 
 
 // ================== Horarios de atención (UI L-V) ==================
-// Página simple para cargar horarios de lunes a viernes (hasta 2 franjas por día)
+// Página visual para cargar horarios de lunes a domingo (hasta 2 franjas por día)
 app.get("/horarios", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
@@ -4511,59 +4511,191 @@ app.get("/horarios", async (req, res) => {
     const _id = `store_hours:${tenant}`;
     const doc = (await db.collection("settings").findOne({ _id })) || {};
     const hours = doc.hours || {};
-    const hoursJson = JSON.stringify(hours).replace(/</g, "\\u003c");
+    const hoursJson = JSON.stringify(hours).replace(/</g, "\u003c");
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html><html><head><meta charset="utf-8" />
       <title>Horarios de atención (${tenant})</title>
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <style>
-        body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:960px}
-        table{border-collapse:collapse;width:100%}
-        th,td{border:1px solid #ddd;padding:6px 8px;text-align:left}
-        th{background:#f5f5f5}
-        input[type=time]{width:100%;box-sizing:border-box;padding:4px}
-        input[type=checkbox]{transform:scale(1.1)}
-        .row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
-        .btn{padding:6px 10px;border-radius:4px;border:1px solid #333;background:#fff;cursor:pointer}
-        .btn:active{transform:scale(.97)}
-        .hint{color:#555;font-size:13px}
+        :root{
+          --bg:#f4f7fb;
+          --card:#ffffff;
+          --text:#0f172a;
+          --muted:#51627f;
+          --line:#d9e3f0;
+          --line-strong:#bfd0e3;
+          --primary:#1f5aa8;
+          --primary-2:#184985;
+          --soft:#eef4fb;
+          --success:#0c7a43;
+          --success-bg:#dff7e9;
+          --shadow:0 12px 26px rgba(16,24,40,.08);
+          --radius:18px;
+        }
+        *{box-sizing:border-box}
+        html,body{margin:0;padding:0;background:transparent;color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+        body{padding:14px 16px 20px;overflow-x:hidden}
+        .page{width:100%;max-width:none;margin:0 auto}
+        .hero{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+        .hero h1{margin:0;font-size:22px;line-height:1.1}
+        .hero p{margin:6px 0 0;color:var(--muted);font-size:14px}
+        .hero-side{display:flex;gap:8px;flex-wrap:wrap}
+        .chip{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:999px;background:#fff;border:1px solid var(--line);font-size:12px;font-weight:700;color:var(--primary)}
+        .toolbar{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow);display:flex;gap:12px;align-items:end;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
+        .toolbar-left{display:flex;gap:12px;flex-wrap:wrap;align-items:end;flex:1 1 420px}
+        .field{display:flex;flex-direction:column;gap:6px;min-width:220px;flex:1 1 260px}
+        .field.small{flex:0 0 220px;min-width:220px}
+        .field label{font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#466189}
+        .field input{width:100%;height:46px;border-radius:14px;border:1px solid var(--line-strong);padding:0 14px;background:#fff;font-size:14px;outline:none;color:var(--text)}
+        .field input:focus{border-color:#88a7d4;box-shadow:0 0 0 4px rgba(31,90,168,.08)}
+        .toolbar-actions{display:flex;gap:10px;flex-wrap:wrap}
+        .btn{appearance:none;border:1px solid var(--line-strong);background:#fff;color:var(--text);border-radius:12px;padding:10px 14px;font-weight:700;font-size:13px;cursor:pointer;transition:.18s ease;line-height:1}
+        .btn:hover{transform:translateY(-1px);box-shadow:0 8px 18px rgba(16,24,40,.08)}
+        .btn-primary{background:var(--primary);border-color:var(--primary);color:#fff}
+        .btn-primary:hover{background:var(--primary-2);border-color:var(--primary-2)}
+        .btn-soft{background:var(--soft);border-color:var(--line);color:var(--primary)}
+        .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+        .day-card{background:var(--card);border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow);overflow:hidden}
+        .day-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line)}
+        .day-title{margin:0;font-size:18px;line-height:1.1}
+        .day-sub{margin:4px 0 0;color:var(--muted);font-size:12px}
+        .day-body{padding:16px 18px 18px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+        .range{background:#f8fbff;border:1px solid var(--line);border-radius:16px;padding:12px}
+        .range h3{margin:0 0 10px;font-size:13px;color:#36527b;letter-spacing:.04em;text-transform:uppercase}
+        .time-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+        .time-field{display:flex;flex-direction:column;gap:6px}
+        .time-field label{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#466189}
+        input[type=time]{width:100%;height:42px;border-radius:12px;border:1px solid var(--line-strong);padding:0 10px;background:#fff;font-size:14px;color:var(--text);outline:none}
+        input[type=time]:focus{border-color:#88a7d4;box-shadow:0 0 0 4px rgba(31,90,168,.08)}
+        .switch-row{display:flex;align-items:center;gap:10px;white-space:nowrap}
+        .switch-label{font-size:13px;font-weight:700;color:var(--muted)}
+        .switch{position:relative;display:inline-flex;align-items:center;width:50px;height:30px}
+        .switch input{position:absolute;opacity:0;pointer-events:none}
+        .switch span{display:block;width:50px;height:30px;border-radius:999px;background:#d6dfeb;border:1px solid #c7d3e5;position:relative;transition:.18s ease}
+        .switch span:before{content:"";position:absolute;left:3px;top:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(16,24,40,.14);transition:.18s ease}
+        .switch input:checked + span{background:var(--success-bg);border-color:#9bdfbb}
+        .switch input:checked + span:before{left:23px;background:var(--success)}
+        .day-card.is-off .range{opacity:.55}
+        .day-card.is-off .day-title{color:#6b7b94}
+        .hint-card{margin-top:16px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px 16px;color:var(--muted);font-size:13px;box-shadow:var(--shadow)}
+        .toast{position:fixed;right:18px;bottom:18px;background:#0f172a;color:#fff;padding:12px 14px;border-radius:14px;box-shadow:0 14px 30px rgba(15,23,42,.22);font-size:13px;font-weight:700;opacity:0;transform:translateY(10px);pointer-events:none;transition:.18s ease;z-index:50}
+        .toast.show{opacity:1;transform:translateY(0)}
+        @media (max-width: 980px){
+          body{padding:12px}
+          .grid{grid-template-columns:1fr}
+        }
+        @media (max-width: 680px){
+          .day-body,.time-grid{grid-template-columns:1fr}
+          .field.small,.field{min-width:0;flex:1 1 100%}
+          .toolbar-actions{width:100%}
+          .toolbar-actions .btn{flex:1 1 0}
+        }
       </style></head><body>
-      <h1>Horarios de atención</h1>
-      <p class="hint">Configurá las franjas horarias disponibles de <strong>lunes a domingo</strong>. Cada día puede tener hasta dos rangos horarios.</p>
-      <div class="row">
-        <label>Tenant:&nbsp;<input id="tenant" type="text" value="${tenant.replace(/"/g,'&quot;')}" /></label>
-        <button id="btnReload" class="btn">Recargar</button>
-        <button id="btnSave" class="btn">Guardar</button>
+      <div class="page">
+        <div class="hero">
+          <div>
+            <h1>Horarios de atención</h1>
+            <p>Configurá la disponibilidad del tenant y definí hasta dos franjas por día sin depender de una tabla ancha.</p>
+          </div>
+          <div class="hero-side">
+            <span class="chip">Lunes a domingo</span>
+            <span class="chip" id="metaEnabled">0 días activos</span>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <div class="toolbar-left">
+            <div class="field small">
+              <label for="tenant">Tenant</label>
+              <input id="tenant" type="text" value="${tenant.replace(/"/g,'&quot;')}" />
+            </div>
+          </div>
+          <div class="toolbar-actions">
+            <button id="btnReload" class="btn btn-soft" type="button">Recargar</button>
+            <button id="btnSave" class="btn btn-primary" type="button">Guardar horarios</button>
+          </div>
+        </div>
+
+        <section class="grid" id="hoursGrid">
+          ${STORE_HOURS_DAYS.map((d, idx) => `
+          <article class="day-card" data-day="${d.key}">
+            <div class="day-head">
+              <div>
+                <h2 class="day-title">${d.label}</h2>
+                <p class="day-sub">${idx < 5 ? 'Jornada configurable' : 'Disponibilidad especial de fin de semana'}</p>
+              </div>
+              <div class="switch-row">
+                <span class="switch-label">Habilitado</span>
+                <label class="switch">
+                  <input type="checkbox" class="enabled" />
+                  <span></span>
+                </label>
+              </div>
+            </div>
+            <div class="day-body">
+              <section class="range">
+                <h3>Franja 1</h3>
+                <div class="time-grid">
+                  <div class="time-field">
+                    <label>Desde</label>
+                    <input type="time" class="from1" />
+                  </div>
+                  <div class="time-field">
+                    <label>Hasta</label>
+                    <input type="time" class="to1" />
+                  </div>
+                </div>
+              </section>
+              <section class="range">
+                <h3>Franja 2</h3>
+                <div class="time-grid">
+                  <div class="time-field">
+                    <label>Desde</label>
+                    <input type="time" class="from2" />
+                  </div>
+                  <div class="time-field">
+                    <label>Hasta</label>
+                    <input type="time" class="to2" />
+                  </div>
+                </div>
+              </section>
+            </div>
+          </article>`).join("")}
+        </section>
+
+        <div class="hint-card">
+          Dejá un día deshabilitado o sin horarios para que no pueda seleccionarse en nuevos pedidos. Los cambios se guardan en el backend y se usan para validar disponibilidad.
+        </div>
       </div>
-      <table>
-        <thead><tr>
-          <th>Día</th>
-          <th>Habilitado</th>
-          <th>Desde 1</th>
-          <th>Hasta 1</th>
-          <th>Desde 2</th>
-          <th>Hasta 2</th>
-        </tr></thead>
-        <tbody>
-          ${STORE_HOURS_DAYS.map(d => `
-          <tr data-day="${d.key}">
-            <td>${d.label}</td>
-            <td style="text-align:center"><input type="checkbox" class="enabled" /></td>
-            <td><input type="time" class="from1" /></td>
-            <td><input type="time" class="to1" /></td>
-            <td><input type="time" class="from2" /></td>
-            <td><input type="time" class="to2" /></td>
-          </tr>`).join("")}
-        </tbody>
-      </table>
-      <p class="hint">Dejá un día deshabilitado o sin horarios para que no se pueda seleccionar. Los horarios se guardan en el backend y se usarán para validar nuevos pedidos.</p>
+      <div id="toast" class="toast" aria-live="polite"></div>
       <script>
-        const DAYS = ${JSON.stringify(STORE_HOURS_DAYS).replace(/</g,"\\u003c")};
+        const DAYS = ${JSON.stringify(STORE_HOURS_DAYS).replace(/</g,"\u003c")};
+
+        function q(s,c){return (c||document).querySelector(s)}
+        function all(s,c){return Array.from((c||document).querySelectorAll(s))}
+
+        function showToast(msg){
+          const t = q('#toast');
+          t.textContent = msg || '';
+          t.classList.add('show');
+          clearTimeout(showToast._tm);
+          showToast._tm = setTimeout(()=>t.classList.remove('show'), 1800);
+        }
+
+        function setDayState(card, enabled){
+          card.classList.toggle('is-off', !enabled);
+        }
+
+        function updateMeta(){
+          const enabledCount = all('.day-card .enabled').filter(el=>el.checked).length;
+          q('#metaEnabled').textContent = enabledCount + ' día' + (enabledCount === 1 ? '' : 's') + ' activos';
+          all('.day-card').forEach(card => setDayState(card, q('.enabled', card).checked));
+        }
 
         function setForm(data){
           DAYS.forEach(d => {
-            const row = document.querySelector('tr[data-day="'+d.key+'"]');
+            const row = document.querySelector('[data-day="'+d.key+'"]');
             if (!row) return;
             const ranges = Array.isArray(data[d.key]) ? data[d.key] : [];
             const r1 = ranges[0] || {};
@@ -4574,12 +4706,13 @@ app.get("/horarios", async (req, res) => {
             row.querySelector('.from2').value = r2.from || "";
             row.querySelector('.to2').value   = r2.to   || "";
           });
+          updateMeta();
         }
 
         function collectForm(){
           const out = {};
           DAYS.forEach(d => {
-            const row = document.querySelector('tr[data-day="'+d.key+'"]');
+            const row = document.querySelector('[data-day="'+d.key+'"]');
             if (!row) return;
             const enabled = row.querySelector('.enabled').checked;
             const f1 = row.querySelector('.from1').value;
@@ -4601,6 +4734,7 @@ app.get("/horarios", async (req, res) => {
           if (!r.ok) { alert('Error recargando horarios'); return; }
           const j = await r.json();
           setForm(j.hours || {});
+          showToast('Horarios recargados');
         }
 
         async function saveHours(){
@@ -4614,11 +4748,14 @@ app.get("/horarios", async (req, res) => {
           if (!r.ok) { alert('Error al guardar'); return; }
           const j = await r.json();
           setForm(j.hours || {});
-          alert('Horarios guardados ✅');
+          showToast('Horarios guardados ✅');
         }
 
         document.getElementById('btnReload').addEventListener('click', reloadHours);
         document.getElementById('btnSave').addEventListener('click', saveHours);
+        all('.enabled').forEach(el => el.addEventListener('change', updateMeta));
+        all('input[type=time]').forEach(el => el.addEventListener('change', updateMeta));
+
         // Inicializar con lo que vino del servidor
         setForm(${hoursJson});
       </script></body></html>`);
