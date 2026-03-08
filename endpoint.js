@@ -2604,7 +2604,7 @@ app.get("/admin", async (req, res) => {
     }
     .adminTable{border-collapse:separate;border-spacing:0;width:100%;min-width:0;table-layout:auto}
     .adminTable th,
-    .adminTable td{padding:11px 8px;font-size:12px;vertical-align:top;word-break:break-word;border-bottom:1px solid #edf2f7}
+    .adminTable td{padding:10px 6px;font-size:12px;vertical-align:top;word-break:break-word;border-bottom:1px solid #edf2f7}
     .adminTable th{
       position:sticky;top:0;z-index:2;
       background:#f8fbff;
@@ -2643,22 +2643,22 @@ app.get("/admin", async (req, res) => {
       display:inline-flex;align-items:center;justify-content:center;
       min-width:40px;padding:4px 6px;border-radius:999px;background:#f8fafc;border:1px solid #dbe5f0;font-weight:700;color:#334155;font-size:11px;
     }
-    .actions{display:grid;grid-template-columns:minmax(0,1fr) 34px 34px;gap:4px;align-items:center;width:100%}
-    .actions .btn{padding:7px 8px;font-size:11px;border-radius:10px;min-width:0}
-    .actions .btn-detail{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .actions{display:flex;gap:4px;align-items:center;justify-content:flex-start;flex-wrap:nowrap;width:100%}
+    .actions .btn{padding:0;border-radius:10px;min-width:30px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;line-height:1}
+    .actions .btn-detail{font-size:14px}
     .actions .btn-soft{background:#f8fafc;color:#334155;border-color:#dbe5f0}
-    .actions .btn-icon{padding:0;min-width:34px;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;font-size:14px}
-    .c-actividad{width:84px}
-    .c-telefono{width:90px}
-    .c-nombre{width:108px}
-    .c-entrega{width:76px}
-    .c-direccion{width:238px}
-    .c-dist{width:58px}
-    .c-dia{width:74px}
-    .c-hora{width:58px}
-    .c-estado{width:94px}
-    .c-ent{width:40px}
-    .c-acciones{width:116px}
+    .actions .btn-icon{padding:0;min-width:30px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;line-height:1}
+    .c-actividad{width:72px}
+    .c-telefono{width:84px}
+    .c-nombre{width:96px}
+    .c-entrega{width:70px}
+    .c-direccion{width:220px}
+    .c-dist{width:52px}
+    .c-dia{width:64px}
+    .c-hora{width:54px}
+    .c-estado{width:86px}
+    .c-ent{width:34px}
+    .c-acciones{width:96px}
     .delivered-row{opacity:.72}
     .delivChk{cursor:pointer;width:16px;height:16px;accent-color:#22c55e}
     .status-badge{
@@ -3417,7 +3417,7 @@ app.get("/admin", async (req, res) => {
           '</td>' +
           '<td data-label="Acciones" style="overflow:visible">' +
             '<div class="actions">' +
-              '<button class="btn btn-primary btn-detail" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
+              '<button class="btn btn-primary btn-detail btn-icon" data-conv="' + escHtml(c._id) + '" title="Ver conversación">👁</button>' +
               '<button class="btn btn-soft btn-icon" data-pedido="' + escHtml(c._id) + '" title="Ver pedido">🧾</button>' +
               '<button class="btn btn-soft btn-icon" data-print="' + escHtml(c._id) + '" title="Imprimir ticket">🖨️</button>' +
             '</div>' +
