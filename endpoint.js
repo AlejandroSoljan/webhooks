@@ -4147,7 +4147,7 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
   }
 });
 
-// GET /productos  → UI HTML simple para administrar
+// GET /productos  → UI HTML mejorada para administrar
 app.get("/productos", async (req, res) => {
   try {
     const db = await getDb();
@@ -4155,47 +4155,336 @@ app.get("/productos", async (req, res) => {
     const tenant = resolveTenantId(req);
     const filtro = verTodos ? {} : { active: { $ne: false } };
     if (tenant) filtro.tenantId = tenant; else if (TENANT_ID) filtro.tenantId = TENANT_ID;
-    const productos = await db.collection("products").find(filtro).sort({ createdAt: -1 }).toArray();
+    const productos = await db.collection("products").find(filtro).sort({ active: -1, descripcion: 1, createdAt: -1 }).toArray();
+
+    const escAttr = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    const escText = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+    const initialRows = productos.map(p => `<tr data-id="${p._id}">
+        <td class="col-desc"><input class="descripcion" type="text" value="${escAttr(p.descripcion || "")}" placeholder="Descripción del producto" /></td>
+        <td class="col-price"><input class="importe" type="number" step="0.01" value="${escAttr(p.importe ?? "")}" placeholder="0" /></td>
+        <td class="col-qty"><input class="cantidad" type="number" step="1" value="${escAttr(p.cantidad ?? "")}" placeholder="0" /></td>
+        <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación...">${escText(p.observacion || "")}</textarea></td>
+        <td class="col-active">
+          <label class="switch">
+            <input class="active" type="checkbox" ${p.active !== false ? "checked" : ""} />
+            <span></span>
+          </label>
+        </td>
+        <td class="col-actions">
+          <div class="actions-stack">
+            <button class="save btn btn-primary" type="button">Guardar</button>
+            <button class="del btn btn-danger" type="button">Eliminar</button>
+            <button class="toggle btn btn-soft" type="button">${p.active !== false ? "Inactivar" : "Reactivar"}</button>
+          </div>
+        </td>
+      </tr>`).join("");
+
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html><html><head><meta charset="utf-8" /><title>Productos</title>
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <style>
-        body{font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1100px}
-        table{border-collapse:collapse;width:100%}th,td{border:1px solid #ddd;padding:8px;vertical-align:top}
-        th{background:#f5f5f5;text-align:left}input,textarea{width:100%;box-sizing:border-box}
-        textarea{min-height:56px}.row{display:flex;gap:8px;align-items:center}.btn{padding:6px 10px;border:1px solid #333;background:#fff;border-radius:4px;cursor:pointer}
+        :root{
+          --bg:#f6f8fc;
+          --card:#ffffff;
+          --line:#d9e2ef;
+          --line-strong:#c7d3e5;
+          --text:#0b1f44;
+          --muted:#5f7598;
+          --primary:#153e75;
+          --primary-2:#1f5aa8;
+          --danger:#b42318;
+          --danger-bg:#fff2f0;
+          --soft:#eff4fb;
+          --success:#0c7a43;
+          --success-bg:#ecfdf3;
+          --shadow:0 12px 26px rgba(16,24,40,.08);
+          --radius:18px;
+        }
+        *{box-sizing:border-box}
+        html,body{margin:0;padding:0;background:transparent;color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+        body{padding:18px 20px 24px}
+        .page{max-width:1220px;margin:0 auto}
+        .hero{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+        .hero h1{margin:0;font-size:22px;line-height:1.1}
+        .hero p{margin:6px 0 0;color:var(--muted);font-size:14px}
+        .hero-side{display:flex;gap:8px;flex-wrap:wrap}
+        .chip{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:999px;background:#fff;border:1px solid var(--line);font-size:12px;font-weight:700;color:var(--primary)}
+        .toolbar{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow);display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
+        .search{position:relative;flex:1 1 360px;min-width:280px}
+        .search input{width:100%;height:46px;border-radius:14px;border:1px solid var(--line-strong);padding:0 16px 0 42px;background:#fff;font-size:14px;outline:none;color:var(--text)}
+        .search input:focus{border-color:#88a7d4;box-shadow:0 0 0 4px rgba(31,90,168,.08)}
+        .search .icon{position:absolute;left:14px;top:50%;transform:translateY(-50%);font-size:15px;color:var(--muted)}
+        .toolbar-actions{display:flex;gap:10px;flex-wrap:wrap}
+        .btn{appearance:none;border:1px solid var(--line-strong);background:#fff;color:var(--text);border-radius:12px;padding:10px 14px;font-weight:700;font-size:13px;cursor:pointer;transition:.18s ease;line-height:1}
+        .btn:hover{transform:translateY(-1px);box-shadow:0 8px 18px rgba(16,24,40,.08)}
+        .btn-primary{background:var(--primary);border-color:var(--primary);color:#fff}
+        .btn-primary:hover{background:var(--primary-2);border-color:var(--primary-2)}
+        .btn-soft{background:var(--soft);border-color:var(--line);color:var(--primary)}
+        .btn-danger{background:var(--danger-bg);border-color:#f5c3bd;color:var(--danger)}
+        .table-card{background:var(--card);border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow);overflow:hidden}
+        .table-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:18px 18px 12px;border-bottom:1px solid var(--line)}
+        .table-head h2{margin:0;font-size:16px}
+        .table-head p{margin:4px 0 0;color:var(--muted);font-size:13px}
+        .table-wrap{overflow:auto}
+        table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;min-width:1040px}
+        thead th{position:sticky;top:0;z-index:1;background:#f8fbff;color:#36527b;font-size:12px;letter-spacing:.04em;text-transform:uppercase;padding:12px 10px;border-bottom:1px solid var(--line);text-align:left}
+        tbody td{padding:12px 10px;border-bottom:1px solid #edf2f7;vertical-align:top;background:#fff}
+        tbody tr:hover td{background:#fbfdff}
+        tbody tr:last-child td{border-bottom:none}
+        .col-desc{width:28%}
+        .col-price{width:13%}
+        .col-qty{width:11%}
+        .col-obs{width:28%}
+        .col-active{width:8%;text-align:center}
+        .col-actions{width:12%}
+        input[type=text],input[type=number],textarea{
+          width:100%;border:1px solid var(--line-strong);border-radius:12px;background:#fff;padding:10px 11px;font-size:14px;color:var(--text);outline:none;transition:.18s ease
+        }
+        input[type=text]:focus,input[type=number]:focus,textarea:focus{
+          border-color:#88a7d4;box-shadow:0 0 0 4px rgba(31,90,168,.08)
+        }
+        textarea{min-height:78px;resize:vertical;line-height:1.35}
+        input[type=number]{text-align:right}
+        .switch{position:relative;display:inline-flex;align-items:center;width:50px;height:30px}
+        .switch input{position:absolute;opacity:0;pointer-events:none}
+        .switch span{display:block;width:50px;height:30px;border-radius:999px;background:#d6dfeb;border:1px solid #c7d3e5;position:relative;transition:.18s ease}
+        .switch span:before{content:"";position:absolute;left:3px;top:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(16,24,40,.14);transition:.18s ease}
+        .switch input:checked + span{background:#dff7e9;border-color:#9bdfbb}
+        .switch input:checked + span:before{left:23px;background:#0c7a43}
+        .actions-stack{display:flex;flex-direction:column;gap:8px}
+        .actions-stack .btn{width:100%;justify-content:center;padding:9px 10px}
+        .empty-row td{padding:32px 20px;text-align:center;color:var(--muted);font-weight:600}
+        .row-draft td{background:#fffcf1}
+        @media (max-width: 960px){
+          body{padding:14px}
+          .table-card{border-radius:18px}
+          .table-wrap{overflow:auto}
+          table{min-width:980px}
+        }
       </style></head><body>
-      <h1>Productos</h1>
-      <div class="row"><a class="btn" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a> <button id="btnAdd" class="btn">Agregar</button> <button id="btnReload" class="btn">Recargar</button></div>
-      <p></p>
-      <table id="tbl"><thead><tr><th>Descripción</th><th>Importe</th><th>Cantidad</th><th>Obs.</th><th>Activo</th><th>Acciones</th></tr></thead>
-      <tbody>${productos.map(p => `<tr data-id="${p._id}">
-        <td><input class="descripcion" type="text" value="${(p.descripcion||'').replace(/\"/g,'&quot;')}" /></td>
-        <td><input class="importe" type="number" step="0.01" value="${p.importe ?? ''}" /></td>
-        <td><input class="cantidad" type="number" step="1" value="${p.cantidad ?? ''}" /></td>
-        <td><textarea class="observacion">${(p.observacion||'').replace(/</g,'&lt;')}</textarea></td>
-        <td><input class="active" type="checkbox" ${p.active!==false?'checked':''} /></td>
-        <td><button class="save btn">Guardar</button><button class="del btn">Eliminar</button><button class="toggle btn">${p.active!==false?'Inactivar':'Reactivar'}</button></td>
-      </tr>`).join('')}</tbody></table>
-      <template id="row-tpl"><tr data-id="">
-        <td><input class="descripcion" type="text" /></td>
-        <td><input class="importe" type="number" step="0.01" /></td>
-        <td><input class="cantidad" type="number" step="1" /></td>
-        <td><textarea class="observacion"></textarea></td>
-        <td><input class="active" type="checkbox" checked /></td>
-        <td><button class="save btn">Guardar</button><button class="del btn">Eliminar</button><button class="toggle btn">Inactivar</button></td>
+      <div class="page">
+        <div class="hero">
+          <div>
+            <h1>Productos</h1>
+            <p>Administrá el catálogo del tenant, activá o desactivá artículos y actualizá importes sin tocar la lógica.</p>
+          </div>
+          <div class="hero-side">
+            <span class="chip" id="metaMode">${verTodos ? "Mostrando todos" : "Solo activos"}</span>
+            <span class="chip" id="metaCount">0 productos</span>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <label class="search">
+            <span class="icon">🔎</span>
+            <input id="searchInput" type="text" placeholder="Buscar por descripción, observación, importe o cantidad..." />
+          </label>
+          <div class="toolbar-actions">
+            <a class="btn btn-soft" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a>
+            <button id="btnAdd" class="btn btn-primary" type="button">Nuevo producto</button>
+            <button id="btnReload" class="btn" type="button">Recargar</button>
+          </div>
+        </div>
+
+        <section class="table-card">
+          <div class="table-head">
+            <div>
+              <h2>Listado</h2>
+              <p id="tableHint">Editá directamente sobre la tabla y guardá cada fila cuando termines.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table id="tbl">
+              <thead>
+                <tr>
+                  <th class="col-desc">Descripción</th>
+                  <th class="col-price">Importe</th>
+                  <th class="col-qty">Cantidad</th>
+                  <th class="col-obs">Observaciones</th>
+                  <th class="col-active">Activo</th>
+                  <th class="col-actions">Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="6">No hay productos para mostrar.</td></tr>`}</tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <template id="row-tpl"><tr data-id="" data-draft="1" class="row-draft">
+        <td class="col-desc"><input class="descripcion" type="text" placeholder="Descripción del producto" /></td>
+        <td class="col-price"><input class="importe" type="number" step="0.01" placeholder="0" /></td>
+        <td class="col-qty"><input class="cantidad" type="number" step="1" placeholder="0" /></td>
+        <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación..."></textarea></td>
+        <td class="col-active">
+          <label class="switch">
+            <input class="active" type="checkbox" checked />
+            <span></span>
+          </label>
+        </td>
+        <td class="col-actions">
+          <div class="actions-stack">
+            <button class="save btn btn-primary" type="button">Guardar</button>
+            <button class="del btn btn-danger" type="button">Eliminar</button>
+            <button class="toggle btn btn-soft" type="button">Inactivar</button>
+          </div>
+        </td>
       </tr></template>
+
       <script>
-        function q(s,c){return (c||document).querySelector(s)}function all(s,c){return Array.from((c||document).querySelectorAll(s))}
-        async function j(url,opts){const r=await fetch(url,opts||{});if(!r.ok)throw new Error('HTTP '+r.status);const ct=r.headers.get('content-type')||'';return ct.includes('application/json')?r.json():r.text()}
-        async function reload(){const url=new URL(location.href);const allFlag=url.searchParams.get('all')==='true';const data=await j('/api/products'+(allFlag?'?all=true':''));const tb=q('#tbl tbody');tb.innerHTML='';for(const it of data){const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);tr.dataset.id=it._id||'';q('.descripcion',tr).value=it.descripcion||'';q('.importe',tr).value=typeof it.importe==='number'?it.importe:(it.importe||'');q('.cantidad',tr).value=typeof it.cantidad==='number'?it.cantidad:(it.cantidad||'');q('.observacion',tr).value=it.observacion||'';q('.active',tr).checked=it.active!==false;q('.toggle',tr).textContent=(it.active!==false)?'Inactivar':'Reactivar';bindRow(tr);tb.appendChild(tr);}if(!data.length){const r=document.createElement('tr');r.innerHTML='<td colspan="6" style="text-align:center;color:#666">Sin productos para mostrar</td>';tb.appendChild(r);}}
-        async function saveRow(tr){const id=tr.dataset.id;const payload={descripcion:q('.descripcion',tr).value.trim(),importe:q('.importe',tr).value.trim(),cantidad:q('.cantidad',tr).value.trim(),observacion:q('.observacion',tr).value.trim(),active:q('.active',tr).checked};if(!payload.descripcion){alert('Descripción requerida');return;}if(id){await j('/api/products/'+encodeURIComponent(id),{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}else{await j('/api/products',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});}await reload();}
-  async function deleteRow(tr){const id=tr.dataset.id;if(!id){tr.remove();return;}if(!confirm('¿Eliminar definitivamente?'))return;await j('/api/products/'+encodeURIComponent(id),{method:'DELETE'});await reload();}
-        async function toggleRow(tr){const id=tr.dataset.id;if(!id){alert('Primero guardá el nuevo producto.');return;}const active=q('.active',tr).checked;const path=active?('/api/products/'+encodeURIComponent(id)+'/inactivate'):('/api/products/'+encodeURIComponent(id)+'/reactivate');await j(path,{method:'POST'});await reload();}
-        function bindRow(tr){q('.save',tr).addEventListener('click',()=>saveRow(tr));q('.del',tr).addEventListener('click',()=>deleteRow(tr));q('.toggle',tr).addEventListener('click',()=>toggleRow(tr));}
-        document.getElementById('btnReload').addEventListener('click',reload);
-        document.getElementById('btnAdd').addEventListener('click',()=>{const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);q('#tbl tbody').prepend(tr);bindRow(tr);});
-        all('#tbl tbody tr').forEach(bindRow);
+        function q(s,c){return (c||document).querySelector(s)}
+        function all(s,c){return Array.from((c||document).querySelectorAll(s))}
+        async function j(url,opts){
+          const r=await fetch(url,opts||{});
+          if(!r.ok)throw new Error('HTTP '+r.status);
+          const ct=r.headers.get('content-type')||'';
+          return ct.includes('application/json')?r.json():r.text();
+        }
+
+        function setRowValues(tr,it){
+          tr.dataset.id=it && it._id ? String(it._id) : '';
+          tr.dataset.draft = it && it._id ? '' : '1';
+          tr.classList.toggle('row-draft', !(it && it._id));
+          q('.descripcion',tr).value=it && it.descripcion ? it.descripcion : '';
+          q('.importe',tr).value=(it && (typeof it.importe==='number' || it.importe)) ? it.importe : '';
+          q('.cantidad',tr).value=(it && (typeof it.cantidad==='number' || it.cantidad)) ? it.cantidad : '';
+          q('.observacion',tr).value=it && it.observacion ? it.observacion : '';
+          q('.active',tr).checked=!(it && it.active===false);
+          q('.toggle',tr).textContent=!(it && it.active===false)?'Inactivar':'Reactivar';
+        }
+
+        function visibleRows(){
+          return all('#productRows tr').filter(tr => !tr.classList.contains('empty-row'));
+        }
+
+        function updateMeta(){
+          const term=(q('#searchInput').value||'').trim().toLowerCase();
+          let total=0, visibles=0, activos=0;
+          visibleRows().forEach(tr=>{
+            total++;
+            const haystack=[
+              q('.descripcion',tr)?.value||'',
+              q('.observacion',tr)?.value||'',
+              q('.importe',tr)?.value||'',
+              q('.cantidad',tr)?.value||''
+            ].join(' ').toLowerCase();
+            const show=!term || haystack.includes(term);
+            tr.style.display=show?'':'none';
+            if(show) visibles++;
+            if(q('.active',tr)?.checked) activos++;
+          });
+          q('#metaCount').textContent = visibles + ' / ' + total + ' visibles';
+          q('#tableHint').textContent = total
+            ? (term ? 'Filtrando ' + visibles + ' de ' + total + ' productos.' : 'Editá directamente sobre la tabla y guardá cada fila cuando termines.')
+            : 'No hay productos para mostrar.';
+        }
+
+        function bindRow(tr){
+          q('.save',tr).addEventListener('click',()=>saveRow(tr));
+          q('.del',tr).addEventListener('click',()=>deleteRow(tr));
+          q('.toggle',tr).addEventListener('click',()=>toggleRow(tr));
+          all('input,textarea',tr).forEach(el=>el.addEventListener('input',updateMeta));
+          q('.active',tr).addEventListener('change',()=>{
+            q('.toggle',tr).textContent = q('.active',tr).checked ? 'Inactivar' : 'Reactivar';
+            updateMeta();
+          });
+        }
+
+        function showEmptyIfNeeded(){
+          const tb=q('#productRows');
+          const rows=visibleRows();
+          const currentEmpty=q('.empty-row',tb);
+          if(!rows.length){
+            if(!currentEmpty){
+              const tr=document.createElement('tr');
+              tr.className='empty-row';
+              tr.innerHTML='<td colspan="6">No hay productos para mostrar.</td>';
+              tb.appendChild(tr);
+            }
+          }else if(currentEmpty){
+            currentEmpty.remove();
+          }
+        }
+
+        async function reload(){
+          const url=new URL(location.href);
+          const allFlag=url.searchParams.get('all')==='true';
+          const data=await j('/api/products'+(allFlag?'?all=true':''));
+          const tb=q('#productRows');
+          tb.innerHTML='';
+          if(Array.isArray(data) && data.length){
+            data.forEach(it=>{
+              const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);
+              setRowValues(tr,it);
+              bindRow(tr);
+              tb.appendChild(tr);
+            });
+          }
+          showEmptyIfNeeded();
+          updateMeta();
+        }
+
+        async function saveRow(tr){
+          const payload={
+            descripcion:q('.descripcion',tr).value.trim(),
+            importe:q('.importe',tr).value.trim(),
+            cantidad:q('.cantidad',tr).value.trim(),
+            observacion:q('.observacion',tr).value.trim(),
+            active:q('.active',tr).checked
+          };
+          if(!payload.descripcion){ alert('Descripción requerida'); return; }
+          const id=tr.dataset.id;
+          if(id){
+            await j('/api/products/'+encodeURIComponent(id),{
+              method:'PUT',
+              headers:{'Content-Type':'application/json'},
+              body:JSON.stringify(payload)
+            });
+          }else{
+            await j('/api/products',{
+              method:'POST',
+              headers:{'Content-Type':'application/json'},
+              body:JSON.stringify(payload)
+            });
+          }
+          await reload();
+        }
+
+        async function deleteRow(tr){
+          const id=tr.dataset.id;
+          if(!id){ tr.remove(); showEmptyIfNeeded(); updateMeta(); return; }
+          if(!confirm('¿Eliminar definitivamente este producto?')) return;
+          await j('/api/products/'+encodeURIComponent(id),{method:'DELETE'});
+          await reload();
+        }
+
+        async function toggleRow(tr){
+          const id=tr.dataset.id;
+          if(!id){ alert('Primero guardá el nuevo producto.'); return; }
+          const active=q('.active',tr).checked;
+          const path=active
+            ? ('/api/products/'+encodeURIComponent(id)+'/inactivate')
+            : ('/api/products/'+encodeURIComponent(id)+'/reactivate');
+          await j(path,{method:'POST'});
+          await reload();
+        }
+
+        q('#btnReload').addEventListener('click',reload);
+        q('#btnAdd').addEventListener('click',()=>{
+          const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);
+          bindRow(tr);
+          q('#productRows').prepend(tr);
+          showEmptyIfNeeded();
+          updateMeta();
+          q('.descripcion',tr).focus();
+        });
+        q('#searchInput').addEventListener('input',updateMeta);
+
+        all('#productRows tr').forEach(tr=>{
+          if(!tr.classList.contains('empty-row')) bindRow(tr);
+        });
+        showEmptyIfNeeded();
+        updateMeta();
       </script></body></html>`);
   } catch (e) {
     console.error("/productos error:", e);
@@ -4204,7 +4493,6 @@ app.get("/productos", async (req, res) => {
 });
 
 
- 
 // ================== Horarios de atención (UI L-V) ==================
 // Página simple para cargar horarios de lunes a viernes (hasta 2 franjas por día)
 app.get("/horarios", async (req, res) => {
