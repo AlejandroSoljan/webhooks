@@ -18,6 +18,54 @@ const TENANT_ID = (process.env.TENANT_ID || "").trim();
 const pendingTextBatches = new Map();
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+
+// ================== Coordinación de corridas por conversación ==================
+// Evita respuestas duplicadas cuando entran múltiples webhooks muy juntos
+// para el mismo tenant/canal/conversación.
+// - Serializa el procesamiento por conversación.
+// - Permite descartar resultados viejos si una corrida más nueva ya tomó prioridad.
+const processingRunState = new Map();
+
+function buildProcessingRunKey(tenantId, phoneNumberId, convId, waId) {
+  return convId
+    ? `${String(tenantId || "").trim()}:${String(phoneNumberId || "env").trim()}:${String(convId)}`
+    : `${String(tenantId || "").trim()}:${String(phoneNumberId || "env").trim()}:${String(waId || "").trim()}`;
+}
+
+async function withConversationRunLock(runKey, job) {
+  const key = String(runKey || "").trim();
+  if (!key) return job({ runSeq: 0, isStale: () => false });
+
+  let state = processingRunState.get(key);
+  if (!state) {
+    state = { seq: 0, tail: Promise.resolve() };
+    processingRunState.set(key, state);
+  }
+
+  const mySeq = ++state.seq;
+  const prevTail = state.tail;
+  let release = null;
+  const myTail = new Promise((resolve) => { release = resolve; });
+  state.tail = myTail;
+
+  await prevTail.catch(() => {});
+
+  const isStale = () => {
+    const current = processingRunState.get(key);
+    return !current || current.seq !== mySeq;
+  };
+
+  try {
+    return await job({ runSeq: mySeq, isStale });
+  } finally {
+    try { if (typeof release === "function") release(); } catch {}
+    const current = processingRunState.get(key);
+    if (current && current.seq === mySeq && current.tail === myTail) {
+      processingRunState.delete(key);
+    }
+  }
+}
+
 function clampInt(v, min, max) {
   const n = Number.parseInt(v, 10);
   if (Number.isNaN(n)) return min;
@@ -120,7 +168,7 @@ app.post("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
       whatsappToken: body.whatsappToken,
       verifyToken: body.verifyToken,
       openaiApiKey: body.openaiApiKey,
-      messageDebounceMs: clampInt(req.body?.messageDebounceMs ?? 0, 0, 30000),
+      messageDebounceMs: clampInt(req.body?.messageDebounceMs ?? 0, 0, 5000),
     };
 
     const r = await upsertTenantChannel(payload, { allowSecrets: true });
@@ -5477,35 +5525,52 @@ console.log("[convId] "+ convId);
       text = clean.join(", ");
     }
 
-    // Si la sesión acaba de terminar y llega un cierre corto repetido,
-    // respondemos amablemente sin reabrir el flujo.
-    if (hasActiveEndedFlag(tenant, from) && isPoliteClosingMessage(text)) {
-      await require("./logic").sendWhatsAppMessage(
-        from,
-        "¡Gracias! 😊 Cuando quieras hacemos otro pedido.",
-        waOpts
-      );
-      return res.sendStatus(200);
-    }
+    const runKey = buildProcessingRunKey(tenant, waOpts?.phoneNumberId, convId, from);
 
-    // Solo limpiamos el flag cuando el cliente realmente arranca algo nuevo.
-    if (!isPoliteClosingMessage(text)) {
-      clearEndedFlag(tenant, from);
-    }
+    await withConversationRunLock(runKey, async ({ runSeq, isStale }) => {
+      if (isStale()) {
+        console.log(`[webhook][stale-run] abort before processing key=${runKey} seq=${runSeq}`);
+        return;
+      }
 
-        // ⚡ Fast-path: si el usuario confirma explícitamente, cerramos sin llamar al modelo
-    // ⚡ Fast-path: aceptar también “sí/si” como confirmación explícita,
-    // además de las variantes de “confirmar”.
-    const userConfirms =
-      /\bconfirm(ar|o|a|ame|alo|ado)\b/i.test(text) ||
-      /\b(s[ií])\b/.test(text);
-    if (userConfirms) {
-      // Tomamos último snapshot si existe
-      let snapshot = null;
-      try { snapshot = JSON.parse(require("./logic").__proto__ ? "{}" : "{}"); } catch {}
-      // En minimal guardamos snapshot siempre; si no lo tenés a mano, seguimos y dejamos que el modelo lo complete
-    }
-    const gptReply = await getGPTReply(tenant, from, text, aiOpts);
+      // Si el mensaje NO es solo un cierre de cortesía, limpiamos el flag de sesión terminada
+      if (!isPoliteClosingMessage(text)) {
+        clearEndedFlag(tenant, from);
+      }
+      if (hasActiveEndedFlag(tenant, from)) {
+        if (isPoliteClosingMessage(text)) {
+          if (isStale()) {
+            console.log(`[webhook][stale-run] polite close dropped key=${runKey} seq=${runSeq}`);
+            return;
+          }
+          await require("./logic").sendWhatsAppMessage(
+            from,
+            "¡Gracias! 😊 Cuando quieras hacemos otro pedido.",
+            waOpts
+          );
+          return;
+        }
+      }
+
+          // ⚡ Fast-path: si el usuario confirma explícitamente, cerramos sin llamar al modelo
+      // ⚡ Fast-path: aceptar también “sí/si” como confirmación explícita,
+      // además de las variantes de “confirmar”.
+      const userConfirms =
+        /\bconfirm(ar|o|a|ame|alo|ado)\b/i.test(text) ||
+        /\b(s[ií])\b/.test(text);
+      if (userConfirms) {
+        // Tomamos último snapshot si existe
+        let snapshot = null;
+        try { snapshot = JSON.parse(require("./logic").__proto__ ? "{}" : "{}"); } catch {}
+        // En minimal guardamos snapshot siempre; si no lo tenés a mano, seguimos y dejamos que el modelo lo complete
+      }
+      const gptReply = await getGPTReply(tenant, from, text, aiOpts);
+      if (isStale()) {
+        console.log(`[webhook][stale-run] drop GPT reply key=${runKey} seq=${runSeq}`);
+        return;
+      }
+   
+  
     // También dispara si el usuario pide "total" o está en fase de confirmar
    const wantsDetail = /\b(detalle|detall|resumen|desglose|total|confirm(a|o|ar))\b/i
       .test(String(text || ""));
@@ -5933,6 +5998,15 @@ console.log("[convId] "+ convId);
       || (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length
           ? buildBackendSummary(pedido, { showEnvio: wantsDetail })
           : "Perfecto, sigo acá. ¿Querés confirmar o cambiar algo?");
+    if (isStale()) {
+      console.log(`[webhook][stale-run] abort before send key=${runKey} seq=${runSeq}`);
+      return;
+    }
+     await require("./logic").sendWhatsAppMessage(from, responseTextSafe, waOpts);
+    if (isStale()) {
+      console.log(`[webhook][stale-run] abort after send before persist key=${runKey} seq=${runSeq}`);
+      return;
+    }
     await require("./logic").sendWhatsAppMessage(from, responseTextSafe, waOpts);
     
     
@@ -5980,6 +6054,10 @@ console.log("[convId] "+ convId);
 
 
 
+    if (isStale()) {
+      console.log(`[webhook][stale-run] abort before post-send side effects key=${runKey} seq=${runSeq}`);
+      return;
+    }
 
     try {
      // 🔹 Distancia + geocoding + Envío dinámico
@@ -6186,6 +6264,7 @@ if (willComplete && pedido && convId) {
 	        markSessionEnded(tenant, from);
 	      }
     } catch {}
+    });
 
     res.sendStatus(200);
   } catch (e) {

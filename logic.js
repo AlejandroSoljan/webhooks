@@ -948,6 +948,14 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
     if (historyMode === "standard") {
       // Si otra request cerró la sesión mientras esperábamos a OpenAI,
       // recreamos el historial mínimo para evitar "Cannot read properties of undefined (reading 'push')".
+      // La sesión puede haberse limpiado mientras esperábamos a OpenAI
+      // (por ejemplo, cierre de conversación o cambio de convId).
+      if (!Array.isArray(chatHistories[id])) {
+        chatHistories[id] = [{ role: "system", content: fullSystem }];
+      } else if (!chatHistories[id].length) {
+        chatHistories[id].push({ role: "system", content: fullSystem });
+      }
+
       if (!chatHistories[id]) {
         chatHistories[id] = [{ role: "system", content: fullSystem }];
       }
