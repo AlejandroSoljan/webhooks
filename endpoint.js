@@ -2589,16 +2589,6 @@ app.get("/admin", async (req, res) => {
     .btn-icon{padding:10px 11px;min-width:42px;text-align:center}
     .muted{color:var(--muted)}
 
-    .stats-grid{
-      display:grid;
-      grid-template-columns:repeat(4,minmax(0,1fr));
-      gap:12px;
-    }
-    .stat-card{padding:14px 16px;background:linear-gradient(180deg,#fff,#f8fbff)}
-    .stat-label{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em}
-    .stat-value{margin-top:8px;font-size:30px;font-weight:800;line-height:1;color:#0f172a}
-    .stat-note{margin-top:6px;font-size:12px;color:#64748b}
-
     .table-card{padding:14px}
     .table-toolbar{
       display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;
@@ -2612,7 +2602,7 @@ app.get("/admin", async (req, res) => {
       border-radius:16px;
       background:#fff;
     }
-    .adminTable{border-collapse:separate;border-spacing:0;width:100%;min-width:1080px;table-layout:fixed}
+    .adminTable{border-collapse:separate;border-spacing:0;width:100%;min-width:1180px;table-layout:fixed}
     .adminTable th,
     .adminTable td{padding:12px 10px;font-size:12px;vertical-align:top;word-break:break-word;border-bottom:1px solid #edf2f7}
     .adminTable th{
@@ -2629,6 +2619,7 @@ app.get("/admin", async (req, res) => {
     .adminTable tbody tr:nth-child(even){background:#fcfdff}
     .adminTable tbody tr:hover{background:#f6fbff}
     .adminTable td{color:#1f2937;overflow:hidden;text-overflow:ellipsis}
+    .adminTable td[data-label="Acciones"]{overflow:visible;text-overflow:clip}
     .cell-strong{font-weight:700;color:#0f172a}
     .cell-subtle{display:block;margin-top:2px;color:#64748b;font-size:11px}
     .cell-ellipsis{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -2643,9 +2634,20 @@ app.get("/admin", async (req, res) => {
       display:inline-flex;align-items:center;justify-content:center;
       min-width:58px;padding:5px 8px;border-radius:999px;background:#f8fafc;border:1px solid #dbe5f0;font-weight:700;color:#334155;
     }
-    .actions{display:flex;gap:6px;flex-wrap:nowrap;white-space:nowrap;align-items:center}
-    .actions .btn{padding:7px 10px;font-size:12px;border-radius:10px}
+    .actions{display:flex;gap:6px;flex-wrap:wrap;white-space:normal;align-items:center;justify-content:flex-start}
+    .actions .btn{padding:7px 10px;font-size:12px;border-radius:10px;flex:0 0 auto}
     .actions .btn-soft{background:#f8fafc;color:#334155;border-color:#dbe5f0}
+    .c-actividad{width:74px}
+    .c-telefono{width:98px}
+    .c-nombre{width:98px}
+    .c-entrega{width:98px}
+    .c-direccion{width:98px}
+    .c-dist{width:98px}
+    .c-dia{width:98px}
+    .c-hora{width:98px}
+    .c-estado{width:98px}
+    .c-ent{width:56px}
+    .c-acciones{width:220px}
     .delivered-row{opacity:.72}
     .delivChk{cursor:pointer;width:16px;height:16px;accent-color:#22c55e}
     .status-badge{
@@ -2690,12 +2692,10 @@ app.get("/admin", async (req, res) => {
     .ticket-modal-actions {display: flex;justify-content: flex-end;gap: 8px;margin-top: 6px;}
 
     @media (max-width: 1080px){
-      .stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
       .page-header{flex-direction:column}
     }
     @media (max-width: 720px){
       body{padding:12px}
-      .stats-grid{grid-template-columns:1fr}
       .toolbar{align-items:stretch}
       .toolbar-actions{width:100%}
       .toolbar-actions .btn{flex:1 1 auto;justify-content:center}
@@ -2743,29 +2743,6 @@ app.get("/admin", async (req, res) => {
           <button class="btn" id="btnReload">Actualizar</button>
         </div>
       </div>
-    </section>
-
-    <section class="stats-grid" aria-label="Resumen rápido">
-      <article class="stat-card">
-        <div class="stat-label">Conversaciones</div>
-        <div class="stat-value" id="statTotal">0</div>
-        <div class="stat-note">listado actual</div>
-      </article>
-      <article class="stat-card">
-        <div class="stat-label">Pendientes</div>
-        <div class="stat-value" id="statPending">0</div>
-        <div class="stat-note">sin marcar como entregadas</div>
-      </article>
-      <article class="stat-card">
-        <div class="stat-label">Entregadas</div>
-        <div class="stat-value" id="statDelivered">0</div>
-        <div class="stat-note">marcadas por el equipo</div>
-      </article>
-      <article class="stat-card">
-        <div class="stat-label">Envíos</div>
-        <div class="stat-value" id="statEnvio">0</div>
-        <div class="stat-note">pedidos con reparto</div>
-      </article>
     </section>
 
     <section class="table-card">
@@ -3354,22 +3331,9 @@ app.get("/admin", async (req, res) => {
     }
   }
 
-  function setStat(id, value){
-    const el = document.getElementById(id);
-    if (el) el.textContent = String(value || 0);
-  }
-
   function updateAdminSummary(list){
     const rows = Array.isArray(list) ? list : [];
     const total = rows.length;
-    const delivered = rows.filter(x => !!x.delivered).length;
-    const pending = Math.max(total - delivered, 0);
-    const envio = rows.filter(x => String(x.entregaLabel || '').toLowerCase().includes('env')).length;
-    setStat('statTotal', total);
-    setStat('statPending', pending);
-    setStat('statDelivered', delivered);
-    setStat('statEnvio', envio);
-
     const filter = document.getElementById('delivFilter')?.value || 'all';
     const hint = document.getElementById('tableHint');
     if (hint) {
@@ -3440,7 +3404,7 @@ app.get("/admin", async (req, res) => {
             '<input class="delivChk" type="checkbox" data-id="' + escHtml(c._id) + '" ' +
             (c.delivered ? 'checked' : '') + ' title="Entregado" />' +
           '</td>' +
-          '<td data-label="Acciones">' +
+          '<td data-label="Acciones" style="overflow:visible">' +
             '<div class="actions">' +
               '<button class="btn btn-primary" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
               '<button class="btn btn-soft" data-pedido="' + escHtml(c._id) + '">Pedido</button>' +
