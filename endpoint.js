@@ -4776,48 +4776,238 @@ app.get("/comportamiento", async (req, res) => {
     res.end(`<!doctype html><html><head><meta charset="utf-8" />
       <title>Comportamiento del Bot (${tenant})</title>
       <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:960px}
-      textarea{width:100%;min-height:360px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
-      .row{display:flex;gap:8px;align-items:center}.hint{color:#666;font-size:12px}.tag{padding:2px 6px;border:1px solid #ccc;border-radius:4px;font-size:12px}
-      input[type=text]{padding:6px 8px}</style></head><body>
-      <h1>Comportamiento del Bot</h1>
-      <div class="row">
-        <label>Tenant:&nbsp;<input id="tenant" type="text" value="${tenant}" /></label>
-        <button id="btnReload">Recargar</button>
-        <button id="btnSave">Guardar</button>
+      <style>
+        :root{
+          --bg:#f4f8fc;
+          --card:#ffffff;
+          --card-soft:#f8fbff;
+          --line:#d7e2f1;
+          --line-strong:#c3d1e6;
+          --text:#0f1f39;
+          --muted:#587196;
+          --primary:#163f7a;
+          --primary-2:#2054a4;
+          --success:#10804c;
+          --success-bg:#dff7e9;
+          --shadow:0 14px 34px rgba(20,50,90,.08);
+          --danger:#b42318;
+          --danger-bg:#fff1f1;
+        }
+        *{box-sizing:border-box}
+        html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+        body{padding:18px}
+        .page{max-width:1180px;margin:0 auto}
+        .hero{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap;margin-bottom:16px}
+        .hero h1{margin:0;font-size:44px;line-height:1.04;letter-spacing:-.03em}
+        .hero p{margin:10px 0 0;color:var(--muted);font-size:16px;max-width:840px}
+        .hero-side{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+        .chip{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:999px;background:var(--card);border:1px solid var(--line);color:#24446f;font-size:13px;font-weight:800;box-shadow:var(--shadow)}
+        .layout{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(280px,.85fr);gap:16px;align-items:start}
+        .card{background:var(--card);border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow)}
+        .toolbar{padding:18px;display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+        .toolbar-left{display:flex;gap:14px;flex-wrap:wrap;align-items:end;flex:1 1 620px}
+        .field{display:flex;flex-direction:column;gap:7px;min-width:220px;flex:1 1 220px}
+        .field.small{flex:0 0 220px;min-width:220px}
+        .field label{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#47658e}
+        .field input,.field select{height:46px;border-radius:14px;border:1px solid var(--line-strong);padding:0 14px;background:#fff;color:var(--text);font-size:15px;outline:none;box-shadow:inset 0 1px 0 rgba(255,255,255,.8)}
+        .field input:focus,.field select:focus,.editor:focus{border-color:#88a7d4;box-shadow:0 0 0 4px rgba(31,90,168,.08)}
+        .toolbar-actions{display:flex;gap:10px;flex-wrap:wrap}
+        .btn{height:46px;padding:0 18px;border-radius:14px;border:1px solid transparent;font-weight:800;font-size:14px;cursor:pointer;transition:.18s ease;display:inline-flex;align-items:center;justify-content:center;white-space:nowrap}
+        .btn-primary{background:var(--primary);color:#fff;box-shadow:0 12px 22px rgba(22,63,122,.16)}
+        .btn-primary:hover{background:var(--primary-2)}
+        .btn-soft{background:#fff;color:var(--primary);border-color:var(--line-strong)}
+        .btn-soft:hover{background:#f7fbff}
+        .panel-head{padding:18px 20px 12px;border-bottom:1px solid var(--line)}
+        .panel-head h2{margin:0;font-size:28px;letter-spacing:-.02em}
+        .panel-head p{margin:8px 0 0;color:var(--muted);font-size:14px}
+        .editor-wrap{padding:0 20px 18px}
+        .editor-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:14px 0 12px}
+        .editor-meta{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+        .pill{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:999px;background:var(--card-soft);border:1px solid var(--line);font-size:12px;font-weight:800;color:#3a5780}
+        .pill.ok{background:var(--success-bg);border-color:#b8ebcd;color:var(--success)}
+        .editor{width:100%;min-height:540px;border-radius:18px;border:1px solid var(--line-strong);padding:18px;background:#fbfdff;color:#10223f;font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;resize:vertical;outline:none}
+        .tips{padding:18px}
+        .tips h3{margin:0 0 12px;font-size:20px;letter-spacing:-.01em}
+        .tips p{margin:0 0 14px;color:var(--muted);font-size:14px;line-height:1.55}
+        .hint-list{display:grid;gap:10px}
+        .hint{padding:12px 13px;border-radius:16px;border:1px solid var(--line);background:var(--card-soft)}
+        .hint strong{display:block;font-size:13px;margin-bottom:4px;color:#24446f}
+        .hint span{display:block;font-size:13px;color:var(--muted);line-height:1.5}
+        .shortcut{margin-top:14px;padding:12px 13px;border-radius:16px;background:#f7fbff;border:1px dashed var(--line-strong);font-size:13px;color:#3c567e}
+        .shortcut kbd{display:inline-block;min-width:26px;padding:3px 7px;border-radius:8px;border:1px solid #cbd7ea;background:#fff;font:12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#183e77}
+        .cache-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+        .banner{margin-top:16px;padding:14px 16px;border-radius:18px;border:1px solid var(--line);background:var(--card);color:var(--muted);font-size:13px;line-height:1.55;box-shadow:var(--shadow)}
+        .toast{position:fixed;right:18px;bottom:18px;background:#0f172a;color:#fff;padding:12px 14px;border-radius:14px;box-shadow:0 14px 30px rgba(15,23,42,.22);font-size:13px;font-weight:700;opacity:0;transform:translateY(10px);pointer-events:none;transition:.18s ease;z-index:50}
+        .toast.show{opacity:1;transform:translateY(0)}
+        @media (max-width: 1024px){
+          body{padding:12px}
+          .layout{grid-template-columns:1fr}
+          .editor{min-height:420px}
+        }
+        @media (max-width: 720px){
+          .hero h1{font-size:34px}
+          .toolbar-left,.toolbar-actions{width:100%}
+          .toolbar-actions .btn{flex:1 1 0}
+          .field.small,.field{min-width:0;flex:1 1 100%}
+        }
+      </style></head><body>
+      <div class="page">
+        <div class="hero">
+          <div>
+            <h1>Comportamiento del bot</h1>
+            <p>Editá el prompt operativo del tenant, ajustá el modo de historial y guardá cambios sin salir del panel.</p>
+          </div>
+          <div class="hero-side">
+            <span class="chip">Tenant activo: ${tenant}</span>
+            <span class="chip" id="modeChip">Historial: ${(cfg.history_mode || 'standard').replace(/</g,'&lt;')}</span>
+          </div>
+        </div>
+
+        <div class="toolbar card">
+          <div class="toolbar-left">
+            <div class="field small">
+              <label for="tenant">Tenant</label>
+              <input id="tenant" type="text" value="${tenant.replace(/"/g,'&quot;')}" />
+            </div>
+            <div class="field">
+              <label for="historyMode">Modo de historial</label>
+              <select id="historyMode">
+                <option value="standard">standard · historial completo</option>
+                <option value="minimal">minimal · user + assistant pedido</option>
+              </select>
+            </div>
+          </div>
+          <div class="toolbar-actions">
+            <button id="btnReload" class="btn btn-soft" type="button">Recargar</button>
+            <button id="btnRefreshCache" class="btn btn-soft" type="button">Limpiar caché</button>
+            <button id="btnSave" class="btn btn-primary" type="button">Guardar comportamiento</button>
+          </div>
+        </div>
+
+        <div class="layout">
+          <section class="card">
+            <div class="panel-head">
+              <h2>Editor del prompt</h2>
+              <p>Usá este bloque para definir reglas, tono y estructura. El texto se guarda por tenant y se aplica a nuevas conversaciones.</p>
+            </div>
+            <div class="editor-wrap">
+              <div class="editor-toolbar">
+                <div class="editor-meta">
+                  <span class="pill" id="metaLines">0 líneas</span>
+                  <span class="pill" id="metaChars">0 caracteres</span>
+                  <span class="pill ok" id="metaState">Sin cambios guardados</span>
+                </div>
+              </div>
+              <textarea id="txt" class="editor" spellcheck="false" placeholder="Escribí aquí el comportamiento para este tenant..."></textarea>
+            </div>
+          </section>
+
+          <aside class="card tips">
+            <h3>Buenas prácticas</h3>
+            <p>Mantené instrucciones claras, separá reglas por bloques y evitá duplicar contexto ya resuelto por el sistema.</p>
+            <div class="hint-list">
+              <div class="hint">
+                <strong>Tono y objetivo</strong>
+                <span>Definí cómo debe responder el asistente, qué prioriza y cómo cierra cada interacción.</span>
+              </div>
+              <div class="hint">
+                <strong>Validaciones clave</strong>
+                <span>Indicá qué datos debe pedir, cómo confirmar pedidos y qué hacer si faltan dirección, horarios o productos.</span>
+              </div>
+              <div class="hint">
+                <strong>Salida estructurada</strong>
+                <span>Si necesitás JSON o formatos específicos, dejalo explícito en un bloque propio para evitar ambigüedades.</span>
+              </div>
+            </div>
+            <div class="shortcut">
+              Guardado rápido: <kbd>Ctrl</kbd> + <kbd>S</kbd> o <kbd>⌘</kbd> + <kbd>S</kbd>
+            </div>
+            <div class="cache-row">
+              <span class="pill">Cambio aplicado por tenant</span>
+              <span class="pill">Compatible con API behavior</span>
+            </div>
+          </aside>
+        </div>
+
+        <div class="banner">
+          Consejo: recargá antes de editar si otra persona pudo haber modificado este comportamiento desde otro panel. Al guardar, se actualiza el documento del tenant y podés limpiar la caché desde este mismo módulo.
+        </div>
       </div>
-      <div class="row" style="margin-top:8px">
-        <label>Modo de historial:&nbsp;
-          <select id="historyMode">
-            <option value="standard">standard (completo)</option>
-            <option value="minimal">minimal (solo user + assistant Pedido)</option>
-          </select>
-        </label>
-      </div>
-      <p></p><textarea id="txt" placeholder="Escribí aquí el comportamiento para este tenant..."></textarea>
+      <div id="toast" class="toast" aria-live="polite"></div>
       <script>
+        function q(s,c){return (c||document).querySelector(s)}
+        function showToast(msg){
+          const t = q('#toast');
+          t.textContent = msg || '';
+          t.classList.add('show');
+          clearTimeout(showToast._tm);
+          showToast._tm = setTimeout(()=>t.classList.remove('show'), 1800);
+        }
+        function updateMeta(){
+          const txt = q('#txt').value || '';
+          const lines = txt ? txt.split(/
+/).length : 0;
+          q('#metaLines').textContent = lines + ' línea' + (lines === 1 ? '' : 's');
+          q('#metaChars').textContent = txt.length + ' caracteres';
+        }
+        function markDirty(isDirty){
+          q('#metaState').textContent = isDirty ? 'Cambios sin guardar' : 'Sin cambios guardados';
+          q('#metaState').classList.toggle('ok', !isDirty);
+        }
+        function syncModeChip(){
+          const m = q('#historyMode').value || 'standard';
+          q('#modeChip').textContent = 'Historial: ' + m;
+        }
         async function load(){
-          const t = document.getElementById('tenant').value || '';
-          const r=await fetch('/api/behavior?tenant='+encodeURIComponent(t));
-          const j=await r.json();
-          document.getElementById('txt').value=j.text||'';
-          document.getElementById('historyMode').value = (j.history_mode || 'standard');
+          const t = q('#tenant').value || '';
+          const r = await fetch('/api/behavior?tenant=' + encodeURIComponent(t));
+          if (!r.ok) { showToast('Error al recargar'); return; }
+          const j = await r.json();
+          q('#txt').value = j.text || '';
+          q('#historyMode').value = (j.history_mode || 'standard');
+          syncModeChip();
+          updateMeta();
+          markDirty(false);
+          showToast('Comportamiento recargado');
         }
         async function save(){
-          const t=document.getElementById('tenant').value||'';
-          const v=document.getElementById('txt').value||'';
-          const m=document.getElementById('historyMode').value||'standard';
-          const r=await fetch('/api/behavior?tenant='+encodeURIComponent(t),{
+          const t = q('#tenant').value || '';
+          const v = q('#txt').value || '';
+          const m = q('#historyMode').value || 'standard';
+          const r = await fetch('/api/behavior?tenant=' + encodeURIComponent(t), {
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({text:v,tenantId:t,history_mode:m})
+            body: JSON.stringify({ text:v, tenantId:t, history_mode:m })
           });
-          alert(r.ok?'Guardado ✅':'Error al guardar');
+          if (!r.ok) { showToast('Error al guardar'); return; }
+          markDirty(false);
+          syncModeChip();
+          showToast('Comportamiento guardado ✅');
         }
-        document.getElementById('btnSave').addEventListener('click',save);
-        document.getElementById('btnReload').addEventListener('click',load);
+        async function refreshCache(){
+          const t = q('#tenant').value || '';
+          const r = await fetch('/api/behavior/refresh-cache?tenant=' + encodeURIComponent(t), { method:'POST' });
+          if (!r.ok) { showToast('No se pudo limpiar la caché'); return; }
+          showToast('Caché actualizada');
+        }
+        q('#txt').addEventListener('input', () => { updateMeta(); markDirty(true); });
+        q('#historyMode').addEventListener('change', () => { syncModeChip(); markDirty(true); });
+        q('#tenant').addEventListener('input', () => { markDirty(true); });
+        q('#btnSave').addEventListener('click', save);
+        q('#btnReload').addEventListener('click', load);
+        q('#btnRefreshCache').addEventListener('click', refreshCache);
+        document.addEventListener('keydown', (ev) => {
+          const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+          const mod = isMac ? ev.metaKey : ev.ctrlKey;
+          if (mod && ev.key.toLowerCase() === 's') {
+            ev.preventDefault();
+            save();
+          }
+        });
         document.addEventListener('DOMContentLoaded', () => {
-          document.getElementById('historyMode').value='${(cfg.history_mode || 'standard').replace(/"/g,'&quot;')}';
+          q('#historyMode').value = '${(cfg.history_mode || 'standard').replace(/"/g,'&quot;')}';
+          syncModeChip();
+          updateMeta();
         });
         load();
       </script></body></html>`);
