@@ -977,7 +977,6 @@ function getNavItemsForUser(user) {
   const items = [{ key: "home", title: "Inicio", href: "/app" }];
 
   if (hasAccess(user, "admin")) items.push({ key: "admin", title: "Conversaciones", href: "/ui/admin" });
-  if (hasAccess(user, "inbox")) items.push({ key: "inbox", title: "Inbox", href: "/ui/inbox" });
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
@@ -2191,7 +2190,6 @@ function mountAuthRoutes(app) {
     const isAdmin = (role === "admin" || role === "superadmin");
     const routes = [
       { title: "Inicio", href: "/app", badge: "", desc: "Panel principal" },
-      { title: "Inbox", href: "/ui/inbox", badge: "Admin UI", desc: "Bandeja de conversaciones" },
       { title: "Conversaciones", href: "/ui/admin", badge: "Admin UI", desc: "Panel de conversaciones" },
       { title: "Productos", href: "/ui/productos", badge: "UI", desc: "Catálogo del tenant" },
       { title: "Horarios", href: "/ui/horarios", badge: "UI", desc: "Configuración de horarios" },
