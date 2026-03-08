@@ -1024,6 +1024,54 @@ async function geocodeAddress(address) {
   }
 }
 
+// ================== Reverse Geocoding por coordenadas (Google) ==================
+// Útil cuando el usuario comparte ubicación (lat/lon) en WhatsApp.
+async function reverseGeocode(lat, lon) {
+  try {
+    const la = Number(lat);
+    const lo = Number(lon);
+    if (!GOOGLE_MAPS_API_KEY || !Number.isFinite(la) || !Number.isFinite(lo)) return null;
+
+    const url = "https://maps.googleapis.com/maps/api/geocode/json";
+    const { data } = await axios.get(url, { params: { latlng: `${la},${lo}`, key: GOOGLE_MAPS_API_KEY } });
+
+    const result0 = data?.results?.[0];
+    if (!result0) return null;
+
+    const comps = Array.isArray(result0.address_components) ? result0.address_components : [];
+    const pick = (type) => {
+      const c = comps.find(x => Array.isArray(x?.types) && x.types.includes(type));
+      return c?.long_name || null;
+    };
+
+    // Algunos países no devuelven "locality" siempre, por eso agregamos fallbacks.
+   const locality = pick("locality") || pick("administrative_area_level_2") || null;
+    const province = pick("administrative_area_level_1") || null;
+
+    return {
+      lat: la,
+      lon: lo,
+      formatted_address: result0?.formatted_address || null,
+      place_id: result0?.place_id || null,
+      types: Array.isArray(result0?.types) ? result0.types.map(String) : [],
+      status: data?.status || null,
+      // componentes útiles para completar Domicilio
+      street: pick("route"),
+      street_number: pick("street_number"),
+      barrio: pick("sublocality") || pick("neighborhood") || null,
+      ciudad: locality,
+      provincia: province,
+      cp: pick("postal_code"),
+      country: pick("country"),
+    };
+  } catch (e) {
+    console.error("reverseGeocode error:", e?.response?.data || e.message);
+    return null;
+  }
+}
+
+
+
 function getStoreCoords() {
   // Devuelve null si no están configuradas para no romper el flujo
   if (!Number.isFinite(STORE_LAT) || !Number.isFinite(STORE_LNG)) return null;
@@ -1131,6 +1179,21 @@ async function ensureEnvioSmart(pedido, tenantId) {
       : rawDomicilio;
     // normalizamos para que siempre sea objeto
     pedido.Domicilio = domicilio;
+
+    // Si ya tenemos coords (por ubicación compartida), preferimos eso y evitamos geocoding.
+    const store = getStoreCoords?.();
+    const domLat = Number(domicilio?.lat);
+    const domLon = Number(domicilio?.lon);
+    const hasCoords = Number.isFinite(domLat) && Number.isFinite(domLon);
+    let distKm = null;
+    if (store && hasCoords) {
+      pedido.Domicilio.lat = domLat;
+      pedido.Domicilio.lon = domLon;
+      distKm = calcularDistanciaKm(store.lat, store.lon, domLat, domLon);
+      pedido.distancia_km = distKm;
+      console.log(`[envio] ensureEnvioSmart coords lat=${domLat}, lon=${domLon}, distancia=${distKm} km`);
+    }
+
     const addrParts = [
       domicilio.direccion,
       [domicilio.calle, domicilio.numero].filter(Boolean).join(" "),
@@ -1140,18 +1203,17 @@ async function ensureEnvioSmart(pedido, tenantId) {
       domicilio.cp
     ].filter(Boolean);
     let address = addrParts.join(", ").trim();
-   if (!address) {
-      console.log("[envio] ensureEnvioSmart: sin dirección, no ajusto el envío por distancia");
+    if (!address && !hasCoords) {
+      console.log("[envio] ensureEnvioSmart: sin dirección ni coords, no ajusto el envío por distancia");
       return pedido;
     }
     if (!/,/.test(address)) {
       address = [address, DEF_CITY, DEF_PROVINCE, DEF_COUNTRY].filter(Boolean).join(", ");
     }
 
-    // Geocoding + distancia
-    const store = getStoreCoords?.();
-    let distKm = null;
-    if (store && address) {
+    
+     // Geocoding + distancia (solo si NO había coords)
+    if (store && address && !hasCoords) {
       const geo = await geocodeAddress(address);
       if (geo && geo.exact) {
         const { lat, lon } = geo;
@@ -1244,6 +1306,7 @@ module.exports = {
   setAssistantPedidoSnapshot,
   calcularDistanciaKm,
   geocodeAddress,
+  reverseGeocode,
   getStoreCoords,
   pickEnvioProductByDistance,
   hydratePricesFromCatalog,

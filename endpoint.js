@@ -343,7 +343,7 @@ const {
   hydratePricesFromCatalog,
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
   DEFAULT_TENANT_ID, setAssistantPedidoSnapshot, calcularDistanciaKm,
-  geocodeAddress, getStoreCoords, pickEnvioProductByDistance,clearEndedFlag,analyzeImageExternal,
+  geocodeAddress, reverseGeocode, getStoreCoords, pickEnvioProductByDistance,clearEndedFlag,analyzeImageExternal,
   ensureEnvioSmart,hasContext,
 } = require("./logic");
 
@@ -4727,6 +4727,7 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
     const from = msg.from;
     let text   = (msg.text?.body || "").trim();
     const msgType = msg.type;
+    let inboundLocation = null;
 
     // Normalización del texto según tipo de mensaje
     if (msg.type === "text" && msg.text?.body) {
@@ -4786,6 +4787,45 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
       msg.__media = { kind: "sticker", mime: msg.sticker?.mime_type || null };
     }
 
+    else if (msg.type === "location" && msg.location) {
+      // Ubicación compartida: intentamos reverse geocoding para obtener una dirección aproximada.
+      const lat = Number(msg.location?.latitude);
+      const lon = Number(msg.location?.longitude);
+      const name = String(msg.location?.name || "").trim();
+      const addr = String(msg.location?.address || "").trim();
+
+      let formatted = addr;
+      let rev = null;
+      try {
+        if (!formatted && Number.isFinite(lat) && Number.isFinite(lon)) {
+          rev = await reverseGeocode(lat, lon);
+         formatted = String(rev?.formatted_address || "").trim();
+        }
+      } catch {}
+
+      inboundLocation = {
+        lat: Number.isFinite(lat) ? lat : null,
+        lon: Number.isFinite(lon) ? lon : null,
+        name: name || null,
+        address: addr || null,
+        formatted_address: formatted || null,
+        rev: rev || null,
+      };
+      msg.__location = inboundLocation;
+
+      const link = (Number.isFinite(lat) && Number.isFinite(lon))
+        ? `https://www.google.com/maps?q=${lat},${lon}`
+        : "";
+
+      // Texto que alimenta al modelo conversacional
+      text = [
+        "📍 El usuario compartió su ubicación.",
+        (Number.isFinite(lat) && Number.isFinite(lon)) ? `Coordenadas: ${lat}, ${lon}.` : null,
+        formatted ? `Dirección aproximada: ${formatted}.` : null,
+        link ? `Link: ${link}` : null,
+      ].filter(Boolean).join("\n");
+    }
+
 
         // Asegurar conversación y guardar mensaje de usuario
     let conv = null;
@@ -4817,7 +4857,7 @@ console.log("[convId] "+ convId);
           role: "user",
           content: text,
           type: msg.type || "text",
-           meta: { raw: msg, media: msg.__media || null }
+           meta: { raw: msg, media: msg.__media || null, location: msg.__location || null }
         });
       } catch (e) { console.error("saveMessage(user):", e?.message); }
     }
@@ -4920,6 +4960,53 @@ console.log("[convId] "+ convId);
       const parsed = JSON.parse(gptReply);
       estado = parsed.estado;
       pedido = parsed.Pedido || { items: [] };
+
+      // 📍 Si el mensaje entrante fue una ubicación, la volcamos al Pedido.
+      // Esto permite que el flujo siga aunque el usuario no escriba una dirección textual.
+      try {
+        if (inboundLocation && pedido && typeof pedido === "object") {
+          // si todavía no eligió modalidad, inferimos domicilio (lo más común cuando manda ubicación)
+          if (!String(pedido.Entrega || "").trim()) {
+            pedido.Entrega = "domicilio";
+          }
+          const dom0 = (typeof pedido.Domicilio === "string")
+            ? { direccion: pedido.Domicilio }
+            : (pedido.Domicilio || {});
+          pedido.Domicilio = dom0;
+
+          if (Number.isFinite(Number(inboundLocation.lat)) && Number.isFinite(Number(inboundLocation.lon))) {
+            pedido.Domicilio.lat = Number(inboundLocation.lat);
+            pedido.Domicilio.lon = Number(inboundLocation.lon);
+          }
+
+          const addr = String(
+            inboundLocation.formatted_address ||
+            inboundLocation.address ||
+            inboundLocation.name ||
+            ""
+          ).trim();
+          if (addr && !String(pedido.Domicilio.direccion || "").trim()) {
+            pedido.Domicilio.direccion = addr;
+          }
+          if (!String(pedido.Domicilio.direccion || "").trim() &&
+              Number.isFinite(Number(pedido.Domicilio.lat)) &&
+              Number.isFinite(Number(pedido.Domicilio.lon))) {
+            pedido.Domicilio.direccion = `Ubicación compartida (${pedido.Domicilio.lat}, ${pedido.Domicilio.lon})`;
+          }
+
+          // Opcional: completar campos si reverse geocoding trajo componentes
+          const rev = inboundLocation.rev || null;
+          if (rev && typeof rev === "object") {
+            if (rev.street && !pedido.Domicilio.calle) pedido.Domicilio.calle = rev.street;
+            if (rev.street_number && !pedido.Domicilio.numero) pedido.Domicilio.numero = rev.street_number;
+            if (rev.barrio && !pedido.Domicilio.barrio) pedido.Domicilio.barrio = rev.barrio;
+            if (rev.ciudad && !pedido.Domicilio.ciudad && !pedido.Domicilio.localidad) pedido.Domicilio.ciudad = rev.ciudad;
+            if (rev.provincia && !pedido.Domicilio.provincia) pedido.Domicilio.provincia = rev.provincia;
+            if (rev.cp && !pedido.Domicilio.cp) pedido.Domicilio.cp = rev.cp;
+          }
+        }
+      } catch {}
+
       // 💰 Hidratar precios desde catálogo ANTES de recalcular (evita “Pollo entero @ 0”)
       try { pedido = await hydratePricesFromCatalog(pedido, tenant || null); } catch {}
       // 🚚 Asegurar ítem Envío con geocoding/distancia (awaitable, sin race)
@@ -4981,6 +5068,26 @@ console.log("[convId] "+ convId);
             estado = parsedFix.estado || estado;
 
             let pedidoFix = parsedFix.Pedido || { items: [] };
+
+            // 📍 También aplicamos ubicación entrante si existiera (mismo mensaje)
+            try {
+              if (inboundLocation && pedidoFix && typeof pedidoFix === "object") {
+                if (!String(pedidoFix.Entrega || "").trim()) pedidoFix.Entrega = "domicilio";
+                const dom0 = (typeof pedidoFix.Domicilio === "string")
+                  ? { direccion: pedidoFix.Domicilio }
+                  : (pedidoFix.Domicilio || {});
+                pedidoFix.Domicilio = dom0;
+               if (Number.isFinite(Number(inboundLocation.lat)) && Number.isFinite(Number(inboundLocation.lon))) {
+                  pedidoFix.Domicilio.lat = Number(inboundLocation.lat);
+                  pedidoFix.Domicilio.lon = Number(inboundLocation.lon);
+                }
+                const addr = String(inboundLocation.formatted_address || inboundLocation.address || inboundLocation.name || "").trim();
+                if (addr && !String(pedidoFix.Domicilio.direccion || "").trim()) {
+                  pedidoFix.Domicilio.direccion = addr;
+                }
+             }
+            } catch {}
+
              // 💰 Rehidratar también en el ciclo de fix
             try { pedidoFix = await hydratePricesFromCatalog(pedidoFix, tenant || null); } catch {}
          
@@ -5212,6 +5319,9 @@ console.log("[convId] "+ convId);
           : (pedido.Domicilio || {});
         pedido.Domicilio = dom;
 
+        // Si ya tenemos coordenadas (ubicación compartida), NO forzamos geocoding exacto.
+        const hasCoords = Number.isFinite(Number(dom.lat)) && Number.isFinite(Number(dom.lon));
+
         const addrParts = [
           dom.direccion,
           [dom.calle, dom.numero].filter(Boolean).join(" "),
@@ -5221,7 +5331,7 @@ console.log("[convId] "+ convId);
           dom.cp
         ].filter(Boolean);
         const address = addrParts.join(", ").trim();
-        if (address) {
+        if (address && !hasCoords) {
           const DEF_CITY = process.env.DEFAULT_CITY || "Venado Tuerto";
           const DEF_PROVINCE = process.env.DEFAULT_PROVINCE || "Santa Fe";
           const DEF_COUNTRY = process.env.DEFAULT_COUNTRY || "Argentina";
@@ -5251,7 +5361,7 @@ console.log("[convId] "+ convId);
               pedido = pedidoCorr;
             } catch {}
 
-            responseText = "📍 No pude ubicar *exactamente* esa dirección en Google Maps.\n\nPor favor escribila nuevamente con *calle y número*, y si podés agregá *barrio/localidad*.\nEj: *Moreno 247, Venado Tuerto*";
+            responseText = "📍 No pude ubicar *exactamente* esa dirección en Google Maps.\n\nPor favor escribila nuevamente con *calle y número* y, si podés, agregá *barrio/localidad*.\nEj: *Moreno 247, Venado Tuerto*\n\n👉 Si te queda más fácil, mandame tu *Ubicación* desde WhatsApp (📎 → Ubicación).";
           }
         }
       }
