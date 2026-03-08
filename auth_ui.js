@@ -1209,18 +1209,7 @@ function appMenuPage({ user, routes }) {
 
         <div class="homeEyebrow">Panel principal</div>
         <h1 class="homeTitle">Bienvenido, ${htmlEscape(user.username)}</h1>
-        <p class="homeLead">
-          Este inicio queda limpio a propósito. Para abrir cada módulo, usá el menú lateral izquierdo:
-          el panel seleccionado se carga a la derecha sin duplicar opciones en el centro.
-        </p>
-
-        <div class="homeHint">
-          <div class="homeHintTitle">Cómo usar este panel</div>
-          <p class="homeHintText">
-            Elegí una sección desde la barra lateral para trabajar en Conversaciones, Inbox, Productos,
-            Horarios, Comportamiento y el resto de los módulos habilitados para tu usuario.
-          </p>
-        </div>
+       
 
         ${accessBadges ? `
         <div class="homeAccess">
