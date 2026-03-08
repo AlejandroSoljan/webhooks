@@ -2602,7 +2602,7 @@ app.get("/admin", async (req, res) => {
       border-radius:16px;
       background:#fff;
     }
-    .adminTable{border-collapse:separate;border-spacing:0;width:100%;min-width:1180px;table-layout:fixed}
+    .adminTable{border-collapse:separate;border-spacing:0;width:100%;min-width:1040px;table-layout:fixed}
     .adminTable th,
     .adminTable td{padding:12px 10px;font-size:12px;vertical-align:top;word-break:break-word;border-bottom:1px solid #edf2f7}
     .adminTable th{
@@ -2620,9 +2620,18 @@ app.get("/admin", async (req, res) => {
     .adminTable tbody tr:hover{background:#f6fbff}
     .adminTable td{color:#1f2937;overflow:hidden;text-overflow:ellipsis}
     .adminTable td[data-label="Acciones"]{overflow:visible;text-overflow:clip}
+    .adminTable td[data-label="Distancia"],
+    .adminTable td[data-label="Día"],
+    .adminTable td[data-label="Hora"],
+    .adminTable td[data-label="Estado"],
+    .adminTable th:nth-child(6),
+    .adminTable th:nth-child(7),
+    .adminTable th:nth-child(8),
+    .adminTable th:nth-child(9){padding-left:8px;padding-right:8px;white-space:nowrap}
     .cell-strong{font-weight:700;color:#0f172a}
     .cell-subtle{display:block;margin-top:2px;color:#64748b;font-size:11px}
     .cell-ellipsis{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .cell-address{display:block;white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35;word-break:break-word}
     .delivery-pill{
       display:inline-flex;align-items:center;gap:6px;
       padding:5px 10px;border-radius:999px;
@@ -2632,22 +2641,22 @@ app.get("/admin", async (req, res) => {
     .delivery-pill.is-retiro{background:#f8fafc;border-color:#dbe5f0;color:#475569}
     .distance-badge{
       display:inline-flex;align-items:center;justify-content:center;
-      min-width:58px;padding:5px 8px;border-radius:999px;background:#f8fafc;border:1px solid #dbe5f0;font-weight:700;color:#334155;
+      min-width:52px;padding:5px 7px;border-radius:999px;background:#f8fafc;border:1px solid #dbe5f0;font-weight:700;color:#334155;
     }
-    .actions{display:flex;gap:6px;flex-wrap:wrap;white-space:normal;align-items:center;justify-content:flex-start}
-    .actions .btn{padding:7px 10px;font-size:12px;border-radius:10px;flex:0 0 auto}
+    .actions{display:flex;gap:4px;flex-wrap:nowrap;white-space:nowrap;align-items:center;justify-content:flex-start}
+    .actions .btn{padding:7px 9px;font-size:12px;border-radius:10px;flex:0 0 auto}
     .actions .btn-soft{background:#f8fafc;color:#334155;border-color:#dbe5f0}
-    .c-actividad{width:74px}
-    .c-telefono{width:98px}
-    .c-nombre{width:98px}
-    .c-entrega{width:98px}
-    .c-direccion{width:98px}
-    .c-dist{width:98px}
-    .c-dia{width:98px}
-    .c-hora{width:98px}
-    .c-estado{width:98px}
-    .c-ent{width:56px}
-    .c-acciones{width:220px}
+    .c-actividad{width:76px}
+    .c-telefono{width:100px}
+    .c-nombre{width:102px}
+    .c-entrega{width:86px}
+    .c-direccion{width:176px}
+    .c-dist{width:72px}
+    .c-dia{width:82px}
+    .c-hora{width:68px}
+    .c-estado{width:112px}
+    .c-ent{width:52px}
+    .c-acciones{width:176px}
     .delivered-row{opacity:.72}
     .delivChk{cursor:pointer;width:16px;height:16px;accent-color:#22c55e}
     .status-badge{
@@ -3395,7 +3404,7 @@ app.get("/admin", async (req, res) => {
           '<td data-label="Teléfono"><span class="cell-strong">' + escHtml(c.waId || '-') + '</span></td>' +
           '<td data-label="Nombre" title="' + escHtml(nombre) + '"><span class="cell-strong cell-ellipsis">' + escHtml(nombre) + '</span></td>' +
           '<td data-label="Entrega">' + renderEntregaPill(c.entregaLabel || '-') + '</td>' +
-          '<td data-label="Dirección" title="' + escHtml(direccion) + '"><span class="cell-ellipsis">' + escHtml(direccion) + '</span></td>' +
+          '<td data-label="Dirección" title="' + escHtml(direccion) + '"><span class="cell-address">' + escHtml(direccion) + '</span></td>' +
           '<td data-label="Distancia">' + renderDistanceBadge(c.distanceKm) + '</td>' +
           '<td data-label="Día"><span class="cell-ellipsis">' + escHtml(c.fechaEntrega || '-') + '</span></td>' +
           '<td data-label="Hora"><span class="cell-strong">' + escHtml(c.horaEntrega || '-') + '</span></td>' +
