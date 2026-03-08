@@ -502,8 +502,10 @@ function isPoliteClosingMessage(textRaw) {
   const s = String(textRaw || "").trim().toLowerCase();
   if (!s) return false;
   // Solo cierres MUY cortos (sin más palabras ni números).
+  // Incluimos "si/sí" exactos para absorber confirmaciones duplicadas
+  // que puedan llegar DESPUÉS de haber cerrado la conversación.
   const shortExacts = [
-    "ok","dale","listo","gracias","muchas gracias","mil gracias",
+    "si","sí","ok","dale","listo","gracias","muchas gracias","mil gracias",
     "👍","👌","🙌","🙏","🙂","😊","👏","✌️"
   ];
   if (shortExacts.includes(s)) return true;
@@ -944,6 +946,11 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       _log("[openai] assistant.content =>\n" + reply);
     }
     if (historyMode === "standard") {
+      // Si otra request cerró la sesión mientras esperábamos a OpenAI,
+      // recreamos el historial mínimo para evitar "Cannot read properties of undefined (reading 'push')".
+      if (!chatHistories[id]) {
+        chatHistories[id] = [{ role: "system", content: fullSystem }];
+      }
       chatHistories[id].push({ role: "assistant", content: reply });
     }
     return reply;
