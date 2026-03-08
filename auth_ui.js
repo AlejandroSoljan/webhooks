@@ -623,18 +623,205 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
     .navItem.active .navDot{background: rgba(0,210,160,.75); border-color: rgba(0,210,160,.65);}
     .main{flex:1; min-width:0;}
     .frameWrap{
-      background: rgba(255,255,255,.92);
+      background: rgba(255,255,255,.94);
       border: 1px solid rgba(16,24,40,.10);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
       overflow:hidden;
     }
+    .frameHead{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      padding: 16px 18px;
+      background: rgba(255,255,255,.88);
+      border-bottom:1px solid rgba(16,24,40,.08);
+      color:#0b1726;
+    }
+    .frameHead h2{
+      margin:0;
+      font-size:20px;
+      line-height:1.1;
+    }
+    .frameHead p{
+      margin:4px 0 0;
+      font-size:13px;
+      color:#667085;
+    }
+    .frameHead .badge{
+      background: rgba(14,107,102,.10);
+      color: var(--primary);
+      border-color: rgba(14,107,102,.18);
+    }
     .frame{
       width:100%;
-      height: calc(100vh - 140px);
+      height: calc(100vh - 206px);
       border:0;
       background:#fff;
       display:block;
+    }
+
+    .homeShell{
+      min-height: calc(100vh - 150px);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding: 10px 0;
+    }
+    .homeCard{
+      width:min(860px, 100%);
+      background: rgba(255,255,255,.92);
+      color:#0b1726;
+      border-radius: 26px;
+      border:1px solid rgba(16,24,40,.10);
+      box-shadow: var(--shadow);
+      padding: 34px 28px;
+      text-align:center;
+      position:relative;
+      overflow:hidden;
+    }
+    .homeCard::before{
+      content:"";
+      position:absolute;
+      inset:-120px auto auto -120px;
+      width:280px;
+      height:280px;
+      border-radius:999px;
+      background: radial-gradient(circle, rgba(14,107,102,.14), transparent 68%);
+      pointer-events:none;
+    }
+    .homeCard::after{
+      content:"";
+      position:absolute;
+      inset:auto -120px -120px auto;
+      width:260px;
+      height:260px;
+      border-radius:999px;
+      background: radial-gradient(circle, rgba(33,140,255,.12), transparent 70%);
+      pointer-events:none;
+    }
+    .homeLogoWrap{
+      position:relative;
+      z-index:1;
+      display:flex;
+      justify-content:center;
+      margin-bottom: 18px;
+    }
+    .homeLogoHalo{
+      width: 190px;
+      height: 190px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(14,107,102,.12), rgba(33,140,255,.10));
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.7);
+    }
+    .homeLogo{
+      width: 116px;
+      height: 116px;
+      object-fit:contain;
+      filter: drop-shadow(0 10px 18px rgba(0,0,0,.18));
+    }
+    .homeEyebrow{
+      position:relative;
+      z-index:1;
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: rgba(14,107,102,.08);
+      color: var(--primary);
+      border:1px solid rgba(14,107,102,.14);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      margin-bottom: 12px;
+    }
+    .homeTitle{
+      position:relative;
+      z-index:1;
+      margin:0;
+      font-size: clamp(28px, 4vw, 42px);
+      line-height: 1.04;
+      color:#0b1726;
+    }
+    .homeLead{
+      position:relative;
+      z-index:1;
+      max-width: 620px;
+      margin: 12px auto 0;
+      color:#52606d;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    .homeHint{
+      position:relative;
+      z-index:1;
+      margin: 20px auto 0;
+      max-width: 680px;
+      background: rgba(11,23,38,.04);
+      border:1px solid rgba(16,24,40,.08);
+      border-radius: 18px;
+      padding: 16px 18px;
+    }
+    .homeHintTitle{
+      margin:0 0 8px;
+      font-size: 14px;
+      font-weight: 800;
+      color:#0f2741;
+    }
+    .homeHintText{
+      margin:0;
+      font-size: 14px;
+      color:#52606d;
+      line-height:1.55;
+    }
+    .homeAccess{
+      position:relative;
+      z-index:1;
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      justify-content:center;
+      margin-top: 20px;
+    }
+    .homeAccess .badge{
+      font-size: 12px;
+      padding: 8px 12px;
+      background: rgba(14,107,102,.08);
+      color: var(--primary);
+      border:1px solid rgba(14,107,102,.14);
+    }
+    .homeMeta{
+      position:relative;
+      z-index:1;
+      margin-top: 18px;
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      justify-content:center;
+    }
+    .homeMetaItem{
+      font-size: 12px;
+      color:#667085;
+      background:#fff;
+      border:1px solid rgba(16,24,40,.08);
+      border-radius:999px;
+      padding:7px 11px;
+    }
+
+    @media (max-width: 980px){
+      .homeShell{ min-height: auto; padding: 4px 0 10px; }
+      .homeCard{ padding: 26px 18px; border-radius: 22px; }
+      .frame{ height: calc(100vh - 240px); }
+      .frameHead{
+        padding: 14px 16px;
+        align-items:flex-start;
+        flex-direction:column;
+      }
     }
 
 
@@ -1000,50 +1187,52 @@ function loginPage({ error, msg, to, baseUrl }) {
 }
 
 function appMenuPage({ user, routes }) {
-  const tiles = (routes || [])
-    .map(
-      (r) => `
-    <a class="tile" href="${htmlEscape(r.href)}">
-      <div>
-        <h3>${htmlEscape(r.title)}</h3>
-        <p>${htmlEscape(r.desc || "")}</p>
-      </div>
-      <span class="badge">${htmlEscape(r.badge || "")}</span>
-    </a>
-  `
-    )
+  const enabledRoutes = Array.isArray(routes) ? routes.filter((r) => r && r.href && r.href !== "/app") : [];
+  const accessBadges = enabledRoutes
+    .slice(0, 8)
+    .map((r) => `<span class="badge">${htmlEscape(r.title)}</span>`)
     .join("");
-
- const adminTiles =
-    user && (user.role === "admin" || user.role === "superadmin")
-      ? [
-          hasAccess(user, "leads")
-            ? `<a class="tile" href="/admin/leads">
-                <div><h3>Leads</h3><p>Mensajes recibidos desde el formulario de contacto</p></div>
-                <span class="badge">Admin</span>
-              </a>`
-            : "",
-          hasAccess(user, "users")
-            ? `<a class="tile" href="/admin/users">
-                <div><h3>Usuarios</h3><p>Alta/baja y reseteo de contraseñas</p></div>
-                <span class="badge">Admin</span>
-              </a>`
-            : "",
-        ].join("")
-      : "";
+  const extraCount = Math.max(0, enabledRoutes.length - 8);
 
   return appShell({
     title: "Inicio · Asisto",
     user,
     active: "home",
     main: `
-    <div class="app appWide">
-      <h2 style="margin:0 0 6px">Bienvenido, ${htmlEscape(user.username)}</h2>
-      <div class="small" style="margin-bottom:18px">Elegí una opción para gestionar Asisto.</div>
-      <div class="cards">
-        ${adminTiles}
-        ${tiles}
-      </div>
+    <div class="homeShell">
+      <section class="homeCard">
+        <div class="homeLogoWrap">
+          <div class="homeLogoHalo">
+            <img class="homeLogo" src="/static/logo.png" alt="Asisto"/>
+          </div>
+        </div>
+
+        <div class="homeEyebrow">Panel principal</div>
+        <h1 class="homeTitle">Bienvenido, ${htmlEscape(user.username)}</h1>
+        <p class="homeLead">
+          Este inicio queda limpio a propósito. Para abrir cada módulo, usá el menú lateral izquierdo:
+          el panel seleccionado se carga a la derecha sin duplicar opciones en el centro.
+        </p>
+
+        <div class="homeHint">
+          <div class="homeHintTitle">Cómo usar este panel</div>
+          <p class="homeHintText">
+            Elegí una sección desde la barra lateral para trabajar en Conversaciones, Inbox, Productos,
+            Horarios, Comportamiento y el resto de los módulos habilitados para tu usuario.
+          </p>
+        </div>
+
+        ${accessBadges ? `
+        <div class="homeAccess">
+          ${accessBadges}
+          ${extraCount > 0 ? `<span class="badge">+${extraCount} más</span>` : ""}
+        </div>` : ""}
+
+        <div class="homeMeta">
+          <span class="homeMetaItem">Tenant: ${htmlEscape(user.tenantId)}</span>
+          <span class="homeMetaItem">Rol: ${htmlEscape(user.role)}</span>
+        </div>
+      </section>
     </div>
     `,
   });
@@ -2048,12 +2237,12 @@ function mountAuthRoutes(app) {
     }
 
     const map = {
-      admin: { title: "Conversaciones", src: "/admin", active: "admin" },
-      inbox: { title: "Inbox", src: "/admin/inbox", active: "inbox" },
-      productos: { title: "Productos", src: "/productos", active: "productos" },
-      horarios: { title: "Horarios", src: "/horarios", active: "horarios" },
-      comportamiento: { title: "Comportamiento", src: "/comportamiento", active: "comportamiento" },
-       tenant_config: { title: "Tenant Config", src: "/admin/tenant-config?embed=1", active: "tenant_config" },
+      admin: { title: "Conversaciones", desc: "Panel de conversaciones y seguimiento", badge: "Admin UI", src: "/admin", active: "admin" },
+      inbox: { title: "Inbox", desc: "Bandeja de conversaciones estilo chat", badge: "Admin UI", src: "/admin/inbox", active: "inbox" },
+      productos: { title: "Productos", desc: "Catálogo y mantenimiento del tenant", badge: "UI", src: "/productos", active: "productos" },
+      horarios: { title: "Horarios", desc: "Configuración de disponibilidad", badge: "UI", src: "/horarios", active: "horarios" },
+      comportamiento: { title: "Comportamiento", desc: "Prompt, reglas y configuración del asistente", badge: "UI", src: "/comportamiento", active: "comportamiento" },
+      tenant_config: { title: "Tenant Config", desc: "Configuración general por tenant", badge: "Admin", src: "/admin/tenant-config?embed=1", active: "tenant_config" },
     };
 
     const conf = map[page];
@@ -2071,6 +2260,13 @@ function mountAuthRoutes(app) {
         active: conf.active,
         main: `
         <div class="frameWrap">
+          <div class="frameHead">
+            <div>
+              <h2>${htmlEscape(conf.title)}</h2>
+              <p>${htmlEscape(conf.desc || "")}</p>
+            </div>
+            <span class="badge">${htmlEscape(conf.badge || "Panel")}</span>
+          </div>
           <iframe class="frame" src="${htmlEscape(src)}"></iframe>
         </div>
       `,
