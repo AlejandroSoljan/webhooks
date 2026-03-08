@@ -2485,246 +2485,332 @@ app.get("/admin", async (req, res) => {
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Admin | Conversaciones</title>
   <style>
-    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; margin:20px;}
-     header{display:flex; align-items:center; gap:12px; margin-bottom:16px;}
-     input,button,select{font-size:12px; padding:5px 6px;}
-     table{border-collapse:collapse; width:100%; table-layout:fixed}
-     th,td{border:1px solid #ddd; padding:6px; vertical-align:top; font-size:12px; word-break:break-word}
-
-     th{background:#f5f5f5; text-align:left}
-     .row{display:flex; gap:16px; align-items:center; flex-wrap:wrap}
-     .muted{color:#666}
-     .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:4px; cursor:pointer}
-    /* ===== Modal simple ===== */
-    .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:1000}
-    .modal{background:#fff;border:1px solid #ddd;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.25);width:min(900px,95vw);max-height:85vh;display:flex;flex-direction:column}
-    .modal header{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border-bottom:1px solid #eee}
-    .modal header h3{margin:0;font-size:16px}
-    .modal .body{padding:10px 12px;overflow:auto}
-    .chip{display:inline-flex;align-items:center;gap:6px}
-    .iconbtn{border:none;background:transparent;cursor:pointer;font-size:18px}
-    .msg{border:1px solid #eee;border-radius:8px;padding:8px;margin-bottom:8px}
-    .role-user{background:#f0fafc}
-    .role-assistant{background:#f8f6ff}
-    small{color:#666}
-    pre{white-space:pre-wrap;margin:4px 0 0}
-
-    /* ===== Manual chat UI ===== */
-    .badge{padding:4px 8px;border-radius:999px;font-size:12px}
-    .badge-bot{background:#e3f7e3;color:#145214}
-    .badge-manual{background:#ffe4e1;color:#8b0000}
-    .modal-meta-row{display:flex; gap:8px; align-items:center; margin-bottom:10px; flex-wrap:wrap}
-    #modalChatBox{margin-top:12px;border-top:1px solid #eee;padding-top:10px;display:flex;flex-direction:column;gap:6px}
-    #modalReplyText{width:100%;min-height:70px;font-family:inherit;font-size:14px;padding:6px 8px}
-    .chat-actions{display:flex;align-items:center;gap:8px;justify-content:flex-end;flex-wrap:wrap}
-     table{border-collapse:collapse; width:100%; margin-top:12px; table-layout:fixed}
-    th,td{border:1px solid #ddd; padding:6px; vertical-align:top; font-size:12px; word-break:break-word}
-
-    th{background:#f7f7f7; text-align:left}
-    .btn{padding:6px 10px; border:1px solid #333; background:#fff; border-radius:6px; cursor:pointer}
-    .actions{
+    :root{
+      --bg:#f3f7fc;
+      --card:#ffffff;
+      --card-soft:#f8fbff;
+      --line:#dbe5f0;
+      --line-strong:#c7d4e2;
+      --text:#0f172a;
+      --muted:#5b6472;
+      --primary:#0f3b68;
+      --primary-2:#164e86;
+      --shadow:0 10px 28px rgba(15, 23, 42, .08);
+      --radius:18px;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0}
+    body{
+      font-family:system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background:var(--bg);
+      color:var(--text);
+      padding:16px 18px 24px;
+    }
+    .page-shell{display:flex;flex-direction:column;gap:16px}
+    .page-header{
       display:flex;
-      gap:6px;
-      flex-wrap:nowrap;          /* una sola fila */
-      white-space:nowrap;
+      justify-content:space-between;
+      align-items:flex-start;
+      gap:12px;
+      padding:4px 2px 0;
+    }
+    .eyebrow{
+      display:inline-flex;
       align-items:center;
-    }
-    .actions .btn{
-      padding:4px 6px;
-      font-size:11px;
-      line-height:1.1;
-      white-space:nowrap;
-    }
-
-@media (max-width: 720px){
-  body{ margin: 12px; }
-  header{ flex-wrap: wrap; }
-
-  /* Ocultamos encabezados y colgroup */
-  .adminTable colgroup,
-  .adminTable thead{
-    display:none;
-  }
-
-  /* Tabla → lista de cards */
-  .adminTable,
-  .adminTable tbody,
-  .adminTable tr,
-  .adminTable td{
-    display:block;
-    width:100%;
-  }
-
-  .adminTable{
-    border:0;
-  }
-
-  .adminTable tr{
-    border:1px solid #ddd;
-    border-radius:12px;
-    padding:10px 12px;
-    margin:10px 0;
-    background:#fff;
-  }
-
-  /* Cada “fila” (td) con etiqueta a la izquierda */
-  .adminTable td{
-    border:none;
-    padding:6px 0;
-    overflow:visible;
-    text-overflow:unset;
-    display:flex;
-    gap:10px;
-    justify-content:space-between;
-    align-items:flex-start;
-  }
-
-  .adminTable td::before{
-    content: attr(data-label);
-    font-weight:700;
-    color:#475467;
-    min-width:42%;
-    max-width:42%;
-  }
-
-  /* Acciones: que ocupen toda la línea y permitan wrap */
-  .adminTable td[data-label="Acciones"]{
-    display:block;
-    padding-top:10px;
-  }
-  .adminTable td[data-label="Acciones"]::before{
-    display:none;
-  }
-  .adminTable td[data-label="Acciones"] .actions{
-    flex-wrap:wrap;
-    white-space:normal;
-    gap:8px;
-  }
-}
-
-
-    /* Ajuste de anchos (sin scroll horizontal) */
-    .adminTable{table-layout:fixed}
-    .adminTable th{white-space:nowrap}
-    .adminTable td{overflow:hidden; text-overflow:ellipsis}
-    .adminTable col.c-entrega{width:88px}    /* más chico */
-    .adminTable col.c-hora{width:66px}       /* más chico */
-    .adminTable col.c-ent{width:44px}        /* más chico */
-    .adminTable col.c-estado{width:140px}    /* un poquito más grande */
-    .adminTable col.c-acciones{width:240px}  /* asegura que entren los botones */
-    .delivered-row{opacity:.85}
-    .delivChk{cursor:pointer}
-
-
-    /* ===== Estado (badge) ===== */
-    .status-badge{
-      display:inline-block;
-      padding:2px 8px;
-      border-radius:999px;
+      gap:6px;
       font-size:12px;
       font-weight:700;
-      letter-spacing:.2px;
-      border:1px solid transparent;
-      line-height:1.4;
+      color:var(--primary-2);
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      margin-bottom:6px;
+    }
+    .eyebrow::before{
+      content:"";
+      width:8px;height:8px;border-radius:999px;background:#22c55e;
+      box-shadow:0 0 0 4px rgba(34,197,94,.14);
+    }
+    .page-header h2{margin:0;font-size:28px;line-height:1.1}
+    .subtitle{margin:6px 0 0;color:var(--muted);font-size:14px}
+    .live-indicator{
+      display:inline-flex;align-items:center;gap:8px;
+      background:#fff;border:1px solid var(--line);border-radius:999px;
+      padding:8px 12px;font-size:13px;color:#334155;box-shadow:var(--shadow);
       white-space:nowrap;
     }
-    .st-open{background:#eef2ff;color:#1e3a8a;border-color:#c7d2fe;}
-    .st-progress{background:#fff7ed;color:#9a3412;border-color:#fed7aa;}
-    .st-completed{background:#ecfdf5;color:#065f46;border-color:#a7f3d0;}
-    .st-cancelled{background:#fef2f2;color:#991b1b;border-color:#fecaca;}
+    .live-indicator .dot{
+      width:8px;height:8px;border-radius:999px;background:#22c55e;
+      box-shadow:0 0 0 4px rgba(34,197,94,.16);
+    }
+    .toolbar-card,.table-card,.stat-card{
+      background:var(--card);
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+    }
+    .toolbar-card{padding:14px}
+    .toolbar{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+    .field{display:flex;flex-direction:column;gap:6px;min-width:180px}
+    .field.grow{flex:1 1 300px}
+    .field label{font-size:12px;font-weight:700;color:#334155}
+    .field input,.field select,#modalReplyText{
+      width:100%;
+      font-size:14px;
+      padding:10px 12px;
+      border:1px solid var(--line-strong);
+      border-radius:12px;
+      background:#fff;
+      color:var(--text);
+      outline:none;
+      transition:border-color .16s ease, box-shadow .16s ease, background .16s ease;
+    }
+    .field input:focus,.field select:focus,#modalReplyText:focus{
+      border-color:#8fb7df;
+      box-shadow:0 0 0 4px rgba(59,130,246,.12);
+    }
+    .toolbar-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .btn{
+      appearance:none;
+      border:1px solid var(--line-strong);
+      background:#fff;
+      color:#0f172a;
+      border-radius:12px;
+      padding:10px 14px;
+      font-size:13px;
+      font-weight:700;
+      cursor:pointer;
+      transition:transform .12s ease, box-shadow .16s ease, background .16s ease, border-color .16s ease;
+      box-shadow:0 4px 12px rgba(15,23,42,.04);
+    }
+    .btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(15,23,42,.08)}
+    .btn-primary{background:var(--primary);border-color:var(--primary);color:#fff}
+    .btn-primary:hover{background:var(--primary-2);border-color:var(--primary-2)}
+    .btn-soft{background:#eff6ff;border-color:#cfe0f2;color:var(--primary-2)}
+    .btn-icon{padding:10px 11px;min-width:42px;text-align:center}
+    .muted{color:var(--muted)}
 
+    .stats-grid{
+      display:grid;
+      grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:12px;
+    }
+    .stat-card{padding:14px 16px;background:linear-gradient(180deg,#fff,#f8fbff)}
+    .stat-label{font-size:12px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em}
+    .stat-value{margin-top:8px;font-size:30px;font-weight:800;line-height:1;color:#0f172a}
+    .stat-note{margin-top:6px;font-size:12px;color:#64748b}
 
-      /* ===== Modal de ticket ===== */
-      .ticket-modal-backdrop {
-        position: fixed;
-        inset: 0;
-        background: rgba(0,0,0,.45);
-        display: none;
-        align-items: center;
-        justify-content: center;
-        z-index: 1000;
-      }
+    .table-card{padding:14px}
+    .table-toolbar{
+      display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;
+      margin-bottom:12px;
+    }
+    .table-toolbar h3{margin:0;font-size:18px}
+    .table-toolbar p{margin:4px 0 0;color:var(--muted);font-size:13px}
+    .table-wrap{
+      overflow:auto;
+      border:1px solid var(--line);
+      border-radius:16px;
+      background:#fff;
+    }
+    .adminTable{border-collapse:separate;border-spacing:0;width:100%;min-width:1080px;table-layout:fixed}
+    .adminTable th,
+    .adminTable td{padding:12px 10px;font-size:12px;vertical-align:top;word-break:break-word;border-bottom:1px solid #edf2f7}
+    .adminTable th{
+      position:sticky;top:0;z-index:2;
+      background:#f8fbff;
+      color:#475569;
+      text-align:left;
+      font-size:11px;
+      text-transform:uppercase;
+      letter-spacing:.04em;
+      white-space:nowrap;
+    }
+    .adminTable tbody tr{background:#fff;transition:background .14s ease}
+    .adminTable tbody tr:nth-child(even){background:#fcfdff}
+    .adminTable tbody tr:hover{background:#f6fbff}
+    .adminTable td{color:#1f2937;overflow:hidden;text-overflow:ellipsis}
+    .cell-strong{font-weight:700;color:#0f172a}
+    .cell-subtle{display:block;margin-top:2px;color:#64748b;font-size:11px}
+    .cell-ellipsis{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .delivery-pill{
+      display:inline-flex;align-items:center;gap:6px;
+      padding:5px 10px;border-radius:999px;
+      background:#f8fafc;border:1px solid #dbe5f0;font-size:12px;font-weight:700;color:#334155;
+    }
+    .delivery-pill.is-envio{background:#eef6ff;border-color:#cfe0f2;color:#164e86}
+    .delivery-pill.is-retiro{background:#f8fafc;border-color:#dbe5f0;color:#475569}
+    .distance-badge{
+      display:inline-flex;align-items:center;justify-content:center;
+      min-width:58px;padding:5px 8px;border-radius:999px;background:#f8fafc;border:1px solid #dbe5f0;font-weight:700;color:#334155;
+    }
+    .actions{display:flex;gap:6px;flex-wrap:nowrap;white-space:nowrap;align-items:center}
+    .actions .btn{padding:7px 10px;font-size:12px;border-radius:10px}
+    .actions .btn-soft{background:#f8fafc;color:#334155;border-color:#dbe5f0}
+    .delivered-row{opacity:.72}
+    .delivChk{cursor:pointer;width:16px;height:16px;accent-color:#22c55e}
+    .status-badge{
+      display:inline-block;
+      padding:4px 9px;
+      border-radius:999px;
+      font-size:11px;
+      font-weight:800;
+      letter-spacing:.03em;
+      border:1px solid transparent;
+      line-height:1.35;
+      white-space:nowrap;
+    }
+    .st-open{background:#eef2ff;color:#1e3a8a;border-color:#c7d2fe}
+    .st-progress{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
+    .st-completed{background:#ecfdf5;color:#065f46;border-color:#a7f3d0}
+    .st-cancelled{background:#fef2f2;color:#991b1b;border-color:#fecaca}
 
-      .ticket-modal {
-        background: #fff;
-        border-radius: 8px;
-        padding: 12px;
-        box-shadow: 0 10px 30px rgba(0,0,0,.25);
-        width: 90mm;           /* ancho parecido a ticket de 80mm */
-        max-height: 90vh;
-        display: flex;
-        flex-direction: column;
-        overflow: auto;
-        gap: 8px;
-      }
+    .modal-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.42);display:none;align-items:center;justify-content:center;z-index:1000;padding:16px}
+    .modal{background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 60px rgba(15,23,42,.22);width:min(960px,95vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden}
+    .modal header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid #eef2f7;margin:0}
+    .modal header h3{margin:0;font-size:18px}
+    .modal .body{padding:14px 16px;overflow:auto;background:#fbfdff}
+    .chip{display:inline-flex;align-items:center;gap:8px}
+    .iconbtn{border:none;background:#f8fafc;cursor:pointer;font-size:16px;width:36px;height:36px;border-radius:10px;border:1px solid #dbe5f0}
+    .msg{border:1px solid #e7eef6;border-radius:14px;padding:10px 12px;margin-bottom:8px;background:#fff}
+    .role-user{background:#f0fafc}
+    .role-assistant{background:#f8f6ff}
+    small{color:#64748b}
+    pre{white-space:pre-wrap;margin:6px 0 0;font-family:inherit}
+    .badge{padding:5px 10px;border-radius:999px;font-size:12px;font-weight:700}
+    .badge-bot{background:#e3f7e3;color:#145214}
+    .badge-manual{background:#ffe4e1;color:#8b0000}
+    .modal-meta-row{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+    #modalChatBox{margin-top:14px;border-top:1px solid #eef2f7;padding-top:12px;display:flex;flex-direction:column;gap:8px}
+    #modalReplyText{min-height:88px;font-family:inherit}
+    .chat-actions{display:flex;align-items:center;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 
-     .ticket-modal iframe {
-       border: none;
-        width: 100%;
-        flex: 1;
-      }
+    .ticket-modal-backdrop {position: fixed;inset: 0;background: rgba(0,0,0,.45);display: none;align-items: center;justify-content: center;z-index: 1000;}
+    .ticket-modal {background: #fff;border-radius: 12px;padding: 12px;box-shadow: 0 10px 30px rgba(0,0,0,.25);width: 90mm;max-height: 90vh;display: flex;flex-direction: column;overflow: auto;gap: 8px;}
+    .ticket-modal iframe {border: none;width: 100%;flex: 1;}
+    .ticket-modal-actions {display: flex;justify-content: flex-end;gap: 8px;margin-top: 6px;}
 
-      .ticket-modal-actions {
-        display: flex;
-        justify-content: flex-end;
-        gap: 8px;
-        margin-top: 6px;
-      }
-
-
-
-
+    @media (max-width: 1080px){
+      .stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .page-header{flex-direction:column}
+    }
+    @media (max-width: 720px){
+      body{padding:12px}
+      .stats-grid{grid-template-columns:1fr}
+      .toolbar{align-items:stretch}
+      .toolbar-actions{width:100%}
+      .toolbar-actions .btn{flex:1 1 auto;justify-content:center}
+      .table-card{padding:10px}
+      .table-wrap{border:none;background:transparent;overflow:visible}
+      .adminTable colgroup,.adminTable thead{display:none}
+      .adminTable,.adminTable tbody,.adminTable tr,.adminTable td{display:block;width:100%}
+      .adminTable{min-width:0;border:0}
+      .adminTable tr{border:1px solid var(--line);border-radius:16px;padding:10px 12px;margin:10px 0;background:#fff;box-shadow:0 8px 20px rgba(15,23,42,.05)}
+      .adminTable td{border:none;padding:6px 0;overflow:visible;text-overflow:unset;display:flex;gap:10px;justify-content:space-between;align-items:flex-start}
+      .adminTable td::before{content: attr(data-label);font-weight:700;color:#475467;min-width:42%;max-width:42%}
+      .adminTable td[data-label="Acciones"]{display:block;padding-top:10px}
+      .adminTable td[data-label="Acciones"]::before{display:none}
+      .adminTable td[data-label="Acciones"] .actions{flex-wrap:wrap;white-space:normal;gap:8px}
+    }
   </style>
 </head>
 <body>
-  <header>
-    <h2>Panel de conversaciones</h2>
-  </header>
+  <div class="page-shell">
+    <header class="page-header">
+      <div>
+        <div class="eyebrow">Operación diaria</div>
+        <h2>Panel de conversaciones</h2>
+        <p class="subtitle">Buscá, filtrá y gestioná pedidos sin salir del listado.</p>
+      </div>
+      <div class="live-indicator"><span class="dot"></span> Actualiza cada 20 segundos</div>
+    </header>
 
-    <div class="row" style="gap:8px">
-     <label>Buscar por waId:&nbsp;<input id="waIdI" placeholder="5493..."/></label>
-     <button class="btn" id="btnBuscar">Buscar</button>
-     <button class="btn" id="btnReload">Recargar tabla</button>
-     <label>Filtro:&nbsp;
-       <select id="delivFilter">
-         <option value="all" selected>Todas</option>
-         <option value="pending">No entregadas</option>
-         <option value="delivered">Entregadas</option>
-       </select>
-     </label>
-   </div>
-   <p></p>
-   <table id="tbl" class="adminTable">
-     <colgroup>
-       <col class="c-actividad"/>
-       <col class="c-telefono"/>
-       <col class="c-nombre"/>
-       <col class="c-entrega"/>
-       <col class="c-direccion"/>
-       <col class="c-dist"/>
-       <col class="c-dia"/>
-       <col class="c-hora"/>
-       <col class="c-estado"/>
-       <col class="c-ent"/>
-       <col class="c-acciones"/>
-     </colgroup>
-     <thead>
-       <tr>
-         <th>Actividad</th>
-         <th>Teléfono</th>
-         <th>Nombre</th>
-         <th>Entrega</th>
-         <th>Dirección</th>
-          <th>Distancia (km)</th>
-          <th>Día</th>
-         <th>Hora</th>
-         <th>Estado</th>
-         <th>Ent.</th>
-         <th>Acciones</th>
-       </tr>
-     </thead>
-     <tbody></tbody>
-   </table>
+    <section class="toolbar-card">
+      <div class="toolbar">
+        <div class="field grow">
+          <label for="waIdI">Buscar por waId</label>
+          <input id="waIdI" placeholder="5493..."/>
+        </div>
+        <div class="field">
+          <label for="delivFilter">Filtro</label>
+          <select id="delivFilter">
+            <option value="all" selected>Todas</option>
+            <option value="pending">No entregadas</option>
+            <option value="delivered">Entregadas</option>
+          </select>
+        </div>
+        <div class="toolbar-actions">
+          <button class="btn btn-primary" id="btnBuscar">Buscar</button>
+          <button class="btn" id="btnReload">Actualizar</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="stats-grid" aria-label="Resumen rápido">
+      <article class="stat-card">
+        <div class="stat-label">Conversaciones</div>
+        <div class="stat-value" id="statTotal">0</div>
+        <div class="stat-note">listado actual</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Pendientes</div>
+        <div class="stat-value" id="statPending">0</div>
+        <div class="stat-note">sin marcar como entregadas</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Entregadas</div>
+        <div class="stat-value" id="statDelivered">0</div>
+        <div class="stat-note">marcadas por el equipo</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Envíos</div>
+        <div class="stat-value" id="statEnvio">0</div>
+        <div class="stat-note">pedidos con reparto</div>
+      </article>
+    </section>
+
+    <section class="table-card">
+      <div class="table-toolbar">
+        <div>
+          <h3>Listado reciente</h3>
+          <p id="tableHint">Cargando conversaciones…</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="tbl" class="adminTable">
+          <colgroup>
+            <col class="c-actividad"/>
+            <col class="c-telefono"/>
+            <col class="c-nombre"/>
+            <col class="c-entrega"/>
+            <col class="c-direccion"/>
+            <col class="c-dist"/>
+            <col class="c-dia"/>
+            <col class="c-hora"/>
+            <col class="c-estado"/>
+            <col class="c-ent"/>
+            <col class="c-acciones"/>
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Actividad</th>
+              <th>Teléfono</th>
+              <th>Nombre</th>
+              <th>Entrega</th>
+              <th>Dirección</th>
+              <th>Distancia</th>
+              <th>Día</th>
+              <th>Hora</th>
+              <th>Estado</th>
+              <th>Ent.</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
     <!-- Modal -->
    <div id="modalRoot" class="modal-backdrop" role="dialog" aria-modal="true" aria-hidden="true">
      <div class="modal" role="document">
@@ -3256,54 +3342,115 @@ app.get("/admin", async (req, res) => {
   window.closeTicketModal = closeTicketModal;
   window.printTicket = printTicket;
 
+  function formatActivity(raw){
+    try {
+      const d = new Date(raw);
+      return {
+        date: d.toLocaleDateString('es-AR'),
+        time: d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
+      };
+    } catch {
+      return { date: '-', time: '' };
+    }
+  }
+
+  function setStat(id, value){
+    const el = document.getElementById(id);
+    if (el) el.textContent = String(value || 0);
+  }
+
+  function updateAdminSummary(list){
+    const rows = Array.isArray(list) ? list : [];
+    const total = rows.length;
+    const delivered = rows.filter(x => !!x.delivered).length;
+    const pending = Math.max(total - delivered, 0);
+    const envio = rows.filter(x => String(x.entregaLabel || '').toLowerCase().includes('env')).length;
+    setStat('statTotal', total);
+    setStat('statPending', pending);
+    setStat('statDelivered', delivered);
+    setStat('statEnvio', envio);
+
+    const filter = document.getElementById('delivFilter')?.value || 'all';
+    const hint = document.getElementById('tableHint');
+    if (hint) {
+      const map = {
+        all: 'Mostrando todas las conversaciones del listado actual.',
+        pending: 'Mostrando solo conversaciones no entregadas.',
+        delivered: 'Mostrando solo conversaciones entregadas.'
+      };
+      hint.textContent = total
+        ? (total + ' conversaciones. ' + (map[filter] || ''))
+        : 'No hay conversaciones para mostrar con el filtro actual.';
+    }
+  }
+
+  function renderEntregaPill(raw){
+    const label = String(raw || '-').trim() || '-';
+    const cls = label.toLowerCase().includes('env') ? 'delivery-pill is-envio' : (label.toLowerCase().includes('ret') ? 'delivery-pill is-retiro' : 'delivery-pill');
+    return '<span class="' + cls + '">' + escHtml(label) + '</span>';
+  }
+
+  function renderDistanceBadge(raw){
+    if (raw === undefined || raw === null || raw === '') return '<span class="distance-badge">-</span>';
+    return '<span class="distance-badge">' + escHtml(raw) + '</span>';
+  }
+
   // =========================
   // Tabla conversaciones (ÚNICA versión)
   // =========================
   async function loadTable(){
+    const tb = document.querySelector('#tbl tbody');
     try{
       const f = (document.getElementById('delivFilter')?.value || 'all');
       let url = '/api/logs/conversations?limit=200';
       if (f === 'delivered') url += '&delivered=true';
       else if (f === 'pending') url += '&delivered=false';
 
+      if (tb) {
+        tb.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#64748b;padding:20px">Cargando conversaciones…</td></tr>';
+      }
+
       const r = await fetch(url);
       const data = await r.json().catch(()=>[]);
-      const tb = document.querySelector('#tbl tbody');
       if (!tb) return;
 
       tb.innerHTML = '';
+      updateAdminSummary(data);
 
       for(const c of data){
         const tr = document.createElement('tr');
         if (c.delivered) tr.classList.add('delivered-row');
+        const act = formatActivity(c.lastAt);
+        const direccion = String(c.direccion || '-').trim() || '-';
+        const nombre = String(c.contactName || '-').trim() || '-';
         tr.innerHTML =
-  '<td data-label="Actividad">' + fmt(c.lastAt) + '</td>' +
-  '<td data-label="Teléfono">' + escHtml(c.waId || '-') + '</td>' +
-  '<td data-label="Nombre">' + escHtml(c.contactName || '-') + '</td>' +
-  '<td data-label="Entrega">' + escHtml(c.entregaLabel || '-') + '</td>' +
-  '<td data-label="Dirección">' + escHtml(c.direccion || '-') + '</td>' +
-  '<td data-label="Distancia (km)">' +
-    ((c.distanceKm !== undefined && c.distanceKm !== null) ? escHtml(c.distanceKm) : '-') +
-  '</td>' +
-  '<td data-label="Día">' + escHtml(c.fechaEntrega || '-') + '</td>' +
-  '<td data-label="Hora">' + escHtml(c.horaEntrega || '-') + '</td>' +
-  '<td data-label="Estado">' + renderStatusBadge(c.status) + '</td>' +
-  '<td data-label="Ent." style="text-align:center">' +
-    '<input class="delivChk" type="checkbox" data-id="' + escHtml(c._id) + '" ' +
-    (c.delivered ? 'checked' : '') + ' title="Entregado" />' +
-  '</td>' +
-  '<td data-label="Acciones">' +
-    '<div class="actions">' +
-      '<button class="btn" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
-      '<button class="btn" data-pedido="' + escHtml(c._id) + '">Pedido</button>' +
-      '<button class="btn" data-print="' + escHtml(c._id) + '">🖨️ Imprimir</button>' +
-    '</div>' +
-  '</td>';
+          '<td data-label="Actividad">' +
+            '<span class="cell-strong">' + escHtml(act.date) + '</span>' +
+            '<span class="cell-subtle">' + escHtml(act.time || '') + '</span>' +
+          '</td>' +
+          '<td data-label="Teléfono"><span class="cell-strong">' + escHtml(c.waId || '-') + '</span></td>' +
+          '<td data-label="Nombre" title="' + escHtml(nombre) + '"><span class="cell-strong cell-ellipsis">' + escHtml(nombre) + '</span></td>' +
+          '<td data-label="Entrega">' + renderEntregaPill(c.entregaLabel || '-') + '</td>' +
+          '<td data-label="Dirección" title="' + escHtml(direccion) + '"><span class="cell-ellipsis">' + escHtml(direccion) + '</span></td>' +
+          '<td data-label="Distancia">' + renderDistanceBadge(c.distanceKm) + '</td>' +
+          '<td data-label="Día"><span class="cell-ellipsis">' + escHtml(c.fechaEntrega || '-') + '</span></td>' +
+          '<td data-label="Hora"><span class="cell-strong">' + escHtml(c.horaEntrega || '-') + '</span></td>' +
+          '<td data-label="Estado">' + renderStatusBadge(c.status) + '</td>' +
+          '<td data-label="Ent." style="text-align:center">' +
+            '<input class="delivChk" type="checkbox" data-id="' + escHtml(c._id) + '" ' +
+            (c.delivered ? 'checked' : '') + ' title="Entregado" />' +
+          '</td>' +
+          '<td data-label="Acciones">' +
+            '<div class="actions">' +
+              '<button class="btn btn-primary" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
+              '<button class="btn btn-soft" data-pedido="' + escHtml(c._id) + '">Pedido</button>' +
+              '<button class="btn btn-icon" data-print="' + escHtml(c._id) + '" title="Imprimir ticket">🖨️</button>' +
+            '</div>' +
+          '</td>';
 
         tb.appendChild(tr);
       }
 
-      // Bind botones
       tb.querySelectorAll('button[data-conv]').forEach(b=>{
         b.addEventListener('click',()=>openDetailModal(b.getAttribute('data-conv')));
       });
@@ -3313,7 +3460,6 @@ app.get("/admin", async (req, res) => {
       tb.querySelectorAll('button[data-print]').forEach(b=>{
         b.addEventListener('click',()=>openTicketModal(b.getAttribute('data-print')));
       });
-      // Bind entregado
       tb.querySelectorAll('input.delivChk').forEach(chk=>{
         chk.addEventListener('change', async()=>{
           const convId = chk.getAttribute('data-id');
@@ -3327,14 +3473,10 @@ app.get("/admin", async (req, res) => {
               body: JSON.stringify({ convId, delivered: flag })
             });
             let ok = rr.ok;
-
-            // Si el server/proxy devolvió un status raro pero alcanzó a guardar,
-            // verificamos el estado real antes de mostrar error.
             if (!ok) {
               const actual = await verifyDelivered(convId);
               ok = (actual === flag);
             }
-
             if (!ok) throw new Error('not_updated');
 
             const tr = chk.closest('tr');
@@ -3342,10 +3484,10 @@ app.get("/admin", async (req, res) => {
               if (flag) tr.classList.add('delivered-row');
               else tr.classList.remove('delivered-row');
             }
-
-
+            const actualData = Array.from(tb.querySelectorAll('input.delivChk')).map(el => ({ delivered: !!el.checked }));
+            setStat('statPending', actualData.filter(x => !x.delivered).length);
+            setStat('statDelivered', actualData.filter(x => x.delivered).length);
           }catch(e){
-            // revertir UI
             chk.checked = !flag;
             alert('No se pudo actualizar el estado de entrega');
           }finally{
@@ -3356,12 +3498,13 @@ app.get("/admin", async (req, res) => {
 
       if(!data.length){
         const tr = document.createElement('tr');
-       tr.innerHTML = '<td colspan="11" style="text-align:center;color:#666">Sin conversaciones</td>';
-       tb.appendChild(tr);
+        tr.innerHTML = '<td colspan="11" style="text-align:center;color:#64748b;padding:26px">Sin conversaciones para mostrar</td>';
+        tb.appendChild(tr);
       }
 
     }catch(e){
       console.error('loadTable error', e);
+      if (tb) tb.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#b91c1c;padding:20px">No se pudo cargar la tabla</td></tr>';
     }
   }
 
@@ -3381,6 +3524,13 @@ app.get("/admin", async (req, res) => {
     const v=(document.getElementById('waIdI')?.value||'').trim();
     if(!v){ alert('Ingresá un waId'); return; }
     openDetailByWaId(v);
+  });
+  document.getElementById('btnReload')?.addEventListener('click', loadTable);
+  document.getElementById('waIdI')?.addEventListener('keydown', (e)=>{
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      document.getElementById('btnBuscar')?.click();
+    }
   });
 
   // Bind modal manual/chat
@@ -4799,7 +4949,7 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
       try {
         if (!formatted && Number.isFinite(lat) && Number.isFinite(lon)) {
           rev = await reverseGeocode(lat, lon);
-         formatted = String(rev?.formatted_address || "").trim();
+          formatted = String(rev?.formatted_address || "").trim();
         }
       } catch {}
 
@@ -4965,7 +5115,6 @@ console.log("[convId] "+ convId);
       // Esto permite que el flujo siga aunque el usuario no escriba una dirección textual.
       try {
         if (inboundLocation && pedido && typeof pedido === "object") {
-          // si todavía no eligió modalidad, inferimos domicilio (lo más común cuando manda ubicación)
           if (!String(pedido.Entrega || "").trim()) {
             pedido.Entrega = "domicilio";
           }
@@ -4994,7 +5143,6 @@ console.log("[convId] "+ convId);
             pedido.Domicilio.direccion = `Ubicación compartida (${pedido.Domicilio.lat}, ${pedido.Domicilio.lon})`;
           }
 
-          // Opcional: completar campos si reverse geocoding trajo componentes
           const rev = inboundLocation.rev || null;
           if (rev && typeof rev === "object") {
             if (rev.street && !pedido.Domicilio.calle) pedido.Domicilio.calle = rev.street;
@@ -5006,7 +5154,6 @@ console.log("[convId] "+ convId);
           }
         }
       } catch {}
-
       // 💰 Hidratar precios desde catálogo ANTES de recalcular (evita “Pollo entero @ 0”)
       try { pedido = await hydratePricesFromCatalog(pedido, tenant || null); } catch {}
       // 🚚 Asegurar ítem Envío con geocoding/distancia (awaitable, sin race)
@@ -5077,7 +5224,7 @@ console.log("[convId] "+ convId);
                   ? { direccion: pedidoFix.Domicilio }
                   : (pedidoFix.Domicilio || {});
                 pedidoFix.Domicilio = dom0;
-               if (Number.isFinite(Number(inboundLocation.lat)) && Number.isFinite(Number(inboundLocation.lon))) {
+                if (Number.isFinite(Number(inboundLocation.lat)) && Number.isFinite(Number(inboundLocation.lon))) {
                   pedidoFix.Domicilio.lat = Number(inboundLocation.lat);
                   pedidoFix.Domicilio.lon = Number(inboundLocation.lon);
                 }
@@ -5085,7 +5232,7 @@ console.log("[convId] "+ convId);
                 if (addr && !String(pedidoFix.Domicilio.direccion || "").trim()) {
                   pedidoFix.Domicilio.direccion = addr;
                 }
-             }
+              }
             } catch {}
 
              // 💰 Rehidratar también en el ciclo de fix
