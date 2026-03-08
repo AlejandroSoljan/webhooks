@@ -2602,9 +2602,9 @@ app.get("/admin", async (req, res) => {
       border-radius:16px;
       background:#fff;
     }
-    .adminTable{border-collapse:separate;border-spacing:0;width:100%;min-width:1040px;table-layout:fixed}
+    .adminTable{border-collapse:separate;border-spacing:0;width:100%;min-width:0;table-layout:auto}
     .adminTable th,
-    .adminTable td{padding:12px 10px;font-size:12px;vertical-align:top;word-break:break-word;border-bottom:1px solid #edf2f7}
+    .adminTable td{padding:11px 8px;font-size:12px;vertical-align:top;word-break:break-word;border-bottom:1px solid #edf2f7}
     .adminTable th{
       position:sticky;top:0;z-index:2;
       background:#f8fbff;
@@ -2627,47 +2627,49 @@ app.get("/admin", async (req, res) => {
     .adminTable th:nth-child(6),
     .adminTable th:nth-child(7),
     .adminTable th:nth-child(8),
-    .adminTable th:nth-child(9){padding-left:8px;padding-right:8px;white-space:nowrap}
+    .adminTable th:nth-child(9){padding-left:6px;padding-right:6px;white-space:nowrap;font-size:11px}
     .cell-strong{font-weight:700;color:#0f172a}
     .cell-subtle{display:block;margin-top:2px;color:#64748b;font-size:11px}
     .cell-ellipsis{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .cell-address{display:block;white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35;word-break:break-word}
+    .cell-address{display:block;white-space:normal;overflow:visible;text-overflow:clip;line-height:1.32;word-break:break-word;overflow-wrap:anywhere}
     .delivery-pill{
-      display:inline-flex;align-items:center;gap:6px;
-      padding:5px 10px;border-radius:999px;
-      background:#f8fafc;border:1px solid #dbe5f0;font-size:12px;font-weight:700;color:#334155;
+      display:inline-flex;align-items:center;gap:5px;
+      padding:4px 9px;border-radius:999px;
+      background:#f8fafc;border:1px solid #dbe5f0;font-size:11px;font-weight:700;color:#334155;
     }
     .delivery-pill.is-envio{background:#eef6ff;border-color:#cfe0f2;color:#164e86}
     .delivery-pill.is-retiro{background:#f8fafc;border-color:#dbe5f0;color:#475569}
     .distance-badge{
       display:inline-flex;align-items:center;justify-content:center;
-      min-width:52px;padding:5px 7px;border-radius:999px;background:#f8fafc;border:1px solid #dbe5f0;font-weight:700;color:#334155;
+      min-width:40px;padding:4px 6px;border-radius:999px;background:#f8fafc;border:1px solid #dbe5f0;font-weight:700;color:#334155;font-size:11px;
     }
-    .actions{display:flex;gap:4px;flex-wrap:nowrap;white-space:nowrap;align-items:center;justify-content:flex-start}
-    .actions .btn{padding:7px 9px;font-size:12px;border-radius:10px;flex:0 0 auto}
+    .actions{display:grid;grid-template-columns:minmax(0,1fr) 34px 34px;gap:4px;align-items:center;width:100%}
+    .actions .btn{padding:7px 8px;font-size:11px;border-radius:10px;min-width:0}
+    .actions .btn-detail{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .actions .btn-soft{background:#f8fafc;color:#334155;border-color:#dbe5f0}
-    .c-actividad{width:76px}
-    .c-telefono{width:100px}
-    .c-nombre{width:102px}
-    .c-entrega{width:86px}
-    .c-direccion{width:176px}
-    .c-dist{width:72px}
-    .c-dia{width:82px}
-    .c-hora{width:68px}
-    .c-estado{width:112px}
-    .c-ent{width:52px}
-    .c-acciones{width:176px}
+    .actions .btn-icon{padding:0;min-width:34px;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;font-size:14px}
+    .c-actividad{width:84px}
+    .c-telefono{width:90px}
+    .c-nombre{width:108px}
+    .c-entrega{width:76px}
+    .c-direccion{width:238px}
+    .c-dist{width:58px}
+    .c-dia{width:74px}
+    .c-hora{width:58px}
+    .c-estado{width:94px}
+    .c-ent{width:40px}
+    .c-acciones{width:116px}
     .delivered-row{opacity:.72}
     .delivChk{cursor:pointer;width:16px;height:16px;accent-color:#22c55e}
     .status-badge{
       display:inline-block;
-      padding:4px 9px;
+      padding:4px 8px;
       border-radius:999px;
-      font-size:11px;
+      font-size:10px;
       font-weight:800;
-      letter-spacing:.03em;
+      letter-spacing:.02em;
       border:1px solid transparent;
-      line-height:1.35;
+      line-height:1.2;
       white-space:nowrap;
     }
     .st-open{background:#eef2ff;color:#1e3a8a;border-color:#c7d2fe}
@@ -3415,9 +3417,9 @@ app.get("/admin", async (req, res) => {
           '</td>' +
           '<td data-label="Acciones" style="overflow:visible">' +
             '<div class="actions">' +
-              '<button class="btn btn-primary" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
-              '<button class="btn btn-soft" data-pedido="' + escHtml(c._id) + '">Pedido</button>' +
-              '<button class="btn btn-icon" data-print="' + escHtml(c._id) + '" title="Imprimir ticket">🖨️</button>' +
+              '<button class="btn btn-primary btn-detail" data-conv="' + escHtml(c._id) + '">Detalle</button>' +
+              '<button class="btn btn-soft btn-icon" data-pedido="' + escHtml(c._id) + '" title="Ver pedido">🧾</button>' +
+              '<button class="btn btn-soft btn-icon" data-print="' + escHtml(c._id) + '" title="Imprimir ticket">🖨️</button>' +
             '</div>' +
           '</td>';
 
