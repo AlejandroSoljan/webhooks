@@ -6007,7 +6007,7 @@ console.log("[convId] "+ convId);
       console.log(`[webhook][stale-run] abort after send before persist key=${runKey} seq=${runSeq}`);
       return;
     }
-    await require("./logic").sendWhatsAppMessage(from, responseTextSafe, waOpts);
+   
     
     
     
