@@ -5580,75 +5580,78 @@ console.log("[convId] "+ convId);
    }
 
     // ================== Debounce configurable (solo mensajes text) ==================
-    // - Retrocompatible: si messageDebounceMs=0 => no cambia nada
-    // - Si >0: junta varios mensajes text y llama al LLM una sola vez
-    const debounceMs = clampInt(runtime?.messageDebounceMs ?? runtime?.debounceMs ?? 0, 0, 5000);
-    const debounceKey = convId
-      ? `${tenant}:${waOpts?.phoneNumberId || "env"}:${convId}`
-     : `${tenant}:${waOpts?.phoneNumberId || "env"}:${from}`;
+// - Retrocompatible: si messageDebounceMs=0 => no cambia nada
+// - Si >0: junta varios mensajes text y llama al LLM una sola vez
+const debounceMs = clampInt(runtime?.messageDebounceMs ?? runtime?.debounceMs ?? 0, 0, 5000);
+const debounceKey = convId
+  ? `${tenant}:${channelType}:${channelOpts?.phoneNumberId || channelOpts?.instagramAccountId || "env"}:${convId}`
+  : `${tenant}:${channelType}:${channelOpts?.phoneNumberId || channelOpts?.instagramAccountId || "env"}:${from}`;
 
-    // Si entra un mensaje NO-text (ej. location), cancelamos cualquier tanda
-    // pendiente de texto para que no se procese una dirección vieja después.
-    if (debounceMs > 0 && msg.type !== "text") {
-      const pending = pendingTextBatches.get(debounceKey);
-      if (pending) {
-        pending.cancelled = true;
-       pendingTextBatches.delete(debounceKey);
-        console.log(`[debounce] lote cancelado por mensaje ${msg.type} key=${debounceKey}`);
-      }
-    }
+// Si entra un mensaje NO-text (ej. location), cancelamos cualquier tanda
+// pendiente de texto para que no se procese una dirección vieja después.
+if (debounceMs > 0 && msg.type !== "text") {
+  const pending = pendingTextBatches.get(debounceKey);
+  if (pending) {
+    pending.cancelled = true;
+    pendingTextBatches.delete(debounceKey);
+    console.log(`[debounce] lote cancelado por mensaje ${msg.type} key=${debounceKey}`);
+  }
+}
 
-    if (debounceMs > 0 && msg.type === "text") {
-      // key estable: convId si existe; si no, tenant+canal+from
-      const key = debounceKey;
-      let batch = pendingTextBatches.get(key);
-      if (!batch) {
-       batch = { texts: [], leader: false, createdAt: Date.now(), cancelled: false };
-        pendingTextBatches.set(key, batch);
-      }
+if (debounceMs > 0 && msg.type === "text") {
+  // key estable: convId si existe; si no, tenant+canal+from
+  const key = debounceKey;
+  let batch = pendingTextBatches.get(key);
+  if (!batch) {
+    batch = { texts: [], leader: false, createdAt: Date.now(), cancelled: false };
+    pendingTextBatches.set(key, batch);
+  }
 
-      // guardamos el texto de este mensaje
-      const t = String(text || "").trim();
-       if (t) {
-        // dedupe simple: no agregar si es igual al último
-        const last = batch.texts.length ? batch.texts[batch.texts.length - 1] : null;
-        if (last !== t) batch.texts.push(t);
-      }
+  // guardamos el texto de este mensaje
+  const t = String(text || "").trim();
+  if (t) {
+    // dedupe simple: no agregar si es igual al último
+    const last = batch.texts.length ? batch.texts[batch.texts.length - 1] : null;
+    if (last !== t) batch.texts.push(t);
+  }
 
-      // si ya hay otro request “líder” esperando, este request termina acá (Meta recibe 200)
-      if (batch.leader) {
-        return res.sendStatus(200);
-      }
+  // si ya hay otro request “líder” esperando, este request termina acá
+  if (batch.leader) {
+    return res.sendStatus(200);
+  }
 
-      // este request se convierte en líder: espera y luego procesa todo junto
-      batch.leader = true;
-      await sleep(debounceMs);
+  // este request se convierte en líder: espera y luego procesa todo junto
+  batch.leader = true;
+  await sleep(debounceMs);
 
-      // recuperar lote final y liberarlo
-      const finalBatch = pendingTextBatches.get(key);
-      pendingTextBatches.delete(key);
-      if (!finalBatch || finalBatch.cancelled) {
-        console.log(`[debounce] líder cancelado key=${key}`);
-        return res.sendStatus(200);
-      }
-      const parts = Array.isArray(finalBatch?.texts) ? finalBatch.texts : [];
+  // recuperar lote final y liberarlo
+  const finalBatch = pendingTextBatches.get(key);
+  pendingTextBatches.delete(key);
 
+  if (!finalBatch || finalBatch.cancelled) {
+    console.log(`[debounce] líder cancelado key=${key}`);
+    return res.sendStatus(200);
+  }
 
-      // dedupe extra (caso típico: "hola" al inicio y repetido al final)
-      if (parts.length >= 2 && parts[0] === parts[parts.length - 1]) {
-        parts.pop();
-      }
-      // limpiar vacíos
-      const clean = parts.map(x => String(x||"").trim()).filter(Boolean);
+  const parts = Array.isArray(finalBatch?.texts) ? finalBatch.texts : [];
 
-      // unir como pidió el usuario: separados por coma
-      // ejemplo: "hola", "quiero 2", "y 1" => "hola, quiero 2, y 1"
-      text = clean.join(", ");
-     if (!text) {
-        console.log(`[debounce] lote vacío, no se procesa key=${key}`);
-        return res.sendStatus(200);
-      }
-    }
+  // dedupe extra (caso típico: "hola" al inicio y repetido al final)
+  if (parts.length >= 2 && parts[0] === parts[parts.length - 1]) {
+    parts.pop();
+  }
+
+  // limpiar vacíos
+  const clean = parts.map(x => String(x || "").trim()).filter(Boolean);
+
+  // unir como pidió el usuario: separados por coma
+  // ejemplo: "hola", "quiero 2", "y 1" => "hola, quiero 2, y 1"
+  text = clean.join(", ");
+
+  if (!text) {
+    console.log(`[debounce] lote vacío, no se procesa key=${key}`);
+    return res.sendStatus(200);
+  }
+}
 
     const runKey = buildProcessingRunKey(tenant, `${channelType}:${channelOpts?.phoneNumberId || channelOpts?.instagramAccountId || "env"}`, convId, from);
 
