@@ -993,7 +993,74 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
   }
 }
 
+ 
+function cloneJsonSafe(v) {
+  try { return JSON.parse(JSON.stringify(v)); } catch { return v; }
+}
 
+function isFilledValue(v) {
+  if (v === null || v === undefined) return false;
+  if (typeof v === "string") return v.trim() !== "";
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === "object") return Object.keys(v).length > 0;
+  return true;
+}
+
+function normalizeDomicilioObj(v) {
+  if (typeof v === "string") return { direccion: v };
+  if (v && typeof v === "object") return cloneJsonSafe(v) || {};
+  return {};
+}
+
+function mergePedidoState(prevPedido, nextPedido) {
+  const prev = (prevPedido && typeof prevPedido === "object") ? cloneJsonSafe(prevPedido) : {};
+  const next = (nextPedido && typeof nextPedido === "object") ? cloneJsonSafe(nextPedido) : {};
+
+  const merged = { ...prev, ...next };
+  for (const key of ["nombre_apellido", "Entrega", "Pago", "fecha_pedido", "hora_pedido", "Fecha", "Hora", "distancia_km"]) {
+    merged[key] = isFilledValue(next[key]) ? next[key] : prev[key];
+  }
+
+  const prevDom = normalizeDomicilioObj(prev.Domicilio);
+  const nextDom = normalizeDomicilioObj(next.Domicilio);
+  const dom = {};
+  for (const key of new Set([...Object.keys(prevDom), ...Object.keys(nextDom)])) {
+    dom[key] = isFilledValue(nextDom[key]) ? nextDom[key] : prevDom[key];
+  }
+  merged.Domicilio = dom;
+
+  if (Array.isArray(next.items) && next.items.length > 0) merged.items = cloneJsonSafe(next.items);
+  else if (Array.isArray(prev.items)) merged.items = cloneJsonSafe(prev.items);
+  else merged.items = [];
+
+  if (isFilledValue(next.total_pedido)) merged.total_pedido = next.total_pedido;
+  else if (isFilledValue(prev.total_pedido)) merged.total_pedido = prev.total_pedido;
+  else merged.total_pedido = 0;
+
+  return merged;
+}
+
+async function loadLastPedidoSnapshot(tenantId, conversationId) {
+  try {
+    if (!conversationId) return null;
+    const db = await getDb();
+    const doc = await db.collection("messages").findOne(
+      withTenant({
+        conversationId: new ObjectId(String(conversationId)),
+        role: "assistant",
+        type: "json",
+        "meta.kind": "pedido-snapshot"
+      }, tenantId),
+      { sort: { ts: -1, createdAt: -1, _id: -1 }, projection: { content: 1 } }
+    );
+    if (!doc?.content) return null;
+    const parsed = JSON.parse(String(doc.content));
+    return (parsed?.Pedido && typeof parsed.Pedido === "object") ? parsed.Pedido : null;
+  } catch (e) {
+    console.warn("[snapshot] loadLastPedidoSnapshot error:", e?.message || e);
+    return null;
+  }
+}
 
 
 // === Helpers para resumen de Pedido (fecha/hora/entrega/envío) ===
@@ -5558,6 +5625,23 @@ console.log("[convId] "+ convId);
     // para que un nuevo pedido no arrastre contexto del pedido anterior.
     if (convId) syncSessionConversation(tenant, sessionFrom, convId);
 
+    if (convId && String(msg?.id || "").trim()) {
+      try {
+        const db = await getDb();
+        const dupInbound = await db.collection("messages").findOne(
+          withTenant({ conversationId: new ObjectId(String(convId)), "meta.raw.id": String(msg.id).trim() }, tenant),
+          { projection: { _id: 1 } }
+        );
+        if (dupInbound) {
+          console.log("[webhook] duplicate inbound already processed:", String(msg.id).trim());
+          return res.sendStatus(200);
+        }
+      } catch (e) {
+        console.warn("[webhook] duplicate inbound check error:", e?.message || e);
+      }
+    }
+
+
        if (convId) {
       console.log("[messages] about to save USER message", { convId, from, type: msg.type, textPreview: String(text).slice(0,80) });
       try {
@@ -5707,11 +5791,12 @@ if (debounceMs > 0 && msg.type === "text") {
     let responseText = "Perdón, hubo un error. ¿Podés repetir?";
     let estado = null;
     let pedido = null;
+    const prevPedidoSnapshot = convId ? await loadLastPedidoSnapshot(tenant, convId) : null;
 
     try {
       const parsed = JSON.parse(gptReply);
       estado = parsed.estado;
-      pedido = parsed.Pedido || { items: [] };
+      pedido = mergePedidoState(prevPedidoSnapshot, parsed.Pedido || { items: [] });
 
       // 📍 Si el mensaje entrante fue una ubicación, la volcamos al Pedido.
       // Esto permite que el flujo siga aunque el usuario no escriba una dirección textual.
@@ -5805,6 +5890,7 @@ if (debounceMs > 0 && msg.type === "text") {
           "",
           "Devolvé UN ÚNICO objeto JSON con: response, estado (IN_PROGRESS|COMPLETED|CANCELLED),",
           "y Pedido { Entrega, Domicilio, items[ {id, descripcion, cantidad, importe_unitario, total} ], total_pedido }.",
+          "Si ya había otros datos válidos del pedido (nombre, pago, fecha, hora), no los contradigas ni los cambies.",
           "No incluyas texto fuera del JSON."
         ].join("\n");
 
@@ -5816,7 +5902,7 @@ if (debounceMs > 0 && msg.type === "text") {
             parsedFixLast = parsedFix;
             estado = parsedFix.estado || estado;
 
-            let pedidoFix = parsedFix.Pedido || { items: [] };
+            let pedidoFix = mergePedidoState(pedido, parsedFix.Pedido || { items: [] });
 
             // 📍 También aplicamos ubicación entrante si existiera (mismo mensaje)
             try {
@@ -6297,9 +6383,7 @@ if (debounceMs > 0 && msg.type === "text") {
    // 🔹 Mantener snapshot del asistente
 setAssistantPedidoSnapshot(tenant, sessionFrom, pedido, estado);
 
-   // 🔹 Mantener snapshot del asistente
-	setAssistantPedidoSnapshot(tenant, sessionFrom, pedido, estado);
-
+ 
 	// 🔎 Heurística: si el usuario pidió cancelar, forzamos CANCELLED para el cierre
 	// (esto evita que el /admin muestre COMPLETED cuando el modelo respondió mal el estado)
 	const _tNorm = String(text || "")
