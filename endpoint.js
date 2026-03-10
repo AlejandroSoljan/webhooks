@@ -5583,14 +5583,27 @@ console.log("[convId] "+ convId);
     // - Retrocompatible: si messageDebounceMs=0 => no cambia nada
     // - Si >0: junta varios mensajes text y llama al LLM una sola vez
     const debounceMs = clampInt(runtime?.messageDebounceMs ?? runtime?.debounceMs ?? 0, 0, 5000);
+    const debounceKey = convId
+      ? `${tenant}:${waOpts?.phoneNumberId || "env"}:${convId}`
+     : `${tenant}:${waOpts?.phoneNumberId || "env"}:${from}`;
+
+    // Si entra un mensaje NO-text (ej. location), cancelamos cualquier tanda
+    // pendiente de texto para que no se procese una dirección vieja después.
+    if (debounceMs > 0 && msg.type !== "text") {
+      const pending = pendingTextBatches.get(debounceKey);
+      if (pending) {
+        pending.cancelled = true;
+       pendingTextBatches.delete(debounceKey);
+        console.log(`[debounce] lote cancelado por mensaje ${msg.type} key=${debounceKey}`);
+      }
+    }
+
     if (debounceMs > 0 && msg.type === "text") {
-       // key estable: convId si existe; si no, tenant+canal+from
-      const key = convId
-        ? `${tenant}:${channelType}:${channelOpts?.phoneNumberId || channelOpts?.instagramAccountId || "env"}:${convId}`
-        : `${tenant}:${channelType}:${channelOpts?.phoneNumberId || channelOpts?.instagramAccountId || "env"}:${from}`;
+      // key estable: convId si existe; si no, tenant+canal+from
+      const key = debounceKey;
       let batch = pendingTextBatches.get(key);
       if (!batch) {
-       batch = { texts: [], leader: false, createdAt: Date.now() };
+       batch = { texts: [], leader: false, createdAt: Date.now(), cancelled: false };
         pendingTextBatches.set(key, batch);
       }
 
@@ -5614,6 +5627,10 @@ console.log("[convId] "+ convId);
       // recuperar lote final y liberarlo
       const finalBatch = pendingTextBatches.get(key);
       pendingTextBatches.delete(key);
+      if (!finalBatch || finalBatch.cancelled) {
+        console.log(`[debounce] líder cancelado key=${key}`);
+        return res.sendStatus(200);
+      }
       const parts = Array.isArray(finalBatch?.texts) ? finalBatch.texts : [];
 
 
@@ -5627,6 +5644,10 @@ console.log("[convId] "+ convId);
       // unir como pidió el usuario: separados por coma
       // ejemplo: "hola", "quiero 2", "y 1" => "hola, quiero 2, y 1"
       text = clean.join(", ");
+     if (!text) {
+        console.log(`[debounce] lote vacío, no se procesa key=${key}`);
+        return res.sendStatus(200);
+      }
     }
 
     const runKey = buildProcessingRunKey(tenant, `${channelType}:${channelOpts?.phoneNumberId || channelOpts?.instagramAccountId || "env"}`, convId, from);
