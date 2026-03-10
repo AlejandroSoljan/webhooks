@@ -12,7 +12,7 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOK
 // ⬇️ Para catálogo en Mongo
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
-const { getRuntimeByPhoneNumberId, findAnyByVerifyToken, upsertTenantChannel } = require("./tenant_runtime");
+const { getRuntimeByPhoneNumberId, getRuntimeByInstagramAccountId, findAnyByVerifyToken, upsertTenantChannel } = require("./tenant_runtime");
 const TENANT_ID = (process.env.TENANT_ID || "").trim();
 // ================== Debounce de textos (por tenant+canal+waId+convId) ==================
 const pendingTextBatches = new Map();
@@ -127,13 +127,17 @@ app.get("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
     const safe = rows.map(r => ({
       _id: String(r._id),
       tenantId: r.tenantId || null,
+      channelType: r.channelType || "whatsapp",
       phoneNumberId: r.phoneNumberId || null,
       displayPhoneNumber: r.displayPhoneNumber || null,
+      instagramAccountId: r.instagramAccountId || null,
+      instagramPageId: r.instagramPageId || null,
       isDefault: !!r.isDefault,
       messageDebounceMs: r.messageDebounceMs ?? 0,
       updatedAt: r.updatedAt || null,
       createdAt: r.createdAt || null,
       whatsappToken: isSuper ? (r.whatsappToken || null) : (r.whatsappToken ? "********" : null),
+      instagramAccessToken: isSuper ? (r.instagramAccessToken || null) : (r.instagramAccessToken ? "********" : null),
       verifyToken: isSuper ? (r.verifyToken || null) : (r.verifyToken ? "********" : null),
       openaiApiKey: isSuper ? (r.openaiApiKey || null) : (r.openaiApiKey ? "********" : null),
     }));
@@ -1448,9 +1452,12 @@ app.get("/api/admin/conversation-meta", async (req, res) => {
       manualOpen: !!conv.manualOpen,
       delivered: !!conv.delivered,
       deliveredAt: conv.deliveredAt || null,
+      channelType: conv.channelType || "whatsapp",
        // Canal/telefono del negocio por el que entró la conversación
        phoneNumberId: conv.phoneNumberId || null,
        displayPhoneNumber: conv.displayPhoneNumber || null,
+      instagramAccountId: conv.instagramAccountId || null,
+      instagramPageId: conv.instagramPageId || null,
     });
   } catch (e) {
     console.error("GET /api/admin/conversation-meta error:", e);
@@ -2131,9 +2138,10 @@ app.get("/admin/inbox", async (req, res) => {
       const name = meta.contactName || meta.waId || "Chat";
       chatAvatar.textContent = initials(name);
       chatName.textContent = name;
-       const ch = (meta.displayPhoneNumber || meta.phoneNumberId || "");
+       const ch = (meta.displayPhoneNumber || meta.phoneNumberId || meta.instagramPageId || meta.instagramAccountId || "");
+       const channelLabel = String(meta.channelType || 'whatsapp').toLowerCase() === 'instagram' ? 'Instagram' : 'WhatsApp';
        chatSub.textContent = meta.waId
-         ? ("WhatsApp: " + meta.waId + (ch ? (" · Canal: " + ch) : ""))
+         ? (channelLabel + ': ' + meta.waId + (ch ? (' · Canal: ' + ch) : ''))
          : "";
       chatStatus.textContent = meta.status || "";
       if (deliveredToggle) deliveredToggle.checked = !!meta.delivered;
@@ -2351,23 +2359,29 @@ app.post("/api/admin/send-message", async (req, res) => {
     }
 
     const to = conv.waId;
-
-     // Enviar por WhatsApp (multi-phone): usar el mismo canal (phoneNumberId) de la conversación
-    const convPhoneNumberId = conv.phoneNumberId || null;
+    const channelType = String(conv.channelType || "whatsapp").trim().toLowerCase() || "whatsapp";
     let rt = null;
     try {
-      if (convPhoneNumberId) {
-        rt = await getRuntimeByPhoneNumberId(convPhoneNumberId);
+      if (channelType === "instagram") {
+        rt = await getRuntimeByInstagramAccountId(conv.instagramAccountId || conv.instagramPageId || null);
+      } else {
+        const convPhoneNumberId = conv.phoneNumberId || null;
+        if (convPhoneNumberId) {
+          rt = await getRuntimeByPhoneNumberId(convPhoneNumberId);
+        }
       }
     } catch {}
 
-    const waOpts = {
+    const channelOpts = {
+      channelType,
       whatsappToken: rt?.whatsappToken || null,
-      phoneNumberId: rt?.phoneNumberId || convPhoneNumberId || null,
+      phoneNumberId: rt?.phoneNumberId || conv.phoneNumberId || null,
+      instagramAccountId: rt?.instagramAccountId || conv.instagramAccountId || null,
+      instagramPageId: rt?.instagramPageId || conv.instagramPageId || null,
+      instagramAccessToken: rt?.instagramAccessToken || null,
     };
 
-    // Enviar por WhatsApp (si waOpts no tiene token/phoneNumberId, logic.js cae a .env => retrocompatible)
-    await require("./logic").sendWhatsAppMessage(to, body, waOpts);
+    await require("./logic").sendChannelMessage(to, body, channelOpts);
 
     const now = new Date();
 
@@ -4910,8 +4924,8 @@ app.get("/canales", async (req, res) => {
   </style>
 </head>
 <body>
-  <h1>Canales (WhatsApp/OpenAI)</h1>
-  <div class="muted">Configurá por <b>tenantId</b> y <b>phoneNumberId</b> el token de WhatsApp, verify token y API key de OpenAI (colección <code>tenant_channels</code>). Podés marcar un canal como <b>Default</b> por tenant.</div>
+  <h1>Canales (WhatsApp / Instagram / OpenAI)</h1>
+  <div class="muted">Configurá por <b>tenantId</b> un canal de WhatsApp o Instagram y la API key de OpenAI (colección <code>tenant_channels</code>). Podés marcar un canal como <b>Default</b> por tenant.</div>
 
   <div id="msg"></div>
 
@@ -4922,17 +4936,36 @@ app.get("/canales", async (req, res) => {
         <label>TenantId</label>
         <input name="tenantId" value="${String(tenant||'').replace(/"/g,'&quot;')}" placeholder="default"/>
 
-        <label>Phone Number ID (Meta)</label>
-        <input name="phoneNumberId" placeholder="1234567890" required/>
+        <label>Tipo de canal</label>
+        <select name="channelType" id="channelType" style="width:100%;padding:10px 12px;border:1px solid #ccc;border-radius:8px">
+          <option value="whatsapp">WhatsApp</option>
+          <option value="instagram">Instagram</option>
+        </select>
 
-        <label>Display phone (opcional)</label>
-        <input name="displayPhoneNumber" placeholder="+54 9 ..."/>
+        <div id="waFields">
+          <label>Phone Number ID (Meta)</label>
+          <input name="phoneNumberId" placeholder="1234567890"/>
 
-        <label>WhatsApp Token</label>
-        <input name="whatsappToken" placeholder="EAAG..." />
+          <label>Display phone (opcional)</label>
+          <input name="displayPhoneNumber" placeholder="+54 9 ..."/>
 
-        <label>Verify Token</label>
-        <input name="verifyToken" placeholder="mi-token-verificacion" />
+          <label>WhatsApp Token</label>
+          <input name="whatsappToken" placeholder="EAAG..." />
+
+          <label>Verify Token</label>
+          <input name="verifyToken" placeholder="mi-token-verificacion" />
+        </div>
+
+        <div id="igFields" style="display:none">
+          <label>Instagram Account ID</label>
+          <input name="instagramAccountId" placeholder="1784..." />
+
+          <label>Facebook Page ID vinculada</label>
+          <input name="instagramPageId" placeholder="1234567890" />
+
+          <label>Instagram Access Token</label>
+          <input name="instagramAccessToken" placeholder="EAAG..." />
+        </div>
 
         <label>OpenAI API Key</label>
         <input name="openaiApiKey" placeholder="sk-..." />
@@ -4961,7 +4994,8 @@ app.get("/canales", async (req, res) => {
           <thead>
             <tr>
               <th>Tenant</th>
-              <th>PhoneNumberId</th>
+              <th>Tipo</th>
+              <th>Canal ID</th>
               <th>Display</th>
               <th>Default</th>
               <th>Updated</th>
@@ -4969,7 +5003,7 @@ app.get("/canales", async (req, res) => {
             </tr>
           </thead>
           <tbody id="tbody">
-            <tr><td colspan="6" class="muted">Cargando...</td></tr>
+            <tr><td colspan="7" class="muted">Cargando...</td></tr>
           </tbody>
         </table>
       </div>
@@ -4995,7 +5029,7 @@ app.get("/canales", async (req, res) => {
 
   async function load(){
     setMsg('', '');
-    tbody.innerHTML = '<tr><td colspan="6" class="muted">Cargando...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">Cargando...</td></tr>';
 
     let items = [];
     try {
@@ -5010,32 +5044,36 @@ app.get("/canales", async (req, res) => {
       if(!r.ok){
         const jErr = await r.json().catch(()=>null);
         const msg = (jErr && (jErr.error || jErr.message)) ? (jErr.error || jErr.message) : ('HTTP ' + r.status);
-        tbody.innerHTML = '<tr><td colspan="6">No se pudo cargar: '+esc(msg)+'</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7">No se pudo cargar: '+esc(msg)+'</td></tr>';
         return;
       }
 
       const ct = String(r.headers.get('content-type') || '').toLowerCase();
       if(!ct.includes('application/json')){
-        tbody.innerHTML = '<tr><td colspan="6">No se pudo cargar (respuesta no JSON). Probable sesión vencida/redirección a login. Refrescá o volvé a iniciar sesión.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7">No se pudo cargar (respuesta no JSON). Probable sesión vencida/redirección a login. Refrescá o volvé a iniciar sesión.</td></tr>';
         return;
       }
 
       const j = await r.json();
       items = Array.isArray(j.items) ? j.items : [];
       if(!items.length){
-        tbody.innerHTML = '<tr><td colspan="6" class="muted">No hay canales cargados.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="muted">No hay canales cargados.</td></tr>';
         return;
       }
 
       tbody.innerHTML = items.map(it => {
         const def = (it && it.isDefault) ? '✅' : '';
+        const channelId = (it.channelType === 'instagram')
+          ? (it.instagramAccountId || '')
+          : (it.phoneNumberId || '');
         const btnDefault = it.isDefault ? '' :
-          '<button type="button" class="secondary" data-make-default="1" data-tenant="'+esc(it.tenantId||'')+'" data-phone="'+esc(it.phoneNumberId||'')+'">Hacer default</button>';
+          '<button type="button" class="secondary" data-make-default="1" data-tenant="'+esc(it.tenantId||'')+'" data-type="'+esc(it.channelType||'whatsapp')+'" data-phone="'+esc(it.phoneNumberId||'')+'" data-ig="'+esc(it.instagramAccountId||'')+'">Hacer default</button>';
 
         return '<tr>'+
           '<td><span class="pill">'+esc(it.tenantId||'')+'</span></td>'+
-          '<td>'+esc(it.phoneNumberId||'')+'</td>'+
-          '<td>'+esc(it.displayPhoneNumber||'')+'</td>'+
+          '<td>'+esc(it.channelType||'whatsapp')+'</td>'+
+          '<td>'+esc(channelId)+'</td>'+
+          '<td>'+esc(it.displayPhoneNumber || it.instagramPageId || '')+'</td>'+
           '<td>'+def+'</td>'+
           '<td class="muted">'+esc(it.updatedAt||it.createdAt||'')+'</td>'+
           '<td class="actions">'+
@@ -5053,16 +5091,21 @@ app.get("/canales", async (req, res) => {
           if(!it) return;
 
           form.tenantId.value = it.tenantId || '';
+          if (form.channelType) form.channelType.value = it.channelType || 'whatsapp';
           form.phoneNumberId.value = it.phoneNumberId || '';
           form.displayPhoneNumber.value = it.displayPhoneNumber || '';
+          form.instagramAccountId.value = it.instagramAccountId || '';
+          form.instagramPageId.value = it.instagramPageId || '';
 
           // secretos pueden venir enmascarados si no sos superadmin
           form.whatsappToken.value = (it.whatsappToken && it.whatsappToken !== '********') ? it.whatsappToken : '';
+          form.instagramAccessToken.value = (it.instagramAccessToken && it.instagramAccessToken !== '********') ? it.instagramAccessToken : '';
           form.verifyToken.value   = (it.verifyToken && it.verifyToken !== '********') ? it.verifyToken : '';
           form.openaiApiKey.value  = (it.openaiApiKey && it.openaiApiKey !== '********') ? it.openaiApiKey : '';
           if (form.messageDebounceMs) form.messageDebounceMs.value = String(it.messageDebounceMs ?? '');
           const cb = form.querySelector('input[name="isDefault"]');
           if (cb) cb.checked = !!it.isDefault;
+          toggleChannelFields();
 
           window.scrollTo({ top: 0, behavior: 'smooth' });
         });
@@ -5072,13 +5115,17 @@ app.get("/canales", async (req, res) => {
       tbody.querySelectorAll('button[data-make-default]').forEach(btn=>{
         btn.addEventListener('click', async ()=>{
           const t = btn.getAttribute('data-tenant') || '';
+          const type = btn.getAttribute('data-type') || 'whatsapp';
           const p = btn.getAttribute('data-phone') || '';
-          if(!t || !p) return;
+          const ig = btn.getAttribute('data-ig') || '';
+          if(!t || (type === 'instagram' ? !ig : !p)) return;
 
           setMsg('', '');
           const data = new URLSearchParams();
           data.set('tenantId', t);
-          data.set('phoneNumberId', p);
+          data.set('channelType', type);
+          if (type === 'instagram') data.set('instagramAccountId', ig);
+          else data.set('phoneNumberId', p);
           data.set('isDefault', '1');
 
           const rr = await fetch('/api/tenant-channels', {
@@ -5100,7 +5147,7 @@ app.get("/canales", async (req, res) => {
 
     } catch (e) {
       console.error('[canales] load error:', e);
-      tbody.innerHTML = '<tr><td colspan="6">Error cargando canales: '+esc(e?.message || String(e))+'</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7">Error cargando canales: '+esc(e?.message || String(e))+'</td></tr>';
     }
   }
 
@@ -5126,10 +5173,25 @@ app.get("/canales", async (req, res) => {
     await load();
   });
 
+  function toggleChannelFields(){
+    const type = (form.channelType && form.channelType.value) || 'whatsapp';
+    const wa = document.getElementById('waFields');
+    const ig = document.getElementById('igFields');
+    if (wa) wa.style.display = type === 'instagram' ? 'none' : '';
+    if (ig) ig.style.display = type === 'instagram' ? '' : 'none';
+  }
+
+  if (form.channelType) {
+    form.channelType.addEventListener('change', toggleChannelFields);
+    toggleChannelFields();
+  }
+
   btnClear.addEventListener('click', ()=>{
     const keepTenant = form.tenantId.value;
     form.reset();
     form.tenantId.value = keepTenant;
+    if (form.channelType) form.channelType.value = 'whatsapp';
+    toggleChannelFields();
     setMsg('', '');
   });
 
@@ -5305,33 +5367,72 @@ app.post("/webhook", async (req, res) => {
     }
 // ✅ PARSEO CORRECTO DEL PAYLOAD WHATSAPP
 
-    const change = req.body?.entry?.[0]?.changes?.[0];
+    const entry0 = req.body?.entry?.[0] || {};
+    const change = entry0?.changes?.[0];
     const value  = change?.value;
+    const messagingEvt = entry0?.messaging?.[0] || null;
 const phoneNumberIdInbound =
   value?.metadata?.phone_number_id ||
   value?.metadata?.phoneNumberId ||
   value?.metadata?.phone_number ||
   null;
 
-// Runtime por canal (WhatsApp/OpenAI) desde Mongo.
-// Si no existe, cae a .env (100% retrocompatible).
+const instagramAccountIdInbound =
+  value?.metadata?.instagram_account_id ||
+  value?.metadata?.instagram_accountId ||
+  value?.metadata?.page_id ||
+  value?.metadata?.pageId ||
+  value?.recipient?.id ||
+  messagingEvt?.recipient?.id ||
+  null;
+
+// Runtime por canal desde Mongo.
+// Si no existe, cae a .env (retrocompatible para WhatsApp).
 let runtime = null;
-try { runtime = await getRuntimeByPhoneNumberId(phoneNumberIdInbound); } catch {}
+let channelType = "whatsapp";
+let msg = value?.messages?.[0];   // mensaje entrante (texto/audio/etc.)
+const status = value?.statuses?.[0];   // (se ignora para persistencia)
+
+if (!msg && messagingEvt?.message) {
+  channelType = "instagram";
+  const attachments = Array.isArray(messagingEvt.message.attachments) ? messagingEvt.message.attachments : [];
+  const firstAttachment = attachments[0] || null;
+  msg = {
+    from: messagingEvt.sender?.id || "",
+    text: messagingEvt.message.text ? { body: messagingEvt.message.text } : undefined,
+    type: messagingEvt.message.text ? "text" : (firstAttachment?.type || "text"),
+    instagram_mid: messagingEvt.message.mid || null,
+    attachments,
+  };
+  if (!msg.text?.body && firstAttachment) {
+    msg.text = { body: `[adjunto instagram: ${firstAttachment.type || "archivo"}]` };
+  }
+} else if (String(value?.messaging_product || "").trim().toLowerCase() === "instagram") {
+  channelType = "instagram";
+}
+
+try {
+  if (channelType === "instagram") runtime = await getRuntimeByInstagramAccountId(instagramAccountIdInbound);
+  else runtime = await getRuntimeByPhoneNumberId(phoneNumberIdInbound);
+} catch {}
 const tenant = String(runtime?.tenantId || DEFAULT_TENANT_ID || TENANT_ID || "default").trim();
 
-const waOpts = {
+const channelOpts = {
+  channelType,
   whatsappToken: runtime?.whatsappToken || null,
   phoneNumberId: runtime?.phoneNumberId || phoneNumberIdInbound || null,
+  instagramAccountId: runtime?.instagramAccountId || instagramAccountIdInbound || null,
+  instagramPageId: runtime?.instagramPageId || null,
+  instagramAccessToken: runtime?.instagramAccessToken || null,
 };
 const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
 
-    const msg    = value?.messages?.[0];   // mensaje entrante (texto/audio/etc.)
-    const status = value?.statuses?.[0];   // (se ignora para persistencia)
     if (!msg) {
       console.warn("[webhook] evento sin messages; se ignora");
       return res.sendStatus(200);
     }
     const from = msg.from;
+    const sessionFrom = channelType === "instagram" ? `instagram:${from}` : from;
     let text   = (msg.text?.body || "").trim();
     const msgType = msg.type;
     let inboundLocation = null;
@@ -5341,8 +5442,8 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
       text = msg.text.body;
     } else if (msg.type === "audio" && msg.audio?.id) {
       try {
-        const info = await getMediaInfo(msg.audio.id, waOpts);
-        const buf = await downloadMediaBuffer(info.url, waOpts);
+        const info = await getMediaInfo(msg.audio.id, channelOpts);
+        const buf = await downloadMediaBuffer(info.url, channelOpts);
         const id = putInCache(buf, info.mime_type || "audio/ogg");
         const publicAudioUrl = `${req.protocol}://${req.get("host")}/cache/audio/${id}`;
         const tr = await transcribeAudioExternal({ publicAudioUrl, buffer: buf, mime: info.mime_type, ...aiOpts });
@@ -5355,8 +5456,8 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
       }
      } else if (msg.type === "image" && msg.image?.id) {
       try {
-        const info = await getMediaInfo(msg.image.id, waOpts);
-        const buf = await downloadMediaBuffer(info.url, waOpts);
+        const info = await getMediaInfo(msg.image.id, channelOpts);
+        const buf = await downloadMediaBuffer(info.url, channelOpts);
         const id = putInCache(buf, info.mime_type || "image/jpeg");
         const publicImageUrl = `${req.protocol}://${req.get("host")}/cache/media/${id}`;
 
@@ -5439,8 +5540,11 @@ const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
      try {
        // Guardamos el canal/telefono por el que entró el mensaje para poder verlo en Admin UI
        conv = await upsertConversation(from, {
-         phoneNumberId: waOpts?.phoneNumberId || null,
+         channelType,
+         phoneNumberId: channelOpts?.phoneNumberId || null,
          displayPhoneNumber: runtime?.displayPhoneNumber || null,
+         instagramAccountId: channelOpts?.instagramAccountId || null,
+         instagramPageId: channelOpts?.instagramPageId || null,
        }, tenant);
      } catch (e) { console.error("upsertConversation:", e?.message); }
      // Guardamos phoneNumberId para poder responder/operar por el mismo canal luego (admin, etc.)
@@ -5452,7 +5556,7 @@ console.log("[convId] "+ convId);
 
     // ✅ Si se creó una conversación nueva, reseteamos historial del LLM
     // para que un nuevo pedido no arrastre contexto del pedido anterior.
-    if (convId) syncSessionConversation(tenant, from, convId);
+    if (convId) syncSessionConversation(tenant, sessionFrom, convId);
 
        if (convId) {
       console.log("[messages] about to save USER message", { convId, from, type: msg.type, textPreview: String(text).slice(0,80) });
@@ -5464,7 +5568,7 @@ console.log("[convId] "+ convId);
           role: "user",
           content: text,
           type: msg.type || "text",
-           meta: { raw: msg, media: msg.__media || null, location: msg.__location || null }
+           meta: { raw: msg, media: msg.__media || null, location: msg.__location || null, channelType }
         });
       } catch (e) { console.error("saveMessage(user):", e?.message); }
     }
@@ -5476,56 +5580,80 @@ console.log("[convId] "+ convId);
    }
 
     // ================== Debounce configurable (solo mensajes text) ==================
-    // - Retrocompatible: si messageDebounceMs=0 => no cambia nada
-    // - Si >0: junta varios mensajes text y llama al LLM una sola vez
-    const debounceMs = clampInt(runtime?.messageDebounceMs ?? runtime?.debounceMs ?? 0, 0, 5000);
-    if (debounceMs > 0 && msg.type === "text") {
-       // key estable: convId si existe; si no, tenant+canal+from
-      const key = convId
-        ? `${tenant}:${waOpts?.phoneNumberId || "env"}:${convId}`
-        : `${tenant}:${waOpts?.phoneNumberId || "env"}:${from}`;
-      let batch = pendingTextBatches.get(key);
-      if (!batch) {
-       batch = { texts: [], leader: false, createdAt: Date.now() };
-        pendingTextBatches.set(key, batch);
-      }
+// - Retrocompatible: si messageDebounceMs=0 => no cambia nada
+// - Si >0: junta varios mensajes text y llama al LLM una sola vez
+const debounceMs = clampInt(runtime?.messageDebounceMs ?? runtime?.debounceMs ?? 0, 0, 5000);
+const debounceKey = convId
+  ? `${tenant}:${channelType}:${channelOpts?.phoneNumberId || channelOpts?.instagramAccountId || "env"}:${convId}`
+  : `${tenant}:${channelType}:${channelOpts?.phoneNumberId || channelOpts?.instagramAccountId || "env"}:${from}`;
 
-      // guardamos el texto de este mensaje
-      const t = String(text || "").trim();
-       if (t) {
-        // dedupe simple: no agregar si es igual al último
-        const last = batch.texts.length ? batch.texts[batch.texts.length - 1] : null;
-        if (last !== t) batch.texts.push(t);
-      }
+// Si entra un mensaje NO-text (ej. location), cancelamos cualquier tanda
+// pendiente de texto para que no se procese una dirección vieja después.
+if (debounceMs > 0 && msg.type !== "text") {
+  const pending = pendingTextBatches.get(debounceKey);
+  if (pending) {
+    pending.cancelled = true;
+    pendingTextBatches.delete(debounceKey);
+    console.log(`[debounce] lote cancelado por mensaje ${msg.type} key=${debounceKey}`);
+  }
+}
 
-      // si ya hay otro request “líder” esperando, este request termina acá (Meta recibe 200)
-      if (batch.leader) {
-        return res.sendStatus(200);
-      }
+if (debounceMs > 0 && msg.type === "text") {
+  // key estable: convId si existe; si no, tenant+canal+from
+  const key = debounceKey;
+  let batch = pendingTextBatches.get(key);
+  if (!batch) {
+    batch = { texts: [], leader: false, createdAt: Date.now(), cancelled: false };
+    pendingTextBatches.set(key, batch);
+  }
 
-      // este request se convierte en líder: espera y luego procesa todo junto
-      batch.leader = true;
-      await sleep(debounceMs);
+  // guardamos el texto de este mensaje
+  const t = String(text || "").trim();
+  if (t) {
+    // dedupe simple: no agregar si es igual al último
+    const last = batch.texts.length ? batch.texts[batch.texts.length - 1] : null;
+    if (last !== t) batch.texts.push(t);
+  }
 
-      // recuperar lote final y liberarlo
-      const finalBatch = pendingTextBatches.get(key);
-      pendingTextBatches.delete(key);
-      const parts = Array.isArray(finalBatch?.texts) ? finalBatch.texts : [];
+  // si ya hay otro request “líder” esperando, este request termina acá
+  if (batch.leader) {
+    return res.sendStatus(200);
+  }
 
+  // este request se convierte en líder: espera y luego procesa todo junto
+  batch.leader = true;
+  await sleep(debounceMs);
 
-      // dedupe extra (caso típico: "hola" al inicio y repetido al final)
-      if (parts.length >= 2 && parts[0] === parts[parts.length - 1]) {
-        parts.pop();
-      }
-      // limpiar vacíos
-      const clean = parts.map(x => String(x||"").trim()).filter(Boolean);
+  // recuperar lote final y liberarlo
+  const finalBatch = pendingTextBatches.get(key);
+  pendingTextBatches.delete(key);
 
-      // unir como pidió el usuario: separados por coma
-      // ejemplo: "hola", "quiero 2", "y 1" => "hola, quiero 2, y 1"
-      text = clean.join(", ");
-    }
+  if (!finalBatch || finalBatch.cancelled) {
+    console.log(`[debounce] líder cancelado key=${key}`);
+    return res.sendStatus(200);
+  }
 
-    const runKey = buildProcessingRunKey(tenant, waOpts?.phoneNumberId, convId, from);
+  const parts = Array.isArray(finalBatch?.texts) ? finalBatch.texts : [];
+
+  // dedupe extra (caso típico: "hola" al inicio y repetido al final)
+  if (parts.length >= 2 && parts[0] === parts[parts.length - 1]) {
+    parts.pop();
+  }
+
+  // limpiar vacíos
+  const clean = parts.map(x => String(x || "").trim()).filter(Boolean);
+
+  // unir como pidió el usuario: separados por coma
+  // ejemplo: "hola", "quiero 2", "y 1" => "hola, quiero 2, y 1"
+  text = clean.join(", ");
+
+  if (!text) {
+    console.log(`[debounce] lote vacío, no se procesa key=${key}`);
+    return res.sendStatus(200);
+  }
+}
+
+    const runKey = buildProcessingRunKey(tenant, `${channelType}:${channelOpts?.phoneNumberId || channelOpts?.instagramAccountId || "env"}`, convId, from);
 
     await withConversationRunLock(runKey, async ({ runSeq, isStale }) => {
       if (isStale()) {
@@ -5535,18 +5663,18 @@ console.log("[convId] "+ convId);
 
       // Si el mensaje NO es solo un cierre de cortesía, limpiamos el flag de sesión terminada
       if (!isPoliteClosingMessage(text)) {
-        clearEndedFlag(tenant, from);
+        clearEndedFlag(tenant, sessionFrom);
       }
-      if (hasActiveEndedFlag(tenant, from)) {
+      if (hasActiveEndedFlag(tenant, sessionFrom)) {
         if (isPoliteClosingMessage(text)) {
           if (isStale()) {
             console.log(`[webhook][stale-run] polite close dropped key=${runKey} seq=${runSeq}`);
             return;
           }
-          await require("./logic").sendWhatsAppMessage(
+          await require("./logic").sendChannelMessage(
             from,
             "¡Gracias! 😊 Cuando quieras hacemos otro pedido.",
-            waOpts
+            channelOpts
           );
           return;
         }
@@ -5564,7 +5692,7 @@ console.log("[convId] "+ convId);
         try { snapshot = JSON.parse(require("./logic").__proto__ ? "{}" : "{}"); } catch {}
         // En minimal guardamos snapshot siempre; si no lo tenés a mano, seguimos y dejamos que el modelo lo complete
       }
-      const gptReply = await getGPTReply(tenant, from, text, aiOpts);
+      const gptReply = await getGPTReply(tenant, sessionFrom, text, aiOpts);
       if (isStale()) {
         console.log(`[webhook][stale-run] drop GPT reply key=${runKey} seq=${runSeq}`);
         return;
@@ -5681,7 +5809,7 @@ console.log("[convId] "+ convId);
         ].join("\n");
 
         for (let attempt = 1; attempt <= (Number(process.env.CALC_FIX_MAX_RETRIES || 3)); attempt++) {
-          const fixReply = await getGPTReply(tenant, from, `${baseCorrection}\n[INTENTO:${attempt}/${process.env.CALC_FIX_MAX_RETRIES || 3}]`, aiOpts);
+          const fixReply = await getGPTReply(tenant, sessionFrom, `${baseCorrection}\n[INTENTO:${attempt}/${process.env.CALC_FIX_MAX_RETRIES || 3}]`, aiOpts);
           console.log(`[fix][${attempt}] assistant.content =>\n${fixReply}`);
           try {
             const parsedFix = JSON.parse(fixReply);
@@ -6002,7 +6130,7 @@ console.log("[convId] "+ convId);
       console.log(`[webhook][stale-run] abort before send key=${runKey} seq=${runSeq}`);
       return;
     }
-     await require("./logic").sendWhatsAppMessage(from, responseTextSafe, waOpts);
+     await require("./logic").sendChannelMessage(from, responseTextSafe, channelOpts);
     if (isStale()) {
       console.log(`[webhook][stale-run] abort after send before persist key=${runKey} seq=${runSeq}`);
       return;
@@ -6167,10 +6295,10 @@ console.log("[convId] "+ convId);
         }
       }
    // 🔹 Mantener snapshot del asistente
-setAssistantPedidoSnapshot(tenant, from, pedido, estado);
+setAssistantPedidoSnapshot(tenant, sessionFrom, pedido, estado);
 
    // 🔹 Mantener snapshot del asistente
-	setAssistantPedidoSnapshot(tenant, from, pedido, estado);
+	setAssistantPedidoSnapshot(tenant, sessionFrom, pedido, estado);
 
 	// 🔎 Heurística: si el usuario pidió cancelar, forzamos CANCELLED para el cierre
 	// (esto evita que el /admin muestre COMPLETED cuando el modelo respondió mal el estado)
@@ -6261,7 +6389,7 @@ if (willComplete && pedido && convId) {
 	        }
 
 	        // 🧹 limpiar sesión en memoria para que el próximo msg empiece conversación nueva
-	        markSessionEnded(tenant, from);
+	        markSessionEnded(tenant, sessionFrom);
 	      }
     } catch {}
     });

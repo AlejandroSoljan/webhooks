@@ -30,12 +30,16 @@ function _normalizeRuntime(doc) {
   if (!doc || typeof doc !== "object") return null;
   return {
     tenantId: String(doc.tenantId || "").trim() || null,
+    channelType: String(doc.channelType || "whatsapp").trim().toLowerCase() || "whatsapp",
     phoneNumberId: String(doc.phoneNumberId || "").trim() || null,
     displayPhoneNumber: String(doc.displayPhoneNumber || "").trim() || null,
+    instagramAccountId: String(doc.instagramAccountId || "").trim() || null,
+    instagramPageId: String(doc.instagramPageId || "").trim() || null,
     isDefault: !!doc.isDefault,
     // NUEVO: debounce por canal (ms). 0 = sin espera (retrocompatible)
     messageDebounceMs: clampInt(doc.messageDebounceMs ?? doc.debounceMs ?? 0, 0, 30000),
     whatsappToken: String(doc.whatsappToken || "").trim() || null,
+    instagramAccessToken: String(doc.instagramAccessToken || "").trim() || null,
     verifyToken: String(doc.verifyToken || "").trim() || null,
     openaiApiKey: String(doc.openaiApiKey || "").trim() || null,
   };
@@ -50,6 +54,25 @@ async function getRuntimeByPhoneNumberId(phoneNumberId) {
 
   const db = await getDb();
   const doc = await db.collection("tenant_channels").findOne({ phoneNumberId: pid });
+  const val = _normalizeRuntime(doc);
+  if (val) _cacheSet(ck, val);
+  return val;
+}
+
+async function getRuntimeByInstagramAccountId(instagramAccountId) {
+  const igid = String(instagramAccountId || "").trim();
+  if (!igid) return null;
+  const ck = `instagram:${igid}`;
+  const cached = _cacheGet(ck);
+  if (cached) return cached;
+
+  const db = await getDb();
+  const doc = await db.collection("tenant_channels").findOne({
+    $or: [
+      { instagramAccountId: igid },
+      { instagramPageId: igid },
+    ],
+  });
   const val = _normalizeRuntime(doc);
   if (val) _cacheSet(ck, val);
   return val;
@@ -100,17 +123,36 @@ async function findAnyByVerifyToken(verifyToken) {
 async function upsertTenantChannel(payload, { allowSecrets = true } = {}) {
   const p = payload || {};
   const tenantId = String(p.tenantId || "").trim();
+  const channelType = String(p.channelType || "whatsapp").trim().toLowerCase() || "whatsapp";
   const phoneNumberId = String(p.phoneNumberId || "").trim();
+  const instagramAccountId = String(p.instagramAccountId || "").trim();
+  const instagramPageId = String(p.instagramPageId || "").trim();
   if (!tenantId) throw new Error("tenantId_required");
-  if (!phoneNumberId) throw new Error("phoneNumberId_required");
+  if (channelType === "instagram") {
+    if (!instagramAccountId) throw new Error("instagramAccountId_required");
+  } else {
+    if (!phoneNumberId) throw new Error("phoneNumberId_required");
+  }
   const messageDebounceMs = clampInt(p.messageDebounceMs ?? p.debounceMs ?? 0, 0, 30000);
 
+  const selector = channelType === "instagram"
+    ? { tenantId, channelType, instagramAccountId }
+    : { tenantId, channelType, phoneNumberId };
+
   const update = {
-    $setOnInsert: { tenantId, phoneNumberId, createdAt: new Date() },
-    $set: { updatedAt: new Date() },
+    $setOnInsert: {
+      tenantId,
+      channelType,
+      ...(channelType === "instagram"
+        ? { instagramAccountId, createdAt: new Date() }
+        : { phoneNumberId, createdAt: new Date() })
+    },
+    $set: { updatedAt: new Date(), channelType },
   };
 
  if (p.isDefault !== undefined) update.$set.isDefault = !!p.isDefault;
+  if (p.displayPhoneNumber !== undefined) update.$set.displayPhoneNumber = String(p.displayPhoneNumber || "").trim();
+  if (p.instagramPageId !== undefined) update.$set.instagramPageId = instagramPageId;
   // NUEVO: persistir debounce ms (0..30000)
   if (p.messageDebounceMs !== undefined || p.debounceMs !== undefined) {
     update.$set.messageDebounceMs = messageDebounceMs;
@@ -118,20 +160,23 @@ async function upsertTenantChannel(payload, { allowSecrets = true } = {}) {
 
   if (allowSecrets) {
     if (p.whatsappToken !== undefined) update.$set.whatsappToken = String(p.whatsappToken || "").trim();
+    if (p.instagramAccessToken !== undefined) update.$set.instagramAccessToken = String(p.instagramAccessToken || "").trim();
     if (p.verifyToken !== undefined) update.$set.verifyToken = String(p.verifyToken || "").trim();
     if (p.openaiApiKey !== undefined) update.$set.openaiApiKey = String(p.openaiApiKey || "").trim();
   }
 
   const db = await getDb();
   const r = await db.collection("tenant_channels").updateOne(
-    { tenantId, phoneNumberId },
+    selector,
     update,
     { upsert: true }
   );
 
   // invalidar cache relacionado
   cache.delete(`tenant:${tenantId}`);
-  cache.delete(`phone:${phoneNumberId}`);
+  if (phoneNumberId) cache.delete(`phone:${phoneNumberId}`);
+  if (instagramAccountId) cache.delete(`instagram:${instagramAccountId}`);
+  if (instagramPageId) cache.delete(`instagram:${instagramPageId}`);
 
   return { ok: true, upserted: !!r.upsertedId, modified: r.modifiedCount };
 }

@@ -342,6 +342,40 @@ async function sendWhatsAppMessage(to, text, opts = {}) {
   }
 }
 
+async function sendInstagramMessage(to, text, opts = {}) {
+  try {
+    const body = String(text ?? "").trim();
+    if (!body) {
+      console.error("Instagram: intento de envío con text vacío. Se omite el envío.");
+      return;
+    }
+    const pageId = String(opts.instagramPageId || "").trim();
+    const token = String(opts.instagramAccessToken || "").trim();
+    if (!pageId) throw new Error("missing_instagram_page_id");
+    if (!token) throw new Error("missing_instagram_access_token");
+
+    await axios.post(
+      `https://graph.facebook.com/${GRAPH_API_VERSION}/${pageId}/messages`,
+      {
+        recipient: { id: String(to || "").trim() },
+        messaging_type: "RESPONSE",
+        message: { text: body }
+      },
+      { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
+    );
+  } catch (error) {
+    console.error("Error enviando Instagram:", error.response?.data || error.message);
+  }
+}
+
+async function sendChannelMessage(to, text, opts = {}) {
+  const channelType = String(opts.channelType || "whatsapp").trim().toLowerCase();
+  if (channelType === "instagram") {
+    return sendInstagramMessage(to, text, opts);
+  }
+  return sendWhatsAppMessage(to, text, opts);
+}
+
 // ================== Media (audio) ==================
 async function getMediaInfo(mediaId, opts = {}) {
   const token = String(opts.whatsappToken || WHATSAPP_TOKEN || "").trim();
@@ -1297,6 +1331,8 @@ module.exports = {
 
   // whatsapp + media + stt
   sendWhatsAppMessage,
+  sendInstagramMessage,
+  sendChannelMessage,
   getMediaInfo,
   downloadMediaBuffer,
   transcribeAudioExternal,
