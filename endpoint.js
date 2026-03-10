@@ -12,6 +12,7 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOK
 // ⬇️ Para catálogo en Mongo
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
+const { ObjectId } = require("mongodb");
 const { getRuntimeByPhoneNumberId, getRuntimeByInstagramAccountId, findAnyByVerifyToken, upsertTenantChannel } = require("./tenant_runtime");
 const TENANT_ID = (process.env.TENANT_ID || "").trim();
 // ================== Debounce de textos (por tenant+canal+waId+convId) ==================
@@ -918,6 +919,11 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
               ...(horaEntrega  ? { pedidoHora:  horaEntrega  } : {}),
               ...(nombreFromPedido ? { contactName: nombreFromPedido } : {}),
               ...(estadoStr ? { pedidoEstado: estadoStr } : {}),
+              lastPedidoSnapshot: {
+                estado: estadoStr || null,
+                Pedido: pedido
+              },
+              lastPedidoSnapshotAt: now,
               ...(isFinalEstado ? { finalized: true, status: estadoStr, closedAt: now } : {})
     
             }

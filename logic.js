@@ -30,7 +30,7 @@ const STORE_LNG = parseFloat(process.env.STORE_LNG || "");
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || "";
 
 const { getDb } = require("./db");
-
+const { ObjectId } = require("mongodb");
 // ================== OpenAI client (para fallback STT) ==================
 let openai = null;
 const openaiByKey = new Map();
@@ -318,6 +318,58 @@ function clearEndedFlag(tenantId, from) {
   const id = k(tenantId, from);
   delete endedSessions[id];
 }
+
+ 
+async function hydrateSessionStateFromDb(tenantId, from, historyMode, fullSystem) {
+  try {
+    const id = k(tenantId, from);
+    const convId = currentConversationIds[id];
+    if (!convId) return false;
+
+   const db = await getDb();
+    const convObjectId = new ObjectId(String(convId));
+    const tenant = String(tenantId || DEFAULT_TENANT_ID || "default");
+
+    const conv = await db.collection("conversations").findOne({ _id: convObjectId, tenantId: tenant });
+    const rows = await db.collection("messages")
+      .find({ conversationId: convObjectId, tenantId: tenant })
+      .sort({ ts: 1, _id: 1 })
+      .limit(100)
+      .toArray();
+    if (String(historyMode || "").toLowerCase() === "minimal") {
+      userOnlyHistories[id] = rows
+        .filter(r => String(r?.role || "") === "user")
+        .map(r => ({ role: "user", content: String(r?.content || "") }))
+        .filter(r => r.content.trim());
+
+      const snap = conv?.lastPedidoSnapshot;
+      if (snap && typeof snap === "object") {
+        try {
+          assistantPedidoSnapshot[id] = JSON.stringify(snap);
+        } catch {}
+      } else if (!assistantPedidoSnapshot[id]) {
+        assistantPedidoSnapshot[id] = JSON.stringify({ estado: "IN_PROGRESS", Pedido: { items: [], total_pedido: 0 } });
+      }
+      return true;
+    }
+
+    const restored = [{ role: "system", content: fullSystem }];
+    for (const row of rows) {
+      const role = String(row?.role || "");
+      if (role !== "user" && role !== "assistant") continue;
+      if (String(row?.type || "text") === "json") continue;
+      const content = String(row?.content || "");
+      if (!content.trim()) continue;
+      restored.push({ role, content });
+    }
+    chatHistories[id] = restored;
+    return true;
+  } catch (e) {
+    console.warn("[history] no se pudo rehidratar sesión desde Mongo:", e?.message || e);
+    return false;
+  }
+}
+
 
 // ================== WhatsApp ==================
 async function sendWhatsAppMessage(to, text, opts = {}) {
@@ -916,6 +968,9 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
   let messages = [];
 
   if (historyMode === "minimal") {
+    if ((!userOnlyHistories[id] || !assistantPedidoSnapshot[id]) && currentConversationIds[id]) {
+      await hydrateSessionStateFromDb(tenantId, from, historyMode, fullSystem);
+    }
     if (!userOnlyHistories[id]) userOnlyHistories[id] = [];
     if (!assistantPedidoSnapshot[id]) {
       assistantPedidoSnapshot[id] = JSON.stringify({ estado: "IN_PROGRESS", Pedido: { items: [], total_pedido: 0 } });
@@ -923,14 +978,27 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
     messages = [{ role: "system", content: fullSystem }];
     const asst = assistantPedidoSnapshot[id];
     if (asst) messages.push({ role: "assistant", content: asst });
-    const seq = userOnlyHistories[id].concat([{ role: "user", content: userMessage }]);
+    const alreadySeededCurrentUser = (() => {
+      const last = userOnlyHistories[id]?.[userOnlyHistories[id].length - 1];
+      return last && last.role === "user" && String(last.content || "") === String(userMessage || "");
+    })();
+    const seq = alreadySeededCurrentUser
+      ? userOnlyHistories[id].slice()
+      : userOnlyHistories[id].concat([{ role: "user", content: userMessage }]);
     messages.push(...seq);
-    userOnlyHistories[id].push({ role: "user", content: userMessage });
+    if (!alreadySeededCurrentUser) {
+      userOnlyHistories[id].push({ role: "user", content: userMessage });
+    }
 
    // console.log("[minimal] comportamiento =>\n" + baseText);
    // console.log("[minimal] messages => " + safeStringify(messages));
     //console.log("[minimal] userOnlyHistories => " + safeStringify(userOnlyHistories[id]));
   } else {
+    // --- standard history: si se perdió memoria, rehidratar desde Mongo usando la conversación actual ---
+    if (!chatHistories[id] && currentConversationIds[id]) {
+      await hydrateSessionStateFromDb(tenantId, from, historyMode, fullSystem);
+    }
+
     // --- standard history: refrescar siempre el primer system con [AHORA] actualizado ---
     if (!chatHistories[id]) {
       chatHistories[id] = [{ role: "system", content: fullSystem }];
@@ -938,7 +1006,11 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       // 🔁 Refresh del bloque system para que [AHORA] sea siempre el del turno actual
       chatHistories[id][0] = { role: "system", content: fullSystem };
     }
-    chatHistories[id].push({ role: "user", content: userMessage });
+    const lastMsg = chatHistories[id][chatHistories[id].length - 1];
+    const alreadySeededCurrentUser = lastMsg && lastMsg.role === "user" && String(lastMsg.content || "") === String(userMessage || "");
+    if (!alreadySeededCurrentUser) {
+      chatHistories[id].push({ role: "user", content: userMessage });
+    }
     messages = chatHistories[id];
   }
 
