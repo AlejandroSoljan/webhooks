@@ -649,6 +649,30 @@ function compareConvsForEntrega(a, b) {
   return _toMs(b.lastAt) - _toMs(a.lastAt);
 }
 
+function buildAdminProductLinesFromPedido(pedido) {
+  const items = Array.isArray(pedido?.items) ? pedido.items : [];
+  return items
+    .map((it) => {
+      const descripcion = String(it?.descripcion || "").trim();
+      if (!descripcion) return "";
+      if (/env[ií]o/i.test(descripcion)) return "";
+      const qtyNum = Number(it?.cantidad);
+      const qty = Number.isFinite(qtyNum) && qtyNum > 0
+        ? String(qtyNum).replace(/\.0+$/g, "")
+        : "";
+      return qty ? `${qty} x ${descripcion}` : descripcion;
+    })
+    .filter(Boolean);
+}
+
+function buildAdminProductSummaryFromPedido(pedido) {
+  const lines = buildAdminProductLinesFromPedido(pedido);
+  return {
+    productLines: lines,
+    productsText: lines.length ? lines.join("\n") : "-"
+  };
+}
+
 
 async function saveLog(entry) {
   try {
@@ -1084,7 +1108,8 @@ async function _getLastPedidoSummary(db, convId, tenantId) {
         if (j && j.Pedido && Array.isArray(j.Pedido.items)) { pedido = j.Pedido; break; }
       } catch {}
     }
-    if (!pedido) return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-", direccion: "-" };
+    if (!pedido) return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-", direccion: "-", productLines: [], productsText: "-" };
+ 
 
     // Entrega/Envío
     const entregaRaw = String(pedido.Entrega || "").trim().toLowerCase();
@@ -1111,13 +1136,13 @@ async function _getLastPedidoSummary(db, convId, tenantId) {
     if (!direccion && envio) {
       direccion = String(envio.descripcion || "").trim();
     }
-
+    const productSummary = buildAdminProductSummaryFromPedido(pedido);
     // Día/Hora
     const fechaEntrega = /^\d{4}-\d{2}-\d{2}$/.test(String(pedido.Fecha || "")) ? pedido.Fecha : "-";
     const horaEntrega  = /^\d{2}:\d{2}$/.test(String(pedido.Hora  || "")) ? pedido.Hora  : "-";
-    return { entregaLabel, fechaEntrega, horaEntrega, direccion: direccion || "-" };
+    return { entregaLabel, fechaEntrega, horaEntrega, direccion: direccion || "-", ...productSummary };
   } catch {
-    return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-", direccion: "-" };
+    return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-", direccion: "-", productLines: [], productsText: "-" };
   }
 }
 
@@ -1152,7 +1177,7 @@ async function listConversations(limit = 50, tenantId, deliveredFilter = null) {
 
   if (convIds.length) {
     const cursor = db.collection("orders")
-      .find({ conversationId: { $in: convIds } })
+      .find(withTenant({ conversationId: { $in: convIds } }, tenantId))
       .sort({ createdAt: -1 });
 
     for await (const ord of cursor) {
@@ -1186,6 +1211,12 @@ async function listConversations(limit = 50, tenantId, deliveredFilter = null) {
 
     // Preferir campos persistidos en conversations; si faltan, fallback a escanear mensajes
     if (c.pedidoEntregaLabel || c.pedidoFecha || c.pedidoHora || c.pedidoEntrega) {
+      const productSummary = buildAdminProductSummaryFromPedido(
+        ord?.pedido
+        || c?.lastPedidoSnapshot?.Pedido
+        || c?.lastPedidoSnapshot
+        || null
+      );
       const extra = {
         entregaLabel:
           c.pedidoEntregaLabel
@@ -1205,6 +1236,7 @@ async function listConversations(limit = 50, tenantId, deliveredFilter = null) {
       out.push({
         ...base,
         ...extra,
+         ...productSummary,
         ...(distanceKm !== null ? { distanceKm } : {})
       });
     }
@@ -2753,19 +2785,24 @@ app.get("/admin", async (req, res) => {
     .adminTable tbody tr:nth-child(even){background:#fcfdff}
     .adminTable tbody tr:hover{background:#f6fbff}
     .adminTable td{color:#1f2937;overflow:hidden;text-overflow:ellipsis}
-    .adminTable td[data-label="Acciones"]{overflow:visible;text-overflow:clip}
+    .adminTable td[data-label="Acciones"],
+    .adminTable td[data-label="Productos"]{overflow:visible;text-overflow:clip}
     .adminTable td[data-label="Distancia"],
     .adminTable td[data-label="Día"],
     .adminTable td[data-label="Hora"],
     .adminTable td[data-label="Estado"],
-    .adminTable th:nth-child(6),
     .adminTable th:nth-child(7),
     .adminTable th:nth-child(8),
-    .adminTable th:nth-child(9){padding-left:6px;padding-right:6px;white-space:nowrap;font-size:11px}
-    .cell-strong{font-weight:700;color:#0f172a}
+    .adminTable th:nth-child(9),
+    .adminTable th:nth-child(10){padding-left:6px;padding-right:6px;white-space:nowrap;font-size:11px}
+      .cell-strong{font-weight:700;color:#0f172a}
     .cell-subtle{display:block;margin-top:2px;color:#64748b;font-size:11px}
     .cell-ellipsis{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .cell-address{display:block;white-space:normal;overflow:visible;text-overflow:clip;line-height:1.32;word-break:break-word;overflow-wrap:anywhere}
+    .cell-products{display:flex;flex-direction:column;gap:4px;white-space:normal;overflow:visible;text-overflow:clip;line-height:1.3;word-break:break-word;overflow-wrap:anywhere}
+    .cell-products span{display:block}
+    .cell-products.is-empty{color:#94a3b8;font-style:italic}
+
     .delivery-pill{
       display:inline-flex;align-items:center;gap:5px;
       padding:4px 9px;border-radius:999px;
@@ -2785,6 +2822,7 @@ app.get("/admin", async (req, res) => {
     .c-actividad{width:72px}
     .c-telefono{width:84px}
     .c-nombre{width:96px}
+    .c-productos{width:260px}
     .c-entrega{width:70px}
     .c-direccion{width:220px}
     .c-dist{width:52px}
@@ -2865,7 +2903,7 @@ app.get("/admin", async (req, res) => {
       <div class="toolbar">
         <div class="field grow">
           <label for="qFilter">Buscar</label>
-          <input id="qFilter" placeholder="waId, nombre o dirección"/>
+          <input id="qFilter" placeholder="waId, nombre, dirección o producto"/>
         </div>
         <div class="field">
           <label for="delivFilter">Entrega</label>
@@ -2915,6 +2953,7 @@ app.get("/admin", async (req, res) => {
             <col class="c-actividad"/>
             <col class="c-telefono"/>
             <col class="c-nombre"/>
+            <col class="c-productos"/>
             <col class="c-entrega"/>
             <col class="c-direccion"/>
             <col class="c-dist"/>
@@ -2929,6 +2968,7 @@ app.get("/admin", async (req, res) => {
               <th>Actividad</th>
               <th>Teléfono</th>
               <th>Nombre</th>
+               <th>Productos</th>
               <th>Entrega</th>
               <th>Dirección</th>
               <th>Distancia</th>
@@ -3527,7 +3567,8 @@ app.get("/admin", async (req, res) => {
       c.direccion,
       c.entregaLabel,
       c.fechaEntrega,
-      c.horaEntrega
+      c.horaEntrega,
+      c.productsText
     ].map(v => String(v || '').toLowerCase()).join(' ');
     return haystack.includes(textFilter);
   }
@@ -3644,6 +3685,15 @@ app.get("/admin", async (req, res) => {
     if (raw === undefined || raw === null || raw === '') return '<span class="distance-badge">-</span>';
     return '<span class="distance-badge">' + escHtml(raw) + '</span>';
   }
+  function renderProductsHtml(lines, fallbackText){
+    const safeLines = (Array.isArray(lines) ? lines : String(fallbackText || '').split(/\n+/))
+      .map(v => String(v || '').trim())
+      .filter(Boolean);
+    if (!safeLines.length) {
+      return '<div class="cell-products is-empty"><span>-</span></div>';
+    }
+    return '<div class="cell-products">' + safeLines.map(line => '<span>' + escHtml(line) + '</span>').join('') + '</div>';
+  }
 
   // =========================
   // Tabla conversaciones (ÚNICA versión)
@@ -3661,7 +3711,7 @@ app.get("/admin", async (req, res) => {
       else if (deliveredFilter === 'pending') url += '&delivered=false';
 
       if (tb) {
-        tb.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#64748b;padding:20px">Cargando conversaciones…</td></tr>';
+        tb.innerHTML = '<tr><td colspan="12" style="text-align:center;color:#64748b;padding:20px">Cargando conversaciones…</td></tr>';
       }
 
       const r = await fetch(url);
@@ -3684,6 +3734,7 @@ app.get("/admin", async (req, res) => {
         const act = formatActivity(c.lastAt);
         const direccion = String(c.direccion || '-').trim() || '-';
         const nombre = String(c.contactName || '-').trim() || '-';
+        const productLines = Array.isArray(c.productLines) ? c.productLines : [];
         tr.innerHTML =
           '<td data-label="Actividad">' +
             '<span class="cell-strong">' + escHtml(act.date) + '</span>' +
@@ -3691,6 +3742,7 @@ app.get("/admin", async (req, res) => {
           '</td>' +
           '<td data-label="Teléfono"><span class="cell-strong">' + escHtml(c.waId || '-') + '</span></td>' +
           '<td data-label="Nombre" title="' + escHtml(nombre) + '"><span class="cell-strong cell-ellipsis">' + escHtml(nombre) + '</span></td>' +
+          '<td data-label="Productos">' + renderProductsHtml(productLines, c.productsText || '-') + '</td>' +
           '<td data-label="Entrega">' + renderEntregaPill(c.entregaLabel || '-') + '</td>' +
           '<td data-label="Dirección" title="' + escHtml(direccion) + '"><span class="cell-address">' + escHtml(direccion) + '</span></td>' +
           '<td data-label="Distancia">' + renderDistanceBadge(c.distanceKm) + '</td>' +
@@ -3752,13 +3804,13 @@ app.get("/admin", async (req, res) => {
 
      if(!rows.length){
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td colspan="11" style="text-align:center;color:#64748b;padding:26px">Sin conversaciones para mostrar</td>';
+        tr.innerHTML = '<td colspan="12" style="text-align:center;color:#64748b;padding:26px">Sin conversaciones para mostrar</td>';
         tb.appendChild(tr);
       }
 
     }catch(e){
       console.error('loadTable error', e);
-      if (tb) tb.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#b91c1c;padding:20px">No se pudo cargar la tabla</td></tr>';
+      if (tb) tb.innerHTML = '<tr><td colspan="12" style="text-align:center;color:#b91c1c;padding:20px">No se pudo cargar la tabla</td></tr>';
     }
   }
 
