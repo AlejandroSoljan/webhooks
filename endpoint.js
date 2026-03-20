@@ -2860,32 +2860,45 @@ app.get("/admin", async (req, res) => {
 </head>
 <body>
   <div class="page-shell">
-    <header class="page-header">
-      <div>
-        <div class="eyebrow">Operación diaria</div>
-        <h2>Panel de conversaciones</h2>
-        <p class="subtitle">Buscá, filtrá y gestioná pedidos sin salir del listado.</p>
-      </div>
-      <div class="live-indicator"><span class="dot"></span> Actualiza cada 20 segundos</div>
-    </header>
-
+   
     <section class="toolbar-card">
       <div class="toolbar">
         <div class="field grow">
-          <label for="waIdI">Buscar por waId</label>
-          <input id="waIdI" placeholder="5493..."/>
+          <label for="qFilter">Buscar</label>
+          <input id="qFilter" placeholder="waId, nombre o dirección"/>
         </div>
         <div class="field">
-          <label for="delivFilter">Filtro</label>
+          <label for="delivFilter">Entrega</label>
           <select id="delivFilter">
-            <option value="all" selected>Todas</option>
-            <option value="pending">No entregadas</option>
+            <option value="pending" selected>No entregadas</option>
             <option value="delivered">Entregadas</option>
+            <option value="all">Todas</option>
           </select>
         </div>
+        <div class="field">
+         <label for="statusFilter">Estado</label>
+          <select id="statusFilter">
+            <option value="completed_open" selected>Completadas + abiertas</option>
+            <option value="completed">Solo completadas</option>
+            <option value="open">Solo abiertas</option>
+            <option value="in_progress">Solo en curso</option>
+            <option value="cancelled">Solo canceladas</option>
+            <option value="all">Todas</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="dateFrom">Desde</label>
+          <input id="dateFrom" type="date"/>
+        </div>
+        <div class="field">
+          <label for="dateTo">Hasta</label>
+          <input id="dateTo" type="date"/>
+        </div>
         <div class="toolbar-actions">
-          <button class="btn btn-primary" id="btnBuscar">Buscar</button>
-          <button class="btn" id="btnReload">Actualizar</button>
+          <button class="btn btn-soft" id="btnToday">Hoy</button>
+          <button class="btn" id="btnClearDates">Limpiar fechas</button>
+          <button class="btn btn-primary" id="btnReload">Actualizar</button>
+
         </div>
       </div>
     </section>
@@ -2893,8 +2906,7 @@ app.get("/admin", async (req, res) => {
     <section class="table-card">
       <div class="table-toolbar">
         <div>
-          <h3>Listado reciente</h3>
-          <p id="tableHint">Cargando conversaciones…</p>
+           <p id="tableHint">Cargando conversaciones…</p>
         </div>
       </div>
       <div class="table-wrap">
@@ -3476,20 +3488,149 @@ app.get("/admin", async (req, res) => {
     }
   }
 
-  function updateAdminSummary(list){
+  function todayIso(){
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    return yyyy + '-' + mm + '-' + dd;
+  }
+
+  function initAdminFilters(){
+    const today = todayIso();
+    const from = document.getElementById('dateFrom');
+    const to = document.getElementById('dateTo');
+    if (from && !from.value) from.value = today;
+    if (to && !to.value) to.value = today;
+  }
+
+  function getTextFilterValue(){
+    return String(document.getElementById('qFilter')?.value || '').trim().toLowerCase();
+  }
+
+  function getStatusFilterValue(){
+    return String(document.getElementById('statusFilter')?.value || 'completed_open').trim();
+  }
+
+  function getDateRangeValue(){
+    return {
+      from: String(document.getElementById('dateFrom')?.value || '').trim(),
+      to: String(document.getElementById('dateTo')?.value || '').trim()
+    };
+  }
+
+  function convMatchesText(c, textFilter){
+   if (!textFilter) return true;
+    const haystack = [
+      c.waId,
+      c.contactName,
+      c.direccion,
+      c.entregaLabel,
+      c.fechaEntrega,
+      c.horaEntrega
+    ].map(v => String(v || '').toLowerCase()).join(' ');
+    return haystack.includes(textFilter);
+  }
+
+  function convMatchesStatus(c, statusFilter){
+    const st = normalizeStatus(c?.status);
+    if (statusFilter === 'all') return true;
+    if (statusFilter === 'completed_open') return st === 'COMPLETED' || st === 'OPEN' || st === 'IN_PROGRESS';
+    if (statusFilter === 'completed') return st === 'COMPLETED';
+    if (statusFilter === 'open') return st === 'OPEN' || st === 'IN_PROGRESS';
+    if (statusFilter === 'in_progress') return st === 'IN_PROGRESS';
+    if (statusFilter === 'cancelled') return st === 'CANCELLED';
+    return true;
+  }
+
+ function convMatchesDateRange(c, from, to){
+    const fecha = String(c?.fechaEntrega || '').trim();
+    if (!from && !to) return true;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return false;
+    if (from && fecha < from) return false;
+    if (to && fecha > to) return false;
+    return true;
+  }
+
+  function convDateTimeSortValue(c){
+    const fecha = /^\d{4}-\d{2}-\d{2}$/.test(String(c?.fechaEntrega || '').trim()) ? String(c.fechaEntrega).trim() : '';
+    const hora = /^\d{2}:\d{2}$/.test(String(c?.horaEntrega || '').trim()) ? String(c.horaEntrega).trim() : '23:59';
+    if (fecha) {
+      const ms = Date.parse(fecha + 'T' + hora + ':00-03:00');
+      if (Number.isFinite(ms)) return ms;
+    }
+    const fallback = Date.parse(c?.lastAt || '');
+    return Number.isFinite(fallback) ? fallback : 0;
+  }
+
+  function statusPriorityForAdmin(raw, statusFilter){
+    const st = normalizeStatus(raw);
+    if (statusFilter === 'completed_open') {
+      if (st === 'COMPLETED') return 0;
+      if (st === 'OPEN') return 1;
+      if (st === 'IN_PROGRESS') return 2;
+      if (st === 'CANCELLED') return 9;
+      return 5;
+    }
+    if (statusFilter === 'open') {
+      if (st === 'OPEN') return 0;
+      if (st === 'IN_PROGRESS') return 1;
+      return 5;
+    }
+    if (statusFilter === 'completed') return st === 'COMPLETED' ? 0 : 5;
+    if (statusFilter === 'in_progress') return st === 'IN_PROGRESS' ? 0 : 5;
+    if (statusFilter === 'cancelled') return st === 'CANCELLED' ? 0 : 5;
+    if (st === 'COMPLETED') return 0;
+    if (st === 'OPEN') return 1;
+    if (st === 'IN_PROGRESS') return 2;
+    if (st === 'CANCELLED') return 3;
+    return 4;
+  }
+
+  function sortAdminConversations(list, statusFilter){
+    return (Array.isArray(list) ? list.slice() : []).sort((a, b) => {
+      const statusDelta = statusPriorityForAdmin(a?.status, statusFilter) - statusPriorityForAdmin(b?.status, statusFilter);
+      if (statusDelta !== 0) return statusDelta;
+
+      const aWhen = convDateTimeSortValue(a);
+      const bWhen = convDateTimeSortValue(b);
+      if (aWhen !== bWhen) return aWhen - bWhen;
+      const aLast = Date.parse(a?.lastAt || '');
+      const bLast = Date.parse(b?.lastAt || '');
+      return (Number.isFinite(bLast) ? bLast : 0) - (Number.isFinite(aLast) ? aLast : 0);
+    });
+  }
+
+  function updateAdminSummary(list, allCount){
     const rows = Array.isArray(list) ? list : [];
     const total = rows.length;
-    const filter = document.getElementById('delivFilter')?.value || 'all';
+    const deliveredFilter = document.getElementById('delivFilter')?.value || 'pending';
+    const statusFilter = getStatusFilterValue();
+    const range = getDateRangeValue();
     const hint = document.getElementById('tableHint');
     if (hint) {
-      const map = {
-        all: 'Mostrando todas las conversaciones del listado actual.',
-        pending: 'Mostrando solo conversaciones no entregadas.',
-        delivered: 'Mostrando solo conversaciones entregadas.'
+      const deliveryMap = {
+        all: 'todas las entregas',
+        pending: 'solo no entregadas',
+        delivered: 'solo entregadas'
       };
+      const statusMap = {
+        all: 'todos los estados',
+        completed_open: 'completadas primero y luego abiertas',
+        completed: 'solo completadas',
+        open: 'solo abiertas',
+        in_progress: 'solo en curso',
+        cancelled: 'solo canceladas'
+      };
+      const dateLabel = (range.from || range.to)
+        ? ('fechas ' + (range.from || '...') + ' a ' + (range.to || '...'))
+        : 'sin rango de fechas';
+      const base = [deliveryMap[deliveredFilter] || deliveryMap.pending, statusMap[statusFilter] || statusMap.completed_open, dateLabel].join(' · ');
+
       hint.textContent = total
-        ? (total + ' conversaciones. ' + (map[filter] || ''))
-        : 'No hay conversaciones para mostrar con el filtro actual.';
+        ? (total + ' conversaciones visibles' + (Number.isFinite(allCount) ? (' de ' + allCount) : '') + ' · ' + base + '.')
+        : ('No hay conversaciones para mostrar con los filtros actuales.');
+
     }
   }
 
@@ -3510,10 +3651,14 @@ app.get("/admin", async (req, res) => {
   async function loadTable(){
     const tb = document.querySelector('#tbl tbody');
     try{
-      const f = (document.getElementById('delivFilter')?.value || 'all');
+      const deliveredFilter = (document.getElementById('delivFilter')?.value || 'pending');
+      const statusFilter = getStatusFilterValue();
+      const textFilter = getTextFilterValue();
+      const range = getDateRangeValue();
+
       let url = '/api/logs/conversations?limit=200';
-      if (f === 'delivered') url += '&delivered=true';
-      else if (f === 'pending') url += '&delivered=false';
+       if (deliveredFilter === 'delivered') url += '&delivered=true';
+      else if (deliveredFilter === 'pending') url += '&delivered=false';
 
       if (tb) {
         tb.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#64748b;padding:20px">Cargando conversaciones…</td></tr>';
@@ -3522,11 +3667,18 @@ app.get("/admin", async (req, res) => {
       const r = await fetch(url);
       const data = await r.json().catch(()=>[]);
       if (!tb) return;
+      const filtered = (Array.isArray(data) ? data : []).filter(c =>
+        convMatchesText(c, textFilter) &&
+       convMatchesStatus(c, statusFilter) &&
+        convMatchesDateRange(c, range.from, range.to)
+      );
+      const rows = sortAdminConversations(filtered, statusFilter);
+
 
       tb.innerHTML = '';
-      updateAdminSummary(data);
+      updateAdminSummary(rows, Array.isArray(data) ? data.length : 0);
 
-      for(const c of data){
+      for(const c of rows){
         const tr = document.createElement('tr');
         if (c.delivered) tr.classList.add('delivered-row');
         const act = formatActivity(c.lastAt);
@@ -3588,14 +3740,7 @@ app.get("/admin", async (req, res) => {
             }
             if (!ok) throw new Error('not_updated');
 
-            const tr = chk.closest('tr');
-            if (tr) {
-              if (flag) tr.classList.add('delivered-row');
-              else tr.classList.remove('delivered-row');
-            }
-            const actualData = Array.from(tb.querySelectorAll('input.delivChk')).map(el => ({ delivered: !!el.checked }));
-            setStat('statPending', actualData.filter(x => !x.delivered).length);
-            setStat('statDelivered', actualData.filter(x => x.delivered).length);
+           await loadTable();
           }catch(e){
             chk.checked = !flag;
             alert('No se pudo actualizar el estado de entrega');
@@ -3605,7 +3750,7 @@ app.get("/admin", async (req, res) => {
         });
       });
 
-      if(!data.length){
+     if(!rows.length){
         const tr = document.createElement('tr');
         tr.innerHTML = '<td colspan="11" style="text-align:center;color:#64748b;padding:26px">Sin conversaciones para mostrar</td>';
         tb.appendChild(tr);
@@ -3617,28 +3762,39 @@ app.get("/admin", async (req, res) => {
     }
   }
 
-  // =========================
-  // Buscar
-  // =========================
-  function openDetailByWaId(wa){
-    window.open('/admin/conversation?waId='+encodeURIComponent(wa),'_blank');
-  }
+  
 
   // =========================
   // Bind general
   // =========================
   document.getElementById('delivFilter')?.addEventListener('change', loadTable);
+  document.getElementById('statusFilter')?.addEventListener('change', loadTable);
+  document.getElementById('dateFrom')?.addEventListener('change', loadTable);
+  document.getElementById('dateTo')?.addEventListener('change', loadTable);
+  document.getElementById('qFilter')?.addEventListener('input', loadTable);
 
-  document.getElementById('btnBuscar')?.addEventListener('click', ()=>{
-    const v=(document.getElementById('waIdI')?.value||'').trim();
-    if(!v){ alert('Ingresá un waId'); return; }
-    openDetailByWaId(v);
-  });
+  
   document.getElementById('btnReload')?.addEventListener('click', loadTable);
-  document.getElementById('waIdI')?.addEventListener('keydown', (e)=>{
+  document.getElementById('btnToday')?.addEventListener('click', ()=>{
+    const today = todayIso();
+    const from = document.getElementById('dateFrom');
+    const to = document.getElementById('dateTo');
+    if (from) from.value = today;
+    if (to) to.value = today;
+    loadTable();
+  });
+  document.getElementById('btnClearDates')?.addEventListener('click', ()=>{
+    const from = document.getElementById('dateFrom');
+    const to = document.getElementById('dateTo');
+    if (from) from.value = '';
+    if (to) to.value = '';
+    loadTable();
+  });
+  document.getElementById('qFilter')?.addEventListener('keydown', (e)=>{
+
     if (e.key === 'Enter') {
       e.preventDefault();
-      document.getElementById('btnBuscar')?.click();
+       loadTable();
     }
   });
 
@@ -3662,6 +3818,7 @@ app.get("/admin", async (req, res) => {
   });
 
   // Carga inicial + refresco tabla
+  initAdminFilters();
   loadTable();
   setInterval(loadTable, 20000);
 
