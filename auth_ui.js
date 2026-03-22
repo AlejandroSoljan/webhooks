@@ -309,7 +309,7 @@ function absUrl(baseUrl, path) {
   return p; // fallback relativo
 }
 
-function pageShell({ title, user, body, head = "", robots = "" }) {
+function pageShell({ title, user, body, head = "", robots = "", showSidebarToggle = false }) {
   const u = user ? `${htmlEscape(user.username)} · ${htmlEscape(user.tenantId)} · ${htmlEscape(user.role)}` : "";
   // Importante para SEO:
   // - si hay user => pantalla privada => noindex
@@ -420,12 +420,15 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
     .topbar{
       position:fixed; left:0; right:0; top:0;
       display:flex; align-items:center; justify-content:space-between;
+      gap:12px;
       padding: 16px 18px;
       background: rgba(8,16,28,.20);
       backdrop-filter: blur(10px);
       border-bottom: 1px solid rgba(255,255,255,.06);
     }
-    .pill{display:inline-flex; gap:10px; align-items:center; color:rgba(255,255,255,.86); font-size:13px}
+    .topbarLeft,.topbarRight{display:flex;align-items:center;gap:10px;min-width:0;}
+    .topbarRight{margin-left:auto;}
+    .pill{display:inline-flex; gap:10px; align-items:center; color:rgba(255,255,255,.86); font-size:13px; min-width:0}
     .pill strong{color:#fff}
     .content{padding-top:74px;}
     .app{
@@ -518,6 +521,23 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
       display:flex;
       gap: 18px;
       align-items: stretch;
+      transition: gap .18s ease;
+    }
+    .layout > .sidebar{
+      flex:0 0 260px;
+      transition: flex-basis .18s ease, width .18s ease, opacity .18s ease, padding .18s ease, margin .18s ease, border-color .18s ease;
+    }
+    body.sidebarCollapsed .layout{gap:0;}
+    body.sidebarCollapsed .layout > .sidebar{
+      flex-basis:0;
+      width:0;
+      min-width:0;
+      padding:0;
+      margin:0;
+      border-color:transparent;
+      opacity:0;
+      overflow:hidden;
+      pointer-events:none;
     }
     
     /* ===== Mobile drawer ===== */
@@ -531,6 +551,24 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
       font-size:18px;
       cursor:pointer;
     }
+    .sidebarToggleBtn{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+      border:1px solid rgba(255,255,255,.18);
+      background: rgba(255,255,255,.08);
+      color:#fff;
+      border-radius: 12px;
+      padding: 8px 12px;
+      font-size:13px;
+      font-weight:700;
+      cursor:pointer;
+      white-space:nowrap;
+    }
+    .sidebarToggleBtn .icon{font-size:16px; line-height:1;}
+    body.sidebarCollapsed .sidebarToggleBtn .when-open{display:none;}
+    body:not(.sidebarCollapsed) .sidebarToggleBtn .when-closed{display:none;}
 
     .drawerBackdrop{
       position:fixed;
@@ -563,6 +601,7 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
 
     @media (max-width: 980px){
       .menuBtn{ display:inline-flex; align-items:center; justify-content:center; }
+      .sidebarToggleBtn{ display:none; }
       .layout{ padding: 14px; }
       /* ocultamos el sidebar “fijo” del layout en mobile */
       .layout > .sidebar{ display:none; }
@@ -930,16 +969,21 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
 <body>
   ${user ? `
   <div class="topbar">
-  <button type="button" class="menuBtn" id="menuBtn" aria-label="Abrir menú">☰</button>
-    <div class="pill">
-      <img src="/static/logo.png" alt="Asisto" style="width:28px;height:28px;object-fit:contain"/>
-      <strong>Asisto</strong>
-      <span>·</span>
-      <span>${u}</span>
+    <div class="topbarLeft">
+      <button type="button" class="menuBtn" id="menuBtn" aria-label="Abrir menú">☰</button>
+      ${showSidebarToggle ? `<button type="button" class="sidebarToggleBtn" id="sidebarToggleBtn" aria-label="Ocultar menú lateral" title="Ocultar menú lateral"><span class="icon">☰</span><span class="when-open">Ocultar menú</span><span class="when-closed">Mostrar menú</span></button>` : ``}
+      <div class="pill">
+        <img src="/static/logo.png" alt="Asisto" style="width:28px;height:28px;object-fit:contain"/>
+        <strong>Asisto</strong>
+        <span>·</span>
+        <span>${u}</span>
+      </div>
     </div>
-    <form method="POST" action="/logout" style="margin:0">
-      <button class="btn2" type="submit">Cerrar sesión</button>
-    </form>
+    <div class="topbarRight">
+      <form method="POST" action="/logout" style="margin:0">
+        <button class="btn2" type="submit">Cerrar sesión</button>
+      </form>
+    </div>
   </div>` : ``}
   <div class="${user ? "content" : ""}">
     ${body}
@@ -949,7 +993,9 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
   (function () {
     const btn = document.getElementById("menuBtn");
     const backdrop = document.getElementById("drawerBackdrop");
-   const drawer = document.getElementById("drawer");
+    const drawer = document.getElementById("drawer");
+    const sidebarToggleBtn = document.getElementById("sidebarToggleBtn");
+    const SIDEBAR_STATE_KEY = "asisto.sidebarCollapsed";
 
     function openDrawer(){ document.body.classList.add("drawerOpen"); }
     function closeDrawer(){ document.body.classList.remove("drawerOpen"); }
@@ -958,12 +1004,51 @@ function pageShell({ title, user, body, head = "", robots = "" }) {
       else openDrawer();
     }
 
-    if (!btn || !backdrop || !drawer) return;
+    function syncSidebarToggle(){
+      if (!sidebarToggleBtn) return;
+      const collapsed = document.body.classList.contains("sidebarCollapsed");
+      sidebarToggleBtn.setAttribute("aria-label", collapsed ? "Mostrar menú lateral" : "Ocultar menú lateral");
+      sidebarToggleBtn.setAttribute("title", collapsed ? "Mostrar menú lateral" : "Ocultar menú lateral");
+      sidebarToggleBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    }
 
-    btn.addEventListener("click", toggleDrawer);
-    backdrop.addEventListener("click", closeDrawer);
+    function applySavedSidebarState(){
+      if (!sidebarToggleBtn) return;
+      try {
+        const saved = localStorage.getItem(SIDEBAR_STATE_KEY);
+        if (saved === "1") document.body.classList.add("sidebarCollapsed");
+        else document.body.classList.remove("sidebarCollapsed");
+      } catch (_) {}
+      syncSidebarToggle();
+    }
+
+    function toggleSidebar(){
+      if (!sidebarToggleBtn) return;
+      if (window.matchMedia("(max-width: 980px)").matches) {
+        toggleDrawer();
+        return;
+      }
+      document.body.classList.toggle("sidebarCollapsed");
+      try {
+        localStorage.setItem(SIDEBAR_STATE_KEY, document.body.classList.contains("sidebarCollapsed") ? "1" : "0");
+      } catch (_) {}
+      syncSidebarToggle();
+    }
+
+    applySavedSidebarState();
+
+    if (btn && backdrop && drawer) {
+      btn.addEventListener("click", toggleDrawer);
+      backdrop.addEventListener("click", closeDrawer);
+      drawer.addEventListener("click", (e) => { if (e.target.closest("a")) closeDrawer(); });
+    }
+
+    if (sidebarToggleBtn) {
+      sidebarToggleBtn.addEventListener("click", toggleSidebar);
+    }
+
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
-    drawer.addEventListener("click", (e) => { if (e.target.closest("a")) closeDrawer(); });
+    window.addEventListener("resize", syncSidebarToggle);
   })();
   </script>` : ``}
 
@@ -1017,6 +1102,7 @@ function appShell({ title, user, active, main }) {
   return pageShell({
     title,
     user,
+    showSidebarToggle: true,
     body: `
     <div class="drawerBackdrop" id="drawerBackdrop"></div>
       <aside class="drawer" id="drawer">
