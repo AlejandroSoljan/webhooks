@@ -3846,6 +3846,9 @@ app.get("/admin", async (req, res) => {
     }
     if (kind === 'papa') {
       if (!/\\bpapa(?:s)?\\b|\\bfrita(?:s)?\\b/.test(name)) return 0;
+      const paraMatch = name.match(/\\bpara\\s+(\\d+)\\b/);
+      const porciones = paraMatch ? Number(paraMatch[1]) : 0;
+      if (porciones > 0) return qty * porciones;
       return qty;
     }
     return 0;
