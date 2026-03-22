@@ -2856,7 +2856,7 @@ app.get("/admin", async (req, res) => {
     .stats-subtitle{margin:2px 0 0;color:var(--muted);font-size:12px}
     .stats-refresh{font-size:11px;white-space:nowrap}
     .stats-body{margin-top:10px;display:flex;flex-direction:column;gap:10px}
-    .stats-grid{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:8px}
+    .stats-grid{display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:8px}
     .kpi{
       border:1px solid var(--line);
       background:linear-gradient(180deg,#fff 0%,#f8fbff 100%);
@@ -2887,6 +2887,7 @@ app.get("/admin", async (req, res) => {
     }
     .bar-value,.top-item-value{font-size:11px;font-weight:800;color:#0f172a}
     .top-list{display:flex;flex-direction:column;gap:8px}
+    .top-list.is-scrollable{max-height:240px;overflow-y:auto;padding-right:4px}
     .top-item{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start}
     .top-item + .top-item{padding-top:8px;border-top:1px dashed #e5edf6}
 
@@ -2968,7 +2969,7 @@ app.get("/admin", async (req, res) => {
       <div class="stats-head">
         <div>
           <div class="stats-title">Resumen del movimiento</div>
-          <p class="stats-subtitle" id="statsHint">Calculado sobre las conversaciones visibles.</p>
+          <p class="stats-subtitle" id="statsHint">Estados y productos sobre lo filtrado · pendientes y entrega sobre el total cargado.</p>
         </div>
         <div class="toolbar-actions">
           <span class="muted stats-refresh">Refresco automático cada 1 minuto</span>
@@ -2977,12 +2978,11 @@ app.get("/admin", async (req, res) => {
       </div>
       <div class="stats-body" id="statsBody">
         <div class="stats-grid" id="statsGrid">
-          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">Pedidos visibles</div><div class="kpi-meta">Cargando…</div></div>
-          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">Pendientes</div><div class="kpi-meta">Cargando…</div></div>
-          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">Pollos</div><div class="kpi-meta">Pendientes</div></div>
-          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">Papas</div><div class="kpi-meta">Pendientes</div></div>
-          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">A enviar</div><div class="kpi-meta">Pendientes</div></div>
-          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">A retirar</div><div class="kpi-meta">Pendientes</div></div>
+          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">Pendientes</div><div class="kpi-meta">Total cargado</div></div>
+          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">Pollos</div><div class="kpi-meta">Pendientes totales</div></div>
+          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">Papas</div><div class="kpi-meta">Pendientes totales</div></div>
+          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">A enviar</div><div class="kpi-meta">Pendientes totales</div></div>
+          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">A retirar</div><div class="kpi-meta">Pendientes totales</div></div>
         </div>
         <div class="stats-charts">
           <div class="chart-card">
@@ -3790,20 +3790,32 @@ app.get("/admin", async (req, res) => {
     return String(line || '').replace(/^(\d+(?:[\.,]\d+)?)\s*x\s+/i, '').trim();
   }
 
+  function isDeliveryProductLine(line){
+    return /\benv[ií]o\b/i.test(normalizeProductLine(line));
+  }
+
+  function getEntregaMode(row){
+    const label = String(row?.entregaLabel || '').toLowerCase();
+    if (label.includes('env')) return 'envio';
+    if (label.includes('ret')) return 'retiro';
+    const lines = Array.isArray(row?.products) ? row.products : [];
+    if (lines.some(isDeliveryProductLine)) return 'envio';
+    return '';
+  }
+
   function sumProductQty(rows, regex){
     return (Array.isArray(rows) ? rows : []).reduce((acc, row) => {
       const lines = Array.isArray(row?.products) ? row.products : [];
-      return acc + lines.reduce((sum, line) => regex.test(String(line || '')) ? (sum + parseQtyFromProductLine(line)) : sum, 0);
+      return acc + lines.reduce((sum, line) => {
+        const name = normalizeProductLine(line);
+        if (!name || isDeliveryProductLine(name) || !regex.test(name)) return sum;
+        return sum + parseQtyFromProductLine(line);
+      }, 0);
     }, 0);
   }
 
   function countByEntrega(rows, mode){
-    return (Array.isArray(rows) ? rows : []).filter((row) => {
-      const label = String(row?.entregaLabel || '').toLowerCase();
-      if (mode === 'envio') return label.includes('env');
-      if (mode === 'retiro') return label.includes('ret');
-      return false;
-    }).length;
+    return (Array.isArray(rows) ? rows : []).filter((row) => getEntregaMode(row) === mode).length;
   }
 
   function buildBarRows(items){
@@ -3826,20 +3838,20 @@ app.get("/admin", async (req, res) => {
       const lines = Array.isArray(row?.products) ? row.products : [];
       for (const line of lines) {
         const name = normalizeProductLine(line);
-        if (!name) continue;
+        if (!name || isDeliveryProductLine(name)) continue;
         const next = (counts.get(name) || 0) + parseQtyFromProductLine(line);
         counts.set(name, next);
       }
     }
     return Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]), 'es'))
-      .slice(0, 6);
+      .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]), 'es'));
   }
 
   function renderTopProducts(rows){
     const el = document.getElementById('topProductsList');
     if (!el) return;
     const top = buildTopProducts(rows);
+    el.classList.add('is-scrollable');
     if (!top.length) {
       el.innerHTML = '<div class="muted" style="font-size:12px">Sin productos para resumir con los filtros actuales.</div>';
       return;
@@ -3852,28 +3864,28 @@ app.get("/admin", async (req, res) => {
     ).join('');
   }
 
-  function renderAdminStats(rows){
+  function renderAdminStats(rows, allRows){
     const visible = Array.isArray(rows) ? rows : [];
-    const pending = visible.filter(row => !row?.delivered);
+    const loaded = Array.isArray(allRows) ? allRows : [];
+    const pendingAll = loaded.filter(row => !row?.delivered);
     const completedCount = visible.filter(row => normalizeStatus(row?.status) === 'COMPLETED').length;
     const openCount = visible.filter(row => {
       const st = normalizeStatus(row?.status);
       return st === 'OPEN' || st === 'IN_PROGRESS';
     }).length;
-    const envioCount = countByEntrega(pending, 'envio');
-    const retiroCount = countByEntrega(pending, 'retiro');
-    const polloQty = sumProductQty(pending, /pollo/i);
-    const papaQty = sumProductQty(pending, /\bpapa(?:s)?\b/i);
+    const envioCount = countByEntrega(pendingAll, 'envio');
+    const retiroCount = countByEntrega(pendingAll, 'retiro');
+    const polloQty = sumProductQty(pendingAll, /\bpollo(?:s)?\b/i);
+    const papaQty = sumProductQty(pendingAll, /\bpapa(?:s)?\b|\bfrita(?:s)?\b/i);
 
     const statsGrid = document.getElementById('statsGrid');
     if (statsGrid) {
       const cards = [
-        { value: visible.length, label: 'Pedidos visibles', meta: completedCount + ' completados · ' + openCount + ' abiertos/en curso' },
-        { value: pending.length, label: 'Pendientes', meta: 'No marcados como entregados' },
-        { value: String(polloQty).replace(/\.0+$/, ''), label: 'Pollos', meta: 'Unidades pendientes detectadas' },
-        { value: String(papaQty).replace(/\.0+$/, ''), label: 'Papas', meta: 'Unidades pendientes detectadas' },
-        { value: envioCount, label: 'A enviar', meta: 'Pendientes con envío a domicilio' },
-        { value: retiroCount, label: 'A retirar', meta: 'Pendientes para retiro' }
+        { value: pendingAll.length, label: 'Pendientes', meta: 'Sobre el total de conversaciones cargadas' },
+        { value: String(polloQty).replace(/\.0+$/, ''), label: 'Pollos', meta: 'Unidades pendientes totales' },
+        { value: String(papaQty).replace(/\.0+$/, ''), label: 'Papas', meta: 'Unidades pendientes totales' },
+        { value: envioCount, label: 'A enviar', meta: 'Pendientes totales con envío' },
+        { value: retiroCount, label: 'A retirar', meta: 'Pendientes totales para retiro' }
       ];
       statsGrid.innerHTML = cards.map((card) =>
         '<div class="kpi">' +
@@ -3899,20 +3911,17 @@ app.get("/admin", async (req, res) => {
       deliveryBars.innerHTML = buildBarRows([
         { label: 'Envío', value: envioCount },
         { label: 'Retiro', value: retiroCount },
-        { label: 'Sin definir', value: pending.filter(row => {
-            const label = String(row?.entregaLabel || '').toLowerCase();
-            return !label.includes('env') && !label.includes('ret');
-          }).length }
+        { label: 'Sin definir', value: pendingAll.filter(row => !getEntregaMode(row)).length }
       ]);
     }
 
-    renderTopProducts(pending);
+    renderTopProducts(visible);
 
     const statsHint = document.getElementById('statsHint');
     if (statsHint) {
       const now = new Date();
       const hhmm = now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-      statsHint.textContent = 'Última actualización ' + hhmm + ' · métricas sobre las conversaciones visibles.';
+      statsHint.textContent = 'Última actualización ' + hhmm + ' · estados y productos sobre lo filtrado · pendientes y entrega sobre el total cargado.';
     }
   }
 
@@ -3984,7 +3993,7 @@ app.get("/admin", async (req, res) => {
 
       tb.innerHTML = '';
       updateAdminSummary(rows, Array.isArray(data) ? data.length : 0);
-      renderAdminStats(rows);
+      renderAdminStats(rows, Array.isArray(data) ? data : []);
 
       for(const c of rows){
         const tr = document.createElement('tr');
