@@ -2732,15 +2732,15 @@ app.get("/admin", async (req, res) => {
       border-radius:var(--radius);
       box-shadow:var(--shadow);
     }
-    .toolbar-card{padding:14px}
-    .toolbar{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
-    .field{display:flex;flex-direction:column;gap:6px;min-width:180px}
+    .toolbar-card{padding:10px 12px}
+    .toolbar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+    .field{display:flex;flex-direction:column;gap:4px;min-width:150px}
     .field.grow{flex:1 1 300px}
-    .field label{font-size:12px;font-weight:700;color:#334155}
+    .field label{font-size:11px;font-weight:700;color:#334155}
     .field input,.field select,#modalReplyText{
       width:100%;
-      font-size:14px;
-      padding:10px 12px;
+      font-size:13px;
+      padding:8px 10px;
       border:1px solid var(--line-strong);
       border-radius:12px;
       background:#fff;
@@ -2752,15 +2752,15 @@ app.get("/admin", async (req, res) => {
       border-color:#8fb7df;
       box-shadow:0 0 0 4px rgba(59,130,246,.12);
     }
-    .toolbar-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .toolbar-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
     .btn{
       appearance:none;
       border:1px solid var(--line-strong);
       background:#fff;
       color:#0f172a;
-      border-radius:12px;
-      padding:10px 14px;
-      font-size:13px;
+      border-radius:10px;
+      padding:8px 12px;
+      font-size:12px;
       font-weight:700;
       cursor:pointer;
       transition:transform .12s ease, box-shadow .16s ease, background .16s ease, border-color .16s ease;
@@ -2773,13 +2773,13 @@ app.get("/admin", async (req, res) => {
     .btn-icon{padding:10px 11px;min-width:42px;text-align:center}
     .muted{color:var(--muted)}
 
-    .table-card{padding:14px}
+    .table-card{padding:10px 12px}
     .table-toolbar{
-      display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;
-      margin-bottom:12px;
+      display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap;
+      margin-bottom:8px;
     }
-    .table-toolbar h3{margin:0;font-size:18px}
-    .table-toolbar p{margin:4px 0 0;color:var(--muted);font-size:13px}
+    .table-toolbar h3{margin:0;font-size:16px}
+    .table-toolbar p{margin:0;color:var(--muted);font-size:12px}
     .table-wrap{
       overflow:auto;
       border:1px solid var(--line);
@@ -2788,7 +2788,7 @@ app.get("/admin", async (req, res) => {
     }
     .adminTable{border-collapse:separate;border-spacing:0;width:100%;min-width:0;table-layout:auto}
     .adminTable th,
-    .adminTable td{padding:10px 6px;font-size:12px;vertical-align:top;word-break:break-word;border-bottom:1px solid #edf2f7}
+    .adminTable td{padding:8px 5px;font-size:12px;vertical-align:top;word-break:break-word;border-bottom:1px solid #edf2f7}
     .adminTable th{
       position:sticky;top:0;z-index:2;
       background:#f8fbff;
@@ -2836,9 +2836,10 @@ app.get("/admin", async (req, res) => {
     .actions .btn-icon{padding:0;min-width:30px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;line-height:1}
     .c-actividad{width:72px}
     .c-telefono{width:84px}
-    .c-nombre{width:96px}
-    .c-entrega{width:70px}
-    .c-direccion{width:220px}
+    .c-nombre{width:92px}
+    .c-productos{width:320px}
+    .c-entrega{width:66px}
+    .c-direccion{width:180px}
     .c-dist{width:52px}
     .c-dia{width:64px}
     .c-hora{width:54px}
@@ -2847,6 +2848,48 @@ app.get("/admin", async (req, res) => {
     .c-acciones{width:96px}
     .delivered-row{opacity:.72}
     .delivChk{cursor:pointer;width:16px;height:16px;accent-color:#22c55e}
+
+    .stats-panel{padding:10px 12px}
+    .stats-panel.is-collapsed .stats-body{display:none}
+    .stats-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+    .stats-title{font-size:15px;font-weight:800;color:#0f172a}
+    .stats-subtitle{margin:2px 0 0;color:var(--muted);font-size:12px}
+    .stats-refresh{font-size:11px;white-space:nowrap}
+    .stats-body{margin-top:10px;display:flex;flex-direction:column;gap:10px}
+    .stats-grid{display:grid;grid-template-columns:repeat(6,minmax(110px,1fr));gap:8px}
+    .kpi{
+      border:1px solid var(--line);
+      background:linear-gradient(180deg,#fff 0%,#f8fbff 100%);
+      border-radius:14px;
+      padding:10px 10px 8px;
+      min-height:78px;
+    }
+    .kpi-value{font-size:24px;line-height:1;font-weight:800;color:#0f172a}
+    .kpi-label{margin-top:4px;font-size:11px;font-weight:700;color:#475467;text-transform:uppercase;letter-spacing:.04em}
+    .kpi-meta{margin-top:4px;font-size:11px;color:#64748b;line-height:1.25}
+    .stats-charts{display:grid;grid-template-columns:1.1fr 1.1fr 1.2fr;gap:8px}
+    .chart-card{
+      border:1px solid var(--line);
+      background:#fff;
+      border-radius:14px;
+      padding:10px;
+    }
+    .chart-title{font-size:12px;font-weight:800;color:#0f172a;margin-bottom:8px}
+    .bar-list{display:flex;flex-direction:column;gap:8px}
+    .bar-row{display:grid;grid-template-columns:minmax(74px,auto) 1fr auto;gap:8px;align-items:center}
+    .bar-label,.top-item-label{font-size:11px;color:#475467;font-weight:700}
+    .bar-track{
+      position:relative;height:8px;border-radius:999px;background:#edf2f7;overflow:hidden;
+    }
+    .bar-fill{
+      position:absolute;left:0;top:0;bottom:0;border-radius:999px;
+      background:linear-gradient(90deg,#164e86 0%,#3b82f6 100%);
+    }
+    .bar-value,.top-item-value{font-size:11px;font-weight:800;color:#0f172a}
+    .top-list{display:flex;flex-direction:column;gap:8px}
+    .top-item{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start}
+    .top-item + .top-item{padding-top:8px;border-top:1px dashed #e5edf6}
+
     .status-badge{
       display:inline-block;
       padding:4px 8px;
@@ -2888,14 +2931,21 @@ app.get("/admin", async (req, res) => {
     .ticket-modal iframe {border: none;width: 100%;flex: 1;}
     .ticket-modal-actions {display: flex;justify-content: flex-end;gap: 8px;margin-top: 6px;}
 
+    @media (max-width: 1180px){
+      .stats-grid{grid-template-columns:repeat(3,minmax(120px,1fr))}
+      .stats-charts{grid-template-columns:1fr}
+    }
     @media (max-width: 1080px){
       .page-header{flex-direction:column}
     }
     @media (max-width: 720px){
-      body{padding:12px}
+      body{padding:10px}
       .toolbar{align-items:stretch}
+      .field{min-width:100%}
       .toolbar-actions{width:100%}
       .toolbar-actions .btn{flex:1 1 auto;justify-content:center}
+      .stats-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}
+      .stats-panel,.table-card,.toolbar-card{padding:10px}
       .table-card{padding:10px}
       .table-wrap{border:none;background:transparent;overflow:visible}
       .adminTable colgroup,.adminTable thead{display:none}
@@ -2913,11 +2963,49 @@ app.get("/admin", async (req, res) => {
 <body>
   <div class="page-shell">
    
-    <section class="toolbar-card">
+    
+    <section class="stat-card stats-panel" id="statsPanel">
+      <div class="stats-head">
+        <div>
+          <div class="stats-title">Resumen del movimiento</div>
+          <p class="stats-subtitle" id="statsHint">Calculado sobre las conversaciones visibles.</p>
+        </div>
+        <div class="toolbar-actions">
+          <span class="muted stats-refresh">Refresco automático cada 1 minuto</span>
+          <button class="btn btn-soft" id="btnToggleStats">Ocultar resumen</button>
+        </div>
+      </div>
+      <div class="stats-body" id="statsBody">
+        <div class="stats-grid" id="statsGrid">
+          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">Pedidos visibles</div><div class="kpi-meta">Cargando…</div></div>
+          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">Pendientes</div><div class="kpi-meta">Cargando…</div></div>
+          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">Pollos</div><div class="kpi-meta">Pendientes</div></div>
+          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">Papas</div><div class="kpi-meta">Pendientes</div></div>
+          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">A enviar</div><div class="kpi-meta">Pendientes</div></div>
+          <div class="kpi"><div class="kpi-value">-</div><div class="kpi-label">A retirar</div><div class="kpi-meta">Pendientes</div></div>
+        </div>
+        <div class="stats-charts">
+          <div class="chart-card">
+            <div class="chart-title">Estados visibles</div>
+            <div class="bar-list" id="statusBars"></div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Entrega pendiente</div>
+            <div class="bar-list" id="deliveryBars"></div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">Productos más pedidos</div>
+            <div class="top-list" id="topProductsList"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+<section class="toolbar-card">
       <div class="toolbar">
         <div class="field grow">
           <label for="qFilter">Buscar</label>
-          <input id="qFilter" placeholder="waId, nombre o dirección"/>
+          <input id="qFilter" placeholder="waId, nombre, dirección o producto"/>
         </div>
         <div class="field">
           <label for="delivFilter">Entrega</label>
@@ -3575,13 +3663,15 @@ app.get("/admin", async (req, res) => {
 
   function convMatchesText(c, textFilter){
    if (!textFilter) return true;
+    const productLines = Array.isArray(c?.products) ? c.products.join(' ') : '';
     const haystack = [
       c.waId,
       c.contactName,
       c.direccion,
       c.entregaLabel,
       c.fechaEntrega,
-      c.horaEntrega
+      c.horaEntrega,
+      productLines
     ].map(v => String(v || '').toLowerCase()).join(' ');
     return haystack.includes(textFilter);
   }
@@ -3688,6 +3778,163 @@ app.get("/admin", async (req, res) => {
     }
   }
 
+
+  function parseQtyFromProductLine(line){
+    const m = String(line || '').trim().match(/^(\d+(?:[\.,]\d+)?)\s*x\s+/i);
+    if (!m) return 1;
+    const n = Number(String(m[1]).replace(',', '.'));
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  }
+
+  function normalizeProductLine(line){
+    return String(line || '').replace(/^(\d+(?:[\.,]\d+)?)\s*x\s+/i, '').trim();
+  }
+
+  function sumProductQty(rows, regex){
+    return (Array.isArray(rows) ? rows : []).reduce((acc, row) => {
+      const lines = Array.isArray(row?.products) ? row.products : [];
+      return acc + lines.reduce((sum, line) => regex.test(String(line || '')) ? (sum + parseQtyFromProductLine(line)) : sum, 0);
+    }, 0);
+  }
+
+  function countByEntrega(rows, mode){
+    return (Array.isArray(rows) ? rows : []).filter((row) => {
+      const label = String(row?.entregaLabel || '').toLowerCase();
+      if (mode === 'envio') return label.includes('env');
+      if (mode === 'retiro') return label.includes('ret');
+      return false;
+    }).length;
+  }
+
+  function buildBarRows(items){
+    const safeItems = (Array.isArray(items) ? items : []).filter(Boolean);
+    const max = safeItems.reduce((m, item) => Math.max(m, Number(item?.value || 0)), 0) || 1;
+    return safeItems.map((item) => {
+      const value = Number(item?.value || 0);
+      const width = Math.max(6, Math.round((value / max) * 100));
+      return '<div class="bar-row">' +
+        '<div class="bar-label">' + escHtml(item.label || '-') + '</div>' +
+        '<div class="bar-track"><div class="bar-fill" style="width:' + width + '%"></div></div>' +
+        '<div class="bar-value">' + escHtml(String(value)) + '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  function buildTopProducts(rows){
+    const counts = new Map();
+    for (const row of (Array.isArray(rows) ? rows : [])) {
+      const lines = Array.isArray(row?.products) ? row.products : [];
+      for (const line of lines) {
+        const name = normalizeProductLine(line);
+        if (!name) continue;
+        const next = (counts.get(name) || 0) + parseQtyFromProductLine(line);
+        counts.set(name, next);
+      }
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]), 'es'))
+      .slice(0, 6);
+  }
+
+  function renderTopProducts(rows){
+    const el = document.getElementById('topProductsList');
+    if (!el) return;
+    const top = buildTopProducts(rows);
+    if (!top.length) {
+      el.innerHTML = '<div class="muted" style="font-size:12px">Sin productos para resumir con los filtros actuales.</div>';
+      return;
+    }
+    el.innerHTML = top.map(([name, qty]) =>
+      '<div class="top-item">' +
+        '<div class="top-item-label">' + escHtml(name) + '</div>' +
+        '<div class="top-item-value">' + escHtml(String(qty).replace(/\.0+$/, '')) + '</div>' +
+      '</div>'
+    ).join('');
+  }
+
+  function renderAdminStats(rows){
+    const visible = Array.isArray(rows) ? rows : [];
+    const pending = visible.filter(row => !row?.delivered);
+    const completedCount = visible.filter(row => normalizeStatus(row?.status) === 'COMPLETED').length;
+    const openCount = visible.filter(row => {
+      const st = normalizeStatus(row?.status);
+      return st === 'OPEN' || st === 'IN_PROGRESS';
+    }).length;
+    const envioCount = countByEntrega(pending, 'envio');
+    const retiroCount = countByEntrega(pending, 'retiro');
+    const polloQty = sumProductQty(pending, /pollo/i);
+    const papaQty = sumProductQty(pending, /\bpapa(?:s)?\b/i);
+
+    const statsGrid = document.getElementById('statsGrid');
+    if (statsGrid) {
+      const cards = [
+        { value: visible.length, label: 'Pedidos visibles', meta: completedCount + ' completados · ' + openCount + ' abiertos/en curso' },
+        { value: pending.length, label: 'Pendientes', meta: 'No marcados como entregados' },
+        { value: String(polloQty).replace(/\.0+$/, ''), label: 'Pollos', meta: 'Unidades pendientes detectadas' },
+        { value: String(papaQty).replace(/\.0+$/, ''), label: 'Papas', meta: 'Unidades pendientes detectadas' },
+        { value: envioCount, label: 'A enviar', meta: 'Pendientes con envío a domicilio' },
+        { value: retiroCount, label: 'A retirar', meta: 'Pendientes para retiro' }
+      ];
+      statsGrid.innerHTML = cards.map((card) =>
+        '<div class="kpi">' +
+          '<div class="kpi-value">' + escHtml(String(card.value)) + '</div>' +
+          '<div class="kpi-label">' + escHtml(card.label) + '</div>' +
+          '<div class="kpi-meta">' + escHtml(card.meta) + '</div>' +
+        '</div>'
+      ).join('');
+    }
+
+    const statusBars = document.getElementById('statusBars');
+    if (statusBars) {
+      statusBars.innerHTML = buildBarRows([
+        { label: 'Completadas', value: completedCount },
+        { label: 'Abiertas', value: visible.filter(row => normalizeStatus(row?.status) === 'OPEN').length },
+        { label: 'En curso', value: visible.filter(row => normalizeStatus(row?.status) === 'IN_PROGRESS').length },
+        { label: 'Canceladas', value: visible.filter(row => normalizeStatus(row?.status) === 'CANCELLED').length }
+      ]);
+    }
+
+    const deliveryBars = document.getElementById('deliveryBars');
+    if (deliveryBars) {
+      deliveryBars.innerHTML = buildBarRows([
+        { label: 'Envío', value: envioCount },
+        { label: 'Retiro', value: retiroCount },
+        { label: 'Sin definir', value: pending.filter(row => {
+            const label = String(row?.entregaLabel || '').toLowerCase();
+            return !label.includes('env') && !label.includes('ret');
+          }).length }
+      ]);
+    }
+
+    renderTopProducts(pending);
+
+    const statsHint = document.getElementById('statsHint');
+    if (statsHint) {
+      const now = new Date();
+      const hhmm = now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+      statsHint.textContent = 'Última actualización ' + hhmm + ' · métricas sobre las conversaciones visibles.';
+    }
+  }
+
+  function setStatsCollapsed(collapsed){
+    const panel = document.getElementById('statsPanel');
+    const btn = document.getElementById('btnToggleStats');
+    if (!panel || !btn) return;
+    panel.classList.toggle('is-collapsed', !!collapsed);
+    btn.textContent = collapsed ? 'Mostrar resumen' : 'Ocultar resumen';
+    try { localStorage.setItem('adminStatsCollapsed', collapsed ? '1' : '0'); } catch {}
+  }
+
+  function initAdminUiState(){
+    let collapsed = false;
+    try { collapsed = localStorage.getItem('adminStatsCollapsed') === '1'; } catch {}
+    setStatsCollapsed(collapsed);
+    document.getElementById('btnToggleStats')?.addEventListener('click', () => {
+      const next = !document.getElementById('statsPanel')?.classList.contains('is-collapsed');
+      setStatsCollapsed(next);
+    });
+  }
+
   function renderEntregaPill(raw){
     const label = String(raw || '-').trim() || '-';
     const cls = label.toLowerCase().includes('env') ? 'delivery-pill is-envio' : (label.toLowerCase().includes('ret') ? 'delivery-pill is-retiro' : 'delivery-pill');
@@ -3737,6 +3984,7 @@ app.get("/admin", async (req, res) => {
 
       tb.innerHTML = '';
       updateAdminSummary(rows, Array.isArray(data) ? data.length : 0);
+      renderAdminStats(rows);
 
       for(const c of rows){
         const tr = document.createElement('tr');
@@ -3819,6 +4067,7 @@ app.get("/admin", async (req, res) => {
 
     }catch(e){
       console.error('loadTable error', e);
+      renderAdminStats([]);
       if (tb) tb.innerHTML = '<tr><td colspan="12" style="text-align:center;color:#b91c1c;padding:20px">No se pudo cargar la tabla</td></tr>';
     }
   }
@@ -3880,8 +4129,9 @@ app.get("/admin", async (req, res) => {
 
   // Carga inicial + refresco tabla
   initAdminFilters();
+  initAdminUiState();
   loadTable();
-  setInterval(loadTable, 20000);
+  setInterval(loadTable, 60000);
 
 
   </script>
