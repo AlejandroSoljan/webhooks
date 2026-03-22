@@ -3686,7 +3686,7 @@ app.get("/admin", async (req, res) => {
     return '<span class="distance-badge">' + escHtml(raw) + '</span>';
   }
   function renderProductsHtml(lines, fallbackText){
-    const safeLines = (Array.isArray(lines) ? lines : String(fallbackText || '').split(/\n+/))
+    const safeLines = (Array.isArray(lines) ? lines : String(fallbackText || '').split(/\\n+/))
       .map(v => String(v || '').trim())
       .filter(Boolean);
     if (!safeLines.length) {
