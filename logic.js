@@ -1087,6 +1087,25 @@ function setAssistantPedidoSnapshot(tenantId, from, pedidoObj, estado) {
   } catch {}
 }
 
+function replaceLastAssistantHistory(tenantId, from, assistantContent) {
+  const id = k(tenantId, from);
+  const content = String(assistantContent || "").trim();
+  if (!content) return false;
+  try {
+    if (!Array.isArray(chatHistories[id]) || !chatHistories[id].length) return false;
+    for (let i = chatHistories[id].length - 1; i >= 0; i--) {
+      if (String(chatHistories[id][i]?.role || "") === "assistant") {
+        chatHistories[id][i] = { role: "assistant", content };
+        return true;
+      }
+    }
+    chatHistories[id].push({ role: "assistant", content });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 
 // ================== Distancia Haversine ==================
 function calcularDistanciaKm(lat1, lon1, lat2, lon2) {
@@ -1427,6 +1446,7 @@ module.exports = {
   // exports auxiliares
   DEFAULT_TENANT_ID,
   setAssistantPedidoSnapshot,
+  replaceLastAssistantHistory,
   calcularDistanciaKm,
   geocodeAddress,
   reverseGeocode,

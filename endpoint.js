@@ -394,7 +394,7 @@ const {
   START_FALLBACK, buildBackendSummary, coalesceResponse, recalcAndDetectMismatch,
   hydratePricesFromCatalog,
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
-  DEFAULT_TENANT_ID, setAssistantPedidoSnapshot, calcularDistanciaKm,
+  DEFAULT_TENANT_ID, setAssistantPedidoSnapshot, replaceLastAssistantHistory, calcularDistanciaKm,
   geocodeAddress, reverseGeocode, getStoreCoords, pickEnvioProductByDistance,clearEndedFlag,analyzeImageExternal,
   ensureEnvioSmart,hasContext,
 } = require("./logic");
@@ -1049,9 +1049,20 @@ async function loadLastPedidoSnapshot(tenantId, conversationId) {
   try {
     if (!conversationId) return null;
     const db = await getDb();
+    const convObjectId = new ObjectId(String(conversationId));
+
+    const conv = await db.collection("conversations").findOne(
+      withTenant({ _id: convObjectId }, tenantId),
+      { projection: { lastPedidoSnapshot: 1 } }
+    );
+    const convSnap = conv?.lastPedidoSnapshot?.Pedido;
+    if (convSnap && typeof convSnap === "object") {
+      return cloneJsonSafe(convSnap) || convSnap;
+    }
+
     const doc = await db.collection("messages").findOne(
       withTenant({
-        conversationId: new ObjectId(String(conversationId)),
+        conversationId: convObjectId,
         role: "assistant",
         type: "json",
         "meta.kind": "pedido-snapshot"
@@ -1066,7 +1077,6 @@ async function loadLastPedidoSnapshot(tenantId, conversationId) {
     return null;
   }
 }
-
 
 function _pedidoItemsToDisplayLines(pedido) {
   const items = Array.isArray(pedido?.items) ? pedido.items : [];
@@ -6382,91 +6392,19 @@ if (debounceMs > 0 && msg.type === "text") {
       const { pedidoCorr, mismatch, hasItems } = recalcAndDetectMismatch(pedido);
       pedido = pedidoCorr;
 
-      //if (mismatch && hasItems) {
-      //  let fixedOk = false;
-      //  let parsedFixLast = null;
+      const originalResponseText = coalesceResponse(parsed.response, pedido);
 
-       // ✅ Si el modelo devuelve {"error":"..."} lo tratamos como MENSAJE AL USUARIO (no fatal):
+      // ✅ Si el modelo devuelve {"error":"..."} lo tratamos como MENSAJE AL USUARIO (no fatal):
       if (typeof parsed?.error === "string" && parsed.error.trim()) {
         responseText = parsed.error.trim();
       } else if (mismatch && hasItems) {
-        let fixedOk = false;
-        let parsedFixLast = null;
-
-        const itemsForModel = (pedido.items || [])
-          .map(i => `- ${i.cantidad} x ${i.descripcion} @ ${i.importe_unitario}`)
-          .join("\n");
-
-        const baseCorrection = [
-          "[CORRECCION_DE_IMPORTES]",
-          "Detectamos que los importes de tu JSON no coinciden con la suma de ítems según el catálogo.",
-          "Usá EXACTAMENTE estos ítems interpretados por backend (cantidad y precio unitario):",
-          itemsForModel,
-          `Total esperado por backend (total_pedido): ${pedido.total_pedido}`,
-          "Reglas OBLIGATORIAS:",
-          "- Recalculá todo DESDE CERO usando esos precios (no arrastres totales previos).",
-          "- Si Pedido.Entrega = 'domicilio', DEBES incluir el ítem de Envío correspondiente.",
-          "",
-          "SOBRE EL CAMPO response:",
-          "- NO digas que estás recalculando ni hables de backend ni de importes.",
-          "- Usá en `response` el MISMO tipo de mensaje que venías usando para seguir la conversación.",
-          "- Si antes estabas pidiendo fecha y hora, seguí pidiendo fecha y hora.",
-          "- Si ya tenés fecha/hora, seguí con el siguiente dato faltante (por ejemplo, nombre del cliente).",
-          "",
-          "Devolvé UN ÚNICO objeto JSON con: response, estado (IN_PROGRESS|COMPLETED|CANCELLED),",
-          "y Pedido { Entrega, Domicilio, items[ {id, descripcion, cantidad, importe_unitario, total} ], total_pedido }.",
-          "Si ya había otros datos válidos del pedido (nombre, pago, fecha, hora), no los contradigas ni los cambies.",
-          "No incluyas texto fuera del JSON."
-        ].join("\n");
-
-        for (let attempt = 1; attempt <= (Number(process.env.CALC_FIX_MAX_RETRIES || 3)); attempt++) {
-          const fixReply = await getGPTReply(tenant, sessionFrom, `${baseCorrection}\n[INTENTO:${attempt}/${process.env.CALC_FIX_MAX_RETRIES || 3}]`, aiOpts);
-          console.log(`[fix][${attempt}] assistant.content =>\n${fixReply}`);
-          try {
-            const parsedFix = JSON.parse(fixReply);
-            parsedFixLast = parsedFix;
-            estado = parsedFix.estado || estado;
-
-            let pedidoFix = mergePedidoState(pedido, parsedFix.Pedido || { items: [] });
-
-            // 📍 También aplicamos ubicación entrante si existiera (mismo mensaje)
-            try {
-              if (inboundLocation && pedidoFix && typeof pedidoFix === "object") {
-                if (!String(pedidoFix.Entrega || "").trim()) pedidoFix.Entrega = "domicilio";
-                const dom0 = (typeof pedidoFix.Domicilio === "string")
-                  ? { direccion: pedidoFix.Domicilio }
-                  : (pedidoFix.Domicilio || {});
-                pedidoFix.Domicilio = dom0;
-                if (Number.isFinite(Number(inboundLocation.lat)) && Number.isFinite(Number(inboundLocation.lon))) {
-                  pedidoFix.Domicilio.lat = Number(inboundLocation.lat);
-                  pedidoFix.Domicilio.lon = Number(inboundLocation.lon);
-                }
-                const addr = String(inboundLocation.formatted_address || inboundLocation.address || inboundLocation.name || "").trim();
-                if (addr && !String(pedidoFix.Domicilio.direccion || "").trim()) {
-                  pedidoFix.Domicilio.direccion = addr;
-                }
-              }
-            } catch {}
-
-             // 💰 Rehidratar también en el ciclo de fix
-            try { pedidoFix = await hydratePricesFromCatalog(pedidoFix, tenant || null); } catch {}
-         
-            const { pedidoCorr: pedidoFixCorr, mismatch: mismatchFix, hasItems: hasItemsFix } = recalcAndDetectMismatch(pedidoFix);
-            pedido = pedidoFixCorr;
-
-            if (!mismatchFix && hasItemsFix) { fixedOk = true; break; }
-          } catch (e2) {
-            console.error("Error parse fixReply JSON:", e2.message);
-          }
-        }
-
-        responseText =
-          parsedFixLast && typeof parsedFixLast.response === "string"
-            ? coalesceResponse(parsedFixLast.response, pedido)
-            // Solo mostrar resumen si el usuario pidió detalle/total/confirmar
-            : (wantsDetail ? buildBackendSummary(pedido, { showEnvio: wantsDetail }) : "");
+        // 🔒 La corrección de importes la resuelve el backend en silencio.
+        // No volvemos a consultar al modelo porque eso altera el flujo visible,
+        // puede repetir preguntas ya respondidas y ensucia el historial con prompts internos.
+        console.log("[fix] importes corregidos por backend; se preserva el response original del asistente");
+        responseText = originalResponseText;
       } else {
-        responseText = coalesceResponse(parsed.response, pedido);
+        responseText = originalResponseText;
       }
     } catch (e) {
       console.error("Error al parsear/corregir JSON:", e.message);
@@ -6737,6 +6675,19 @@ if (debounceMs > 0 && msg.type === "text") {
       || (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length
           ? buildBackendSummary(pedido, { showEnvio: wantsDetail })
           : "Perfecto, sigo acá. ¿Querés confirmar o cambiar algo?");
+
+    try {
+      replaceLastAssistantHistory(tenant, sessionFrom, JSON.stringify({
+        response: responseTextSafe,
+        estado: typeof estado === "string" ? estado : "IN_PROGRESS",
+        Pedido: (pedido && typeof pedido === "object")
+          ? pedido
+          : { Entrega: "", Domicilio: {}, items: [], total_pedido: 0 }
+      }));
+    } catch (e) {
+      console.warn("[history] no se pudo reemplazar la última respuesta del asistente:", e?.message || e);
+    }
+
     if (isStale()) {
       console.log(`[webhook][stale-run] abort before send key=${runKey} seq=${runSeq}`);
       return;
