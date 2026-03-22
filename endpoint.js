@@ -1091,35 +1091,101 @@ function _pedidoItemsToDisplayLines(pedido) {
     .filter(Boolean);
 }
 
+function _extractPedidoSummaryData(pedido) {
+  if (!pedido || typeof pedido !== "object") {
+    return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-", direccion: "-" };
+  }
+
+  const items = Array.isArray(pedido.items) ? pedido.items : [];
+  const entregaRaw = String(pedido.Entrega || pedido.entrega || "").trim().toLowerCase();
+  const envio = items.find(i => /env[ií]o/i.test(String(i?.descripcion || "")));
+
+  let entregaLabel = "-";
+  if (entregaRaw === "domicilio") entregaLabel = "Envío";
+  else if (entregaRaw === "retiro") entregaLabel = "Retiro";
+
+  let direccion = "";
+  const domicilio = pedido.Domicilio ?? pedido.domicilio;
+  if (typeof domicilio === "string") {
+    direccion = domicilio.trim();
+  } else if (domicilio && typeof domicilio === "object") {
+    direccion = String(
+      domicilio.direccion ||
+      domicilio.calle ||
+      domicilio.address ||
+      ""
+    ).trim();
+  }
+  if (!direccion && envio) {
+    direccion = String(envio.descripcion || "").trim();
+  }
+
+  const fechaRaw = String(
+    pedido.Fecha ||
+    pedido.fecha ||
+    pedido.fecha_pedido ||
+    ""
+  ).trim();
+  const horaRaw = String(
+    pedido.Hora ||
+    pedido.hora ||
+    pedido.hora_pedido ||
+    ""
+  ).trim();
+
+  const fechaEntrega = /^\d{4}-\d{2}-\d{2}$/.test(fechaRaw) ? fechaRaw : "-";
+  const horaEntrega = /^\d{2}:\d{2}$/.test(horaRaw) ? horaRaw : "-";
+
+  return { entregaLabel, fechaEntrega, horaEntrega, direccion: direccion || "-" };
+}
+
+async function _loadLastPedidoForConversation(db, convId, tenantId, orderHint = null) {
+  let pedido =
+    orderHint && orderHint.pedido && Array.isArray(orderHint.pedido.items)
+      ? orderHint.pedido
+      : null;
+
+  if (!pedido) {
+    try {
+      const conv = await db.collection("conversations").findOne(
+        withTenant({ _id: new ObjectId(String(convId)) }, tenantId),
+        { projection: { lastPedidoSnapshot: 1 } }
+      );
+      const convSnap = conv?.lastPedidoSnapshot?.Pedido;
+      if (convSnap && Array.isArray(convSnap.items)) {
+        pedido = convSnap;
+      }
+    } catch {}
+  }
+
+  if (!pedido) {
+    const filter = withTenant(
+      { conversationId: new ObjectId(String(convId)), role: "assistant" },
+      tenantId
+    );
+    const cursor = db.collection("messages")
+      .find(filter)
+      .sort({ ts: -1, createdAt: -1 })
+      .limit(200);
+
+    for await (const m of cursor) {
+      const s = String(m.content || "").trim();
+      try {
+        const j = JSON.parse(s);
+        if (j && j.Pedido && Array.isArray(j.Pedido.items)) {
+          pedido = j.Pedido;
+          break;
+        }
+      } catch {}
+    }
+  }
+
+  return pedido || null;
+}
+
 async function _getLastPedidoProducts(db, convId, tenantId, orderHint = null) {
   try {
-    let pedido =
-      orderHint && orderHint.pedido && Array.isArray(orderHint.pedido.items)
-        ? orderHint.pedido
-        : null;
-
-    if (!pedido) {
-      const filter = withTenant(
-        { conversationId: new ObjectId(String(convId)), role: "assistant" },
-        tenantId
-      );
-      const cursor = db.collection("messages")
-        .find(filter)
-        .sort({ ts: -1, createdAt: -1 })
-        .limit(200);
-
-      for await (const m of cursor) {
-        const s = String(m.content || "").trim();
-        try {
-          const j = JSON.parse(s);
-          if (j && j.Pedido && Array.isArray(j.Pedido.items)) {
-            pedido = j.Pedido;
-            break;
-          }
-        } catch {}
-      }
-    }
-
+    const pedido = await _loadLastPedidoForConversation(db, convId, tenantId, orderHint);
     return _pedidoItemsToDisplayLines(pedido);
   } catch {
     return [];
@@ -1127,53 +1193,11 @@ async function _getLastPedidoProducts(db, convId, tenantId, orderHint = null) {
 }
 
 // === Helpers para resumen de Pedido (fecha/hora/entrega/envío) ===
-async function _getLastPedidoSummary(db, convId, tenantId) {
+async function _getLastPedidoSummary(db, convId, tenantId, orderHint = null) {
  try {
-    const filter = withTenant({ conversationId: new ObjectId(String(convId)), role: "assistant" }, tenantId);
-    const cursor = db.collection("messages")
-      .find(filter)
-      .sort({ ts: -1, createdAt: -1 })
-      .limit(200);
-    let pedido = null;
-    for await (const m of cursor) {
-      const s = String(m.content || "").trim();
-      try {
-        const j = JSON.parse(s);
-        if (j && j.Pedido && Array.isArray(j.Pedido.items)) { pedido = j.Pedido; break; }
-      } catch {}
-    }
+    const pedido = await _loadLastPedidoForConversation(db, convId, tenantId, orderHint);
     if (!pedido) return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-", direccion: "-" };
-
-    // Entrega/Envío
-    const entregaRaw = String(pedido.Entrega || "").trim().toLowerCase();
-    const envio = (pedido.items || []).find(i => /env[ií]o/i.test(String(i?.descripcion || "")));
-
-    let entregaLabel = "-";
-    if (entregaRaw === "domicilio") {
-      entregaLabel = "Envío";
-    } else if (entregaRaw === "retiro") {
-      entregaLabel = "Retiro";
-    }
-
-    // Dirección (string u objeto)
-    let direccion = "";
-    if (typeof pedido.Domicilio === "string") {
-      direccion = pedido.Domicilio.trim();
-    } else if (pedido.Domicilio && typeof pedido.Domicilio === "object") {
-      direccion = String(
-        pedido.Domicilio.direccion ||
-        pedido.Domicilio.calle ||
-        ""
-      ).trim();
-    }
-    if (!direccion && envio) {
-      direccion = String(envio.descripcion || "").trim();
-    }
-
-    // Día/Hora
-    const fechaEntrega = /^\d{4}-\d{2}-\d{2}$/.test(String(pedido.Fecha || "")) ? pedido.Fecha : "-";
-    const horaEntrega  = /^\d{2}:\d{2}$/.test(String(pedido.Hora  || "")) ? pedido.Hora  : "-";
-    return { entregaLabel, fechaEntrega, horaEntrega, direccion: direccion || "-" };
+    return _extractPedidoSummaryData(pedido);
   } catch {
     return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-", direccion: "-" };
   }
@@ -1260,7 +1284,7 @@ async function listConversations(limit = 50, tenantId, deliveredFilter = null) {
       };
       out.push({ ...base, ...extra, products });
     } else {
-      const extra = await _getLastPedidoSummary(db, c._id, tenantId);
+      const extra = await _getLastPedidoSummary(db, c._id, tenantId, ord);
       out.push({
         ...base,
         ...extra,
@@ -3697,10 +3721,25 @@ app.get("/admin", async (req, res) => {
     return true;
   }
 
+ function convDateKey(c){
+    const raw = String(c?.fechaEntrega || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    const m = raw.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (m) return m[3] + '-' + m[2] + '-' + m[1];
+    const last = c?.lastAt ? new Date(c.lastAt) : null;
+    if (last && Number.isFinite(last.getTime())) {
+      const yyyy = last.getFullYear();
+      const mm = String(last.getMonth() + 1).padStart(2, '0');
+      const dd = String(last.getDate()).padStart(2, '0');
+      return yyyy + '-' + mm + '-' + dd;
+    }
+    return '';
+  }
+
  function convMatchesDateRange(c, from, to){
-    const fecha = String(c?.fechaEntrega || '').trim();
+    const fecha = convDateKey(c);
     if (!from && !to) return true;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return false;
+    if (!fecha) return false;
     if (from && fecha < from) return false;
     if (to && fecha > to) return false;
     return true;
