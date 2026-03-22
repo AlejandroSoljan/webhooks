@@ -3790,12 +3790,43 @@ app.get("/admin", async (req, res) => {
     return String(line || '').replace(/^(\d+(?:[\.,]\d+)?)\s*x\s+/i, '').trim();
   }
 
+  function foldText(raw){
+    return String(raw || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   function isDeliveryProductLine(line){
-    return /\benv[ií]o\b/i.test(normalizeProductLine(line));
+    const name = foldText(normalizeProductLine(line));
+    return !!name && (
+      name.includes('envio') ||
+      name.includes('costo de envio') ||
+      name.includes('delivery') ||
+      /\b\d+\s*-\s*\d+\s*km\b/.test(name)
+    );
+  }
+
+  function rowHasPedido(row){
+    const lines = Array.isArray(row?.products) ? row.products.filter(Boolean) : [];
+    if (lines.length) return true;
+    if (String(row?.fechaEntrega || '').trim() && String(row?.fechaEntrega || '').trim() !== '-') return true;
+    if (String(row?.horaEntrega || '').trim() && String(row?.horaEntrega || '').trim() !== '-') return true;
+    if (String(row?.entregaLabel || '').trim() && String(row?.entregaLabel || '').trim() !== '-') return true;
+    if (String(row?.direccion || '').trim() && String(row?.direccion || '').trim() !== '-') return true;
+    return false;
+  }
+
+  function isPendingConversation(row){
+    if (!row || row.delivered) return false;
+    if (normalizeStatus(row?.status) === 'CANCELLED') return false;
+    return rowHasPedido(row);
   }
 
   function getEntregaMode(row){
-    const label = String(row?.entregaLabel || '').toLowerCase();
+    const label = foldText(row?.entregaLabel || '');
     if (label.includes('env')) return 'envio';
     if (label.includes('ret')) return 'retiro';
     const lines = Array.isArray(row?.products) ? row.products : [];
@@ -3803,14 +3834,27 @@ app.get("/admin", async (req, res) => {
     return '';
   }
 
-  function sumProductQty(rows, regex){
+  function getWeightedQty(line, kind){
+    const name = foldText(normalizeProductLine(line));
+    if (!name || isDeliveryProductLine(name)) return 0;
+    const qty = parseQtyFromProductLine(line);
+    if (kind === 'pollo') {
+      if (!/\bpollo\b/.test(name)) return 0;
+      if (/\bmedio\s+pollo\b|\b1\/2\s+pollo\b/.test(name)) return qty * 0.5;
+      if (/\bcuarto\s+de\s+pollo\b|\b1\/4\s+pollo\b/.test(name)) return qty * 0.25;
+      return qty;
+    }
+    if (kind === 'papa') {
+      if (!/\bpapa(?:s)?\b|\bfrita(?:s)?\b/.test(name)) return 0;
+      return qty;
+    }
+    return 0;
+  }
+
+  function sumProductQty(rows, kind){
     return (Array.isArray(rows) ? rows : []).reduce((acc, row) => {
       const lines = Array.isArray(row?.products) ? row.products : [];
-      return acc + lines.reduce((sum, line) => {
-        const name = normalizeProductLine(line);
-        if (!name || isDeliveryProductLine(name) || !regex.test(name)) return sum;
-        return sum + parseQtyFromProductLine(line);
-      }, 0);
+      return acc + lines.reduce((sum, line) => sum + getWeightedQty(line, kind), 0);
     }, 0);
   }
 
@@ -3838,7 +3882,7 @@ app.get("/admin", async (req, res) => {
       const lines = Array.isArray(row?.products) ? row.products : [];
       for (const line of lines) {
         const name = normalizeProductLine(line);
-        if (!name || isDeliveryProductLine(name)) continue;
+        if (!name || isDeliveryProductLine(line)) continue;
         const next = (counts.get(name) || 0) + parseQtyFromProductLine(line);
         counts.set(name, next);
       }
@@ -3867,21 +3911,17 @@ app.get("/admin", async (req, res) => {
   function renderAdminStats(rows, allRows){
     const visible = Array.isArray(rows) ? rows : [];
     const loaded = Array.isArray(allRows) ? allRows : [];
-    const pendingAll = loaded.filter(row => !row?.delivered);
+    const pendingAll = loaded.filter(isPendingConversation);
     const completedCount = visible.filter(row => normalizeStatus(row?.status) === 'COMPLETED').length;
-    const openCount = visible.filter(row => {
-      const st = normalizeStatus(row?.status);
-      return st === 'OPEN' || st === 'IN_PROGRESS';
-    }).length;
     const envioCount = countByEntrega(pendingAll, 'envio');
     const retiroCount = countByEntrega(pendingAll, 'retiro');
-    const polloQty = sumProductQty(pendingAll, /\bpollo(?:s)?\b/i);
-    const papaQty = sumProductQty(pendingAll, /\bpapa(?:s)?\b|\bfrita(?:s)?\b/i);
+    const polloQty = sumProductQty(pendingAll, 'pollo');
+    const papaQty = sumProductQty(pendingAll, 'papa');
 
     const statsGrid = document.getElementById('statsGrid');
     if (statsGrid) {
       const cards = [
-        { value: pendingAll.length, label: 'Pendientes', meta: 'Sobre el total de conversaciones cargadas' },
+        { value: pendingAll.length, label: 'Pendientes', meta: 'Total no entregado con pedido válido' },
         { value: String(polloQty).replace(/\.0+$/, ''), label: 'Pollos', meta: 'Unidades pendientes totales' },
         { value: String(papaQty).replace(/\.0+$/, ''), label: 'Papas', meta: 'Unidades pendientes totales' },
         { value: envioCount, label: 'A enviar', meta: 'Pendientes totales con envío' },
