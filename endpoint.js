@@ -3805,7 +3805,7 @@ app.get("/admin", async (req, res) => {
       name.includes('envio') ||
       name.includes('costo de envio') ||
       name.includes('delivery') ||
-      /\b\d+\s*-\s*\d+\s*km\b/.test(name)
+      /\\b\\d+\\s*-\\s*\\d+\\s*km\\b/.test(name)
     );
   }
 
@@ -3839,13 +3839,13 @@ app.get("/admin", async (req, res) => {
     if (!name || isDeliveryProductLine(name)) return 0;
     const qty = parseQtyFromProductLine(line);
     if (kind === 'pollo') {
-      if (!/\bpollo\b/.test(name)) return 0;
-      if (/\bmedio\s+pollo\b|\b1\/2\s+pollo\b/.test(name)) return qty * 0.5;
-      if (/\bcuarto\s+de\s+pollo\b|\b1\/4\s+pollo\b/.test(name)) return qty * 0.25;
+      if (!/\\bpollo\\b/.test(name)) return 0;
+      if (/\\bmedio\\s+pollo\\b|\\b1\\/2\\s+pollo\\b/.test(name)) return qty * 0.5;
+      if (/\\bcuarto\\s+de\\s+pollo\\b|\\b1\\/4\\s+pollo\\b/.test(name)) return qty * 0.25;
       return qty;
     }
     if (kind === 'papa') {
-      if (!/\bpapa(?:s)?\b|\bfrita(?:s)?\b/.test(name)) return 0;
+      if (!/\\bpapa(?:s)?\\b|\\bfrita(?:s)?\\b/.test(name)) return 0;
       return qty;
     }
     return 0;
