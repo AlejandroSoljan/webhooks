@@ -7,9 +7,9 @@ const OpenAI = require("openai");
 let toFile = null;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const CHAT_MODEL = process.env.CHAT_MODEL || "gpt-4o-mini";
+const CHAT_MODEL = process.env.CHAT_MODEL || "gpt-5.4-mini";
 const VISION_MODEL = process.env.VISION_MODEL || CHAT_MODEL;
-const CHAT_TEMPERATURE = Number(process.env.OPENAI_TEMPERATURE ?? 0.1) || 0.1;
+const CHAT_TEMPERATURE = Number(process.env.OPENAI_TEMPERATURE ?? 0.1) || 0.0;
 
 const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || "v17.0";
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
@@ -1016,7 +1016,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
 
   try {
     const apiKey = String(opts.openaiApiKey || OPENAI_API_KEY || "").trim();
-    const model = String(opts.chatModel || CHAT_MODEL || "gpt-4o-mini").trim();
+    const model = String(opts.chatModel || CHAT_MODEL || "gpt-5.4-mini").trim();
     const payload = {
       model,
       messages: sanitizeMessages(messages),
