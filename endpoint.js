@@ -1267,9 +1267,11 @@ async function listConversations(limit = 50, tenantId, deliveredFilter = null) {
       ord && ord.distancia_km !== undefined && ord.distancia_km !== null
         ? ord.distancia_km
         : null;
-    const products = await _getLastPedidoProducts(db, c._id, tenantId, ord);
+    const pedido = await _loadLastPedidoForConversation(db, c._id, tenantId, ord);
+    const products = _pedidoItemsToDisplayLines(pedido);
+    const pedidoItems = _safePedidoItemsForAdmin(pedido);
 
-    // Preferir campos persistidos en conversations; si faltan, fallback a escanear mensajes
+    // Preferir campos persistidos en conversations; si faltan, fallback al último pedido detectado
     if (c.pedidoEntregaLabel || c.pedidoFecha || c.pedidoHora || c.pedidoEntrega) {
       const extra = {
         entregaLabel:
@@ -1284,13 +1286,14 @@ async function listConversations(limit = 50, tenantId, deliveredFilter = null) {
         direccion: c.pedidoDireccion || "-",
         ...(distanceKm !== null ? { distanceKm } : {})
       };
-      out.push({ ...base, ...extra, products });
+      out.push({ ...base, ...extra, products, pedidoItems });
     } else {
-      const extra = await _getLastPedidoSummary(db, c._id, tenantId, ord);
+      const extra = pedido ? _extractPedidoSummaryData(pedido) : { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-", direccion: "-" };
       out.push({
         ...base,
         ...extra,
         products,
+        pedidoItems,
         ...(distanceKm !== null ? { distanceKm } : {})
       });
     }
@@ -3806,12 +3809,50 @@ app.get("/admin", async (req, res) => {
     return yyyy + '-' + mm + '-' + dd;
   }
 
+  const ADMIN_FILTERS_STORAGE_KEY = 'adminConversationsFilters.v1';
+
+  function saveAdminFilterState(){
+    try {
+      const payload = {
+        q: String(document.getElementById('qFilter')?.value || ''),
+        deliv: String(document.getElementById('delivFilter')?.value || 'pending'),
+        status: String(document.getElementById('statusFilter')?.value || 'completed'),
+        from: String(document.getElementById('dateFrom')?.value || ''),
+        to: String(document.getElementById('dateTo')?.value || '')
+      };
+      localStorage.setItem(ADMIN_FILTERS_STORAGE_KEY, JSON.stringify(payload));
+    } catch {}
+  }
+
   function initAdminFilters(){
     const today = todayIso();
     const from = document.getElementById('dateFrom');
     const to = document.getElementById('dateTo');
-    if (from && !from.value) from.value = today;
-    if (to && !to.value) to.value = today;
+    const q = document.getElementById('qFilter');
+    const deliv = document.getElementById('delivFilter');
+    const status = document.getElementById('statusFilter');
+
+    let restored = false;
+    try {
+      const raw = localStorage.getItem(ADMIN_FILTERS_STORAGE_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw) || {};
+        if (q && typeof saved.q === 'string') q.value = saved.q;
+        if (from && typeof saved.from === 'string') from.value = saved.from;
+        if (to && typeof saved.to === 'string') to.value = saved.to;
+        if (deliv) deliv.value = parseMultiFilterValue(saved.deliv, DELIVERY_FILTER_ALLOWED, ['pending']).join(',');
+        if (status) status.value = parseMultiFilterValue(saved.status, STATUS_FILTER_ALLOWED, ['completed']).join(',');
+        restored = true;
+      }
+    } catch {}
+
+    if (!restored) {
+      if (from && !from.value) from.value = today;
+      if (to && !to.value) to.value = today;
+      if (deliv && !String(deliv.value || '').trim()) deliv.value = 'pending';
+      if (status && !String(status.value || '').trim()) status.value = 'completed';
+    }
+    refreshFilterButtonLabels();
   }
 
   function getTextFilterValue(){
@@ -3875,6 +3916,7 @@ app.get("/admin", async (req, res) => {
     const ordered = parseMultiFilterValue((Array.isArray(values) ? values : []).join(','), allowed, fallback);
     hidden.value = ordered.join(',');
     refreshFilterButtonLabels();
+    saveAdminFilterState();
   }
 
   function closeAllFilterPopovers(){
@@ -4290,6 +4332,7 @@ app.get("/admin", async (req, res) => {
       const statusFilter = getStatusFilterValue();
       const textFilter = getTextFilterValue();
       const range = getDateRangeValue();
+      saveAdminFilterState();
 
       let url = '/api/logs/conversations?limit=200';
       if (deliveredFilter.length === 1 && deliveredFilter[0] === 'delivered') url += '&delivered=true';
