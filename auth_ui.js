@@ -3,7 +3,7 @@
 // Requiere MongoDB (getDb) y la colección "users".
 //
 // Documento esperado en "users":
-// { username, role: 'admin'|'user'|'superadmin', tenantId, password: { salt, hash }, createdAt, allowedPages? }
+// { username, role: 'admin'|'user'|'superadmin', tenantId, password: { salt, hash }, createdAt, allowedPages?, defaultPage? }
 //
 // allowedPages:
 //   - undefined / no existe el campo => acceso completo (compatibilidad)
@@ -160,6 +160,7 @@ function makeSessionPayload(user) {
     role: String(user.role || "user"),
     tenantId: String(user.tenantId || "default"),
     allowedPages: Array.isArray(user.allowedPages) ? user.allowedPages : undefined,
+    defaultPage: String(user?.defaultPage || "/app"),
     iat: Date.now(),
   };
 }
@@ -238,7 +239,7 @@ async function attachUser(req, res, next) {
     if (ObjectId.isValid(uid)) {
       userDoc = await db.collection("users").findOne(
         { _id: new ObjectId(uid) },
-        { projection: { username: 1, role: 1, tenantId: 1, allowedPages: 1, isLocked: 1 } }
+        { projection: { username: 1, role: 1, tenantId: 1, allowedPages: 1, defaultPage: 1, isLocked: 1 } }
       );
     }
 
@@ -246,7 +247,7 @@ async function attachUser(req, res, next) {
     if (!userDoc && sess.username) {
       userDoc = await db.collection("users").findOne(
         { username: String(sess.username) },
-        { projection: { username: 1, role: 1, tenantId: 1, allowedPages: 1, isLocked: 1 } }
+        { projection: { username: 1, role: 1, tenantId: 1, allowedPages: 1, defaultPage: 1, isLocked: 1 } }
       );
     }
 
@@ -1074,6 +1075,34 @@ function getNavItemsForUser(user) {
   return items;
 }
 
+function getLandingItemsForUser(user) {
+  return getNavItemsForUser(user).filter((it) => it && it.href && it.title);
+}
+
+function normalizeDefaultPage(userLike, desiredHref) {
+  const items = getLandingItemsForUser(userLike);
+  if (!items.length) return "/app";
+  const desired = String(desiredHref || "").trim();
+  if (!desired) return "/app";
+  const match = items.find((it) => it.href === desired);
+  return match ? match.href : "/app";
+}
+
+function getDefaultPageTitle(userLike, href) {
+  const safeHref = normalizeDefaultPage(userLike, href);
+  const items = getLandingItemsForUser(userLike);
+  const match = items.find((it) => it.href === safeHref);
+  return match ? match.title : "Inicio";
+}
+
+function defaultPageOptionsHtml(userLike, selectedHref) {
+  const items = getLandingItemsForUser(userLike);
+  const safeSelected = normalizeDefaultPage(userLike, selectedHref || "/app");
+  return items
+    .map((it) => `<option value="${htmlEscape(it.href)}" ${it.href === safeSelected ? "selected" : ""}>${htmlEscape(it.title)}</option>`)
+    .join("");
+}
+
 function sidebarHtml(user, activeKey) {
   const items = getNavItemsForUser(user)
     .map((it) => {
@@ -1337,6 +1366,14 @@ function usersAdminPage({ user, users, msg, err }) {
     ? `<input name="tenantId" required placeholder="default"/>`
     : `<input name="tenantId" required value="${htmlEscape(myTenant)}" readonly/>`;
 
+  const defaultCreateUserLike = {
+    role: "user",
+    tenantId: myTenant,
+    allowedPages: defaultCreatePages,
+    defaultPage: "/app",
+  };
+  const createDefaultPageOptions = defaultPageOptionsHtml(defaultCreateUserLike, "/app");
+
   const rows = (users || [])
     .map((u) => {
       const id = String(u._id);
@@ -1375,6 +1412,10 @@ function usersAdminPage({ user, users, msg, err }) {
         })
         .join("");
 
+      const targetUserLike = { role, tenantId, allowedPages: currentPages, defaultPage: String(u.defaultPage || "/app") };
+      const defaultPageTitle = getDefaultPageTitle(targetUserLike, targetUserLike.defaultPage);
+      const defaultPageSelect = `<select name="defaultPage" style="width:180px; display:inline-block; margin-right:6px">${defaultPageOptionsHtml(targetUserLike, targetUserLike.defaultPage)}</select>`;
+
       const roleSelect = (() => {
         const opts = isSuper ? ["user", "admin", "superadmin"] : ["user", "admin"];
         const options = opts.map((r) => `<option value="${r}" ${r === role ? "selected" : ""}>${r}</option>`).join("");
@@ -1403,7 +1444,10 @@ function usersAdminPage({ user, users, msg, err }) {
         </td>
         <td>${htmlEscape(tenantId)}</td>
         <td>${htmlEscape(role)}</td>
-        <td><div class="small" style="color:#111827">${htmlEscape(accessLabel)}</div></td>
+        <td>
+          <div class="small" style="color:#111827">${htmlEscape(accessLabel)}</div>
+          <div class="small" style="margin-top:4px">Inicio: ${htmlEscape(defaultPageTitle)}</div>
+        </td>
         <td>${locked ? "Bloqueado" : "Activo"}</td>
         <td class="actions">
           <form method="POST" action="/admin/users/update" style="margin:0 0 8px 0">
@@ -1413,6 +1457,10 @@ function usersAdminPage({ user, users, msg, err }) {
             ${lockToggle}
             <div style="margin:8px 0 10px; display:flex; flex-wrap:wrap; gap:10px">
               ${accessCheckboxes}
+            </div>
+            <div style="margin:8px 0 10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+              <label class="small" style="display:inline-flex; align-items:center; gap:6px">Inicio al login</label>
+              ${defaultPageSelect}
             </div>
             <button class="btn2 btnOk" type="submit" ${saveDisabled}>Guardar</button>
             ${isSelf ? `<div class="small" style="margin-top:6px">No se permite cambiar tu rol/tenant/bloqueo desde acá.</div>` : ``}
@@ -1487,6 +1535,11 @@ function usersAdminPage({ user, users, msg, err }) {
             <div style="display:flex; flex-wrap:wrap; gap:10px">
               ${createAccessCheckboxes}
             </div>
+          </div>
+
+          <div class="field">
+            <label>Inicio al login</label>
+            <select name="defaultPage">${createDefaultPageOptions}</select>
           </div>
 
           <button class="btn" type="submit">Crear usuario</button>
@@ -2216,7 +2269,11 @@ function mountAuthRoutes(app) {
 
       const payload = makeSessionPayload(user);
       setSessionCookie(res, payload);
-      return res.redirect(to.startsWith("/") ? to : "/app");
+      const safeTo = to.startsWith("/") ? to : "/app";
+      const redirectTo = (!to || safeTo === "/app")
+        ? normalizeDefaultPage(user, user?.defaultPage || "/app")
+        : safeTo;
+      return res.redirect(redirectTo);
     } catch (e) {
       console.error("[auth] login error:", e);
            const baseUrl =
@@ -2378,6 +2435,7 @@ function mountAuthRoutes(app) {
       const tenantId = String(req.body?.tenantId || "").trim() || "default";
 
       const role = String(req.body?.role || "user").trim();
+      const defaultPage = String(req.body?.defaultPage || "/app").trim();
       const isLocked = !!req.body?.isLocked;
 
       const actorRole = String(req.user?.role || "");
@@ -2406,6 +2464,7 @@ function mountAuthRoutes(app) {
 
       const passwordDoc = hashPassword(password);
       const allowedPages = normalizeAllowedPages(req.body?.allowedPages);
+      const finalDefaultPage = normalizeDefaultPage({ role: finalRole, tenantId: finalTenantId, allowedPages }, defaultPage);
 
       await db.collection("users").insertOne({
         username,
@@ -2413,6 +2472,7 @@ function mountAuthRoutes(app) {
         role: finalRole,
         isLocked: !!isLocked,
         allowedPages,
+        defaultPage: finalDefaultPage,
         password: passwordDoc,
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -2430,6 +2490,7 @@ function mountAuthRoutes(app) {
       const userId = String(req.body?.userId || "").trim();
       const tenantId = String(req.body?.tenantId || "").trim();
       const role = String(req.body?.role || "").trim();
+      const defaultPage = String(req.body?.defaultPage || "/app").trim();
       const isLocked = !!req.body?.isLocked;
       const allowedPages = normalizeAllowedPages(req.body?.allowedPages);
 
@@ -2471,9 +2532,11 @@ function mountAuthRoutes(app) {
         if (["user", "admin"].includes(role)) finalRole = role;
       }
 
+      const finalDefaultPage = normalizeDefaultPage({ role: finalRole, tenantId: finalTenantId, allowedPages }, defaultPage);
+
       await db.collection("users").updateOne(
         { _id: new ObjectId(userId) },
-        { $set: { tenantId: finalTenantId, role: finalRole, isLocked: !!isLocked, allowedPages, updatedAt: new Date() } }
+        { $set: { tenantId: finalTenantId, role: finalRole, isLocked: !!isLocked, allowedPages, defaultPage: finalDefaultPage, updatedAt: new Date() } }
       );
 
       return res.redirect("/admin/users?msg=" + encodeURIComponent("Usuario actualizado."));
