@@ -2818,7 +2818,7 @@ app.get("/admin", async (req, res) => {
       box-shadow:var(--shadow);
     }
     .toolbar-card{padding:10px 12px}
-    .toolbar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+    .toolbar{display:flex;gap:10px;align-items:flex-end;justify-content:flex-start;flex-wrap:wrap}
     .field{display:flex;flex-direction:column;gap:4px;min-width:150px}
     .field.grow{flex:1 1 300px}
     .field label{font-size:11px;font-weight:700;color:#334155}
@@ -2886,7 +2886,7 @@ app.get("/admin", async (req, res) => {
     .filter-option input{margin:0}
     .filter-popover-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb}
     .btn.btn-mini{padding:7px 10px;font-size:11px;border-radius:10px}
-    .toolbar-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+    .toolbar-actions{display:flex;gap:6px;align-items:center;justify-content:flex-start;flex-wrap:wrap}
     .btn{
       appearance:none;
       border:1px solid var(--line-strong);
@@ -3002,7 +3002,7 @@ app.get("/admin", async (req, res) => {
     .kpi-value{font-size:24px;line-height:1;font-weight:800;color:#0f172a}
     .kpi-label{margin-top:4px;font-size:11px;font-weight:700;color:#475467;text-transform:uppercase;letter-spacing:.04em}
     .kpi-meta{margin-top:4px;font-size:11px;color:#64748b;line-height:1.25}
-    .stats-charts{display:grid;grid-template-columns:1.1fr 1.1fr 1.2fr;gap:8px}
+    .stats-charts{display:grid;grid-template-columns:1fr 1fr;gap:8px}
     .chart-card{
       border:1px solid var(--line);
       background:#fff;
@@ -3104,7 +3104,7 @@ app.get("/admin", async (req, res) => {
       <div class="stats-head">
         <div>
           <div class="stats-title">Resumen del movimiento</div>
-          <p class="stats-subtitle" id="statsHint">Estados y productos sobre lo filtrado · pendientes y entrega sobre el total cargado.</p>
+          <p class="stats-subtitle" id="statsHint">Estados visibles sobre lo filtrado · pendientes y entrega sobre el total cargado.</p>
         </div>
         <div class="toolbar-actions">
           <span class="muted stats-refresh">Refresco automático cada 1 minuto</span>
@@ -3128,10 +3128,6 @@ app.get("/admin", async (req, res) => {
             <div class="chart-title">Entrega pendiente</div>
             <div class="bar-list" id="deliveryBars"></div>
           </div>
-          <div class="chart-card">
-            <div class="chart-title">Productos más pedidos</div>
-            <div class="top-list" id="topProductsList"></div>
-          </div>
         </div>
       </div>
     </section>
@@ -3151,6 +3147,7 @@ app.get("/admin", async (req, res) => {
           <div class="filter-popover" id="delivFilterPopover" hidden>
             <div class="filter-popover-title">Entrega</div>
             <label class="filter-option"><input type="checkbox" value="pending" checked /> <span>No entregadas</span></label>
+            <label class="filter-option"><input type="checkbox" value="kitchen" /> <span>En cocina</span></label>
             <label class="filter-option"><input type="checkbox" value="delivered" /> <span>Entregadas</span></label>
             <div class="filter-popover-actions">
               <button type="button" class="btn btn-mini" data-filter-all="delivFilter">Todas</button>
@@ -3168,8 +3165,6 @@ app.get("/admin", async (req, res) => {
             <div class="filter-popover-title">Estado</div>
             <label class="filter-option"><input type="checkbox" value="completed" checked /> <span>Completadas</span></label>
             <label class="filter-option"><input type="checkbox" value="open" /> <span>Abiertas</span></label>
-            <label class="filter-option"><input type="checkbox" value="kitchen" /> <span>En cocina</span></label>
-            <label class="filter-option"><input type="checkbox" value="in_progress" /> <span>En curso</span></label>
             <label class="filter-option"><input type="checkbox" value="cancelled" /> <span>Canceladas</span></label>
             <div class="filter-popover-actions">
               <button type="button" class="btn btn-mini" data-filter-all="statusFilter">Todas</button>
@@ -3805,10 +3800,10 @@ app.get("/admin", async (req, res) => {
     return String(document.getElementById('qFilter')?.value || '').trim().toLowerCase();
   }
 
-  const DELIVERY_FILTER_ALLOWED = ['pending', 'delivered'];
-  const STATUS_FILTER_ALLOWED = ['completed', 'open', 'kitchen', 'in_progress', 'cancelled'];
-  const DELIVERY_FILTER_LABELS = { pending: 'No entregadas', delivered: 'Entregadas' };
-  const STATUS_FILTER_LABELS = { completed: 'Completadas', open: 'Abiertas', kitchen: 'En cocina', in_progress: 'En curso', cancelled: 'Canceladas' };
+  const DELIVERY_FILTER_ALLOWED = ['pending', 'kitchen', 'delivered'];
+  const STATUS_FILTER_ALLOWED = ['completed', 'open', 'cancelled'];
+  const DELIVERY_FILTER_LABELS = { pending: 'No entregadas', kitchen: 'En cocina', delivered: 'Entregadas' };
+  const STATUS_FILTER_LABELS = { completed: 'Completadas', open: 'Abiertas', cancelled: 'Canceladas' };
 
   function parseMultiFilterValue(raw, allowed, fallback){
     const allowedSet = new Set(Array.isArray(allowed) ? allowed : []);
@@ -3951,10 +3946,8 @@ app.get("/admin", async (req, res) => {
   function getConversationStatusTags(c){
     const st = normalizeStatus(c?.status);
     const tags = [];
-    if (c?.kitchenSent) tags.push('kitchen');
     if (st === 'COMPLETED') tags.push('completed');
-    if (st === 'OPEN') tags.push('open');
-    if (st === 'IN_PROGRESS') tags.push('in_progress');
+    if (st === 'OPEN' || st === 'IN_PROGRESS') tags.push('open');
     if (st === 'CANCELLED') tags.push('cancelled');
     return tags;
   }
@@ -3970,7 +3963,11 @@ app.get("/admin", async (req, res) => {
     const selected = Array.isArray(deliveryFilter) ? deliveryFilter : getDeliveryFilterValue();
     if (!selected.length || selected.length === DELIVERY_FILTER_ALLOWED.length) return true;
     const delivered = !!c?.delivered;
-    return (delivered && selected.includes('delivered')) || (!delivered && selected.includes('pending'));
+    const kitchen = !!c?.kitchenSent && !delivered;
+    const pending = !delivered && !kitchen;
+    return (pending && selected.includes('pending')) ||
+           (kitchen && selected.includes('kitchen')) ||
+           (delivered && selected.includes('delivered'));
   }
 
  function convDateKey(c){
@@ -4173,43 +4170,12 @@ app.get("/admin", async (req, res) => {
     }).join('');
   }
 
-  function buildTopProducts(rows){
-    const counts = new Map();
-    for (const row of (Array.isArray(rows) ? rows : [])) {
-      const lines = Array.isArray(row?.products) ? row.products : [];
-      for (const line of lines) {
-        const name = normalizeProductLine(line);
-        if (!name || isDeliveryProductLine(line)) continue;
-        const next = (counts.get(name) || 0) + parseQtyFromProductLine(line);
-        counts.set(name, next);
-      }
-    }
-    return Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]), 'es'));
-  }
-
-  function renderTopProducts(rows){
-    const el = document.getElementById('topProductsList');
-    if (!el) return;
-    const top = buildTopProducts(rows);
-    el.classList.add('is-scrollable');
-    if (!top.length) {
-      el.innerHTML = '<div class="muted" style="font-size:12px">Sin productos para resumir con los filtros actuales.</div>';
-      return;
-    }
-    el.innerHTML = top.map(([name, qty]) =>
-      '<div class="top-item">' +
-        '<div class="top-item-label">' + escHtml(name) + '</div>' +
-        '<div class="top-item-value">' + escHtml(String(qty).replace(/\.0+$/, '')) + '</div>' +
-      '</div>'
-    ).join('');
-  }
-
   function renderAdminStats(rows, allRows){
     const visible = Array.isArray(rows) ? rows : [];
     const loaded = Array.isArray(allRows) ? allRows : [];
     const pendingAll = loaded.filter(isPendingConversation);
     const completedCount = visible.filter(row => normalizeStatus(row?.status) === 'COMPLETED').length;
+    const openCount = visible.filter(row => ['OPEN','IN_PROGRESS'].includes(normalizeStatus(row?.status))).length;
     const envioCount = countByEntrega(pendingAll, 'envio');
     const retiroCount = countByEntrega(pendingAll, 'retiro');
     const polloQty = sumProductQty(pendingAll, 'pollo');
@@ -4237,8 +4203,7 @@ app.get("/admin", async (req, res) => {
     if (statusBars) {
       statusBars.innerHTML = buildBarRows([
         { label: 'Completadas', value: completedCount },
-        { label: 'Abiertas', value: visible.filter(row => normalizeStatus(row?.status) === 'OPEN').length },
-        { label: 'En cocina', value: visible.filter(row => !!row?.kitchenSent).length },
+        { label: 'Abiertas', value: openCount },
         { label: 'Canceladas', value: visible.filter(row => normalizeStatus(row?.status) === 'CANCELLED').length }
       ]);
     }
@@ -4252,13 +4217,12 @@ app.get("/admin", async (req, res) => {
       ]);
     }
 
-    renderTopProducts(visible);
 
     const statsHint = document.getElementById('statsHint');
     if (statsHint) {
       const now = new Date();
       const hhmm = now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-      statsHint.textContent = 'Última actualización ' + hhmm + ' · estados y productos sobre lo filtrado · pendientes y entrega sobre el total cargado.';
+      statsHint.textContent = 'Última actualización ' + hhmm + ' · estados visibles sobre lo filtrado · pendientes y entrega sobre el total cargado.';
     }
   }
 
