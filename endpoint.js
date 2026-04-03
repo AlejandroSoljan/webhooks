@@ -2888,9 +2888,9 @@ app.get("/admin", async (req, res) => {
     }
     .filter-popover[hidden]{display:none}
     .filter-popover-title{font-size:12px;font-weight:800;color:#0f172a;margin:0 0 8px}
-    .filter-option{display:flex;align-items:flex-start;justify-content:flex-start;gap:8px;width:100%;padding:6px 2px;font-size:13px;color:#0f172a;cursor:pointer;text-align:left}
-    .filter-option span{display:block;flex:1 1 auto;text-align:left;line-height:1.25}
-    .filter-option input{margin:2px 0 0;flex:0 0 auto}
+    .filter-option{display:grid;grid-template-columns:16px minmax(0,1fr);align-items:start;justify-content:flex-start;column-gap:8px;row-gap:0;width:100%;padding:6px 2px;font-size:13px;color:#0f172a;cursor:pointer;text-align:left}
+    .filter-option span{display:block;min-width:0;text-align:left;line-height:1.25;white-space:normal;word-break:break-word}
+    .filter-option input[type="checkbox"]{width:16px !important;min-width:16px;max-width:16px;height:16px;margin:1px 0 0;padding:0;border:none;box-shadow:none;background:transparent;accent-color:var(--primary-2);appearance:auto;flex:none;justify-self:start;align-self:start}
     .filter-popover-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb}
     .btn.btn-mini{padding:7px 10px;font-size:11px;border-radius:10px}
     .toolbar-actions{display:flex;gap:6px;align-items:center;justify-content:flex-start;flex-wrap:wrap}
