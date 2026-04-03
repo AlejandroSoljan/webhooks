@@ -1255,6 +1255,8 @@ async function listConversations(limit = 50, tenantId, deliveredFilter = null) {
       contactName: c.contactName || "-",
       status: adminStatusLabel(c),
       manualOpen: !!c.manualOpen,
+      kitchenSent: !!c.kitchenSent,
+      kitchenAt: c.kitchenAt || null,
       delivered: !!c.delivered,
       deliveredAt: c.deliveredAt || null,
       lastAt: c.lastUserTs || c.lastAssistantTs || c.updatedAt || c.closedAt || c.openedAt
@@ -1606,6 +1608,8 @@ app.get("/api/admin/conversation-meta", async (req, res) => {
       contactName: conv.contactName || "",
       status: adminStatusLabel(conv),
       manualOpen: !!conv.manualOpen,
+      kitchenSent: !!conv.kitchenSent,
+      kitchenAt: conv.kitchenAt || null,
       delivered: !!conv.delivered,
       deliveredAt: conv.deliveredAt || null,
       channelType: conv.channelType || "whatsapp",
@@ -2445,6 +2449,53 @@ app.post("/api/admin/conversation-delivered", async (req, res) => {
 });
 
 
+// ---------- Marcar conversación como enviada a cocina / pendiente de cocina ----------
+app.post("/api/admin/conversation-kitchen", async (req, res) => {
+  try {
+    const { convId, waId, kitchenSent } = req.body || {};
+    if (!convId && !waId) {
+      return res.status(400).json({ error: "convId_or_waId_required" });
+    }
+    const tenant = resolveTenantId(req);
+    const db = await getDb();
+
+    let filter;
+    if (convId) {
+      filter = withTenant({ _id: new ObjectId(String(convId)) }, tenant);
+    } else {
+      filter = withTenant({ waId: String(waId) }, tenant);
+    }
+
+    const now = new Date();
+    const flag = !!kitchenSent;
+    const update = flag
+      ? { $set: { kitchenSent: true, kitchenAt: now, updatedAt: now } }
+      : { $set: { kitchenSent: false, updatedAt: now }, $unset: { kitchenAt: "" } };
+
+    const result = await db.collection("conversations").findOneAndUpdate(
+      filter,
+      update,
+      { returnDocument: "after" }
+    );
+
+    const conv = result.value;
+    if (!conv) {
+      return res.status(404).json({ error: "conv_not_found" });
+    }
+
+    res.json({
+      ok: true,
+      convId: String(conv._id),
+      kitchenSent: !!conv.kitchenSent,
+      kitchenAt: conv.kitchenAt || null,
+    });
+  } catch (e) {
+    console.error("POST /api/admin/conversation-kitchen error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+
 // ---------- Marcar conversación como manual (humano) / automática (bot) ----------
 app.post("/api/admin/conversation-manual", async (req, res) => {
   try {
@@ -2786,6 +2837,55 @@ app.get("/admin", async (req, res) => {
       border-color:#8fb7df;
       box-shadow:0 0 0 4px rgba(59,130,246,.12);
     }
+    .field.field-filter{position:relative}
+    .field input[type="hidden"]{display:none}
+    .filter-trigger{
+      width:100%;
+      font-size:13px;
+      padding:8px 10px;
+      border:1px solid var(--line-strong);
+      border-radius:12px;
+      background:#fff;
+      color:var(--text);
+      outline:none;
+      transition:border-color .16s ease, box-shadow .16s ease, background .16s ease;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      min-height:35px;
+      cursor:pointer;
+      text-align:left;
+      box-shadow:none;
+      font-weight:400;
+    }
+    .filter-trigger:hover{background:#f8fafc}
+    .filter-trigger:focus{
+      border-color:#8fb7df;
+      box-shadow:0 0 0 4px rgba(59,130,246,.12);
+    }
+    .filter-trigger .caret{font-size:10px;color:#64748b;flex:0 0 auto}
+    .filter-trigger .filter-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .filter-popover{
+      position:absolute;
+      top:calc(100% + 6px);
+      left:0;
+      min-width:220px;
+      width:max-content;
+      max-width:280px;
+      padding:10px;
+      border:1px solid var(--line-strong);
+      border-radius:14px;
+      background:#fff;
+      box-shadow:0 18px 40px rgba(15,23,42,.16);
+      z-index:40;
+    }
+    .filter-popover[hidden]{display:none}
+    .filter-popover-title{font-size:12px;font-weight:800;color:#0f172a;margin:0 0 8px}
+    .filter-option{display:flex;align-items:center;gap:8px;padding:6px 2px;font-size:13px;color:#0f172a;cursor:pointer}
+    .filter-option input{margin:0}
+    .filter-popover-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb}
+    .btn.btn-mini{padding:7px 10px;font-size:11px;border-radius:10px}
     .toolbar-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
     .btn{
       appearance:none;
@@ -2881,6 +2981,7 @@ app.get("/admin", async (req, res) => {
     .c-ent{width:34px}
     .c-acciones{width:96px}
     .delivered-row{opacity:.72}
+    .kitchen-row{background:rgba(255,243,205,.45)}
     .delivChk{cursor:pointer;width:16px;height:16px;accent-color:#22c55e}
 
     .stats-panel{padding:10px 12px}
@@ -2940,37 +3041,6 @@ app.get("/admin", async (req, res) => {
     .st-progress{background:#fff7ed;color:#9a3412;border-color:#fed7aa}
     .st-completed{background:#ecfdf5;color:#065f46;border-color:#a7f3d0}
     .st-cancelled{background:#fef2f2;color:#991b1b;border-color:#fecaca}
-    .st-kitchen{background:#fffbeb;color:#92400e;border-color:#fde68a}
-
-    .filter-picker{position:relative}
-    .filter-trigger{
-      width:100%;
-      min-height:36px;
-      height:36px;
-      justify-content:space-between;
-      align-items:center;
-      padding:8px 10px;
-      font-size:13px;
-      line-height:1.2;
-      box-sizing:border-box;
-    }
-    .filter-trigger .filter-label{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .filter-trigger .filter-caret{font-size:11px;opacity:.8;margin-left:8px;flex:0 0 auto}
-    .filter-value{display:none}
-    .filter-popover{position:absolute;top:calc(100% + 8px);left:0;z-index:30;min-width:280px;max-width:min(340px, calc(100vw - 32px));background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 16px 40px rgba(15,23,42,.14);padding:10px;display:none}
-    .filter-popover.is-open{display:block}
-    .filter-popover-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid #eef2f7}
-    .filter-popover-title{font-size:13px;font-weight:700;color:#0f172a}
-    .filter-popover-close{border:none;background:transparent;font-size:16px;line-height:1;cursor:pointer;color:#64748b;padding:4px}
-    .filter-option-list{display:flex;flex-direction:column;gap:6px;max-height:240px;overflow:auto;padding-right:2px}
-    .filter-option{display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border:1px solid transparent;border-radius:12px;cursor:pointer;transition:.16s ease background,.16s ease border-color}
-    .filter-option:hover{background:#f8fafc;border-color:#e2e8f0}
-    .filter-option input{margin-top:2px;accent-color:#1d4ed8}
-    .filter-option-main{display:flex;flex-direction:column;gap:2px;min-width:0}
-    .filter-option-label{font-size:13px;font-weight:600;color:#0f172a}
-    .filter-option-hint{font-size:11px;color:#64748b}
-    .filter-popover-actions{display:flex;justify-content:flex-end;gap:8px;padding-top:10px;margin-top:10px;border-top:1px solid #eef2f7}
-    .btn-xs{padding:7px 11px;font-size:12px;border-radius:10px}
 
     .modal-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.42);display:none;align-items:center;justify-content:center;z-index:1000;padding:16px}
     .modal{background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 60px rgba(15,23,42,.22);width:min(960px,95vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden}
@@ -3072,102 +3142,38 @@ app.get("/admin", async (req, res) => {
           <label for="qFilter">Buscar</label>
           <input id="qFilter" placeholder="waId, nombre, dirección o producto"/>
         </div>
-        <div class="field filter-picker" data-filter-picker="delivery">
+        <div class="field field-filter">
           <label for="delivFilter">Entrega</label>
-          <input id="delivFilter" class="filter-value" type="hidden" value="pending"/>
-          <button type="button" class="btn btn-soft filter-trigger" id="delivFilterBtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="delivFilterPopover">
-            <span class="filter-label">No entregadas</span>
-            <span class="filter-caret">▾</span>
+          <input id="delivFilter" type="hidden" value="pending"/>
+          <button type="button" class="filter-trigger" id="delivFilterBtn" aria-haspopup="true" aria-expanded="false">
+            <span class="filter-text">No entregadas</span><span class="caret">▾</span>
           </button>
-          <div class="filter-popover" id="delivFilterPopover" role="dialog" aria-label="Seleccionar filtro de entrega">
-            <div class="filter-popover-head">
-              <div class="filter-popover-title">Filtrar por entrega</div>
-              <button type="button" class="filter-popover-close" data-filter-close>✕</button>
-            </div>
-            <div class="filter-option-list">
-              <label class="filter-option">
-                <input type="checkbox" name="deliveryFilterChoice" value="pending" checked />
-                <span class="filter-option-main">
-                  <span class="filter-option-label">No entregadas</span>
-                  <span class="filter-option-hint">Pedidos aún pendientes de marcar como entregados</span>
-                </span>
-              </label>
-              <label class="filter-option">
-                <input type="checkbox" name="deliveryFilterChoice" value="delivered" />
-                <span class="filter-option-main">
-                  <span class="filter-option-label">Entregadas</span>
-                  <span class="filter-option-hint">Conversaciones ya marcadas como entregadas</span>
-                </span>
-              </label>
-            </div>
+          <div class="filter-popover" id="delivFilterPopover" hidden>
+            <div class="filter-popover-title">Entrega</div>
+            <label class="filter-option"><input type="checkbox" value="pending" checked /> <span>No entregadas</span></label>
+            <label class="filter-option"><input type="checkbox" value="delivered" /> <span>Entregadas</span></label>
             <div class="filter-popover-actions">
-              <button type="button" class="btn btn-soft btn-xs" data-filter-reset="delivery">Todas</button>
-              <button type="button" class="btn btn-primary btn-xs" data-filter-apply="delivery">Aplicar</button>
+              <button type="button" class="btn btn-mini" data-filter-all="delivFilter">Todas</button>
+              <button type="button" class="btn btn-mini btn-primary" data-filter-apply="delivFilter">Aplicar</button>
             </div>
           </div>
         </div>
-        <div class="field filter-picker" data-filter-picker="status">
+        <div class="field field-filter">
          <label for="statusFilter">Estado</label>
-          <input id="statusFilter" class="filter-value" type="hidden" value="completed_open"/>
-          <button type="button" class="btn btn-soft filter-trigger" id="statusFilterBtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="statusFilterPopover">
-            <span class="filter-label">Completadas + abiertas</span>
-            <span class="filter-caret">▾</span>
+          <input id="statusFilter" type="hidden" value="completed"/>
+          <button type="button" class="filter-trigger" id="statusFilterBtn" aria-haspopup="true" aria-expanded="false">
+            <span class="filter-text">Completadas</span><span class="caret">▾</span>
           </button>
-          <div class="filter-popover" id="statusFilterPopover" role="dialog" aria-label="Seleccionar filtro de estado">
-            <div class="filter-popover-head">
-              <div class="filter-popover-title">Filtrar por estado</div>
-              <button type="button" class="filter-popover-close" data-filter-close>✕</button>
-            </div>
-            <div class="filter-option-list">
-              <label class="filter-option">
-                <input type="radio" name="statusFilterChoice" value="completed_open" checked />
-                <span class="filter-option-main">
-                  <span class="filter-option-label">Completadas + abiertas</span>
-                  <span class="filter-option-hint">Muestra completadas primero y luego abiertas</span>
-                </span>
-              </label>
-              <label class="filter-option">
-                <input type="radio" name="statusFilterChoice" value="completed" />
-                <span class="filter-option-main">
-                  <span class="filter-option-label">Solo completadas</span>
-                  <span class="filter-option-hint">Solo pedidos cerrados</span>
-                </span>
-              </label>
-              <label class="filter-option">
-                <input type="radio" name="statusFilterChoice" value="open" />
-                <span class="filter-option-main">
-                  <span class="filter-option-label">Solo abiertas</span>
-                  <span class="filter-option-hint">Conversaciones abiertas o en curso</span>
-                </span>
-              </label>
-              <label class="filter-option">
-                <input type="radio" name="statusFilterChoice" value="kitchen" />
-                <span class="filter-option-main">
-                  <span class="filter-option-label">Solo en cocina</span>
-                  <span class="filter-option-hint">Pedidos marcados o informados como en cocina</span>
-                </span>
-              </label>
-              <label class="filter-option">
-                <input type="radio" name="statusFilterChoice" value="in_progress" />
-                <span class="filter-option-main">
-                  <span class="filter-option-label">Solo en curso</span>
-                  <span class="filter-option-hint">Conversaciones en progreso</span>
-                </span>
-              </label>
-              <label class="filter-option">
-                <input type="radio" name="statusFilterChoice" value="cancelled" />
-                <span class="filter-option-main">
-                  <span class="filter-option-label">Solo canceladas</span>
-                  <span class="filter-option-hint">Conversaciones canceladas</span>
-                </span>
-              </label>
-              <label class="filter-option">
-                <input type="radio" name="statusFilterChoice" value="all" />
-                <span class="filter-option-main">
-                  <span class="filter-option-label">Todas</span>
-                  <span class="filter-option-hint">No aplicar filtro por estado</span>
-                </span>
-              </label>
+          <div class="filter-popover" id="statusFilterPopover" hidden>
+            <div class="filter-popover-title">Estado</div>
+            <label class="filter-option"><input type="checkbox" value="completed" checked /> <span>Completadas</span></label>
+            <label class="filter-option"><input type="checkbox" value="open" /> <span>Abiertas</span></label>
+            <label class="filter-option"><input type="checkbox" value="kitchen" /> <span>En cocina</span></label>
+            <label class="filter-option"><input type="checkbox" value="in_progress" /> <span>En curso</span></label>
+            <label class="filter-option"><input type="checkbox" value="cancelled" /> <span>Canceladas</span></label>
+            <div class="filter-popover-actions">
+              <button type="button" class="btn btn-mini" data-filter-all="statusFilter">Todas</button>
+              <button type="button" class="btn btn-mini btn-primary" data-filter-apply="statusFilter">Aplicar</button>
             </div>
           </div>
         </div>
@@ -3207,6 +3213,7 @@ app.get("/admin", async (req, res) => {
             <col class="c-dia"/>
             <col class="c-hora"/>
             <col class="c-estado"/>
+            <col class="c-coc"/>
             <col class="c-ent"/>
             <col class="c-acciones"/>
           </colgroup>
@@ -3222,6 +3229,7 @@ app.get("/admin", async (req, res) => {
               <th>Día</th>
               <th>Hora</th>
               <th>Estado</th>
+              <th>Coc.</th>
               <th>Ent.</th>
               <th>Acciones</th>
             </tr>
@@ -3334,33 +3342,32 @@ app.get("/admin", async (req, res) => {
     if (['CANCELLED','CANCELED','CANCELADA','CANCELADO'].includes(s)) return 'CANCELLED';
     if (['COMPLETED','COMPLETADA','FINALIZADA','FINALIZADO'].includes(s)) return 'COMPLETED';
     if (['OPEN','ABIERTA','ABIERTO'].includes(s)) return 'OPEN';
-    if (['KITCHEN','EN_COCINA','EN COCINA','COCINA'].includes(s)) return 'KITCHEN';
     if (['IN_PROGRESS','EN CURSO','PROCESANDO'].includes(s)) return 'IN_PROGRESS';
     return s;
   }
 
-  function statusLabelEs(raw){
+  function statusLabelEs(raw, kitchenSent){
+    if (kitchenSent) return 'EN COCINA';
     const st = normalizeStatus(raw);
     if (st === 'CANCELLED') return 'CANCELADA';
     if (st === 'COMPLETED') return 'COMPLETADA';
-    if (st === 'KITCHEN') return 'EN COCINA';
     if (st === 'IN_PROGRESS') return 'EN CURSO';
     if (st === 'OPEN') return 'ABIERTA';
     return String(raw || st || '').trim();
   }
 
-  function statusClass(raw){
+  function statusClass(raw, kitchenSent){
+    if (kitchenSent) return 'st-progress';
     const st = normalizeStatus(raw);
     if (st === 'CANCELLED') return 'st-cancelled';
     if (st === 'COMPLETED') return 'st-completed';
-    if (st === 'KITCHEN') return 'st-kitchen';
     if (st === 'IN_PROGRESS') return 'st-progress';
     return 'st-open';
   }
 
-  function renderStatusBadge(raw){
-    const label = statusLabelEs(raw);
-    const cls = statusClass(raw);
+  function renderStatusBadge(raw, kitchenSent){
+    const label = statusLabelEs(raw, kitchenSent);
+    const cls = statusClass(raw, kitchenSent);
     return '<span class="status-badge ' + cls + '">' + escHtml(label) + '</span>';
   }
  
@@ -3798,8 +3805,125 @@ app.get("/admin", async (req, res) => {
     return String(document.getElementById('qFilter')?.value || '').trim().toLowerCase();
   }
 
+  const DELIVERY_FILTER_ALLOWED = ['pending', 'delivered'];
+  const STATUS_FILTER_ALLOWED = ['completed', 'open', 'kitchen', 'in_progress', 'cancelled'];
+  const DELIVERY_FILTER_LABELS = { pending: 'No entregadas', delivered: 'Entregadas' };
+  const STATUS_FILTER_LABELS = { completed: 'Completadas', open: 'Abiertas', kitchen: 'En cocina', in_progress: 'En curso', cancelled: 'Canceladas' };
+
+  function parseMultiFilterValue(raw, allowed, fallback){
+    const allowedSet = new Set(Array.isArray(allowed) ? allowed : []);
+    const values = String(raw || '')
+      .split(',')
+      .map(v => String(v || '').trim())
+      .filter(v => allowedSet.has(v));
+    const ordered = (Array.isArray(allowed) ? allowed : []).filter(v => values.includes(v));
+    if (ordered.length) return ordered;
+    return Array.isArray(fallback) ? fallback.slice() : [];
+  }
+
+  function getDeliveryFilterValue(){
+    return parseMultiFilterValue(document.getElementById('delivFilter')?.value, DELIVERY_FILTER_ALLOWED, ['pending']);
+  }
+
   function getStatusFilterValue(){
-    return String(document.getElementById('statusFilter')?.value || 'completed_open').trim();
+    return parseMultiFilterValue(document.getElementById('statusFilter')?.value, STATUS_FILTER_ALLOWED, ['completed']);
+  }
+
+  function formatMultiFilterLabel(selected, labels, allowed, allLabel){
+    const ordered = (Array.isArray(allowed) ? allowed : []).filter(v => (Array.isArray(selected) ? selected : []).includes(v));
+    if (!ordered.length || ordered.length === (Array.isArray(allowed) ? allowed.length : 0)) return allLabel;
+    if (ordered.length === 1) return labels[ordered[0]] || ordered[0];
+    if (ordered.length === 2) return (labels[ordered[0]] || ordered[0]) + ' + ' + (labels[ordered[1]] || ordered[1]);
+    return ordered.length + ' seleccionados';
+  }
+
+  function refreshFilterButtonLabels(){
+    const delivBtnTxt = document.querySelector('#delivFilterBtn .filter-text');
+    if (delivBtnTxt) delivBtnTxt.textContent = formatMultiFilterLabel(getDeliveryFilterValue(), DELIVERY_FILTER_LABELS, DELIVERY_FILTER_ALLOWED, 'Todas');
+    const statusBtnTxt = document.querySelector('#statusFilterBtn .filter-text');
+    if (statusBtnTxt) statusBtnTxt.textContent = formatMultiFilterLabel(getStatusFilterValue(), STATUS_FILTER_LABELS, STATUS_FILTER_ALLOWED, 'Todos');
+  }
+
+  function syncPopoverChecks(hiddenId){
+    const hidden = document.getElementById(hiddenId);
+    const pop = document.getElementById(hiddenId + 'Popover');
+    if (!hidden || !pop) return;
+    const allowed = hiddenId === 'delivFilter' ? DELIVERY_FILTER_ALLOWED : STATUS_FILTER_ALLOWED;
+    const fallback = hiddenId === 'delivFilter' ? ['pending'] : ['completed'];
+    const selected = parseMultiFilterValue(hidden.value, allowed, fallback);
+    pop.querySelectorAll('input[type="checkbox"]').forEach(chk => { chk.checked = selected.includes(chk.value); });
+  }
+
+  function setHiddenMultiValue(hiddenId, values){
+    const hidden = document.getElementById(hiddenId);
+    if (!hidden) return;
+    const allowed = hiddenId === 'delivFilter' ? DELIVERY_FILTER_ALLOWED : STATUS_FILTER_ALLOWED;
+    const fallback = hiddenId === 'delivFilter' ? ['pending'] : ['completed'];
+    const ordered = parseMultiFilterValue((Array.isArray(values) ? values : []).join(','), allowed, fallback);
+    hidden.value = ordered.join(',');
+    refreshFilterButtonLabels();
+  }
+
+  function closeAllFilterPopovers(){
+    ['delivFilter', 'statusFilter'].forEach(id => {
+      const pop = document.getElementById(id + 'Popover');
+      const btn = document.getElementById(id + 'Btn');
+      if (pop) pop.hidden = true;
+      if (btn) btn.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  function openFilterPopover(hiddenId){
+    const pop = document.getElementById(hiddenId + 'Popover');
+    const btn = document.getElementById(hiddenId + 'Btn');
+    if (!pop || !btn) return;
+    const willOpen = pop.hidden;
+    closeAllFilterPopovers();
+    if (!willOpen) return;
+    syncPopoverChecks(hiddenId);
+    pop.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+  }
+
+  function initAdminFilterPopovers(){
+    ['delivFilter', 'statusFilter'].forEach(hiddenId => {
+      const btn = document.getElementById(hiddenId + 'Btn');
+      const pop = document.getElementById(hiddenId + 'Popover');
+      if (!btn || !pop) return;
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openFilterPopover(hiddenId);
+      });
+      pop.addEventListener('click', (e) => e.stopPropagation());
+    });
+
+    document.querySelectorAll('[data-filter-all]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const hiddenId = btn.getAttribute('data-filter-all');
+        const allowed = hiddenId === 'delivFilter' ? DELIVERY_FILTER_ALLOWED : STATUS_FILTER_ALLOWED;
+        setHiddenMultiValue(hiddenId, allowed);
+        syncPopoverChecks(hiddenId);
+      });
+    });
+
+    document.querySelectorAll('[data-filter-apply]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const hiddenId = btn.getAttribute('data-filter-apply');
+        const pop = document.getElementById(hiddenId + 'Popover');
+        if (!pop) return;
+        const checked = Array.from(pop.querySelectorAll('input[type="checkbox"]:checked')).map(chk => chk.value);
+        const fallback = hiddenId === 'delivFilter' ? ['pending'] : ['completed'];
+        setHiddenMultiValue(hiddenId, checked.length ? checked : fallback);
+        closeAllFilterPopovers();
+        loadTable();
+      });
+    });
+
+    document.addEventListener('click', () => closeAllFilterPopovers());
+    refreshFilterButtonLabels();
   }
 
   function getDateRangeValue(){
@@ -3807,160 +3931,6 @@ app.get("/admin", async (req, res) => {
       from: String(document.getElementById('dateFrom')?.value || '').trim(),
       to: String(document.getElementById('dateTo')?.value || '').trim()
     };
-  }
-
-  function isKitchenConversation(c){
-    const st = normalizeStatus(c?.status);
-    if (st === 'KITCHEN') return true;
-    return !!(c?.kitchen || c?.kitchenSent || c?.inKitchen || c?.enCocina);
-  }
-
-  const DELIVERY_FILTER_LABELS = {
-    pending: 'No entregadas',
-    delivered: 'Entregadas'
-  };
-
-  const STATUS_FILTER_LABELS = {
-    completed: 'Completadas',
-    open: 'Abiertas',
-    kitchen: 'En cocina',
-    in_progress: 'En curso',
-    cancelled: 'Canceladas'
-  };
-
-  function parseMultiFilterValue(raw, allowed){
-    const allowedList = Array.isArray(allowed) ? allowed : [];
-    const allowedSet = new Set(allowedList);
-    const parts = String(raw || '')
-      .split(',')
-      .map(v => String(v || '').trim())
-      .filter(Boolean)
-      .filter(v => allowedSet.has(v));
-    return [...new Set(parts)];
-  }
-
-  function formatMultiFilterLabel(values, labelsMap, allLabel){
-    const chosen = Array.isArray(values) ? values.filter(v => labelsMap[v]) : [];
-    const total = Object.keys(labelsMap).length;
-    if (!chosen.length || chosen.length === total) return allLabel;
-    if (chosen.length === 1) return labelsMap[chosen[0]] || allLabel;
-    if (chosen.length === 2) return chosen.map(v => labelsMap[v]).join(' + ');
-    return chosen.length + ' seleccionados';
-  }
-
-  function getDeliveryFilterLabel(value){
-    return formatMultiFilterLabel(parseMultiFilterValue(value, ['pending','delivered']), DELIVERY_FILTER_LABELS, 'Todas');
-  }
-
-  function getStatusFilterLabel(value){
-    return formatMultiFilterLabel(parseMultiFilterValue(value, ['completed','open','kitchen','in_progress','cancelled']), STATUS_FILTER_LABELS, 'Todos');
-  }
-
-  function closeFilterPopover(popover){
-    if (!popover) return;
-    popover.classList.remove('is-open');
-    const owner = popover.closest('.filter-picker')?.querySelector('.filter-trigger');
-    if (owner) owner.setAttribute('aria-expanded', 'false');
-  }
-
-  function closeAllFilterPopovers(except){
-    document.querySelectorAll('.filter-popover.is-open').forEach((el) => {
-      if (except && el === except) return;
-      closeFilterPopover(el);
-    });
-  }
-
-  function applyFilterChoice(hiddenId, values, label){
-    const hidden = document.getElementById(hiddenId);
-    if (!hidden) return;
-    const normalized = Array.isArray(values) ? values.join(',') : String(values || '');
-    const changed = hidden.value !== normalized;
-    hidden.value = normalized;
-    const trigger = hidden.closest('.filter-picker')?.querySelector('.filter-trigger .filter-label');
-    if (trigger) trigger.textContent = label;
-    if (changed) hidden.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-
-  function getAllowedFilterValues(hiddenId){
-    if (hiddenId === 'statusFilter') return ['completed','open','kitchen','in_progress','cancelled'];
-    return ['pending','delivered'];
-  }
-
-  function readFilterChoices(popover, hiddenId){
-    const allowed = getAllowedFilterValues(hiddenId);
-    const checked = Array.from(popover.querySelectorAll('input[type="checkbox"]:checked')).map(el => el.value).filter(v => allowed.includes(v));
-    if (checked.length === 0 || checked.length === allowed.length) return allowed.slice();
-    return checked;
-  }
-
-  function syncPickerInputs(hidden, popover){
-    const allowed = getAllowedFilterValues(hidden.id);
-    const selected = parseMultiFilterValue(hidden.value, allowed);
-    const effective = selected.length ? selected : allowed;
-    popover.querySelectorAll('input[type="checkbox"]').forEach((chk) => {
-      chk.checked = effective.includes(chk.value);
-    });
-  }
-
-  function initFilterPickers(){
-    document.querySelectorAll('.filter-picker').forEach((picker) => {
-      const hidden = picker.querySelector('.filter-value');
-      const trigger = picker.querySelector('.filter-trigger');
-      const popover = picker.querySelector('.filter-popover');
-      if (!hidden || !trigger || !popover) return;
-
-      const isStatus = hidden.id === 'statusFilter';
-      const labelEl = trigger.querySelector('.filter-label');
-      const syncLabel = () => {
-        const labelText = isStatus ? getStatusFilterLabel(hidden.value) : getDeliveryFilterLabel(hidden.value);
-        if (labelEl) labelEl.textContent = labelText;
-      };
-      syncLabel();
-      syncPickerInputs(hidden, popover);
-
-      trigger.addEventListener('click', (e) => {
-        e.preventDefault();
-        const willOpen = !popover.classList.contains('is-open');
-        closeAllFilterPopovers(popover);
-        syncPickerInputs(hidden, popover);
-        popover.classList.toggle('is-open', willOpen);
-        trigger.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
-      });
-
-      popover.querySelector('[data-filter-close]')?.addEventListener('click', () => closeFilterPopover(popover));
-
-      popover.querySelector('[data-filter-reset]')?.addEventListener('click', () => {
-        const allowed = getAllowedFilterValues(hidden.id);
-        applyFilterChoice(hidden.id, allowed, isStatus ? getStatusFilterLabel(allowed.join(',')) : getDeliveryFilterLabel(allowed.join(',')));
-        syncPickerInputs(hidden, popover);
-        closeFilterPopover(popover);
-      });
-
-      popover.querySelector('[data-filter-apply]')?.addEventListener('click', () => {
-        const values = readFilterChoices(popover, hidden.id);
-        const label = isStatus ? getStatusFilterLabel(values.join(',')) : getDeliveryFilterLabel(values.join(','));
-        applyFilterChoice(hidden.id, values, label);
-        closeFilterPopover(popover);
-      });
-
-      popover.querySelectorAll('input[type="checkbox"]').forEach((chk) => {
-        chk.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            popover.querySelector('[data-filter-apply]')?.click();
-          }
-        });
-      });
-    });
-
-    document.addEventListener('click', (e) => {
-      if (e.target.closest('.filter-picker')) return;
-      closeAllFilterPopovers();
-    });
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeAllFilterPopovers();
-    });
   }
 
   function convMatchesText(c, textFilter){
@@ -3978,20 +3948,29 @@ app.get("/admin", async (req, res) => {
     return haystack.includes(textFilter);
   }
 
-  function convMatchesStatus(c, statusFilter){
-    const selected = parseMultiFilterValue(statusFilter, ['completed','open','kitchen','in_progress','cancelled']);
-    if (!selected.length || selected.length === 5) return true;
+  function getConversationStatusTags(c){
     const st = normalizeStatus(c?.status);
-    const matches = new Set();
-    if (st === 'COMPLETED') matches.add('completed');
-    if (st === 'OPEN') matches.add('open');
-    if (st === 'IN_PROGRESS') {
-      matches.add('open');
-      matches.add('in_progress');
-    }
-    if (st === 'CANCELLED') matches.add('cancelled');
-    if (isKitchenConversation(c)) matches.add('kitchen');
-    return selected.some(v => matches.has(v));
+    const tags = [];
+    if (c?.kitchenSent) tags.push('kitchen');
+    if (st === 'COMPLETED') tags.push('completed');
+    if (st === 'OPEN') tags.push('open');
+    if (st === 'IN_PROGRESS') tags.push('in_progress');
+    if (st === 'CANCELLED') tags.push('cancelled');
+    return tags;
+  }
+
+  function convMatchesStatus(c, statusFilter){
+    const selected = Array.isArray(statusFilter) ? statusFilter : getStatusFilterValue();
+    if (!selected.length || selected.length === STATUS_FILTER_ALLOWED.length) return true;
+    const tags = getConversationStatusTags(c);
+    return selected.some(tag => tags.includes(tag));
+  }
+
+  function convMatchesDelivered(c, deliveryFilter){
+    const selected = Array.isArray(deliveryFilter) ? deliveryFilter : getDeliveryFilterValue();
+    if (!selected.length || selected.length === DELIVERY_FILTER_ALLOWED.length) return true;
+    const delivered = !!c?.delivered;
+    return (delivered && selected.includes('delivered')) || (!delivered && selected.includes('pending'));
   }
 
  function convDateKey(c){
@@ -4029,30 +4008,38 @@ app.get("/admin", async (req, res) => {
     return Number.isFinite(fallback) ? fallback : 0;
   }
 
-  function statusPriorityForAdmin(conv, statusFilter){
-    const selected = parseMultiFilterValue(statusFilter, ['completed','open','kitchen','in_progress','cancelled']);
-    const order = selected.length ? selected : ['completed','open','kitchen','in_progress','cancelled'];
+  function statusPriorityForAdmin(raw, statusFilter, kitchenSent){
     const tags = [];
-    const st = normalizeStatus(conv?.status);
+    const st = normalizeStatus(raw);
+    if (kitchenSent) tags.push('kitchen');
     if (st === 'COMPLETED') tags.push('completed');
     if (st === 'OPEN') tags.push('open');
-    if (st === 'IN_PROGRESS') tags.push('open','in_progress');
+    if (st === 'IN_PROGRESS') tags.push('in_progress');
     if (st === 'CANCELLED') tags.push('cancelled');
-    if (isKitchenConversation(conv)) tags.push('kitchen');
-    for (let i = 0; i < order.length; i += 1) {
-      if (tags.includes(order[i])) return i;
+    const preferred = ['kitchen', 'completed', 'open', 'in_progress', 'cancelled'];
+    const selected = Array.isArray(statusFilter) && statusFilter.length
+      ? preferred.filter(v => statusFilter.includes(v))
+      : preferred;
+    for (let i = 0; i < selected.length; i++) {
+      if (tags.includes(selected[i])) return i;
     }
-    if (st === 'COMPLETED') return 0;
-    if (st === 'OPEN') return 1;
-    if (st === 'IN_PROGRESS') return 2;
-    if (st === 'CANCELLED') return 3;
-    return 4;
+    return preferred.length + 1;
+  }
+
+  function entregaPriorityForAdmin(row){
+    const mode = getEntregaMode(row);
+    if (mode === 'retiro') return 0;
+    if (mode === 'envio') return 1;
+    return 2;
   }
 
   function sortAdminConversations(list, statusFilter){
     return (Array.isArray(list) ? list.slice() : []).sort((a, b) => {
-      const statusDelta = statusPriorityForAdmin(a, statusFilter) - statusPriorityForAdmin(b, statusFilter);
+      const statusDelta = statusPriorityForAdmin(a?.status, statusFilter, !!a?.kitchenSent) - statusPriorityForAdmin(b?.status, statusFilter, !!b?.kitchenSent);
       if (statusDelta !== 0) return statusDelta;
+
+      const entregaDelta = entregaPriorityForAdmin(a) - entregaPriorityForAdmin(b);
+      if (entregaDelta !== 0) return entregaDelta;
 
       const aWhen = convDateTimeSortValue(a);
       const bWhen = convDateTimeSortValue(b);
@@ -4066,25 +4053,13 @@ app.get("/admin", async (req, res) => {
   function updateAdminSummary(list, allCount){
     const rows = Array.isArray(list) ? list : [];
     const total = rows.length;
-    const deliveredFilter = document.getElementById('delivFilter')?.value || 'pending';
+    const deliveredFilter = getDeliveryFilterValue();
     const statusFilter = getStatusFilterValue();
     const range = getDateRangeValue();
     const hint = document.getElementById('tableHint');
     if (hint) {
-      const deliveryMap = {
-        all: 'todas las entregas',
-        pending: 'solo no entregadas',
-        delivered: 'solo entregadas'
-      };
-      const statusMap = {
-        all: 'todos los estados',
-        completed_open: 'completadas primero y luego abiertas',
-        completed: 'solo completadas',
-        open: 'solo abiertas',
-        kitchen: 'solo en cocina',
-        in_progress: 'solo en curso',
-        cancelled: 'solo canceladas'
-      };
+      const deliveryLabel = formatMultiFilterLabel(deliveredFilter, DELIVERY_FILTER_LABELS, DELIVERY_FILTER_ALLOWED, 'Todas las entregas').toLowerCase();
+      const statusLabel = formatMultiFilterLabel(statusFilter, STATUS_FILTER_LABELS, STATUS_FILTER_ALLOWED, 'Todos los estados').toLowerCase();
       const dateLabel = (range.from || range.to)
         ? ('fechas ' + (range.from || '...') + ' a ' + (range.to || '...'))
         : 'sin rango de fechas';
@@ -4235,7 +4210,6 @@ app.get("/admin", async (req, res) => {
     const loaded = Array.isArray(allRows) ? allRows : [];
     const pendingAll = loaded.filter(isPendingConversation);
     const completedCount = visible.filter(row => normalizeStatus(row?.status) === 'COMPLETED').length;
-    const kitchenCount = visible.filter(isKitchenConversation).length;
     const envioCount = countByEntrega(pendingAll, 'envio');
     const retiroCount = countByEntrega(pendingAll, 'retiro');
     const polloQty = sumProductQty(pendingAll, 'pollo');
@@ -4264,8 +4238,7 @@ app.get("/admin", async (req, res) => {
       statusBars.innerHTML = buildBarRows([
         { label: 'Completadas', value: completedCount },
         { label: 'Abiertas', value: visible.filter(row => normalizeStatus(row?.status) === 'OPEN').length },
-        { label: 'En cocina', value: kitchenCount },
-        { label: 'En curso', value: visible.filter(row => normalizeStatus(row?.status) === 'IN_PROGRESS').length },
+        { label: 'En cocina', value: visible.filter(row => !!row?.kitchenSent).length },
         { label: 'Canceladas', value: visible.filter(row => normalizeStatus(row?.status) === 'CANCELLED').length }
       ]);
     }
@@ -4331,25 +4304,26 @@ app.get("/admin", async (req, res) => {
   async function loadTable(){
     const tb = document.querySelector('#tbl tbody');
     try{
-      const deliveredFilter = (document.getElementById('delivFilter')?.value || 'pending');
+      const deliveredFilter = getDeliveryFilterValue();
       const statusFilter = getStatusFilterValue();
       const textFilter = getTextFilterValue();
       const range = getDateRangeValue();
 
       let url = '/api/logs/conversations?limit=200';
-       if (deliveredFilter === 'delivered') url += '&delivered=true';
-      else if (deliveredFilter === 'pending') url += '&delivered=false';
+      if (deliveredFilter.length === 1 && deliveredFilter[0] === 'delivered') url += '&delivered=true';
+      else if (deliveredFilter.length === 1 && deliveredFilter[0] === 'pending') url += '&delivered=false';
 
       if (tb) {
-        tb.innerHTML = '<tr><td colspan="12" style="text-align:center;color:#64748b;padding:20px">Cargando conversaciones…</td></tr>';
+        tb.innerHTML = '<tr><td colspan="13" style="text-align:center;color:#64748b;padding:20px">Cargando conversaciones…</td></tr>';
       }
 
       const r = await fetch(url);
       const data = await r.json().catch(()=>[]);
       if (!tb) return;
       const filtered = (Array.isArray(data) ? data : []).filter(c =>
+        convMatchesDelivered(c, deliveredFilter) &&
         convMatchesText(c, textFilter) &&
-       convMatchesStatus(c, statusFilter) &&
+        convMatchesStatus(c, statusFilter) &&
         convMatchesDateRange(c, range.from, range.to)
       );
       const rows = sortAdminConversations(filtered, statusFilter);
@@ -4362,6 +4336,7 @@ app.get("/admin", async (req, res) => {
       for(const c of rows){
         const tr = document.createElement('tr');
         if (c.delivered) tr.classList.add('delivered-row');
+        if (c.kitchenSent) tr.classList.add('kitchen-row');
         const act = formatActivity(c.lastAt);
         const direccion = String(c.direccion || '-').trim() || '-';
         const nombre = String(c.contactName || '-').trim() || '-';
@@ -4378,7 +4353,11 @@ app.get("/admin", async (req, res) => {
           '<td data-label="Distancia">' + renderDistanceBadge(c.distanceKm) + '</td>' +
           '<td data-label="Día"><span class="cell-ellipsis">' + escHtml(c.fechaEntrega || '-') + '</span></td>' +
           '<td data-label="Hora"><span class="cell-strong">' + escHtml(c.horaEntrega || '-') + '</span></td>' +
-          '<td data-label="Estado">' + renderStatusBadge(c.status) + '</td>' +
+          '<td data-label="Estado">' + renderStatusBadge(c.status, c.kitchenSent) + '</td>' +
+          '<td data-label="Coc." style="text-align:center">' +
+            '<input class="kitchenChk" type="checkbox" data-id="' + escHtml(c._id) + '" ' +
+            (c.kitchenSent ? 'checked' : '') + ' title="Enviado a cocina" />' +
+          '</td>' +
           '<td data-label="Ent." style="text-align:center">' +
             '<input class="delivChk" type="checkbox" data-id="' + escHtml(c._id) + '" ' +
             (c.delivered ? 'checked' : '') + ' title="Entregado" />' +
@@ -4402,6 +4381,29 @@ app.get("/admin", async (req, res) => {
       });
       tb.querySelectorAll('button[data-print]').forEach(b=>{
         b.addEventListener('click',()=>openTicketModal(b.getAttribute('data-print')));
+      });
+      tb.querySelectorAll('input.kitchenChk').forEach(chk=>{
+        chk.addEventListener('change', async()=>{
+          const convId = chk.getAttribute('data-id');
+          if (!convId) return;
+          const flag = chk.checked;
+          chk.disabled = true;
+          try{
+            const rr = await fetch('/api/admin/conversation-kitchen', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ convId, kitchenSent: flag })
+            });
+            const jj = await rr.json().catch(()=>({}));
+            if (!rr.ok || !jj.ok) throw new Error('not_updated');
+            await loadTable();
+          }catch(e){
+            chk.checked = !flag;
+            alert('No se pudo actualizar el estado de cocina');
+          }finally{
+            chk.disabled = false;
+          }
+        });
       });
       tb.querySelectorAll('input.delivChk').forEach(chk=>{
         chk.addEventListener('change', async()=>{
@@ -4434,14 +4436,14 @@ app.get("/admin", async (req, res) => {
 
      if(!rows.length){
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td colspan="12" style="text-align:center;color:#64748b;padding:26px">Sin conversaciones para mostrar</td>';
+        tr.innerHTML = '<td colspan="13" style="text-align:center;color:#64748b;padding:26px">Sin conversaciones para mostrar</td>';
         tb.appendChild(tr);
       }
 
     }catch(e){
       console.error('loadTable error', e);
       renderAdminStats([]);
-      if (tb) tb.innerHTML = '<tr><td colspan="12" style="text-align:center;color:#b91c1c;padding:20px">No se pudo cargar la tabla</td></tr>';
+      if (tb) tb.innerHTML = '<tr><td colspan="13" style="text-align:center;color:#b91c1c;padding:20px">No se pudo cargar la tabla</td></tr>';
     }
   }
 
@@ -4450,9 +4452,6 @@ app.get("/admin", async (req, res) => {
   // =========================
   // Bind general
   // =========================
-  initFilterPickers();
-  document.getElementById('delivFilter')?.addEventListener('change', loadTable);
-  document.getElementById('statusFilter')?.addEventListener('change', loadTable);
   document.getElementById('dateFrom')?.addEventListener('change', loadTable);
   document.getElementById('dateTo')?.addEventListener('change', loadTable);
   document.getElementById('qFilter')?.addEventListener('input', loadTable);
@@ -4503,6 +4502,7 @@ app.get("/admin", async (req, res) => {
 
   // Carga inicial + refresco tabla
   initAdminFilters();
+  initAdminFilterPopovers();
   initAdminUiState();
   loadTable();
   setInterval(loadTable, 60000);
