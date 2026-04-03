@@ -4207,6 +4207,16 @@ app.get("/admin", async (req, res) => {
 
   function sumProductQty(rows, kind){
     return (Array.isArray(rows) ? rows : []).reduce((acc, row) => {
+      const pedidoItems = Array.isArray(row?.pedidoItems) ? row.pedidoItems : [];
+      if (pedidoItems.length) {
+        const itemSum = pedidoItems.reduce((sum, it) => {
+          const desc = String(it?.descripcion || '').trim();
+          const qty = Number(it?.cantidad || 0);
+          if (!desc || !Number.isFinite(qty) || qty <= 0) return sum;
+          return sum + getWeightedQty(String(qty).replace(/\.0+$/, '') + ' x ' + desc, kind);
+        }, 0);
+        return acc + itemSum;
+      }
       const lines = Array.isArray(row?.products) ? row.products : [];
       return acc + lines.reduce((sum, line) => sum + getWeightedQty(line, kind), 0);
     }, 0);
