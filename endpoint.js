@@ -1091,6 +1091,26 @@ function _pedidoItemsToDisplayLines(pedido) {
     .filter(Boolean);
 }
 
+function _safePedidoItemsForAdmin(pedido) {
+  const items = Array.isArray(pedido?.items) ? pedido.items : [];
+  return items
+    .map((it) => {
+      const desc = String(it?.descripcion || it?.nombre || "").trim();
+      if (!desc) return null;
+      const qtyNum = Number(it?.cantidad);
+      const unitNum = Number(it?.importe_unitario);
+      const totalNum = Number(it?.total);
+      return {
+        id: it?.id ?? "",
+        descripcion: desc,
+        cantidad: Number.isFinite(qtyNum) ? qtyNum : 0,
+        importe_unitario: Number.isFinite(unitNum) ? unitNum : 0,
+        total: Number.isFinite(totalNum) ? totalNum : 0,
+      };
+    })
+    .filter(Boolean);
+}
+
 function _extractPedidoSummaryData(pedido) {
   if (!pedido || typeof pedido !== "object") {
     return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-", direccion: "-" };
