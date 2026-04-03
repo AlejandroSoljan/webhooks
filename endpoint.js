@@ -2431,7 +2431,9 @@ app.post("/api/admin/conversation-delivered", async (req, res) => {
       { returnDocument: "after" }
     );
 
-    const conv = result.value;
+    const conv = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "value")
+      ? result.value
+      : result;
    if (!conv) {
       return res.status(404).json({ error: "conv_not_found" });
     }
@@ -2478,7 +2480,9 @@ app.post("/api/admin/conversation-kitchen", async (req, res) => {
       { returnDocument: "after" }
     );
 
-    const conv = result.value;
+    const conv = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "value")
+      ? result.value
+      : result;
     if (!conv) {
       return res.status(404).json({ error: "conv_not_found" });
     }
@@ -2520,7 +2524,9 @@ app.post("/api/admin/conversation-manual", async (req, res) => {
       { returnDocument: "after" }
     );
 
-    const conv = result.value;
+    const conv = result && typeof result === "object" && Object.prototype.hasOwnProperty.call(result, "value")
+      ? result.value
+      : result;
     if (!conv) {
       return res.status(404).json({ error: "conv_not_found" });
     }
@@ -2882,8 +2888,9 @@ app.get("/admin", async (req, res) => {
     }
     .filter-popover[hidden]{display:none}
     .filter-popover-title{font-size:12px;font-weight:800;color:#0f172a;margin:0 0 8px}
-    .filter-option{display:flex;align-items:center;gap:8px;padding:6px 2px;font-size:13px;color:#0f172a;cursor:pointer}
-    .filter-option input{margin:0}
+    .filter-option{display:flex;align-items:flex-start;justify-content:flex-start;gap:8px;width:100%;padding:6px 2px;font-size:13px;color:#0f172a;cursor:pointer;text-align:left}
+    .filter-option span{display:block;flex:1 1 auto;text-align:left;line-height:1.25}
+    .filter-option input{margin:2px 0 0;flex:0 0 auto}
     .filter-popover-actions{display:flex;justify-content:flex-end;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb}
     .btn.btn-mini{padding:7px 10px;font-size:11px;border-radius:10px}
     .toolbar-actions{display:flex;gap:6px;align-items:center;justify-content:flex-start;flex-wrap:wrap}
@@ -3470,6 +3477,17 @@ app.get("/admin", async (req, res) => {
       if(!r.ok) return null;
       const j = await r.json();
       return !!j.delivered;
+    }catch{
+      return null;
+    }
+  }
+
+  async function verifyKitchen(convId){
+    try{
+      const r = await fetch('/api/admin/conversation-meta?convId=' + encodeURIComponent(convId));
+      if(!r.ok) return null;
+      const j = await r.json();
+      return !!j.kitchenSent;
     }catch{
       return null;
     }
@@ -4358,8 +4376,15 @@ app.get("/admin", async (req, res) => {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ convId, kitchenSent: flag })
             });
-            const jj = await rr.json().catch(()=>({}));
-            if (!rr.ok || !jj.ok) throw new Error('not_updated');
+            let ok = rr.ok;
+            if (ok) {
+              const jj = await rr.json().catch(()=>({}));
+              ok = !!jj.ok;
+            } else {
+              const actual = await verifyKitchen(convId);
+              ok = (actual === flag);
+            }
+            if (!ok) throw new Error('not_updated');
             await loadTable();
           }catch(e){
             chk.checked = !flag;
