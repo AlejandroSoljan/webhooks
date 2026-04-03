@@ -2943,22 +2943,34 @@ app.get("/admin", async (req, res) => {
     .st-kitchen{background:#fffbeb;color:#92400e;border-color:#fde68a}
 
     .filter-picker{position:relative}
-    .filter-trigger{width:100%;justify-content:space-between;min-height:40px}
+    .filter-trigger{
+      width:100%;
+      min-height:36px;
+      height:36px;
+      justify-content:space-between;
+      align-items:center;
+      padding:8px 10px;
+      font-size:13px;
+      line-height:1.2;
+      box-sizing:border-box;
+    }
     .filter-trigger .filter-label{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .filter-trigger .filter-caret{font-size:11px;opacity:.8;margin-left:8px}
+    .filter-trigger .filter-caret{font-size:11px;opacity:.8;margin-left:8px;flex:0 0 auto}
     .filter-value{display:none}
-    .filter-popover{position:absolute;top:calc(100% + 8px);left:0;z-index:30;min-width:260px;max-width:min(320px, calc(100vw - 32px));background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 16px 40px rgba(15,23,42,.14);padding:10px;display:none}
+    .filter-popover{position:absolute;top:calc(100% + 8px);left:0;z-index:30;min-width:280px;max-width:min(340px, calc(100vw - 32px));background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 16px 40px rgba(15,23,42,.14);padding:10px;display:none}
     .filter-popover.is-open{display:block}
     .filter-popover-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid #eef2f7}
     .filter-popover-title{font-size:13px;font-weight:700;color:#0f172a}
     .filter-popover-close{border:none;background:transparent;font-size:16px;line-height:1;cursor:pointer;color:#64748b;padding:4px}
-    .filter-option-list{display:flex;flex-direction:column;gap:6px}
+    .filter-option-list{display:flex;flex-direction:column;gap:6px;max-height:240px;overflow:auto;padding-right:2px}
     .filter-option{display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border:1px solid transparent;border-radius:12px;cursor:pointer;transition:.16s ease background,.16s ease border-color}
     .filter-option:hover{background:#f8fafc;border-color:#e2e8f0}
-    .filter-option input{margin-top:2px}
+    .filter-option input{margin-top:2px;accent-color:#1d4ed8}
     .filter-option-main{display:flex;flex-direction:column;gap:2px;min-width:0}
     .filter-option-label{font-size:13px;font-weight:600;color:#0f172a}
     .filter-option-hint{font-size:11px;color:#64748b}
+    .filter-popover-actions{display:flex;justify-content:flex-end;gap:8px;padding-top:10px;margin-top:10px;border-top:1px solid #eef2f7}
+    .btn-xs{padding:7px 11px;font-size:12px;border-radius:10px}
 
     .modal-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.42);display:none;align-items:center;justify-content:center;z-index:1000;padding:16px}
     .modal{background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 60px rgba(15,23,42,.22);width:min(960px,95vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden}
@@ -3074,26 +3086,23 @@ app.get("/admin", async (req, res) => {
             </div>
             <div class="filter-option-list">
               <label class="filter-option">
-                <input type="radio" name="deliveryFilterChoice" value="pending" checked />
+                <input type="checkbox" name="deliveryFilterChoice" value="pending" checked />
                 <span class="filter-option-main">
                   <span class="filter-option-label">No entregadas</span>
                   <span class="filter-option-hint">Pedidos aún pendientes de marcar como entregados</span>
                 </span>
               </label>
               <label class="filter-option">
-                <input type="radio" name="deliveryFilterChoice" value="delivered" />
+                <input type="checkbox" name="deliveryFilterChoice" value="delivered" />
                 <span class="filter-option-main">
                   <span class="filter-option-label">Entregadas</span>
-                  <span class="filter-option-hint">Solo conversaciones ya entregadas</span>
+                  <span class="filter-option-hint">Conversaciones ya marcadas como entregadas</span>
                 </span>
               </label>
-              <label class="filter-option">
-                <input type="radio" name="deliveryFilterChoice" value="all" />
-                <span class="filter-option-main">
-                  <span class="filter-option-label">Todas</span>
-                  <span class="filter-option-hint">No aplicar filtro por entrega</span>
-                </span>
-              </label>
+            </div>
+            <div class="filter-popover-actions">
+              <button type="button" class="btn btn-soft btn-xs" data-filter-reset="delivery">Todas</button>
+              <button type="button" class="btn btn-primary btn-xs" data-filter-apply="delivery">Aplicar</button>
             </div>
           </div>
         </div>
@@ -3806,22 +3815,45 @@ app.get("/admin", async (req, res) => {
     return !!(c?.kitchen || c?.kitchenSent || c?.inKitchen || c?.enCocina);
   }
 
+  const DELIVERY_FILTER_LABELS = {
+    pending: 'No entregadas',
+    delivered: 'Entregadas'
+  };
+
+  const STATUS_FILTER_LABELS = {
+    completed: 'Completadas',
+    open: 'Abiertas',
+    kitchen: 'En cocina',
+    in_progress: 'En curso',
+    cancelled: 'Canceladas'
+  };
+
+  function parseMultiFilterValue(raw, allowed){
+    const allowedList = Array.isArray(allowed) ? allowed : [];
+    const allowedSet = new Set(allowedList);
+    const parts = String(raw || '')
+      .split(',')
+      .map(v => String(v || '').trim())
+      .filter(Boolean)
+      .filter(v => allowedSet.has(v));
+    return [...new Set(parts)];
+  }
+
+  function formatMultiFilterLabel(values, labelsMap, allLabel){
+    const chosen = Array.isArray(values) ? values.filter(v => labelsMap[v]) : [];
+    const total = Object.keys(labelsMap).length;
+    if (!chosen.length || chosen.length === total) return allLabel;
+    if (chosen.length === 1) return labelsMap[chosen[0]] || allLabel;
+    if (chosen.length === 2) return chosen.map(v => labelsMap[v]).join(' + ');
+    return chosen.length + ' seleccionados';
+  }
+
   function getDeliveryFilterLabel(value){
-    const map = { pending: 'No entregadas', delivered: 'Entregadas', all: 'Todas' };
-    return map[value] || map.pending;
+    return formatMultiFilterLabel(parseMultiFilterValue(value, ['pending','delivered']), DELIVERY_FILTER_LABELS, 'Todas');
   }
 
   function getStatusFilterLabel(value){
-    const map = {
-      completed_open: 'Completadas + abiertas',
-      completed: 'Solo completadas',
-      open: 'Solo abiertas',
-      kitchen: 'Solo en cocina',
-      in_progress: 'Solo en curso',
-      cancelled: 'Solo canceladas',
-      all: 'Todas'
-    };
-    return map[value] || map.completed_open;
+    return formatMultiFilterLabel(parseMultiFilterValue(value, ['completed','open','kitchen','in_progress','cancelled']), STATUS_FILTER_LABELS, 'Todos');
   }
 
   function closeFilterPopover(popover){
@@ -3838,14 +3870,36 @@ app.get("/admin", async (req, res) => {
     });
   }
 
-  function applyFilterChoice(hiddenId, value, label){
+  function applyFilterChoice(hiddenId, values, label){
     const hidden = document.getElementById(hiddenId);
     if (!hidden) return;
-    const changed = hidden.value !== value;
-    hidden.value = value;
+    const normalized = Array.isArray(values) ? values.join(',') : String(values || '');
+    const changed = hidden.value !== normalized;
+    hidden.value = normalized;
     const trigger = hidden.closest('.filter-picker')?.querySelector('.filter-trigger .filter-label');
     if (trigger) trigger.textContent = label;
     if (changed) hidden.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function getAllowedFilterValues(hiddenId){
+    if (hiddenId === 'statusFilter') return ['completed','open','kitchen','in_progress','cancelled'];
+    return ['pending','delivered'];
+  }
+
+  function readFilterChoices(popover, hiddenId){
+    const allowed = getAllowedFilterValues(hiddenId);
+    const checked = Array.from(popover.querySelectorAll('input[type="checkbox"]:checked')).map(el => el.value).filter(v => allowed.includes(v));
+    if (checked.length === 0 || checked.length === allowed.length) return allowed.slice();
+    return checked;
+  }
+
+  function syncPickerInputs(hidden, popover){
+    const allowed = getAllowedFilterValues(hidden.id);
+    const selected = parseMultiFilterValue(hidden.value, allowed);
+    const effective = selected.length ? selected : allowed;
+    popover.querySelectorAll('input[type="checkbox"]').forEach((chk) => {
+      chk.checked = effective.includes(chk.value);
+    });
   }
 
   function initFilterPickers(){
@@ -3856,27 +3910,45 @@ app.get("/admin", async (req, res) => {
       if (!hidden || !trigger || !popover) return;
 
       const isStatus = hidden.id === 'statusFilter';
-      const labelText = isStatus ? getStatusFilterLabel(hidden.value) : getDeliveryFilterLabel(hidden.value);
       const labelEl = trigger.querySelector('.filter-label');
-      if (labelEl) labelEl.textContent = labelText;
+      const syncLabel = () => {
+        const labelText = isStatus ? getStatusFilterLabel(hidden.value) : getDeliveryFilterLabel(hidden.value);
+        if (labelEl) labelEl.textContent = labelText;
+      };
+      syncLabel();
+      syncPickerInputs(hidden, popover);
 
       trigger.addEventListener('click', (e) => {
         e.preventDefault();
         const willOpen = !popover.classList.contains('is-open');
         closeAllFilterPopovers(popover);
+        syncPickerInputs(hidden, popover);
         popover.classList.toggle('is-open', willOpen);
         trigger.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
       });
 
       popover.querySelector('[data-filter-close]')?.addEventListener('click', () => closeFilterPopover(popover));
 
-      popover.querySelectorAll('input[type="radio"]').forEach((radio) => {
-        if (radio.value === hidden.value) radio.checked = true;
-        radio.addEventListener('change', () => {
-          if (!radio.checked) return;
-          const label = isStatus ? getStatusFilterLabel(radio.value) : getDeliveryFilterLabel(radio.value);
-          applyFilterChoice(hidden.id, radio.value, label);
-          closeFilterPopover(popover);
+      popover.querySelector('[data-filter-reset]')?.addEventListener('click', () => {
+        const allowed = getAllowedFilterValues(hidden.id);
+        applyFilterChoice(hidden.id, allowed, isStatus ? getStatusFilterLabel(allowed.join(',')) : getDeliveryFilterLabel(allowed.join(',')));
+        syncPickerInputs(hidden, popover);
+        closeFilterPopover(popover);
+      });
+
+      popover.querySelector('[data-filter-apply]')?.addEventListener('click', () => {
+        const values = readFilterChoices(popover, hidden.id);
+        const label = isStatus ? getStatusFilterLabel(values.join(',')) : getDeliveryFilterLabel(values.join(','));
+        applyFilterChoice(hidden.id, values, label);
+        closeFilterPopover(popover);
+      });
+
+      popover.querySelectorAll('input[type="checkbox"]').forEach((chk) => {
+        chk.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            popover.querySelector('[data-filter-apply]')?.click();
+          }
         });
       });
     });
@@ -3907,15 +3979,19 @@ app.get("/admin", async (req, res) => {
   }
 
   function convMatchesStatus(c, statusFilter){
+    const selected = parseMultiFilterValue(statusFilter, ['completed','open','kitchen','in_progress','cancelled']);
+    if (!selected.length || selected.length === 5) return true;
     const st = normalizeStatus(c?.status);
-    if (statusFilter === 'all') return true;
-    if (statusFilter === 'completed_open') return st === 'COMPLETED' || st === 'OPEN' || st === 'IN_PROGRESS';
-    if (statusFilter === 'completed') return st === 'COMPLETED';
-    if (statusFilter === 'open') return st === 'OPEN' || st === 'IN_PROGRESS';
-    if (statusFilter === 'kitchen') return isKitchenConversation(c);
-    if (statusFilter === 'in_progress') return st === 'IN_PROGRESS';
-    if (statusFilter === 'cancelled') return st === 'CANCELLED';
-    return true;
+    const matches = new Set();
+    if (st === 'COMPLETED') matches.add('completed');
+    if (st === 'OPEN') matches.add('open');
+    if (st === 'IN_PROGRESS') {
+      matches.add('open');
+      matches.add('in_progress');
+    }
+    if (st === 'CANCELLED') matches.add('cancelled');
+    if (isKitchenConversation(c)) matches.add('kitchen');
+    return selected.some(v => matches.has(v));
   }
 
  function convDateKey(c){
@@ -3953,24 +4029,19 @@ app.get("/admin", async (req, res) => {
     return Number.isFinite(fallback) ? fallback : 0;
   }
 
-  function statusPriorityForAdmin(raw, statusFilter){
-    const st = normalizeStatus(raw);
-    if (statusFilter === 'completed_open') {
-      if (st === 'COMPLETED') return 0;
-      if (st === 'OPEN') return 1;
-      if (st === 'IN_PROGRESS') return 2;
-      if (st === 'CANCELLED') return 9;
-      return 5;
+  function statusPriorityForAdmin(conv, statusFilter){
+    const selected = parseMultiFilterValue(statusFilter, ['completed','open','kitchen','in_progress','cancelled']);
+    const order = selected.length ? selected : ['completed','open','kitchen','in_progress','cancelled'];
+    const tags = [];
+    const st = normalizeStatus(conv?.status);
+    if (st === 'COMPLETED') tags.push('completed');
+    if (st === 'OPEN') tags.push('open');
+    if (st === 'IN_PROGRESS') tags.push('open','in_progress');
+    if (st === 'CANCELLED') tags.push('cancelled');
+    if (isKitchenConversation(conv)) tags.push('kitchen');
+    for (let i = 0; i < order.length; i += 1) {
+      if (tags.includes(order[i])) return i;
     }
-    if (statusFilter === 'open') {
-      if (st === 'OPEN') return 0;
-      if (st === 'IN_PROGRESS') return 1;
-      return 5;
-    }
-    if (statusFilter === 'completed') return st === 'COMPLETED' ? 0 : 5;
-    if (statusFilter === 'kitchen') return normalizeStatus(raw) === 'KITCHEN' ? 0 : 5;
-    if (statusFilter === 'in_progress') return st === 'IN_PROGRESS' ? 0 : 5;
-    if (statusFilter === 'cancelled') return st === 'CANCELLED' ? 0 : 5;
     if (st === 'COMPLETED') return 0;
     if (st === 'OPEN') return 1;
     if (st === 'IN_PROGRESS') return 2;
@@ -3980,7 +4051,7 @@ app.get("/admin", async (req, res) => {
 
   function sortAdminConversations(list, statusFilter){
     return (Array.isArray(list) ? list.slice() : []).sort((a, b) => {
-      const statusDelta = statusPriorityForAdmin(a?.status, statusFilter) - statusPriorityForAdmin(b?.status, statusFilter);
+      const statusDelta = statusPriorityForAdmin(a, statusFilter) - statusPriorityForAdmin(b, statusFilter);
       if (statusDelta !== 0) return statusDelta;
 
       const aWhen = convDateTimeSortValue(a);
@@ -4017,7 +4088,7 @@ app.get("/admin", async (req, res) => {
       const dateLabel = (range.from || range.to)
         ? ('fechas ' + (range.from || '...') + ' a ' + (range.to || '...'))
         : 'sin rango de fechas';
-      const base = [deliveryMap[deliveredFilter] || deliveryMap.pending, statusMap[statusFilter] || statusMap.completed_open, dateLabel].join(' · ');
+      const base = [deliveryLabel, statusLabel, dateLabel].join(' · ');
 
       hint.textContent = total
         ? (total + ' conversaciones visibles' + (Number.isFinite(allCount) ? (' de ' + allCount) : '') + ' · ' + base + '.')
