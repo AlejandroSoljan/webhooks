@@ -2901,7 +2901,7 @@ app.get("/admin", async (req, res) => {
     .kpi-value{font-size:24px;line-height:1;font-weight:800;color:#0f172a}
     .kpi-label{margin-top:4px;font-size:11px;font-weight:700;color:#475467;text-transform:uppercase;letter-spacing:.04em}
     .kpi-meta{margin-top:4px;font-size:11px;color:#64748b;line-height:1.25}
-    .stats-charts{display:grid;grid-template-columns:1.1fr 1.1fr 1.2fr;gap:8px}
+    .stats-charts{display:grid;grid-template-columns:1fr 1fr;gap:8px}
     .chart-card{
       border:1px solid var(--line);
       background:#fff;
@@ -3003,7 +3003,7 @@ app.get("/admin", async (req, res) => {
       <div class="stats-head">
         <div>
           <div class="stats-title">Resumen del movimiento</div>
-          <p class="stats-subtitle" id="statsHint">Estados y productos sobre lo filtrado · pendientes y entrega sobre el total cargado.</p>
+          <p class="stats-subtitle" id="statsHint">Estados sobre lo filtrado · pendientes y entrega sobre el total cargado.</p>
         </div>
         <div class="toolbar-actions">
           <span class="muted stats-refresh">Refresco automático cada 1 minuto</span>
@@ -3027,10 +3027,7 @@ app.get("/admin", async (req, res) => {
             <div class="chart-title">Entrega pendiente</div>
             <div class="bar-list" id="deliveryBars"></div>
           </div>
-          <div class="chart-card">
-            <div class="chart-title">Productos más pedidos</div>
-            <div class="top-list" id="topProductsList"></div>
-          </div>
+
         </div>
       </div>
     </section>
@@ -3052,8 +3049,8 @@ app.get("/admin", async (req, res) => {
         <div class="field">
          <label for="statusFilter">Estado</label>
           <select id="statusFilter">
-            <option value="completed_open" selected>Completadas + abiertas</option>
-            <option value="completed">Solo completadas</option>
+            <option value="completed_open">Completadas + abiertas</option>
+            <option value="completed" selected>Solo completadas</option>
             <option value="open">Solo abiertas</option>
             <option value="in_progress">Solo en curso</option>
             <option value="cancelled">Solo canceladas</option>
@@ -3685,7 +3682,7 @@ app.get("/admin", async (req, res) => {
   }
 
   function getStatusFilterValue(){
-    return String(document.getElementById('statusFilter')?.value || 'completed_open').trim();
+    return String(document.getElementById('statusFilter')?.value || 'completed').trim();
   }
 
   function getDateRangeValue(){
@@ -3780,10 +3777,20 @@ app.get("/admin", async (req, res) => {
     return 4;
   }
 
+  function entregaPriorityForAdmin(row){
+    const mode = getEntregaMode(row);
+    if (mode === 'retiro') return 0;
+    if (mode === 'envio') return 1;
+    return 2;
+  }
+
   function sortAdminConversations(list, statusFilter){
     return (Array.isArray(list) ? list.slice() : []).sort((a, b) => {
       const statusDelta = statusPriorityForAdmin(a?.status, statusFilter) - statusPriorityForAdmin(b?.status, statusFilter);
       if (statusDelta !== 0) return statusDelta;
+
+      const entregaDelta = entregaPriorityForAdmin(a) - entregaPriorityForAdmin(b);
+      if (entregaDelta !== 0) return entregaDelta;
 
       const aWhen = convDateTimeSortValue(a);
       const bWhen = convDateTimeSortValue(b);
@@ -4007,13 +4014,11 @@ app.get("/admin", async (req, res) => {
       ]);
     }
 
-    renderTopProducts(visible);
-
     const statsHint = document.getElementById('statsHint');
     if (statsHint) {
       const now = new Date();
       const hhmm = now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-      statsHint.textContent = 'Última actualización ' + hhmm + ' · estados y productos sobre lo filtrado · pendientes y entrega sobre el total cargado.';
+      statsHint.textContent = 'Última actualización ' + hhmm + ' · estados sobre lo filtrado · pendientes y entrega sobre el total cargado.';
     }
   }
 
