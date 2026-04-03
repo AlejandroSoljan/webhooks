@@ -1255,6 +1255,8 @@ async function listConversations(limit = 50, tenantId, deliveredFilter = null) {
       contactName: c.contactName || "-",
       status: adminStatusLabel(c),
       manualOpen: !!c.manualOpen,
+      kitchenSent: !!c.kitchenSent,
+      kitchenAt: c.kitchenAt || null,
       delivered: !!c.delivered,
       deliveredAt: c.deliveredAt || null,
       lastAt: c.lastUserTs || c.lastAssistantTs || c.updatedAt || c.closedAt || c.openedAt
@@ -1606,6 +1608,8 @@ app.get("/api/admin/conversation-meta", async (req, res) => {
       contactName: conv.contactName || "",
       status: adminStatusLabel(conv),
       manualOpen: !!conv.manualOpen,
+      kitchenSent: !!conv.kitchenSent,
+      kitchenAt: conv.kitchenAt || null,
       delivered: !!conv.delivered,
       deliveredAt: conv.deliveredAt || null,
       channelType: conv.channelType || "whatsapp",
@@ -2445,6 +2449,53 @@ app.post("/api/admin/conversation-delivered", async (req, res) => {
 });
 
 
+// ---------- Marcar conversación como enviada a cocina / pendiente de cocina ----------
+app.post("/api/admin/conversation-kitchen", async (req, res) => {
+  try {
+    const { convId, waId, kitchenSent } = req.body || {};
+    if (!convId && !waId) {
+      return res.status(400).json({ error: "convId_or_waId_required" });
+    }
+    const tenant = resolveTenantId(req);
+    const db = await getDb();
+
+    let filter;
+    if (convId) {
+      filter = withTenant({ _id: new ObjectId(String(convId)) }, tenant);
+    } else {
+      filter = withTenant({ waId: String(waId) }, tenant);
+    }
+
+    const now = new Date();
+    const flag = !!kitchenSent;
+    const update = flag
+      ? { $set: { kitchenSent: true, kitchenAt: now, updatedAt: now } }
+      : { $set: { kitchenSent: false, updatedAt: now }, $unset: { kitchenAt: "" } };
+
+    const result = await db.collection("conversations").findOneAndUpdate(
+      filter,
+      update,
+      { returnDocument: "after" }
+    );
+
+    const conv = result.value;
+    if (!conv) {
+      return res.status(404).json({ error: "conv_not_found" });
+    }
+
+    res.json({
+      ok: true,
+      convId: String(conv._id),
+      kitchenSent: !!conv.kitchenSent,
+      kitchenAt: conv.kitchenAt || null,
+    });
+  } catch (e) {
+    console.error("POST /api/admin/conversation-kitchen error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
+
 // ---------- Marcar conversación como manual (humano) / automática (bot) ----------
 app.post("/api/admin/conversation-manual", async (req, res) => {
   try {
@@ -2881,6 +2932,7 @@ app.get("/admin", async (req, res) => {
     .c-ent{width:34px}
     .c-acciones{width:96px}
     .delivered-row{opacity:.72}
+    .kitchen-row{background:rgba(255,243,205,.45)}
     .delivChk{cursor:pointer;width:16px;height:16px;accent-color:#22c55e}
 
     .stats-panel{padding:10px 12px}
@@ -2901,7 +2953,7 @@ app.get("/admin", async (req, res) => {
     .kpi-value{font-size:24px;line-height:1;font-weight:800;color:#0f172a}
     .kpi-label{margin-top:4px;font-size:11px;font-weight:700;color:#475467;text-transform:uppercase;letter-spacing:.04em}
     .kpi-meta{margin-top:4px;font-size:11px;color:#64748b;line-height:1.25}
-    .stats-charts{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .stats-charts{display:grid;grid-template-columns:1.1fr 1.1fr 1.2fr;gap:8px}
     .chart-card{
       border:1px solid var(--line);
       background:#fff;
@@ -3003,7 +3055,7 @@ app.get("/admin", async (req, res) => {
       <div class="stats-head">
         <div>
           <div class="stats-title">Resumen del movimiento</div>
-          <p class="stats-subtitle" id="statsHint">Estados sobre lo filtrado · pendientes y entrega sobre el total cargado.</p>
+          <p class="stats-subtitle" id="statsHint">Estados y productos sobre lo filtrado · pendientes y entrega sobre el total cargado.</p>
         </div>
         <div class="toolbar-actions">
           <span class="muted stats-refresh">Refresco automático cada 1 minuto</span>
@@ -3027,7 +3079,10 @@ app.get("/admin", async (req, res) => {
             <div class="chart-title">Entrega pendiente</div>
             <div class="bar-list" id="deliveryBars"></div>
           </div>
-
+          <div class="chart-card">
+            <div class="chart-title">Productos más pedidos</div>
+            <div class="top-list" id="topProductsList"></div>
+          </div>
         </div>
       </div>
     </section>
@@ -3049,10 +3104,10 @@ app.get("/admin", async (req, res) => {
         <div class="field">
          <label for="statusFilter">Estado</label>
           <select id="statusFilter">
-            <option value="completed_open">Completadas + abiertas</option>
-            <option value="completed" selected>Solo completadas</option>
+            <option value="completed_open" selected>Completadas + abiertas</option>
+            <option value="completed">Solo completadas</option>
             <option value="open">Solo abiertas</option>
-            <option value="in_progress">Solo en curso</option>
+            <option value="in_progress">Solo en cocina</option>
             <option value="cancelled">Solo canceladas</option>
             <option value="all">Todas</option>
           </select>
@@ -3093,6 +3148,7 @@ app.get("/admin", async (req, res) => {
             <col class="c-dia"/>
             <col class="c-hora"/>
             <col class="c-estado"/>
+            <col class="c-coc"/>
             <col class="c-ent"/>
             <col class="c-acciones"/>
           </colgroup>
@@ -3108,6 +3164,7 @@ app.get("/admin", async (req, res) => {
               <th>Día</th>
               <th>Hora</th>
               <th>Estado</th>
+              <th>Coc.</th>
               <th>Ent.</th>
               <th>Acciones</th>
             </tr>
@@ -3224,7 +3281,8 @@ app.get("/admin", async (req, res) => {
     return s;
   }
 
-  function statusLabelEs(raw){
+  function statusLabelEs(raw, kitchenSent){
+    if (kitchenSent) return 'EN COCINA';
     const st = normalizeStatus(raw);
     if (st === 'CANCELLED') return 'CANCELADA';
     if (st === 'COMPLETED') return 'COMPLETADA';
@@ -3233,7 +3291,8 @@ app.get("/admin", async (req, res) => {
     return String(raw || st || '').trim();
   }
 
-  function statusClass(raw){
+  function statusClass(raw, kitchenSent){
+    if (kitchenSent) return 'st-progress';
     const st = normalizeStatus(raw);
     if (st === 'CANCELLED') return 'st-cancelled';
     if (st === 'COMPLETED') return 'st-completed';
@@ -3241,9 +3300,9 @@ app.get("/admin", async (req, res) => {
     return 'st-open';
   }
 
-  function renderStatusBadge(raw){
-    const label = statusLabelEs(raw);
-    const cls = statusClass(raw);
+  function renderStatusBadge(raw, kitchenSent){
+    const label = statusLabelEs(raw, kitchenSent);
+    const cls = statusClass(raw, kitchenSent);
     return '<span class="status-badge ' + cls + '">' + escHtml(label) + '</span>';
   }
  
@@ -3682,7 +3741,7 @@ app.get("/admin", async (req, res) => {
   }
 
   function getStatusFilterValue(){
-    return String(document.getElementById('statusFilter')?.value || 'completed').trim();
+    return String(document.getElementById('statusFilter')?.value || 'completed_open').trim();
   }
 
   function getDateRangeValue(){
@@ -3709,11 +3768,12 @@ app.get("/admin", async (req, res) => {
 
   function convMatchesStatus(c, statusFilter){
     const st = normalizeStatus(c?.status);
+    const isKitchen = !!c?.kitchenSent;
     if (statusFilter === 'all') return true;
     if (statusFilter === 'completed_open') return st === 'COMPLETED' || st === 'OPEN' || st === 'IN_PROGRESS';
     if (statusFilter === 'completed') return st === 'COMPLETED';
     if (statusFilter === 'open') return st === 'OPEN' || st === 'IN_PROGRESS';
-    if (statusFilter === 'in_progress') return st === 'IN_PROGRESS';
+    if (statusFilter === 'in_progress') return isKitchen || st === 'IN_PROGRESS';
     if (statusFilter === 'cancelled') return st === 'CANCELLED';
     return true;
   }
@@ -3753,10 +3813,10 @@ app.get("/admin", async (req, res) => {
     return Number.isFinite(fallback) ? fallback : 0;
   }
 
-  function statusPriorityForAdmin(raw, statusFilter){
+  function statusPriorityForAdmin(raw, statusFilter, kitchenSent){
     const st = normalizeStatus(raw);
     if (statusFilter === 'completed_open') {
-      if (st === 'COMPLETED') return 0;
+      if (st === 'COMPLETED') return kitchenSent ? -1 : 0;
       if (st === 'OPEN') return 1;
       if (st === 'IN_PROGRESS') return 2;
       if (st === 'CANCELLED') return 9;
@@ -3767,30 +3827,20 @@ app.get("/admin", async (req, res) => {
       if (st === 'IN_PROGRESS') return 1;
       return 5;
     }
-    if (statusFilter === 'completed') return st === 'COMPLETED' ? 0 : 5;
-    if (statusFilter === 'in_progress') return st === 'IN_PROGRESS' ? 0 : 5;
+    if (statusFilter === 'completed') return st === 'COMPLETED' ? (kitchenSent ? -1 : 0) : 5;
+    if (statusFilter === 'in_progress') return (kitchenSent || st === 'IN_PROGRESS') ? 0 : 5;
     if (statusFilter === 'cancelled') return st === 'CANCELLED' ? 0 : 5;
-    if (st === 'COMPLETED') return 0;
+    if (st === 'COMPLETED') return kitchenSent ? -1 : 0;
     if (st === 'OPEN') return 1;
     if (st === 'IN_PROGRESS') return 2;
     if (st === 'CANCELLED') return 3;
     return 4;
   }
 
-  function entregaPriorityForAdmin(row){
-    const mode = getEntregaMode(row);
-    if (mode === 'retiro') return 0;
-    if (mode === 'envio') return 1;
-    return 2;
-  }
-
   function sortAdminConversations(list, statusFilter){
     return (Array.isArray(list) ? list.slice() : []).sort((a, b) => {
-      const statusDelta = statusPriorityForAdmin(a?.status, statusFilter) - statusPriorityForAdmin(b?.status, statusFilter);
+      const statusDelta = statusPriorityForAdmin(a?.status, statusFilter, !!a?.kitchenSent) - statusPriorityForAdmin(b?.status, statusFilter, !!b?.kitchenSent);
       if (statusDelta !== 0) return statusDelta;
-
-      const entregaDelta = entregaPriorityForAdmin(a) - entregaPriorityForAdmin(b);
-      if (entregaDelta !== 0) return entregaDelta;
 
       const aWhen = convDateTimeSortValue(a);
       const bWhen = convDateTimeSortValue(b);
@@ -3819,7 +3869,7 @@ app.get("/admin", async (req, res) => {
         completed_open: 'completadas primero y luego abiertas',
         completed: 'solo completadas',
         open: 'solo abiertas',
-        in_progress: 'solo en curso',
+        in_progress: 'solo en cocina',
         cancelled: 'solo canceladas'
       };
       const dateLabel = (range.from || range.to)
@@ -4000,7 +4050,7 @@ app.get("/admin", async (req, res) => {
       statusBars.innerHTML = buildBarRows([
         { label: 'Completadas', value: completedCount },
         { label: 'Abiertas', value: visible.filter(row => normalizeStatus(row?.status) === 'OPEN').length },
-        { label: 'En curso', value: visible.filter(row => normalizeStatus(row?.status) === 'IN_PROGRESS').length },
+        { label: 'En cocina', value: visible.filter(row => !!row?.kitchenSent).length },
         { label: 'Canceladas', value: visible.filter(row => normalizeStatus(row?.status) === 'CANCELLED').length }
       ]);
     }
@@ -4014,11 +4064,13 @@ app.get("/admin", async (req, res) => {
       ]);
     }
 
+    renderTopProducts(visible);
+
     const statsHint = document.getElementById('statsHint');
     if (statsHint) {
       const now = new Date();
       const hhmm = now.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-      statsHint.textContent = 'Última actualización ' + hhmm + ' · estados sobre lo filtrado · pendientes y entrega sobre el total cargado.';
+      statsHint.textContent = 'Última actualización ' + hhmm + ' · estados y productos sobre lo filtrado · pendientes y entrega sobre el total cargado.';
     }
   }
 
@@ -4074,7 +4126,7 @@ app.get("/admin", async (req, res) => {
       else if (deliveredFilter === 'pending') url += '&delivered=false';
 
       if (tb) {
-        tb.innerHTML = '<tr><td colspan="12" style="text-align:center;color:#64748b;padding:20px">Cargando conversaciones…</td></tr>';
+        tb.innerHTML = '<tr><td colspan="13" style="text-align:center;color:#64748b;padding:20px">Cargando conversaciones…</td></tr>';
       }
 
       const r = await fetch(url);
@@ -4095,6 +4147,7 @@ app.get("/admin", async (req, res) => {
       for(const c of rows){
         const tr = document.createElement('tr');
         if (c.delivered) tr.classList.add('delivered-row');
+        if (c.kitchenSent) tr.classList.add('kitchen-row');
         const act = formatActivity(c.lastAt);
         const direccion = String(c.direccion || '-').trim() || '-';
         const nombre = String(c.contactName || '-').trim() || '-';
@@ -4111,7 +4164,11 @@ app.get("/admin", async (req, res) => {
           '<td data-label="Distancia">' + renderDistanceBadge(c.distanceKm) + '</td>' +
           '<td data-label="Día"><span class="cell-ellipsis">' + escHtml(c.fechaEntrega || '-') + '</span></td>' +
           '<td data-label="Hora"><span class="cell-strong">' + escHtml(c.horaEntrega || '-') + '</span></td>' +
-          '<td data-label="Estado">' + renderStatusBadge(c.status) + '</td>' +
+          '<td data-label="Estado">' + renderStatusBadge(c.status, c.kitchenSent) + '</td>' +
+          '<td data-label="Coc." style="text-align:center">' +
+            '<input class="kitchenChk" type="checkbox" data-id="' + escHtml(c._id) + '" ' +
+            (c.kitchenSent ? 'checked' : '') + ' title="Enviado a cocina" />' +
+          '</td>' +
           '<td data-label="Ent." style="text-align:center">' +
             '<input class="delivChk" type="checkbox" data-id="' + escHtml(c._id) + '" ' +
             (c.delivered ? 'checked' : '') + ' title="Entregado" />' +
@@ -4135,6 +4192,29 @@ app.get("/admin", async (req, res) => {
       });
       tb.querySelectorAll('button[data-print]').forEach(b=>{
         b.addEventListener('click',()=>openTicketModal(b.getAttribute('data-print')));
+      });
+      tb.querySelectorAll('input.kitchenChk').forEach(chk=>{
+        chk.addEventListener('change', async()=>{
+          const convId = chk.getAttribute('data-id');
+          if (!convId) return;
+          const flag = chk.checked;
+          chk.disabled = true;
+          try{
+            const rr = await fetch('/api/admin/conversation-kitchen', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ convId, kitchenSent: flag })
+            });
+            const jj = await rr.json().catch(()=>({}));
+            if (!rr.ok || !jj.ok) throw new Error('not_updated');
+            await loadTable();
+          }catch(e){
+            chk.checked = !flag;
+            alert('No se pudo actualizar el estado de cocina');
+          }finally{
+            chk.disabled = false;
+          }
+        });
       });
       tb.querySelectorAll('input.delivChk').forEach(chk=>{
         chk.addEventListener('change', async()=>{
@@ -4167,14 +4247,14 @@ app.get("/admin", async (req, res) => {
 
      if(!rows.length){
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td colspan="12" style="text-align:center;color:#64748b;padding:26px">Sin conversaciones para mostrar</td>';
+        tr.innerHTML = '<td colspan="13" style="text-align:center;color:#64748b;padding:26px">Sin conversaciones para mostrar</td>';
         tb.appendChild(tr);
       }
 
     }catch(e){
       console.error('loadTable error', e);
       renderAdminStats([]);
-      if (tb) tb.innerHTML = '<tr><td colspan="12" style="text-align:center;color:#b91c1c;padding:20px">No se pudo cargar la tabla</td></tr>';
+      if (tb) tb.innerHTML = '<tr><td colspan="13" style="text-align:center;color:#b91c1c;padding:20px">No se pudo cargar la tabla</td></tr>';
     }
   }
 
