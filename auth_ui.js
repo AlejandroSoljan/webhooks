@@ -3113,7 +3113,7 @@ function mountAuthRoutes(app) {
   app.post("/api/tenant-config", requireAuth, requireAdmin, async (req, res) => {
     try {
       if (!hasAccess(req.user, "tenant_config")) return res.status(403).json({ ok:false, error:"forbidden" });
-       const role = String(req.user?.role || "").toLowerCase();
+      const role = String(req.user?.role || "").toLowerCase();
       const isSuper = role === "superadmin";
       const tenantIdRaw = String(req.body?.tenantId || "").trim();
       const tenantId = tenantIdRaw || (isSuper ? "" : String(req.user?.tenantId || "default"));
@@ -3129,14 +3129,25 @@ function mountAuthRoutes(app) {
       const db = await getDb();
       const col = db.collection("tenant_config");
       const now = new Date();
-      await col.updateOne(
+
+      const existing = await col.findOne(
         { _id: tenantId },
-        {
-          $setOnInsert: { createdAt: now },
-          $set: { ...data, updatedAt: now },
-        },
+        { projection: { _id: 1, createdAt: 1 } }
+      );
+
+      const replacement = {
+        _id: tenantId,
+        ...data,
+        createdAt: existing?.createdAt || now,
+        updatedAt: now,
+      };
+
+      await col.replaceOne(
+        { _id: tenantId },
+        replacement,
         { upsert: true }
       );
+
       return res.json({ ok:true });
     } catch (e) {
       return res.status(500).json({ ok:false, error: String(e?.message || e) });
