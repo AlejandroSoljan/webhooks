@@ -2879,7 +2879,17 @@ function mountAuthRoutes(app) {
         async function loadList(){
           try {
             const j = await apiList();
-            const items = Array.isArray(j.items) ? j.items : [];
+            const items = Array.isArray(j.items)
+              ? j.items
+              : (j && j.item && j.item._id
+                  ? [{
+                      _id: j.item._id,
+                      nom_emp: (j.item.data && j.item.data.nom_emp) || '',
+                      numero: (j.item.data && j.item.data.numero) || '',
+                      createdAt: j.item.createdAt || null,
+                      updatedAt: j.item.updatedAt || null
+                    }]
+                  : []);
             if (!items.length) {
               listEl.innerHTML = '<tr><td colspan="5" class="small">No hay registros.</td></tr>';
               return;
@@ -3016,22 +3026,25 @@ function mountAuthRoutes(app) {
 
 
       if (embed) {
-        // IMPORTANTE: en embed NO usamos appShell (evita sidebar duplicado)
+        // Embed liviano: evita shells anidados dentro del iframe
         res.setHeader("Content-Type", "text/html; charset=utf-8");
-        return res.status(200).send(
-          pageShell({
-            title: "Tenant Config · Asisto",
-            body: `
-              <style>
-                body { background: transparent !important; }
-                .content { padding: 0 !important; max-width: 100% !important; }
-              </style>
-              <div class="content" style="padding:16px">
-                ${inner}
-              </div>
-            `,
-          })
-        );
+        return res.status(200).send(`<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Tenant Config · Asisto</title>
+  <style>
+    html,body{margin:0;padding:0;background:transparent;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+    .embedWrap{padding:16px}
+  </style>
+</head>
+<body>
+  <div class="embedWrap">
+    ${inner}
+  </div>
+</body>
+</html>`);
       }
 
       return res.status(200).send(
