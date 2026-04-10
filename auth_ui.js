@@ -2959,7 +2959,7 @@ function mountAuthRoutes(app) {
           renderMeta(null);
           currentId = null;
           if(isSuper) tenantEl.value = '';
-          else tenantEl.value = ${json.dumps(tenantId)};
+          else tenantEl.value = ${JSON.stringify(tenantId)};
           setFieldsFromDoc({});
           openModal('Nuevo tenant');
         });
