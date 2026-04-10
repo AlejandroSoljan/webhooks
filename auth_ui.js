@@ -965,7 +965,38 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
         .lpRow{grid-template-columns:1fr}
         
       }
-  </style>
+  
+        .wa-actions-cell{position:relative; overflow:visible}
+        .wa-actions-wrap{position:relative; display:inline-block}
+        .wa-actions-menu{
+          position:absolute;
+          top:calc(100% + 6px);
+          right:0;
+          min-width:180px;
+          z-index:2500;
+          background:#fff;
+          border:1px solid rgba(148,163,184,.28);
+          border-radius:14px;
+          box-shadow:0 18px 40px rgba(15,23,42,.18);
+          padding:8px;
+        }
+        .wa-actions-menu.up{
+          top:auto;
+          bottom:calc(100% + 6px);
+        }
+        .wa-actions-menu[hidden]{display:none !important}
+        .wa-actions-menu button{
+          width:100%;
+          text-align:left;
+          justify-content:flex-start;
+        }
+        body.dark .wa-actions-menu{
+          background:#111827;
+          border-color:rgba(148,163,184,.22);
+          box-shadow:0 18px 40px rgba(0,0,0,.35);
+        }
+
+</style>
 </head>
 <body>
   ${user ? `
@@ -1449,7 +1480,7 @@ function usersAdminPage({ user, users, msg, err }) {
           <div class="small" style="margin-top:4px">Inicio: ${htmlEscape(defaultPageTitle)}</div>
         </td>
         <td>${locked ? "Bloqueado" : "Activo"}</td>
-        <td class="actions">
+        <td class="actions wa-actions-cell">
           <form method="POST" action="/admin/users/update" style="margin:0 0 8px 0">
             <input type="hidden" name="userId" value="${htmlEscape(id)}"/>
             ${tenantInput}
@@ -1817,7 +1848,7 @@ function wwebSessionsAdminPage({ user }) {
         actions += ''
           + '<div class="menuWrap">'
           +   '<button class="btn2 btnMenu" type="button" data-action="menu" data-menu="' + escapeHtml(menuId) + '" aria-haspopup="true" aria-expanded="false" title="Acciones">Acciones <span class="caret">▾</span></button>'
-          +   '<div class="menu" id="' + escapeHtml(menuId) + '" role="menu" aria-hidden="true">'
+          +   '<div class="menu wa-actions-menu" id="' + escapeHtml(menuId) + '" role="menu" aria-hidden="true">'
           +     '<button class="menuItem" type="button" role="menuitem" data-action="restart" data-id="' + escapeHtml(lock._id) + '">Reiniciar</button>'
           +     '<button class="menuItem" type="button" role="menuitem" data-action="toggle" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-disabled="' + (isDisabled ? '1' : '0') + '">' + (isDisabled ? 'Habilitar' : 'Bloquear') + '</button>'
           +     '<div class="menuSep"></div>'
@@ -2018,7 +2049,30 @@ function wwebSessionsAdminPage({ user }) {
         m.style.display = 'block';
         btn.setAttribute('aria-expanded','true');
       }
-      document.addEventListener('click', function(e){
+      
+      function positionWaActionsMenu(btn){
+        try{
+          const wrap = btn?.closest('.wa-actions-wrap') || btn?.parentElement;
+          const menu = wrap?.querySelector('.wa-actions-menu, .menu');
+          if(!menu) return;
+          menu.classList.remove('up');
+          menu.hidden = false;
+          const rect = menu.getBoundingClientRect();
+          const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+          const overflowBottom = rect.bottom > (vh - 12);
+          if(overflowBottom) menu.classList.add('up');
+        }catch{}
+      window.addEventListener('resize', ()=> {
+        document.querySelectorAll('.wa-actions-menu:not([hidden]), .menu.wa-actions-menu:not([hidden])').forEach(menu=>{
+          const wrap = menu.closest('.wa-actions-wrap');
+          const btn = wrap?.querySelector('button');
+          if(btn) positionWaActionsMenu(btn);
+        });
+      });
+    
+      }
+    
+document.addEventListener('click', function(e){
         // click afuera -> cerrar
         var inside = e.target && e.target.closest ? e.target.closest('.menuWrap') : null;
         if(!inside) closeAllMenus();
@@ -3020,7 +3074,8 @@ function mountAuthRoutes(app) {
         });
 
         btnCloseModal.addEventListener('click', closeModal);
-        modalBackdrop.addEventListener('click', (e)=>{ if(e.target === modalBackdrop) closeModal(); });
+        modalBackdrop.addEventListener('click', (e)=>{
+            positionWaActionsMenu(e.currentTarget); if(e.target === modalBackdrop) closeModal(); });
         document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape' && modalBackdrop.classList.contains('open')) closeModal(); });
 
         loadList();
