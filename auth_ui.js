@@ -2645,6 +2645,22 @@ function mountAuthRoutes(app) {
 
     return `
       <style>
+        .small{font-size:14px;color:#64748b}
+        .card{background:#fff;border:1px solid rgba(148,163,184,.22);border-radius:16px;padding:16px;box-shadow:0 10px 24px rgba(15,23,42,.06)}
+        .btn,.btn2{height:40px;padding:0 14px;border-radius:12px;font-weight:700;font-size:14px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px}
+        .btn{background:#0f3b68;color:#fff;border:1px solid #0f3b68}
+        .btn:hover{filter:brightness(.98)}
+        .btn2{background:#fff;color:#0f172a;border:1px solid rgba(148,163,184,.45)}
+        .btnDanger{border-color:#fecaca;color:#b91c1c;background:#fff}
+        .inp{width:100%;height:40px;border-radius:12px;border:1px solid rgba(148,163,184,.45);padding:0 12px;font-size:14px;box-sizing:border-box;background:#fff;color:#0f172a}
+        .tbl{width:100%;border-collapse:separate;border-spacing:0}
+        .tbl th,.tbl td{padding:12px 10px;border-bottom:1px solid rgba(148,163,184,.22);text-align:left;vertical-align:middle}
+        .tbl thead th{font-size:13px;color:#0f172a;background:#f8fafc;position:sticky;top:0}
+        .tbl tbody tr:last-child td{border-bottom:none}
+        .msg{padding:10px 12px;border-radius:12px;font-size:14px}
+        .msg.ok{background:#ecfdf5;color:#166534;border:1px solid #bbf7d0}
+        .msg.err{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}
+        .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
         .tc-toolbar{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
         .tc-listwrap{overflow:auto;border:1px solid rgba(148,163,184,.35);border-radius:12px;margin-top:10px}
         .tc-modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:center;justify-content:center;padding:20px;z-index:2000}
@@ -2652,11 +2668,14 @@ function mountAuthRoutes(app) {
         .tc-modal{width:min(960px,100%);max-height:min(88vh,900px);overflow:auto;background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(15,23,42,.32);border:1px solid rgba(148,163,184,.28)}
         .tc-modal-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid rgba(148,163,184,.22);position:sticky;top:0;background:#fff;z-index:1}
         .tc-modal-body{padding:16px 18px 18px}
-        .tc-close{border:1px solid rgba(148,163,184,.35);background:#fff;border-radius:10px;padding:8px 10px;cursor:pointer}
+        .tc-close{height:40px;border:1px solid rgba(148,163,184,.35);background:#fff;border-radius:12px;padding:0 12px;cursor:pointer;font-weight:700}
         .tc-meta{margin-top:10px;color:#64748b;font-size:12px}
+        body.dark .card{background:#0f172a;border-color:rgba(148,163,184,.18)}
+        body.dark .btn2, body.dark .inp, body.dark .tc-close{background:#111827;color:#e5e7eb;border-color:rgba(148,163,184,.28)}
+        body.dark .tbl thead th{background:#111827;color:#e5e7eb}
+        body.dark .tbl th, body.dark .tbl td{border-bottom-color:rgba(148,163,184,.16)}
         body.dark .tc-modal{background:#0f172a;border-color:rgba(148,163,184,.22)}
         body.dark .tc-modal-head{background:#0f172a;border-bottom-color:rgba(148,163,184,.18)}
-        body.dark .tc-close{background:#111827;color:#e5e7eb;border-color:rgba(148,163,184,.28)}
       </style>
 
       <div class="tc-toolbar">
@@ -2666,7 +2685,7 @@ function mountAuthRoutes(app) {
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <button class="btn2" type="button" id="tc_btnReload">Actualizar</button>
-          <button class="btn" type="button" id="tc_btnNew">Nuevo tenant</button>
+          ${isSuper ? `<button class="btn" type="button" id="tc_btnNew">Nuevo tenant</button>` : ``}
           <div class="small">${isSuper ? "Superadmin" : "Admin"} · tenant: <b>${htmlEscape(tenantId)}</b></div>
         </div>
       </div>
@@ -2954,7 +2973,7 @@ function mountAuthRoutes(app) {
         btnAdd.addEventListener('click', ()=> addRow('', ''));
         btnClear.addEventListener('click', ()=> { setMsg('', ''); renderMeta(null); setFieldsFromDoc({}); currentId = null; });
         btnReload.addEventListener('click', async ()=> { await loadList(); });
-        btnNew.addEventListener('click', ()=> {
+        if (btnNew) btnNew.addEventListener('click', ()=> {
           setMsg('', '');
           renderMeta(null);
           currentId = null;
