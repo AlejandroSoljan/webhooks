@@ -2644,73 +2644,93 @@ function mountAuthRoutes(app) {
     const tenantId = String(initialTenantId || user?.tenantId || "default");
 
     return `
-      <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:12px">
+      <style>
+        .tc-toolbar{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+        .tc-listwrap{overflow:auto;border:1px solid rgba(148,163,184,.35);border-radius:12px;margin-top:10px}
+        .tc-modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:center;justify-content:center;padding:20px;z-index:2000}
+        .tc-modal-backdrop.open{display:flex}
+        .tc-modal{width:min(960px,100%);max-height:min(88vh,900px);overflow:auto;background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(15,23,42,.32);border:1px solid rgba(148,163,184,.28)}
+        .tc-modal-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid rgba(148,163,184,.22);position:sticky;top:0;background:#fff;z-index:1}
+        .tc-modal-body{padding:16px 18px 18px}
+        .tc-close{border:1px solid rgba(148,163,184,.35);background:#fff;border-radius:10px;padding:8px 10px;cursor:pointer}
+        .tc-meta{margin-top:10px;color:#64748b;font-size:12px}
+        body.dark .tc-modal{background:#0f172a;border-color:rgba(148,163,184,.22)}
+        body.dark .tc-modal-head{background:#0f172a;border-bottom-color:rgba(148,163,184,.18)}
+        body.dark .tc-close{background:#111827;color:#e5e7eb;border-color:rgba(148,163,184,.28)}
+      </style>
+
+      <div class="tc-toolbar">
         <div>
           <h1 style="margin:0 0 4px">Tenant Config</h1>
-          <div class="small">Editá la colección <code>tenant_config</code>. Cada documento usa <code>_id = tenantId</code>. Podés agregar campos libres.</div>
+          <div class="small">Editá la colección <code>tenant_config</code>. Cada documento usa <code>_id = tenantId</code>. Al hacer clic en <b>Editar</b> se abre un modal con la configuración.</div>
         </div>
-        <div class="small">${isSuper ? "Superadmin" : "Admin"} · tenant: <b>${htmlEscape(tenantId)}</b></div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="btn2" type="button" id="tc_btnReload">Actualizar</button>
+          <button class="btn" type="button" id="tc_btnNew">Nuevo tenant</button>
+          <div class="small">${isSuper ? "Superadmin" : "Admin"} · tenant: <b>${htmlEscape(tenantId)}</b></div>
+        </div>
       </div>
 
       <div id="tc_msg" style="margin:10px 0"></div>
 
-      <div class="grid2" style="grid-template-columns: 1fr 1fr; gap:14px">
-        <div class="card">
-          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px">
-            <h3 style="margin:0">Crear / editar</h3>
-            <div class="actions" style="gap:8px">
-              <button class="btn2" type="button" id="tc_btnReload">Actualizar</button>
-              <button class="btn2" type="button" id="tc_btnNew">Nuevo</button>
-              ${isSuper ? `<button class="btn2 btnDanger" type="button" id="tc_btnDelete">Eliminar</button>` : ``}
-            </div>
-          </div>
-
-          <form id="tc_form">
-            <label class="small">TenantId</label>
-            <input class="inp" id="tc_tenant" name="tenantId" value="${htmlEscape(tenantId)}" ${isSuper ? "" : "readonly"} placeholder="default"/>
-
-            <div class="small" style="margin-top:10px; color:#64748b">Campos</div>
-            <div style="overflow:auto; border:1px solid rgba(148,163,184,.35); border-radius:12px">
-              <table class="tbl" style="margin:0">
-                <thead>
-                  <tr>
-                    <th style="width:34%">Campo</th>
-                    <th>Valor</th>
-                    <th style="width:1%"></th>
-                  </tr>
-                </thead>
-                <tbody id="tc_fields"></tbody>
-              </table>
-            </div>
-
-            <div class="actions" style="margin-top:12px">
-              <button class="btn" type="submit" id="tc_btnSave">Guardar</button>
-              <button class="btn2" type="button" id="tc_btnAdd">Agregar campo</button>
-              <button class="btn2" type="button" id="tc_btnClear">Limpiar</button>
-            </div>
-
-            <div class="small" id="tc_meta" style="margin-top:10px; color:#64748b"></div>
-          </form>
+      <div class="card">
+        <h3 style="margin:0 0 8px">Tenants</h3>
+        <div class="small">Se listan al ingresar. Usá “Editar” para abrir la configuración en un modal.</div>
+        <div class="tc-listwrap">
+          <table class="tbl" style="margin:0">
+            <thead>
+              <tr>
+                <th>Tenant</th>
+                <th>Empresa</th>
+                <th>Número</th>
+                <th>Updated</th>
+                <th style="width:1%"></th>
+              </tr>
+            </thead>
+            <tbody id="tc_list">
+              <tr><td colspan="5" class="small">Cargando...</td></tr>
+            </tbody>
+          </table>
         </div>
+      </div>
 
-        <div class="card">
-          <h3 style="margin:0 0 8px">Tenants</h3>
-          <div class="small">Tip: hacé click en “Editar” para cargar la config.</div>
-          <div style="overflow:auto; border:1px solid rgba(148,163,184,.35); border-radius:12px; margin-top:10px">
-            <table class="tbl" style="margin:0">
-              <thead>
-                <tr>
-                  <th>Tenant</th>
-                  <th>Empresa</th>
-                  <th>Número</th>
-                  <th>Updated</th>
-                  <th style="width:1%"></th>
-                </tr>
-              </thead>
-              <tbody id="tc_list">
-                <tr><td colspan="5" class="small">Cargando...</td></tr>
-              </tbody>
-            </table>
+      <div class="tc-modal-backdrop" id="tc_modalBackdrop" aria-hidden="true">
+        <div class="tc-modal" role="dialog" aria-modal="true" aria-labelledby="tc_modalTitle">
+          <div class="tc-modal-head">
+            <div>
+              <div id="tc_modalTitle" style="font-weight:700;font-size:18px">Editar tenant</div>
+              <div class="small">Modificá campos libres y guardá la configuración.</div>
+            </div>
+            <button class="tc-close" type="button" id="tc_btnCloseModal">Cerrar</button>
+          </div>
+          <div class="tc-modal-body">
+            <form id="tc_form">
+              <label class="small">TenantId</label>
+              <input class="inp" id="tc_tenant" name="tenantId" value="${htmlEscape(tenantId)}" ${isSuper ? "" : "readonly"} placeholder="default"/>
+
+              <div class="small" style="margin-top:10px; color:#64748b">Campos</div>
+              <div style="overflow:auto; border:1px solid rgba(148,163,184,.35); border-radius:12px">
+                <table class="tbl" style="margin:0">
+                  <thead>
+                    <tr>
+                      <th style="width:34%">Campo</th>
+                      <th>Valor</th>
+                      <th style="width:1%"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="tc_fields"></tbody>
+                </table>
+              </div>
+
+              <div class="actions" style="margin-top:12px">
+                <button class="btn" type="submit" id="tc_btnSave">Guardar</button>
+                <button class="btn2" type="button" id="tc_btnAdd">Agregar campo</button>
+                <button class="btn2" type="button" id="tc_btnClear">Limpiar</button>
+                ${isSuper ? `<button class="btn2 btnDanger" type="button" id="tc_btnDelete">Eliminar</button>` : ``}
+              </div>
+
+              <div class="tc-meta" id="tc_meta"></div>
+            </form>
           </div>
         </div>
       </div>
@@ -2729,6 +2749,9 @@ function mountAuthRoutes(app) {
         const btnReload = document.getElementById('tc_btnReload');
         const btnNew = document.getElementById('tc_btnNew');
         const btnDelete = document.getElementById('tc_btnDelete');
+        const modalBackdrop = document.getElementById('tc_modalBackdrop');
+        const btnCloseModal = document.getElementById('tc_btnCloseModal');
+        const modalTitle = document.getElementById('tc_modalTitle');
 
         let currentId = null;
         let currentDocMeta = null;
@@ -2752,19 +2775,28 @@ function mountAuthRoutes(app) {
           if (s === '') return '';
           if (/^(true|false)$/i.test(s)) return /^true$/i.test(s);
           if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
-          // si parece JSON, intentamos parsear
-          if ((s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']')) || (s.startsWith('"') && s.endsWith('"')))
-          {
+          if ((s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']')) || (s.startsWith('"') && s.endsWith('"'))) {
             try { return JSON.parse(s); } catch {}
           }
           return s;
         }
 
-           function addRow(key='', value=''){
+        function openModal(title){
+          modalTitle.textContent = title || 'Editar tenant';
+          modalBackdrop.classList.add('open');
+          modalBackdrop.setAttribute('aria-hidden', 'false');
+          setTimeout(() => { try { tenantEl.focus(); } catch {} }, 30);
+        }
+        function closeModal(){
+          modalBackdrop.classList.remove('open');
+          modalBackdrop.setAttribute('aria-hidden', 'true');
+        }
+
+        function addRow(key='', value=''){
           const tr = document.createElement('tr');
           tr.innerHTML =
-            '<td><input class="inp" data-k value=\"' + esc(key) + '\" placeholder=\"campo\"/></td>' +
-            '<td><input class="inp" data-v value=\"' + esc(value) + '\" placeholder=\"valor\"/></td>' +
+            '<td><input class="inp" data-k value="' + esc(key) + '" placeholder="campo"/></td>' +
+            '<td><input class="inp" data-v value="' + esc(value) + '" placeholder="valor"/></td>' +
             '<td><button class="btn2" type="button" data-rm>✕</button></td>';
           tr.querySelector('[data-rm]').addEventListener('click', ()=> tr.remove());
           fieldsEl.appendChild(tr);
@@ -2867,8 +2899,7 @@ function mountAuthRoutes(app) {
                 const tid = btn.getAttribute('data-edit');
                 if(!tid) return;
                 tenantEl.value = tid;
-                await loadCurrent();
-                window.scrollTo({ top: 0, behavior: 'smooth' });
+                await loadCurrent(true);
               });
             });
           } catch (e) {
@@ -2877,13 +2908,14 @@ function mountAuthRoutes(app) {
           }
         }
 
-        async function loadCurrent(){
+        async function loadCurrent(openAfterLoad){
           setMsg('', '');
           const tid = String(tenantEl.value||'').trim();
           if (!tid) {
             currentId = null;
             renderMeta(null);
             setFieldsFromDoc({});
+            if (openAfterLoad) openModal('Nuevo tenant');
             return;
           }
           try {
@@ -2893,23 +2925,34 @@ function mountAuthRoutes(app) {
             if (!doc) {
               renderMeta(null);
               setFieldsFromDoc({});
+              if (openAfterLoad) openModal('Nuevo tenant');
               setMsg('err', 'No existe configuración para ese tenant. Podés crearla con Guardar.');
               return;
             }
             renderMeta({ createdAt: doc.createdAt, updatedAt: doc.updatedAt });
             setFieldsFromDoc(doc.data || {});
+            if (openAfterLoad) openModal('Editar tenant · ' + tid);
           } catch (e) {
             console.error('[tenant_config] get error:', e);
             setMsg('err', e?.message || String(e));
             setFieldsFromDoc({});
             renderMeta(null);
+            if (openAfterLoad) openModal('Nuevo tenant');
           }
         }
 
         btnAdd.addEventListener('click', ()=> addRow('', ''));
         btnClear.addEventListener('click', ()=> { setMsg('', ''); renderMeta(null); setFieldsFromDoc({}); currentId = null; });
-        btnReload.addEventListener('click', async ()=> { await loadList(); await loadCurrent(); });
-        btnNew.addEventListener('click', ()=> { setMsg('', ''); renderMeta(null); currentId = null; if(isSuper) tenantEl.value = ''; setFieldsFromDoc({}); });
+        btnReload.addEventListener('click', async ()=> { await loadList(); });
+        btnNew.addEventListener('click', ()=> {
+          setMsg('', '');
+          renderMeta(null);
+          currentId = null;
+          if(isSuper) tenantEl.value = '';
+          else tenantEl.value = ${json.dumps(tenantId)};
+          setFieldsFromDoc({});
+          openModal('Nuevo tenant');
+        });
 
         if (btnDelete) {
           btnDelete.addEventListener('click', async ()=>{
@@ -2922,6 +2965,7 @@ function mountAuthRoutes(app) {
               currentId = null;
               renderMeta(null);
               setFieldsFromDoc({});
+              closeModal();
               await loadList();
             } catch (e) {
               setMsg('err', e?.message || String(e));
@@ -2939,17 +2983,18 @@ function mountAuthRoutes(app) {
             await apiSave(tid, doc);
             setMsg('ok', 'Guardado ✅');
             currentId = tid;
+            closeModal();
             await loadList();
-            await loadCurrent();
           } catch (e) {
             setMsg('err', e?.message || String(e));
           }
         });
 
-        // init
-        setFieldsFromDoc({});
+        btnCloseModal.addEventListener('click', closeModal);
+        modalBackdrop.addEventListener('click', (e)=>{ if(e.target === modalBackdrop) closeModal(); });
+        document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape' && modalBackdrop.classList.contains('open')) closeModal(); });
+
         loadList();
-        loadCurrent();
       })();
       </script>
     `;

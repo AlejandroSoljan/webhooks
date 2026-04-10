@@ -1,6 +1,14 @@
 /*script:app_asisto*/
 /*version:1.06.02   11/07/2025*/
 
+// =========================
+// FIXES 2026-01:
+// - Evitar takeover por state=offline si NO está stale (solo por lease_ms)
+// - Evitar que el prune borre el backup mientras otra PC lo está restaurando (pin)
+// - Backup seguro: upload temp -> rename -> prune
+// =========================
+
+
 //const chatbot = require("./funciones_asisto.js")
 const { Client, MessageMedia, LocalAuth, RemoteAuth } = require('whatsapp-web.js');
 const mongoose = require('mongoose');
@@ -24,6 +32,13 @@ const nodemailer = require('nodemailer');
 const { eventNames } = require('process');
 const fs = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
+let mongoConnectingPromise = null;
+
+// Momento en el que ESTA instancia tomó el lock (para ignorar acciones viejas en wa_wweb_actions)
+let lockAcquiredAt = null;
+// --- LocalAuth backup/restore removido ---
+let authFailureHandling = false;
 const AR_TZ = 'America/Argentina/Cordoba';
 
 
@@ -38,16 +53,403 @@ let numero = process.env.NUMERO || "";              // solo dígitos, ej: 54911.
 let mongo_uri = process.env.MONGO_URI || "";
 let status_token = process.env.STATUS_TOKEN || "";  // opcional para proteger /status
 
+// DB name: si el URI no incluye "/<db>", Mongo usa "test" por defecto.
+// Para que quede en tu DB (ej: "CARICO"), seteá mongo_db en configuracion.json
+// o usaremos tenantId como dbName por defecto.
+let mongo_db = process.env.MONGO_DB || "";
+
+// =========================
+// Config por tenant (MongoDB)
+// configuracion.json: SOLO { tenantId, mongo_uri, mongo_db }
+// El resto (puerto, numero, seg_desde, etc.) viene de la colección tenant_config.
+// =========================
+let tenantConfig = null; // config cargada desde Mongo
+
+function readBootstrapFromFile() {
+  try {
+    const p = path.join(process.cwd(), "configuracion.json");
+    if (!fs.existsSync(p)) return {};
+    const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+    const obj = (raw && raw.configuracion && typeof raw.configuracion === "object") ? raw.configuracion : raw;
+    return obj && typeof obj === "object" ? obj : {};
+  } catch {
+    return {};
+  }
+}
+
+function applyTenantConfig(conf) {
+  if (!conf || typeof conf !== "object") return;
+
+  // Core
+  if (conf.puerto !== undefined && conf.puerto !== null && conf.puerto !== "") {
+    port = Number(conf.puerto) || port;
+  }
+  if (conf.headless !== undefined) {
+    headless = conf.headless;
+    if (typeof headless === "string") headless = headless.toLowerCase().trim() === "true";
+    else headless = !!headless;
+  }
+  if (!numero && (conf.numero || conf.NUMERO)) numero = String(conf.numero || conf.NUMERO).trim();
+  if (conf.status_token !== undefined) status_token = String(conf.status_token || status_token || "").trim();
+
+  // Lock/lease
+  if (conf.lease_ms !== undefined) lease_ms = Number(conf.lease_ms) || lease_ms;
+  if (conf.heartbeat_ms !== undefined) heartbeat_ms = Number(conf.heartbeat_ms) || heartbeat_ms;
+  if (conf.backup_every_ms !== undefined) backup_every_ms = Number(conf.backup_every_ms) || backup_every_ms;
+  if (conf.auth_base_path !== undefined || conf.auth_path !== undefined) {
+    auth_base_path = String(conf.auth_base_path || conf.auth_path || auth_base_path || "").trim();
+  }
+  // En Windows el backup (zip) puede bloquear el event loop varios segundos.
+  // Si lease_ms es muy bajo, otra PC toma el lock aunque esta siga viva.
+  if (!Number.isFinite(lease_ms) || lease_ms < MIN_LEASE_MS) lease_ms = MIN_LEASE_MS;
+
+
+  if (conf.auth_mode !== undefined && conf.auth_mode !== null && String(conf.auth_mode).trim() !== '') {
+    auth_mode = String(conf.auth_mode).trim().toLowerCase();
+  }
+
+  // Mensajes / límites
+  if (conf.seg_desde !== undefined) seg_desde = conf.seg_desde;
+  if (conf.seg_hasta !== undefined) seg_hasta = conf.seg_hasta;
+  if (conf.dsn !== undefined) dsn = conf.dsn;
+  if (conf.seg_msg !== undefined) seg_msg = conf.seg_msg;
+  if (conf.seg_tele !== undefined) seg_tele = conf.seg_tele;
+  if (conf.api !== undefined) api = conf.api;
+  if (conf.msg_inicio !== undefined) msg_inicio = conf.msg_inicio;
+  if (conf.msg_fin !== undefined) msg_fin = conf.msg_fin;
+  if (conf.cant_lim !== undefined) cant_lim = conf.cant_lim;
+  if (conf.msg_lim !== undefined) msg_lim = conf.msg_lim;
+  if (conf.time_cad !== undefined) time_cad = conf.time_cad;
+  if (conf.msg_cad !== undefined) msg_cad = conf.msg_cad;
+  if (conf.msg_can !== undefined) msg_can = conf.msg_can;
+  if (conf.nom_emp !== undefined) nom_chatbot = conf.nom_emp;
+  if (conf.nom_chatbot !== undefined) nom_chatbot = conf.nom_chatbot;
+
+  applyAutoUpdateConfig(conf);
+}
+
+async function loadTenantConfigFromDb() {
+  const boot = readBootstrapFromFile();
+  if (!tenantId && boot.tenantId) tenantId = String(boot.tenantId).trim();
+
+  // Normalizar tenantId para evitar locks duplicados por mayúsculas/espacios
+  tenantId = String(tenantId || '').trim();
+  if (tenantId) tenantId = tenantId.toUpperCase();
+  if (!mongo_uri && (boot.mongo_uri || boot.mongoUri)) mongo_uri = String(boot.mongo_uri || boot.mongoUri).trim();
+  if (!mongo_db && (boot.mongo_db || boot.mongoDb || boot.dbName)) mongo_db = String(boot.mongo_db || boot.mongoDb || boot.dbName).trim();
+  if (!mongo_db) mongo_db = "Cluster0";
+
+  if (!tenantId || !mongo_uri) throw new Error("Falta tenantId/mongo_uri en configuracion.json");
+
+  const ok = await ensureMongo();
+  if (!ok || !mongoose?.connection?.db) throw new Error("No se pudo conectar a Mongo para cargar configuración");
+
+  const collName = String(process.env.ASISTO_CONFIG_COLLECTION || "tenant_config").trim() || "tenant_config";
+  const coll = mongoose.connection.db.collection(collName);
+
+  let doc = await coll.findOne({ _id: tenantId });
+  if (!doc) doc = await coll.findOne({ tenantId: tenantId });
+  if (!doc) throw new Error(`No existe configuración en BD para tenantId=${tenantId} (${collName})`);
+
+  const conf = (doc && doc.configuracion && typeof doc.configuracion === "object") ? doc.configuracion : doc;
+  tenantConfig = conf;
+  applyTenantConfig(conf);
+
+  try {
+    console.log(`[CONFIG] tenantId=${tenantId} numero=${numero || ""} puerto=${port} headless=${headless} seg_desde=${seg_desde}`);
+  } catch {}
+  return true;
+}
+
+function sessionLog(msg) {
+  try { console.log(msg); } catch {}
+  try { EscribirLog(msg, "event"); } catch {}
+}
+
+
+// Lease/heartbeat configurables (ms)
+const MIN_LEASE_MS = Number(process.env.MIN_LEASE_MS || 180000);
+let lease_ms = Number(process.env.LEASE_MS || MIN_LEASE_MS);
+let heartbeat_ms = Number(process.env.HEARTBEAT_MS || 5000);
+let backup_every_ms = Number(process.env.BACKUP_EVERY_MS || 300000);
+let auth_base_path = process.env.ASISTO_AUTH_PATH || "";            // LocalAuth dataPath override
+let auth_mode = String(process.env.ASISTO_AUTH_MODE || '').trim().toLowerCase(); // 'remote' | 'local' (default: local)
+
+// =========================
+// Auto-update desde repositorio (opcional, NO rompe comportamiento actual)
+// Requiere que la carpeta local sea un checkout git y que exista 'git' en la PC.
+// Por seguridad, viene DESACTIVADO por defecto y solo se habilita por config/env.
+// =========================
+let auto_update_enabled = String(process.env.AUTO_UPDATE_ENABLED || '').trim().toLowerCase() === 'true';
+let auto_update_repo_path = String(process.env.AUTO_UPDATE_REPO_PATH || process.cwd()).trim() || process.cwd();
+let auto_update_remote = String(process.env.AUTO_UPDATE_REMOTE || 'origin').trim() || 'origin';
+let auto_update_branch = String(process.env.AUTO_UPDATE_BRANCH || '').trim();
+let auto_update_check_every_ms = Number(process.env.AUTO_UPDATE_CHECK_EVERY_MS || 10 * 60_000);
+let auto_update_startup_delay_ms = Number(process.env.AUTO_UPDATE_STARTUP_DELAY_MS || 120_000);
+let auto_update_restart_on_apply = String(process.env.AUTO_UPDATE_RESTART_ON_APPLY || 'true').trim().toLowerCase() !== 'false';
+let auto_update_require_clean = String(process.env.AUTO_UPDATE_REQUIRE_CLEAN || 'true').trim().toLowerCase() !== 'false';
+let auto_update_run_npm_install = String(process.env.AUTO_UPDATE_RUN_NPM_INSTALL || 'true').trim().toLowerCase() !== 'false';
+let auto_update_post_update_cmd = String(process.env.AUTO_UPDATE_POST_UPDATE_CMD || '').trim();
+let autoUpdateTimer = null;
+let autoUpdateRunning = false;
+let autoUpdateRestarting = false;
+
+// opcional para proteger /status
+
+function isRemoteAuthMode() {
+  const mode = String(auth_mode || 'local').trim().toLowerCase();
+  return mode && mode !== 'local';
+}
+
+function isLocalAuthMode() {
+  return !isRemoteAuthMode();
+}
+
+function parseBoolLike(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  const v = String(value).trim().toLowerCase();
+  if (!v) return fallback;
+  if (["1", "true", "yes", "si", "sí", "on"].includes(v)) return true;
+  if (["0", "false", "no", "off"].includes(v)) return false;
+  return fallback;
+}
+
+function normalizeAutoUpdateConfig(conf) {
+  if (!conf || typeof conf !== 'object') return {};
+  const nested = (conf.auto_update && typeof conf.auto_update === 'object') ? conf.auto_update : (conf.autoUpdate && typeof conf.autoUpdate === 'object' ? conf.autoUpdate : null);
+  return { ...conf, ...(nested || {}) };
+}
+
+function applyAutoUpdateConfig(conf) {
+  const au = normalizeAutoUpdateConfig(conf);
+  if (!au || typeof au !== 'object') return;
+
+  if (au.auto_update_enabled !== undefined || au.enabled !== undefined) {
+    auto_update_enabled = parseBoolLike(au.enabled !== undefined ? au.enabled : au.auto_update_enabled, auto_update_enabled);
+  }
+  if (au.auto_update_repo_path !== undefined || au.repo_path !== undefined || au.path !== undefined) {
+    const v = String(au.repo_path || au.path || au.auto_update_repo_path || '').trim();
+    if (v) auto_update_repo_path = v;
+  }
+  if (au.auto_update_remote !== undefined || au.remote !== undefined) {
+    const v = String(au.remote || au.auto_update_remote || '').trim();
+    if (v) auto_update_remote = v;
+  }
+  if (au.auto_update_branch !== undefined || au.branch !== undefined) {
+    const v = String(au.branch || au.auto_update_branch || '').trim();
+    if (v) auto_update_branch = v;
+  }
+  if (au.auto_update_check_every_ms !== undefined || au.check_every_ms !== undefined) {
+    const n = Number(au.check_every_ms !== undefined ? au.check_every_ms : au.auto_update_check_every_ms);
+    if (!Number.isNaN(n) && n > 0) auto_update_check_every_ms = n;
+  }
+  if (au.auto_update_startup_delay_ms !== undefined || au.startup_delay_ms !== undefined) {
+    const n = Number(au.startup_delay_ms !== undefined ? au.startup_delay_ms : au.auto_update_startup_delay_ms);
+    if (!Number.isNaN(n) && n >= 0) auto_update_startup_delay_ms = n;
+  }
+  if (au.auto_update_restart_on_apply !== undefined || au.restart_on_apply !== undefined) {
+    auto_update_restart_on_apply = parseBoolLike(au.restart_on_apply !== undefined ? au.restart_on_apply : au.auto_update_restart_on_apply, auto_update_restart_on_apply);
+  }
+  if (au.auto_update_require_clean !== undefined || au.require_clean !== undefined) {
+    auto_update_require_clean = parseBoolLike(au.require_clean !== undefined ? au.require_clean : au.auto_update_require_clean, auto_update_require_clean);
+  }
+  if (au.auto_update_run_npm_install !== undefined || au.run_npm_install !== undefined) {
+    auto_update_run_npm_install = parseBoolLike(au.run_npm_install !== undefined ? au.run_npm_install : au.auto_update_run_npm_install, auto_update_run_npm_install);
+  }
+  if (au.auto_update_post_update_cmd !== undefined || au.post_update_cmd !== undefined) {
+    auto_update_post_update_cmd = String(au.post_update_cmd || au.auto_update_post_update_cmd || '').trim();
+  }
+
+  if (!Number.isFinite(auto_update_check_every_ms) || auto_update_check_every_ms < 60_000) auto_update_check_every_ms = 60_000;
+  if (!Number.isFinite(auto_update_startup_delay_ms) || auto_update_startup_delay_ms < 0) auto_update_startup_delay_ms = 0;
+  auto_update_repo_path = auto_update_repo_path || process.cwd();
+  auto_update_remote = auto_update_remote || 'origin';
+}
+
+function autoUpdateLog(msg, type = 'event') {
+  try { console.log(msg); } catch {}
+  try { EscribirLog(msg, type); } catch {}
+}
+
+function resolveCmdBin(name) {
+  if (process.platform === 'win32') {
+    if (name === 'npm') return 'npm.cmd';
+    if (name === 'npx') return 'npx.cmd';
+  }
+  return name;
+}
+
+function runCommand(bin, args = [], opts = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(resolveCmdBin(bin), args, {
+      cwd: opts.cwd || process.cwd(),
+      shell: !!opts.shell,
+      env: { ...process.env, ...(opts.env || {}) },
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+    let finished = false;
+    let timeoutId = null;
+
+    if (opts.timeout && Number(opts.timeout) > 0) {
+      timeoutId = setTimeout(() => {
+        if (finished) return;
+        finished = true;
+        try { child.kill('SIGTERM'); } catch {}
+        reject(new Error(`${bin}_timeout`));
+      }, Number(opts.timeout));
+    }
+
+    child.stdout && child.stdout.on('data', (d) => { stdout += d.toString(); });
+    child.stderr && child.stderr.on('data', (d) => { stderr += d.toString(); });
+    child.on('error', (err) => {
+      if (finished) return;
+      finished = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      reject(err);
+    });
+    child.on('close', (code) => {
+      if (finished) return;
+      finished = true;
+      if (timeoutId) clearTimeout(timeoutId);
+      if (code === 0) return resolve({ code, stdout, stderr });
+      const err = new Error(`${bin} exited with code ${code}`);
+      err.code = code;
+      err.stdout = stdout;
+      err.stderr = stderr;
+      reject(err);
+    });
+  });
+}
+
+async function autoUpdateGetBranch(repoPath) {
+  if (auto_update_branch) return auto_update_branch;
+  const out = await runCommand('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoPath, timeout: 20_000 });
+  return String(out.stdout || '').trim() || 'main';
+}
+
+async function autoUpdateCheckAndApply(reason = 'interval') {
+  if (!auto_update_enabled || autoUpdateRunning || autoUpdateRestarting) return;
+  autoUpdateRunning = true;
+
+  try {
+    const repoPath = path.resolve(auto_update_repo_path || process.cwd());
+    if (!fs.existsSync(repoPath)) {
+      autoUpdateLog(`[AUTO_UPDATE] skip (${reason}): repo_path inexistente -> ${repoPath}`, 'error');
+      return;
+    }
+    if (!fs.existsSync(path.join(repoPath, '.git'))) {
+      autoUpdateLog(`[AUTO_UPDATE] skip (${reason}): ${repoPath} no es un repositorio git`, 'event');
+      return;
+    }
+
+    await runCommand('git', ['rev-parse', '--is-inside-work-tree'], { cwd: repoPath, timeout: 15_000 });
+
+    const branch = await autoUpdateGetBranch(repoPath);
+    const remote = auto_update_remote || 'origin';
+
+    if (auto_update_require_clean) {
+      const statusOut = await runCommand('git', ['status', '--porcelain'], { cwd: repoPath, timeout: 20_000 });
+      if (String(statusOut.stdout || '').trim()) {
+        autoUpdateLog(`[AUTO_UPDATE] skip (${reason}): working tree con cambios locales`, 'event');
+        return;
+      }
+    }
+
+    const headOut = await runCommand('git', ['rev-parse', 'HEAD'], { cwd: repoPath, timeout: 15_000 });
+    const localHead = String(headOut.stdout || '').trim();
+    if (!localHead) throw new Error('git_local_head_empty');
+
+    await runCommand('git', ['fetch', remote, branch, '--prune'], { cwd: repoPath, timeout: 120_000 });
+
+    const remoteRef = `${remote}/${branch}`;
+    const remoteHeadOut = await runCommand('git', ['rev-parse', remoteRef], { cwd: repoPath, timeout: 15_000 });
+    const remoteHead = String(remoteHeadOut.stdout || '').trim();
+    if (!remoteHead) throw new Error('git_remote_head_empty');
+
+    if (remoteHead === localHead) {
+      autoUpdateLog(`[AUTO_UPDATE] ok (${reason}): sin cambios (${localHead.slice(0, 7)})`, 'event');
+      return;
+    }
+
+    autoUpdateLog(`[AUTO_UPDATE] update (${reason}): ${localHead.slice(0, 7)} -> ${remoteHead.slice(0, 7)}`, 'event');
+
+    const changedOut = await runCommand('git', ['diff', '--name-only', `${localHead}..${remoteRef}`], { cwd: repoPath, timeout: 30_000 });
+    const changedFiles = String(changedOut.stdout || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+
+    await runCommand('git', ['reset', '--hard', remoteRef], { cwd: repoPath, timeout: 120_000 });
+
+    if (auto_update_run_npm_install) {
+      const needsNpm = changedFiles.some((name) => /(^|\/)(package\.json|package-lock\.json)$/i.test(name));
+      if (needsNpm) {
+        autoUpdateLog('[AUTO_UPDATE] package*.json cambió, ejecutando npm install --omit=dev', 'event');
+        await runCommand('npm', ['install', '--omit=dev'], { cwd: repoPath, timeout: 10 * 60_000 });
+      }
+    }
+
+    if (auto_update_post_update_cmd) {
+      autoUpdateLog(`[AUTO_UPDATE] ejecutando post_update_cmd: ${auto_update_post_update_cmd}`, 'event');
+      if (process.platform === 'win32') {
+        await runCommand('cmd', ['/c', auto_update_post_update_cmd], { cwd: repoPath, timeout: 10 * 60_000, shell: false });
+      } else {
+        await runCommand('sh', ['-lc', auto_update_post_update_cmd], { cwd: repoPath, timeout: 10 * 60_000, shell: false });
+      }
+    }
+
+    autoUpdateLog(`[AUTO_UPDATE] cambios aplicados en ${repoPath}`, 'event');
+
+    if (auto_update_restart_on_apply) {
+      autoUpdateRestarting = true;
+      autoUpdateLog('[AUTO_UPDATE] reiniciando proceso para aplicar actualización...', 'event');
+      setTimeout(() => { gracefulShutdown('AUTO_UPDATE'); }, 1200);
+    }
+  } catch (e) {
+    autoUpdateLog(`[AUTO_UPDATE] error (${reason}): ${e?.message || e}`, 'error');
+  } finally {
+    autoUpdateRunning = false;
+  }
+}
+
+function startAutoUpdateScheduler() {
+  if (!auto_update_enabled) {
+    autoUpdateLog('[AUTO_UPDATE] desactivado', 'event');
+    return;
+  }
+  if (autoUpdateTimer) return;
+
+  const repoPath = path.resolve(auto_update_repo_path || process.cwd());
+  autoUpdateLog(`[AUTO_UPDATE] activado repo=${repoPath} remote=${auto_update_remote} branch=${auto_update_branch || '(auto)'} every=${auto_update_check_every_ms}ms startupDelay=${auto_update_startup_delay_ms}ms`, 'event');
+
+  setTimeout(() => {
+    autoUpdateCheckAndApply('startup').catch(() => {});
+  }, Math.max(0, Number(auto_update_startup_delay_ms) || 0));
+
+  autoUpdateTimer = setInterval(() => {
+    autoUpdateCheckAndApply('interval').catch(() => {});
+  }, Math.max(60_000, Number(auto_update_check_every_ms) || 600_000));
+}
+
+
 const instanceId = process.env.INSTANCE_ID || `${os.hostname()}-${process.pid}-${crypto.randomBytes(4).toString("hex")}`;
 let lockId = "";                 // `${tenantId}:${numero}`
 let isOwner = false;             // true si esta PC tiene el lock
 let clientStarted = false;       // true si initialize() fue llamado
+let startingNow = false;       // evita inicializaciones concurrentes (doble Chrome/userDataDir)
 let lastQrRaw = null;
 let lastQrDataUrl = null;
 let lastQrAt = null;
+let localWsPanelState = 'idle';
+// Cache liviano: si la política marca disabled=true, no inicializamos WhatsApp.
+let lastPolicyDisabled = null;
 let mongoReady = false;
 let LockModel = null;
 let ActionModel = null;
+let PolicyModel = null;      // wa_wweb_policies
+let HistoryModel = null;     // wa_wweb_history
 let heartbeatTimer = null;
 let pollTimer = null;
 var a = 0;
@@ -134,6 +536,7 @@ app.get('/', (req, res) => {
 // =========================
 // STATUS endpoints (debug / monitoreo)
 // =========================
+
 function requireStatusToken(req, res, next) {
   if (!status_token) return next();
   const t = String(req.query?.token || req.headers["x-status-token"] || "");
@@ -142,71 +545,187 @@ function requireStatusToken(req, res, next) {
 }
 
 async function ensureMongo() {
-  if (mongoReady) return true;
-  if (!mongo_uri) return false;
   try {
-    await mongoose.connect(mongo_uri, { autoIndex: true, serverSelectionTimeoutMS: 15000 });
-
-    // IMPORTANTÍSIMO:
-    // wwebjs-mongo usa mongoose.connection.db.collection(...)
-    // y en algunos casos db todavía puede estar undefined justo después del connect().
-    if (!mongoose.connection.db) {
-      await new Promise((resolve, reject) => {
-        const t = setTimeout(() => reject(new Error("mongo_db_not_ready")), 15000);
-        mongoose.connection.once("connected", () => { clearTimeout(t); resolve(); });
-        mongoose.connection.once("open",      () => { clearTimeout(t); resolve(); });
-      });
+    // Ya conectado
+    if (mongoReady && mongoose?.connection?.readyState === 1 && mongoose?.connection?.db) {
+      // asegurar modelos
+      initMongoModelsIfNeeded();
+      return true;
     }
-    if (!mongoose.connection.db) throw new Error("mongo_db_still_undefined");
 
-    mongoReady = true;
+    // Promise global para serializar conexión (evita ReferenceError aunque falte una variable global)
+    if (globalThis.__asistoMongoConnectingPromise) {
+      const ok = await globalThis.__asistoMongoConnectingPromise;
+      if (ok) initMongoModelsIfNeeded();
+      return ok;
+    }
 
-    const LockSchema = new mongoose.Schema(
-      {
-        _id: { type: String },       // `${tenantId}:${numero}`
-        tenantId: { type: String },
-        numero: { type: String },
-        holderId: { type: String },
-        host: { type: String },
-        pid: { type: Number },
-        state: { type: String },     // standby|starting|qr|authenticated|ready|disconnected|offline
-        startedAt: { type: Date },
-        lastSeenAt: { type: Date }
-      },
-      { collection: "wa_locks" }
-    );
-    LockModel = mongoose.models.WaLock || mongoose.model("WaLock", LockSchema);
+    if (!mongo_uri) return false;
 
-const ActionSchema = new mongoose.Schema(
-  {
-    lockId: { type: String, index: true },
-    action: { type: String },          // restart | release | resetAuth
-    reason: { type: String },
-    requestedBy: { type: String },
-    requestedAt: { type: Date, default: Date.now, index: true },
-    doneAt: { type: Date, index: true },
-    doneBy: { type: String },
-    result: { type: String }
-  },
-  { collection: "wa_actions" }
-);
-ActionModel = mongoose.models.WaAction || mongoose.model("WaAction", ActionSchema);
+    globalThis.__asistoMongoConnectingPromise = (async () => {
+      try {
+        await mongoose.connect(mongo_uri, {
+          dbName: (mongo_db || tenantId || "asisto"),
+          autoIndex: true,
+          serverSelectionTimeoutMS: 15000
+        });
 
-    return true;
+        // Asegurar que db exista (algunas veces tarda un tick)
+        if (!mongoose.connection.db) {
+          await new Promise((resolve, reject) => {
+            const t = setTimeout(() => reject(new Error("mongo_db_not_ready")), 15000);
+            mongoose.connection.once("connected", () => { clearTimeout(t); resolve(); });
+          });
+        }
+
+        mongoReady = true;
+
+        try {
+          const host = mongoose?.connection?.host || "";
+          const dbName = mongoose?.connection?.name || (mongo_db || tenantId || "asisto");
+          console.log(`Mongo conectado. dbName=${dbName} host=${host}`);
+          EscribirLog(`Mongo conectado. dbName=${dbName} host=${host}`, "event");
+        } catch {}
+
+        initMongoModelsIfNeeded();
+        return true;
+      } catch (e) {
+        try { console.log("Mongo connect error:", e?.message || e); } catch {}
+        try { EscribirLog("Mongo connect error: " + String(e?.message || e), "error"); } catch {}
+        try { await mongoose.disconnect(); } catch {}
+        mongoReady = false;
+        return false;
+      } finally {
+        globalThis.__asistoMongoConnectingPromise = null;
+      }
+    })();
+
+    const ok = await globalThis.__asistoMongoConnectingPromise;
+    if (ok) initMongoModelsIfNeeded();
+    return ok;
   } catch (e) {
-    console.log("Mongo connect error:", e?.message || e);
+    try { console.log("ensureMongo error:", e?.message || e); } catch {}
+    try { EscribirLog("ensureMongo error: " + String(e?.message || e), "error"); } catch {}
+    mongoReady = false;
+    globalThis.__asistoMongoConnectingPromise = null;
     return false;
   }
 }
 
-async function getLockDocSafe() {
+// Inicializa modelos una sola vez (lock/policies/history/actions)
+function initMongoModelsIfNeeded() {
+  // Modo simplificado: ya no inicializamos modelos de lock/acciones/políticas.
+  return;
+}
+
+ 
+
+// =========================
+// Carga configuración por tenant desde MongoDB (colección tenant_config)
+// - configuracion.json SOLO: tenantId, mongo_uri, mongo_db
+// - el resto (numero, puerto, headless, timers, paths, etc.) viene de BD
+// =========================
+async function loadTenantConfigFromDbMinimal() {
   try {
-    if (!await ensureMongo()) return null;
-    if (!lockId) return null;
-    return await LockModel.findById(lockId).lean();
-  } catch {
+    // Necesitamos bootstrap mínimo antes
+    if (!tenantId || !mongo_uri) return null;
+
+    const ok = await ensureMongo();
+    if (!ok || !mongoose?.connection?.db) return null;
+
+    const collName = String(process.env.ASISTO_CONFIG_COLLECTION || "tenant_config").trim() || "tenant_config";
+    const coll = mongoose.connection.db.collection(collName);
+
+    // Soporta doc con _id=tenantId o con campo tenantId
+    let doc = await coll.findOne({ _id: tenantId });
+    if (!doc) doc = await coll.findOne({ tenantId: tenantId });
+    if (!doc) {
+      try { console.log(`[CONFIG] No existe config en BD para tenantId=${tenantId} (colección ${collName})`); } catch {}
+      return null;
+    }
+
+    const conf = (doc && doc.configuracion && typeof doc.configuracion === "object") ? doc.configuracion : doc;
+
+    // Aplicar SOLO si vienen valores definidos (no pisar con vacíos)
+    if (!numero && conf.numero) numero = String(conf.numero).trim();
+
+    if (conf.puerto !== undefined && conf.puerto !== null && conf.puerto !== "") {
+      const p = Number(conf.puerto);
+      if (!Number.isNaN(p) && p > 0) port = p;
+    }
+
+    if (conf.headless !== undefined) {
+      headless = conf.headless;
+      if (typeof headless === "string") headless = headless.toLowerCase().trim() === "true";
+      else headless = !!headless;
+    }
+
+    if (conf.lease_ms !== undefined && conf.lease_ms !== null && conf.lease_ms !== "") {
+      const v = Number(conf.lease_ms);
+      if (!Number.isNaN(v) && v > 0) lease_ms = v;
+    }
+    if (conf.heartbeat_ms !== undefined && conf.heartbeat_ms !== null && conf.heartbeat_ms !== "") {
+      const v = Number(conf.heartbeat_ms);
+      if (!Number.isNaN(v) && v > 0) heartbeat_ms = v;
+    }
+    if (conf.backup_every_ms !== undefined && conf.backup_every_ms !== null && conf.backup_every_ms !== "") {
+      const v = Number(conf.backup_every_ms);
+      if (!Number.isNaN(v) && v > 0) backup_every_ms = v;
+    }
+    // En Windows el zip puede demorar bastante; evitamos lease muy bajo aunque venga en tenant_config
+    if (!Number.isFinite(lease_ms) || lease_ms < MIN_LEASE_MS) lease_ms = MIN_LEASE_MS;
+
+    const abp = conf.auth_base_path || conf.auth_path;
+    if (abp !== undefined && abp !== null && String(abp).trim()) {
+      auth_base_path = String(abp).trim();
+    }
+
+    if (conf.auth_mode !== undefined && conf.auth_mode !== null && String(conf.auth_mode).trim()) {
+      auth_mode = String(conf.auth_mode).trim().toLowerCase();
+    }
+
+
+    if (!status_token && conf.status_token) status_token = String(conf.status_token).trim();
+
+    applyAutoUpdateConfig(conf);
+
+    try { console.log(`[CONFIG] tenantId=${tenantId} numero=${numero} puerto=${port} headless=${headless} auth_mode=${auth_mode || 'local'} lease_ms=${lease_ms} heartbeat_ms=${heartbeat_ms}`); } catch {}
+    return conf;
+  } catch (e) {
+    try { console.log("loadTenantConfigFromDbMinimal error:", e?.message || e); } catch {}
+    try { EscribirLog("loadTenantConfigFromDbMinimal error: " + String(e?.message || e), "error"); } catch {}
     return null;
   }
+}
+
+
+
+async function pushHistory(event, detail) {
+  return null;
+}
+
+async function getPolicySafe() {
+  return null;
+}
+
+function hostName() {
+  return os.hostname();
+}
+
+async function getLockDocSafe() {
+  return {
+    _id: lockId || `${tenantId}:${numero}`,
+    tenantId,
+    numero,
+    holderId: instanceId,
+    host: os.hostname(),
+    pid: process.pid,
+    state: localWsPanelState,
+    startedAt: lockAcquiredAt || null,
+    lastSeenAt: new Date(),
+    lastQrAt,
+    lastQrDataUrl
+  };
 }
 
 app.get("/status", requireStatusToken, async (req, res) => {
@@ -253,17 +772,11 @@ app.get("/status/qr", requireStatusToken, async (req, res) => {
 });
 
 app.post("/control/release", requireStatusToken, async (req, res) => {
-  // Libera el lock y apaga el cliente en esta PC (standby manual).
   try {
-    if (!isOwner) return res.status(409).json({ ok: false, error: "not_owner" });
-
-    // best-effort: apagar WA
-    try { if (clientStarted) await client.destroy(); } catch {}
+    try { if (clientStarted && client) await client.destroy(); } catch {}
     clientStarted = false;
-
-    await forceReleaseLock();
+    localWsPanelState = 'offline';
     isOwner = false;
-
     return res.json({ ok: true, released: true });
   } catch (e) {
     return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -271,42 +784,123 @@ app.post("/control/release", requireStatusToken, async (req, res) => {
 });
 
 
-RecuperarJsonConf();
-//headless = devolver_headless();
 
-//const port =  devolver_puerto();
+    
+(async function startAsistoWs() {
+  // Bootstrap: configuracion.json (tenantId/mongo_uri/mongo_db) + tenant_config (resto)
+  try {
+    RecuperarJsonConf();
 
-server.listen(port, function() {
-  console.log('App running on *: ' + port);
-  EscribirLog('App running on *: ' + port,"event");
+    // Cargar resto de configuración desde Mongo (numero/puerto/headless/etc.)
+    await loadTenantConfigFromDbMinimal();
 
-});
+    server.listen(port, function() {
+      console.log('App running on *: ' + port);
+      EscribirLog('App running on *: ' + port,"event");
+    });
 
-const store = new MongoStore({ mongoose });
+    startAutoUpdateScheduler();
 
-let client = new Client({
+    bootstrapWithLock().catch(e => {
+      console.log('bootstrap inicio directo error:', e?.message || e);
+      EscribirLog('bootstrap inicio directo error: ' + String(e?.message || e), 'error');
+    });
+  } catch (e) {
+    console.log('FATAL bootstrap:', e?.message || e);
+   try { EscribirLog('FATAL bootstrap: ' + String(e?.message || e), 'error'); } catch {}
+    // No matamos el proceso: dejamos el server arriba para debug.
+    try {
+      server.listen(port, function() {
+        console.log('App running on *: ' + port);
+        EscribirLog('App running on *: ' + port,"event");
+      });
+    } catch {}
+  }
+})();
 
+let store = null;
+let client = null;
 
-  restartOnAuthFail: true,
-  puppeteer: {
-   headless: headless,
-   
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--disable-gpu'
-    ],
-  },
-  authStrategy: new RemoteAuth({
-    store,
-    clientId: `asisto_${tenantId || "tenant"}_${numero || "numero"}`,
-    backupSyncIntervalMs: 300000
-  })
-});
+// =========================
+// LocalAuth helpers
+// =========================
+function getAuthBasePath() {
+  // priority: config auth_base_path -> env -> default in user home
+  if (auth_base_path && String(auth_base_path).trim()) return String(auth_base_path).trim();
+  const envp = process.env.ASISTO_AUTH_PATH;
+  if (envp && String(envp).trim()) return String(envp).trim();
+  return path.join(os.homedir(), ".asisto_wwebjs_auth");
+}
+
+function getLocalAuthSessionDir(clientId) {
+  // whatsapp-web.js LocalAuth creates: <dataPath>/session-<clientId>
+  return path.join(getAuthBasePath(), `session-${clientId}`);
+}
+
+function dirLooksPopulated(p) {
+  try {
+    if (!fs.existsSync(p)) return false;
+    const items = fs.readdirSync(p);
+ return Array.isArray(items) && items.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Crea el cliente WhatsApp SOLO cuando Mongo está listo (mongoose.connection.db disponible).
+ * Esto evita el crash de wwebjs-mongo: Cannot read properties of undefined (reading 'collection')
+ */
+async function createClientIfNeeded(opts = {}) {
+  if (client) return client;
+
+  // Necesitamos Mongo para lock y estado del panel
+  const ok = await ensureMongo();
+  if (!ok) throw new Error("mongo_not_ready");
+
+  if (!tenantId || !numero) throw new Error("tenant_or_numero_missing");
+
+  const clientId = `asisto_${tenantId}_${numero}`;
+
+  const useRemoteAuth = isRemoteAuthMode();
+  if (useRemoteAuth) {
+    if (!store) store = new MongoStore({ mongoose });
+  }
+
+  client = new Client({
+     // Con LocalAuth + restore/backup propio NO queremos que whatsapp-web.js borre la carpeta de sesión en auth_failure.
+    // Con RemoteAuth sí conviene reiniciar.
+    restartOnAuthFail: useRemoteAuth,
+    puppeteer: {
+      headless: headless,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--disable-gpu',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-site-isolation-trials'
+      ],
+    },
+    authStrategy: useRemoteAuth
+      ? new RemoteAuth({
+          clientId,
+          store,
+          backupSyncIntervalMs: Math.max(60_000, Number(backup_every_ms) || 300_000)
+        })
+      : new LocalAuth({
+          clientId,
+          dataPath: getAuthBasePath()
+        })
+  });
+
+  attachClientHandlers();
+  return client;
+}
+
 
 /**
  * Envío robusto con reintentos ante errores de evaluación/recarga en WhatsApp Web
@@ -320,7 +914,9 @@ async function safeSend(to, content, opts) {
       if (state !== 'CONNECTED') {
         await sleep(700 * attempt);
       }
-      return await client.sendMessage(to, content, opts);
+       const sendOpts = (opts && typeof opts === 'object') ? { ...opts } : {};
+      if (typeof sendOpts.sendSeen === 'undefined') sendOpts.sendSeen = false;
+      return await client.sendMessage(to, content, sendOpts);
     } catch (e) {
       const msg = String(e && e.message ? e.message : e);
       const transient = msg.includes('Evaluation failed') ||
@@ -339,235 +935,127 @@ async function safeSend(to, content, opts) {
 // =========================
 async function updateLockStateSafe(state) {
   try {
-    if (!isOwner) return;
-    if (!await ensureMongo()) return;
-    if (!lockId) return;
-    await LockModel.updateOne(
-      { _id: lockId, holderId: instanceId },
-      { $set: { state: state || null, lastSeenAt: new Date() } }
-    );
+    localWsPanelState = String(state || localWsPanelState || 'idle');
   } catch {}
 }
 
-async function tryAcquireLock() {
-  if (!tenantId || !numero) return true; // si falta config, no bloqueamos (modo simple)
-  lockId = `${tenantId}:${numero}`;
-
-  const okMongo = await ensureMongo();
-  if (!okMongo) {
-    console.log("WARN: No hay Mongo (mongo_uri). No se puede aplicar lock/failover.");
-    return true; // fallback: deja iniciar
-  }
-
-  const now = new Date();
-  const leaseMs = 25000;
-  const stale = new Date(now.getTime() - leaseMs);
-
-  const doc = await LockModel.findOneAndUpdate(
-    {
-      _id: lockId,
-      $or: [
-        { holderId: instanceId },
-        { lastSeenAt: { $lt: stale } },
-        { lastSeenAt: { $exists: false } }
-      ]
-    },
-    {
-      $set: {
-        tenantId,
-        numero,
-        holderId: instanceId,
-        host: os.hostname(),
-        pid: process.pid,
-        state: "standby",
-        startedAt: now,
-        lastSeenAt: now
-      }
-    },
-    { upsert: true, new: true }
-  ).lean();
-
-  isOwner = !!(doc && doc.holderId === instanceId);
-  return isOwner;
+// Guarda el último QR en el lock para poder verlo desde el panel admin (/admin/wweb)
+async function updateLockQrDataSafe(qrDataUrl, qrAtIso) {
+  try {
+    if (qrDataUrl) lastQrDataUrl = String(qrDataUrl);
+    if (qrAtIso) lastQrAt = String(qrAtIso);
+    localWsPanelState = 'qr';
+  } catch {}
 }
 
-function startHeartbeat() {
-  if (heartbeatTimer) return;
-  heartbeatTimer = setInterval(async () => {
-    try {
-      if (!isOwner) return;
-      if (!await ensureMongo()) return;
-      if (!lockId) return;
-      const r = await LockModel.updateOne(
-        { _id: lockId, holderId: instanceId },
-        { $set: { lastSeenAt: new Date() } }
-      );
-      if (!r || r.matchedCount === 0) {
-        // perdimos el lock
-        isOwner = false;
-        if (clientStarted) {
-          try { await client.destroy(); } catch {}
-          clientStarted = false;
-        }
-      }
-    } catch {}
-  }, 9000);
-}
+// Lock/lease multi-PC removido en modo simplificado.
 
-function startClientInitialize() {
+
+async function startClientInitialize() {
+  // Inicializa WhatsApp SOLO si esta instancia es dueña del lock.
   if (clientStarted) return;
-  clientStarted = true;
-  console.log("LOCK OK -> inicializando WhatsApp...");
-  EscribirLog("LOCK OK -> inicializando WhatsApp...", "event");
-  updateLockStateSafe("starting").catch(()=>{});
-  bootstrapWithLock().catch(e => {
-  console.log('bootstrapWithLock error:', e?.message || e);
-  EscribirLog('bootstrapWithLock error: ' + String(e?.message || e), 'error');
-});
-}
+  if (!isOwner) return;
 
-async function bootstrapWithLock() {
-  // intenta adquirir
-  const ok = await tryAcquireLock();
-  if (ok) {
-    isOwner = true;
-    startHeartbeat();
-    startActionPoller();
-    startClientInitialize();
+
+  // Política: si está deshabilitado desde el panel, NO inicializamos WhatsApp.
+  try {
+    const pol = await getPolicySafe();
+    if (pol && pol.disabled === true) {
+      lastPolicyDisabled = true;
+      await updateLockStateSafe("disabled");
+      await pushHistory("policy_disabled", { by: "policy", disabled: true });
+      return;
+    }
+    if (pol && pol.disabled === false) lastPolicyDisabled = false;
+  } catch {}
+
+  // Evita que el timer de standby (poll) llame varias veces mientras inicializa
+  if (startingNow) return;
+  startingNow = true;
+
+  try {
+    await createClientIfNeeded();
+  } catch (e) {
+    clientStarted = false;
+    console.log("No se pudo crear cliente WhatsApp:", e?.message || e);
+    EscribirLog("No se pudo crear cliente WhatsApp: " + String(e?.message || e), "error");
+    startingNow = false;
     return;
   }
 
-  // standby
-  console.log(`STANDBY: sesión activa en otra PC (${lockId}). No se inicializa WhatsApp acá.`);
-  EscribirLog(`STANDBY: sesión activa en otra PC (${lockId}).`, "event");
+  console.log("LOCK OK -> inicializando WhatsApp...");
+  pushHistory('lock_acquired', { holderId: instanceId, host: os.hostname() }).catch(()=>{});
+  EscribirLog("LOCK OK -> inicializando WhatsApp...", "event");
+  updateLockStateSafe("starting").catch(() => {});
 
-  if (!pollTimer) {
-    pollTimer = setInterval(async () => {
-      try {
-        const ok2 = await tryAcquireLock();
-        if (ok2) {
-          console.log("LOCK TOMADO (otra PC cayó) -> iniciando...");
-          EscribirLog("LOCK TOMADO (otra PC cayó) -> iniciando...", "event");
-          startHeartbeat();
-          startActionPoller();
-          startClientInitialize();
-        }
-      } catch {}
-    }, 8000);
-  }
-}
-
-
-async function forceReleaseLock() {
-  // Libera el lock (borrándolo) para permitir takeover inmediato desde otra PC.
   try {
-    if (!await ensureMongo()) return;
-    if (!lockId) return;
-    await LockModel.deleteOne({ _id: lockId, holderId: instanceId });
-  } catch {}
-}
-
-async function releaseLock() {
-  try {
-    if (!isOwner) return;
-    if (!await ensureMongo()) return;
-    if (!lockId) return;
-    await LockModel.updateOne(
-      { _id: lockId, holderId: instanceId },
-      { $set: { state: "offline", lastSeenAt: new Date() } }
-    );
-  } catch {}
-}
-
-
-
-let actionTimer = null;
-let actionBusy = false;
-
-async function handleActionDoc(doc) {
-  const action = String(doc?.action || "").toLowerCase();
-  const reason = String(doc?.reason || "");
-  try {
-    if (action === "release") {
-      EscribirLog(`Accion RELEASE recibida: ${reason}`, "event");
-      await updateLockStateSafe("release_requested");
-
-      // apagar WA en esta PC y dejar el lock como offline (otra PC lo tomará por lease)
-      try { if (client) await client.destroy(); } catch {}
-      clientStarted = false;
-      isOwner = false;
-      await releaseLock();
-
-      return "released";
-    }
-
-    if (action === "restart") {
-      EscribirLog(`Accion RESTART recibida: ${reason}`, "event");
-      await updateLockStateSafe("restarting");
-
-      try { if (client) await client.destroy(); } catch {}
-      clientStarted = false;
-
-      // si seguimos siendo owner, reiniciamos
-      isOwner = true;
-      startClientInitialize();
-      return "restarted";
-    }
-
-    if (action === "resetauth") {
-      // La limpieza de auth remota (GridFS) normalmente se hace del lado servidor admin,
-      // acá solo liberamos para forzar nuevo QR en la próxima inicialización.
-      EscribirLog(`Accion RESET AUTH recibida: ${reason}`, "event");
-      await updateLockStateSafe("reset_auth_requested");
-      try { if (client) await client.destroy(); } catch {}
-      clientStarted = false;
-      isOwner = false;
-      await releaseLock();
-      return "reset_auth_requested";
-    }
-
-    return "ignored";
+    await initializeWithRetry(client, 5);
+    clientStarted = true;
   } catch (e) {
-    EscribirLog(`Error manejando accion ${action}: ${e?.message || e}`, "error");
-    return "error";
-  }
-}
+    clientStarted = false;
+    console.log("Error al inicializar WhatsApp:", e?.message || e);
+    EscribirLog("Error al inicializar WhatsApp: " + String(e?.message || e), "error");
 
-async function pollActionsOnce() {
-  if (actionBusy) return;
-  if (!isOwner) return;
-  if (!lockId) return;
-  if (!await ensureMongo()) return;
-  if (!ActionModel) return;
+    // Este error aparece cuando el poll intenta inicializar 2 veces y el Chrome anterior sigue vivo
+    const msg = String(e?.message || e || "");
+    if (msg.includes("browser is already running")) {
+      console.log("TIP: Se detectó un Chrome ya corriendo para este userDataDir. Revisá que no haya dos instancias del script abiertas.");
+      EscribirLog("TIP: Se detectó un Chrome ya corriendo para este userDataDir. Evitar doble instancia.", "error");
+    }
 
-  actionBusy = true;
-  try {
-    // Tomar 1 acción pendiente (doneAt no seteado), por lockId
-    const doc = await ActionModel.findOneAndUpdate(
-      { lockId, doneAt: { $exists: false } },
-      { $set: { doneAt: new Date(), doneBy: instanceId } },
-      { sort: { requestedAt: 1 }, new: true }
-    ).lean();
-
-    if (!doc) return;
-
-    const result = await handleActionDoc(doc);
-    await ActionModel.updateOne({ _id: doc._id }, { $set: { result } });
-  } catch (e) {
-    // si algo falló, liberamos busy y seguimos
+    // Si la inicialización falla, limpiamos fuerte para permitir reintentos limpios
+    try { await destroyClientHard(client); } catch {}
+    try { client = null; } catch {}
   } finally {
-    actionBusy = false;
+    startingNow = false;
+  }
+}
+async function bootstrapWithLock() {
+  // Modo simplificado:
+  // - no usa lock/lease multi-PC
+  // - inicia WhatsApp apenas corre el script
+  try {
+    lockId = `${tenantId}:${numero}`;
+    isOwner = true;
+
+    try { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } } catch {}
+    try { if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; } } catch {}
+    try { if (actionTimer) { clearInterval(actionTimer); actionTimer = null; } } catch {}
+
+    console.log("Inicio directo sin lock -> inicializando WhatsApp...");
+    EscribirLog("Inicio directo sin lock -> inicializando WhatsApp...", "event");
+
+    await startClientInitialize();
+    return true;
+  } catch (e) {
+    console.log("bootstrap directo error:", e?.message || e);
+    EscribirLog("bootstrap directo error: " + String(e?.message || e), "error");
+    return false;
   }
 }
 
-function startActionPoller() {
-  if (actionTimer) return;
-  actionTimer = setInterval(pollActionsOnce, 4000);
+
+// Release/acciones remotas removidas en modo simplificado.
+
+
+
+async function gracefulShutdown(signal) {
+  try { sessionLog(`[SHUTDOWN] ${signal} -> cerrando WhatsApp...`); } catch {}
+  try { if (autoUpdateTimer) { clearInterval(autoUpdateTimer); autoUpdateTimer = null; } } catch {}
+  try { if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; } } catch {}
+  try { if (actionTimer) { clearInterval(actionTimer); actionTimer = null; } } catch {}
+  try { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } } catch {}
+  try { if (client) { try { await client.destroy(); } catch {} } } catch {}
+  try { isOwner = false; } catch {}
+
+  process.exit(0);
+
 }
 
-
-process.on("SIGINT", async () => { await releaseLock(); process.exit(0); });
-process.on("SIGTERM", async () => { await releaseLock(); process.exit(0); });
+process.on("SIGINT", () => { gracefulShutdown("SIGINT"); });
+process.on("SIGTERM", () => { gracefulShutdown("SIGTERM"); });
+// Windows: cerrar consola / Ctrl+Break
+process.on("SIGBREAK", () => { gracefulShutdown("SIGBREAK"); });
 
 
 
@@ -759,7 +1247,11 @@ async function ConsultaApiMensajes(){
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+function attachClientHandlers() {
+
 client.on('message', async message => {
+
+if (message.from=='5493462514448@c.us'   ){
 
   var indice_telefono = indexOf2d(message.from);
 
@@ -776,7 +1268,7 @@ EscribirLog(message.from +' '+message.to+' '+message.type+' '+message.body ,"eve
   console.log("mensaje "+message.from);
  
   
-if (message.from=='5493462514448@c.us'   ){
+
 
   
     
@@ -951,73 +1443,6 @@ if (message.from=='5493462514448@c.us'   ){
 
 
 
-/*client.on('message_ack', (message2, ack) => {
-
-
-  console.log('Mensaje ' + message2.id.id);
-  console.log('Estado ' + ack);
-  console.log('id_msg '+Id_msj_dest+'  id_renlon '+Id_msj_renglon);
-});
-*/
-
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-client.initialize();
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////
-/// ENVIO DE LOG A APLICACION CLIENTE
-//////////////////////////////////////////////////////////////
-// Socket IO
-/*io.on('connection', async function(socket) {
- 
-  socket.emit('message', 'Conectando...');
-
-  client.on('qr', (qr) => {
-    console.log('QR RECEIVED', qr);
-  updateLockStateSafe('qr').catch(()=>{});
-    qrcode.toDataURL(qr, (err, url) => {
-    socket.emit('qr', url);
-    socket.emit('message', 'Código QR Recibido...');
-    });
-  });
-
-  client.on('ready', async () => {
-   // console.log("listo...");
-    //controlar_hora_msg();
-  //  socket.emit('ready', 'Whatsapp Listo!');
-    socket.emit('message', 'Whatsapp listo!');
-    
-  });
-
-  client.on('authenticated', async () => {
-    socket.emit('authenticated', 'Whatsapp Autenticado!.');
-    socket.emit('message', 'Whatsapp Autenticado!');
-    console.log('Autenticado');
-
-  });
-
-
-
-  client.on('auth_failure', function(session) {
-    socket.emit('message', 'Auth failure, restarting...');
-    chatbot.EnviarEmail('Chatbot error Auth failure','Auth failure, restarting...'+client);
-  });
-
-  client.on('disconnected', (reason) => {
-    socket.emit('message', 'Whatsapp Desconectado!');
-    chatbot.EnviarEmail('Chatbot Desconectado ','Desconectando...'+client);
-      updateLockStateSafe('disconnected').catch(()=>{});
-  try { client.destroy(); } catch(e) {}
-  clientStarted = false;
-  if (isOwner) {
-    // Reintento en la misma PC si sigue siendo owner
-    setTimeout(() => { if (isOwner && !clientStarted) startClientInitialize(); }, 2500);
-  }
-});
-});
-
-*/
-
 
 client.on('ready', async () => {
   console.log("listo ready....");
@@ -1027,7 +1452,10 @@ client.on('ready', async () => {
     
    await io.emit('message', 'Whatsapp Listo!');
    EscribirLog('Whatsapp Listo!',"event");
-  updateLockStateSafe('ready').catch(()=>{});
+   // Para el panel: sesión activa
+  updateLockStateSafe('online').catch(()=>{});
+  // Opcional: si querés conservar un "hito" ready en historial:
+  // updateLockStateSafe('ready').catch(()=>{});
 
   //ConsultaApiMensajes();
 
@@ -1036,14 +1464,23 @@ client.on('ready', async () => {
 
 client.on('qr', (qr) => {
   console.log('QR RECEIVED', qr);
-
+pushHistory('qr', { at: new Date().toISOString() }).catch(()=>{});
   // Guardar último QR para endpoint /status/qr
   lastQrRaw = qr;
   lastQrAt = nowArgentinaISO();
 
   updateLockStateSafe('qr').catch(()=>{});
   qrcode.toDataURL(qr, (err, url) => {
-    if (!err && url) lastQrDataUrl = url;
+     if (err || !url) {
+      try { console.log('QR toDataURL error:', err); } catch {}
+      return;
+    }
+
+    // Guardar el QR en memoria (status/qr) y en Mongo (panel /admin/wweb)
+    lastQrDataUrl = url;
+    updateLockQrDataSafe(url, lastQrAt).catch(() => {});
+
+
     io.emit('qr', url);
     io.emit('message', 'Código QR Recibido...');
   });
@@ -1056,23 +1493,58 @@ client.on('authenticated', async () => {
   console.log('Autenticado');
   EscribirLog('Autenticado',"event");
   updateLockStateSafe('authenticated').catch(()=>{});
+
 });
 
 
 
-client.on('auth_failure', function(session) {
-  io.emit('message', 'Auth failure, restarting...');
-  EnviarEmail('Chatbot error Auth failure','Auth failure, restarting...'+client);
-  EscribirLog('Error 04 - Chatbot error Auth failure','Auth failure, restarting...',"error");
+client.on('auth_failure', async function(session) {
+  io.emit('message', 'Auth failure');
+  EnviarEmail('Chatbot error Auth failure','Auth failure: '+ String(session || '') + ' ' + client);
+  EscribirLog('Error 04 - Chatbot error Auth failure', String(session || ''), "error");
+  updateLockStateSafe('auth_failure').catch(()=>{});
+
+  // Sin backup/restore remoto: reiniciamos el cliente y dejamos que LocalAuth use solo la sesión local.
+  if (isLocalAuthMode() && isOwner && !authFailureHandling) {
+    authFailureHandling = true;
+    setTimeout(async () => {
+      try {
+        try { await destroyClientHard(client); } catch {}
+        try { client = null; } catch {}
+        clientStarted = false;
+
+        if (isOwner && !clientStarted) {
+          await startClientInitialize();
+        }
+      } catch (e) {
+        EscribirLog('auth_failure recovery error: ' + String(e?.message || e), 'error');
+      } finally {
+        authFailureHandling = false;
+      }
+    }, 2000);
+  }
 });
 
-client.on('disconnected', (reason) => {
+client.on('disconnected', async (reason) => {
   io.emit('message', 'Whatsapp Desconectado!');
   EnviarEmail('Chatbot Desconectado ','Desconectando...'+client);
   EscribirLog('Chatbot Desconectado ','Desconectando...',"event");
-  client.destroy();
-  client.initialize();
+  updateLockStateSafe('disconnected').catch(()=>{});
+
+  try { await client.destroy(); } catch(e) {}
+  clientStarted = false;
+
+  // Solo reintenta si esta PC sigue siendo owner del lock.
+  if (isOwner) {
+    setTimeout(() => {
+      if (isOwner && !clientStarted) startClientInitialize();
+    }, 2500);
+  }
 });
+
+
+}
+
 
 
 
@@ -1257,35 +1729,33 @@ async function controlar_hora_msg(){
 
  
 function RecuperarJsonConfMensajes(){
+  // Mensajes/config vienen de MongoDB (tenantConfig). Mantiene configuracion_errores.json desde archivo.
+  let jsonError = null;
+  try { jsonError = JSON.parse(fs.readFileSync('configuracion_errores.json')); } catch {}
+  try {
+    if (jsonError && jsonError.configuracion) {
+      email_err = jsonError.configuracion.email_err;
+      smtp = jsonError.configuracion.smtp;
+      email_usuario = jsonError.configuracion.user;
+      email_pas = jsonError.configuracion.pass;
+      email_puerto = jsonError.configuracion.puerto;
+      email_saliente = jsonError.configuracion.email_sal;
+      msg_errores = jsonError.configuracion.msg_error;
+    }
+  } catch {}
 
-  const jsonConf =  JSON.parse(fs.readFileSync('configuracion.json'));
-  const jsonError = JSON.parse(fs.readFileSync('configuracion_errores.json'));
- // console.log("configuracion.json "+jsonConf);
+  // Preferencia: tenantConfig (BD)
+  if (tenantConfig && typeof tenantConfig === "object") {
+    applyTenantConfig(tenantConfig);
+    return;
+  }
 
-   
-   seg_desde = jsonConf.configuracion.seg_desde;
-   seg_hasta = jsonConf.configuracion.seg_hasta;
-   dsn = jsonConf.configuracion.dsn;
-   seg_msg = jsonConf.configuracion.seg_msg;
-   api = jsonConf.configuracion.api;
-   msg_inicio = jsonConf.configuracion.msg_inicio;
-   msg_fin = jsonConf.configuracion.msg_fin;
-   cant_lim = jsonConf.configuracion.cant_lim;
-   time_cad = jsonConf.configuracion.time_cad;
-   email_err = jsonError.configuracion.email_err;
-   msg_lim = jsonConf.configuracion.msg_lim;
-   msg_cad = jsonConf.configuracion.msg_cad;
-   msg_can = jsonConf.configuracion.msg_can;
-
-   smtp = jsonError.configuracion.smtp;
-   email_usuario = jsonError.configuracion.user;
-   email_pas = jsonError.configuracion.pass;
-   email_puerto = jsonError.configuracion.puerto;
-   email_saliente = jsonError.configuracion.email_sal;
-   msg_errores = jsonError.configuracion.msg_error;
-   nom_chatbot= jsonConf.configuracion.nom_emp;
-
-
+  // Fallback (legacy): si alguien todavía usa configuracion.json viejo con {configuracion:{...}}
+  try {
+    const raw = JSON.parse(fs.readFileSync('configuracion.json'));
+    const conf = (raw && raw.configuracion && typeof raw.configuracion === "object") ? raw.configuracion : raw;
+    if (conf && typeof conf === "object") applyTenantConfig(conf);
+  } catch {}
 }
 
 
@@ -1361,6 +1831,79 @@ function sleep(ms) {
   });
 }
 
+
+
+function isDetachedFrameError(err) {
+  const msg = String(err?.message || err || "");
+  return msg.toLowerCase().includes("detached frame") || msg.toLowerCase().includes("frame was detached") || msg.toLowerCase().includes("navigating frame was detached");
+}
+
+function isExecutionContextError(err) {
+  const msg = String(err?.message || err || "");
+ return msg.includes("Execution context was destroyed") ||
+         msg.includes("Cannot find context") ||
+         msg.includes("Target closed") ||
+         msg.includes("Protocol error");
+}
+
+async function destroyClientHard(c) {
+  if (!c) return;
+  // whatsapp-web.js expone (segun version) pupBrowser/pupPage en el client.
+  try { await c.destroy(); } catch {}
+  try { await c.pupPage?.close?.(); } catch {}
+  try { await c.pupBrowser?.close?.(); } catch {}
+ await sleep(2500);
+}
+
+async function recreateClientForRetry(reason) {
+  try { console.log(`Recreando client por: ${reason}`); } catch {}
+  try { EscribirLog(`Recreando client por: ${reason}`, "event"); } catch {}
+
+  try { await destroyClientHard(client); } catch {}
+  try { clientStarted = false; } catch {}
+  try { client = null; } catch {}
+
+  // mini backoff para que Chrome termine de cerrar (Windows)
+  await sleep(2500);
+
+  // Re-crea el client:
+  // Si venimos por execution_context / detached_frame, NO tocar el storage local ni forzar restore,
+  // porque esos errores suelen ser del navegador, no de la sesión.
+  await createClientIfNeeded();
+  return client;
+}
+
+async function initializeWithRetry(clientInstance, maxRetries = 5) {
+  // IMPORTANTE: ante ciertos errores (detached frame / execution context) conviene
+  // recrear TODO el client y reintentar. Re-usar el mismo objeto suele quedar roto.
+  let c = clientInstance;
+
+  for (let i = 1; i <= maxRetries; i++) {
+    try {
+      try {
+        console.log(`[INIT] attempt=${i} dataPath=${getAuthBasePath()} sessionDir=${getLocalAuthSessionDir(`asisto_${tenantId}_${numero}`)}`);
+      } catch {}
+      await c.initialize();
+      return true;
+    } catch (e) {
+       const detached = isDetachedFrameError(e);
+      const ctx = isExecutionContextError(e);
+      if (!detached && !ctx) throw e;
+
+      const msg = String(e?.message || e || "");
+      console.log(`initialize retry ${i}/${maxRetries} (${detached ? "detached frame" : "execution context"}) -> ${msg}`);
+      try { EscribirLog(`initialize retry ${i}/${maxRetries}: ${msg}`, "event"); } catch {}
+
+      // Backoff progresivo
+      await sleep(1500 * i);
+
+      // Re-create completo (evita quedarse con frames viejos)
+      c = await recreateClientForRetry(detached ? "detached_frame" : "execution_context");
+
+    }
+  }
+  throw new Error("initialize_failed_after_retries");
+}
 function detectMimeType(b64) {
   for (var s in signatures) {
     if (b64.indexOf(s) === 0) {
@@ -1395,49 +1938,22 @@ return headless;
 }
 
 function RecuperarJsonConf(){
-  
-  const jsonConf =  JSON.parse(fs.readFileSync('configuracion.json'));
-  console.log("configuracion.json "+jsonConf.configuracion);
-
-   port = jsonConf.configuracion.puerto;
-   console.log("puerto: "+port);
+  // configuracion.json (bootstrap) SOLO: tenantId, mongo_uri, mongo_db
+  // El resto se carga desde Mongo (tenantConfig) por loadTenantConfigFromDb()
+  try {
+    const boot = readBootstrapFromFile();
+    if (!tenantId && boot.tenantId) tenantId = String(boot.tenantId).trim();
  
-   headless = jsonConf.configuracion.headless;
-   console.log("headless: "+headless);
-   
+  // Normalizar tenantId para evitar locks duplicados por mayúsculas/espacios
+  tenantId = String(tenantId || '').trim();
+  if (tenantId) tenantId = tenantId.toUpperCase();
+    if (!mongo_uri && (boot.mongo_uri || boot.mongoUri)) mongo_uri = String(boot.mongo_uri || boot.mongoUri).trim();
+    if (!mongo_db && (boot.mongo_db || boot.mongoDb || boot.dbName)) mongo_db = String(boot.mongo_db || boot.mongoDb || boot.dbName).trim();
+    if (!mongo_db) mongo_db = "Cluster0";
+  } catch {}
 
-  // Lock/Remote session config (opción B)
-  tenantId = String(jsonConf.configuracion.tenantId || tenantId || "").trim();
-  numero = String(jsonConf.configuracion.numero || numero || "").trim();
-  mongo_uri = String(jsonConf.configuracion.mongo_uri || mongo_uri || "").trim();
-  status_token = String(jsonConf.configuracion.status_token || status_token || "").trim();
-seg_desde = jsonConf.configuracion.seg_desde;
-   console.log("seg_desde: "+seg_desde);
-   seg_hasta = jsonConf.configuracion.seg_hasta;
-   console.log("seg_hasta: "+seg_hasta);
-   dsn = jsonConf.configuracion.dsn;
-   console.log("dsn: "+dsn);
-   seg_msg = jsonConf.configuracion.seg_msg;
-   console.log("seg_msg: "+seg_msg);
-   seg_tele = jsonConf.configuracion.seg_tele;
-   console.log("seg_msg: "+seg_tele);
-   api = jsonConf.configuracion.api;
-   console.log("api: "+api);
-   msg_inicio = jsonConf.configuracion.msg_inicio
-   console.log("msg_inicio: "+msg_inicio);
-   msg_fin = jsonConf.configuracion.msg_fin
-   console.log("msg_fin: "+msg_fin);
-   if (headless == 'true'){
-    headless = true
-  }else
-  {
-    headless = false
-  }
-
-   // server.listen(port, function() {
-  //console.log('App running on *: ' + port);
-//});
-
+  // Si ya hay config de BD, aplicarla (no rompe si es null)
+  try { if (tenantConfig) applyTenantConfig(tenantConfig); } catch {}
 }
 
 
