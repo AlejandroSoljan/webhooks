@@ -3639,7 +3639,7 @@ function mountAuthRoutes(app) {
           outgoing: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } },
           contactsSet: { $addToSet: '$contact' },
           lastMessageAt: { $max: '$at' }
-      } } }
+      } }
     ]).toArray();
 
     const allRows = await coll.aggregate([
