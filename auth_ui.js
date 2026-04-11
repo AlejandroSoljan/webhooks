@@ -1665,6 +1665,45 @@ function wwebSessionsAdminPage({ user }) {
         </div>
       </div>
 
+      <div class="modal" id="statsModal" hidden>
+        <div class="modalBackdrop" data-stats-close="1"></div>
+        <div class="modalCard statsModalCard" role="dialog" aria-modal="true" aria-label="Estadísticas WhatsApp">
+          <div class="modalHeader">
+            <div>
+              <div id="statsTitle" style="font-weight:800">Estadísticas</div>
+              <div id="statsSub" class="small" style="opacity:.85"></div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+              <label class="small">Desde <input type="date" id="statsFrom"/></label>
+              <label class="small">Hasta <input type="date" id="statsTo"/></label>
+              <button id="statsApply" class="btn2" type="button">Ver</button>
+              <button id="statsClose" class="btn2" type="button">Cerrar</button>
+            </div>
+          </div>
+          <div id="statsMeta" class="small" style="margin:10px 0"></div>
+          <div id="statsCards" class="statsCards"></div>
+          <div class="card" style="margin-top:12px; padding:10px 12px">
+            <div class="cellMain" style="margin-bottom:6px">Contactos del rango</div>
+            <div class="tableWrap statsTableWrap">
+              <table class="table statsTable">
+                <thead>
+                  <tr>
+                    <th>Teléfono</th>
+                    <th>Entrada</th>
+                    <th>Salida</th>
+                    <th>Total</th>
+                    <th>Último mensaje</th>
+                  </tr>
+                </thead>
+                <tbody id="statsContactsBody">
+                  <tr><td colspan="5" class="small">Sin datos.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
 
 
@@ -1777,6 +1816,115 @@ function wwebSessionsAdminPage({ user }) {
 
 
 
+      // ===== Modal Estadísticas =====
+      var statsModal = document.getElementById('statsModal');
+      var statsTitle = document.getElementById('statsTitle');
+      var statsSub = document.getElementById('statsSub');
+      var statsMeta = document.getElementById('statsMeta');
+      var statsCards = document.getElementById('statsCards');
+      var statsFrom = document.getElementById('statsFrom');
+      var statsTo = document.getElementById('statsTo');
+      var statsApply = document.getElementById('statsApply');
+      var statsClose = document.getElementById('statsClose');
+      var statsContactsBody = document.getElementById('statsContactsBody');
+      var statsTenant = '';
+      var statsNumero = '';
+
+      function statsSetOpen(open){
+        if(!statsModal) return;
+        if(open){ statsModal.hidden = false; document.body.classList.add('modalOpen'); }
+        else { statsModal.hidden = true; document.body.classList.remove('modalOpen'); }
+      }
+      function closeStats(){ statsSetOpen(false); }
+      function toYmd(d){
+        try {
+          var y = d.getFullYear();
+          var m = String(d.getMonth()+1).padStart(2,'0');
+          var day = String(d.getDate()).padStart(2,'0');
+          return y + '-' + m + '-' + day;
+        } catch(e){ return ''; }
+      }
+      function fmtDurationMs(ms){
+        var n = Number(ms);
+        if(!isFinite(n) || n < 0) return '-';
+        var mins = Math.floor(n/60000);
+        var d = Math.floor(mins/1440);
+        var h = Math.floor((mins%1440)/60);
+        var m = mins%60;
+        var parts = [];
+        if(d) parts.push(d + 'd');
+        if(h || d) parts.push(h + 'h');
+        parts.push(m + 'm');
+        return parts.join(' ');
+      }
+      function statsCard(label, value, sub){
+        return '<div class="statsMiniCard">'
+          + '<div class="small" style="opacity:.8">' + escapeHtml(label) + '</div>'
+          + '<div class="cellMain" style="font-size:22px; margin-top:4px">' + escapeHtml(value) + '</div>'
+          + (sub ? ('<div class="small" style="margin-top:4px">' + escapeHtml(sub) + '</div>') : '')
+          + '</div>';
+      }
+      function renderStats(data){
+        var summary = data && data.summary ? data.summary : {};
+        var overall = data && data.overall ? data.overall : {};
+        var contacts = Array.isArray(data && data.contacts) ? data.contacts : [];
+        statsMeta.textContent = 'Rango: ' + (data.from || '-') + ' a ' + (data.to || '-')
+          + ' · Último mensaje global: ' + (overall.lastMessageAt ? fmtDate(overall.lastMessageAt) : '-');
+        statsCards.innerHTML = ''
+          + statsCard('Mensajes entrada', String(summary.incoming || 0))
+          + statsCard('Mensajes salida', String(summary.outgoing || 0))
+          + statsCard('Mensajes totales', String(summary.total || 0))
+          + statsCard('Contactos', String(summary.contacts || 0))
+          + statsCard('Último mensaje del rango', summary.lastAt ? fmtDate(summary.lastAt) : '-')
+          + statsCard('Inactividad actual', overall.inactivityLabel || fmtDurationMs(overall.inactivityMs || 0));
+
+        if(!contacts.length){
+          statsContactsBody.innerHTML = '<tr><td colspan="5" class="small">No hay mensajes en el rango seleccionado.</td></tr>';
+          return;
+        }
+        statsContactsBody.innerHTML = contacts.map(function(c){
+          return '<tr>'
+            + '<td class="mono">' + escapeHtml(c.contact || '-') + '</td>'
+            + '<td>' + escapeHtml(String(c.incoming || 0)) + '</td>'
+            + '<td>' + escapeHtml(String(c.outgoing || 0)) + '</td>'
+            + '<td>' + escapeHtml(String(c.total || 0)) + '</td>'
+            + '<td>' + escapeHtml(c.lastAt ? fmtDate(c.lastAt) : '-') + '</td>'
+            + '</tr>';
+        }).join('');
+      }
+      function loadStats(){
+        if(!statsTenant || !statsNumero) return;
+        statsMeta.textContent = 'Cargando…';
+        statsCards.innerHTML = '';
+        statsContactsBody.innerHTML = '<tr><td colspan="5" class="small">Cargando…</td></tr>';
+        return api('/api/wweb/stats?tenantId=' + encodeURIComponent(statsTenant) + '&numero=' + encodeURIComponent(statsNumero)
+          + '&from=' + encodeURIComponent(statsFrom.value || '') + '&to=' + encodeURIComponent(statsTo.value || ''), { method:'GET' })
+          .then(renderStats)
+          .catch(function(e){
+            statsMeta.textContent = 'Error: ' + (e.message || e);
+            statsContactsBody.innerHTML = '<tr><td colspan="5" class="small">Error cargando estadísticas.</td></tr>';
+          });
+      }
+      function openStats(tenant, numero){
+        statsTenant = String(tenant || '');
+        statsNumero = String(numero || '');
+        var today = toYmd(new Date());
+        if(statsTitle) statsTitle.textContent = 'Estadísticas · ' + statsNumero;
+        if(statsSub) statsSub.textContent = 'tenant: ' + statsTenant;
+        if(statsFrom && !statsFrom.value) statsFrom.value = today;
+        if(statsTo && !statsTo.value) statsTo.value = today;
+        if(statsFrom && !statsFrom.value) statsFrom.value = today;
+        if(statsTo && !statsTo.value) statsTo.value = statsFrom.value || today;
+        statsSetOpen(true);
+        loadStats();
+      }
+      if(statsApply) statsApply.addEventListener('click', loadStats);
+      if(statsClose) statsClose.addEventListener('click', closeStats);
+      if(statsModal) statsModal.addEventListener('click', function(ev){
+        var t = ev && ev.target;
+        if(t && t.getAttribute && t.getAttribute('data-stats-close')) closeStats();
+      });
+
       function fmtDate(v){
         if(!v) return "";
         try { return new Date(v).toLocaleString(); } catch (e) { return String(v); }
@@ -1853,7 +2001,7 @@ function wwebSessionsAdminPage({ user }) {
           +     '<button class="menuItem" type="button" role="menuitem" data-action="toggle" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-disabled="' + (isDisabled ? '1' : '0') + '">' + (isDisabled ? 'Habilitar' : 'Bloquear') + '</button>'
           +     '<div class="menuSep"></div>'
           +     '<button class="menuItem" type="button" role="menuitem" data-action="resetauth" data-id="' + escapeHtml(lock._id) + '">Reset Auth</button>'
-          +     '<button class="menuItem" type="button" role="menuitem" data-action="log" data-id="' + escapeHtml(lock._id) + '">Log</button>'
+          +     '<button class="menuItem" type="button" role="menuitem" data-action="stats" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Estadísticas</button>'
           +   '</div>'
           + '</div>'
           + '<button class="btn2 btnQr" type="button" data-action="qr" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '"' + (canQr ? '' : ' disabled') + ' title="QR">QR</button>';
@@ -1873,9 +2021,14 @@ function wwebSessionsAdminPage({ user }) {
           + escapeHtml(String(lock.holderId || lock.instanceId || "-"))
           + '</div>';
 
+        var statsToday = lock.statsToday || { incoming:0, outgoing:0, contacts:0 };
         var timesHtml = ''
           + '<div class="cellSub"><b>Inicio:</b> ' + escapeHtml(fmtDate(lock.startedAt) || '-') + '</div>'
-          + '<div class="cellSub"><b>Heartbeat:</b> ' + escapeHtml(fmtDate(lock.lastSeenAt) || '-') + '</div>';
+          + '<div class="cellSub"><b>Heartbeat:</b> ' + escapeHtml(fmtDate(lock.lastSeenAt) || '-') + '</div>'
+          + '<div class="cellSub"><b>Hoy E/S:</b> ' + escapeHtml(String(statsToday.incoming || 0)) + ' / ' + escapeHtml(String(statsToday.outgoing || 0)) + '</div>'
+          + '<div class="cellSub"><b>Contactos hoy:</b> ' + escapeHtml(String(statsToday.contacts || 0)) + '</div>'
+          + '<div class="cellSub"><b>Últ. msg:</b> ' + escapeHtml(fmtDate(lock.lastMessageAt) || '-') + '</div>'
+          + '<div class="cellSub"><b>Inactividad:</b> ' + escapeHtml(lock.inactivityLabel || '-') + '</div>';
 
 
 
@@ -2023,7 +2176,7 @@ function wwebSessionsAdminPage({ user }) {
         if(act === 'restart') return doRestart(id);
         if(act === 'toggle') return doToggle(tenant, numero, currentlyDisabled);
         if(act === 'resetauth') return doResetAuth(id);
-        if(act === 'log') return alert('Log: lo definimos después.');
+        if(act === 'stats') return openStats(tenant, numero);
         if(act === 'qr') return openQr(id, tenant, numero);
 
             });
@@ -2179,6 +2332,14 @@ document.addEventListener('click', function(e){
       .modalHeader{display:flex; justify-content:space-between; align-items:flex-start; gap:10px}
       .qrWrap{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; min-height:340px}
       #qrImg{max-width:100%; height:auto; display:none}
+      .statsModalCard{width:min(980px,96vw)}
+      .statsCards{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:8px}
+      .statsMiniCard{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:12px; padding:10px 12px}
+      .statsTableWrap{max-height:48vh; overflow:auto; padding-bottom:0}
+      .statsTable{width:100%; table-layout:fixed}
+      .statsTable th:nth-child(1){width:190px}
+      .statsTable th:nth-child(2), .statsTable th:nth-child(3), .statsTable th:nth-child(4){width:90px}
+      .statsTable th:nth-child(5){width:180px}
 
     </style>
     `,
@@ -3431,6 +3592,80 @@ function mountAuthRoutes(app) {
     }
   });
 
+  function wwebArYmd(date = new Date()) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Argentina/Cordoba',
+        year: 'numeric', month: '2-digit', day: '2-digit'
+      }).formatToParts(date);
+      const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+      return `${map.year}-${map.month}-${map.day}`;
+    } catch {
+      const d = new Date(date);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }
+  }
+
+  function wwebArDateRange(fromYmd, toYmd) {
+    const from = String(fromYmd || '').trim();
+    const to = String(toYmd || fromYmd || '').trim();
+    const start = new Date(`${from}T00:00:00-03:00`);
+    const endBase = new Date(`${to}T00:00:00-03:00`);
+    const end = new Date(endBase.getTime() + 24*60*60*1000);
+    return { start, end };
+  }
+
+  function wwebHumanizeMs(ms) {
+    const n = Number(ms);
+    if (!Number.isFinite(n) || n < 0) return '';
+    const totalMinutes = Math.floor(n / 60000);
+    const days = Math.floor(totalMinutes / 1440);
+    const hours = Math.floor((totalMinutes % 1440) / 60);
+    const mins = totalMinutes % 60;
+    const parts = [];
+    if (days) parts.push(`${days}d`);
+    if (hours || days) parts.push(`${hours}h`);
+    parts.push(`${mins}m`);
+    return parts.join(' ');
+  }
+
+  async function wwebBuildStatsMap(db, baseFilter, start, end) {
+    const coll = db.collection('wa_wweb_message_log');
+    const todayRows = await coll.aggregate([
+      { $match: { ...baseFilter, at: { $gte: start, $lt: end } } },
+      { $group: {
+          _id: { tenantId: '$tenantId', numero: '$numero' },
+          incoming: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
+          outgoing: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } },
+          contactsSet: { $addToSet: '$contact' },
+          lastMessageAt: { $max: '$at' }
+      } } }
+    ]).toArray();
+
+    const allRows = await coll.aggregate([
+      { $match: { ...baseFilter } },
+      { $group: { _id: { tenantId: '$tenantId', numero: '$numero' }, lastMessageAt: { $max: '$at' } } }
+    ]).toArray();
+
+    const map = new Map();
+    for (const row of (todayRows || [])) {
+      const key = `${row?._id?.tenantId || ''}::${row?._id?.numero || ''}`;
+      map.set(key, {
+        incoming: Number(row?.incoming || 0),
+        outgoing: Number(row?.outgoing || 0),
+        contacts: Array.isArray(row?.contactsSet) ? row.contactsSet.filter(Boolean).length : 0,
+        lastMessageAt: row?.lastMessageAt || null
+      });
+    }
+    for (const row of (allRows || [])) {
+      const key = `${row?._id?.tenantId || ''}::${row?._id?.numero || ''}`;
+      const prev = map.get(key) || { incoming: 0, outgoing: 0, contacts: 0, lastMessageAt: null };
+      if (!prev.lastMessageAt && row?.lastMessageAt) prev.lastMessageAt = row.lastMessageAt;
+      map.set(key, prev);
+    }
+    return map;
+  }
+
   // Listado de locks activos/inactivos (colección: wa_locks)
   app.get("/api/wweb/locks", requireAuth, requireAdmin, async (req, res) => {
     try {
@@ -3453,6 +3688,10 @@ function mountAuthRoutes(app) {
         .limit(2000)
         .toArray();
 
+      const todayYmd = wwebArYmd(new Date());
+      const { start: todayStart, end: todayEnd } = wwebArDateRange(todayYmd, todayYmd);
+      const statsMap = await wwebBuildStatsMap(db, filter, todayStart, todayEnd);
+
       const polMap = new Map();
       for (const p of (policies || [])) {
         const tid = String(p.tenantId || "");
@@ -3461,17 +3700,20 @@ function mountAuthRoutes(app) {
           mode: p.mode || "any",
           pinnedHost: p.pinnedHost || "",
           blockedHosts: Array.isArray(p.blockedHosts) ? p.blockedHosts : [],
-          // Nuevo: deshabilitar sesión (no inicializa WhatsApp aunque el script esté vivo)
           disabled: !!p.disabled,
           updatedAt: p.updatedAt || p.createdAt || null,
           updatedBy: p.updatedBy || null,
         });
       }
 
+      const now = new Date();
       const out = locks.map((l) => {
         const tid = String(l.tenantId || "");
         const num = String(l.numero || l.number || l.phone || "");
-        const policy = polMap.get(tid + "::" + num) || { mode: "any", pinnedHost: "", blockedHosts: [], disabled: false };
+        const key = tid + "::" + num;
+        const policy = polMap.get(key) || { mode: "any", pinnedHost: "", blockedHosts: [], disabled: false };
+        const stats = statsMap.get(key) || { incoming: 0, outgoing: 0, contacts: 0, lastMessageAt: null };
+        const inactivityMs = stats.lastMessageAt ? Math.max(0, now.getTime() - new Date(stats.lastMessageAt).getTime()) : null;
         return {
           _id: String(l._id),
           tenantId: tid,
@@ -3484,10 +3726,18 @@ function mountAuthRoutes(app) {
           lastQrAt: l.lastQrAt || null,
           hasQr: !!l.lastQrDataUrl,
           policy,
+          statsToday: {
+            incoming: Number(stats.incoming || 0),
+            outgoing: Number(stats.outgoing || 0),
+            contacts: Number(stats.contacts || 0),
+          },
+          lastMessageAt: stats.lastMessageAt || null,
+          inactivityMs,
+          inactivityLabel: inactivityMs == null ? '' : wwebHumanizeMs(inactivityMs),
         };
       });
 
-      return res.status(200).json({ now: new Date(), locks: out });
+      return res.status(200).json({ now: new Date(), todayYmd, locks: out });
     } catch (e) {
       console.error("api/wweb/locks error:", e);
       return res.status(500).json({ ok: false, error: "Error leyendo locks." });
@@ -3672,6 +3922,92 @@ function mountAuthRoutes(app) {
     } catch (e) {
       console.error("api/wweb/policy error:", e);
       return res.status(500).json({ ok: false, error: "Error guardando política." });
+    }
+  });
+
+  // Estadísticas de mensajes por sesión y rango de fechas
+  app.get("/api/wweb/stats", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const db = await getDb();
+      const role = String(req.user?.role || "").toLowerCase();
+      const isSuper = role === "superadmin";
+      const tenantId = String(req.query?.tenantId || (!isSuper ? (req.user?.tenantId || "default") : "")).trim();
+      const numero = String(req.query?.numero || "").trim();
+      if (!tenantId || !numero) return res.status(400).json({ ok:false, error: "tenantId y numero requeridos" });
+      if (!isSuper && tenantId !== String(req.user?.tenantId || "default")) return res.status(403).json({ ok:false, error: "forbidden" });
+
+      const from = String(req.query?.from || wwebArYmd(new Date())).trim();
+      const to = String(req.query?.to || from).trim();
+      const { start, end } = wwebArDateRange(from, to);
+      const coll = db.collection("wa_wweb_message_log");
+      const baseMatch = { tenantId, numero };
+      const rangeMatch = { ...baseMatch, at: { $gte: start, $lt: end } };
+
+      const [summaryRows, contactRows, overallLast] = await Promise.all([
+        coll.aggregate([
+          { $match: rangeMatch },
+          { $group: {
+              _id: null,
+              incoming: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
+              outgoing: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } },
+              total: { $sum: 1 },
+              contactsSet: { $addToSet: '$contact' },
+              firstAt: { $min: '$at' },
+              lastAt: { $max: '$at' }
+          } }
+        ]).toArray(),
+        coll.aggregate([
+          { $match: rangeMatch },
+          { $group: {
+              _id: '$contact',
+              incoming: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
+              outgoing: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } },
+              total: { $sum: 1 },
+              firstAt: { $min: '$at' },
+              lastAt: { $max: '$at' }
+          } },
+          { $sort: { total: -1, lastAt: -1 } },
+          { $limit: 1000 }
+        ]).toArray(),
+        coll.find(baseMatch).sort({ at: -1 }).limit(1).toArray(),
+      ]);
+
+      const summary = summaryRows[0] || { incoming: 0, outgoing: 0, total: 0, contactsSet: [], firstAt: null, lastAt: null };
+      const lastOverall = overallLast[0] || null;
+      const inactivityMs = lastOverall?.at ? Math.max(0, Date.now() - new Date(lastOverall.at).getTime()) : null;
+
+      return res.status(200).json({
+        ok: true,
+        tenantId,
+        numero,
+        from,
+        to,
+        range: { start, end },
+        summary: {
+          incoming: Number(summary.incoming || 0),
+          outgoing: Number(summary.outgoing || 0),
+          total: Number(summary.total || 0),
+          contacts: Array.isArray(summary.contactsSet) ? summary.contactsSet.filter(Boolean).length : 0,
+          firstAt: summary.firstAt || null,
+          lastAt: summary.lastAt || null,
+        },
+        overall: {
+          lastMessageAt: lastOverall?.at || null,
+          inactivityMs,
+          inactivityLabel: inactivityMs == null ? '' : wwebHumanizeMs(inactivityMs),
+        },
+        contacts: (contactRows || []).map((r) => ({
+          contact: String(r._id || ''),
+          incoming: Number(r.incoming || 0),
+          outgoing: Number(r.outgoing || 0),
+          total: Number(r.total || 0),
+          firstAt: r.firstAt || null,
+          lastAt: r.lastAt || null,
+        })),
+      });
+    } catch (e) {
+      console.error("api/wweb/stats error:", e);
+      return res.status(500).json({ ok:false, error: "Error leyendo estadísticas." });
     }
   });
 
