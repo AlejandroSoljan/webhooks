@@ -1622,6 +1622,29 @@ function wwebSessionsAdminPage({ user }) {
         </div>
       </div>
 
+      <div class="wwebFilters">
+        <div class="wwebFilterItem wwebFilterItem--search">
+          <label class="small" for="wwebSearch">Buscar sesión</label>
+          <input class="inp" id="wwebSearch" type="search" placeholder="Tenant, número, host o holder"/>
+        </div>
+        <div class="wwebFilterItem">
+          <label class="small" for="wwebStateFilter">Estado</label>
+          <select class="inp" id="wwebStateFilter">
+            <option value="all">Todos</option>
+            <option value="active">Activas</option>
+            <option value="inactive">Inactivas</option>
+            <option value="starting">starting</option>
+            <option value="qr">qr</option>
+            <option value="authenticated">authenticated</option>
+            <option value="online">online</option>
+            <option value="disconnected">disconnected</option>
+            <option value="offline">offline</option>
+            <option value="auth_failure">auth_failure</option>
+            <option value="disabled">disabled</option>
+          </select>
+        </div>
+      </div>
+
       <div id="wwebMsg" class="small" style="margin-top:10px"></div>
 
       <div class="card" style="margin-top:14px">
@@ -1715,8 +1738,12 @@ function wwebSessionsAdminPage({ user }) {
       var msg = document.getElementById('wwebMsg');
       var statusEl = document.getElementById('wwebStatus');
       var tableWrap = document.getElementById('wwebTableWrap');
+      var searchEl = document.getElementById('wwebSearch');
+      var stateFilterEl = document.getElementById('wwebStateFilter');
       var inflight = false;
       var lastHtml = null;
+      var lastLocksData = [];
+      var lastNowMs = Date.now();
 
 
       // ===== Modal QR =====
@@ -1790,6 +1817,7 @@ function wwebSessionsAdminPage({ user }) {
       }
 
       function openQr(lockId, tenantId, numero){
+        closeAllMenus();
         qrLockId = String(lockId || '');
         lastQrSrc = null;
         if(qrTitle) qrTitle.textContent = 'QR · ' + (numero || '-');
@@ -1906,6 +1934,7 @@ function wwebSessionsAdminPage({ user }) {
           });
       }
       function openStats(tenant, numero){
+        closeAllMenus();
         statsTenant = String(tenant || '');
         statsNumero = String(numero || '');
         var today = toYmd(new Date());
@@ -2033,13 +2062,13 @@ function wwebSessionsAdminPage({ user }) {
 
 
         return ''
-          + '<tr>'
+          + '<tr class="wwebRow">'
           + '<td>' + sessionHtml + '</td>'
           + '<td>' + stateBadge + ageHtml + stHtml + qrAgeHtml + '</td>'
           + '<td>' + ownerHtml + '</td>'
           + '<td>' + timesHtml + '</td>'
           + '<td>' + policyHtml + '</td>'
-          + '<td><div class="actionBar">' + actions + '</div></td>'
+          + '<td class="wa-actions-cell"><div class="actionBar">' + actions + '</div></td>'
 
           + '</tr>';
       }
@@ -2049,6 +2078,82 @@ function wwebSessionsAdminPage({ user }) {
         if(on) tableWrap.setAttribute('data-loading','1');
         else tableWrap.removeAttribute('data-loading');
       }
+
+      function normalizedState(lock, nowMs){
+        var st = String((lock && lock.state) || '').trim().toLowerCase();
+        var last = lock && lock.lastSeenAt ? new Date(lock.lastSeenAt).getTime() : 0;
+        var active = !!(last && (nowMs - last) <= 30000);
+        if (st === 'disabled' || (lock && lock.policy && lock.policy.disabled)) return 'disabled';
+        if (sfMap[st]) return sfMap[st];
+        if (st) return st;
+        return active ? 'active' : 'inactive';
+      }
+
+      function lockSearchText(lock){
+        return [
+          lock && lock.tenantId || '',
+          lock && (lock.numero || lock.number || lock.phone) || '',
+          lock && lock.host || '',
+          lock && (lock.holderId || lock.instanceId) || ''
+        ].join(' ').toLowerCase();
+      }
+
+      function applyFiltersAndSort(locks, nowMs){
+        var items = Array.isArray(locks) ? locks.slice() : [];
+        var q = searchEl ? String(searchEl.value || '').trim().toLowerCase() : '';
+        var sf = stateFilterEl ? String(stateFilterEl.value || 'all').trim().toLowerCase() : 'all';
+
+        items.sort(function(a, b){
+          var ta = String(a && a.tenantId || '').toLowerCase();
+          var tb = String(b && b.tenantId || '').toLowerCase();
+          if (ta !== tb) return ta.localeCompare(tb, 'es', { sensitivity: 'base' });
+          var na = String(a && (a.numero || a.number || a.phone) || '').toLowerCase();
+          var nb = String(b && (b.numero || b.number || b.phone) || '').toLowerCase();
+          return na.localeCompare(nb, 'es', { sensitivity: 'base', numeric: true });
+        });
+
+        if (q) {
+          items = items.filter(function(lock){
+            return lockSearchText(lock).indexOf(q) >= 0;
+          });
+        }
+
+        if (sf && sf !== 'all') {
+          items = items.filter(function(lock){
+            var ns = normalizedState(lock, nowMs);
+            if (sf === 'active') return ['active','online','authenticated','qr','starting'].indexOf(ns) >= 0;
+            if (sf === 'inactive') return ['inactive','offline','disconnected','auth_failure'].indexOf(ns) >= 0;
+            return ns === sf;
+          });
+        }
+
+        return items;
+      }
+
+      function renderCurrentLocks(){
+        var nowMs = lastNowMs || Date.now();
+        var locks = applyFiltersAndSort(lastLocksData, nowMs);
+
+        var html = '';
+        if(!locks.length){
+          html = '<tr><td colspan="6" class="small">No hay sesiones para los filtros seleccionados.</td></tr>';
+        } else {
+          html = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
+        }
+
+        if(html !== lastHtml){
+          var sx = tableWrap ? tableWrap.scrollLeft : 0;
+          var sy = tableWrap ? tableWrap.scrollTop : 0;
+          body.innerHTML = html;
+          if(tableWrap){
+            tableWrap.scrollLeft = sx;
+            tableWrap.scrollTop = sy;
+          }
+          lastHtml = html;
+        }
+      }
+
+      var sfMap = { ready: 'online' };
 
       function load(opts){
         opts = opts || {};
@@ -2067,30 +2172,13 @@ function wwebSessionsAdminPage({ user }) {
         setLoading(true);
         return api('/api/wweb/locks', { method:'GET' })
           .then(function(data){
-            var locks = Array.isArray(data.locks) ? data.locks : [];
-            var nowMs = data.now ? new Date(data.now).getTime() : Date.now();
+            lastLocksData = Array.isArray(data.locks) ? data.locks : [];
+            lastNowMs = data.now ? new Date(data.now).getTime() : Date.now();
 
-            var html = '';
-            if(!locks.length){
-              html = '<tr><td colspan="6" class="small">No hay sesiones registradas.</td></tr>';
-            } else {
-              html = locks.map(function(l){ return renderRow(l, nowMs); }).join('');
-            }
-
-            // Evita parpadeo: solo repinta si cambió
-            if(html !== lastHtml){
-              var sx = tableWrap ? tableWrap.scrollLeft : 0;
-              var sy = tableWrap ? tableWrap.scrollTop : 0;
-              body.innerHTML = html;
-              if(tableWrap){
-                tableWrap.scrollLeft = sx;
-                tableWrap.scrollTop = sy;
-              }
-              lastHtml = html;
-            }
+            renderCurrentLocks();
 
             if(statusEl){
-              statusEl.textContent = 'Última actualización: ' + new Date(nowMs).toLocaleTimeString();
+              statusEl.textContent = 'Última actualización: ' + new Date(lastNowMs).toLocaleTimeString();
             }
             if(msg) msg.textContent = '';
           })
@@ -2118,6 +2206,7 @@ function wwebSessionsAdminPage({ user }) {
       }
 
       function doRestart(lockId){
+        closeAllMenus();
         if(!confirm('¿Reiniciar la sesión de WhatsApp en la PC dueña?')) return;
         doAction(lockId, 'restart', 'admin_restart')
           .then(function(){ msg.textContent = 'Reinicio solicitado.'; return load(); })
@@ -2125,6 +2214,7 @@ function wwebSessionsAdminPage({ user }) {
       }
 
       function doToggle(tenantId, numero, currentlyDisabled){
+        closeAllMenus();
         var nextDisabled = !currentlyDisabled;
         var label = nextDisabled ? 'bloquear' : 'habilitar';
         if(!confirm('¿' + label.toUpperCase() + ' esta sesión?' + tenantId + ' · ' + numero)) return;
@@ -2134,6 +2224,7 @@ function wwebSessionsAdminPage({ user }) {
       }
 
       function doResetAuth(lockId){
+        closeAllMenus();
         var txt = IS_SUPER
           ? '¿Reset Auth? Esto borrará el backup remoto (si existe) y pedirá QR nuevamente.'
           : '¿Reset Auth? Pedirá QR nuevamente en la PC dueña.';
@@ -2189,7 +2280,13 @@ function wwebSessionsAdminPage({ user }) {
           m.style.display = 'none';
         });
         document.querySelectorAll('button[data-action="menu"][aria-expanded="true"]').forEach(function(b){
-         b.setAttribute('aria-expanded','false');
+          b.setAttribute('aria-expanded','false');
+        });
+        document.querySelectorAll('.wa-actions-cell.menuCellOpen').forEach(function(cell){
+          cell.classList.remove('menuCellOpen');
+        });
+        document.querySelectorAll('.wwebRow.rowMenuOpen').forEach(function(row){
+          row.classList.remove('rowMenuOpen');
         });
       }
       function positionWaActionsMenu(btn){
@@ -2211,6 +2308,10 @@ function wwebSessionsAdminPage({ user }) {
         var isOpen = (m.getAttribute('aria-hidden') === 'false');
         closeAllMenus();
         if(isOpen) return;
+        var cell = btn && btn.closest ? btn.closest('.wa-actions-cell') : null;
+        var row = btn && btn.closest ? btn.closest('.wwebRow') : null;
+        if(cell) cell.classList.add('menuCellOpen');
+        if(row) row.classList.add('rowMenuOpen');
         m.setAttribute('aria-hidden','false');
         m.style.display = 'block';
         btn.setAttribute('aria-expanded','true');
@@ -2234,6 +2335,19 @@ document.addEventListener('click', function(e){
         if(e.key === 'Escape') closeAllMenus();
       });
 
+      if (searchEl) {
+        searchEl.addEventListener('input', function(){
+          closeAllMenus();
+          renderCurrentLocks();
+        });
+      }
+      if (stateFilterEl) {
+        stateFilterEl.addEventListener('change', function(){
+          closeAllMenus();
+          renderCurrentLocks();
+        });
+      }
+
       window.__wwebReload = function(){ return load({ force:true }); };
       load({ initial:true });
       setInterval(function(){ if(document.hidden) return; load(); }, 8000);
@@ -2243,51 +2357,59 @@ document.addEventListener('click', function(e){
 
     <style>
       /* Ajustes específicos de /admin/wweb */
-      /* Centrado + ancho máximo: evita “pantalla infinita” */
       .appWide{width:100%; max-width:1240px; margin:0 auto;}
-      .toolbar{display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap}
+      .toolbar{display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap}
       .toolbarActions{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+      .wwebFilters{
+        display:grid;
+        grid-template-columns:minmax(260px,1fr) 220px;
+        gap:12px;
+        align-items:end;
+        margin-top:12px;
+      }
+      .wwebFilterItem{min-width:0}
+      .wwebFilterItem label{display:block; margin-bottom:6px}
 
-      /* Sin scroll horizontal: hacemos wrap + fixed layout */
       .card{overflow:visible}
       .tableWrap{
-        overflow:visible;
+        overflow:auto;
         max-width:100%;
         -webkit-overflow-scrolling:touch;
-        padding-bottom:220px;
+        padding-bottom:140px;
       }
       .tableWrap[data-loading="1"]{opacity:.75}
 
-      .wwebTable{width:100%; table-layout:fixed}
-      .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:1}
+      .wwebTable{width:100%; table-layout:fixed; border-collapse:separate; border-spacing:0}
+      .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:2}
+      .wwebTable tbody tr{position:relative}
       .wwebTable tbody tr:nth-child(even){background: rgba(16,24,40,.02)}
+      .wwebTable tbody tr.rowMenuOpen{z-index:80}
 
-      /* Compacto + legible */
       .wwebTable td, .wwebTable th{white-space:normal; word-break:break-word; vertical-align:top}
       .wwebTable th:nth-child(1){width:160px}
       .wwebTable th:nth-child(2){width:190px}
       .wwebTable th:nth-child(3){width:240px}
       .wwebTable th:nth-child(4){width:220px}
       .wwebTable th:nth-child(5){width:170px}
-      .wwebTable th:nth-child(6){width:360px}
+      .wwebTable th:nth-child(6){width:240px}
 
       .cellMain{font-weight:700}
       .cellSub{font-size:12px; opacity:.85; margin-top:2px}
       .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
 
-      /* Barra de acciones: siempre “junta” y prolija */
+      .wa-actions-cell{position:relative}
+      .wa-actions-cell.menuCellOpen{z-index:90}
       .actionBar{
         display:flex;
         gap:10px;
         align-items:center;
         justify-content:flex-start;
+        flex-wrap:wrap;
       }
-      .btnMenu{padding:8px 12px; border-radius:12px; white-space:nowrap}
-      .btnQr{padding:8px 12px; border-radius:12px; white-space:nowrap}
+      .btnMenu,.btnQr{padding:8px 12px; border-radius:12px; white-space:nowrap}
       .caret{opacity:.7; margin-left:6px}
 
-      /* Dropdown */
-      .menuWrap{position:relative; display:inline-block; overflow:visible; z-index:5001}
+      .menuWrap{position:relative; display:inline-block; overflow:visible; z-index:95}
       .menu{
         position:absolute;
         right:0;
@@ -2299,7 +2421,7 @@ document.addEventListener('click', function(e){
         border-radius:14px;
         padding:8px;
         display:none;
-        z-index:5000;
+        z-index:100;
       }
       .menu.up{
         top:auto;
@@ -2317,82 +2439,76 @@ document.addEventListener('click', function(e){
       }
       .menuItem:hover{background: rgba(15,23,42,.06)}
       .menuSep{height:1px; background: rgba(15,23,42,.10); margin:8px 6px}
-  
+
+      @media (max-width: 960px){
+        .wwebFilters{grid-template-columns:1fr}
+      }
+
+      @media (max-width: 820px){
+        .appWide{max-width:100%}
+        .toolbar{align-items:stretch}
+        .toolbarActions{width:100%}
+        .toolbarActions .btn2,
+        .toolbarActions a.btn2{
+          flex:1 1 auto;
+          justify-content:center;
+        }
+
+        .tableWrap{
+          overflow:visible;
+          padding-bottom:24px;
+        }
+        .wwebTable,
+        .wwebTable thead,
+        .wwebTable tbody,
+        .wwebTable th,
+        .wwebTable td,
+        .wwebTable tr{
+          display:block;
+          width:100%;
+        }
+        .wwebTable thead{display:none}
+        .wwebTable tbody{display:grid; gap:12px}
+        .wwebTable tbody tr{
+          border:1px solid rgba(148,163,184,.22);
+          border-radius:14px;
+          padding:10px 12px;
+          background:#fff !important;
+          box-shadow:0 8px 18px rgba(15,23,42,.06);
+        }
+        .wwebTable td{
+          border:0;
+          padding:8px 0;
+        }
+        .wwebTable td + td{
+          border-top:1px solid rgba(148,163,184,.14);
+        }
+        .actionBar{justify-content:flex-start}
+        .menu{
+          right:auto;
+          left:0;
+          min-width:min(240px, 82vw);
+        }
+      }
 
       .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700}
       .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
       .badgeWarn{background:#b453091a; color:#b45309; border:1px solid #b4530955}
 
-      /* Modal QR / Estadísticas */
+      /* Modal QR */
       body.modalOpen{overflow:hidden}
-      .modal{
-        position:fixed;
-        inset:0;
-        z-index:6000;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        padding:16px;
-      }
+      .modal{position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; padding:16px}
       .modal[hidden]{display:none !important}
       .modalBackdrop{position:absolute; inset:0; background:rgba(0,0,0,.55)}
-      .modalCard{
-        position:relative;
-        width:min(560px, 95vw);
-        background:#fff;
-        color:#0f172a;
-        border-radius:16px;
-        padding:14px 14px 16px;
-        box-shadow:0 20px 60px rgba(0,0,0,.35);
-        border:1px solid rgba(148,163,184,.22);
-      }
-      .modalCard .small,
-      .modalCard .cellMain,
-      .modalCard label,
-      .modalCard th,
-      .modalCard td{
-        color:#0f172a;
-      }
+      .modalCard{position:relative; width:min(560px, 95vw); background:#fff; border-radius:16px; padding:14px 14px 16px; box-shadow:0 20px 60px rgba(0,0,0,.35)}
       .modalHeader{display:flex; justify-content:space-between; align-items:flex-start; gap:10px}
-      .qrWrap{
-        background:rgba(16,24,40,.03);
-        border:1px solid rgba(16,24,40,.08);
-        border-radius:12px;
-        overflow:hidden;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        min-height:340px;
-      }
+      .qrWrap{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; min-height:340px}
       #qrImg{max-width:100%; height:auto; display:none}
       .statsModalCard{width:min(980px,96vw)}
-      .statsCards{
-        display:grid;
-        grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
-        gap:10px;
-        margin-top:8px;
-      }
-      .statsMiniCard{
-        background:rgba(16,24,40,.03);
-        border:1px solid rgba(16,24,40,.08);
-        border-radius:12px;
-        padding:10px 12px;
-        color:#0f172a;
-      }
-      .statsMiniCard .cellMain,
-      .statsMiniCard .small{
-        color:#0f172a !important;
-      }
+      .statsCards{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:8px}
+      .statsMiniCard{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:12px; padding:10px 12px}
       .statsTableWrap{max-height:48vh; overflow:auto; padding-bottom:0}
-      .statsTable{
-        width:100%;
-        table-layout:fixed;
-        color:#0f172a;
-      }
-      .statsTable th,
-      .statsTable td{
-        color:#0f172a;
-      }
+      .statsTable{width:100%; table-layout:fixed}
       .statsTable th:nth-child(1){width:190px}
       .statsTable th:nth-child(2), .statsTable th:nth-child(3), .statsTable th:nth-child(4){width:90px}
       .statsTable th:nth-child(5){width:180px}
@@ -3791,6 +3907,13 @@ function mountAuthRoutes(app) {
           inactivityMs,
           inactivityLabel: inactivityMs == null ? '' : wwebHumanizeMs(inactivityMs),
         };
+      }).sort((a, b) => {
+        const ta = String(a?.tenantId || '').toLowerCase();
+        const tb = String(b?.tenantId || '').toLowerCase();
+        if (ta !== tb) return ta.localeCompare(tb, 'es', { sensitivity: 'base' });
+        const na = String(a?.numero || '').toLowerCase();
+        const nb = String(b?.numero || '').toLowerCase();
+        return na.localeCompare(nb, 'es', { sensitivity: 'base', numeric: true });
       });
 
       return res.status(200).json({ now: new Date(), todayYmd, locks: out });
