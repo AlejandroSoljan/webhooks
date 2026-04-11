@@ -2323,20 +2323,76 @@ document.addEventListener('click', function(e){
       .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
       .badgeWarn{background:#b453091a; color:#b45309; border:1px solid #b4530955}
 
-      /* Modal QR */
+      /* Modal QR / Estadísticas */
       body.modalOpen{overflow:hidden}
-      .modal{position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; padding:16px}
+      .modal{
+        position:fixed;
+        inset:0;
+        z-index:6000;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        padding:16px;
+      }
       .modal[hidden]{display:none !important}
       .modalBackdrop{position:absolute; inset:0; background:rgba(0,0,0,.55)}
-      .modalCard{position:relative; width:min(560px, 95vw); background:#fff; border-radius:16px; padding:14px 14px 16px; box-shadow:0 20px 60px rgba(0,0,0,.35)}
+      .modalCard{
+        position:relative;
+        width:min(560px, 95vw);
+        background:#fff;
+        color:#0f172a;
+        border-radius:16px;
+        padding:14px 14px 16px;
+        box-shadow:0 20px 60px rgba(0,0,0,.35);
+        border:1px solid rgba(148,163,184,.22);
+      }
+      .modalCard .small,
+      .modalCard .cellMain,
+      .modalCard label,
+      .modalCard th,
+      .modalCard td{
+        color:#0f172a;
+      }
       .modalHeader{display:flex; justify-content:space-between; align-items:flex-start; gap:10px}
-      .qrWrap{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; min-height:340px}
+      .qrWrap{
+        background:rgba(16,24,40,.03);
+        border:1px solid rgba(16,24,40,.08);
+        border-radius:12px;
+        overflow:hidden;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        min-height:340px;
+      }
       #qrImg{max-width:100%; height:auto; display:none}
       .statsModalCard{width:min(980px,96vw)}
-      .statsCards{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:8px}
-      .statsMiniCard{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:12px; padding:10px 12px}
+      .statsCards{
+        display:grid;
+        grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+        gap:10px;
+        margin-top:8px;
+      }
+      .statsMiniCard{
+        background:rgba(16,24,40,.03);
+        border:1px solid rgba(16,24,40,.08);
+        border-radius:12px;
+        padding:10px 12px;
+        color:#0f172a;
+      }
+      .statsMiniCard .cellMain,
+      .statsMiniCard .small{
+        color:#0f172a !important;
+      }
       .statsTableWrap{max-height:48vh; overflow:auto; padding-bottom:0}
-      .statsTable{width:100%; table-layout:fixed}
+      .statsTable{
+        width:100%;
+        table-layout:fixed;
+        color:#0f172a;
+      }
+      .statsTable th,
+      .statsTable td{
+        color:#0f172a;
+      }
       .statsTable th:nth-child(1){width:190px}
       .statsTable th:nth-child(2), .statsTable th:nth-child(3), .statsTable th:nth-child(4){width:90px}
       .statsTable th:nth-child(5){width:180px}
