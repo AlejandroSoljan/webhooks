@@ -5082,7 +5082,7 @@ app.post("/api/products", async (req, res) => {
     const now = new Date();
     const tenant = resolveTenantId(req);
     const doc = { tenantId: (tenant || TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, tag, active, createdAt: now, updatedAt: now };
-    if (qty !== null) doc.cantidad = qty;
+     if (qty !== null) doc.cantidad = qty;
     if (imp !== null) doc.importe = imp;
     const ins = await db.collection("products").insertOne(doc);
     res.json({ ok: true, _id: String(ins.insertedId) });
@@ -5202,6 +5202,7 @@ app.get("/productos", async (req, res) => {
         <td class="col-desc"><input class="descripcion" type="text" value="${escAttr(p.descripcion || "")}" placeholder="Descripción del producto" /></td>
         <td class="col-price"><input class="importe" type="number" step="0.01" value="${escAttr(p.importe ?? "")}" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" value="${escAttr(p.cantidad ?? "")}" placeholder="0" /></td>
+        <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación...">${escText(p.observacion || "")}</textarea></td>
         <td class="col-tag"><textarea class="tag" placeholder="Tag / etiqueta / agrupador...">${escText(p.tag || "")}</textarea></td>
         <td class="col-active">
           <label class="switch">
@@ -5356,7 +5357,7 @@ app.get("/productos", async (req, res) => {
                   <th class="col-actions">Acciones</th>
                 </tr>
               </thead>
-             <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="7">No hay productos para mostrar.</td></tr>`}</tbody>
+              <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="7">No hay productos para mostrar.</td></tr>`}</tbody>
             </table>
           </div>
         </section>
@@ -5366,6 +5367,7 @@ app.get("/productos", async (req, res) => {
         <td class="col-desc"><input class="descripcion" type="text" placeholder="Descripción del producto" /></td>
         <td class="col-price"><input class="importe" type="number" step="0.01" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" placeholder="0" /></td>
+        <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación..."></textarea></td>
         <td class="col-tag"><textarea class="tag" placeholder="Tag / etiqueta / agrupador..."></textarea></td>
         <td class="col-active">
           <label class="switch">
