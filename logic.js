@@ -179,14 +179,18 @@ async function loadCatalogTextFromMongo(tenantId = DEFAULT_TENANT_ID) {
   for (const it of items) {
     const precio = (typeof it.importe === "number") ? it.importe : Number(it.importe || 0);
     const obs = (it.observacion || "").trim();
+    const tag = (it.tag || "").trim();
     const qtyNum = (it.cantidad === undefined || it.cantidad === null) ? null : Number(it.cantidad);
     const qtyPart =
       (qtyNum !== null && Number.isFinite(qtyNum))
         ? `. Cantidad Máxima: ${qtyNum}`
         : "";
     const base = `id ${i} - ${String(it.descripcion || "").trim()}. Precio: ${Number(precio || 0)}${qtyPart}`;
- 
-    lines.push(obs ? `${base}. Observaciones: ${obs}` : `${base}.`);
+    const extras = [];
+    if (obs) extras.push(`Observaciones: ${obs}`);
+    if (tag) extras.push(`TAG: ${tag}`);
+
+    lines.push(extras.length ? `${base}. ${extras.join(". ")}` : `${base}.`);
     i++;
   }
   const text = lines.length

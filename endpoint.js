@@ -5052,9 +5052,10 @@ app.get("/api/products", async (req, res) => {
 app.post("/api/products", async (req, res) => {
   try {
     const db = await getDb();
-    let { descripcion, importe, cantidad, observacion, active } = req.body || {};
+    let { descripcion, importe, cantidad, observacion, tag, active } = req.body || {};
     descripcion = String(descripcion || "").trim();
     observacion = String(observacion || "").trim();
+    tag = String(tag || "").trim();
     if (typeof active !== "boolean") active = !!active;
     let imp = null;
     if (typeof importe === "number") imp = importe;
@@ -5080,8 +5081,8 @@ app.post("/api/products", async (req, res) => {
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
     const now = new Date();
     const tenant = resolveTenantId(req);
-    const doc = { tenantId: (tenant || TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
-     if (qty !== null) doc.cantidad = qty;
+    const doc = { tenantId: (tenant || TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, tag, active, createdAt: now, updatedAt: now };
+    if (qty !== null) doc.cantidad = qty;
     if (imp !== null) doc.importe = imp;
     const ins = await db.collection("products").insertOne(doc);
     res.json({ ok: true, _id: String(ins.insertedId) });
@@ -5097,7 +5098,7 @@ app.put("/api/products/:id", async (req, res) => {
     const db = await getDb();
     const { id } = req.params;
     const upd = {};
-    ["descripcion","observacion","active","importe","cantidad"].forEach(k => {
+    ["descripcion","observacion","tag","active","importe","cantidad"].forEach(k => {
       if (req.body[k] !== undefined) upd[k] = req.body[k];
     });
     if (upd.importe !== undefined && typeof upd.importe === "string") {
@@ -5201,7 +5202,7 @@ app.get("/productos", async (req, res) => {
         <td class="col-desc"><input class="descripcion" type="text" value="${escAttr(p.descripcion || "")}" placeholder="Descripción del producto" /></td>
         <td class="col-price"><input class="importe" type="number" step="0.01" value="${escAttr(p.importe ?? "")}" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" value="${escAttr(p.cantidad ?? "")}" placeholder="0" /></td>
-        <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación...">${escText(p.observacion || "")}</textarea></td>
+        <td class="col-tag"><textarea class="tag" placeholder="Tag / etiqueta / agrupador...">${escText(p.tag || "")}</textarea></td>
         <td class="col-active">
           <label class="switch">
             <input class="active" type="checkbox" ${p.active !== false ? "checked" : ""} />
@@ -5271,7 +5272,8 @@ app.get("/productos", async (req, res) => {
         .col-desc{width:24%}
         .col-price{width:11%}
         .col-qty{width:10%}
-        .col-obs{width:27%}
+        .col-obs{width:23%}
+        .col-tag{width:16%}
         .col-active{width:8%;text-align:center}
         .col-actions{width:20%}
         input[type=text],input[type=number],textarea{
@@ -5297,9 +5299,10 @@ app.get("/productos", async (req, res) => {
           .col-desc{width:22%}
           .col-price{width:10%}
           .col-qty{width:9%}
-          .col-obs{width:25%}
+          .col-obs{width:21%}
+          .col-tag{width:16%}
           .col-active{width:8%}
-          .col-actions{width:26%}
+          .col-actions{width:24%}
           .actions-stack{grid-template-columns:1fr}
         }
         @media (max-width: 960px){
@@ -5348,11 +5351,12 @@ app.get("/productos", async (req, res) => {
                   <th class="col-price">Importe</th>
                   <th class="col-qty">Cantidad</th>
                   <th class="col-obs">Observaciones</th>
+                  <th class="col-tag">TAG</th>
                   <th class="col-active">Activo</th>
                   <th class="col-actions">Acciones</th>
                 </tr>
               </thead>
-              <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="6">No hay productos para mostrar.</td></tr>`}</tbody>
+             <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="7">No hay productos para mostrar.</td></tr>`}</tbody>
             </table>
           </div>
         </section>
@@ -5362,7 +5366,7 @@ app.get("/productos", async (req, res) => {
         <td class="col-desc"><input class="descripcion" type="text" placeholder="Descripción del producto" /></td>
         <td class="col-price"><input class="importe" type="number" step="0.01" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" placeholder="0" /></td>
-        <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación..."></textarea></td>
+        <td class="col-tag"><textarea class="tag" placeholder="Tag / etiqueta / agrupador..."></textarea></td>
         <td class="col-active">
           <label class="switch">
             <input class="active" type="checkbox" checked />
@@ -5396,6 +5400,7 @@ app.get("/productos", async (req, res) => {
           q('.importe',tr).value=(it && (typeof it.importe==='number' || it.importe)) ? it.importe : '';
           q('.cantidad',tr).value=(it && (typeof it.cantidad==='number' || it.cantidad)) ? it.cantidad : '';
           q('.observacion',tr).value=it && it.observacion ? it.observacion : '';
+          q('.tag',tr).value=it && it.tag ? it.tag : '';
           q('.active',tr).checked=!(it && it.active===false);
           q('.toggle',tr).innerHTML = '<span class="ic">' + (!(it && it.active===false) ? '⏸️' : '▶️') + '</span>';
         }
@@ -5412,6 +5417,7 @@ app.get("/productos", async (req, res) => {
             const haystack=[
               q('.descripcion',tr)?.value||'',
               q('.observacion',tr)?.value||'',
+              q('.tag',tr)?.value||'',
               q('.importe',tr)?.value||'',
               q('.cantidad',tr)?.value||''
             ].join(' ').toLowerCase();
@@ -5445,7 +5451,7 @@ app.get("/productos", async (req, res) => {
             if(!currentEmpty){
               const tr=document.createElement('tr');
               tr.className='empty-row';
-              tr.innerHTML='<td colspan="6">No hay productos para mostrar.</td>';
+              tr.innerHTML='<td colspan="7">No hay productos para mostrar.</td>';
               tb.appendChild(tr);
             }
           }else if(currentEmpty){
@@ -5477,6 +5483,7 @@ app.get("/productos", async (req, res) => {
             importe:q('.importe',tr).value.trim(),
             cantidad:q('.cantidad',tr).value.trim(),
             observacion:q('.observacion',tr).value.trim(),
+            tag:q('.tag',tr).value.trim(),
             active:q('.active',tr).checked
           };
           if(!payload.descripcion){ alert('Descripción requerida'); return; }
