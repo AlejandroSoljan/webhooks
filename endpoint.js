@@ -5270,13 +5270,13 @@ app.get("/productos", async (req, res) => {
         tbody td{padding:10px 8px;border-bottom:1px solid #edf2f7;vertical-align:top;background:#fff}
         tbody tr:hover td{background:#fbfdff}
         tbody tr:last-child td{border-bottom:none}
-        .col-desc{width:24%}
-        .col-price{width:11%}
-        .col-qty{width:10%}
-        .col-obs{width:23%}
+        .col-desc{width:22%}
+        .col-price{width:10%}
+        .col-qty{width:9%}
+        .col-obs{width:20%}
         .col-tag{width:16%}
-        .col-active{width:8%;text-align:center}
-        .col-actions{width:20%}
+        .col-active{width:7%;text-align:center}
+        .col-actions{width:16%}
         input[type=text],input[type=number],textarea{
           width:100%;border:1px solid var(--line-strong);border-radius:12px;background:#fff;padding:9px 10px;font-size:13px;color:var(--text);outline:none;transition:.18s ease
         }
@@ -5284,6 +5284,7 @@ app.get("/productos", async (req, res) => {
           border-color:#88a7d4;box-shadow:0 0 0 4px rgba(31,90,168,.08)
         }
         textarea{min-height:74px;resize:vertical;line-height:1.35}
+        .col-tag textarea{min-height:74px}
         input[type=number]{text-align:right}
         .switch{position:relative;display:inline-flex;align-items:center;width:50px;height:30px}
         .switch input{position:absolute;opacity:0;pointer-events:none}
@@ -5296,14 +5297,14 @@ app.get("/productos", async (req, res) => {
         .actions-stack .btn .ic{font-size:13px;line-height:1}
         .empty-row td{padding:32px 20px;text-align:center;color:var(--muted);font-weight:600}
         .row-draft td{background:#fffcf1}
-        @media (max-width: 1100px){
-          .col-desc{width:22%}
+        @media (max-width: 1280px){
+          .col-desc{width:21%}
           .col-price{width:10%}
           .col-qty{width:9%}
-          .col-obs{width:21%}
-          .col-tag{width:16%}
-          .col-active{width:8%}
-          .col-actions{width:24%}
+          .col-obs{width:19%}
+          .col-tag{width:15%}
+          .col-active{width:7%}
+          .col-actions{width:19%}
           .actions-stack{grid-template-columns:1fr}
         }
         @media (max-width: 960px){
@@ -5328,7 +5329,7 @@ app.get("/productos", async (req, res) => {
 
         <div class="toolbar">
           <label class="search">
-            <input id="searchInput" type="text" placeholder="Buscar por descripción, observación, importe o cantidad..." />
+            <input id="searchInput" type="text" placeholder="Buscar por descripción, observación, tag, importe o cantidad..." />
           </label>
           <div class="toolbar-actions">
             <a class="btn btn-soft" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a>

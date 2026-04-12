@@ -186,11 +186,11 @@ async function loadCatalogTextFromMongo(tenantId = DEFAULT_TENANT_ID) {
         ? `. Cantidad Máxima: ${qtyNum}`
         : "";
     const base = `id ${i} - ${String(it.descripcion || "").trim()}. Precio: ${Number(precio || 0)}${qtyPart}`;
-    const extras = [];
-    if (obs) extras.push(`Observaciones: ${obs}`);
-    if (tag) extras.push(`TAG: ${tag}`);
-
-    lines.push(extras.length ? `${base}. ${extras.join(". ")}` : `${base}.`);
+ 
+    const extra = [];
+    if (obs) extra.push(`Observaciones: ${obs}`);
+    if (tag) extra.push(`TAG: ${tag}`);
+    lines.push(extra.length ? `${base}. ${extra.join('. ')}` : `${base}.`);
     i++;
   }
   const text = lines.length
