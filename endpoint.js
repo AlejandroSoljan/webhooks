@@ -709,12 +709,13 @@ async function closeConversation(convId, status = "COMPLETED", extra = {}) {
 function isPedidoCompleto(p) {
   try {
     if (!p) return false;
-    const itemsOk   = Array.isArray(p.items) && p.items.length > 0;
-    const entregaOk = p.Entrega === 'retiro' || p.Entrega === 'domicilio';
-    const dirOk     = p.Entrega !== 'domicilio'
-      || (p.Domicilio && p.Domicilio.direccion && String(p.Domicilio.direccion).trim());
-    const fechaOk   = /^\d{4}-\d{2}-\d{2}$/.test(p.Fecha || "");
-    const horaOk    = /^\d{2}:\d{2}$/.test(p.Hora  || "");
+    const pedido = normalizePedidoDateTimeFields(cloneJsonSafe(p) || {});
+    const itemsOk   = Array.isArray(pedido.items) && pedido.items.length > 0;
+    const entregaOk = pedido.Entrega === 'retiro' || pedido.Entrega === 'domicilio';
+    const dirOk     = pedido.Entrega !== 'domicilio'
+      || (pedido.Domicilio && pedido.Domicilio.direccion && String(pedido.Domicilio.direccion).trim());
+    const fechaOk   = /^\d{4}-\d{2}-\d{2}$/.test(String(pedido.Fecha || ""));
+    const horaOk    = /^\d{2}:\d{2}$/.test(String(pedido.Hora || ""));
     return itemsOk && entregaOk && dirOk && fechaOk && horaOk;
   } catch {
     return false;
@@ -753,8 +754,9 @@ function validatePedidoSchedule(pedido, hoursCfg) {
   try {
     if (!pedido || !hoursCfg) return result;
 
-    const fecha = String(pedido.Fecha || "").trim();
-    const hora  = String(pedido.Hora  || "").trim();
+    const p = normalizePedidoDateTimeFields(cloneJsonSafe(pedido) || {});
+    const fecha = String(p.Fecha || "").trim();
+    const hora  = String(p.Hora || "").trim();
 
     // Si el formato no es el esperado, no forzamos nada (lo valida la lógica actual)
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return result;
@@ -1017,6 +1019,23 @@ function normalizeDomicilioObj(v) {
   return {};
 }
 
+function normalizePedidoDateTimeFields(pedido) {
+  const p = (pedido && typeof pedido === "object") ? pedido : {};
+
+  const fechaNew = typeof p.fecha_pedido === "string" ? p.fecha_pedido.trim() : "";
+  const fechaOld = typeof p.Fecha === "string" ? p.Fecha.trim() : "";
+  const horaNew = typeof p.hora_pedido === "string" ? p.hora_pedido.trim() : "";
+  const horaOld = typeof p.Hora === "string" ? p.Hora.trim() : "";
+
+  if (fechaNew) p.Fecha = fechaNew;
+  else if (fechaOld) p.fecha_pedido = fechaOld;
+
+  if (horaNew) p.Hora = horaNew;
+  else if (horaOld) p.hora_pedido = horaOld;
+
+  return p;
+}
+
 function mergePedidoState(prevPedido, nextPedido) {
   const prev = (prevPedido && typeof prevPedido === "object") ? cloneJsonSafe(prevPedido) : {};
   const next = (nextPedido && typeof nextPedido === "object") ? cloneJsonSafe(nextPedido) : {};
@@ -1042,7 +1061,7 @@ function mergePedidoState(prevPedido, nextPedido) {
   else if (isFilledValue(prev.total_pedido)) merged.total_pedido = prev.total_pedido;
   else merged.total_pedido = 0;
 
-  return merged;
+  return normalizePedidoDateTimeFields(merged);
 }
 
 async function loadLastPedidoSnapshot(tenantId, conversationId) {
@@ -1116,6 +1135,7 @@ function _extractPedidoSummaryData(pedido) {
     return { entregaLabel: "-", fechaEntrega: "-", horaEntrega: "-", direccion: "-" };
   }
 
+  pedido = normalizePedidoDateTimeFields(cloneJsonSafe(pedido) || {});
   const items = Array.isArray(pedido.items) ? pedido.items : [];
   const entregaRaw = String(pedido.Entrega || pedido.entrega || "").trim().toLowerCase();
   const envio = items.find(i => /env[ií]o/i.test(String(i?.descripcion || "")));
@@ -5052,10 +5072,9 @@ app.get("/api/products", async (req, res) => {
 app.post("/api/products", async (req, res) => {
   try {
     const db = await getDb();
-    let { descripcion, importe, cantidad, observacion, tag, active } = req.body || {};
+    let { descripcion, importe, cantidad, observacion, active } = req.body || {};
     descripcion = String(descripcion || "").trim();
     observacion = String(observacion || "").trim();
-    tag = String(tag || "").trim();
     if (typeof active !== "boolean") active = !!active;
     let imp = null;
     if (typeof importe === "number") imp = importe;
@@ -5081,7 +5100,7 @@ app.post("/api/products", async (req, res) => {
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
     const now = new Date();
     const tenant = resolveTenantId(req);
-    const doc = { tenantId: (tenant || TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, tag, active, createdAt: now, updatedAt: now };
+    const doc = { tenantId: (tenant || TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
      if (qty !== null) doc.cantidad = qty;
     if (imp !== null) doc.importe = imp;
     const ins = await db.collection("products").insertOne(doc);
@@ -5098,7 +5117,7 @@ app.put("/api/products/:id", async (req, res) => {
     const db = await getDb();
     const { id } = req.params;
     const upd = {};
-    ["descripcion","observacion","tag","active","importe","cantidad"].forEach(k => {
+    ["descripcion","observacion","active","importe","cantidad"].forEach(k => {
       if (req.body[k] !== undefined) upd[k] = req.body[k];
     });
     if (upd.importe !== undefined && typeof upd.importe === "string") {
@@ -5203,7 +5222,6 @@ app.get("/productos", async (req, res) => {
         <td class="col-price"><input class="importe" type="number" step="0.01" value="${escAttr(p.importe ?? "")}" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" value="${escAttr(p.cantidad ?? "")}" placeholder="0" /></td>
         <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación...">${escText(p.observacion || "")}</textarea></td>
-        <td class="col-tag"><textarea class="tag" placeholder="Tag / etiqueta / agrupador...">${escText(p.tag || "")}</textarea></td>
         <td class="col-active">
           <label class="switch">
             <input class="active" type="checkbox" ${p.active !== false ? "checked" : ""} />
@@ -5270,13 +5288,12 @@ app.get("/productos", async (req, res) => {
         tbody td{padding:10px 8px;border-bottom:1px solid #edf2f7;vertical-align:top;background:#fff}
         tbody tr:hover td{background:#fbfdff}
         tbody tr:last-child td{border-bottom:none}
-        .col-desc{width:22%}
-        .col-price{width:10%}
-        .col-qty{width:9%}
-        .col-obs{width:20%}
-        .col-tag{width:16%}
-        .col-active{width:7%;text-align:center}
-        .col-actions{width:16%}
+        .col-desc{width:24%}
+        .col-price{width:11%}
+        .col-qty{width:10%}
+        .col-obs{width:27%}
+        .col-active{width:8%;text-align:center}
+        .col-actions{width:20%}
         input[type=text],input[type=number],textarea{
           width:100%;border:1px solid var(--line-strong);border-radius:12px;background:#fff;padding:9px 10px;font-size:13px;color:var(--text);outline:none;transition:.18s ease
         }
@@ -5284,7 +5301,6 @@ app.get("/productos", async (req, res) => {
           border-color:#88a7d4;box-shadow:0 0 0 4px rgba(31,90,168,.08)
         }
         textarea{min-height:74px;resize:vertical;line-height:1.35}
-        .col-tag textarea{min-height:74px}
         input[type=number]{text-align:right}
         .switch{position:relative;display:inline-flex;align-items:center;width:50px;height:30px}
         .switch input{position:absolute;opacity:0;pointer-events:none}
@@ -5297,14 +5313,13 @@ app.get("/productos", async (req, res) => {
         .actions-stack .btn .ic{font-size:13px;line-height:1}
         .empty-row td{padding:32px 20px;text-align:center;color:var(--muted);font-weight:600}
         .row-draft td{background:#fffcf1}
-        @media (max-width: 1280px){
-          .col-desc{width:21%}
+        @media (max-width: 1100px){
+          .col-desc{width:22%}
           .col-price{width:10%}
           .col-qty{width:9%}
-          .col-obs{width:19%}
-          .col-tag{width:15%}
-          .col-active{width:7%}
-          .col-actions{width:19%}
+          .col-obs{width:25%}
+          .col-active{width:8%}
+          .col-actions{width:26%}
           .actions-stack{grid-template-columns:1fr}
         }
         @media (max-width: 960px){
@@ -5329,7 +5344,7 @@ app.get("/productos", async (req, res) => {
 
         <div class="toolbar">
           <label class="search">
-            <input id="searchInput" type="text" placeholder="Buscar por descripción, observación, tag, importe o cantidad..." />
+            <input id="searchInput" type="text" placeholder="Buscar por descripción, observación, importe o cantidad..." />
           </label>
           <div class="toolbar-actions">
             <a class="btn btn-soft" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a>
@@ -5353,12 +5368,11 @@ app.get("/productos", async (req, res) => {
                   <th class="col-price">Importe</th>
                   <th class="col-qty">Cantidad</th>
                   <th class="col-obs">Observaciones</th>
-                  <th class="col-tag">TAG</th>
                   <th class="col-active">Activo</th>
                   <th class="col-actions">Acciones</th>
                 </tr>
               </thead>
-              <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="7">No hay productos para mostrar.</td></tr>`}</tbody>
+              <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="6">No hay productos para mostrar.</td></tr>`}</tbody>
             </table>
           </div>
         </section>
@@ -5369,7 +5383,6 @@ app.get("/productos", async (req, res) => {
         <td class="col-price"><input class="importe" type="number" step="0.01" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" placeholder="0" /></td>
         <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación..."></textarea></td>
-        <td class="col-tag"><textarea class="tag" placeholder="Tag / etiqueta / agrupador..."></textarea></td>
         <td class="col-active">
           <label class="switch">
             <input class="active" type="checkbox" checked />
@@ -5403,7 +5416,6 @@ app.get("/productos", async (req, res) => {
           q('.importe',tr).value=(it && (typeof it.importe==='number' || it.importe)) ? it.importe : '';
           q('.cantidad',tr).value=(it && (typeof it.cantidad==='number' || it.cantidad)) ? it.cantidad : '';
           q('.observacion',tr).value=it && it.observacion ? it.observacion : '';
-          q('.tag',tr).value=it && it.tag ? it.tag : '';
           q('.active',tr).checked=!(it && it.active===false);
           q('.toggle',tr).innerHTML = '<span class="ic">' + (!(it && it.active===false) ? '⏸️' : '▶️') + '</span>';
         }
@@ -5420,7 +5432,6 @@ app.get("/productos", async (req, res) => {
             const haystack=[
               q('.descripcion',tr)?.value||'',
               q('.observacion',tr)?.value||'',
-              q('.tag',tr)?.value||'',
               q('.importe',tr)?.value||'',
               q('.cantidad',tr)?.value||''
             ].join(' ').toLowerCase();
@@ -5454,7 +5465,7 @@ app.get("/productos", async (req, res) => {
             if(!currentEmpty){
               const tr=document.createElement('tr');
               tr.className='empty-row';
-              tr.innerHTML='<td colspan="7">No hay productos para mostrar.</td>';
+              tr.innerHTML='<td colspan="6">No hay productos para mostrar.</td>';
               tb.appendChild(tr);
             }
           }else if(currentEmpty){
@@ -5486,7 +5497,6 @@ app.get("/productos", async (req, res) => {
             importe:q('.importe',tr).value.trim(),
             cantidad:q('.cantidad',tr).value.trim(),
             observacion:q('.observacion',tr).value.trim(),
-            tag:q('.tag',tr).value.trim(),
             active:q('.active',tr).checked
           };
           if(!payload.descripcion){ alert('Descripción requerida'); return; }
@@ -6796,20 +6806,9 @@ if (debounceMs > 0 && msg.type === "text") {
 
     // ✅ Validar día y horario del pedido contra los horarios configurados del local
     try {
-      // Normalizar campos de fecha/hora desde el JSON del modelo.
-      // El asistente devuelve fecha_pedido / hora_pedido, pero la validación
-      // trabaja con Pedido.Fecha / Pedido.Hora.
+      // Normalizar fecha/hora usando fecha_pedido/hora_pedido como fuente de verdad.
       if (pedido && typeof pedido === "object") {
-        if (!pedido.Fecha &&
-            typeof pedido.fecha_pedido === "string" &&
-            pedido.fecha_pedido.trim()) {
-          pedido.Fecha = pedido.fecha_pedido.trim();
-        }
-        if (!pedido.Hora &&
-            typeof pedido.hora_pedido === "string" &&
-            pedido.hora_pedido.trim()) {
-          pedido.Hora = pedido.hora_pedido.trim();
-        }
+        pedido = normalizePedidoDateTimeFields(pedido);
       }
 
       if (pedido && typeof pedido === "object" && pedido.Fecha && pedido.Hora) {

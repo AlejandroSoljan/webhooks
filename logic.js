@@ -179,7 +179,6 @@ async function loadCatalogTextFromMongo(tenantId = DEFAULT_TENANT_ID) {
   for (const it of items) {
     const precio = (typeof it.importe === "number") ? it.importe : Number(it.importe || 0);
     const obs = (it.observacion || "").trim();
-    const tag = (it.tag || "").trim();
     const qtyNum = (it.cantidad === undefined || it.cantidad === null) ? null : Number(it.cantidad);
     const qtyPart =
       (qtyNum !== null && Number.isFinite(qtyNum))
@@ -187,10 +186,7 @@ async function loadCatalogTextFromMongo(tenantId = DEFAULT_TENANT_ID) {
         : "";
     const base = `id ${i} - ${String(it.descripcion || "").trim()}. Precio: ${Number(precio || 0)}${qtyPart}`;
  
-    const extra = [];
-    if (obs) extra.push(`Observaciones: ${obs}`);
-    if (tag) extra.push(`TAG: ${tag}`);
-    lines.push(extra.length ? `${base}. ${extra.join('. ')}` : `${base}.`);
+    lines.push(obs ? `${base}. Observaciones: ${obs}` : `${base}.`);
     i++;
   }
   const text = lines.length
@@ -660,7 +656,7 @@ function hasContext(pedido) {
   if (!pedido) return false;
   const hasItems =
     Array.isArray(pedido.items) && pedido.items.filter(Boolean).length > 0;
-  const hasWhen = Boolean(pedido.Fecha) || Boolean(pedido.Hora);
+  const hasWhen = Boolean(pedido.fecha_pedido || pedido.Fecha) || Boolean(pedido.hora_pedido || pedido.Hora);
   return hasItems || hasWhen;
 }
 
