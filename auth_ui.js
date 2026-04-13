@@ -2040,9 +2040,13 @@ function wwebSessionsAdminPage({ user }) {
         var stHtml = st ? ('<div class="small" style="margin-top:4px; opacity:.9">estado: ' + escapeHtml(st) + '</div>') : '';
         var qrAgeHtml = lock.lastQrAt ? ('<div class="small" style="margin-top:4px; opacity:.85">QR: ' + escapeHtml(String(lock.lastQrAt)) + '</div>') : '';
 
+        var versionLabel = String(lock.runtimeVersion || '').trim();
+        var desiredTagLabel = String(lock.desiredTag || '').trim();
         var sessionHtml = ''
           + '<div class="cellMain">' + escapeHtml(tenantId) + '</div>'
-          + '<div class="cellSub">' + escapeHtml(numero) + '</div>';
+          + '<div class="cellSub">' + escapeHtml(numero) + '</div>'
+          + '<div class="cellSub"><b>Versión:</b> ' + escapeHtml(versionLabel || '-') + '</div>'
+          + '<div class="cellSub"><b>TAG deseado:</b> ' + escapeHtml(desiredTagLabel || '-') + '</div>';
 
         var ownerHtml = ''
           + '<div class="cellMain">' + escapeHtml(host || '-') + '</div>'
@@ -2094,7 +2098,9 @@ function wwebSessionsAdminPage({ user }) {
           lock && lock.tenantId || '',
           lock && (lock.numero || lock.number || lock.phone) || '',
           lock && lock.host || '',
-          lock && (lock.holderId || lock.instanceId) || ''
+          lock && (lock.holderId || lock.instanceId) || '',
+          lock && lock.runtimeVersion || '',
+          lock && lock.desiredTag || ''
         ].join(' ').toLowerCase();
       }
 
@@ -3099,12 +3105,13 @@ function mountAuthRoutes(app) {
                 <th>Tenant</th>
                 <th>Empresa</th>
                 <th>Número</th>
+                <th>TAG deseado</th>
                 <th>Updated</th>
                 <th style="width:1%"></th>
               </tr>
             </thead>
             <tbody id="tc_list">
-              <tr><td colspan="5" class="small">Cargando...</td></tr>
+              <tr><td colspan="6" class="small">Cargando...</td></tr>
             </tbody>
           </table>
         </div>
@@ -3141,6 +3148,7 @@ function mountAuthRoutes(app) {
               <div class="actions" style="margin-top:12px">
                 <button class="btn" type="submit" id="tc_btnSave">Guardar</button>
                 <button class="btn2" type="button" id="tc_btnAdd">Agregar campo</button>
+                <button class="btn2" type="button" id="tc_btnAddTag">Agregar TAG versión</button>
                 <button class="btn2" type="button" id="tc_btnClear">Limpiar</button>
                 ${isSuper ? `<button class="btn2 btnDanger" type="button" id="tc_btnDelete">Eliminar</button>` : ``}
               </div>
@@ -3161,6 +3169,7 @@ function mountAuthRoutes(app) {
         const listEl = document.getElementById('tc_list');
         const metaEl = document.getElementById('tc_meta');
         const btnAdd = document.getElementById('tc_btnAdd');
+        const btnAddTag = document.getElementById('tc_btnAddTag');
         const btnClear = document.getElementById('tc_btnClear');
         const btnReload = document.getElementById('tc_btnReload');
         const btnNew = document.getElementById('tc_btnNew');
@@ -3216,6 +3225,26 @@ function mountAuthRoutes(app) {
             '<td><button class="btn2" type="button" data-rm>✕</button></td>';
           tr.querySelector('[data-rm]').addEventListener('click', ()=> tr.remove());
           fieldsEl.appendChild(tr);
+          return tr;
+        }
+
+        function findFieldRow(fieldName){
+          const want = String(fieldName || '').trim().toLowerCase();
+          return Array.from(fieldsEl.querySelectorAll('tr')).find(tr => {
+            const k = String(tr.querySelector('[data-k]')?.value || '').trim().toLowerCase();
+            return k === want;
+          }) || null;
+        }
+
+        function ensureFieldRow(fieldName, value){
+          let row = findFieldRow(fieldName);
+          if (!row) row = addRow(fieldName, value);
+          const keyInput = row.querySelector('[data-k]');
+          const valInput = row.querySelector('[data-v]');
+          if (keyInput) keyInput.value = fieldName;
+          if (valInput && (valInput.value === '' || String(valInput.value).trim() === '')) valInput.value = value || '';
+          try { valInput && valInput.focus(); } catch {}
+          return row;
         }
 
         function setFieldsFromDoc(doc){
@@ -3302,12 +3331,13 @@ function mountAuthRoutes(app) {
                       _id: j.item._id,
                       nom_emp: (j.item.data && j.item.data.nom_emp) || '',
                       numero: (j.item.data && j.item.data.numero) || '',
+                      release_tag: (j.item.data && (j.item.data.release_tag || j.item.data.version_tag || j.item.data.target_tag || '')) || '',
                       createdAt: j.item.createdAt || null,
                       updatedAt: j.item.updatedAt || null
                     }]
                   : []);
             if (!items.length) {
-              listEl.innerHTML = '<tr><td colspan="5" class="small">No hay registros.</td></tr>';
+              listEl.innerHTML = '<tr><td colspan="6" class="small">No hay registros.</td></tr>';
               return;
             }
             listEl.innerHTML = items.map(it => {
@@ -3315,6 +3345,7 @@ function mountAuthRoutes(app) {
                 '<td><span class="pill">'+esc(it._id||'')+'</span></td>'+
                 '<td>'+esc(it.nom_emp||'')+'</td>'+
                 '<td>'+esc(it.numero||'')+'</td>'+
+                '<td><span class="pill">'+esc(it.release_tag || it.version_tag || it.target_tag || '-')+'</span></td>'+
                 '<td class="small">'+esc(it.updatedAt||it.createdAt||'')+'</td>'+
                 '<td><button class="btn2" type="button" data-edit="'+esc(it._id||'')+'">Editar</button></td>'+
               '</tr>';
@@ -3330,7 +3361,7 @@ function mountAuthRoutes(app) {
             });
           } catch (e) {
             console.error('[tenant_config] list error:', e);
-            listEl.innerHTML = '<tr><td colspan="5" class="small">Error: '+esc(e?.message||String(e))+'</td></tr>';
+            listEl.innerHTML = '<tr><td colspan="6" class="small">Error: '+esc(e?.message||String(e))+'</td></tr>';
           }
         }
 
@@ -3368,6 +3399,7 @@ function mountAuthRoutes(app) {
         }
 
         btnAdd.addEventListener('click', ()=> addRow('', ''));
+        if (btnAddTag) btnAddTag.addEventListener('click', ()=> ensureFieldRow('release_tag', 'v4.00.16'));
         btnClear.addEventListener('click', ()=> { setMsg('', ''); renderMeta(null); setFieldsFromDoc({}); currentId = null; });
         btnReload.addEventListener('click', async ()=> { await loadList(); });
         if (btnNew) btnNew.addEventListener('click', ()=> {
@@ -3498,7 +3530,7 @@ function mountAuthRoutes(app) {
 
       // listado (superadmin)
       const items = await col
-        .find({}, { projection: { _id: 1, nom_emp: 1, numero: 1, createdAt: 1, updatedAt: 1 } })
+        .find({}, { projection: { _id: 1, nom_emp: 1, numero: 1, release_tag: 1, version_tag: 1, target_tag: 1, createdAt: 1, updatedAt: 1 } })
         .sort({ _id: 1 })
         .limit(500)
         .toArray();
@@ -3906,6 +3938,9 @@ function mountAuthRoutes(app) {
           lastMessageAt: stats.lastMessageAt || null,
           inactivityMs,
           inactivityLabel: inactivityMs == null ? '' : wwebHumanizeMs(inactivityMs),
+          runtimeVersion: l.runtimeVersion || l.currentVersion || '',
+          desiredTag: l.desiredTag || l.targetTag || '',
+          autoUpdateSource: l.autoUpdateSource || '',
         };
       }).sort((a, b) => {
         const ta = String(a?.tenantId || '').toLowerCase();
