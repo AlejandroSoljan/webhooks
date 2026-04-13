@@ -3130,6 +3130,17 @@ function mountAuthRoutes(app) {
             <form id="tc_form">
               <label class="small">TenantId</label>
               <input class="inp" id="tc_tenant" name="tenantId" value="${htmlEscape(tenantId)}" ${isSuper ? "" : "readonly"} placeholder="default"/>
+              ${isSuper ? `
+              <div id="tc_copyWrap" style="margin-top:10px">
+                <label class="small">Copiar configuración desde</label>
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+                  <select class="inp" id="tc_copyFrom" style="flex:1 1 280px">
+                    <option value="">Seleccionar tenant…</option>
+                  </select>
+                  <button class="btn2" type="button" id="tc_btnCopy">Copiar</button>
+                </div>
+                <div class="small" style="margin-top:6px">Carga los campos del tenant seleccionado para crear uno nuevo o reutilizarlos en el actual.</div>
+              </div>` : ``}
 
               <div class="small" style="margin-top:10px; color:#64748b">Campos</div>
               <div style="overflow:auto; border:1px solid rgba(148,163,184,.35); border-radius:12px">
@@ -3174,12 +3185,15 @@ function mountAuthRoutes(app) {
         const btnReload = document.getElementById('tc_btnReload');
         const btnNew = document.getElementById('tc_btnNew');
         const btnDelete = document.getElementById('tc_btnDelete');
+        const copyFromEl = document.getElementById('tc_copyFrom');
+        const btnCopy = document.getElementById('tc_btnCopy');
         const modalBackdrop = document.getElementById('tc_modalBackdrop');
         const btnCloseModal = document.getElementById('tc_btnCloseModal');
         const modalTitle = document.getElementById('tc_modalTitle');
 
         let currentId = null;
         let currentDocMeta = null;
+        let tenantListCache = [];
 
         function esc(s){
           return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -3252,6 +3266,32 @@ function mountAuthRoutes(app) {
           const entries = Object.entries(doc || {});
           if (!entries.length) addRow('', '');
           for (const [k,v] of entries) addRow(k, normalizeValueForInput(v));
+        }
+
+        function renderCopyOptions(items){
+          if (!copyFromEl) return;
+          const currentTenant = String(tenantEl && tenantEl.value || '').trim();
+          const opts = ['<option value="">Seleccionar tenant…</option>']
+            .concat((Array.isArray(items) ? items : []).map(function(it){
+              const id = String(it && it._id || '').trim();
+              if (!id) return '';
+              const disabled = (currentTenant && id === currentTenant) ? ' disabled' : '';
+              const company = String(it && it.nom_emp || '').trim();
+              const label = company ? (id + ' · ' + company) : id;
+              return '<option value="' + esc(id) + '"' + disabled + '>' + esc(label) + '</option>';
+            }).filter(Boolean));
+          copyFromEl.innerHTML = opts.join('');
+        }
+
+        async function copyFromTenant(sourceTenantId){
+          const sourceId = String(sourceTenantId || '').trim();
+          if (!sourceId) throw new Error('Seleccioná un tenant para copiar.');
+          const j = await apiGet(sourceId);
+          const doc = j && j.item ? j.item : null;
+          if (!doc) throw new Error('No existe configuración para el tenant origen.');
+          setFieldsFromDoc(doc.data || {});
+          renderMeta({ createdAt: doc.createdAt, updatedAt: doc.updatedAt });
+          return doc;
         }
 
         function collectDoc(){
@@ -3336,6 +3376,8 @@ function mountAuthRoutes(app) {
                       updatedAt: j.item.updatedAt || null
                     }]
                   : []);
+            tenantListCache = Array.isArray(items) ? items.slice() : [];
+            renderCopyOptions(tenantListCache);
             if (!items.length) {
               listEl.innerHTML = '<tr><td colspan="6" class="small">No hay registros.</td></tr>';
               return;
@@ -3382,25 +3424,41 @@ function mountAuthRoutes(app) {
             if (!doc) {
               renderMeta(null);
               setFieldsFromDoc({});
+              renderCopyOptions(tenantListCache);
               if (openAfterLoad) openModal('Nuevo tenant');
               setMsg('err', 'No existe configuración para ese tenant. Podés crearla con Guardar.');
               return;
             }
             renderMeta({ createdAt: doc.createdAt, updatedAt: doc.updatedAt });
             setFieldsFromDoc(doc.data || {});
+            renderCopyOptions(tenantListCache);
             if (openAfterLoad) openModal('Editar tenant · ' + tid);
           } catch (e) {
             console.error('[tenant_config] get error:', e);
             setMsg('err', e?.message || String(e));
             setFieldsFromDoc({});
             renderMeta(null);
+            renderCopyOptions(tenantListCache);
             if (openAfterLoad) openModal('Nuevo tenant');
           }
         }
 
         btnAdd.addEventListener('click', ()=> addRow('', ''));
         if (btnAddTag) btnAddTag.addEventListener('click', ()=> ensureFieldRow('release_tag', 'v4.00.16'));
-        btnClear.addEventListener('click', ()=> { setMsg('', ''); renderMeta(null); setFieldsFromDoc({}); currentId = null; });
+        if (btnCopy && copyFromEl) {
+          btnCopy.addEventListener('click', async ()=> {
+            try {
+              setMsg('', '');
+              const sourceId = String(copyFromEl.value || '').trim();
+              if (!sourceId) throw new Error('Seleccioná un tenant para copiar.');
+              await copyFromTenant(sourceId);
+              setMsg('ok', 'Configuración copiada desde ' + sourceId + '.');
+            } catch (e) {
+              setMsg('err', e?.message || String(e));
+            }
+          });
+        }
+        btnClear.addEventListener('click', ()=> { setMsg('', ''); renderMeta(null); setFieldsFromDoc({}); currentId = null; renderCopyOptions(tenantListCache); });
         btnReload.addEventListener('click', async ()=> { await loadList(); });
         if (btnNew) btnNew.addEventListener('click', ()=> {
           setMsg('', '');
@@ -3409,6 +3467,7 @@ function mountAuthRoutes(app) {
           if(isSuper) tenantEl.value = '';
           else tenantEl.value = ${JSON.stringify(tenantId)};
           setFieldsFromDoc({});
+          renderCopyOptions(tenantListCache);
           openModal('Nuevo tenant');
         });
 
