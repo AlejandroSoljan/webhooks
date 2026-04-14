@@ -1119,15 +1119,22 @@ function normalizeDefaultPage(userLike, desiredHref) {
   return match ? match.href : "/app";
 }
 
+function getDefaultPageChoices(userLike) {
+  return getLandingItemsForUser(userLike).map((it) => ({
+    ...it,
+    title: it.key === "users" ? "Sesiones de usuarios" : it.title,
+  }));
+}
+
 function getDefaultPageTitle(userLike, href) {
   const safeHref = normalizeDefaultPage(userLike, href);
-  const items = getLandingItemsForUser(userLike);
+  const items = getDefaultPageChoices(userLike);
   const match = items.find((it) => it.href === safeHref);
   return match ? match.title : "Inicio";
 }
 
 function defaultPageOptionsHtml(userLike, selectedHref) {
-  const items = getLandingItemsForUser(userLike);
+  const items = getDefaultPageChoices(userLike);
   const safeSelected = normalizeDefaultPage(userLike, selectedHref || "/app");
   return items
     .map((it) => `<option value="${htmlEscape(it.href)}" ${it.href === safeSelected ? "selected" : ""}>${htmlEscape(it.title)}</option>`)
@@ -1373,21 +1380,10 @@ function appMenuPage({ user, routes }) {
 }
 
 function usersAdminPage({ user, users, msg, err }) {
-  const defaultCreatePages = ACCESS_PAGES.filter((p) => p.key !== "users").map((p) => p.key);
-  const createAccessCheckboxes = ACCESS_PAGES.filter((p) => p.key !== "users")
-    .map(
-      (p) => `<label class="small" style="display:inline-flex;align-items:center;gap:6px">
-      <input type="checkbox" name="allowedPages" value="${p.key}" ${defaultCreatePages.includes(p.key) ? "checked" : ""}/>
-      ${htmlEscape(p.title)}
-    </label>`
-    )
-    .join("");
-
-  const message = msg ? `<div class="msg">${htmlEscape(msg)}</div>` : "";
-  const error = err ? `<div class="msg err">${htmlEscape(err)}</div>` : "";
-
-  const isSuper = String(user?.role || "") === "superadmin";
+  const isSuper = String(user?.role || "").toLowerCase() === "superadmin";
   const myTenant = String(user?.tenantId || "default");
+  const createEditablePages = ACCESS_PAGES.filter((p) => (isSuper ? true : p.key !== "users"));
+  const defaultCreatePages = createEditablePages.filter((p) => p.key !== "users").map((p) => p.key);
 
   const roleOptionsForCreate = isSuper
     ? `<option value="user">user</option><option value="admin">admin</option><option value="superadmin">superadmin</option>`
@@ -1397,206 +1393,482 @@ function usersAdminPage({ user, users, msg, err }) {
     ? `<input name="tenantId" required placeholder="default"/>`
     : `<input name="tenantId" required value="${htmlEscape(myTenant)}" readonly/>`;
 
+  const createAccessCheckboxes = createEditablePages
+    .map((p) => `<label class="small usersPermTag">
+      <input type="checkbox" name="allowedPages" value="${p.key}" ${defaultCreatePages.includes(p.key) ? "checked" : ""}/>
+      <span>${htmlEscape(p.title)}</span>
+    </label>`)
+    .join("");
+
   const defaultCreateUserLike = {
     role: "user",
     tenantId: myTenant,
     allowedPages: defaultCreatePages,
     defaultPage: "/app",
   };
-  const createDefaultPageOptions = defaultPageOptionsHtml(defaultCreateUserLike, "/app");
 
-  const rows = (users || [])
-    .map((u) => {
-      const id = String(u._id);
-      const username = String(u.username || "");
-      const tenantId = String(u.tenantId || "");
-      const role = String(u.role || "user");
-      const locked = !!u.isLocked;
-      const isSelf = String(user?.uid) === id;
+  const safeUsers = Array.isArray(users) ? users : [];
+  const userItems = safeUsers.map((u) => {
+    const id = String(u?._id || "");
+    const username = String(u?.username || "");
+    const tenantId = String(u?.tenantId || "");
+    const role = String(u?.role || "user");
+    const locked = !!u?.isLocked;
+    const isSelf = String(user?.uid || "") === id;
+    const hasAllowedPagesField = Object.prototype.hasOwnProperty.call(u || {}, "allowedPages");
+    const currentPages = Array.isArray(u?.allowedPages)
+      ? u.allowedPages
+      : hasAllowedPagesField
+        ? []
+        : ACCESS_PAGES.map((p) => p.key);
+    const accessLabel = !hasAllowedPagesField
+      ? "Completo (legacy)"
+      : currentPages.length
+        ? currentPages.map((k) => {
+            const def = ACCESS_PAGES.find((p) => p.key === k);
+            return def ? (def.key === "users" ? "Sesiones de usuarios" : def.title) : k;
+          }).join(", ")
+        : "Sin acceso";
 
-      const canEditTenant = isSuper;
-      const canEditRole = isSuper;
-      const canEditLock = !isSelf;
+    const targetUserLike = {
+      role,
+      tenantId,
+      allowedPages: currentPages,
+      defaultPage: String(u?.defaultPage || "/app"),
+    };
 
-      // ===== Accesos (label + checkboxes) =====
-      const hasAllowedPagesField = Object.prototype.hasOwnProperty.call(u, "allowedPages");
-      const currentPages = Array.isArray(u.allowedPages)
-        ? u.allowedPages
-        : hasAllowedPagesField
-          ? []
-          : ACCESS_PAGES.map((p) => p.key); // legacy => completo
+    return {
+      id,
+      username,
+      tenantId,
+      role,
+      locked,
+      isSelf,
+      canEditTenant: isSuper,
+      canEditRole: isSuper,
+      canEditLock: !isSelf,
+      createdAt: u?.createdAt || null,
+      updatedAt: u?.updatedAt || null,
+      currentPages,
+      accessLabel,
+      defaultPage: String(u?.defaultPage || "/app"),
+      defaultPageTitle: getDefaultPageTitle(targetUserLike, String(u?.defaultPage || "/app")),
+    };
+  });
 
-      const accessLabel = !hasAllowedPagesField
-        ? "Completo (legacy)"
-        : currentPages.length
-          ? currentPages.join(", ")
-          : "Sin acceso";
+  const rows = userItems.map((u) => `
+    <tr>
+      <td>
+        <div style="font-weight:700">${htmlEscape(u.username)}</div>
+        <div class="small">${htmlEscape(u.id)}</div>
+      </td>
+      <td>${htmlEscape(u.tenantId || "-")}</td>
+      <td>${htmlEscape(u.role)}</td>
+      <td><div class="small" style="color:#111827">${htmlEscape(u.accessLabel)}</div></td>
+      <td>${htmlEscape(u.defaultPageTitle)}</td>
+      <td>${u.locked ? "Bloqueado" : "Activo"}</td>
+      <td class="small">${htmlEscape(String(u.updatedAt || u.createdAt || ""))}</td>
+      <td class="actions"><button class="btn2 btnOk" type="button" data-user-edit="${htmlEscape(u.id)}">Editar</button></td>
+    </tr>
+  `).join("");
 
-      const editablePages = ACCESS_PAGES.filter((p) => (isSuper ? true : p.key !== "users"));
-      const accessCheckboxes = editablePages
-        .map((p) => {
-          const checked = currentPages.includes(p.key) ? "checked" : "";
-          return `<label class="small" style="display:inline-flex;align-items:center;gap:6px">
-            <input type="checkbox" name="allowedPages" value="${p.key}" ${checked}/>
-            ${htmlEscape(p.title)}
-          </label>`;
-        })
-        .join("");
-
-      const targetUserLike = { role, tenantId, allowedPages: currentPages, defaultPage: String(u.defaultPage || "/app") };
-      const defaultPageTitle = getDefaultPageTitle(targetUserLike, targetUserLike.defaultPage);
-      const defaultPageSelect = `<select name="defaultPage" style="width:180px; display:inline-block; margin-right:6px">${defaultPageOptionsHtml(targetUserLike, targetUserLike.defaultPage)}</select>`;
-
-      const roleSelect = (() => {
-        const opts = isSuper ? ["user", "admin", "superadmin"] : ["user", "admin"];
-        const options = opts.map((r) => `<option value="${r}" ${r === role ? "selected" : ""}>${r}</option>`).join("");
-        const disabled = !canEditRole ? "disabled" : "";
-        return `<select name="role" ${disabled} style="width:120px; display:inline-block; margin-right:6px">${options}</select>`;
-      })();
-
-      const tenantInput = canEditTenant
-        ? `<input name="tenantId" value="${htmlEscape(tenantId)}" style="width:140px; display:inline-block; margin-right:6px" />`
-        : `<input name="tenantId" value="${htmlEscape(tenantId)}" readonly style="width:140px; display:inline-block; margin-right:6px" />`;
-
-      const lockToggle = canEditLock
-        ? `<label class="small" style="display:inline-flex; align-items:center; gap:6px; margin-right:8px">
-             <input type="checkbox" name="isLocked" value="1" ${locked ? "checked" : ""}/>
-             Bloqueado
-           </label>`
-        : `<span class="small" style="margin-right:8px">${locked ? "Bloqueado" : "Activo"} (vos)</span>`;
-
-      const saveDisabled = isSelf ? "disabled" : "";
-
-      return `
-      <tr>
-        <td>
-          <strong>${htmlEscape(username)}</strong>
-          <div class="small">${htmlEscape(id)}</div>
-        </td>
-        <td>${htmlEscape(tenantId)}</td>
-        <td>${htmlEscape(role)}</td>
-        <td>
-          <div class="small" style="color:#111827">${htmlEscape(accessLabel)}</div>
-          <div class="small" style="margin-top:4px">Inicio: ${htmlEscape(defaultPageTitle)}</div>
-        </td>
-        <td>${locked ? "Bloqueado" : "Activo"}</td>
-        <td class="actions wa-actions-cell">
-          <form method="POST" action="/admin/users/update" style="margin:0 0 8px 0">
-            <input type="hidden" name="userId" value="${htmlEscape(id)}"/>
-            ${tenantInput}
-            ${roleSelect}
-            ${lockToggle}
-            <div style="margin:8px 0 10px; display:flex; flex-wrap:wrap; gap:10px">
-              ${accessCheckboxes}
-            </div>
-            <div style="margin:8px 0 10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap">
-              <label class="small" style="display:inline-flex; align-items:center; gap:6px">Inicio al login</label>
-              ${defaultPageSelect}
-            </div>
-            <button class="btn2 btnOk" type="submit" ${saveDisabled}>Guardar</button>
-            ${isSelf ? `<div class="small" style="margin-top:6px">No se permite cambiar tu rol/tenant/bloqueo desde acá.</div>` : ``}
-          </form>
-
-          <form method="POST" action="/admin/users/reset-password" style="margin:0 0 8px 0">
-            <input type="hidden" name="userId" value="${htmlEscape(id)}"/>
-            <input name="newPassword" placeholder="Nueva contraseña" required style="width:190px; display:inline-block; margin-right:6px"/>
-            <button class="btn2 btnOk" type="submit">Reset</button>
-          </form>
-
-          <form method="POST" action="/admin/users/delete" style="margin:0" onsubmit="return confirm('¿Eliminar usuario ${htmlEscape(username)}?')">
-            <input type="hidden" name="userId" value="${htmlEscape(id)}"/>
-            <button class="btn2 btnDanger" type="submit" ${isSelf ? "disabled" : ""}>Eliminar</button>
-          </form>
-        </td>
-      </tr>`;
-    })
-    .join("");
+  const message = msg ? `<div class="msg ok">${htmlEscape(msg)}</div>` : "";
+  const error = err ? `<div class="msg err">${htmlEscape(err)}</div>` : "";
 
   return appShell({
     title: "Usuarios · Asisto",
     user,
     active: "users",
     main: `
-    <div class="app appWide">
-      <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px">
+    <style>
+      .usersShell{display:flex; flex-direction:column; gap:14px;}
+      .usersToolbar{display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap;}
+      .usersToolbarActions{display:flex; gap:8px; flex-wrap:wrap; align-items:center;}
+      .usersTableWrap{overflow:auto;}
+      .usersPermGrid{display:flex; flex-wrap:wrap; gap:10px;}
+      .usersPermTag{display:inline-flex;align-items:center;gap:8px;padding:8px 10px;border-radius:999px;background:#f8fafc;border:1px solid rgba(148,163,184,.28);color:#0f172a;}
+      .usersPermTag input{width:auto; margin:0;}
+      .usersInfoGrid{display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:12px;}
+      .usersFieldRow{display:flex;flex-direction:column;gap:6px;}
+      .usersFieldRow label{font-size:13px;color:#475467;margin:0;}
+      .usersFieldRow input,.usersFieldRow select{width:100%;}
+      .usersHint{margin-top:6px;padding:10px 12px;border-radius:12px;background:#f8fafc;border:1px solid rgba(148,163,184,.2);}
+      .usersModal{position:fixed; inset:0; z-index:80; display:flex; align-items:center; justify-content:center; padding:16px;}
+      .usersModal[hidden]{display:none !important;}
+      .usersModalBackdrop{position:absolute; inset:0; background:rgba(0,0,0,.55);}
+      .usersModalCard{position:relative;width:min(820px, 96vw);max-height:calc(100vh - 32px);overflow:auto;background:#fff;color:#0b1726;border-radius:18px;padding:18px;box-shadow:0 20px 60px rgba(0,0,0,.35);}
+      .usersModalHeader{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:14px;}
+      .usersModalTitle{margin:0; font-size:22px;}
+      .usersModalFooter{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:18px;flex-wrap:wrap;}
+      .usersDangerZone{margin-top:14px;padding-top:14px;border-top:1px solid rgba(148,163,184,.24);display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;justify-content:space-between;}
+      body.usersModalOpen{overflow:hidden;}
+      @media (max-width: 820px){
+        .usersInfoGrid{grid-template-columns:1fr;}
+        .usersModalCard{padding:14px;}
+        .usersModalFooter{flex-direction:column-reverse; align-items:stretch;}
+      }
+    </style>
+
+    <div class="app appWide usersShell">
+      <div class="usersToolbar">
         <div>
           <h2 style="margin:0 0 6px">Usuarios</h2>
-          <div class="small">Alta/baja, edición de tenant/rol y bloqueo de cuentas (colección <code>users</code>).</div>
+          <div class="small">Listado de usuarios del panel. Editá cada cuenta desde un modal y creá nuevas sin salir de esta pantalla.</div>
           <div class="small">Reglas: <strong>admin</strong> gestiona sólo su tenant; <strong>superadmin</strong> puede gestionar todos.</div>
         </div>
-        <a class="btn2" href="/app" style="text-decoration:none">Volver</a>
+        <div class="usersToolbarActions">
+          <button class="btn2 btnOk" type="button" id="usersBtnCreate">Nuevo usuario</button>
+          <a class="btn2" href="/app" style="text-decoration:none">Volver</a>
+        </div>
       </div>
 
       ${message}
       ${error}
 
-      <div class="card" style="margin-top:14px">
-        <h2 style="font-size:18px; margin:0 0 10px">Dar de alta usuario</h2>
-        <form method="POST" action="/admin/users/create">
-          <div class="row">
-            <div style="flex:1" class="field">
-              <label>Usuario</label>
-              <input name="username" required placeholder="ej: juan"/>
-            </div>
-            <div style="flex:1" class="field">
-              <label>Contraseña</label>
-              <input name="password" type="password" required placeholder="••••••••"/>
-            </div>
+      <div class="card">
+        <h2 style="font-size:18px; margin:0 0 12px">Listado</h2>
+        <div class="usersTableWrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Usuario</th>
+                <th>Tenant</th>
+                <th>Rol</th>
+                <th>Acceso</th>
+                <th>Inicio</th>
+                <th>Estado</th>
+                <th>Actualizado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows || `<tr><td colspan="8" class="small">No hay usuarios cargados.</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="usersModal" id="userCreateModal" hidden>
+      <div class="usersModalBackdrop" data-users-close="create"></div>
+      <div class="usersModalCard" role="dialog" aria-modal="true" aria-label="Crear usuario">
+        <div class="usersModalHeader">
+          <div>
+            <h3 class="usersModalTitle">Nuevo usuario</h3>
+            <div class="small">Creá una nueva cuenta y definí qué pantallas puede abrir al iniciar sesión.</div>
           </div>
-          <div class="row">
-            <div style="flex:1" class="field">
+          <button class="btn2" type="button" data-users-close="create">Cerrar</button>
+        </div>
+
+        <form method="POST" action="/admin/users/create" id="userCreateForm">
+          <div class="usersInfoGrid">
+            <div class="usersFieldRow">
+              <label>Usuario</label>
+              <input name="username" required placeholder="ej: juan" />
+            </div>
+            <div class="usersFieldRow">
+              <label>Contraseña</label>
+              <input name="password" type="password" required placeholder="••••••••" />
+            </div>
+            <div class="usersFieldRow">
               <label>Tenant</label>
               ${createTenantField}
             </div>
-            <div style="flex:1" class="field">
+            <div class="usersFieldRow">
               <label>Rol</label>
               <select name="role">${roleOptionsForCreate}</select>
             </div>
           </div>
 
-          <div class="field">
+          <div class="usersFieldRow" style="margin-top:12px">
             <label style="display:flex; align-items:center; gap:10px">
-              <input type="checkbox" name="isLocked" value="1" style="width:auto"/>
-              Crear como “bloqueado” (no podrá iniciar sesión)
+              <input type="checkbox" name="isLocked" value="1" style="width:auto" />
+              <span>Crear como bloqueado</span>
             </label>
           </div>
 
-          <div class="field">
+          <div class="usersFieldRow" style="margin-top:12px">
             <label>Acceso a pantallas</label>
-            <div style="display:flex; flex-wrap:wrap; gap:10px">
+            <div class="usersPermGrid" data-permissions-grid="create">
               ${createAccessCheckboxes}
             </div>
           </div>
 
-          <div class="field">
-            <label>Inicio al login</label>
-            <select name="defaultPage">${createDefaultPageOptions}</select>
+          <div class="usersFieldRow" style="margin-top:12px">
+            <label>Ventana de inicio</label>
+            <select name="defaultPage" data-default-page="create">${defaultPageOptionsHtml(defaultCreateUserLike, "/app")}</select>
+            <div class="small">Incluye la opción <strong>Sesiones de usuarios</strong> cuando la cuenta tiene acceso a Usuarios.</div>
           </div>
 
-          <button class="btn" type="submit">Crear usuario</button>
-          <div class="small" style="margin-top:10px">Tip: el <code>tenantId</code> del usuario define el tenant de los endpoints (salvo <code>superadmin</code>).</div>
+          <div class="usersHint small">
+            El inicio disponible depende de las pantallas marcadas arriba. Si quitás un acceso, la ventana de inicio se ajusta automáticamente.
+          </div>
+
+          <div class="usersModalFooter">
+            <button class="btn2" type="button" data-users-close="create">Cancelar</button>
+            <button class="btn" type="submit">Crear usuario</button>
+          </div>
         </form>
       </div>
+    </div>
 
-      <div class="card" style="margin-top:14px">
-        <h2 style="font-size:18px; margin:0 0 10px">Listado</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Usuario</th>
-              <th>Tenant</th>
-              <th>Rol</th>
-              <th>Acceso</th>
-              <th>Estado</th>
-              <th>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows || `<tr><td colspan="6" class="small">No hay usuarios cargados.</td></tr>`}
-          </tbody>
-        </table>
+    <div class="usersModal" id="userEditModal" hidden>
+      <div class="usersModalBackdrop" data-users-close="edit"></div>
+      <div class="usersModalCard" role="dialog" aria-modal="true" aria-label="Editar usuario">
+        <div class="usersModalHeader">
+          <div>
+            <h3 class="usersModalTitle" id="userEditTitle">Editar usuario</h3>
+            <div class="small" id="userEditMeta"></div>
+          </div>
+          <button class="btn2" type="button" data-users-close="edit">Cerrar</button>
+        </div>
+
+        <form method="POST" action="/admin/users/update" id="userEditForm">
+          <input type="hidden" name="userId" value="" />
+          <div class="usersInfoGrid">
+            <div class="usersFieldRow">
+              <label>Usuario</label>
+              <input value="" data-user-edit-username readonly />
+            </div>
+            <div class="usersFieldRow">
+              <label>Tenant</label>
+              <input name="tenantId" value="" />
+            </div>
+            <div class="usersFieldRow">
+              <label>Rol</label>
+              <select name="role"></select>
+            </div>
+            <div class="usersFieldRow">
+              <label>Ventana de inicio</label>
+              <select name="defaultPage" data-default-page="edit"></select>
+            </div>
+          </div>
+
+          <div class="usersFieldRow" style="margin-top:12px">
+            <label style="display:flex; align-items:center; gap:10px">
+              <input type="checkbox" name="isLocked" value="1" style="width:auto" />
+              <span>Usuario bloqueado</span>
+            </label>
+          </div>
+
+          <div class="usersFieldRow" style="margin-top:12px">
+            <label>Acceso a pantallas</label>
+            <div class="usersPermGrid" data-permissions-grid="edit"></div>
+          </div>
+
+          <div class="usersHint small" id="userEditHint"></div>
+
+          <div class="usersModalFooter">
+            <button class="btn2" type="button" data-users-close="edit">Cancelar</button>
+            <button class="btn" type="submit" id="userEditSubmit">Guardar cambios</button>
+          </div>
+        </form>
+
+        <div class="usersDangerZone">
+          <form method="POST" action="/admin/users/reset-password" id="userResetForm" style="display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; margin:0">
+            <input type="hidden" name="userId" value="" />
+            <div class="usersFieldRow" style="min-width:220px">
+              <label>Nueva contraseña</label>
+              <input name="newPassword" placeholder="••••••••" minlength="4" required />
+            </div>
+            <button class="btn2 btnOk" type="submit">Resetear contraseña</button>
+          </form>
+
+          <form method="POST" action="/admin/users/delete" id="userDeleteForm" style="margin:0" onsubmit="return confirm('¿Eliminar este usuario?')">
+            <input type="hidden" name="userId" value="" />
+            <button class="btn2 btnDanger" type="submit" id="userDeleteBtn">Eliminar usuario</button>
+          </form>
+        </div>
       </div>
     </div>
+
+    <script>
+    (function(){
+      const ACCESS_PAGES = [
+        { key: "admin", title: "Conversaciones" },
+        { key: "inbox", title: "Inbox" },
+        { key: "productos", title: "Productos" },
+        { key: "horarios", title: "Horarios" },
+        { key: "comportamiento", title: "Comportamiento" },
+        { key: "leads", title: "Leads" },
+        { key: "wweb", title: "Sesiones WhatsApp Web" },
+        { key: "users", title: "Sesiones de usuarios" },
+        { key: "tenant_config", title: "Tenant Config" },
+      ];
+      const IS_SUPER = ${isSuper ? "true" : "false"};
+      const USERS = ${JSON.stringify(userItems).replace(/</g, '\\u003c')};
+      const ROLE_OPTIONS_SUPER = ["user", "admin", "superadmin"];
+      const ROLE_OPTIONS_ADMIN = ["user", "admin"];
+
+      const createModal = document.getElementById("userCreateModal");
+      const editModal = document.getElementById("userEditModal");
+      const createForm = document.getElementById("userCreateForm");
+      const editForm = document.getElementById("userEditForm");
+      const resetForm = document.getElementById("userResetForm");
+      const deleteForm = document.getElementById("userDeleteForm");
+      const createBtn = document.getElementById("usersBtnCreate");
+      const editTitle = document.getElementById("userEditTitle");
+      const editMeta = document.getElementById("userEditMeta");
+      const editHint = document.getElementById("userEditHint");
+      const editUsername = editForm.querySelector("[data-user-edit-username]");
+      const editTenantInput = editForm.querySelector('input[name="tenantId"]');
+      const editRoleSelect = editForm.querySelector('select[name="role"]');
+      const editLockInput = editForm.querySelector('input[name="isLocked"]');
+      const editDefaultPage = editForm.querySelector('[data-default-page="edit"]');
+      const editPermGrid = editForm.querySelector('[data-permissions-grid="edit"]');
+      const editSubmit = document.getElementById("userEditSubmit");
+      const deleteBtn = document.getElementById("userDeleteBtn");
+
+      function esc(str){
+        return String(str == null ? "" : str)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function openModal(which){
+        const modal = which === "edit" ? editModal : createModal;
+        if (!modal) return;
+        modal.hidden = false;
+        document.body.classList.add("usersModalOpen");
+      }
+
+      function closeModal(which){
+        const modal = which === "edit" ? editModal : createModal;
+        if (!modal) return;
+        modal.hidden = true;
+        if ((createModal && !createModal.hidden) || (editModal && !editModal.hidden)) return;
+        document.body.classList.remove("usersModalOpen");
+      }
+
+      function installCloseHandlers(modalName){
+        document.querySelectorAll('[data-users-close="' + modalName + '"]').forEach((el) => {
+          el.addEventListener("click", () => closeModal(modalName));
+        });
+      }
+
+      function getRoleOptions(){
+        return IS_SUPER ? ROLE_OPTIONS_SUPER : ROLE_OPTIONS_ADMIN;
+      }
+
+      function getEditablePages(){
+        return ACCESS_PAGES.filter((page) => IS_SUPER ? true : page.key !== "users");
+      }
+
+      function buildDefaultPageOptions(allowedKeys, selectedHref){
+        const items = [{ key: "home", title: "Inicio", href: "/app" }];
+        if (allowedKeys.includes("admin")) items.push({ key: "admin", title: "Conversaciones", href: "/ui/admin" });
+        if (allowedKeys.includes("productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
+        if (allowedKeys.includes("horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
+        if (allowedKeys.includes("comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
+        if (allowedKeys.includes("leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
+        if (allowedKeys.includes("wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
+        if (allowedKeys.includes("users")) items.push({ key: "users", title: "Sesiones de usuarios", href: "/admin/users" });
+        if (allowedKeys.includes("tenant_config")) items.push({ key: "tenant_config", title: "Tenant Config", href: "/ui/tenant_config" });
+
+        const desired = items.some((it) => it.href === selectedHref) ? selectedHref : "/app";
+        return {
+          selected: desired,
+          html: items.map((it) => '<option value="' + esc(it.href) + '"' + (it.href === desired ? ' selected' : '') + '>' + esc(it.title) + '</option>').join("")
+        };
+      }
+
+      function getCheckedValues(scope){
+        return Array.from(scope.querySelectorAll('input[name="allowedPages"]:checked')).map((el) => String(el.value || ""));
+      }
+
+      function syncDefaultPageSelect(scope, selectedHref){
+        const select = scope.querySelector('[data-default-page]');
+        if (!select) return;
+        const allowed = getCheckedValues(scope);
+        const built = buildDefaultPageOptions(allowed, selectedHref || select.value || "/app");
+        select.innerHTML = built.html;
+        select.value = built.selected;
+      }
+
+      function installPermissionSync(scope){
+        scope.querySelectorAll('input[name="allowedPages"]').forEach((el) => {
+          el.addEventListener("change", () => syncDefaultPageSelect(scope));
+        });
+      }
+
+      function buildPermissionCheckboxes(gridEl, values, disabled){
+        const checkedSet = new Set(Array.isArray(values) ? values : []);
+        gridEl.innerHTML = getEditablePages().map((page) => {
+          const checked = checkedSet.has(page.key) ? 'checked' : '';
+          const dis = disabled ? 'disabled' : '';
+          return '<label class="small usersPermTag">' +
+            '<input type="checkbox" name="allowedPages" value="' + esc(page.key) + '" ' + checked + ' ' + dis + '/>' +
+            '<span>' + esc(page.key === "users" ? "Usuarios" : page.title) + '</span>' +
+          '</label>';
+        }).join("");
+      }
+
+      function setupCreateModal(){
+        installPermissionSync(createForm);
+        syncDefaultPageSelect(createForm, "/app");
+      }
+
+      function fillEditRoleOptions(roleValue){
+        editRoleSelect.innerHTML = getRoleOptions().map((role) => '<option value="' + esc(role) + '"' + (role === roleValue ? ' selected' : '') + '>' + esc(role) + '</option>').join("");
+      }
+
+      function populateEditModal(userData){
+        if (!userData) return;
+        editForm.querySelector('input[name="userId"]').value = userData.id;
+        resetForm.querySelector('input[name="userId"]').value = userData.id;
+        deleteForm.querySelector('input[name="userId"]').value = userData.id;
+        editTitle.textContent = 'Editar usuario: ' + (userData.username || '');
+        editMeta.textContent = 'Tenant: ' + (userData.tenantId || '-') + ' · Rol: ' + (userData.role || '-') + (userData.updatedAt ? ' · Actualizado: ' + userData.updatedAt : '');
+        editUsername.value = userData.username || '';
+        editTenantInput.value = userData.tenantId || '';
+        fillEditRoleOptions(userData.role || 'user');
+
+        const selfLocked = !!userData.isSelf;
+        buildPermissionCheckboxes(editPermGrid, userData.currentPages || [], selfLocked);
+        installPermissionSync(editForm);
+        syncDefaultPageSelect(editForm, userData.defaultPage || '/app');
+
+        if (editLockInput) {
+          editLockInput.checked = !!userData.locked;
+          editLockInput.disabled = !userData.canEditLock;
+        }
+        editTenantInput.readOnly = !userData.canEditTenant;
+        editRoleSelect.disabled = !userData.canEditRole;
+        editSubmit.disabled = selfLocked;
+        deleteBtn.disabled = selfLocked;
+        resetForm.querySelector('input[name="newPassword"]').value = '';
+
+        if (selfLocked) {
+          editHint.innerHTML = 'No se permite cambiar tu propio rol, tenant, bloqueo ni accesos desde esta pantalla. Podés resetear tu contraseña abajo.';
+        } else {
+          editHint.innerHTML = 'Actualizá los accesos del usuario y elegí su ventana de inicio. Si marcás <strong>Usuarios</strong>, el selector incluirá <strong>Sesiones de usuarios</strong>.';
+        }
+      }
+
+      createBtn && createBtn.addEventListener('click', () => openModal('create'));
+      document.querySelectorAll('[data-user-edit]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const id = String(btn.getAttribute('data-user-edit') || '');
+          const userData = USERS.find((u) => String(u.id) === id);
+          populateEditModal(userData || null);
+          openModal('edit');
+        });
+      });
+
+      installCloseHandlers('create');
+      installCloseHandlers('edit');
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          closeModal('create');
+          closeModal('edit');
+        }
+      });
+      setupCreateModal();
+    })();
+    </script>
     `,
   });
 }
@@ -2818,7 +3090,7 @@ function mountAuthRoutes(app) {
 
       const users = await db
         .collection("users")
-        .find(filter, { projection: { username: 1, tenantId: 1, role: 1, isLocked: 1, allowedPages: 1, createdAt: 1 } })
+        .find(filter, { projection: { username: 1, tenantId: 1, role: 1, isLocked: 1, allowedPages: 1, defaultPage: 1, createdAt: 1, updatedAt: 1 } })
         .sort({ createdAt: -1 })
         .toArray();
 
