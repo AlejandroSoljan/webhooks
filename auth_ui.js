@@ -2159,10 +2159,10 @@ function wwebSessionsAdminPage({ user }) {
       }
       function statsCard(label, value, sub){
         return '<div class="statsMiniCard">'
-          + '<div class="small" style="opacity:.8">' + escapeHtml(label) + '</div>'
-          + '<div class="cellMain" style="font-size:22px; margin-top:4px">' + escapeHtml(value) + '</div>'
-          + (sub ? ('<div class="small" style="margin-top:4px">' + escapeHtml(sub) + '</div>') : '')
-          + '</div>';
+          '<div class="small" style="opacity:.8; color:#475467">' + escapeHtml(label) + '</div>'
+           '<div class="cellMain" style="font-size:22px; margin-top:4px; color:#0f172a; font-weight:800">' + escapeHtml(value) + '</div>'
+           (sub ? ('<div class="small" style="margin-top:4px; color:#475467">' + escapeHtml(sub) + '</div>') : '')
+           '</div>';
       }
       function renderStats(data){
         var summary = data && data.summary ? data.summary : {};
@@ -2659,9 +2659,9 @@ document.addEventListener('click', function(e){
 
       .wwebTable{width:100%; table-layout:fixed; border-collapse:separate; border-spacing:0}
       .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:2}
-      .wwebTable tbody tr{position:relative}
+      .wwebTable tbody tr{position:relative; z-index:1}
       .wwebTable tbody tr:nth-child(even){background: rgba(16,24,40,.02)}
-      .wwebTable tbody tr.rowMenuOpen{z-index:80}
+      .wwebTable tbody tr.rowMenuOpen{z-index:120}
 
       .wwebTable td, .wwebTable th{white-space:normal; word-break:break-word; vertical-align:top}
       .wwebTable th:nth-child(1){width:160px}
@@ -2675,8 +2675,8 @@ document.addEventListener('click', function(e){
       .cellSub{font-size:12px; opacity:.85; margin-top:2px}
       .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
 
-      .wa-actions-cell{position:relative}
-      .wa-actions-cell.menuCellOpen{z-index:90}
+       .wa-actions-cell{position:relative; z-index:1}
+      .wa-actions-cell.menuCellOpen{z-index:220}
       .actionBar{
         display:flex;
         gap:10px;
@@ -2687,7 +2687,7 @@ document.addEventListener('click', function(e){
       .btnMenu,.btnQr{padding:8px 12px; border-radius:12px; white-space:nowrap}
       .caret{opacity:.7; margin-left:6px}
 
-      .menuWrap{position:relative; display:inline-block; overflow:visible; z-index:95}
+      .menuWrap{position:relative; display:inline-block; overflow:visible; z-index:260}
       .menu{
         position:absolute;
         right:0;
@@ -2699,7 +2699,7 @@ document.addEventListener('click', function(e){
         border-radius:14px;
         padding:8px;
         display:none;
-        z-index:100;
+        z-index:320;
       }
       .menu.up{
         top:auto;
@@ -2782,9 +2782,15 @@ document.addEventListener('click', function(e){
       .modalHeader{display:flex; justify-content:space-between; align-items:flex-start; gap:10px}
       .qrWrap{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; min-height:340px}
       #qrImg{max-width:100%; height:auto; display:none}
-      .statsModalCard{width:min(980px,96vw)}
+      .statsModalCard{width:min(980px,96vw); color:#0f172a}
+      .statsModalCard .small,
+      .statsModalCard label,
+      .statsModalCard #statsMeta,
+      .statsModalCard #statsSub{color:#475467}
       .statsCards{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:8px}
-      .statsMiniCard{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:12px; padding:10px 12px}
+      .statsMiniCard{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:12px; padding:10px 12px; color:#0f172a}
+      .statsMiniCard .cellMain{color:#0f172a !important; font-weight:800}
+      .statsMiniCard .small{color:#475467 !important}
       .statsTableWrap{max-height:48vh; overflow:auto; padding-bottom:0}
       .statsTable{width:100%; table-layout:fixed}
       .statsTable th:nth-child(1){width:190px}
