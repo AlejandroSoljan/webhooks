@@ -2159,10 +2159,10 @@ function wwebSessionsAdminPage({ user }) {
       }
       function statsCard(label, value, sub){
         return '<div class="statsMiniCard">'
-          '<div class="small" style="opacity:.8; color:#475467">' + escapeHtml(label) + '</div>'
-           '<div class="cellMain" style="font-size:22px; margin-top:4px; color:#0f172a; font-weight:800">' + escapeHtml(value) + '</div>'
-           (sub ? ('<div class="small" style="margin-top:4px; color:#475467">' + escapeHtml(sub) + '</div>') : '')
-           '</div>';
+          + '<div class="small" style="opacity:.8; color:#475467">' + escapeHtml(label) + '</div>'
+          + '<div class="cellMain" style="font-size:22px; margin-top:4px; color:#0f172a; font-weight:800">' + escapeHtml(value) + '</div>'
+          + (sub ? ('<div class="small" style="margin-top:4px; color:#475467">' + escapeHtml(sub) + '</div>') : '')
+          + '</div>';
       }
       function renderStats(data){
         var summary = data && data.summary ? data.summary : {};
@@ -2675,7 +2675,7 @@ document.addEventListener('click', function(e){
       .cellSub{font-size:12px; opacity:.85; margin-top:2px}
       .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
 
-       .wa-actions-cell{position:relative; z-index:1}
+      .wa-actions-cell{position:relative; z-index:1}
       .wa-actions-cell.menuCellOpen{z-index:220}
       .actionBar{
         display:flex;
@@ -2753,6 +2753,7 @@ document.addEventListener('click', function(e){
           padding:10px 12px;
           background:#fff !important;
           box-shadow:0 8px 18px rgba(15,23,42,.06);
+          z-index:1;
         }
         .wwebTable td{
           border:0;
