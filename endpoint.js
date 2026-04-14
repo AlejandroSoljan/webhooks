@@ -430,79 +430,12 @@ function absUrl(p = "/") {
 }
 
 app.get("/", (req, res) => {
-  const title = "AsistoBot";
-  const description =
-    "AsistoBot: plataforma para gestionar conversaciones y automatizar por WhatsApp con asistentes inteligentes.";
-
-  // IMPORTANTE: este archivo debe existir (ver /static configurado en este mismo endpoint.js)
-  const logoPath = "/static/logo.png";
-  const ogImage = absUrl(logoPath);
-
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  return res.status(200).send(`<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>${title}</title>
-  <meta name="description" content="${description}"/>
-  <link rel="canonical" href="${absUrl("/")}"/>
-
-  <link rel="icon" href="${logoPath}"/>
-  <link rel="apple-touch-icon" href="${logoPath}"/>
-
-  <!-- Open Graph -->
-  <meta property="og:type" content="website"/>
-  <meta property="og:url" content="${absUrl("/")}"/>
-  <meta property="og:title" content="${title}"/>
-  <meta property="og:description" content="${description}"/>
-  <meta property="og:image" content="${ogImage}"/>
-
-  <!-- Twitter -->
-  <meta name="twitter:card" content="summary_large_image"/>
-  <meta name="twitter:title" content="${title}"/>
-  <meta name="twitter:description" content="${description}"/>
-  <meta name="twitter:image" content="${ogImage}"/>
-
-  <!-- Structured data -->
-  <script type="application/ld+json">${JSON.stringify({
-    "@context": "https://schema.org",
-   "@type": "Organization",
-    "name": title,
-    "url": absUrl("/"),
-    "logo": ogImage
-  }).replace(/</g, "\\u003c")}</script>
-
-  <style>
-    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#0f2741;color:#fff;}
-    .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
-   .card{width:min(980px,100%);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);backdrop-filter:blur(10px);border-radius:20px;padding:28px;display:grid;grid-template-columns:140px 1fr;gap:22px;align-items:center;}
-    @media (max-width:720px){.card{grid-template-columns:1fr;}}
-    img{width:140px;height:140px;object-fit:contain;filter:drop-shadow(0 10px 24px rgba(0,0,0,.25));}
-    h1{margin:0 0 8px;font-size:34px;}
-    p{margin:0 0 18px;line-height:1.45;color:rgba(255,255,255,.86)}
-    a.btn{display:inline-flex;align-items:center;justify-content:center;padding:12px 14px;border-radius:12px;background:#0e6b66;color:#fff;text-decoration:none;font-weight:700;}
-    a.btn:hover{background:#0a5a56}
-    .muted{font-size:13px;color:rgba(255,255,255,.72);margin-top:12px}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <div style="display:flex;justify-content:center">
-        <img src="${logoPath}" alt="${title} logo"/>
-      </div>
-      <div>
-        <h1>${title}</h1>
-        <p>${description}</p>
-        <a class="btn" href="/login">Ingresar al panel</a>
-        <div class="muted">El panel (/app) requiere inicio de sesión.</div>
-      </div>
-    </div>
-  </div>
-</body>
-</html>`);
+  const qs = req.originalUrl && req.originalUrl.includes("?")
+    ? req.originalUrl.slice(req.originalUrl.indexOf("?"))
+    : "";
+  return res.redirect(302, "/login" + qs);
 });
+
 
 // robots + sitemap para ayudar a indexación/snippet
 app.get("/robots.txt", (_req, res) => {
