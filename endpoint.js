@@ -7261,6 +7261,47 @@ if (debounceMs > 0 && msg.type === "text") {
       console.warn("[guard] applyCriticalPedidoGuards error:", e?.message || e);
     }
 
+    // ==============================
+    // ✅ Si el pedido es a domicilio y ya tiene dirección,
+    // forzar que el resumen / confirmación / mensaje final
+    // muestre: "Modalidad: Envío ({dirección})"
+    // ==============================
+    try {
+      const entrega = String(pedido?.Entrega || "").trim().toLowerCase();
+      const domDir = String(
+        (typeof pedido?.Domicilio === "string")
+          ? pedido.Domicilio
+          : (pedido?.Domicilio?.direccion || "")
+      ).trim();
+
+      if (entrega === "domicilio" && domDir) {
+        const txt = String(responseText || "");
+        const looksLikeSummaryOrFinal =
+          /(?:\btu pedido es\b|\bresumen\b|\bpedido ha sido confirmado\b|¿\s*confirm|\bmodalidad\s*:|\bhora\s*:|\bnombre(?: y apellido)?\s*:)/i.test(txt);
+
+        if (looksLikeSummaryOrFinal) {
+          const desiredLine = `🚚 Modalidad: Envío (${domDir})`;
+
+          if (/\bmodalidad\s*:/i.test(txt)) {
+            responseText = txt.replace(
+              /(🚚\s*)?Modalidad\s*:\s*(?:domicilio|env[ií]o)(?:\s*\([^\n)]*\))?/i,
+              desiredLine
+            );
+          } else if (!new RegExp(`Envío\\s*\\(${domDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)`, "i").test(txt)) {
+            if (/🕒\s*Hora\s*:/i.test(txt)) {
+              responseText = txt.replace(/(🕒\s*Hora\s*:)/i, `${desiredLine}\n$1`);
+            } else if (/👤\s*(?:Nombre|Nombre y apellido)\s*:/i.test(txt)) {
+              responseText = txt.replace(/(👤\s*(?:Nombre|Nombre y apellido)\s*:)/i, `${desiredLine}\n$1`);
+            } else {
+              responseText = `${txt.trim()}\n${desiredLine}`.trim();
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("[delivery] no se pudo forzar dirección visible en response:", e?.message || e);
+    }
+ 
     const responseTextSafe = String(responseText || "").trim()
       || (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length
           ? buildBackendSummary(pedido, { showEnvio: wantsDetail })
