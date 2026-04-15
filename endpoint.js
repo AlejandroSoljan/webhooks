@@ -6931,6 +6931,43 @@ if (debounceMs > 0 && msg.type === "text") {
 
 
     // ==============================
+    // ✅ Guarda dura: si el pedido quedó como DOMICILIO pero no hay dirección válida,
+    // el backend fuerza la pregunta de dirección y evita resumen/confirmación.
+    // Esto protege el flujo aunque el modelo se saltee la regla.
+    // ==============================
+    try {
+      if (pedido?.Entrega?.toLowerCase() === "domicilio") {
+        const dom = (typeof pedido.Domicilio === "string")
+          ? { direccion: pedido.Domicilio }
+          : (pedido.Domicilio || {});
+        pedido.Domicilio = dom;
+
+        const hasDireccion =
+          String(dom.direccion || "").trim() ||
+          [dom.calle, dom.numero].filter(Boolean).join(" ").trim() ||
+          String(dom.address || "").trim();
+
+        if (!hasDireccion) {
+          estado = "IN_PROGRESS";
+          pedido.distancia_km = null;
+
+          if (Array.isArray(pedido.items)) {
+            pedido.items = pedido.items.filter(i => !/env[ií]o/i.test(String(i?.descripcion || "")));
+          }
+
+          try {
+            const { pedidoCorr } = recalcAndDetectMismatch(pedido);
+            pedido = pedidoCorr;
+          } catch {}
+
+          responseText = "¿A qué dirección te lo enviamos? 😊";
+        }
+      }
+    } catch (e) {
+      console.warn("[delivery] guarda de dirección obligatoria falló:", e?.message || e);
+    }
+
+    // ==============================
     // ✅ Validación de dirección exacta (Google Maps)
     // Si el geocoding NO es exacto, pedimos al cliente que reescriba la dirección.
     // Importante: limpiamos `Pedido.Domicilio.direccion` para que NO cierre la conversación.
