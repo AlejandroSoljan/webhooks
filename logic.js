@@ -7,9 +7,9 @@ const OpenAI = require("openai");
 let toFile = null;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
-const CHAT_MODEL = process.env.CHAT_MODEL || "gpt-5.4-mini";
+const CHAT_MODEL = process.env.CHAT_MODEL || "gpt-5.4";
 const VISION_MODEL = process.env.VISION_MODEL || CHAT_MODEL;
-const CHAT_TEMPERATURE = Number(process.env.OPENAI_TEMPERATURE ?? 0.1) || 0.0;
+const CHAT_TEMPERATURE = Number(process.env.OPENAI_TEMPERATURE ?? 0.0) || 0.0;
 
 const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || "v17.0";
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
@@ -82,6 +82,122 @@ function sanitizeMessages(msgs) {
     role: String(m?.role || "user"),
     content: typeof m?.content === "string" ? m.content : safeStringify(m?.content)
   }));
+}
+
+const ASSISTANT_PEDIDO_RESPONSE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["response", "estado", "Pedido"],
+  properties: {
+    response: { type: "string" },
+    estado: {
+      type: "string",
+      enum: ["IN_PROGRESS", "COMPLETED", "CANCELLED", "PENDIENTE"]
+    },
+    Pedido: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "nombre_apellido",
+        "Entrega",
+        "Domicilio",
+        "Pago",
+        "fecha_pedido",
+        "hora_pedido",
+        "items",
+        "total_pedido"
+      ],
+      properties: {
+        nombre_apellido: { type: "string" },
+        Entrega: { type: "string" },
+        Domicilio: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            direccion: { type: "string" },
+            referencia: { type: "string" },
+            calle: { type: "string" },
+            numero: { type: ["string", "number"] },
+            barrio: { type: "string" },
+            ciudad: { type: "string" },
+            localidad: { type: "string" },
+            provincia: { type: "string" },
+            cp: { type: ["string", "number"] },
+            lat: { type: "number" },
+            lon: { type: "number" },
+            address: { type: "string" }
+          }
+        },
+        Pago: { type: "string" },
+        fecha_pedido: { type: "string" },
+        hora_pedido: { type: "string" },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "descripcion", "cantidad", "importe_unitario", "total"],
+            properties: {
+              id: { type: ["string", "number"] },
+              descripcion: { type: "string" },
+              cantidad: { type: "number" },
+              importe_unitario: { type: "number" },
+              total: { type: "number" }
+            }
+          }
+        },
+        total_pedido: { type: "number" },
+        Fecha: { type: "string" },
+        Hora: { type: "string" }
+      }
+    }
+  }
+};
+
+function buildStrictPedidoResponseFormat() {
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "pedido_response",
+      strict: true,
+      schema: ASSISTANT_PEDIDO_RESPONSE_SCHEMA
+    }
+  };
+}
+
+function extractChatCompletionContent(responseData) {
+  const msg = responseData?.choices?.[0]?.message || {};
+  const refusal = String(msg?.refusal || "").trim();
+  if (refusal) {
+    return JSON.stringify({
+      response: "Perdón, no pude procesar ese mensaje. ¿Podés repetirlo? 😊",
+      estado: "IN_PROGRESS",
+      Pedido: {
+        nombre_apellido: "",
+        Entrega: "",
+        Domicilio: {},
+        Pago: "",
+        fecha_pedido: "",
+        hora_pedido: "",
+        items: [],
+        total_pedido: 0
+      }
+    });
+  }
+  if (typeof msg.content === "string") return msg.content.trim();
+  if (Array.isArray(msg.content)) {
+    const joined = msg.content
+      .map(part => {
+        if (typeof part === "string") return part;
+        if (part && typeof part.text === "string") return part.text;
+        if (part && typeof part.content === "string") return part.content;
+        return "";
+      })
+      .join("")
+      .trim();
+    if (joined) return joined;
+  }
+  return "";
 }
 
 // ================== Fecha/Hora local para el modelo ==================
@@ -1016,16 +1132,17 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
 
   try {
     const apiKey = String(opts.openaiApiKey || OPENAI_API_KEY || "").trim();
-    const model = String(opts.chatModel || CHAT_MODEL || "gpt-5.4-mini").trim();
+    const model = String(opts.chatModel || CHAT_MODEL || "gpt-5.4").trim();
     const payload = {
       model,
       messages: sanitizeMessages(messages),
       temperature: CHAT_TEMPERATURE,
-      response_format: { type: "json_object" }
+      response_format: buildStrictPedidoResponseFormat()
     };
     console.log("[openai] request.meta =>", {
       model,
-      temperature: CHAT_TEMPERATURE
+      temperature: CHAT_TEMPERATURE,
+      response_format: "json_schema_strict"
     });
     console.log("[openai] message =>\n" + JSON.stringify(sanitizeMessages(messages), null, 2));
 
@@ -1050,7 +1167,10 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
 
     //const reply = response.data.choices[0].message.content;
     //console.log("[openai] assistant.content =>\n" + reply);
-    const reply = response.data.choices[0].message.content;
+    const reply = extractChatCompletionContent(response.data);
+    if (!reply) {
+      throw new Error("openai_empty_structured_reply");
+    }
     // Si el modelo devuelve {"error":"..."} lo logueamos como warn (regla de negocio, no falla técnica)
     {
       let _log = console.log;

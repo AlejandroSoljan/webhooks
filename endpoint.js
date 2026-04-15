@@ -430,12 +430,79 @@ function absUrl(p = "/") {
 }
 
 app.get("/", (req, res) => {
-  const qs = req.originalUrl && req.originalUrl.includes("?")
-    ? req.originalUrl.slice(req.originalUrl.indexOf("?"))
-    : "";
-  return res.redirect(302, "/login" + qs);
-});
+  const title = "AsistoBot";
+  const description =
+    "AsistoBot: plataforma para gestionar conversaciones y automatizar por WhatsApp con asistentes inteligentes.";
 
+  // IMPORTANTE: este archivo debe existir (ver /static configurado en este mismo endpoint.js)
+  const logoPath = "/static/logo.png";
+  const ogImage = absUrl(logoPath);
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  return res.status(200).send(`<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>${title}</title>
+  <meta name="description" content="${description}"/>
+  <link rel="canonical" href="${absUrl("/")}"/>
+
+  <link rel="icon" href="${logoPath}"/>
+  <link rel="apple-touch-icon" href="${logoPath}"/>
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website"/>
+  <meta property="og:url" content="${absUrl("/")}"/>
+  <meta property="og:title" content="${title}"/>
+  <meta property="og:description" content="${description}"/>
+  <meta property="og:image" content="${ogImage}"/>
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image"/>
+  <meta name="twitter:title" content="${title}"/>
+  <meta name="twitter:description" content="${description}"/>
+  <meta name="twitter:image" content="${ogImage}"/>
+
+  <!-- Structured data -->
+  <script type="application/ld+json">${JSON.stringify({
+    "@context": "https://schema.org",
+   "@type": "Organization",
+    "name": title,
+    "url": absUrl("/"),
+    "logo": ogImage
+  }).replace(/</g, "\\u003c")}</script>
+
+  <style>
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#0f2741;color:#fff;}
+    .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
+   .card{width:min(980px,100%);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);backdrop-filter:blur(10px);border-radius:20px;padding:28px;display:grid;grid-template-columns:140px 1fr;gap:22px;align-items:center;}
+    @media (max-width:720px){.card{grid-template-columns:1fr;}}
+    img{width:140px;height:140px;object-fit:contain;filter:drop-shadow(0 10px 24px rgba(0,0,0,.25));}
+    h1{margin:0 0 8px;font-size:34px;}
+    p{margin:0 0 18px;line-height:1.45;color:rgba(255,255,255,.86)}
+    a.btn{display:inline-flex;align-items:center;justify-content:center;padding:12px 14px;border-radius:12px;background:#0e6b66;color:#fff;text-decoration:none;font-weight:700;}
+    a.btn:hover{background:#0a5a56}
+    .muted{font-size:13px;color:rgba(255,255,255,.72);margin-top:12px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div style="display:flex;justify-content:center">
+        <img src="${logoPath}" alt="${title} logo"/>
+      </div>
+      <div>
+        <h1>${title}</h1>
+        <p>${description}</p>
+        <a class="btn" href="/login">Ingresar al panel</a>
+        <div class="muted">El panel (/app) requiere inicio de sesión.</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`);
+});
 
 // robots + sitemap para ayudar a indexación/snippet
 app.get("/robots.txt", (_req, res) => {
@@ -995,6 +1062,175 @@ function mergePedidoState(prevPedido, nextPedido) {
   else merged.total_pedido = 0;
 
   return normalizePedidoDateTimeFields(merged);
+}
+
+
+function pedidoItemsArray(pedido) {
+  return Array.isArray(pedido?.items) ? pedido.items : [];
+}
+
+function lowerText(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function pedidoEntregaValue(pedido) {
+  return lowerText(pedido?.Entrega || "");
+}
+
+function pedidoIsDomicilio(pedido) {
+  return pedidoEntregaValue(pedido) === "domicilio";
+}
+
+function pedidoHasAddress(pedido) {
+  const dom = normalizeDomicilioObj(pedido?.Domicilio);
+  if (String(dom.direccion || "").trim()) return true;
+  if ([dom.calle, dom.numero].filter(Boolean).join(" ").trim()) return true;
+  if (String(dom.address || "").trim()) return true;
+  const hasCoords = Number.isFinite(Number(dom.lat)) && Number.isFinite(Number(dom.lon));
+  return hasCoords;
+}
+
+function pedidoHasPago(pedido) {
+  return !!String(pedido?.Pago || "").trim();
+}
+
+function pedidoHasHora(pedido) {
+  const p = normalizePedidoDateTimeFields(cloneJsonSafe(pedido) || {});
+  return /^\d{2}:\d{2}$/.test(String(p.hora_pedido || p.Hora || "").trim());
+}
+
+function pedidoHasNombreCompleto(pedido) {
+  const name = String(pedido?.nombre_apellido || "").trim().replace(/\s+/g, " ");
+  return /\S+\s+\S+/.test(name);
+}
+
+function pedidoHasAnyItems(pedido) {
+  return pedidoItemsArray(pedido).some(it => String(it?.descripcion || "").trim());
+}
+
+function pedidoHasChickenMainItem(pedido) {
+  return pedidoItemsArray(pedido).some((it) => {
+    const id = String(it?.id ?? "").trim();
+    const desc = lowerText(it?.descripcion || "");
+    return id === "55" || id === "42" || desc === "pollo entero" || desc === "medio pollo";
+  });
+}
+
+function pedidoHasResolvedMilanesaType(pedido) {
+  return pedidoItemsArray(pedido).some((it) => {
+    const desc = lowerText(it?.descripcion || "");
+    return desc === "milanesas de carne" || desc === "milanesas de pollo";
+  });
+}
+
+function stripEnvioItemsFromPedido(pedido) {
+  if (!pedido || typeof pedido !== "object") return pedido;
+  if (Array.isArray(pedido.items)) {
+    pedido.items = pedido.items.filter((it) => !/env[ií]o/i.test(String(it?.descripcion || "")));
+  }
+  return pedido;
+}
+
+function asksChickenCondimentQuestion(text) {
+  const s = lowerText(text);
+  return /lim[oó]n,?\s*chimichurri\s*o\s*solo/.test(s)
+    || /lo quer[eé]s con lim[oó]n/.test(s)
+    || /quer[eé]s.*chimichurri.*solo/.test(s);
+}
+
+function asksMilanesaTypeQuestion(text) {
+  const s = lowerText(text);
+  return /milanesas?.*de carne o de pollo/.test(s)
+    || /milanesas?.*carne.*pollo/.test(s)
+    || /la milanesa la quer[eé]s de carne o de pollo/.test(s);
+}
+
+function asksPaymentQuestion(text) {
+  return /efectivo o por transferencia/i.test(String(text || ""));
+}
+
+function looksLikeSummaryOrConfirmation(text) {
+  const s = String(text || "");
+  return /¿\s*confirm[aá]s?\??/i.test(s)
+    || /resumen de tu pedido/i.test(s)
+    || /hora de entrega:/i.test(s)
+    || /modalidad:/i.test(s)
+    || /\*productos:\*/i.test(s);
+}
+
+function nextRequiredQuestionFromPedido(pedido) {
+  const p = normalizePedidoDateTimeFields(cloneJsonSafe(pedido) || {});
+  if (!pedidoHasAnyItems(p)) return "¿Qué te gustaría pedir? 😊";
+  if (!pedidoEntregaValue(p)) return "¿Lo retirás o te lo enviamos? 😊";
+  if (pedidoIsDomicilio(p) && !pedidoHasAddress(p)) return "¿A qué dirección te lo enviamos? 😊";
+  if (pedidoIsDomicilio(p) && pedidoHasAddress(p) && !pedidoHasPago(p)) return "¿Vas a pagar en efectivo o por transferencia? 😊";
+  if (!pedidoHasHora(p)) return "¿Para qué hora te gustaría hacer el pedido? 😊";
+  if (!pedidoHasNombreCompleto(p)) return "¿A nombre de quién hacemos el pedido? 😊";
+  return "Perfecto 😊 ¿Querés confirmar o cambiar algo?";
+}
+
+function pedidoHasRequiredFieldsForClose(pedido) {
+  const p = normalizePedidoDateTimeFields(cloneJsonSafe(pedido) || {});
+  if (!pedidoHasAnyItems(p)) return false;
+  if (!pedidoEntregaValue(p)) return false;
+  if (pedidoIsDomicilio(p) && !pedidoHasAddress(p)) return false;
+  if (pedidoIsDomicilio(p) && !pedidoHasPago(p)) return false;
+  if (!pedidoHasHora(p)) return false;
+  if (!pedidoHasNombreCompleto(p)) return false;
+  return true;
+}
+
+function applyCriticalPedidoGuards({ pedido, responseText, estado }) {
+  let nextPedido = normalizePedidoDateTimeFields(cloneJsonSafe(pedido) || { Entrega: "", Domicilio: {}, items: [], total_pedido: 0 });
+  let nextResponse = String(responseText || "").trim();
+  let nextEstado = String(estado || "IN_PROGRESS").trim() || "IN_PROGRESS";
+  const guardHits = [];
+
+  if (pedidoIsDomicilio(nextPedido) && !pedidoHasAddress(nextPedido)) {
+    nextEstado = "IN_PROGRESS";
+    nextPedido.distancia_km = null;
+    stripEnvioItemsFromPedido(nextPedido);
+    try {
+      const { pedidoCorr } = recalcAndDetectMismatch(nextPedido);
+      nextPedido = pedidoCorr;
+    } catch {}
+    nextResponse = "¿A qué dirección te lo enviamos? 😊";
+    guardHits.push("delivery_address_required");
+  }
+
+  if (asksPaymentQuestion(nextResponse) && !(pedidoIsDomicilio(nextPedido) && pedidoHasAddress(nextPedido))) {
+    nextEstado = "IN_PROGRESS";
+    nextResponse = nextRequiredQuestionFromPedido(nextPedido);
+    guardHits.push("payment_only_after_address");
+  }
+
+  if (pedidoIsDomicilio(nextPedido) && pedidoHasAddress(nextPedido) && !pedidoHasPago(nextPedido)) {
+    if (!asksPaymentQuestion(nextResponse)) {
+      nextEstado = "IN_PROGRESS";
+      nextResponse = "¿Vas a pagar en efectivo o por transferencia? 😊";
+      guardHits.push("force_payment_question");
+    }
+  }
+
+  if (asksChickenCondimentQuestion(nextResponse) && !pedidoHasChickenMainItem(nextPedido)) {
+    nextEstado = "IN_PROGRESS";
+    nextResponse = nextRequiredQuestionFromPedido(nextPedido);
+    guardHits.push("invalid_chicken_condiment_question");
+  }
+
+  if (asksMilanesaTypeQuestion(nextResponse) && pedidoHasResolvedMilanesaType(nextPedido)) {
+    nextEstado = "IN_PROGRESS";
+    nextResponse = nextRequiredQuestionFromPedido(nextPedido);
+    guardHits.push("resolved_milanesa_type_no_reask");
+  }
+
+  if ((looksLikeSummaryOrConfirmation(nextResponse) || /^(COMPLETED|PENDIENTE)$/i.test(nextEstado)) && !pedidoHasRequiredFieldsForClose(nextPedido)) {
+    nextEstado = "IN_PROGRESS";
+    nextResponse = nextRequiredQuestionFromPedido(nextPedido);
+    guardHits.push("summary_blocked_missing_required_fields");
+  }
+
+  return { pedido: nextPedido, responseText: nextResponse, estado: nextEstado, guardHits };
 }
 
 async function loadLastPedidoSnapshot(tenantId, conversationId) {
@@ -5005,10 +5241,9 @@ app.get("/api/products", async (req, res) => {
 app.post("/api/products", async (req, res) => {
   try {
     const db = await getDb();
-    let { descripcion, importe, cantidad, observacion, tag, active } = req.body || {};
+    let { descripcion, importe, cantidad, observacion, active } = req.body || {};
     descripcion = String(descripcion || "").trim();
     observacion = String(observacion || "").trim();
-    tag = String(tag || "").trim();
     if (typeof active !== "boolean") active = !!active;
     let imp = null;
     if (typeof importe === "number") imp = importe;
@@ -5034,7 +5269,7 @@ app.post("/api/products", async (req, res) => {
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
     const now = new Date();
     const tenant = resolveTenantId(req);
-    const doc = { tenantId: (tenant || TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, tag, active, createdAt: now, updatedAt: now };
+    const doc = { tenantId: (tenant || TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
      if (qty !== null) doc.cantidad = qty;
     if (imp !== null) doc.importe = imp;
     const ins = await db.collection("products").insertOne(doc);
@@ -5051,7 +5286,7 @@ app.put("/api/products/:id", async (req, res) => {
     const db = await getDb();
     const { id } = req.params;
     const upd = {};
-    ["descripcion","observacion","tag","active","importe","cantidad"].forEach(k => {
+    ["descripcion","observacion","active","importe","cantidad"].forEach(k => {
       if (req.body[k] !== undefined) upd[k] = req.body[k];
     });
     if (upd.importe !== undefined && typeof upd.importe === "string") {
@@ -5156,7 +5391,6 @@ app.get("/productos", async (req, res) => {
         <td class="col-price"><input class="importe" type="number" step="0.01" value="${escAttr(p.importe ?? "")}" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" value="${escAttr(p.cantidad ?? "")}" placeholder="0" /></td>
         <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación...">${escText(p.observacion || "")}</textarea></td>
-        <td class="col-tag"><textarea class="tag" placeholder="TAG / etiqueta / agrupador...">${escText(p.tag || "")}</textarea></td>
         <td class="col-active">
           <label class="switch">
             <input class="active" type="checkbox" ${p.active !== false ? "checked" : ""} />
@@ -5223,13 +5457,12 @@ app.get("/productos", async (req, res) => {
         tbody td{padding:10px 8px;border-bottom:1px solid #edf2f7;vertical-align:top;background:#fff}
         tbody tr:hover td{background:#fbfdff}
         tbody tr:last-child td{border-bottom:none}
-        .col-desc{width:21%}
-        .col-price{width:10%}
-        .col-qty{width:9%}
-        .col-obs{width:24%}
-        .col-tag{width:18%}
-        .col-active{width:7%;text-align:center}
-        .col-actions{width:11%}
+        .col-desc{width:24%}
+        .col-price{width:11%}
+        .col-qty{width:10%}
+        .col-obs{width:27%}
+        .col-active{width:8%;text-align:center}
+        .col-actions{width:20%}
         input[type=text],input[type=number],textarea{
           width:100%;border:1px solid var(--line-strong);border-radius:12px;background:#fff;padding:9px 10px;font-size:13px;color:var(--text);outline:none;transition:.18s ease
         }
@@ -5250,13 +5483,12 @@ app.get("/productos", async (req, res) => {
         .empty-row td{padding:32px 20px;text-align:center;color:var(--muted);font-weight:600}
         .row-draft td{background:#fffcf1}
         @media (max-width: 1100px){
-          .col-desc{width:20%}
+          .col-desc{width:22%}
           .col-price{width:10%}
           .col-qty{width:9%}
-          .col-obs{width:23%}
-          .col-tag{width:18%}
+          .col-obs{width:25%}
           .col-active{width:8%}
-          .col-actions{width:12%}
+          .col-actions{width:26%}
           .actions-stack{grid-template-columns:1fr}
         }
         @media (max-width: 960px){
@@ -5281,7 +5513,7 @@ app.get("/productos", async (req, res) => {
 
         <div class="toolbar">
           <label class="search">
-            <input id="searchInput" type="text" placeholder="Buscar por descripción, observación, TAG, importe o cantidad..." />
+            <input id="searchInput" type="text" placeholder="Buscar por descripción, observación, importe o cantidad..." />
           </label>
           <div class="toolbar-actions">
             <a class="btn btn-soft" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a>
@@ -5305,12 +5537,11 @@ app.get("/productos", async (req, res) => {
                   <th class="col-price">Importe</th>
                   <th class="col-qty">Cantidad</th>
                   <th class="col-obs">Observaciones</th>
-                  <th class="col-tag">TAG</th>
                   <th class="col-active">Activo</th>
                   <th class="col-actions">Acciones</th>
                 </tr>
               </thead>
-              <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="7">No hay productos para mostrar.</td></tr>`}</tbody>
+              <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="6">No hay productos para mostrar.</td></tr>`}</tbody>
             </table>
           </div>
         </section>
@@ -5321,7 +5552,6 @@ app.get("/productos", async (req, res) => {
         <td class="col-price"><input class="importe" type="number" step="0.01" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" placeholder="0" /></td>
         <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación..."></textarea></td>
-        <td class="col-tag"><textarea class="tag" placeholder="TAG / etiqueta / agrupador..."></textarea></td>
         <td class="col-active">
           <label class="switch">
             <input class="active" type="checkbox" checked />
@@ -5355,7 +5585,6 @@ app.get("/productos", async (req, res) => {
           q('.importe',tr).value=(it && (typeof it.importe==='number' || it.importe)) ? it.importe : '';
           q('.cantidad',tr).value=(it && (typeof it.cantidad==='number' || it.cantidad)) ? it.cantidad : '';
           q('.observacion',tr).value=it && it.observacion ? it.observacion : '';
-          q('.tag',tr).value=it && it.tag ? it.tag : '';
           q('.active',tr).checked=!(it && it.active===false);
           q('.toggle',tr).innerHTML = '<span class="ic">' + (!(it && it.active===false) ? '⏸️' : '▶️') + '</span>';
         }
@@ -5372,7 +5601,6 @@ app.get("/productos", async (req, res) => {
             const haystack=[
               q('.descripcion',tr)?.value||'',
               q('.observacion',tr)?.value||'',
-              q('.tag',tr)?.value||'',
               q('.importe',tr)?.value||'',
               q('.cantidad',tr)?.value||''
             ].join(' ').toLowerCase();
@@ -5406,7 +5634,7 @@ app.get("/productos", async (req, res) => {
             if(!currentEmpty){
               const tr=document.createElement('tr');
               tr.className='empty-row';
-              tr.innerHTML='<td colspan="7">No hay productos para mostrar.</td>';
+              tr.innerHTML='<td colspan="6">No hay productos para mostrar.</td>';
               tb.appendChild(tr);
             }
           }else if(currentEmpty){
@@ -5438,7 +5666,6 @@ app.get("/productos", async (req, res) => {
             importe:q('.importe',tr).value.trim(),
             cantidad:q('.cantidad',tr).value.trim(),
             observacion:q('.observacion',tr).value.trim(),
-            tag:q('.tag',tr).value.trim(),
             active:q('.active',tr).checked
           };
           if(!payload.descripcion){ alert('Descripción requerida'); return; }
@@ -6746,6 +6973,24 @@ if (debounceMs > 0 && msg.type === "text") {
       console.error("Error al parsear/corregir JSON:", e.message);
     }
 
+    // ==============================
+    // ✅ Guarda dura #1: si el pedido quedó como DOMICILIO pero no hay dirección válida,
+    // forzar pregunta de dirección y evitar resumen/confirmación.
+    // ==============================
+    try {
+      if (pedidoIsDomicilio(pedido) && !pedidoHasAddress(pedido)) {
+        estado = "IN_PROGRESS";
+        pedido = stripEnvioItemsFromPedido(pedido || {});
+        try {
+          const { pedidoCorr } = recalcAndDetectMismatch(pedido);
+          pedido = pedidoCorr;
+        } catch {}
+        responseText = "¿A qué dirección te lo enviamos? 😊";
+      }
+    } catch (e) {
+      console.warn("[delivery] Guarda de dirección obligatoria falló:", e?.message || e);
+    }
+
     // ✅ Validar día y horario del pedido contra los horarios configurados del local
     try {
       // Normalizar fecha/hora usando fecha_pedido/hora_pedido como fuente de verdad.
@@ -6931,43 +7176,6 @@ if (debounceMs > 0 && msg.type === "text") {
 
 
     // ==============================
-    // ✅ Guarda dura: si el pedido quedó como DOMICILIO pero no hay dirección válida,
-    // el backend fuerza la pregunta de dirección y evita resumen/confirmación.
-    // Esto protege el flujo aunque el modelo se saltee la regla.
-    // ==============================
-    try {
-      if (pedido?.Entrega?.toLowerCase() === "domicilio") {
-        const dom = (typeof pedido.Domicilio === "string")
-          ? { direccion: pedido.Domicilio }
-          : (pedido.Domicilio || {});
-        pedido.Domicilio = dom;
-
-        const hasDireccion =
-          String(dom.direccion || "").trim() ||
-          [dom.calle, dom.numero].filter(Boolean).join(" ").trim() ||
-          String(dom.address || "").trim();
-
-        if (!hasDireccion) {
-          estado = "IN_PROGRESS";
-          pedido.distancia_km = null;
-
-          if (Array.isArray(pedido.items)) {
-            pedido.items = pedido.items.filter(i => !/env[ií]o/i.test(String(i?.descripcion || "")));
-          }
-
-          try {
-            const { pedidoCorr } = recalcAndDetectMismatch(pedido);
-            pedido = pedidoCorr;
-          } catch {}
-
-          responseText = "¿A qué dirección te lo enviamos? 😊";
-        }
-      }
-    } catch (e) {
-      console.warn("[delivery] guarda de dirección obligatoria falló:", e?.message || e);
-    }
-
-    // ==============================
     // ✅ Validación de dirección exacta (Google Maps)
     // Si el geocoding NO es exacto, pedimos al cliente que reescriba la dirección.
     // Importante: limpiamos `Pedido.Domicilio.direccion` para que NO cierre la conversación.
@@ -7032,6 +7240,26 @@ if (debounceMs > 0 && msg.type === "text") {
 
 
 
+
+    // ==============================
+    // ✅ Guardas backend imprescindibles:
+    // 1) domicilio sin dirección → pedir dirección
+    // 2) forma de pago solo con domicilio + dirección
+    // 3) no preguntar condimento de pollo sin pollo real en Pedido.items
+    // 4) no repreguntar tipo de milanesa si ya quedó resuelto
+    // 5) bloquear resumen/confirmación/COMPLETED si faltan datos obligatorios
+    // ==============================
+    try {
+      const guardRes = applyCriticalPedidoGuards({ pedido, responseText, estado });
+      pedido = guardRes.pedido;
+      responseText = guardRes.responseText;
+      estado = guardRes.estado;
+      if (Array.isArray(guardRes.guardHits) && guardRes.guardHits.length) {
+        console.log("[guard] backend:", guardRes.guardHits.join(", "));
+      }
+    } catch (e) {
+      console.warn("[guard] applyCriticalPedidoGuards error:", e?.message || e);
+    }
 
     const responseTextSafe = String(responseText || "").trim()
       || (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length
