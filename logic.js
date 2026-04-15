@@ -113,19 +113,9 @@ const ASSISTANT_PEDIDO_RESPONSE_SCHEMA = {
         Domicilio: {
           type: "object",
           additionalProperties: false,
+          required: ["direccion"],
           properties: {
-            direccion: { type: "string" },
-            referencia: { type: "string" },
-            calle: { type: "string" },
-            numero: { type: ["string", "number"] },
-            barrio: { type: "string" },
-            ciudad: { type: "string" },
-            localidad: { type: "string" },
-            provincia: { type: "string" },
-            cp: { type: ["string", "number"] },
-            lat: { type: "number" },
-            lon: { type: "number" },
-            address: { type: "string" }
+            direccion: { type: "string" }
           }
         },
         Pago: { type: "string" },
@@ -146,9 +136,7 @@ const ASSISTANT_PEDIDO_RESPONSE_SCHEMA = {
             }
           }
         },
-        total_pedido: { type: "number" },
-        Fecha: { type: "string" },
-        Hora: { type: "string" }
+        total_pedido: { type: "number" }
       }
     }
   }
