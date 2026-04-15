@@ -1158,6 +1158,22 @@ function looksLikeSummaryOrConfirmation(text) {
     || /\*productos:\*/i.test(s);
 }
 
+function isExplicitUserConfirmation(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return false;
+
+  const norm = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (/\bconfirm(ar|o|a|ame|alo|ado)\b/.test(norm)) return true;
+  if (/^(si|ok|dale|listo|de una)\b/.test(norm)) return true;
+  if (["👍", "👌", "✅"].includes(raw)) return true;
+
+  return false;
+}
+
+
 function nextRequiredQuestionFromPedido(pedido) {
   const p = normalizePedidoDateTimeFields(cloneJsonSafe(pedido) || {});
   if (!pedidoHasAnyItems(p)) return "¿Qué te gustaría pedir? 😊";
@@ -6865,9 +6881,7 @@ if (debounceMs > 0 && msg.type === "text") {
           // ⚡ Fast-path: si el usuario confirma explícitamente, cerramos sin llamar al modelo
       // ⚡ Fast-path: aceptar también “sí/si” como confirmación explícita,
       // además de las variantes de “confirmar”.
-      const userConfirms =
-        /\bconfirm(ar|o|a|ame|alo|ado)\b/i.test(text) ||
-        /\b(s[ií])\b/.test(text);
+     +      const userConfirms = isExplicitUserConfirmation(text);
       if (userConfirms) {
         // Tomamos último snapshot si existe
         let snapshot = null;
@@ -7262,6 +7276,23 @@ if (debounceMs > 0 && msg.type === "text") {
     }
 
     // ==============================
+    // ✅ Confirmación obligatoria antes de cerrar:
+    // si el pedido ya está completo y NO es transferencia,
+    // jamás cerramos sin una confirmación explícita del usuario.
+    // ==============================
+    try {
+      const pedidoListoParaCerrar = pedidoHasRequiredFieldsForClose(pedido);
+      const pagoEsTransferencia = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
+      const userConfirmedNow = isExplicitUserConfirmation(text);
+
+      if (pedidoListoParaCerrar && !pagoEsTransferencia && !userConfirmedNow) {
+        estado = "IN_PROGRESS";
+        responseText = buildBackendSummary(pedido, { showEnvio: wantsDetail });
+      }
+    } catch (e) {
+      console.warn("[confirm] no se pudo forzar confirmación previa:", e?.message || e);
+    }
+    // ==============================
     // ✅ Si el pedido es a domicilio y ya tiene dirección,
     // forzar que el resumen / confirmación / mensaje final
     // muestre: "Modalidad: Envío ({dirección})"
@@ -7505,11 +7536,10 @@ setAssistantPedidoSnapshot(tenant, sessionFrom, pedido, estado);
 	  /\bno\s+(quiero\s+)?anul/.test(_tNorm);
 	const userCancelled = !!(userWantsCancelRaw && !userCancelNeg);
 
-	// ¿Cerramos como COMPLETED aunque el modelo no lo haya puesto?
-	const userConfirmsFast =
-	  /\bconfirm(ar|o|a)\b/i.test(String(text || "")) ||
-	  /^s(i|í)\b.*confirm/i.test(String(text || ""));
-	const willComplete = !!(estado === "COMPLETED" || (userConfirmsFast && isPedidoCompleto(pedido)));
+	// ✅ Solo cerramos si el usuario confirma explícitamente y el pedido está completo.
+	const userConfirmsFast = isExplicitUserConfirmation(text);
+	const pagoEsTransferencia = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
+	const willComplete = !!(!pagoEsTransferencia && userConfirmsFast && isPedidoCompleto(pedido));
 
 // 🔹 Persistir pedido definitivo en MongoDB (upsert por conversationId) cuando está COMPLETED
 if (willComplete && pedido && convId) {
