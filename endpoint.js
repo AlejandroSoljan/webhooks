@@ -6881,7 +6881,7 @@ if (debounceMs > 0 && msg.type === "text") {
           // ⚡ Fast-path: si el usuario confirma explícitamente, cerramos sin llamar al modelo
       // ⚡ Fast-path: aceptar también “sí/si” como confirmación explícita,
       // además de las variantes de “confirmar”.
-     +      const userConfirms = isExplicitUserConfirmation(text);
+       const userConfirms = isExplicitUserConfirmation(text);
       if (userConfirms) {
         // Tomamos último snapshot si existe
         let snapshot = null;
