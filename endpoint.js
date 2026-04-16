@@ -1098,9 +1098,18 @@ function isExplicitUserConfirmation(text) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+
+  // confirmaciones verbales explícitas
   if (/\bconfirm(ar|o|a|ame|alo|ado)\b/.test(norm)) return true;
-  if (/^(si|ok|dale|listo|de una)\b/.test(norm)) return true;
-  if (["👍", "👌", "✅"].includes(raw)) return true;
+  if (/\b(esta\s+bien|perfecto|joya|okey|okay|ok|dale|listo|de una|mandale|obvio)\b/.test(norm)) return true;
+
+  // variantes de "sí": si, sí, sisi, siii, sip, sep, sisa, etc.
+  // exige que el mensaje arranque con esa confirmación
+  // para no confundir frases largas ambiguas.
+  if (/^(s[i1]+|s[i1]+s[i1]+|sip+|sep+)\b/.test(norm)) return true;
+
+  // emojis de confirmación
+  if (["👍", "👌", "✅", "✔️", "☑️"].includes(raw)) return true;
 
   return false;
 }
