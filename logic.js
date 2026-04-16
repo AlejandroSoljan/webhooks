@@ -732,7 +732,7 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
  * @returns {{json: object|null, userText: string}}
  */
 async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic", openaiApiKey, tenantId, visionModel, visionMaxTokens } = {}) {
-   try {
+  
   try {
     if (!publicImageUrl) {
       return { json: null, userText: "[imagen]" };
