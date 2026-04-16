@@ -7189,10 +7189,13 @@ if (debounceMs > 0 && msg.type === "text") {
     //    ⚠️ Garantía: nunca mandar vacío a WhatsApp
 
 
+    let geoAddressWarning = "";
+
     // ==============================
     // ✅ Validación de dirección exacta (Google Maps)
-    // Si el geocoding NO es exacto, pedimos al cliente que reescriba la dirección.
-    // Importante: limpiamos `Pedido.Domicilio.direccion` para que NO cierre la conversación.
+    // Si Google Maps no la encuentra de forma exacta, NO borramos la dirección:
+    // la conservamos tal cual la mandó el cliente, la dejamos registrada
+    // para búsqueda manual del operador y evitamos usar coords/distancia/envío.
     // ==============================
     try {
       if (pedido?.Entrega?.toLowerCase() === "domicilio" && pedido?.Domicilio) {
@@ -7200,6 +7203,13 @@ if (debounceMs > 0 && msg.type === "text") {
           ? { direccion: pedido.Domicilio }
           : (pedido.Domicilio || {});
         pedido.Domicilio = dom;
+
+
+        const originalAddress = String(
+          dom.direccion ||
+          [dom.calle, dom.numero].filter(Boolean).join(" ") ||
+          ""
+        ).trim();
 
         // Si ya tenemos coordenadas (ubicación compartida), NO forzamos geocoding exacto.
         const hasCoords = Number.isFinite(Number(dom.lat)) && Number.isFinite(Number(dom.lon));
@@ -7231,7 +7241,7 @@ if (debounceMs > 0 && msg.type === "text") {
             if (pedido.Domicilio && typeof pedido.Domicilio === "object") {
               delete pedido.Domicilio.lat;
               delete pedido.Domicilio.lon;
-              pedido.Domicilio.direccion = "";
+              pedido.Domicilio.direccion = originalAddress || String(dom.direccion || "").trim();
             }
             // Quitar item de envío si ya fue agregado por ensureEnvioSmart
             if (Array.isArray(pedido.items)) {
@@ -7243,8 +7253,15 @@ if (debounceMs > 0 && msg.type === "text") {
               pedido = pedidoCorr;
             } catch {}
 
-            responseText = "📍 No pude ubicar *exactamente* esa dirección en Google Maps.\n\nPor favor escribila nuevamente con *calle y número* y, si podés, agregá *barrio/localidad*.\nEj: *Moreno 247, Venado Tuerto*\n\n👉 Si te queda más fácil, mandame tu *Ubicación* desde WhatsApp (📎 → Ubicación).";
-          }
+            geoAddressWarning =
+              `📍 Google Maps no encontró esa dirección, pero la registré igualmente como:\n*${pedido?.Domicilio?.direccion || originalAddress || address}*\n\n` +
+              `La vamos a dejar guardada para que el operador la busque manualmente.`;
+
+            const nextStep = nextRequiredQuestionFromPedido(pedido);
+            responseText = nextStep
+              ? `${geoAddressWarning}\n\n${nextStep}`
+              : geoAddressWarning;
+         }
         }
       }
     } catch (e) {
@@ -7287,7 +7304,10 @@ if (debounceMs > 0 && msg.type === "text") {
 
       if (pedidoListoParaCerrar && !pagoEsTransferencia && !userConfirmedNow) {
         estado = "IN_PROGRESS";
-        responseText = buildBackendSummary(pedido, { showEnvio: wantsDetail });
+        const summaryText = buildBackendSummary(pedido, { showEnvio: wantsDetail });
+        responseText = geoAddressWarning
+          ? `${geoAddressWarning}\n\n${summaryText}`
+          : summaryText;
       }
     } catch (e) {
       console.warn("[confirm] no se pudo forzar confirmación previa:", e?.message || e);
