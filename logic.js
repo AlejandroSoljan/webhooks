@@ -920,7 +920,7 @@ function buildBackendSummary(pedido, opts = {}) {
     );
   }
 
-  return lines.join("\\n");
+  return lines.join("\n");
 }
  function coalesceResponse(maybeText, pedido, _opts = {}) {
   const s = String(maybeText || "").trim();
