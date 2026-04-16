@@ -1081,6 +1081,26 @@ function asksPaymentQuestion(text) {
   return /efectivo o por transferencia/i.test(String(text || ""));
 }
 
+function isExplicitUserCancellation(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return false;
+  const norm = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const wantsCancelRaw =
+    /\b(cancel|anul)(ar|o|a|e|en|ado|ada|alo|ala)?\b/.test(norm) ||
+    /\bdar de baja\b/.test(norm) ||
+    /\bsuspende\b/.test(norm);
+
+  const cancelNeg =
+    /\bno\s+(quiero\s+)?cancel/.test(norm) ||
+    /\bno\s+(quiero\s+)?anul/.test(norm);
+
+  return !!(wantsCancelRaw && !cancelNeg);
+}
+
 function looksLikeSummaryOrConfirmation(text) {
   const s = String(text || "");
   return /¿\s*confirm[aá]s?\??/i.test(s)
@@ -1137,12 +1157,24 @@ function pedidoHasRequiredFieldsForClose(pedido) {
   return true;
 }
 
-function applyCriticalPedidoGuards({ pedido, responseText, estado }) {
+function applyCriticalPedidoGuards({ pedido, responseText, estado, currentText }) {
   let nextPedido = normalizePedidoDateTimeFields(cloneJsonSafe(pedido) || { Entrega: "", Domicilio: {}, items: [], total_pedido: 0 });
   let nextResponse = String(responseText || "").trim();
   let nextEstado = String(estado || "IN_PROGRESS").trim() || "IN_PROGRESS";
   const guardHits = [];
 
+  const userCancelled = isExplicitUserCancellation(currentText);
+  const assistantCancelled =
+    nextEstado.toUpperCase() === "CANCELLED" ||
+    /\bpedido cancelado\b/i.test(nextResponse);
+
+  // ✅ Si el usuario canceló explícitamente o el modelo ya devolvió CANCELLED,
+  // NO ejecutar guardas de flujo normal (pago, dirección, resumen, etc.).
+  if (userCancelled || assistantCancelled) {
+    nextEstado = "CANCELLED";
+    if (!nextResponse) nextResponse = "Pedido cancelado ✅";
+    return { pedido: nextPedido, responseText: nextResponse, estado: nextEstado, guardHits };
+  }
   if (pedidoIsDomicilio(nextPedido) && !pedidoHasAddress(nextPedido)) {
     nextEstado = "IN_PROGRESS";
     nextPedido.distancia_km = null;
@@ -7376,7 +7408,7 @@ if (debounceMs > 0 && msg.type === "text") {
     // 5) bloquear resumen/confirmación/COMPLETED si faltan datos obligatorios
     // ==============================
     try {
-      const guardRes = applyCriticalPedidoGuards({ pedido, responseText, estado });
+      const guardRes = applyCriticalPedidoGuards({ pedido, responseText, estado, currentText: text });
       pedido = guardRes.pedido;
       responseText = guardRes.responseText;
       estado = guardRes.estado;
