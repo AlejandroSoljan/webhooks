@@ -7450,10 +7450,52 @@ if (debounceMs > 0 && msg.type === "text") {
             })
           : "Perfecto, sigo acá. ¿Querés confirmar o cambiar algo?");
 
+    // ==============================
+    // ✅ Determinar el estado final ANTES de enviar/persistir texto
+    // para que el mensaje visible y el estado guardado queden sincronizados.
+    // ==============================
+    const _tNormPre = String(text || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    const userWantsCancelRaw =
+      /\b(cancel|anul)(ar|o|a|e|en|ado|ada)?\b/.test(_tNormPre) ||
+      /\bdar de baja\b/.test(_tNormPre);
+    const userCancelNeg =
+      /\bno\s+(quiero\s+)?cancel/.test(_tNormPre) ||
+      /\bno\s+(quiero\s+)?anul/.test(_tNormPre);
+    const userCancelled = !!(userWantsCancelRaw && !userCancelNeg);
+
+    const userConfirmsFast = isExplicitUserConfirmation(text);
+    const pagoEsTransferenciaFinal = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
+   const willComplete = !!(!pagoEsTransferenciaFinal && userConfirmsFast && isPedidoCompleto(pedido));
+    const closeStatus =
+      (userCancelled || estado === "CANCELLED")
+        ? "CANCELLED"
+        : (willComplete ? "COMPLETED" : null);
+    const finalEstado = closeStatus || (typeof estado === "string" ? estado : "IN_PROGRESS");
+
+    let outboundText = String(responseTextSafe || "").trim();
+    if (closeStatus === "COMPLETED") {
+      const hasConfirmedPhrase =
+        /\b(qued[oó]\s+confirmado|pedido\s+confirmado)\b/i.test(outboundText);
+      const stillAsksConfirmation =
+        /¿\s*confirm(amos|ás|as)\b/i.test(outboundText);
+
+      if (!hasConfirmedPhrase || stillAsksConfirmation) {
+        outboundText = buildBackendSummary(pedido, {
+          showEnvio: wantsDetail,
+          showTotal: wantsDetail || pagoEsTransferenciaFinal,
+          askConfirmation: false,
+          intro: "Perfecto, tu pedido quedó confirmado ✅\n\n🧾 Resumen del pedido:"
+        });
+      }
+    }
     try {
+      setAssistantPedidoSnapshot(tenant, sessionFrom, pedido, finalEstado);
       replaceLastAssistantHistory(tenant, sessionFrom, JSON.stringify({
-        response: responseTextSafe,
-        estado: typeof estado === "string" ? estado : "IN_PROGRESS",
+        response: outboundText,
+        estado: finalEstado,
         Pedido: (pedido && typeof pedido === "object")
           ? pedido
           : { Entrega: "", Domicilio: {}, items: [], total_pedido: 0 }
@@ -7466,7 +7508,7 @@ if (debounceMs > 0 && msg.type === "text") {
       console.log(`[webhook][stale-run] abort before send key=${runKey} seq=${runSeq}`);
       return;
     }
-     await require("./logic").sendChannelMessage(from, responseTextSafe, channelOpts);
+     await require("./logic").sendChannelMessage(from, outboundText, channelOpts);
     if (isStale()) {
       console.log(`[webhook][stale-run] abort after send before persist key=${runKey} seq=${runSeq}`);
       return;
@@ -7487,7 +7529,7 @@ if (debounceMs > 0 && msg.type === "text") {
           conversationId: convId,
           waId: from,
           role: "assistant",
-          content: String(responseTextSafe || ""),
+          content: String(outboundText || ""),
           type: "text",
           meta: { model: "gpt" }
         });
@@ -7496,8 +7538,8 @@ if (debounceMs > 0 && msg.type === "text") {
       }
       try {
         const snap = {
-          response: typeof responseTextSafe === "string" ? responseTextSafe : "",
-          estado: typeof estado === "string" ? estado : "IN_PROGRESS",
+          response: typeof outboundText === "string" ? outboundText : "",
+          estado: finalEstado,
           Pedido: (pedido && typeof pedido === "object")
             ? pedido
             : { Entrega: "", Domicilio: {}, items: [], total_pedido: 0 }
@@ -7634,24 +7676,7 @@ if (debounceMs > 0 && msg.type === "text") {
 setAssistantPedidoSnapshot(tenant, sessionFrom, pedido, estado);
 
  
-	// 🔎 Heurística: si el usuario pidió cancelar, forzamos CANCELLED para el cierre
-	// (esto evita que el /admin muestre COMPLETED cuando el modelo respondió mal el estado)
-	const _tNorm = String(text || "")
-	  .toLowerCase()
-	  .normalize("NFD")
-	  .replace(/[\u0300-\u036f]/g, "");
-	const userWantsCancelRaw =
-	  /\b(cancel|anul)(ar|o|a|e|en|ado|ada)?\b/.test(_tNorm) ||
-	  /\bdar de baja\b/.test(_tNorm);
-	const userCancelNeg =
-	  /\bno\s+(quiero\s+)?cancel/.test(_tNorm) ||
-	  /\bno\s+(quiero\s+)?anul/.test(_tNorm);
-	const userCancelled = !!(userWantsCancelRaw && !userCancelNeg);
-
-	// ✅ Solo cerramos si el usuario confirma explícitamente y el pedido está completo.
-	const userConfirmsFast = isExplicitUserConfirmation(text);
-	const pagoEsTransferencia = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
-	const willComplete = !!(!pagoEsTransferencia && userConfirmsFast && isPedidoCompleto(pedido));
+	
 
 // 🔹 Persistir pedido definitivo en MongoDB (upsert por conversationId) cuando está COMPLETED
 if (willComplete && pedido && convId) {
@@ -7684,15 +7709,7 @@ if (willComplete && pedido && convId) {
 }
     } catch {}
     try {
-	      // Cerramos si:
-	      // 1) el usuario canceló explícitamente, o
-	      // 2) el flujo terminó (COMPLETED) o
-	      // 3) el usuario confirmó explícitamente y el pedido está completo.
-	      const closeStatus =
-	        (userCancelled || estado === "CANCELLED")
-	          ? "CANCELLED"
-	          : (willComplete ? "COMPLETED" : null);
-
+	  
 	      if (closeStatus) {
 	        await closeConversation(convId, closeStatus);
           
