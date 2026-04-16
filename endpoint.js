@@ -6653,7 +6653,10 @@ const channelOpts = {
   instagramPageId: runtime?.instagramPageId || null,
   instagramAccessToken: runtime?.instagramAccessToken || null,
 };
-const aiOpts = { openaiApiKey: runtime?.openaiApiKey || null };
+    const aiOpts = {
+      tenantId: tenant,
+      openaiApiKey: runtime?.openaiApiKey || null
+    };
 
     if (!msg) {
       console.warn("[webhook] evento sin messages; se ignora");

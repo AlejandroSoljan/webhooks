@@ -10,6 +10,9 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
 const CHAT_MODEL = process.env.CHAT_MODEL || "gpt-5.4";
 const VISION_MODEL = process.env.VISION_MODEL || CHAT_MODEL;
 const CHAT_TEMPERATURE = Number(process.env.OPENAI_TEMPERATURE ?? 0.0) || 0.0;
+const CHAT_MAX_TOKENS = Number(process.env.OPENAI_MAX_TOKENS || process.env.CHAT_MAX_TOKENS || 0) || 0;
+const TENANT_AI_CONFIG_CACHE_TTL_MS = Number(process.env.TENANT_AI_CONFIG_CACHE_TTL_MS || 300000);
+
 
 const GRAPH_API_VERSION = process.env.GRAPH_API_VERSION || "v17.0";
 const GRAPH_VERSION = process.env.GRAPH_VERSION || "v22.0";
@@ -261,6 +264,117 @@ function invalidateBehaviorCache(tenantId = DEFAULT_TENANT_ID) {
   _behaviorCache.delete(String(tenantId));
 }
 
+const _tenantAiConfigCache = new Map();
+
+function _tenantAiCacheKey(tenantId = DEFAULT_TENANT_ID) {
+  return String(tenantId || DEFAULT_TENANT_ID || "default").trim() || "default";
+}
+
+function _pickFirstNonEmptyString(...values) {
+  for (const value of values) {
+    const s = String(value ?? "").trim();
+    if (s) return s;
+  }
+  return "";
+}
+function _pickFirstFiniteNumber(...values) {
+  for (const value of values) {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function _normalizeTenantAiConfig(doc) {
+  const cfg = (doc && typeof doc === "object" && !Array.isArray(doc)) ? doc : {};
+  const openaiCfg = (cfg.openai && typeof cfg.openai === "object" && !Array.isArray(cfg.openai)) ? cfg.openai : {};
+
+  const chatModel = _pickFirstNonEmptyString(
+    openaiCfg.chat_model,
+    openaiCfg.chatModel,
+    cfg.CHAT_MODEL,
+    cfg.chat_model,
+    cfg.chatModel
+  );
+
+  const visionModel = _pickFirstNonEmptyString(
+    openaiCfg.vision_model,
+    openaiCfg.visionModel,
+    cfg.VISION_MODEL,
+    cfg.vision_model,
+    cfg.visionModel
+  );
+
+  const transcribeModel = _pickFirstNonEmptyString(
+    openaiCfg.transcribe_model,
+    openaiCfg.transcribeModel,
+    cfg.OPENAI_TRANSCRIBE_MODEL,
+    cfg.TRANSCRIBE_MODEL,
+    cfg.WHISPER_MODEL,
+    cfg.transcribe_model,
+    cfg.transcribeModel
+ );
+
+  const tempNum = _pickFirstFiniteNumber(
+    openaiCfg.temperature,
+    openaiCfg.chat_temperature,
+    openaiCfg.chatTemperature,
+    cfg.OPENAI_TEMPERATURE,
+    cfg.chat_temperature,
+    cfg.chatTemperature,
+    cfg.openai_temperature
+  );
+
+  const chatMaxTokens = _pickFirstFiniteNumber(
+    openaiCfg.max_tokens,
+    openaiCfg.maxTokens,
+    cfg.OPENAI_MAX_TOKENS,
+    cfg.CHAT_MAX_TOKENS,
+    cfg.max_tokens,
+    cfg.maxTokens,
+    cfg.chat_max_tokens,
+    cfg.chatMaxTokens
+  );
+
+  return {
+    chatModel: chatModel || null,
+    visionModel: visionModel || null,
+    transcribeModel: transcribeModel || null,
+    chatTemperature: tempNum === null ? null : Math.max(0, Math.min(2, tempNum)),
+    chatMaxTokens: chatMaxTokens === null ? null : Math.max(1, Math.trunc(chatMaxTokens)),
+  };
+}
+
+async function loadTenantAiConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
+  const key = _tenantAiCacheKey(tenantId);
+  const cached = _tenantAiConfigCache.get(key);
+  if (cached && (Date.now() - cached.at) < TENANT_AI_CONFIG_CACHE_TTL_MS) {
+    return cached.value;
+  }
+
+  let value = {
+    chatModel: null,
+    visionModel: null,
+    transcribeModel: null,
+    chatTemperature: null,
+    chatMaxTokens: null,
+  };
+
+  try {
+    const db = await getDb();
+    const doc = await db.collection("tenant_config").findOne({ _id: key }) || {};
+    value = _normalizeTenantAiConfig(doc);
+  } catch (e) {
+    console.warn("[tenant-ai] loadTenantAiConfigFromMongo error:", e?.message || e);
+  }
+
+  _tenantAiConfigCache.set(key, { value, at: Date.now() });
+  return value;
+}
+
+function invalidateTenantAiConfigCache(tenantId = DEFAULT_TENANT_ID) {
+  _tenantAiConfigCache.delete(_tenantAiCacheKey(tenantId));
+}
 // ------------------ Catálogo dinámico desde Mongo ------------------
 // Cache por tenant para evitar hits constantes (5 min)
 const _catalogCache = new Map(); // { tenantId: { text, at } }
@@ -610,7 +724,7 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
  * @param {string} params.purpose "payment-proof" | "generic"
  * @returns {{json: object|null, userText: string}}
  */
-async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic", openaiApiKey } = {}) {
++async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic", openaiApiKey, tenantId, visionModel, visionMaxTokens } = {}) {
   try {
     if (!publicImageUrl) {
       return { json: null, userText: "[imagen]" };
@@ -631,8 +745,18 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
     const client = getOpenAIClient(openaiApiKey);
     if (!client) throw new Error("openai_not_configured");
 
+    const tenantAiCfg = await loadTenantAiConfigFromMongo(tenantId);
+    const model = String(
+      visionModel ||
+      tenantAiCfg.visionModel ||
+      VISION_MODEL ||
+      CHAT_MODEL
+    ).trim();
+    const maxTokensNum = Number(visionMaxTokens);
+    const maxTokens = Number.isFinite(maxTokensNum) && maxTokensNum > 0 ? Math.trunc(maxTokensNum) : 500;
+
     const resp = await client.chat.completions.create({
-      model: VISION_MODEL,
+      model,
       temperature: 0,
       response_format: { type: "json_object" },
       messages: [
@@ -645,7 +769,7 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
           ]
         }
       ],
-      max_tokens: 500
+      max_tokens: maxTokens
     });
 
     const content = resp?.choices?.[0]?.message?.content || "";
@@ -1123,16 +1247,32 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
 
   try {
     const apiKey = String(opts.openaiApiKey || OPENAI_API_KEY || "").trim();
-    const model = String(opts.chatModel || CHAT_MODEL || "gpt-5.4").trim();
+    const tenantAiCfg = await loadTenantAiConfigFromMongo(tenantId);
+    const model = String(
+      opts.chatModel ||
+      tenantAiCfg.chatModel ||
+      CHAT_MODEL ||
+      "gpt-5.4"
+    ).trim();
+    const temperatureRaw = opts.chatTemperature ?? tenantAiCfg.chatTemperature;
+    const temperature = Number.isFinite(Number(temperatureRaw))
+      ? Math.max(0, Math.min(2, Number(temperatureRaw)))
+      : CHAT_TEMPERATURE;
+    const maxTokensRaw = opts.chatMaxTokens ?? tenantAiCfg.chatMaxTokens;
+    const maxTokens = Number.isFinite(Number(maxTokensRaw)) && Number(maxTokensRaw) > 0
+      ? Math.trunc(Number(maxTokensRaw))
+      : (CHAT_MAX_TOKENS > 0 ? Math.trunc(CHAT_MAX_TOKENS) : null);
     const payload = {
       model,
       messages: sanitizeMessages(messages),
-      temperature: CHAT_TEMPERATURE,
+      temperature,
       response_format: buildStrictPedidoResponseFormat()
     };
+    if (maxTokens) payload.max_tokens = maxTokens;
     console.log("[openai] request.meta =>", {
       model,
-      temperature: CHAT_TEMPERATURE,
+      temperature,
+      max_tokens: maxTokens || null,
       response_format: "json_schema_strict"
     });
     console.log("[openai] message =>\n" + JSON.stringify(sanitizeMessages(messages), null, 2));
@@ -1148,7 +1288,8 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       console.log("[openai] response.meta =>", {
         id: oid,
         model: responseModel || model,
-        temperature: CHAT_TEMPERATURE,
+        temperature,
+         max_tokens: maxTokens || null,
         usage
       });
       //console.log("[openai] response.data =>\n" + JSON.stringify(response.data, null, 2));
@@ -1528,6 +1669,7 @@ module.exports = {
   loadBehaviorTextFromMongo,
   loadBehaviorConfigFromMongo,
   invalidateBehaviorCache,
+  invalidateTenantAiConfigCache,
   // catálogo
   loadCatalogTextFromMongo,
 
