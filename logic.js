@@ -844,6 +844,7 @@ function ensureEnvio(pedido) {
   */
 function buildBackendSummary(pedido, opts = {}) {
   const showEnvio = !!opts.showEnvio;
+  const showTotal = !!opts.showTotal;
   const items = (pedido.items || []).filter(it =>
     showEnvio ? true : !/env[ií]o/i.test(String(it?.descripcion || ""))
   );
@@ -910,8 +911,8 @@ function buildBackendSummary(pedido, opts = {}) {
     ...(modalidadLabel ? [`*Modalidad:* ${modalidadLabel}`] : []),
     "*Productos:*",
     ...items.map(i => `- ${i.cantidad} ${i.descripcion}`),
-    `*Total:* $${Number(pedido.total_pedido || 0).toLocaleString("es-AR")}`,
-    "¿Confirmamos el pedido? ✅"
+      ...(showTotal ? [`*Total:* $${Number(pedido.total_pedido || 0).toLocaleString("es-AR")}`] : []),
+   "¿Confirmamos el pedido? ✅"
   ];
 
   if (_hasMilanesas(pedido)) {

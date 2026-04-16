@@ -7079,6 +7079,9 @@ if (debounceMs > 0 && msg.type === "text") {
 */
     try {
       let finalBody = String(responseText ?? "").trim();
+      const pagoEsTransferencia = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
+      const showTotalInSummary = !!(wantsDetail || pagoEsTransferencia);
+
 
       // 🛡️ Si el modelo solo respondió algo muy corto tipo
       // "tu pedido queda así" sin detallar productos/total,
@@ -7092,14 +7095,17 @@ if (debounceMs > 0 && msg.type === "text") {
         pedido.items.length > 0
       ) {
         // Usamos el resumen estándar del backend (sin ítem de envío)
-        responseText = buildBackendSummary(pedido);
+        responseText = buildBackendSummary(pedido, { showTotal: showTotalInSummary });
         finalBody = String(responseText || "").trim();
       }
 
       if (!finalBody) {
         // No forzar resumen a menos que lo pidan explícitamente
         if (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length > 0) {
-          responseText = buildBackendSummary(pedido, { showEnvio: wantsDetail });
+          responseText = buildBackendSummary(pedido, {
+            showEnvio: wantsDetail,
+            showTotal: showTotalInSummary
+          });
         } else {
           // Texto neutro si ya hay contexto; saludo solo si no lo hay
           responseText = coalesceResponse("", pedido);
@@ -7189,7 +7195,8 @@ if (debounceMs > 0 && msg.type === "text") {
     //    ⚠️ Garantía: nunca mandar vacío a WhatsApp
 
 
-    let geoAddressWarning = "";
+     let geoAddressWarning = "";
+    let geoShouldPrependToSummary = false;
 
     // ==============================
     // ✅ Validación de dirección exacta (Google Maps)
@@ -7210,7 +7217,12 @@ if (debounceMs > 0 && msg.type === "text") {
           [dom.calle, dom.numero].filter(Boolean).join(" ") ||
           ""
         ).trim();
-
+        const geoManualPending = !!dom.geo_manual_pending;
+        const geoManualPendingAddress = String(dom.geo_manual_pending_address || "").trim();
+        const samePendingAddress =
+          geoManualPending &&
+          geoManualPendingAddress &&
+          geoManualPendingAddress === originalAddress;
         // Si ya tenemos coordenadas (ubicación compartida), NO forzamos geocoding exacto.
         const hasCoords = Number.isFinite(Number(dom.lat)) && Number.isFinite(Number(dom.lon));
 
@@ -7223,7 +7235,7 @@ if (debounceMs > 0 && msg.type === "text") {
           dom.cp
         ].filter(Boolean);
         const address = addrParts.join(", ").trim();
-        if (address && !hasCoords) {
+        if (address && !hasCoords && !samePendingAddress) {
           const DEF_CITY = process.env.DEFAULT_CITY || "Venado Tuerto";
           const DEF_PROVINCE = process.env.DEFAULT_PROVINCE || "Santa Fe";
           const DEF_COUNTRY = process.env.DEFAULT_COUNTRY || "Argentina";
@@ -7242,12 +7254,31 @@ if (debounceMs > 0 && msg.type === "text") {
               delete pedido.Domicilio.lat;
               delete pedido.Domicilio.lon;
               pedido.Domicilio.direccion = originalAddress || String(dom.direccion || "").trim();
+              pedido.Domicilio.geo_manual_pending = true;
+              pedido.Domicilio.geo_manual_pending_address = pedido.Domicilio.direccion;
+
             }
-            // Quitar item de envío si ya fue agregado por ensureEnvioSmart
-            if (Array.isArray(pedido.items)) {
-              pedido.items = pedido.items.filter(i => !/env[ií]o/i.test(String(i?.descripcion || "")));
+
+            // Reemplazar cualquier envío previo por el envío más caro (fallback Infinity)
+            if (!Array.isArray(pedido.items)) pedido.items = [];
+            pedido.items = pedido.items.filter(i => !/env[ií]o/i.test(String(i?.descripcion || "")));
+            try {
+              const db = await getDb();
+              const envioProd = await pickEnvioProductByDistance(db, tenant || null, Infinity);
+              if (envioProd) {
+                pedido.items.push({
+                  id: envioProd._id || envioProd.id || 0,
+                  descripcion: envioProd.descripcion,
+                  cantidad: 1,
+                  importe_unitario: Number(envioProd.importe || 0),
+                  total: Number(envioProd.importe || 0),
+                });
+              }
+            } catch (e) {
+              console.warn("[geo] no se pudo aplicar envío fallback Infinity:", e?.message || e);
             }
-            // Recalcular total
+
+            // Recalcular total con el envío fallback ya insertado
             try {
               const { pedidoCorr } = recalcAndDetectMismatch(pedido);
               pedido = pedidoCorr;
@@ -7256,12 +7287,16 @@ if (debounceMs > 0 && msg.type === "text") {
             geoAddressWarning =
               `📍 Google Maps no encontró esa dirección, pero la registré igualmente como:\n*${pedido?.Domicilio?.direccion || originalAddress || address}*\n\n` +
               `La vamos a dejar guardada para que el operador la busque manualmente.`;
-
+              geoShouldPrependToSummary = true;
+ 
             const nextStep = nextRequiredQuestionFromPedido(pedido);
             responseText = nextStep
               ? `${geoAddressWarning}\n\n${nextStep}`
               : geoAddressWarning;
-         }
+          } else if (pedido.Domicilio && typeof pedido.Domicilio === "object") {
+            delete pedido.Domicilio.geo_manual_pending;
+            delete pedido.Domicilio.geo_manual_pending_address;
+          }
         }
       }
     } catch (e) {
@@ -7304,8 +7339,11 @@ if (debounceMs > 0 && msg.type === "text") {
 
       if (pedidoListoParaCerrar && !pagoEsTransferencia && !userConfirmedNow) {
         estado = "IN_PROGRESS";
-        const summaryText = buildBackendSummary(pedido, { showEnvio: wantsDetail });
-        responseText = geoAddressWarning
+        const summaryText = buildBackendSummary(pedido, {
+          showEnvio: wantsDetail,
+          showTotal: wantsDetail || pagoEsTransferencia
+        });
+        responseText = (geoShouldPrependToSummary && geoAddressWarning)
           ? `${geoAddressWarning}\n\n${summaryText}`
           : summaryText;
       }
@@ -7355,7 +7393,10 @@ if (debounceMs > 0 && msg.type === "text") {
  
     const responseTextSafe = String(responseText || "").trim()
       || (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length
-          ? buildBackendSummary(pedido, { showEnvio: wantsDetail })
+          ? buildBackendSummary(pedido, {
+              showEnvio: wantsDetail,
+              showTotal: wantsDetail || /^transferencia$/i.test(String(pedido?.Pago || "").trim())
+            })
           : "Perfecto, sigo acá. ¿Querés confirmar o cambiar algo?");
 
     try {
