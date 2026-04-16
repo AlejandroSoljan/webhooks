@@ -666,7 +666,7 @@ async function downloadMediaBuffer(mediaUrl, opts = {}) {
 }
 
 // ================== STT (externo -> fallback OpenAI) ==================
-async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApiKey } = {}) {
+async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApiKey, tenantId, transcribeModel } = {}) {
   const prefer = TRANSCRIBE_API_URL;
   if (prefer && publicAudioUrl) {
     try {
@@ -703,7 +703,14 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
       const FileCtor = global.File || require("node:buffer").Blob;
       fileObj = new FileCtor([buf], `audio.${ext}`, { type: mt || "audio/ogg" });
     }
-    const r = await client.audio.transcriptions.create({ file: fileObj, model: TRANSCRIBE_MODEL });
+        const tenantAiCfg = await loadTenantAiConfigFromMongo(tenantId);
+    const model = String(
+      transcribeModel ||
+      tenantAiCfg.transcribeModel ||
+      TRANSCRIBE_MODEL ||
+      "whisper-1"
+    ).trim();
+    const r = await client.audio.transcriptions.create({ file: fileObj, model });
     const text = (r.text || "").trim();
     return { text, usage: r.usage || null, engine: "openai" };
   } catch (e) {
@@ -724,7 +731,8 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
  * @param {string} params.purpose "payment-proof" | "generic"
  * @returns {{json: object|null, userText: string}}
  */
-+async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic", openaiApiKey, tenantId, visionModel, visionMaxTokens } = {}) {
+async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic", openaiApiKey, tenantId, visionModel, visionMaxTokens } = {}) {
+   try {
   try {
     if (!publicImageUrl) {
       return { json: null, userText: "[imagen]" };
@@ -754,6 +762,7 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
     ).trim();
     const maxTokensNum = Number(visionMaxTokens);
     const maxTokens = Number.isFinite(maxTokensNum) && maxTokensNum > 0 ? Math.trunc(maxTokensNum) : 500;
+
 
     const resp = await client.chat.completions.create({
       model,
