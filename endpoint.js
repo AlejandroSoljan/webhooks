@@ -4558,6 +4558,7 @@ app.get("/admin", async (req, res) => {
   }
 
   let adminTablePollTimer = null;
+  let adminTableLoadDebounceTimer = null;
   let lastAdminTableFingerprint = "";
   let adminLastUserInteractionAt = 0;
   function markAdminInteraction(){
@@ -4590,6 +4591,15 @@ app.get("/admin", async (req, res) => {
     });
   }
 
+  function debounceAdminTableLoad(ms = 250, opts = {}){
+    if (adminTableLoadDebounceTimer) {
+      clearTimeout(adminTableLoadDebounceTimer);
+    }
+    adminTableLoadDebounceTimer = setTimeout(() => {
+      loadTable(opts);
+    }, ms);
+  }
+
   function startAdminTablePolling(){
     stopAdminTablePolling();
     adminTablePollTimer = setInterval(async () => {
@@ -4597,7 +4607,7 @@ app.get("/admin", async (req, res) => {
         if (document.hidden) return;
         if (currentConvId) return;
         if (adminUserIsInteracting()) return;
-        await loadTable({ soft: true });
+        await loadTable({ soft: true, preserveScroll: true });
       } catch (e) {
         console.warn('admin table polling error', e);
       }
@@ -4615,10 +4625,10 @@ app.get("/admin", async (req, res) => {
   // =========================
   async function loadTable(opts = {}){
     const soft = !!opts.soft;
-     const tb = document.querySelector('#tbl tbody');
+    const preserveScroll = !!opts.preserveScroll;
     const tableWrap = document.querySelector('.table-wrap');
-    const prevScrollTop = tableWrap ? tableWrap.scrollTop : 0;
-    const prevScrollLeft = tableWrap ? tableWrap.scrollLeft : 0;
+    const prevScrollTop = (preserveScroll && tableWrap) ? tableWrap.scrollTop : 0;
+    const prevScrollLeft = (preserveScroll && tableWrap) ? tableWrap.scrollLeft : 0;
     const tb = document.querySelector('#tbl tbody');
     try{
       const deliveredFilter = getDeliveryFilterValue();
@@ -4644,6 +4654,7 @@ app.get("/admin", async (req, res) => {
         convMatchesStatus(c, statusFilter) &&
         convMatchesDateRange(c, range.from, range.to)
       );
+      const rows = sortAdminConversations(filtered, statusFilter);
       const fingerprint = buildAdminTableFingerprint(Array.isArray(data) ? data : [], rows);
 
       if (soft && fingerprint === lastAdminTableFingerprint) {
@@ -4696,7 +4707,7 @@ app.get("/admin", async (req, res) => {
         tb.appendChild(tr);
       }
 
-      if (tableWrap) {
+      if (preserveScroll && tableWrap) {
         tableWrap.scrollTop = prevScrollTop;
         tableWrap.scrollLeft = prevScrollLeft;
       }
@@ -4731,7 +4742,7 @@ app.get("/admin", async (req, res) => {
               ok = (actual === flag);
             }
             if (!ok) throw new Error('not_updated');
-            await loadTable();
+            await loadTable({ soft: true, preserveScroll: true });
           }catch(e){
             chk.checked = !flag;
             alert('No se pudo actualizar el estado de cocina');
@@ -4759,7 +4770,7 @@ app.get("/admin", async (req, res) => {
             }
             if (!ok) throw new Error('not_updated');
 
-           await loadTable();
+           await loadTable({ soft: true, preserveScroll: true });
           }catch(e){
             chk.checked = !flag;
             alert('No se pudo actualizar el estado de entrega');
@@ -4787,12 +4798,15 @@ app.get("/admin", async (req, res) => {
   // =========================
   // Bind general
   // =========================
-  document.getElementById('dateFrom')?.addEventListener('change', loadTable);
-  document.getElementById('dateTo')?.addEventListener('change', loadTable);
-  document.getElementById('qFilter')?.addEventListener('input', loadTable);
+  document.getElementById('dateFrom')?.addEventListener('change', ()=> loadTable({ soft: true, preserveScroll: true }));
+  document.getElementById('dateTo')?.addEventListener('change', ()=> loadTable({ soft: true, preserveScroll: true }));
+  document.getElementById('qFilter')?.addEventListener('input', ()=>{
+    markAdminInteraction();
+    debounceAdminTableLoad(250, { soft: true, preserveScroll: true });
+  });
 
   
-  document.getElementById('btnReload')?.addEventListener('click', loadTable);
+  document.getElementById('btnReload')?.addEventListener('click', ()=> loadTable());
   document.getElementById('btnToday')?.addEventListener('click', ()=>{
     markAdminInteraction();
     const today = todayIso();
@@ -4800,7 +4814,7 @@ app.get("/admin", async (req, res) => {
     const to = document.getElementById('dateTo');
     if (from) from.value = today;
     if (to) to.value = today;
-    loadTable();
+    loadTable({ soft: true, preserveScroll: true });
   });
   document.getElementById('btnClearDates')?.addEventListener('click', ()=>{
     markAdminInteraction();
@@ -4808,14 +4822,14 @@ app.get("/admin", async (req, res) => {
     const to = document.getElementById('dateTo');
     if (from) from.value = '';
     if (to) to.value = '';
-    loadTable();
+    loadTable({ soft: true, preserveScroll: true });
   });
   document.getElementById('qFilter')?.addEventListener('keydown', (e)=>{
     markAdminInteraction();
 
     if (e.key === 'Enter') {
       e.preventDefault();
-       loadTable();
+       loadTable({ soft: true, preserveScroll: true });
     }
   });
 
@@ -4860,7 +4874,7 @@ app.get("/admin", async (req, res) => {
   loadTable();
   startAdminTablePolling();
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) loadTable({ soft: true });
+    if (!document.hidden) loadTable({ soft: true, preserveScroll: true });
   });
 
 
