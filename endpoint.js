@@ -4557,10 +4557,68 @@ app.get("/admin", async (req, res) => {
     return '<div class="cell-products">' + safeLines.map(line => '<div>' + escHtml(line) + '</div>').join('') + '</div>';
   }
 
+  let adminTablePollTimer = null;
+  let lastAdminTableFingerprint = "";
+  let adminLastUserInteractionAt = 0;
+  function markAdminInteraction(){
+    adminLastUserInteractionAt = Date.now();
+  }
+
+  function adminUserIsInteracting(){
+    return (Date.now() - adminLastUserInteractionAt) < 5000;
+  }
+
+  function buildAdminTableFingerprint(allRows, visibleRows){
+    const all = Array.isArray(allRows) ? allRows : [];
+    const visible = Array.isArray(visibleRows) ? visibleRows : [];
+    return JSON.stringify({
+      totalAll: all.length,
+      totalVisible: visible.length,
+      all: all.map(c => [
+        c._id || '',
+        c.status || '',
+        c.lastAt || '',
+        c.delivered ? 1 : 0,
+        c.kitchenSent ? 1 : 0,
+        c.fechaEntrega || '',
+        c.horaEntrega || '',
+        c.distanceKm ?? '',
+        c.contactName || '',
+        c.direccion || '',
+        Array.isArray(c.products) ? c.products.join('¦') : ''
+      ].join('|'))
+    });
+  }
+
+  function startAdminTablePolling(){
+    stopAdminTablePolling();
+    adminTablePollTimer = setInterval(async () => {
+      try {
+        if (document.hidden) return;
+        if (currentConvId) return;
+        if (adminUserIsInteracting()) return;
+        await loadTable({ soft: true });
+      } catch (e) {
+        console.warn('admin table polling error', e);
+      }
+    }, 15000);
+  }
+
+  function stopAdminTablePolling(){
+    if (adminTablePollTimer) {
+      clearInterval(adminTablePollTimer);
+      adminTablePollTimer = null;
+    }
+  }
   // =========================
   // Tabla conversaciones (ÚNICA versión)
   // =========================
-  async function loadTable(){
+  async function loadTable(opts = {}){
+    const soft = !!opts.soft;
+     const tb = document.querySelector('#tbl tbody');
+    const tableWrap = document.querySelector('.table-wrap');
+    const prevScrollTop = tableWrap ? tableWrap.scrollTop : 0;
+    const prevScrollLeft = tableWrap ? tableWrap.scrollLeft : 0;
     const tb = document.querySelector('#tbl tbody');
     try{
       const deliveredFilter = getDeliveryFilterValue();
@@ -4573,11 +4631,11 @@ app.get("/admin", async (req, res) => {
       if (deliveredFilter.length === 1 && deliveredFilter[0] === 'delivered') url += '&delivered=true';
       else if (deliveredFilter.length === 1 && deliveredFilter[0] === 'pending') url += '&delivered=false';
 
-      if (tb) {
+      if (tb && !soft) {
         tb.innerHTML = '<tr><td colspan="13" style="text-align:center;color:#64748b;padding:20px">Cargando conversaciones…</td></tr>';
       }
 
-      const r = await fetch(url);
+      const r = await fetch(url, { cache: 'no-store' });
       const data = await r.json().catch(()=>[]);
       if (!tb) return;
       const filtered = (Array.isArray(data) ? data : []).filter(c =>
@@ -4586,7 +4644,12 @@ app.get("/admin", async (req, res) => {
         convMatchesStatus(c, statusFilter) &&
         convMatchesDateRange(c, range.from, range.to)
       );
-      const rows = sortAdminConversations(filtered, statusFilter);
+      const fingerprint = buildAdminTableFingerprint(Array.isArray(data) ? data : [], rows);
+
+      if (soft && fingerprint === lastAdminTableFingerprint) {
+        return;
+      }
+      lastAdminTableFingerprint = fingerprint;
 
 
       tb.innerHTML = '';
@@ -4631,6 +4694,11 @@ app.get("/admin", async (req, res) => {
           '</td>';
 
         tb.appendChild(tr);
+      }
+
+      if (tableWrap) {
+        tableWrap.scrollTop = prevScrollTop;
+        tableWrap.scrollLeft = prevScrollLeft;
       }
 
       tb.querySelectorAll('button[data-conv]').forEach(b=>{
@@ -4726,6 +4794,7 @@ app.get("/admin", async (req, res) => {
   
   document.getElementById('btnReload')?.addEventListener('click', loadTable);
   document.getElementById('btnToday')?.addEventListener('click', ()=>{
+    markAdminInteraction();
     const today = todayIso();
     const from = document.getElementById('dateFrom');
     const to = document.getElementById('dateTo');
@@ -4734,6 +4803,7 @@ app.get("/admin", async (req, res) => {
     loadTable();
   });
   document.getElementById('btnClearDates')?.addEventListener('click', ()=>{
+    markAdminInteraction();
     const from = document.getElementById('dateFrom');
     const to = document.getElementById('dateTo');
     if (from) from.value = '';
@@ -4741,11 +4811,27 @@ app.get("/admin", async (req, res) => {
     loadTable();
   });
   document.getElementById('qFilter')?.addEventListener('keydown', (e)=>{
+    markAdminInteraction();
 
     if (e.key === 'Enter') {
       e.preventDefault();
        loadTable();
     }
+  });
+
+  ['mousedown','keydown','touchstart','wheel','focusin'].forEach(evt => {
+    document.addEventListener(evt, (e) => {
+      const el = e.target;
+      if (!el || !el.closest) return;
+      if (
+        el.closest('.toolbar-card') ||
+        el.closest('.table-card') ||
+        el.closest('#modalRoot') ||
+        el.closest('#pedidoModalBackdrop')
+      ) {
+        markAdminInteraction();
+      }
+    }, true);
   });
 
   // Bind modal manual/chat
@@ -4772,7 +4858,10 @@ app.get("/admin", async (req, res) => {
   initAdminFilterPopovers();
   initAdminUiState();
   loadTable();
-  setInterval(loadTable, 60000);
+  startAdminTablePolling();
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) loadTable({ soft: true });
+  });
 
 
   </script>
