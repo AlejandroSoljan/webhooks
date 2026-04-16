@@ -5339,9 +5339,12 @@ app.put("/api/products/:id", async (req, res) => {
     const db = await getDb();
     const { id } = req.params;
     const upd = {};
-    ["descripcion","observacion","active","importe","cantidad"].forEach(k => {
+    ["descripcion","tag","observacion","active","importe","cantidad"].forEach(k => {
       if (req.body[k] !== undefined) upd[k] = req.body[k];
     });
+    if (upd.tag !== undefined) {
+      upd.tag = String(upd.tag || "").trim();
+    }
     if (upd.importe !== undefined && typeof upd.importe === "string") {
       const n = Number(upd.importe.replace(/[^\d.,-]/g, "").replace(",", "."));
       upd.importe = Number.isFinite(n) ? n : undefined;
@@ -5441,10 +5444,11 @@ app.get("/productos", async (req, res) => {
     const escText = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
     const initialRows = productos.map(p => `<tr data-id="${p._id}">
         <td class="col-desc"><input class="descripcion" type="text" value="${escAttr(p.descripcion || "")}" placeholder="Descripción del producto" /></td>
+        <td class="col-tag"><input class="tag" type="text" value="${escAttr(p.tag || "")}" placeholder="Tag" /></td>
         <td class="col-price"><input class="importe" type="number" step="0.01" value="${escAttr(p.importe ?? "")}" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" value="${escAttr(p.cantidad ?? "")}" placeholder="0" /></td>
         <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación...">${escText(p.observacion || "")}</textarea></td>
-        <td class="col-active">
+       <td class="col-active">
           <label class="switch">
             <input class="active" type="checkbox" ${p.active !== false ? "checked" : ""} />
             <span></span>
@@ -5549,7 +5553,7 @@ app.get("/productos", async (req, res) => {
           body{padding:12px}
           .table-card{border-radius:18px}
           .table-wrap{overflow:auto}
-          table{min-width:920px}
+          table{min-width:1080px}
           .actions-stack{grid-template-columns:1fr}
         }
       </style></head><body>
@@ -5567,7 +5571,7 @@ app.get("/productos", async (req, res) => {
 
         <div class="toolbar">
           <label class="search">
-            <input id="searchInput" type="text" placeholder="Buscar por descripción, observación, importe o cantidad..." />
+            <input id="searchInput" type="text" placeholder="Buscar por descripción, tag, observación, importe o cantidad..." />
           </label>
           <div class="toolbar-actions">
             <a class="btn btn-soft" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a>
@@ -5596,7 +5600,7 @@ app.get("/productos", async (req, res) => {
                 <th class="col-actions">Acciones</th>
               </tr>
               </thead>
-              <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="6">No hay productos para mostrar.</td></tr>`}</tbody>
+               <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="7">No hay productos para mostrar.</td></tr>`}</tbody>
             </table>
           </div>
         </section>
@@ -5604,7 +5608,7 @@ app.get("/productos", async (req, res) => {
 
       <template id="row-tpl"><tr data-id="" data-draft="1" class="row-draft">
         <td class="col-desc"><input class="descripcion" type="text" placeholder="Descripción del producto" /></td>
-        <td><input class="tag" type="text" placeholder="Tag"/></td>
+        <td class="col-tag"><input class="tag" type="text" placeholder="Tag" /></td>
         <td class="col-price"><input class="importe" type="number" step="0.01" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" placeholder="0" /></td>
         <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación..."></textarea></td>
