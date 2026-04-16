@@ -375,6 +375,24 @@ async function loadTenantAiConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
 function invalidateTenantAiConfigCache(tenantId = DEFAULT_TENANT_ID) {
   _tenantAiConfigCache.delete(_tenantAiCacheKey(tenantId));
 }
+
+function modelUsesMaxCompletionTokens(modelName) {
+  const m = String(modelName || "").trim().toLowerCase();
+  return m.startsWith("gpt-5");
+}
+
+function applyModelTokenLimit(payload, modelName, limit) {
+  const n = Number(limit);
+  if (!Number.isFinite(n) || n <= 0) return payload;
+
+  if (modelUsesMaxCompletionTokens(modelName)) {
+    payload.max_completion_tokens = Math.trunc(n);
+  } else {
+    payload.max_tokens = Math.trunc(n);
+  }
+  return payload;
+}
+
 // ------------------ Catálogo dinámico desde Mongo ------------------
 // Cache por tenant para evitar hits constantes (5 min)
 const _catalogCache = new Map(); // { tenantId: { text, at } }
@@ -764,7 +782,7 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
     const maxTokens = Number.isFinite(maxTokensNum) && maxTokensNum > 0 ? Math.trunc(maxTokensNum) : 500;
 
 
-    const resp = await client.chat.completions.create({
+        const payload = {
       model,
       temperature: 0,
       response_format: { type: "json_object" },
@@ -777,9 +795,11 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
             { type: "image_url", image_url: { url: publicImageUrl } }
           ]
         }
-      ],
-      max_tokens: maxTokens
-    });
+      ]
+    };
+    applyModelTokenLimit(payload, model, maxTokens);
+
+    const resp = await client.chat.completions.create(payload);
 
     const content = resp?.choices?.[0]?.message?.content || "";
     let json = null;
@@ -1277,11 +1297,14 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       temperature,
       response_format: buildStrictPedidoResponseFormat()
     };
-    if (maxTokens) payload.max_tokens = maxTokens;
+    applyModelTokenLimit(payload, model, maxTokens);
     console.log("[openai] request.meta =>", {
       model,
       temperature,
-      max_tokens: maxTokens || null,
+      token_limit_param: maxTokens
+        ? (modelUsesMaxCompletionTokens(model) ? "max_completion_tokens" : "max_tokens")
+        : null,
+      token_limit_value: maxTokens || null,
       response_format: "json_schema_strict"
     });
     console.log("[openai] message =>\n" + JSON.stringify(sanitizeMessages(messages), null, 2));
