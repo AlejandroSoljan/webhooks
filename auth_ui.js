@@ -916,40 +916,7 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
         flex-direction:column;
         justify-content:center;
       }
-      /* ===== Slider clientes ===== */
-      .lpSliderWrap{max-width:1100px; margin:18px auto 0; padding:16px; border-radius:18px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.10)}
-      .lpSliderTitle{
-  margin: 0 0 10px;
-  color: #fff;
-  font-size: 22px;
-  font-weight: 700;
-}
-      .lpSlider{overflow:hidden; border-radius:14px}
-      .lpSliderTrack{display:flex; gap:14px; align-items:center; width:max-content; animation: lpScroll 22s linear infinite}
-      .clientBadge{opacity:.95}
-      .lpSliderHint{margin-top:10px; color:rgba(255,255,255,.65); font-size:12px}
-      @keyframes lpScroll{from{transform:translateX(0)} to{transform:translateX(-50%)}}
-.clientBadge{
-  height: 58px;                 /* antes 44px */
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  padding: 10px 16px;           /* antes 6px 12px */
-  border-radius: 14px;
-  border:1px solid rgba(255,255,255,0.16);
-  background: rgba(255,255,255,0.06);
-  color: rgba(255,255,255,0.90);
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.clientLogoImg{
-  height: 38px;                 /* antes 26px */
-  width: auto;
-  max-width: 220px;             /* antes 170px */
-  object-fit: contain;
-  filter: drop-shadow(0 6px 10px rgba(0,0,0,.18));
-}
+      
 
       .lpSection{max-width:1100px; margin:18px auto 0; padding:18px; border-radius:18px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.10)}
       .lpSection h2{margin:0 0 10px; color:#fff; font-size:22px}
@@ -1214,28 +1181,7 @@ function loginPage({ error, msg, to, baseUrl }) {
   const err = error ? `<div class="msg err">${htmlEscape(error)}</div>` : "";
   const ok = msg ? `<div class="msg ok">${htmlEscape(msg)}</div>` : "";
 
-   // Logos reales (reemplazá name/src por los tuyos)
-  const clientLogo = ({ name, src }) => {
-    // fallback si no hay logo real
-    if (!src) {
-      return `<div class="clientBadge" title="${htmlEscape(name)}">${htmlEscape(name)}</div>`;
-    }
-    return `
-      <div class="clientBadge" title="${htmlEscape(name)}" aria-label="${htmlEscape(name)}">
-        <img class="clientLogoImg" src="${htmlEscape(src)}" alt="${htmlEscape(name)}" loading="lazy"/>
-      </div>
-    `;
-  };
-  const logos = [
-    { name: "Chiarotto", src: "/static/clientes/chiarotto.png" },  // <- corregí pngg -> png
-    { name: "Fleming",   src: "/static/clientes/fleming.png" },
-    { name: "TecnoVet",  src: "/static/clientes/tecnovet.png" },
-    { name: "Caryco",    src: "/static/clientes/carico.png" },    // ojo: que el nombre del archivo exista
-     { name: "Provemix",    src: "/static/clientes/provemix.png" },    // ojo: que el nombre del archivo exista
-  ];
-
-  const sliderHtml = logos.concat(logos).map(clientLogo).join("");
-
+  
 
     return pageShell({
     title: "Login · Asisto",
@@ -1286,15 +1232,7 @@ function loginPage({ error, msg, to, baseUrl }) {
         </aside>
       </main>
 
-       <section class="lpSliderWrap" id="clientes" aria-label="Clientes">
-        <div class="lpSliderTitle">Empresas que confían en Asisto</div>
-        <div class="lpSlider">
-          <div class="lpSliderTrack">
-            ${sliderHtml}
-          </div>
-        </div>
-        
-      </section>
+       
 
       <section class="lpSection" id="contacto">
         <h2>Contacto</h2>

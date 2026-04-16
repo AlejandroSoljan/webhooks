@@ -430,78 +430,10 @@ function absUrl(p = "/") {
 }
 
 app.get("/", (req, res) => {
-  const title = "AsistoBot";
-  const description =
-    "AsistoBot: plataforma para gestionar conversaciones y automatizar por WhatsApp con asistentes inteligentes.";
-
-  // IMPORTANTE: este archivo debe existir (ver /static configurado en este mismo endpoint.js)
-  const logoPath = "/static/logo.png";
-  const ogImage = absUrl(logoPath);
-
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  return res.status(200).send(`<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>${title}</title>
-  <meta name="description" content="${description}"/>
-  <link rel="canonical" href="${absUrl("/")}"/>
-
-  <link rel="icon" href="${logoPath}"/>
-  <link rel="apple-touch-icon" href="${logoPath}"/>
-
-  <!-- Open Graph -->
-  <meta property="og:type" content="website"/>
-  <meta property="og:url" content="${absUrl("/")}"/>
-  <meta property="og:title" content="${title}"/>
-  <meta property="og:description" content="${description}"/>
-  <meta property="og:image" content="${ogImage}"/>
-
-  <!-- Twitter -->
-  <meta name="twitter:card" content="summary_large_image"/>
-  <meta name="twitter:title" content="${title}"/>
-  <meta name="twitter:description" content="${description}"/>
-  <meta name="twitter:image" content="${ogImage}"/>
-
-  <!-- Structured data -->
-  <script type="application/ld+json">${JSON.stringify({
-    "@context": "https://schema.org",
-   "@type": "Organization",
-    "name": title,
-    "url": absUrl("/"),
-    "logo": ogImage
-  }).replace(/</g, "\\u003c")}</script>
-
-  <style>
-    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#0f2741;color:#fff;}
-    .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
-   .card{width:min(980px,100%);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);backdrop-filter:blur(10px);border-radius:20px;padding:28px;display:grid;grid-template-columns:140px 1fr;gap:22px;align-items:center;}
-    @media (max-width:720px){.card{grid-template-columns:1fr;}}
-    img{width:140px;height:140px;object-fit:contain;filter:drop-shadow(0 10px 24px rgba(0,0,0,.25));}
-    h1{margin:0 0 8px;font-size:34px;}
-    p{margin:0 0 18px;line-height:1.45;color:rgba(255,255,255,.86)}
-    a.btn{display:inline-flex;align-items:center;justify-content:center;padding:12px 14px;border-radius:12px;background:#0e6b66;color:#fff;text-decoration:none;font-weight:700;}
-    a.btn:hover{background:#0a5a56}
-    .muted{font-size:13px;color:rgba(255,255,255,.72);margin-top:12px}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="card">
-      <div style="display:flex;justify-content:center">
-        <img src="${logoPath}" alt="${title} logo"/>
-      </div>
-      <div>
-        <h1>${title}</h1>
-        <p>${description}</p>
-        <a class="btn" href="/login">Ingresar al panel</a>
-        <div class="muted">El panel (/app) requiere inicio de sesión.</div>
-      </div>
-    </div>
-  </div>
-</body>
-</html>`);
+  const qs = req.originalUrl && req.originalUrl.includes("?")
+    ? req.originalUrl.slice(req.originalUrl.indexOf("?"))
+    : "";
+  return res.redirect(302, "/login" + qs);
 });
 
 // robots + sitemap para ayudar a indexación/snippet
@@ -5360,8 +5292,9 @@ app.get("/api/products", async (req, res) => {
 app.post("/api/products", async (req, res) => {
   try {
     const db = await getDb();
-    let { descripcion, importe, cantidad, observacion, active } = req.body || {};
+    let { descripcion, tag, importe, cantidad, observacion, active } = req.body || {};
     descripcion = String(descripcion || "").trim();
+    tag = String(tag || "").trim();
     observacion = String(observacion || "").trim();
     if (typeof active !== "boolean") active = !!active;
     let imp = null;
@@ -5389,7 +5322,8 @@ app.post("/api/products", async (req, res) => {
     const now = new Date();
     const tenant = resolveTenantId(req);
     const doc = { tenantId: (tenant || TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
-     if (qty !== null) doc.cantidad = qty;
+    if (tag) doc.tag = tag;
+    if (qty !== null) doc.cantidad = qty;
     if (imp !== null) doc.importe = imp;
     const ins = await db.collection("products").insertOne(doc);
     res.json({ ok: true, _id: String(ins.insertedId) });
@@ -5602,12 +5536,13 @@ app.get("/productos", async (req, res) => {
         .empty-row td{padding:32px 20px;text-align:center;color:var(--muted);font-weight:600}
         .row-draft td{background:#fffcf1}
         @media (max-width: 1100px){
-          .col-desc{width:22%}
+          .col-desc{width:20%}
+          .col-tag{width:12%}
           .col-price{width:10%}
           .col-qty{width:9%}
-          .col-obs{width:25%}
+          .col-obs{width:20%}
           .col-active{width:8%}
-          .col-actions{width:26%}
+          .col-actions{width:21%}
           .actions-stack{grid-template-columns:1fr}
         }
         @media (max-width: 960px){
@@ -5651,14 +5586,15 @@ app.get("/productos", async (req, res) => {
           <div class="table-wrap">
             <table id="tbl">
               <thead>
-                <tr>
-                  <th class="col-desc">Descripción</th>
-                  <th class="col-price">Importe</th>
-                  <th class="col-qty">Cantidad</th>
-                  <th class="col-obs">Observaciones</th>
-                  <th class="col-active">Activo</th>
-                  <th class="col-actions">Acciones</th>
-                </tr>
+              <tr>
+                <th class="col-desc">Descripción</th>
+                <th class="col-tag">Tag</th>
+                <th class="col-price">Importe</th>
+                <th class="col-qty">Cantidad máx.</th>
+                <th class="col-obs">Observación</th>
+                <th class="col-active">Activo</th>
+                <th class="col-actions">Acciones</th>
+              </tr>
               </thead>
               <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="6">No hay productos para mostrar.</td></tr>`}</tbody>
             </table>
@@ -5668,6 +5604,7 @@ app.get("/productos", async (req, res) => {
 
       <template id="row-tpl"><tr data-id="" data-draft="1" class="row-draft">
         <td class="col-desc"><input class="descripcion" type="text" placeholder="Descripción del producto" /></td>
+        <td><input class="tag" type="text" placeholder="Tag"/></td>
         <td class="col-price"><input class="importe" type="number" step="0.01" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" placeholder="0" /></td>
         <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación..."></textarea></td>
@@ -5701,6 +5638,7 @@ app.get("/productos", async (req, res) => {
           tr.dataset.draft = it && it._id ? '' : '1';
           tr.classList.toggle('row-draft', !(it && it._id));
           q('.descripcion',tr).value=it && it.descripcion ? it.descripcion : '';
+          q('.tag',tr).value=it && it.tag ? it.tag : '';
           q('.importe',tr).value=(it && (typeof it.importe==='number' || it.importe)) ? it.importe : '';
           q('.cantidad',tr).value=(it && (typeof it.cantidad==='number' || it.cantidad)) ? it.cantidad : '';
           q('.observacion',tr).value=it && it.observacion ? it.observacion : '';
@@ -5719,6 +5657,7 @@ app.get("/productos", async (req, res) => {
             total++;
             const haystack=[
               q('.descripcion',tr)?.value||'',
+              q('.tag',tr)?.value||'',
               q('.observacion',tr)?.value||'',
               q('.importe',tr)?.value||'',
               q('.cantidad',tr)?.value||''
@@ -5753,7 +5692,7 @@ app.get("/productos", async (req, res) => {
             if(!currentEmpty){
               const tr=document.createElement('tr');
               tr.className='empty-row';
-              tr.innerHTML='<td colspan="6">No hay productos para mostrar.</td>';
+              tr.innerHTML='<td colspan="7">No hay productos para mostrar.</td>';
               tb.appendChild(tr);
             }
           }else if(currentEmpty){
@@ -5782,6 +5721,7 @@ app.get("/productos", async (req, res) => {
         async function saveRow(tr){
           const payload={
             descripcion:q('.descripcion',tr).value.trim(),
+            tag:q('.tag',tr).value.trim(),
             importe:q('.importe',tr).value.trim(),
             cantidad:q('.cantidad',tr).value.trim(),
             observacion:q('.observacion',tr).value.trim(),
