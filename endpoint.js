@@ -1419,7 +1419,31 @@ function looksLikeSummaryOrConfirmation(text) {
     || /\*productos:\*/i.test(s);
 }
 
-function isExplicitUserConfirmation(text) {
+function assistantWasAskingForOrderConfirmation(text) {
+  const s = String(text || "");
+  return looksLikeSummaryOrConfirmation(s)
+    || /¿\s*confirm(amos|as|ás)\s+el\s+pedido\??/i.test(s)
+    || /quer[eé]s\s+confirmar/i.test(s)
+    || /pedido\s+qued[oó]\s+confirmado/i.test(s);
+}
+
+async function loadLastAssistantTextMessage(tenantId, conversationId) {
+  try {
+    if (!conversationId) return "";
+    const db = await getDb();
+    const convObjectId = new ObjectId(String(conversationId));
+    const doc = await db.collection("messages").findOne(
+      withTenant({ conversationId: convObjectId, role: "assistant", type: "text" }, tenantId),
+      { sort: { ts: -1, createdAt: -1, _id: -1 }, projection: { content: 1 } }
+    );
+    return String(doc?.content || "").trim();
+  } catch (e) {
+    console.warn("[messages] loadLastAssistantTextMessage error:", e?.message || e);
+    return "";
+  }
+}
+
+function isExplicitUserConfirmation(text, opts = {}) {
   const raw = String(text || "").trim();
   if (!raw) return false;
 
@@ -1428,17 +1452,26 @@ function isExplicitUserConfirmation(text) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 
-  // confirmaciones verbales explícitas
+   const lastAssistantText = String(opts?.lastAssistantText || "").trim();
+  const expectingOrderConfirmation =
+    !!opts?.expectingOrderConfirmation ||
+    assistantWasAskingForOrderConfirmation(lastAssistantText);
+
+  // confirmaciones realmente explícitas: valen siempre
   if (/\bconfirm(ar|o|a|ame|alo|ado)\b/.test(norm)) return true;
-  if (/\b(esta\s+bien|perfecto|joya|okey|okay|ok|dale|listo|de una|mandale|obvio)\b/.test(norm)) return true;
+    if (/^(s[i1]+|s[i1]+s[i1]+|sip+|sep+)\b.*\bconfirm/.test(norm)) return true;
 
-  // variantes de "sí": si, sí, sisi, siii, sip, sep, sisa, etc.
-  // exige que el mensaje arranque con esa confirmación
-  // para no confundir frases largas ambiguas.
-  if (/^(s[i1]+|s[i1]+s[i1]+|sip+|sep+)\b/.test(norm)) return true;
+  // afirmaciones débiles: solo valen si el mensaje anterior del asistente
+  // estaba realmente pidiendo confirmar el pedido
+  const weakAffirmative =
+    (/^(s[i1]+|s[i1]+s[i1]+|sip+|sep+|ok(?:ey)?|dale|listo|de una|perfecto|joya|mandale|obvio)\b/.test(norm))
+    && norm.split(/\s+/).length <= 3;
 
-  // emojis de confirmación
-  if (["👍", "👌", "✅", "✔️", "☑️"].includes(raw)) return true;
+  if (weakAffirmative) return expectingOrderConfirmation;
+
+  if (["👍", "👌", "✅", "✔️", "☑️"].includes(raw)) {
+    return expectingOrderConfirmation;
+  }
 
   return false;
 }
@@ -7156,6 +7189,10 @@ console.log("[convId] "+ convId);
       }
     }
 
+    const lastAssistantTextBeforeUser = convId
+      ? await loadLastAssistantTextMessage(tenant, convId)
+      : "";
+
 
        if (convId) {
       console.log("[messages] about to save USER message", { convId, from, type: msg.type, textPreview: String(text).slice(0,80) });
@@ -7282,7 +7319,9 @@ if (debounceMs > 0 && msg.type === "text") {
           // ⚡ Fast-path: si el usuario confirma explícitamente, cerramos sin llamar al modelo
       // ⚡ Fast-path: aceptar también “sí/si” como confirmación explícita,
       // además de las variantes de “confirmar”.
-       const userConfirms = isExplicitUserConfirmation(text);
+       const userConfirms = isExplicitUserConfirmation(text, {
+        lastAssistantText: lastAssistantTextBeforeUser
+      });
       if (userConfirms) {
         // Tomamos último snapshot si existe
         let snapshot = null;
@@ -7736,7 +7775,9 @@ if (debounceMs > 0 && msg.type === "text") {
     try {
       const pedidoListoParaCerrar = pedidoHasRequiredFieldsForClose(pedido);
       const pagoEsTransferencia = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
-      const userConfirmedNow = isExplicitUserConfirmation(text);
+      const userConfirmedNow = isExplicitUserConfirmation(text, {
+        lastAssistantText: lastAssistantTextBeforeUser
+      });
       const assistantTryingToClose =
         looksLikeSummaryOrConfirmation(responseText) ||
         /^(COMPLETED|PENDIENTE)$/i.test(String(estado || "").trim());
@@ -7824,7 +7865,9 @@ if (debounceMs > 0 && msg.type === "text") {
       /\bno\s+(quiero\s+)?anul/.test(_tNormPre);
     const userCancelled = !!(userWantsCancelRaw && !userCancelNeg);
 
-    const userConfirmsFast = isExplicitUserConfirmation(text);
+    const userConfirmsFast = isExplicitUserConfirmation(text, {
+      lastAssistantText: lastAssistantTextBeforeUser
+    });
     const pagoEsTransferenciaFinal = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
    const willComplete = !!(!pagoEsTransferenciaFinal && userConfirmsFast && isPedidoCompleto(pedido));
     const closeStatus =
