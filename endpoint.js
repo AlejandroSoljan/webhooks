@@ -1329,8 +1329,20 @@ function pedidoHasHora(pedido) {
 }
 
 function pedidoHasNombreCompleto(pedido) {
-  const name = String(pedido?.nombre_apellido || "").trim().replace(/\s+/g, " ");
-  return /\S+\s+\S+/.test(name);
+  const name = String(pedido?.nombre_apellido || "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  if (!name) return false;
+
+  // aceptar un nombre simple tipo "Werli" o nombre + apellido.
+  // rechazar basura demasiado corta o numérica.
+ if (name.length < 2) return false;
+  if (/^\d+$/.test(name)) return false;
+  if (!/[a-záéíóúñü]/i.test(name)) return false;
+
+  return /^[a-záéíóúñü][a-záéíóúñü.'-]*(?:\s+[a-záéíóúñü][a-záéíóúñü.'-]*)*$/i.test(name);
+
 }
 
 function pedidoHasAnyItems(pedido) {
