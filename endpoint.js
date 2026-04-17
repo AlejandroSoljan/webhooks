@@ -7725,8 +7725,16 @@ if (debounceMs > 0 && msg.type === "text") {
       const pedidoListoParaCerrar = pedidoHasRequiredFieldsForClose(pedido);
       const pagoEsTransferencia = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
       const userConfirmedNow = isExplicitUserConfirmation(text);
+      const assistantTryingToClose =
+        looksLikeSummaryOrConfirmation(responseText) ||
+        /^(COMPLETED|PENDIENTE)$/i.test(String(estado || "").trim());
 
-      if (pedidoListoParaCerrar && !pagoEsTransferencia && !userConfirmedNow) {
+      // ⚠️ IMPORTANTE:
+      // Solo forzamos resumen si el asistente realmente está intentando
+      // cerrar / confirmar el pedido. Si el modelo respondió otra cosa
+      // (por ejemplo: "¿Qué sabor de Aquarius querés?"), NO hay que pisarlo.
+      if (pedidoListoParaCerrar && !pagoEsTransferencia && assistantTryingToClose && !userConfirmedNow) {
+
         estado = "IN_PROGRESS";
         const summaryText = buildBackendSummary(pedido, {
           showEnvio: wantsDetail,
