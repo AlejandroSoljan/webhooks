@@ -4594,7 +4594,8 @@ function protectRoutes(app) {
       p === "/logout" ||
       p.startsWith("/static/") ||
       p.startsWith("/webhook") ||
-      p.startsWith("/cache/")
+      p.startsWith("/cache/") ||
+      p.startsWith("/api/ext/wweb/")
     ) return next();
 
 // =============================

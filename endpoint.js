@@ -377,7 +377,6 @@ app.get("/api/wweb/sessions", async (req, res) => {
       };
     });
 
-    // incluir policies sin lock (por si querés preconfigurar)
     for (const p of policyDocs) {
       if (sessions.some(s => s.lockId === p._id)) continue;
       sessions.push({
@@ -405,6 +404,193 @@ app.get("/api/wweb/sessions", async (req, res) => {
     return res.status(500).json({ ok:false, error: String(e?.message || e) });
   }
 });
+
+// GET /api/ext/wweb/status
+app.get("/api/ext/wweb/status", requireWwebExternalAccess, async (req, res) => {
+  try {
+    const db = await getDb();
+    const { locks, policies } = await wwebCollections(db);
+    const lockId = wwebResolveLockIdFromReq(req);
+    const tenantId = String(req.query?.tenantId || "").trim();
+
+    if (lockId) {
+      const [lockDoc, policyDoc] = await Promise.all([
+        locks.findOne({ _id: lockId }),
+        policies.findOne({ _id: lockId })
+      ]);
+
+      return res.json({
+        ok: true,
+        item: wwebBuildPublicLock(lockDoc || { _id: lockId }, policyDoc || null)
+      });
+    }
+
+    const lockFilter = tenantId ? { tenantId } : {};
+    const policyFilter = tenantId ? { tenantId } : {};
+
+    const [lockDocs, policyDocs] = await Promise.all([
+      locks.find(lockFilter).sort({ lastSeenAt: -1, updatedAt: -1 }).limit(500).toArray(),
+      policies.find(policyFilter).limit(2000).toArray()
+    ]);
+
+    const policyById = new Map((policyDocs || []).map((p) => [String(p._id), p]));
+    const items = (lockDocs || []).map((lockDoc) =>
+      wwebBuildPublicLock(lockDoc, policyById.get(String(lockDoc._id)) || null)
+    );
+
+    for (const p of (policyDocs || [])) {
+      const id = String(p._id || "");
+      if (!id) continue;
+      if (items.some((x) => String(x.lockId) === id)) continue;
+      items.push(wwebBuildPublicLock({ _id: id, tenantId: p.tenantId, numero: p.numero }, p));
+    }
+
+    items.sort((a, b) => String(a.lockId || "").localeCompare(String(b.lockId || "")));
+    return res.json({ ok: true, items });
+  } catch (e) {
+    console.error("GET /api/ext/wweb/status error:", e);
+    return res.status(500).json({ ok: false, error: "internal" });
+  }
+});
+
+// GET /api/ext/wweb/qr
+app.get("/api/ext/wweb/qr", requireWwebExternalAccess, async (req, res) => {
+  try {
+    const lockId = wwebResolveLockIdFromReq(req);
+    if (!lockId) {
+      return res.status(400).json({ ok: false, error: "lockId_or_tenant_numero_required" });
+    }
+
+    const db = await getDb();
+    const lock = await db.collection("wa_locks").findOne(
+      { _id: lockId },
+      {
+        projection: {
+          _id: 1,
+          tenantId: 1,
+          numero: 1,
+          number: 1,
+          phone: 1,
+          state: 1,
+          holderId: 1,
+          instanceId: 1,
+          host: 1,
+          hostname: 1,
+          startedAt: 1,
+          createdAt: 1,
+          lastSeenAt: 1,
+          updatedAt: 1,
+          lastQrAt: 1,
+          lastQrDataUrl: 1,
+          runtimeVersion: 1,
+          currentVersion: 1,
+          desiredTag: 1,
+          targetTag: 1,
+          autoUpdateSource: 1,
+        }
+      }
+    );
+
+    if (!lock) {
+      return res.status(404).json({ ok: false, error: "lock_not_found" });
+    }
+
+    try { res.set("Cache-Control", "no-store"); } catch {}
+
+    return res.status(200).json({
+      ok: true,
+      item: {
+        ...wwebBuildPublicLock(lock),
+        lastQrDataUrl: lock.lastQrDataUrl || null
+      }
+    });
+  } catch (e) {
+    console.error("GET /api/ext/wweb/qr error:", e);
+    return res.status(500).json({ ok: false, error: "internal" });
+  }
+});
+
+// GET /api/ext/wweb/qr-image
+// JSON por defecto. Binario solo con ?raw=1
+app.get("/api/ext/wweb/qr-image", requireWwebExternalAccess, async (req, res) => {
+  try {
+    const lockId = wwebResolveLockIdFromReq(req);
+    if (!lockId) {
+      return res.status(400).json({ ok: false, error: "lockId_or_tenant_numero_required" });
+    }
+
+    const db = await getDb();
+    const lock = await db.collection("wa_locks").findOne(
+      { _id: lockId },
+      {
+        projection: {
+          _id: 1,
+          tenantId: 1,
+          numero: 1,
+          number: 1,
+          phone: 1,
+          state: 1,
+          lastQrAt: 1,
+          lastQrDataUrl: 1,
+          lastSeenAt: 1,
+          updatedAt: 1,
+        }
+      }
+    );
+
+    if (!lock) {
+      return res.status(404).json({ ok: false, error: "lock_not_found" });
+    }
+
+    const qrDataUrl = String(lock.lastQrDataUrl || "").trim();
+    const wantRaw = String(req.query?.raw || "").trim() === "1";
+
+    if (!qrDataUrl) {
+      return res.status(404).json({
+        ok: false,
+        error: "qr_not_available",
+        item: {
+          lockId: String(lock._id),
+          tenantId: String(lock.tenantId || ""),
+          numero: String(lock.numero || lock.number || lock.phone || ""),
+          state: lock.state || null,
+          lastQrAt: lock.lastQrAt || null,
+          lastSeenAt: lock.lastSeenAt || lock.updatedAt || null,
+          hasQr: false
+        }
+      });
+    }
+
+    if (!wantRaw) {
+      return res.status(200).json({
+        ok: true,
+        item: {
+          lockId: String(lock._id),
+          tenantId: String(lock.tenantId || ""),
+          numero: String(lock.numero || lock.number || lock.phone || ""),
+          state: lock.state || null,
+          lastQrAt: lock.lastQrAt || null,
+          lastSeenAt: lock.lastSeenAt || lock.updatedAt || null,
+          hasQr: true,
+          imageDataUrl: qrDataUrl
+        }
+      });
+    }
+
+    const decoded = wwebDecodeDataUrl(qrDataUrl);
+    if (!decoded || !decoded.buffer || !decoded.buffer.length) {
+      return res.status(500).json({ ok: false, error: "qr_decode_failed" });
+    }
+
+    try { res.set("Cache-Control", "no-store"); } catch {}
+    res.setHeader("Content-Type", decoded.mime || "image/png");
+    return res.status(200).send(decoded.buffer);
+  } catch (e) {
+    console.error("GET /api/ext/wweb/qr-image error:", e);
+    return res.status(500).json({ ok: false, error: "internal" });
+  }
+});
+
 
 // POST /api/wweb/policy
 // body: { tenantId?, numero, mode: "any"|"pinned", pinnedHost?, blockHost?, unblockHost? }
@@ -493,173 +679,8 @@ app.get("/api/wweb/history", async (req, res) => {
   }
 });
 
-// ===================== WWeb external read APIs =====================
-// Uso desde otra aplicación:
-// - Authorization: Bearer <WWEB_API_KEY>
-// - o header x-api-key: <WWEB_API_KEY>
-// - o ?apiKey=<WWEB_API_KEY>
-//
-// IMPORTANTe: usan los campos reales ya existentes en wa_locks:
-// state, holderId|instanceId, host|hostname, startedAt|createdAt,
-// lastSeenAt|updatedAt, lastQrAt, lastQrDataUrl, runtimeVersion/currentVersion,
-// desiredTag/targetTag, autoUpdateSource.
 
-// GET /api/ext/wweb/status
-// Opciones:
-// - ?lockId=<tenantId:numero>
-// - ?tenantId=...&numero=...
-// - ?tenantId=...   => lista del tenant
-// - sin filtros     => lista global
-app.get("/api/ext/wweb/status", requireWwebExternalAccess, async (req, res) => {
-  try {
-    const db = await getDb();
-    const { locks, policies } = await wwebCollections(db);
-    const lockId = wwebResolveLockIdFromReq(req);
-    const tenantId = String(req.query?.tenantId || "").trim();
 
-    if (lockId) {
-      const [lockDoc, policyDoc] = await Promise.all([
-        locks.findOne({ _id: lockId }),
-        policies.findOne({ _id: lockId })
-      ]);
-
-      return res.json({
-        ok: true,
-        item: wwebBuildPublicLock(lockDoc || { _id: lockId }, policyDoc || null)
-      });
-    }
-
-    const lockFilter = tenantId ? { tenantId } : {};
-    const policyFilter = tenantId ? { tenantId } : {};
-
-    const [lockDocs, policyDocs] = await Promise.all([
-      locks.find(lockFilter).sort({ lastSeenAt: -1, updatedAt: -1 }).limit(500).toArray(),
-      policies.find(policyFilter).limit(2000).toArray()
-    ]);
-
-    const policyById = new Map((policyDocs || []).map((p) => [String(p._id), p]));
-    const items = (lockDocs || []).map((lockDoc) =>
-      wwebBuildPublicLock(lockDoc, policyById.get(String(lockDoc._id)) || null)
-    );
-
-    for (const p of (policyDocs || [])) {
-      const id = String(p._id || "");
-      if (!id) continue;
-      if (items.some((x) => String(x.lockId) === id)) continue;
-      items.push(wwebBuildPublicLock({ _id: id, tenantId: p.tenantId, numero: p.numero }, p));
-    }
-
-    items.sort((a, b) => String(a.lockId || "").localeCompare(String(b.lockId || "")));
-    return res.json({ ok: true, items });
-  } catch (e) {
-    console.error("GET /api/ext/wweb/status error:", e);
-    return res.status(500).json({ ok: false, error: "internal" });
-  }
-});
-
-// GET /api/ext/wweb/qr
-// Opciones:
-// - ?lockId=<tenantId:numero>
-// - ?tenantId=...&numero=...
-app.get("/api/ext/wweb/qr", requireWwebExternalAccess, async (req, res) => {
-  try {
-    const lockId = wwebResolveLockIdFromReq(req);
-    if (!lockId) {
-      return res.status(400).json({ ok: false, error: "lockId_or_tenant_numero_required" });
-    }
-
-    const db = await getDb();
-    const lock = await db.collection("wa_locks").findOne(
-      { _id: lockId },
-      {
-        projection: {
-          tenantId: 1,
-          numero: 1,
-          number: 1,
-          phone: 1,
-          state: 1,
-          host: 1,
-          hostname: 1,
-          startedAt: 1,
-          createdAt: 1,
-          lastSeenAt: 1,
-          updatedAt: 1,
-          holderId: 1,
-          instanceId: 1,
-          lastQrAt: 1,
-          lastQrDataUrl: 1,
-        }
-      }
-    );
-
-    if (!lock) {
-      return res.status(404).json({ ok: false, error: "lock_not_found" });
-    }
-
-    try { res.set("Cache-Control", "no-store"); } catch {}
-
-    return res.status(200).json({
-      ok: true,
-      now: new Date(),
-      lock: {
-        _id: String(lock._id),
-        tenantId: String(lock.tenantId || ""),
-        numero: String(lock.numero || lock.number || lock.phone || ""),
-        state: lock.state || null,
-        holderId: lock.holderId || lock.instanceId || null,
-        host: lock.host || lock.hostname || null,
-        startedAt: lock.startedAt || lock.createdAt || null,
-        lastSeenAt: lock.lastSeenAt || lock.updatedAt || null,
-        lastQrAt: lock.lastQrAt || null,
-        lastQrDataUrl: lock.lastQrDataUrl || null,
-      },
-    });
-  } catch (e) {
-    console.error("GET /api/ext/wweb/qr error:", e);
-    return res.status(500).json({ ok: false, error: "internal" });
-  }
-});
-
-// GET /api/ext/wweb/qr-image
-// Devuelve directamente la imagen del QR usando el campo real lastQrDataUrl.
-// Opciones:
-// - ?lockId=<tenantId:numero>
-// - ?tenantId=...&numero=...
-app.get("/api/ext/wweb/qr-image", requireWwebExternalAccess, async (req, res) => {
-  try {
-    const lockId = wwebResolveLockIdFromReq(req);
-    if (!lockId) {
-      return res.status(400).json({ ok: false, error: "lockId_or_tenant_numero_required" });
-    }
-
-    const db = await getDb();
-    const lock = await db.collection("wa_locks").findOne(
-      { _id: lockId },
-      { projection: { _id: 1, tenantId: 1, numero: 1, number: 1, phone: 1, state: 1, lastQrAt: 1, lastQrDataUrl: 1 } }
-    );
-
-    if (!lock) {
-      return res.status(404).send("lock_not_found");
-    }
-
-    const qrDataUrl = String(lock.lastQrDataUrl || "").trim();
-    if (!qrDataUrl) {
-      return res.status(404).send("qr_not_available");
-    }
-
-    const decoded = wwebDecodeDataUrl(qrDataUrl);
-    if (!decoded || !decoded.buffer || !decoded.buffer.length) {
-      return res.status(500).send("qr_decode_failed");
-    }
-
-    try { res.set("Cache-Control", "no-store"); } catch {}
-    res.setHeader("Content-Type", decoded.mime || "image/png");
-    return res.status(200).send(decoded.buffer);
-  } catch (e) {
-    console.error("GET /api/ext/wweb/qr-image error:", e);
-    return res.status(500).send("internal");
-  }
-});
 
 const {
   loadBehaviorTextFromMongo,
