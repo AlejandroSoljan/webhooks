@@ -8029,10 +8029,8 @@ if (debounceMs > 0 && msg.type === "text") {
     const userCancelled = !!(userWantsCancelRaw && !userCancelNeg);
 
 	const userConfirmsFast = isExplicitUserConfirmation(text);
-	const pagoEsTransferencia = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
-	
-
-  const willComplete = !!(!pagoEsTransferenciaFinal && userConfirmsFast && isPedidoCompleto(pedido));
+	const pagoEsTransferenciaFinal = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
+	const willComplete = !!(!pagoEsTransferenciaFinal && userConfirmsFast && isPedidoCompleto(pedido));
     const closeStatus =
       (userCancelled || estado === "CANCELLED")
         ? "CANCELLED"
