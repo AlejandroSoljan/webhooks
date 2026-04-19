@@ -7769,8 +7769,10 @@ if (debounceMs > 0 && msg.type === "text") {
 
     // ==============================
     // ✅ Confirmación obligatoria antes de cerrar:
-    // si el pedido ya está completo y NO es transferencia,
-    // jamás cerramos sin una confirmación explícita del usuario.
+    // si el pedido ya está completo:
+    // - NO transferencia: jamás cerramos sin confirmación explícita
+    // - transferencia: SIEMPRE mostrar resumen primero, y recién
+    //   después de la confirmación pasar a PENDIENTE
     // ==============================
     try {
       const pedidoListoParaCerrar = pedidoHasRequiredFieldsForClose(pedido);
@@ -7781,6 +7783,19 @@ if (debounceMs > 0 && msg.type === "text") {
       const assistantTryingToClose =
         looksLikeSummaryOrConfirmation(responseText) ||
         /^(COMPLETED|PENDIENTE)$/i.test(String(estado || "").trim());
+
+
+      const transferSummaryText = buildBackendSummary(pedido, {
+        showEnvio: false,
+        showTotal: true,
+        askConfirmation: false,
+        intro: "🧾 Resumen del pedido:"
+      });
+
+      const transferSummaryWithInstructions =
+        `${transferSummaryText}\n\n` +
+        `Para que podamos realizar tu pedido, por favor enviá el comprobante de la transferencia.\n` +
+        `¿Confirmás? ✅`;
 
       // ⚠️ IMPORTANTE:
       // Solo forzamos resumen si el asistente realmente está intentando
@@ -7796,6 +7811,11 @@ if (debounceMs > 0 && msg.type === "text") {
         responseText = (geoShouldPrependToSummary && geoAddressWarning)
           ? `${geoAddressWarning}\n\n${summaryText}`
           : summaryText;
+      } else if (pedidoListoParaCerrar && pagoEsTransferencia && assistantTryingToClose && !userConfirmedNow) {
+        estado = "IN_PROGRESS";
+        responseText = (geoShouldPrependToSummary && geoAddressWarning)
+          ? `${geoAddressWarning}\n\n${transferSummaryWithInstructions}`
+          : transferSummaryWithInstructions;
       }
     } catch (e) {
       console.warn("[confirm] no se pudo forzar confirmación previa:", e?.message || e);
