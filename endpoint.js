@@ -3859,6 +3859,9 @@ app.get("/admin", async (req, res) => {
             <label class="filter-option"><input type="checkbox" value="completed" checked /> <span>Completadas</span></label>
             <label class="filter-option"><input type="checkbox" value="open" /> <span>Abiertas</span></label>
             <label class="filter-option"><input type="checkbox" value="cancelled" /> <span>Canceladas</span></label>
+            <label class="filter-option"><input type="checkbox" value="pending_importe" /> <span>Pendiente de importe</span></label>
+            <label class="filter-option"><input type="checkbox" value="pending_comprobante" /> <span>Pendiente de comprobante</span></label>
+
             <div class="filter-popover-actions">
               <button type="button" class="btn btn-mini" data-filter-all="statusFilter">Todas</button>
               <button type="button" class="btn btn-mini btn-primary" data-filter-apply="statusFilter">Aplicar</button>
@@ -4543,9 +4546,15 @@ app.get("/admin", async (req, res) => {
   }
 
   const DELIVERY_FILTER_ALLOWED = ['pending', 'kitchen', 'delivered'];
-  const STATUS_FILTER_ALLOWED = ['completed', 'open', 'cancelled'];
+  const STATUS_FILTER_ALLOWED = ['completed', 'open', 'cancelled', 'pending_importe', 'pending_comprobante'];
   const DELIVERY_FILTER_LABELS = { pending: 'No entregadas', kitchen: 'En cocina', delivered: 'Entregadas' };
-  const STATUS_FILTER_LABELS = { completed: 'Completadas', open: 'Abiertas', cancelled: 'Canceladas' };
+  const STATUS_FILTER_LABELS = {
+    completed: 'Completadas',
+    open: 'Abiertas',
+    cancelled: 'Canceladas',
+    pending_importe: 'Pendiente de importe',
+    pending_comprobante: 'Pendiente de comprobante'
+  };
 
   function parseMultiFilterValue(raw, allowed, fallback){
     const allowedSet = new Set(Array.isArray(allowed) ? allowed : []);
@@ -4688,10 +4697,13 @@ app.get("/admin", async (req, res) => {
 
   function getConversationStatusTags(c){
     const st = normalizeStatus(c?.status);
+    const raw = String(c?.status || '').trim().toUpperCase();
     const tags = [];
     if (st === 'COMPLETED') tags.push('completed');
     if (st === 'OPEN' || st === 'IN_PROGRESS') tags.push('open');
     if (st === 'CANCELLED') tags.push('cancelled');
+    if (raw === 'PENDIENTE IMPORTE') tags.push('pending_importe');
+    if (raw === 'PENDIENTE COMPROBANTE') tags.push('pending_comprobante');
     return tags;
   }
 
