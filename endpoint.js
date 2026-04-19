@@ -7886,87 +7886,7 @@ if (debounceMs > 0 && msg.type === "text") {
       console.warn("[guard] applyCriticalPedidoGuards error:", e?.message || e);
     }
 
-    // ==============================
-    // ✅ Flujo especial: transferencia + milanesas
-    // - resumen SIN total
-    // - operador informa importe final
-    // - luego recién comprobante
-    // ==============================
-    try {
-      const pedidoListoParaCerrar = pedidoHasRequiredFieldsForClose(pedido);
-      const pagoEsTransferencia = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
-      const transferenciaConMilanesas = pagoEsTransferencia && pedidoHasMilanesas(pedido);
-      const userConfirmedNow = isExplicitUserConfirmation(text);
-      const assistantTryingToClose =
-        looksLikeSummaryOrConfirmation(responseText) ||
-        /^(COMPLETED|PENDIENTE)$/i.test(String(estado || "").trim());
-
-      if (pedidoListoParaCerrar && assistantTryingToClose && !userConfirmedNow) {
-        if (!pagoEsTransferencia) {
-          estado = "IN_PROGRESS";
-        const summaryText = buildBackendSummary(pedido, {
-          showEnvio: wantsDetail,
-          showTotal: pagoEsTransferencia ? !transferenciaConMilanesas : wantsDetail,
-          askConfirmation: false
-        });
-
-        if (!pagoEsTransferencia) {
-          responseText = summaryText;
-        } else if (transferenciaConMilanesas) {
-          responseText =
-            `${summaryText}\n\n` +
-            `Como el pedido incluye milanesas, el importe final te lo va a informar un operador cuando estén pesadas.\n` +
-            `¿Confirmamos el pedido? ✅`;
-        } else {
-          responseText =
-            `${summaryText}\n\n` +
-            `Para que podamos realizar tu pedido, por favor enviá el comprobante de la transferencia.\n` +
-            `¿Confirmamos el pedido? ✅`;
-        }
-      } else if (pedidoListoParaCerrar && pagoEsTransferencia && transferenciaConMilanesas && userConfirmedNow) {
-        estado = "PENDIENTE";
-        responseText =
-          "Perfecto 😊 Como tu pedido incluye milanesas, un operador te va a informar el importe final para la transferencia. Cuando lo tengas, podés enviarnos el comprobante.";
     
-        } else if (transferenciaConMilanesas) {
-          estado = "IN_PROGRESS";
-          transferFlowStatusToPersist = "PENDIENTE_IMPORTE_TRANSFERENCIA";
-
-          const summaryText = buildBackendSummary(pedido, {
-            showEnvio: wantsDetail,
-            showTotal: false,
-            askConfirmation: false
-          });
-
-          responseText =
-            `${summaryText}\n\n` +
-            `*Como el pedido incluye milanesas, el importe final te lo va a informar un operador cuando estén pesadas.*\n` +
-            `¿Confirmamos el pedido? ✅`;
-        } else {
-          estado = "IN_PROGRESS";
-
-          const summaryText = buildBackendSummary(pedido, {
-            showEnvio: wantsDetail,
-            showTotal: true,
-            askConfirmation: false
-          });
-
-          responseText =
-            `${summaryText}\n\n` +
-            `Para que podamos realizar tu pedido, por favor enviá el comprobante de la transferencia.\n` +
-            `¿Confirmamos el pedido? ✅`;
-        }
-      } else if (pedidoListoParaCerrar && transferenciaConMilanesas && userConfirmedNow) {
-        estado = "PENDIENTE";
-        transferFlowStatusToPersist = "PENDIENTE_IMPORTE_TRANSFERENCIA";
-        responseText =
-          `Perfecto 😊 Como tu pedido incluye milanesas, un operador te va a informar el importe final para la transferencia. ` +
-          `Cuando lo tengas, podés enviarnos el comprobante.`;
-      }
-    } catch (e) {
-      console.warn("[transfer-milanesa] no se pudo aplicar el flujo especial:", e?.message || e);
-    }
-
     // Si todavía está pendiente que el operador informe el importe final,
     // no aceptar comprobantes/imágenes como cierre.
     try {
@@ -7996,6 +7916,7 @@ if (debounceMs > 0 && msg.type === "text") {
     try {
       const pedidoListoParaCerrar = pedidoHasRequiredFieldsForClose(pedido);
       const pagoEsTransferencia = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
+      const transferenciaConMilanesas = pagoEsTransferencia && pedidoHasMilanesas(pedido);
       const userConfirmedNow = isExplicitUserConfirmation(text, {
         lastAssistantText: lastAssistantTextBeforeUser
       });
@@ -8006,15 +7927,18 @@ if (debounceMs > 0 && msg.type === "text") {
 
       const transferSummaryText = buildBackendSummary(pedido, {
         showEnvio: false,
-        showTotal: true,
+        showTotal: !transferenciaConMilanesas,
         askConfirmation: false,
         intro: "🧾 Resumen del pedido:"
       });
 
-      const transferSummaryWithInstructions =
-        `${transferSummaryText}\n\n` +
-        `Para que podamos realizar tu pedido, por favor enviá el comprobante de la transferencia.\n` +
-        `¿Confirmás? ✅`;
+      const transferSummaryWithInstructions = transferenciaConMilanesas
+        ? `${transferSummaryText}\n\n` +
+          `Como el pedido incluye milanesas, el importe final te lo va a informar un operador cuando estén pesadas.\n` +
+          `¿Confirmás? ✅`
+        : `${transferSummaryText}\n\n` +
+          `Para que podamos realizar tu pedido, por favor enviá el comprobante de la transferencia.\n` +
+          `¿Confirmás? ✅`;
 
       // ⚠️ IMPORTANTE:
       // Solo forzamos resumen si el asistente realmente está intentando
@@ -8035,6 +7959,12 @@ if (debounceMs > 0 && msg.type === "text") {
         responseText = (geoShouldPrependToSummary && geoAddressWarning)
           ? `${geoAddressWarning}\n\n${transferSummaryWithInstructions}`
           : transferSummaryWithInstructions;
+      } else if (pedidoListoParaCerrar && transferenciaConMilanesas && userConfirmedNow) {
+        estado = "PENDIENTE";
+        transferFlowStatusToPersist = "PENDIENTE_IMPORTE_TRANSFERENCIA";
+        responseText =
+          "Perfecto 😊 Te vamos a enviar el importe final cuando estén pesadas las milanesas.";
+ 
       }
     } catch (e) {
       console.warn("[confirm] no se pudo forzar confirmación previa:", e?.message || e);
@@ -8084,9 +8014,11 @@ if (debounceMs > 0 && msg.type === "text") {
       || (wantsDetail && pedido && Array.isArray(pedido.items) && pedido.items.length
           ? buildBackendSummary(pedido, {
               showEnvio: wantsDetail,
-              showTotal: wantsDetail || /^transferencia$/i.test(String(pedido?.Pago || "").trim())
+              showTotal:
+                /^transferencia$/i.test(String(pedido?.Pago || "").trim()) &&
+                !pedidoHasMilanesas(pedido)
             })
-          : "Perfecto, sigo acá. ¿Querés confirmar o cambiar algo?");
+         : "Perfecto, sigo acá. ¿Querés confirmar o cambiar algo?");
 
     // ==============================
     // ✅ Determinar el estado final ANTES de enviar/persistir texto
