@@ -798,8 +798,13 @@ const withTenant = (q = {}, tenantId) => {
 // prevalecer (aunque finalized=true), porque puede ser una conversación
 // finalizada por cancelación del usuario.
 function adminStatusLabel(conv) {
+  const flow = String(conv?.transferFlowStatus || "").trim().toUpperCase();
+  if (flow === "PENDIENTE_IMPORTE_TRANSFERENCIA") return "PENDIENTE IMPORTE";
+  if (flow === "PENDIENTE_COMPROBANTE_TRANSFERENCIA") return "PENDIENTE COMPROBANTE";
+
   const raw = String(conv?.status || "").trim();
   const up = raw.toUpperCase();
+  const pedidoEstado = String(conv?.pedidoEstado || "").trim().toUpperCase();
 
   // Cancelaciones (aceptamos variantes)
   if (up === "CANCELLED" || up === "CANCELED" || up === "CANCELADA" || up === "CANCELADO") {
@@ -809,8 +814,46 @@ function adminStatusLabel(conv) {
   // Si hay status persistido, lo devolvemos tal cual (en mayúsculas típicas)
   if (raw) return up;
 
+  // Si no hay status formal pero sí estado de pedido persistido, usarlo.
+  if (pedidoEstado === "PENDIENTE") return "PENDIENTE";
+ 
+
   // Fallback si no hay status explícito
   return conv?.finalized ? "COMPLETED" : "OPEN";
+}
+
+function isExplicitUserConfirmation(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return false;
+
+  const norm = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (/\bconfirm(ar|o|a|ame|alo|ado)\b/.test(norm)) return true;
+  if (/^(s[i1]+|sip+|sep+|ok(?:ey)?|dale|listo|de una|perfecto|joya|mandale|obvio)\b/.test(norm) && norm.split(/\s+/).length <= 3) return true;
+  if (["👍", "👌", "✅", "✔️", "☑️"].includes(raw)) return true;
+  return false;
+}
+
+function normalizeTransferFlowStatus(value) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function manualTextLooksLikeAmountNotice(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return false;
+
+  const norm = raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  const hasAmount = /\$\s*\d/.test(raw) || /(?:^|[^\d])\d{4,}(?:[.,]\d{2})?(?=$|[^\d])/.test(raw);
+  const hasPaymentWords = /\b(total|importe|monto|transfer(?:encia)?|alias|cbu|cvu|comprobante)\b/.test(norm);
+
+  return hasAmount || hasPaymentWords;
 }
 // Parseo tolerante de filtro "entregado":
 // - true  => entregadas
@@ -1149,6 +1192,7 @@ async function saveMessageDoc({ conversationId, waId, role, content, type = "tex
               ...(horaEntrega  ? { pedidoHora:  horaEntrega  } : {}),
               ...(nombreFromPedido ? { contactName: nombreFromPedido } : {}),
               ...(estadoStr ? { pedidoEstado: estadoStr } : {}),
+              ...(estadoStr === "PENDIENTE" ? { status: "PENDIENTE" } : {}),
               lastPedidoSnapshot: {
                 estado: estadoStr || null,
                 Pedido: pedido
@@ -1362,6 +1406,12 @@ function pedidoHasResolvedMilanesaType(pedido) {
     const desc = lowerText(it?.descripcion || "");
     return desc === "milanesas de carne" || desc === "milanesas de pollo";
   });
+}
+
+function pedidoHasMilanesas(pedido) {
+  return pedidoItemsArray(pedido).some((it) =>
+    /milanesa/i.test(String(it?.descripcion || ""))
+  );
 }
 
 function stripEnvioItemsFromPedido(pedido) {
@@ -3152,10 +3202,24 @@ app.post("/api/admin/send-message", async (req, res) => {
       meta: { from: "admin" },
     });
 
-    // Actualizar timestamps de la conversación
-    await db.collection("conversations").updateOne(
+    // Actualizar timestamps y, si correspondiera, pasar de
+    // "pendiente de informar importe" a "pendiente de comprobante".
+    const convUpdate = {
+      $set: { lastAssistantTs: now, updatedAt: now }
+    };
+
+    if (
+      normalizeTransferFlowStatus(conv?.transferFlowStatus || "") === "PENDIENTE_IMPORTE_TRANSFERENCIA" &&
+      manualTextLooksLikeAmountNotice(body)
+    ) {
+      convUpdate.$set.transferFlowStatus = "PENDIENTE_COMPROBANTE_TRANSFERENCIA";
+      convUpdate.$set.status = "PENDIENTE";
+      convUpdate.$set.pedidoEstado = "PENDIENTE";
+    }
+
+   await db.collection("conversations").updateOne(
       { _id: conv._id },
-      { $set: { lastAssistantTs: now, updatedAt: now } }
+      convUpdate
     );
 
     res.json({ ok: true });
@@ -7165,6 +7229,7 @@ const aiOpts = {
      // Guardamos phoneNumberId para poder responder/operar por el mismo canal luego (admin, etc.)
  
     const convId = conv?._id;
+    const transferFlowStatusBeforeMessage = normalizeTransferFlowStatus(conv?.transferFlowStatus || "");
 
    
 console.log("[convId] "+ convId);
@@ -7343,6 +7408,7 @@ if (debounceMs > 0 && msg.type === "text") {
     let responseText = "Perdón, hubo un error. ¿Podés repetir?";
     let estado = null;
     let pedido = null;
+    let transferFlowStatusToPersist = transferFlowStatusBeforeMessage;
     const prevPedidoSnapshot = convId ? await loadLastPedidoSnapshot(tenant, convId) : null;
 
     try {
@@ -7768,6 +7834,83 @@ if (debounceMs > 0 && msg.type === "text") {
     }
 
     // ==============================
+    // ✅ Flujo especial: transferencia + milanesas
+    // - resumen SIN total
+    // - operador informa importe final
+    // - luego recién comprobante
+    // ==============================
+    try {
+      const pedidoListoParaCerrar = pedidoHasRequiredFieldsForClose(pedido);
+      const pagoEsTransferencia = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
+      const transferenciaConMilanesas = pagoEsTransferencia && pedidoHasMilanesas(pedido);
+      const userConfirmedNow = isExplicitUserConfirmation(text);
+      const assistantTryingToClose =
+        looksLikeSummaryOrConfirmation(responseText) ||
+        /^(COMPLETED|PENDIENTE)$/i.test(String(estado || "").trim());
+
+      if (pedidoListoParaCerrar && assistantTryingToClose && !userConfirmedNow) {
+        if (!pagoEsTransferencia) {
+          estado = "IN_PROGRESS";
+          responseText = buildBackendSummary(pedido, { showEnvio: wantsDetail });
+        } else if (transferenciaConMilanesas) {
+          estado = "IN_PROGRESS";
+          transferFlowStatusToPersist = "PENDIENTE_IMPORTE_TRANSFERENCIA";
+
+          const summaryText = buildBackendSummary(pedido, {
+            showEnvio: wantsDetail,
+            showTotal: false,
+            askConfirmation: false
+          });
+
+          responseText =
+            `${summaryText}\n\n` +
+            `*Como el pedido incluye milanesas, el importe final te lo va a informar un operador cuando estén pesadas.*\n` +
+            `¿Confirmamos el pedido? ✅`;
+        } else {
+          estado = "IN_PROGRESS";
+
+          const summaryText = buildBackendSummary(pedido, {
+            showEnvio: wantsDetail,
+            showTotal: true,
+            askConfirmation: false
+          });
+
+          responseText =
+            `${summaryText}\n\n` +
+            `Para que podamos realizar tu pedido, por favor enviá el comprobante de la transferencia.\n` +
+            `¿Confirmamos el pedido? ✅`;
+        }
+      } else if (pedidoListoParaCerrar && transferenciaConMilanesas && userConfirmedNow) {
+        estado = "PENDIENTE";
+        transferFlowStatusToPersist = "PENDIENTE_IMPORTE_TRANSFERENCIA";
+        responseText =
+          `Perfecto 😊 Como tu pedido incluye milanesas, un operador te va a informar el importe final para la transferencia. ` +
+          `Cuando lo tengas, podés enviarnos el comprobante.`;
+      }
+    } catch (e) {
+      console.warn("[transfer-milanesa] no se pudo aplicar el flujo especial:", e?.message || e);
+    }
+
+    // Si todavía está pendiente que el operador informe el importe final,
+    // no aceptar comprobantes/imágenes como cierre.
+    try {
+      const inboundCouldBeReceipt = !!(msg?.type === "image" || msg?.type === "document");
+      const esperandoImporte =
+        transferFlowStatusBeforeMessage === "PENDIENTE_IMPORTE_TRANSFERENCIA" &&
+        /^transferencia$/i.test(String(pedido?.Pago || "").trim()) &&
+        pedidoHasMilanesas(pedido);
+
+      if (esperandoImporte && inboundCouldBeReceipt) {
+        estado = "PENDIENTE";
+        transferFlowStatusToPersist = "PENDIENTE_IMPORTE_TRANSFERENCIA";
+        responseText =
+          "Todavía falta que un operador te informe el importe final de las milanesas para que puedas enviar la transferencia. 😊";
+      }
+    } catch (e) {
+      console.warn("[transfer-milanesa] no se pudo bloquear comprobante anticipado:", e?.message || e);
+    }
+
+    // ==============================
     // ✅ Confirmación obligatoria antes de cerrar:
     // si el pedido ya está completo:
     // - NO transferencia: jamás cerramos sin confirmación explícita
@@ -7885,11 +8028,14 @@ if (debounceMs > 0 && msg.type === "text") {
       /\bno\s+(quiero\s+)?anul/.test(_tNormPre);
     const userCancelled = !!(userWantsCancelRaw && !userCancelNeg);
 
-    const userConfirmsFast = isExplicitUserConfirmation(text, {
-      lastAssistantText: lastAssistantTextBeforeUser
-    });
-    const pagoEsTransferenciaFinal = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
-   const willComplete = !!(!pagoEsTransferenciaFinal && userConfirmsFast && isPedidoCompleto(pedido));
+	const userConfirmsFast = isExplicitUserConfirmation(text);
+	const pagoEsTransferencia = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
+	const willComplete = !!(
+	  estado === "COMPLETED" ||
+	  (!pagoEsTransferencia && userConfirmsFast && isPedidoCompleto(pedido))
+	);
+
+  const willComplete = !!(!pagoEsTransferenciaFinal && userConfirmsFast && isPedidoCompleto(pedido));
     const closeStatus =
       (userCancelled || estado === "CANCELLED")
         ? "CANCELLED"
@@ -7976,6 +8122,30 @@ if (debounceMs > 0 && msg.type === "text") {
         });
       } catch (e) {
         console.error("saveMessage(assistant json final):", e?.message);
+      }
+    }
+
+    if (convId) {
+      try {
+        const db = await getDb();
+        const convUpdate = { $set: { updatedAt: new Date() } };
+
+        if (String(estado || "").trim().toUpperCase() === "PENDIENTE") {
+          convUpdate.$set.status = "PENDIENTE";
+        }
+
+        if (transferFlowStatusToPersist) {
+          convUpdate.$set.transferFlowStatus = transferFlowStatusToPersist;
+        } else if (/^(COMPLETED|CANCELLED)$/i.test(String(estado || "").trim())) {
+          convUpdate.$unset = { transferFlowStatus: "" };
+        }
+
+        await db.collection("conversations").updateOne(
+          { _id: new ObjectId(String(convId)) },
+          convUpdate
+        );
+      } catch (e) {
+        console.warn("[conv] no se pudo persistir transferFlowStatus:", e?.message || e);
       }
     }
 
