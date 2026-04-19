@@ -8030,10 +8030,7 @@ if (debounceMs > 0 && msg.type === "text") {
 
 	const userConfirmsFast = isExplicitUserConfirmation(text);
 	const pagoEsTransferencia = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
-	const willComplete = !!(
-	  estado === "COMPLETED" ||
-	  (!pagoEsTransferencia && userConfirmsFast && isPedidoCompleto(pedido))
-	);
+	
 
   const willComplete = !!(!pagoEsTransferenciaFinal && userConfirmsFast && isPedidoCompleto(pedido));
     const closeStatus =
