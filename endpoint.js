@@ -798,19 +798,24 @@ const withTenant = (q = {}, tenantId) => {
 // prevalecer (aunque finalized=true), porque puede ser una conversación
 // finalizada por cancelación del usuario.
 function adminStatusLabel(conv) {
-  const flow = String(conv?.transferFlowStatus || "").trim().toUpperCase();
-  if (flow === "PENDIENTE_IMPORTE_TRANSFERENCIA") return "PENDIENTE IMPORTE";
-  if (flow === "PENDIENTE_COMPROBANTE_TRANSFERENCIA") return "PENDIENTE COMPROBANTE";
+ 
 
   const raw = String(conv?.status || "").trim();
   const up = raw.toUpperCase();
   const pedidoEstado = String(conv?.pedidoEstado || "").trim().toUpperCase();
+   // Si la conversación ya quedó finalizada, eso manda por sobre cualquier subestado de transferencia
+  if (up === "COMPLETED") return "COMPLETED";
+
 
   // Cancelaciones (aceptamos variantes)
   if (up === "CANCELLED" || up === "CANCELED" || up === "CANCELADA" || up === "CANCELADO") {
     return "CANCELADA";
   }
 
+  const flow = String(conv?.transferFlowStatus || "").trim().toUpperCase();
+  if (flow === "PENDIENTE_IMPORTE_TRANSFERENCIA") return "PENDIENTE IMPORTE";
+  if (flow === "PENDIENTE_COMPROBANTE_TRANSFERENCIA") return "PENDIENTE COMPROBANTE";
+  
   // Si hay status persistido, lo devolvemos tal cual (en mayúsculas típicas)
   if (raw) return up;
 
@@ -855,6 +860,12 @@ function manualTextLooksLikeAmountNotice(text) {
 
   return hasAmount || hasPaymentWords;
 }
+
+function isInboundTransferReceiptMedia(msg) {
+  const t = String(msg?.type || "").trim().toLowerCase();
+  return t === "image" || t === "document";
+}
+
 // Parseo tolerante de filtro "entregado":
 // - true  => entregadas
 // - false => NO entregadas
@@ -968,9 +979,24 @@ async function closeConversation(convId, status = "COMPLETED", extra = {}) {
   try {
     const db = await getDb();
     const now = new Date();
+    const update = {
+      $set: {
+        finalized: true,
+        status,
+        pedidoEstado: status,
+        closedAt: now,
+        updatedAt: now,
+        ...extra
+      }
+    };
+
+    if (/^(COMPLETED|CANCELLED)$/i.test(String(status || "").trim())) {
+      update.$unset = { transferFlowStatus: "" };
+    }
+
     await db.collection("conversations").updateOne(
       { _id: new ObjectId(String(convId)) },
-      { $set: { finalized: true, status, closedAt: now, updatedAt: now, ...extra } }
+      update
     );
   } catch (e) {
     console.error("closeConversation error:", e?.message || e);
@@ -7333,6 +7359,101 @@ console.log("[convId] "+ convId);
       return res.sendStatus(200);
    }
 
+    // ==============================
+    // ✅ Fast-path backend: si la conversación está esperando comprobante
+    // y el usuario manda imagen o archivo, cerramos directamente.
+    // Esto evita que el flujo normal vuelva a mostrar el resumen anterior.
+    // ==============================
+    try {
+      const flowStatus = normalizeTransferFlowStatus(conv?.transferFlowStatus || "");
+      const inboundReceipt = isInboundTransferReceiptMedia(msg);
+
+      if (convId && inboundReceipt && flowStatus === "PENDIENTE_COMPROBANTE_TRANSFERENCIA") {
+        const pedidoPrev = await loadLastPedidoSnapshot(tenant, convId);
+        const pagoPrev = String(pedidoPrev?.Pago || "").trim();
+
+        if (/^transferencia$/i.test(pagoPrev)) {
+          const receiptReply = "Perfecto, recibimos el comprobante. Será revisado a la brevedad. 😊";
+          const pedidoFinal = normalizePedidoDateTimeFields(
+            cloneJsonSafe(pedidoPrev) || { Entrega: "", Domicilio: {}, items: [], total_pedido: 0, Pago: "transferencia" }
+          );
+
+          try {
+            replaceLastAssistantHistory(tenant, sessionFrom, JSON.stringify({
+              response: receiptReply,
+              estado: "COMPLETED",
+              Pedido: pedidoFinal
+            }));
+          } catch (e) {
+            console.warn("[history] no se pudo reemplazar la última respuesta del asistente:", e?.message || e);
+          }
+
+          await require("./logic").sendChannelMessage(from, receiptReply, channelOpts);
+
+          try {
+            await saveMessageDoc({
+              tenantId: tenant,
+              conversationId: convId,
+              waId: from,
+              role: "assistant",
+              content: receiptReply,
+              type: "text",
+              meta: { model: "backend-fastpath", kind: "receipt-confirmed" }
+            });
+          } catch (e) {
+            console.error("saveMessage(assistant text receipt):", e?.message);
+          }
+
+          try {
+            await saveMessageDoc({
+              tenantId: tenant,
+              conversationId: convId,
+              waId: from,
+              role: "assistant",
+              content: JSON.stringify({
+                response: receiptReply,
+               estado: "COMPLETED",
+                Pedido: pedidoFinal
+              }),
+             type: "json",
+              meta: { model: "backend-fastpath", kind: "pedido-snapshot" }
+            });
+          } catch (e) {
+            console.error("saveMessage(assistant json receipt):", e?.message);
+          }
+
+          try {
+            const db = await getDb();
+            const nowOrder = new Date();
+            const convObjectId = new ObjectId(String(convId));
+            await db.collection("orders").updateOne(
+              { conversationId: convObjectId, ...(tenant ? { tenantId: tenant } : {}) },
+              {
+                $set: {
+                  tenantId: (tenant || null),
+                  from,
+                  conversationId: convObjectId,
+                  pedido: pedidoFinal,
+                  estado: "COMPLETED",
+                  status: "COMPLETED",
+                  updatedAt: nowOrder,
+                },
+                $setOnInsert: { createdAt: nowOrder }
+              },
+              { upsert: true }
+            );
+          } catch (e) {
+            console.error("[orders] error upsert receipt COMPLETED:", e?.message || e);
+          }
+
+          await closeConversation(convId, "COMPLETED");
+          markSessionEnded(tenant, sessionFrom);
+          return res.sendStatus(200);
+        }
+      }
+    } catch (e) {
+      console.warn("[receipt-fastpath] error:", e?.message || e);
+    }
     // ================== Debounce configurable (solo mensajes text) ==================
 // - Retrocompatible: si messageDebounceMs=0 => no cambia nada
 // - Si >0: junta varios mensajes text y llama al LLM una sola vez
