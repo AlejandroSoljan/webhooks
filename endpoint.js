@@ -1414,6 +1414,48 @@ function pedidoHasMilanesas(pedido) {
   );
 }
 
+
+function foldIntentText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function textMentionsMilanesaIntent(text) {
+  const s = foldIntentText(text);
+  return /\bmila\b|\bmilanesa\b|\bnapo\b|\bnapolitana\b/.test(s);
+}
+
+function nextMissingMilanesaQuestionFromText(text, pedido) {
+  const s = foldIntentText(text);
+  if (!s) return "";
+  if (!textMentionsMilanesaIntent(s)) return "";
+  if (pedidoHasMilanesas(pedido)) return "";
+
+  const mentionsPollo = /\bde pollo\b|\bpollo\b/.test(s);
+  const mentionsCarne = /\bde carne\b|\bcarne\b/.test(s);
+  const mentionsPechuga = /\bpechuga\b/.test(s);
+  const mentionsMuslo = /\bmuslo\b/.test(s);
+  const mentionsNapo = /\bnapo\b|\bnapolitana\b/.test(s);
+  const mentionsComun = /\bcomun\b/.test(s);
+
+if (!mentionsPollo && !mentionsCarne) {
+    return "¿La milanesa la querés de carne o de pollo? 😊";
+  }
+  if (mentionsPollo && !mentionsPechuga && !mentionsMuslo) {
+    return "¿La milanesa de pollo la querés de pechuga o de muslo? 😊";
+  }
+  if (!mentionsNapo && !mentionsComun) {
+    return "¿La querés común o napolitana? 😊";
+  }
+
+  return "";
+}
+
 function stripEnvioItemsFromPedido(pedido) {
   if (!pedido || typeof pedido !== "object") return pedido;
   if (Array.isArray(pedido.items)) {
@@ -1567,6 +1609,17 @@ function applyCriticalPedidoGuards({ pedido, responseText, estado, currentText }
     if (!nextResponse) nextResponse = "Pedido cancelado ✅";
     return { pedido: nextPedido, responseText: nextResponse, estado: nextEstado, guardHits };
   }
+
+
+  const missingMilanesaQuestion = nextMissingMilanesaQuestionFromText(currentText, nextPedido);
+  if (missingMilanesaQuestion) {
+    nextEstado = "IN_PROGRESS";
+    nextResponse = missingMilanesaQuestion;
+    guardHits.push("milanesa_mentioned_but_missing_from_items");
+    return { pedido: nextPedido, responseText: nextResponse, estado: nextEstado, guardHits };
+  }
+
+
   if (pedidoIsDomicilio(nextPedido) && !pedidoHasAddress(nextPedido)) {
     nextEstado = "IN_PROGRESS";
     nextPedido.distancia_km = null;
@@ -7851,7 +7904,30 @@ if (debounceMs > 0 && msg.type === "text") {
       if (pedidoListoParaCerrar && assistantTryingToClose && !userConfirmedNow) {
         if (!pagoEsTransferencia) {
           estado = "IN_PROGRESS";
-          responseText = buildBackendSummary(pedido, { showEnvio: wantsDetail });
+        const summaryText = buildBackendSummary(pedido, {
+          showEnvio: wantsDetail,
+          showTotal: pagoEsTransferencia ? !transferenciaConMilanesas : wantsDetail,
+          askConfirmation: false
+        });
+
+        if (!pagoEsTransferencia) {
+          responseText = summaryText;
+        } else if (transferenciaConMilanesas) {
+          responseText =
+            `${summaryText}\n\n` +
+            `Como el pedido incluye milanesas, el importe final te lo va a informar un operador cuando estén pesadas.\n` +
+            `¿Confirmamos el pedido? ✅`;
+        } else {
+          responseText =
+            `${summaryText}\n\n` +
+            `Para que podamos realizar tu pedido, por favor enviá el comprobante de la transferencia.\n` +
+            `¿Confirmamos el pedido? ✅`;
+        }
+      } else if (pedidoListoParaCerrar && pagoEsTransferencia && transferenciaConMilanesas && userConfirmedNow) {
+        estado = "PENDIENTE";
+        responseText =
+          "Perfecto 😊 Como tu pedido incluye milanesas, un operador te va a informar el importe final para la transferencia. Cuando lo tengas, podés enviarnos el comprobante.";
+    
         } else if (transferenciaConMilanesas) {
           estado = "IN_PROGRESS";
           transferFlowStatusToPersist = "PENDIENTE_IMPORTE_TRANSFERENCIA";
