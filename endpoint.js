@@ -5678,6 +5678,7 @@ app.get("/admin/ticket/:convId", async (req, res) => {
     const convId = String(req.params.convId || "").trim();
     if (!convId) return res.status(400).send("convId requerido");
     const db = await getDb();
+    const tenant = resolveTenantId(req);
     const convObjectId = new ObjectId(convId);
 
     // Traemos la conversación para nombre / teléfono
@@ -5688,7 +5689,7 @@ app.get("/admin/ticket/:convId", async (req, res) => {
     try {
       const conv = await db
         .collection("conversations")
-        .findOne(withTenant({ _id: convObjectId }));
+        .findOne(withTenant({ _id: convObjectId }, tenant));
       waId = conv?.waId || "";
       nombre = conv?.contactName || "";
     } catch (e) {
@@ -5713,7 +5714,7 @@ app.get("/admin/ticket/:convId", async (req, res) => {
     // 2) Si por algún motivo no encontramos en orders,
     //    caemos al método viejo: buscar el JSON en los mensajes.
     if (!pedido) {
-      const msgs = await getConversationMessagesByConvId(convId, 1000);
+      const msgs = await getConversationMessagesByConvId(convId, 1000, tenant);
       for (let i = msgs.length - 1; i >= 0; i--) {
         const m = msgs[i];
         if (m.role !== "assistant") continue;
