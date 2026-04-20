@@ -1903,7 +1903,7 @@ async function listConversations(limit = 50, tenantId, deliveredFilter = null) {
 
   if (convIds.length) {
     const cursor = db.collection("orders")
-      .find({ conversationId: { $in: convIds } })
+      .find(withTenant({ conversationId: { $in: convIds } }, tenantId))
       .sort({ createdAt: -1 });
 
     for await (const ord of cursor) {
@@ -8259,6 +8259,32 @@ if (debounceMs > 0 && msg.type === "text") {
         });
       } catch (e) {
         console.error("saveMessage(assistant json final):", e?.message);
+      }
+
+      // 🔹 Persistir SIEMPRE el último pedido en orders, aunque todavía no esté completed.
+      // Así el ticket y el panel leen una única fuente consistente.
+      try {
+        const db = await getDb();
+        const nowOrder = new Date();
+        const convObjectId = new ObjectId(String(convId));
+        await db.collection("orders").updateOne(
+          { conversationId: convObjectId, ...(tenant ? { tenantId: tenant } : {}) },
+          {
+            $set: {
+              tenantId: (tenant || null),
+              from,
+              conversationId: convObjectId,
+              ...(pedido ? { pedido } : {}),
+              estado: typeof estado === "string" ? estado : "IN_PROGRESS",
+              status: typeof estado === "string" ? estado : "IN_PROGRESS",
+              updatedAt: nowOrder,
+            },
+            $setOnInsert: { createdAt: nowOrder }
+          },
+          { upsert: true }
+        );
+      } catch (e) {
+        console.error("[orders] error upsert live snapshot:", e?.message || e);
       }
     }
 
