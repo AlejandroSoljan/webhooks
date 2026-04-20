@@ -8093,6 +8093,12 @@ if (debounceMs > 0 && msg.type === "text") {
         responseText = (geoShouldPrependToSummary && geoAddressWarning)
           ? `${geoAddressWarning}\n\n${transferSummaryWithInstructions}`
           : transferSummaryWithInstructions;
+      } else if (pedidoListoParaCerrar && pagoEsTransferencia && !transferenciaConMilanesas && userConfirmedNow) {
+        estado = "PENDIENTE";
+        transferFlowStatusToPersist = "PENDIENTE_COMPROBANTE_TRANSFERENCIA";
+        responseText =
+          "Perfecto. Para avanzar con tu pedido, por favor enviame el comprobante de la transferencia. 😊";
+
       } else if (pedidoListoParaCerrar && transferenciaConMilanesas && userConfirmedNow) {
         estado = "PENDIENTE";
         transferFlowStatusToPersist = "PENDIENTE_IMPORTE_TRANSFERENCIA";
