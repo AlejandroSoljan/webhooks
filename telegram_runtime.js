@@ -229,15 +229,33 @@ function getContextStatus(ctx) {
   };
 }
 
-function contextSignature(cfg) {
+function botConnectionSignature(cfg) {
   return JSON.stringify({
     token: cfg.telegram_bot_token,
     username: cfg.telegram_bot_username,
+  });
+}
+
+function runtimeConfigSignature(cfg) {
+  return JSON.stringify({
     numero: cfg.numero,
     api: cfg.api,
     api2: cfg.api2,
     api3: cfg.api3,
     key: cfg.key,
+    seg_desde: cfg.seg_desde,
+    seg_hasta: cfg.seg_hasta,
+    seg_msg: cfg.seg_msg,
+    seg_tele: cfg.seg_tele,
+    cant_lim: cfg.cant_lim,
+    msg_lim: cfg.msg_lim,
+    time_cad: cfg.time_cad,
+    msg_cad: cfg.msg_cad,
+    msg_can: cfg.msg_can,
+    msg_inicio: cfg.msg_inicio,
+    msg_fin: cfg.msg_fin,
+    status_token: cfg.status_token,
+    nom_chatbot: cfg.nom_chatbot,
   });
 }
 
@@ -1152,23 +1170,48 @@ async function ensureContextForConfig(cfg) {
     return ctx;
   }
 
-  const prevSig = contextSignature(existing.config);
-  const nextSig = contextSignature(cfg);
+  const prevBotSig = botConnectionSignature(existing.config);
+  const nextBotSig = botConnectionSignature(cfg);
+  const prevRuntimeSig = runtimeConfigSignature(existing.config);
+  const nextRuntimeSig = runtimeConfigSignature(cfg);
+  const oldNumero = existing.numero;
+  const oldLockId = existing.lockId;
+
   existing.config = { ...existing.config, ...cfg, ...getErrorConfig() };
   existing.numero = existing.config.numero;
   existing.statusToken = existing.config.status_token || existing.statusToken || '';
   existing.lockId = `${existing.tenantId}:${existing.numero || 'telegram'}`;
 
-  if (prevSig !== nextSig) {
-    logLine(`[${cfg.tenantId}] cambio de configuración Telegram detectado -> reiniciando bot`, 'event');
+  if (prevBotSig !== nextBotSig) {
+    logLine(`[${cfg.tenantId}] cambio de token/username Telegram detectado -> reiniciando bot`, 'event');
     await stopContext(existing, 'reconfiguring');
+    if (oldLockId && oldLockId !== existing.lockId) {
+      try {
+        const db = await getDb();
+        await db.collection('tg_locks').deleteOne({ _id: oldLockId });
+      } catch (e) {
+        logLine(`[${cfg.tenantId}] cleanup lock anterior error: ${e?.message || e}`, 'error');
+      }
+    }
     existing.lockAcquiredAt = new Date();
     existing.botState = 'idle';
     existing.telegramSelfId = '';
     existing.telegramSelfUsername = '';
+    await sleep(1200);
     await startContext(existing);
-  } else if (!existing.botStarted && !existing.startingNow) {
-    await startContext(existing);
+  } else {
+    if (prevRuntimeSig !== nextRuntimeSig) {
+      logLine(`[${cfg.tenantId}] configuración Telegram actualizada sin reinicio de bot`, 'event');
+      if (oldNumero !== existing.numero) {
+        logLine(`[${cfg.tenantId}] numero API Telegram: ${oldNumero || '-'} -> ${existing.numero || '-'}`, 'event');
+      }
+      if (existing.ownsLock) {
+        await updateLockState(existing, existing.botState || (existing.botStarted ? 'online' : 'idle'));
+      }
+    }
+    if (!existing.botStarted && !existing.startingNow) {
+      await startContext(existing);
+    }
   }
   return existing;
 }
