@@ -815,7 +815,7 @@ async function heartbeatTick(ctx) {
 }
 
 function scheduleOutboundPoller(ctx) {
-  try { if (ctx.timers.outbound) clearTimeout(ctx.timers.outbound); } catch {}
+ /* try { if (ctx.timers.outbound) clearTimeout(ctx.timers.outbound); } catch {}
   ctx.timers.outbound = setTimeout(async () => {
     try {
       await consultaApiMensajes(ctx);
@@ -824,7 +824,7 @@ function scheduleOutboundPoller(ctx) {
     } finally {
       if (!ctx.shuttingDown && ctx.botStarted) scheduleOutboundPoller(ctx);
     }
-  }, Math.max(1000, Number(ctx.config.seg_tele) || 3000));
+  }, Math.max(1000, Number(ctx.config.seg_tele) || 3000));*/
 }
 
 async function handleActionDoc(ctx, doc) {
@@ -1091,6 +1091,79 @@ function getTelegramStatus() {
     items,
   };
 }
+
+
+function telegramAdminEmbedPage() {
+  return `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Sesiones Telegram · Asisto</title>
+  <style>
+    :root{--bg:#f8fafc;--card:#ffffff;--text:#0f172a;--muted:#64748b;--border:rgba(148,163,184,.24);--primary:#0e6b66;--danger:#b42318;--shadow:0 14px 36px rgba(15,23,42,.10);--radius:18px}
+    *{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--text)}
+    .page{padding:16px}.toolbar{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px}.toolbar h1{margin:0 0 4px;font-size:24px}
+    .small{font-size:12px;color:var(--muted)}.actions{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer}.btnDanger{color:var(--danger)}
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-bottom:14px}.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+    .metric{font-size:28px;font-weight:800;line-height:1}.metricLabel{font-size:12px;color:var(--muted);margin-top:6px}
+    .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}.filters label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted)}
+    .inp{min-width:220px;border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:#fff;color:var(--text)}
+    .layout{display:grid;grid-template-columns:1.25fr .95fr;gap:14px}.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+    .panelHead{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border)}.panelHead h2{margin:0;font-size:16px}
+    .tableWrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:12px 14px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;font-size:13px}
+    th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;background:#fff;position:sticky;top:0}.tenantName{font-weight:800}
+    .statusPill,.chatPill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:1px solid var(--border);font-size:11px;font-weight:700;background:#fff}
+    .statusPill.is-on{background:rgba(14,107,102,.08);color:var(--primary);border-color:rgba(14,107,102,.18)}.statusPill.is-off{background:rgba(148,163,184,.08);color:#475569}
+    .rowActions{display:flex;gap:8px;flex-wrap:wrap}.rowActions .btn{padding:8px 10px;border-radius:10px;font-size:12px}
+    .msg{margin-bottom:12px;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:#fff;font-size:13px}.msg.err{border-color:rgba(240,68,56,.25);background:rgba(240,68,56,.08);color:#991b1b}.msg.ok{border-color:rgba(14,107,102,.22);background:rgba(14,107,102,.08);color:#0f5132}
+    .empty{padding:18px;color:var(--muted);font-size:13px}code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px}
+    @media (max-width: 980px){ .layout{grid-template-columns:1fr} }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="toolbar"><div><h1>Sesiones Telegram</h1><div class="small">Monitoreo multi-tenant de bots, chats registrados y acciones operativas.</div></div><div class="actions"><button class="btn" id="tgReloadBtn" type="button">Recargar bots</button><button class="btn" id="tgRefreshBtn" type="button">Actualizar vista</button></div></div>
+    <div id="tgMsg"></div>
+    <div class="cards"><div class="card"><div class="metric" id="tgMetricTotal">0</div><div class="metricLabel">Bots configurados</div></div><div class="card"><div class="metric" id="tgMetricStarted">0</div><div class="metricLabel">Bots iniciados</div></div><div class="card"><div class="metric" id="tgMetricChats">0</div><div class="metricLabel">Chats conocidos</div></div><div class="card"><div class="metric" id="tgMetricBlocked">0</div><div class="metricLabel">Chats bloqueados</div></div></div>
+    <div class="filters"><label>Buscar tenant / bot / chat<input class="inp" id="tgSearch" type="search" placeholder="Ej: CARICO, @bot, 549..." /></label><label>Estado<select class="inp" id="tgStateFilter"><option value="">Todos</option><option value="started">Iniciados</option><option value="stopped">Detenidos</option><option value="disabled">Deshabilitados</option></select></label></div>
+    <div class="layout">
+      <section class="panel"><div class="panelHead"><div><h2>Bots por tenant</h2><div class="small" id="tgStatusMeta">Sin datos todavía.</div></div></div><div class="tableWrap"><table><thead><tr><th>Tenant</th><th>Bot</th><th>Estado</th><th>Chats</th><th>Última actividad</th><th>Acciones</th></tr></thead><tbody id="tgBody"></tbody></table></div></section>
+      <section class="panel"><div class="panelHead"><div><h2>Chats registrados</h2><div class="small">Últimos chats conocidos por los bots visibles.</div></div></div><div id="tgChats" class="tableWrap"></div></section>
+    </div>
+  </div>
+  <script>
+    (function(){
+      const msgEl=document.getElementById('tgMsg'), totalEl=document.getElementById('tgMetricTotal'), startedEl=document.getElementById('tgMetricStarted'), chatsEl=document.getElementById('tgMetricChats'), blockedEl=document.getElementById('tgMetricBlocked'), bodyEl=document.getElementById('tgBody'), chatsWrap=document.getElementById('tgChats'), metaEl=document.getElementById('tgStatusMeta'), searchEl=document.getElementById('tgSearch'), stateEl=document.getElementById('tgStateFilter'), reloadBtn=document.getElementById('tgReloadBtn'), refreshBtn=document.getElementById('tgRefreshBtn');
+      let state={items:[],chats:[]};
+      const esc=(v)=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+      async function api(url, opts){ const res=await fetch(url, Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}}, opts||{})); let data=null; try{data=await res.json();}catch{} if(!res.ok) throw new Error((data&&(data.error||data.message))||('HTTP '+res.status)); return data||{}; }
+      function setMsg(kind, text){ if(!text){ msgEl.innerHTML=''; return; } msgEl.innerHTML='<div class="msg '+(kind==='err'?'err':'ok')+'">'+esc(text)+'</div>'; }
+      function statusPill(item){ const cls=item.botStarted?'statusPill is-on':'statusPill is-off'; const label=item.botStarted?(item.botState||'started'):(item.botState||'stopped'); return '<span class="'+cls+'">'+esc(label)+'</span>'; }
+      function rowMatches(item,q,filter){ const hay=[item.tenantId,item.numero,item.telegramBotUsername,item.telegramBotId,item.botState,item.lastSeenAt].join(' ').toLowerCase(); if(q && !hay.includes(q)) return false; if(filter==='started' && !item.botStarted) return false; if(filter==='stopped' && item.botStarted) return false; if(filter==='disabled' && String(item.botState||'').toLowerCase()!=='disabled') return false; return true; }
+      function render(){
+        const q=String(searchEl.value||'').trim().toLowerCase(), filter=String(stateEl.value||'').trim();
+        const items=(state.items||[]).filter((item)=>rowMatches(item,q,filter));
+        const chats=(state.chats||[]).filter((chat)=>{ const hay=[chat.tenantId,chat.numero,chat.chatId,chat.username,chat.firstName,chat.lastName,chat.title,chat.chatType].join(' ').toLowerCase(); return !q || hay.includes(q); });
+        totalEl.textContent=String(state.items.length||0); startedEl.textContent=String((state.items||[]).filter((x)=>x.botStarted).length||0); chatsEl.textContent=String((state.chats||[]).length||0); blockedEl.textContent=String((state.chats||[]).filter((x)=>x.blocked).length||0);
+        metaEl.textContent=items.length?('Mostrando '+items.length+' bot'+(items.length===1?'':'s')+' · actualizado '+new Date().toLocaleString('es-AR')):'Sin bots visibles para el filtro actual.';
+        bodyEl.innerHTML=!items.length?'<tr><td colspan="6" class="empty">No hay bots visibles con el filtro actual.</td></tr>':items.map((item)=>{ const knownChats=Number(item.knownChats||0); const botLabel=item.telegramBotUsername?('@'+String(item.telegramBotUsername).replace(/^@+/,'')):'Sin username'; const lastSeen=item.lastSeenAt?new Date(item.lastSeenAt).toLocaleString('es-AR'):'-'; return '<tr>'+'<td><div class="tenantName">'+esc(item.tenantId)+'</div><div class="small">'+esc(item.numero||'-')+'</div></td>'+'<td><div>'+esc(botLabel)+'</div><div class="small"><code>'+esc(item.telegramBotId||'-')+'</code></div></td>'+'<td>'+statusPill(item)+'</td>'+'<td><span class="chatPill">'+esc(String(knownChats))+' chats</span></td>'+'<td><div>'+esc(lastSeen)+'</div></td>'+'<td><div class="rowActions"><button class="btn" type="button" data-action="start" data-tenant="'+esc(item.tenantId)+'">Iniciar</button><button class="btn btnDanger" type="button" data-action="release" data-tenant="'+esc(item.tenantId)+'">Detener</button></div></td>'+'</tr>'; }).join('');
+        chatsWrap.innerHTML=!chats.length?'<div class="empty">No hay chats registrados.</div>':'<table><thead><tr><th>Tenant</th><th>Chat</th><th>Usuario</th><th>Tipo</th><th>Última vez</th></tr></thead><tbody>'+chats.slice(0,200).map((chat)=>{ const displayName=[chat.firstName,chat.lastName].filter(Boolean).join(' ').trim()||chat.title||chat.username||'-'; return '<tr>'+'<td><div class="tenantName">'+esc(chat.tenantId)+'</div><div class="small">'+esc(chat.numero||'-')+'</div></td>'+'<td><div><code>'+esc(chat.chatId||'-')+'</code></div>'+(chat.blocked?'<div class="small" style="color:#b42318">Bloqueado</div>':'')+'</td>'+'<td><div>'+esc(displayName)+'</div><div class="small">'+esc(chat.username?('@'+String(chat.username).replace(/^@+/,'')):'-')+'</div></td>'+'<td>'+esc(chat.chatType||'-')+'</td>'+'<td>'+esc(chat.lastSeenAt?new Date(chat.lastSeenAt).toLocaleString('es-AR'):'-')+'</td>'+'</tr>'; }).join('')+'</tbody></table>';
+      }
+      async function load(){ setMsg('',''); const [statusRes, chatsRes]=await Promise.all([api('/api/tg/status'), api('/api/tg/chats')]); state.items=Array.isArray(statusRes.items)?statusRes.items:[]; state.chats=Array.isArray(chatsRes.items)?chatsRes.items:[]; render(); }
+      async function runAction(action, tenantId){ try{ setMsg('',''); const url=action==='start'?'/api/tg/start':'/api/tg/release'; await api(url,{method:'POST',body:JSON.stringify({tenantId})}); await load(); setMsg('ok',(action==='start'?'Bot iniciado':'Bot detenido')+' para '+tenantId+'.'); }catch(e){ setMsg('err', e.message||String(e)); } }
+      reloadBtn.addEventListener('click', async ()=>{ try{ setMsg('',''); await api('/api/tg/reload',{method:'POST',body:'{}'}); await load(); setMsg('ok','Bots recargados desde tenant_config.'); }catch(e){ setMsg('err', e.message||String(e)); } });
+      refreshBtn.addEventListener('click', ()=>{ load().catch((e)=>setMsg('err', e.message||String(e))); });
+      searchEl.addEventListener('input', render); stateEl.addEventListener('change', render);
+      bodyEl.addEventListener('click', (ev)=>{ const btn=ev.target.closest('button[data-action]'); if(!btn) return; runAction(btn.getAttribute('data-action'), btn.getAttribute('data-tenant')); });
+      load().catch((e)=>setMsg('err', e.message||String(e)));
+    })();
+  </script>
+</body>
+</html>`;
+}
+
+
 
 function mountTelegramRoutes(app) {
   if (manager.routesMounted) return;

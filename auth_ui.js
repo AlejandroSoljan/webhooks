@@ -43,6 +43,7 @@ const ACCESS_PAGES = [
   { key: "comportamiento", title: "Comportamiento" },
   { key: "leads", title: "Leads" },
   { key: "wweb", title: "Sesiones WhatsApp Web" },
+  { key: "telegram", title: "Sesiones Telegram" },
   { key: "users", title: "Usuarios" },
   { key: "tenant_config", title: "Tenant Config" },
 ];
@@ -85,11 +86,14 @@ function requiredAccessForPath(p) {
 
   // Sesiones WhatsApp Web (whatsapp-web.js)
   if (path.startsWith("/admin/wweb") || path.startsWith("/api/wweb")) return ["wweb"];
+  // Sesiones Telegram
+  if (path.startsWith("/admin/telegram") || path.startsWith("/api/tg")) return ["telegram"];
+ 
 
   // UI wrapper
   if (path.startsWith("/ui/")) {
     const seg = path.split("/")[2] || "";
-    if (["admin", "inbox", "productos", "horarios", "comportamiento", "tenant_config"].includes(seg)) return [seg];
+    if (["admin", "inbox", "productos", "horarios", "comportamiento", "tenant_config", "telegram"].includes(seg)) return [seg];
   }
 
   // Pantallas directas
@@ -1067,6 +1071,7 @@ function getNavItemsForUser(user) {
 
   if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
   if (isAdmin && hasAccess(user, "wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
+  if (isAdmin && hasAccess(user, "telegram")) items.push({ key: "telegram", title: "Sesiones Telegram", href: "/ui/telegram" });
   if (isAdmin && hasAccess(user, "users")) items.push({ key: "users", title: "Usuarios", href: "/admin/users" });
   if (isAdmin && hasAccess(user, "tenant_config")) items.push({ key: "tenant_config", title: "Tenant Config", href: "/ui/tenant_config" });
 
@@ -1703,6 +1708,7 @@ function usersAdminPage({ user, users, msg, err }) {
         if (allowedKeys.includes("comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
         if (allowedKeys.includes("leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
         if (allowedKeys.includes("wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
+        if (allowedKeys.includes("telegram")) items.push({ key: "telegram", title: "Sesiones Telegram", href: "/ui/telegram" });
         if (allowedKeys.includes("users")) items.push({ key: "users", title: "Sesiones de usuarios", href: "/admin/users" });
         if (allowedKeys.includes("tenant_config")) items.push({ key: "tenant_config", title: "Tenant Config", href: "/ui/tenant_config" });
 
@@ -2961,6 +2967,7 @@ function mountAuthRoutes(app) {
       ...(isAdmin ? [
         { title: "Leads", href: "/admin/leads", badge: "Admin", desc: "Mensajes del formulario de contacto" },
         { title: "Sesiones WhatsApp Web", href: "/admin/wweb", badge: "Admin", desc: "Control de sesiones (wwebjs)" },
+         { title: "Sesiones Telegram", href: "/ui/telegram", badge: "Admin", desc: "Estado de bots, chats y acciones por tenant" },
         { title: "Usuarios", href: "/admin/users", badge: "Admin", desc: "Alta/baja y reseteo de contraseñas" },
         { title: "Tenant Config", href: "/ui/tenant_config", badge: "Admin", desc: "Configuración por tenant" },
         { title: "Logs Conversaciones", href: "/api/logs/conversations", badge: "API", desc: "Listado de conversaciones" },
@@ -2993,6 +3000,7 @@ function mountAuthRoutes(app) {
       horarios: { title: "Horarios", desc: "Configuración de disponibilidad", badge: "UI", src: "/horarios", active: "horarios" },
       comportamiento: { title: "Comportamiento", desc: "Prompt, reglas y configuración del asistente", badge: "UI", src: "/comportamiento", active: "comportamiento" },
       tenant_config: { title: "Tenant Config", desc: "Configuración general por tenant", badge: "Admin", src: "/admin/tenant-config?embed=1", active: "tenant_config" },
+      telegram: { title: "Sesiones Telegram", desc: "Estado de bots, chats y acciones por tenant", badge: "Admin", src: "/admin/telegram?embed=1", active: "telegram" },
     };
 
     const conf = map[page];
