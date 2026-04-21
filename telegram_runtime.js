@@ -113,6 +113,29 @@ function buildMediaPayloadFromBase64(base64, filename, caption) {
     caption: normalizeString(caption, ''),
     buffer: Buffer.from(String(base64 || ''), 'base64')
   };
+
+}
+
+function getApiBotNumber(ctx) {
+  return String(
+    ctx?.config?.numero ||
+    ctx?.numero ||
+    ctx?.telegramSelfId ||
+    ''
+  ).trim();
+}
+
+function buildTelegramIdReply(msg) {
+  const userId = String(msg?.from?.id || '').trim();
+  const chatId = String(msg?.chat?.id || '').trim();
+  const username = String(msg?.from?.username || '').trim();
+  const parts = [];
+
+  if (userId) parts.push(`Tu ID de Telegram es: ${userId}`);
+  if (chatId && chatId !== userId) parts.push(`ID del chat: ${chatId}`);
+  if (username) parts.push(`Usuario: @${username}`);
+
+  return parts.length ? parts.join('\n') : 'No pude obtener tu ID de Telegram.';
 }
 
 function getErrorConfig() {
@@ -637,7 +660,7 @@ async function actualizarEstadoMensaje(ctx, estado, tipo, nombre, contacto, dire
   try {
     const params = new URLSearchParams();
     params.set('key', String(ctx.config.key || ''));
-    params.set('nro_tel_from', String(ctx.telegramSelfId || ctx.numero || ''));
+    params.set('nro_tel_from', getApiBotNumber(ctx));
     params.set('estado', String(estado || ''));
     if (tipo !== undefined && tipo !== null) params.set('tipo', String(tipo));
     if (nombre !== undefined && nombre !== null) params.set('nombre', String(nombre));
@@ -664,6 +687,8 @@ async function procesarMensajeLotes(ctx, json, message) {
   if (indice === -1) return;
 
   const now = new Date();
+
+  
   const segDesde = Math.min(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
   const segHasta = Math.max(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
   const segundos = Math.random() * (segHasta - segDesde) + segDesde;
@@ -740,12 +765,20 @@ async function handleIncomingTelegramMessage(ctx, msg) {
         return;
       }
 
+      const trimmedBody = String(body || '').trim();
+      const telefonoFrom = chatId;
+      const telefonoTo = getApiBotNumber(ctx);
+      await logMessageStat(ctx, 'in', telefonoFrom, { body, type: 'text', hasMedia: false });
+
+      if (trimmedBody === '/id') {
+        await safeSendTelegram(ctx, chatId, buildTelegramIdReply(msg));
+        return;
+      }
+
+
       const segDesde = Math.min(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
       const segHasta = Math.max(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
       const segundos = Math.random() * (segHasta - segDesde) + segDesde;
-      const telefonoFrom = chatId;
-      const telefonoTo = String(ctx.telegramSelfId || ctx.numero || '');
-      await logMessageStat(ctx, 'in', telefonoFrom, { body, type: 'text', hasMedia: false });
 
       if (ctx.config.msg_inicio) await safeSendTelegram(ctx, chatId, ctx.config.msg_inicio);
 
@@ -966,7 +999,7 @@ async function consultaApiMensajes(ctx) {
   ctx.outboundBusy = true;
   try {
     if (!ctx.botStarted || !ctx.bot) return;
-    const botFrom = String(ctx.telegramSelfId || ctx.numero || '');
+    const botFrom = getApiBotNumber(ctx);
     if (!botFrom) return;
 
     const url = `${ctx.config.api2}?key=${encodeURIComponent(ctx.config.key)}&nro_tel_from=${encodeURIComponent(botFrom)}`;
