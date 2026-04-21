@@ -5,7 +5,6 @@ const TelegramBot = require('node-telegram-bot-api');
 const { getDb } = require('./db');
 const os = require('os');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
 const auth = require('./auth_ui');
@@ -775,6 +774,15 @@ function RecuperarJsonConfMensajes() {
 async function EnviarEmail(subject, texto) {
   try {
     if (!email_err) return false;
+
+    let nodemailer = null;
+    try {
+      nodemailer = require('nodemailer');
+    } catch (e) {
+      EscribirLog('EnviarEmail omitido: nodemailer no instalado', 'event');
+      return false;
+    }
+
     const jsonError = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'configuracion_errores.json')));
     const cfg = jsonError.configuracion || {};
     if (!cfg.smtp || !cfg.user || !cfg.pass || !cfg.email_sal) return false;
