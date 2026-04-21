@@ -229,33 +229,15 @@ function getContextStatus(ctx) {
   };
 }
 
-function botConnectionSignature(cfg) {
+function contextSignature(cfg) {
   return JSON.stringify({
     token: cfg.telegram_bot_token,
     username: cfg.telegram_bot_username,
-  });
-}
-
-function runtimeConfigSignature(cfg) {
-  return JSON.stringify({
     numero: cfg.numero,
     api: cfg.api,
     api2: cfg.api2,
     api3: cfg.api3,
     key: cfg.key,
-    seg_desde: cfg.seg_desde,
-    seg_hasta: cfg.seg_hasta,
-    seg_msg: cfg.seg_msg,
-    seg_tele: cfg.seg_tele,
-    cant_lim: cfg.cant_lim,
-    msg_lim: cfg.msg_lim,
-    time_cad: cfg.time_cad,
-    msg_cad: cfg.msg_cad,
-    msg_can: cfg.msg_can,
-    msg_inicio: cfg.msg_inicio,
-    msg_fin: cfg.msg_fin,
-    status_token: cfg.status_token,
-    nom_chatbot: cfg.nom_chatbot,
   });
 }
 
@@ -288,7 +270,6 @@ function createContext(cfg) {
       action: null,
       outbound: null,
       expiry: null,
-      retry: null,
     },
   };
 }
@@ -619,7 +600,6 @@ function rememberJson(ctx, chatId, json) {
     ctx.jsonGlobal.push([chatId, 0, json, now]);
   }
 }
- 
 
 async function safeSendTelegram(ctx, chatId, content, opts = {}) {
   if (!ctx.bot) throw new Error('telegram_bot_not_ready');
@@ -676,6 +656,18 @@ async function safeSendTelegram(ctx, chatId, content, opts = {}) {
   }
 }
 
+
+async function safeSendTelegramIfReady(ctx, chatId, content, opts = {}) {
+  if (!ctx || !ctx.bot || ctx.shuttingDown || !ctx.botStarted) return null;
+  try {
+    return await safeSendTelegram(ctx, chatId, content, opts);
+  } catch (e) {
+    const msg = String(e?.message || e || '');
+    if (/telegram_bot_not_ready/i.test(msg)) return null;
+    throw e;
+  }
+}
+
 async function actualizarEstadoMensaje(ctx, estado, tipo, nombre, contacto, direccion, email, idRenglon, idDest) {
   try {
     const params = new URLSearchParams();
@@ -707,17 +699,14 @@ async function procesarMensajeLotes(ctx, json, message) {
   if (indice === -1) return;
 
   const now = new Date();
+
+  
   const segDesde = Math.min(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
   const segHasta = Math.max(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
   const segundos = Math.random() * (segHasta - segDesde) + segDesde;
   const l_json = ctx.jsonGlobal[indice][2];
-  let tam_json = 0;
-
+  const tam_json = Array.isArray(l_json) ? l_json.length : 0;
   ctx.jsonGlobal[indice][3] = now;
-
-  for (const _ in (ctx.jsonGlobal[indice][2] || [])) {
-    tam_json = tam_json + 1;
-  }
 
   for (let i = ctx.jsonGlobal[indice][1]; i < tam_json; i++) {
     let mensaje = '';
@@ -728,42 +717,27 @@ async function procesarMensajeLotes(ctx, json, message) {
       mensaje = l_json[i]?.Respuesta;
     }
 
-    if (mensaje === '' || mensaje === null || mensaje === undefined) {
-    } else {
-      mensaje = String(mensaje).replaceAll('|', '
-');
+    if (mensaje === '' || mensaje === null || mensaje === undefined) continue;
+    mensaje = String(mensaje).replaceAll('|', '\n');
 
-      if (i <= Number(ctx.config.cant_lim || 0) + ctx.jsonGlobal[indice][1] - 1) {
-        await safeSendTelegram(ctx, chatId, mensaje);
-        await sleep(segundos);
-
-        if (tam_json - 1 === i) {
-          ctx.jsonGlobal[indice][1] = 0;
-          ctx.jsonGlobal[indice][2] = '';
-          ctx.jsonGlobal[indice][3] = '';
-        }
-      } else {
-        let msg_loc = String(ctx.config.msg_lim || '').replaceAll('|', '
-');
-
-        if (tam_json <= i + Number(ctx.config.cant_lim || 0)) {
-          msg_loc = msg_loc.replace('<recuento>', String(tam_json - i));
-        } else {
-          msg_loc = msg_loc.replace('<recuento>', String(Number(ctx.config.cant_lim || 0) + 1));
-        }
-
-        msg_loc = msg_loc.replace('<recuento_lote>', String(tam_json - 2));
-        msg_loc = msg_loc.replace('<recuento_pendiente>', String(tam_json - i));
-
-        if (msg_loc === '' || msg_loc === null || msg_loc === undefined) {
-        } else {
-          await safeSendTelegram(ctx, chatId, msg_loc);
-        }
-
-        ctx.jsonGlobal[indice][1] = i;
-        ctx.jsonGlobal[indice][3] = now;
-        return;
+    if (i <= Number(ctx.config.cant_lim || 0) + ctx.jsonGlobal[indice][1] - 1) {
+      await safeSendTelegram(ctx, chatId, mensaje);
+      await sleep(segundos);
+      if (tam_json - 1 === i) {
+        ctx.jsonGlobal[indice][1] = 0;
+        ctx.jsonGlobal[indice][2] = '';
+        ctx.jsonGlobal[indice][3] = '';
       }
+    } else {
+      let msg_loc = String(ctx.config.msg_lim || '').replaceAll('|', '\n');
+      if (tam_json <= i + Number(ctx.config.cant_lim || 0)) msg_loc = msg_loc.replace('<recuento>', String(tam_json - i));
+      else msg_loc = msg_loc.replace('<recuento>', String(Number(ctx.config.cant_lim || 0) + 1));
+      msg_loc = msg_loc.replace('<recuento_lote>', String(Math.max(tam_json - 2, 0)));
+      msg_loc = msg_loc.replace('<recuento_pendiente>', String(Math.max(tam_json - i, 0)));
+      if (msg_loc) await safeSendTelegram(ctx, chatId, msg_loc);
+      ctx.jsonGlobal[indice][1] = i;
+      ctx.jsonGlobal[indice][3] = now;
+      return;
     }
   }
 }
@@ -809,7 +783,7 @@ async function handleIncomingTelegramMessage(ctx, msg) {
       await logMessageStat(ctx, 'in', telefonoFrom, { body, type: 'text', hasMedia: false });
 
       if (trimmedBody === '/id') {
-        await safeSendTelegram(ctx, chatId, buildTelegramIdReply(msg));
+        await safeSendTelegramIfReady(ctx, chatId, buildTelegramIdReply(msg));
         return;
       }
 
@@ -818,7 +792,7 @@ async function handleIncomingTelegramMessage(ctx, msg) {
       const segHasta = Math.max(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
       const segundos = Math.random() * (segHasta - segDesde) + segDesde;
 
-      if (ctx.config.msg_inicio) await safeSendTelegram(ctx, chatId, ctx.config.msg_inicio);
+      if (ctx.config.msg_inicio) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_inicio);
 
       const jsonTexto = { Tel_Origen: telefonoFrom, Tel_Destino: telefonoTo, Mensaje: body, Respuesta: '' };
       let timeoutId;
@@ -840,29 +814,27 @@ async function handleIncomingTelegramMessage(ctx, msg) {
         if (!resp.ok) {
           const detalle = json ? JSON.stringify(json) : raw;
           logLine(`[${ctx.tenantId}] Error ApiTelegram - Response ERROR ${detalle}`, 'error');
-          if (ctx.config.msg_errores) await safeSendTelegram(ctx, chatId, ctx.config.msg_errores);
+          if (ctx.config.msg_errores) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_errores);
           return 'error';
         }
 
         rememberJson(ctx, chatId, json);
         await procesarMensajeLotes(ctx, json, { from: chatId, body });
-        if (ctx.config.msg_fin) await safeSendTelegram(ctx, chatId, ctx.config.msg_fin);
+        if (ctx.config.msg_fin) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_fin);
         await sleep(segundos);
         return 'ok';
       } catch (err) {
         clearTimeout(timeoutId);
         const detalle = `Error Chatbot Telegram ${err?.message || err} ${JSON.stringify(jsonTexto)}`;
         logLine(`[${ctx.tenantId}] ${detalle}`, 'error');
-        if (ctx.config.msg_errores) await safeSendTelegram(ctx, chatId, ctx.config.msg_errores);
+        if (ctx.config.msg_errores) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_errores);
         return 'error';
       }
     }
 
     const bodyUpper = String(body || '').trim().toUpperCase();
     if (valor_i !== 0 && bodyUpper === 'N') {
-      if (!(ctx.config.msg_can === '' || ctx.config.msg_can === undefined || Number(ctx.config.msg_can) === 0)) {
-        await safeSendTelegram(ctx, chatId, ctx.config.msg_can);
-      }
+      if (ctx.config.msg_can) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_can);
       ctx.jsonGlobal[indice_telefono][2] = '';
       ctx.jsonGlobal[indice_telefono][1] = 0;
       ctx.jsonGlobal[indice_telefono][3] = '';
@@ -870,13 +842,12 @@ async function handleIncomingTelegramMessage(ctx, msg) {
     }
 
     if (valor_i !== 0 && bodyUpper !== 'N' && bodyUpper !== 'S') {
-      await safeSendTelegram(ctx, chatId, '🤔 *No entiendo*, \nPor favor ingrese *S* o *N* para mostrar los siguientes resultados\n ');
+      await safeSendTelegramIfReady(ctx, chatId, '🤔 *No entiendo*,\nPor favor ingrese *S* o *N* para mostrar los siguientes resultados\n', { parse_mode: 'Markdown' });
       return;
     }
 
     if (valor_i !== 0 && bodyUpper === 'S') {
       await procesarMensajeLotes(ctx, ctx.jsonGlobal[indice_telefono][2], { from: chatId, body });
-      return;
     }
   } catch (e) {
     logLine(`[${ctx.tenantId}] handleIncomingTelegramMessage error: ${e?.message || e}`, 'error');
@@ -893,22 +864,6 @@ function attachBotHandlers(ctx) {
     logLine(`[${ctx.tenantId}] Telegram polling_error: ${msg}`, 'error');
     if (/409 Conflict/i.test(msg)) {
       await stopContext(ctx, 'conflict');
-
-      // Conflicto de polling: solo reintentamos si el runtime sigue activo.
-      if (!manager.started) return;
-
-      ctx.shuttingDown = false;
-
-      try { if (ctx.timers.retry) clearTimeout(ctx.timers.retry); } catch {}
-      ctx.timers.retry = setTimeout(() => {
-        ctx.timers.retry = null;
-        if (manager.started && !ctx.botStarted && !ctx.startingNow && !ctx.shuttingDown) {
-          startContext(ctx).catch((e) => {
-            logLine(`[${ctx.tenantId}] retry start after conflict error: ${e?.message || e}`, 'error');
-          });
-        }
-      }, Math.max(5000, LOCK_STALE_MS + 1000));
-
       return;
     }
     await updateLockState(ctx, 'polling_error');
@@ -939,8 +894,7 @@ async function stopContext(ctx, reason = 'offline') {
   try { if (ctx.timers.action) clearInterval(ctx.timers.action); } catch {}
   try { if (ctx.timers.outbound) clearTimeout(ctx.timers.outbound); } catch {}
   try { if (ctx.timers.expiry) clearInterval(ctx.timers.expiry); } catch {}
-  try { if (ctx.timers.retry) clearTimeout(ctx.timers.retry); } catch {}
-  ctx.timers.heartbeat = ctx.timers.action = ctx.timers.outbound = ctx.timers.expiry = ctx.timers.retry = null;
+  ctx.timers.heartbeat = ctx.timers.action = ctx.timers.outbound = ctx.timers.expiry = null;
 
   const bot = ctx.bot;
   ctx.bot = null;
@@ -1157,9 +1111,6 @@ async function startContext(ctx) {
     ctx.telegramSelfId = String(me?.id || '');
     ctx.telegramSelfUsername = String(me?.username || ctx.config.telegram_bot_username || '');
     if (ctx.telegramSelfUsername) manager.byUsername.set(String(ctx.telegramSelfUsername).toLowerCase(), ctx.tenantId);
-    try {
-      await ctx.bot.stopPolling({ cancel: true });
-    } catch {}
     await ctx.bot.startPolling({ restart: true });
     ctx.botStarted = true;
     ctx.botState = 'online';
@@ -1213,48 +1164,23 @@ async function ensureContextForConfig(cfg) {
     return ctx;
   }
 
-  const prevBotSig = botConnectionSignature(existing.config);
-  const nextBotSig = botConnectionSignature(cfg);
-  const prevRuntimeSig = runtimeConfigSignature(existing.config);
-  const nextRuntimeSig = runtimeConfigSignature(cfg);
-  const oldNumero = existing.numero;
-  const oldLockId = existing.lockId;
-
+  const prevSig = contextSignature(existing.config);
+  const nextSig = contextSignature(cfg);
   existing.config = { ...existing.config, ...cfg, ...getErrorConfig() };
   existing.numero = existing.config.numero;
   existing.statusToken = existing.config.status_token || existing.statusToken || '';
   existing.lockId = `${existing.tenantId}:${existing.numero || 'telegram'}`;
 
-  if (prevBotSig !== nextBotSig) {
-    logLine(`[${cfg.tenantId}] cambio de token/username Telegram detectado -> reiniciando bot`, 'event');
+  if (prevSig !== nextSig) {
+    logLine(`[${cfg.tenantId}] cambio de configuración Telegram detectado -> reiniciando bot`, 'event');
     await stopContext(existing, 'reconfiguring');
-    if (oldLockId && oldLockId !== existing.lockId) {
-      try {
-        const db = await getDb();
-        await db.collection('tg_locks').deleteOne({ _id: oldLockId });
-      } catch (e) {
-        logLine(`[${cfg.tenantId}] cleanup lock anterior error: ${e?.message || e}`, 'error');
-      }
-    }
     existing.lockAcquiredAt = new Date();
     existing.botState = 'idle';
     existing.telegramSelfId = '';
     existing.telegramSelfUsername = '';
-    await sleep(1200);
     await startContext(existing);
-  } else {
-    if (prevRuntimeSig !== nextRuntimeSig) {
-      logLine(`[${cfg.tenantId}] configuración Telegram actualizada sin reinicio de bot`, 'event');
-      if (oldNumero !== existing.numero) {
-        logLine(`[${cfg.tenantId}] numero API Telegram: ${oldNumero || '-'} -> ${existing.numero || '-'}`, 'event');
-      }
-      if (existing.ownsLock) {
-        await updateLockState(existing, existing.botState || (existing.botStarted ? 'online' : 'idle'));
-      }
-    }
-    if (!existing.botStarted && !existing.startingNow) {
-      await startContext(existing);
-    }
+  } else if (!existing.botStarted && !existing.startingNow) {
+    await startContext(existing);
   }
   return existing;
 }
