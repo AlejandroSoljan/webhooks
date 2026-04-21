@@ -870,6 +870,20 @@ function attachBotHandlers(ctx) {
     logLine(`[${ctx.tenantId}] Telegram polling_error: ${msg}`, 'error');
     if (/409 Conflict/i.test(msg)) {
       await stopContext(ctx, 'conflict');
+
+      // ✅ Conflicto de polling: no es un shutdown definitivo.
+      // Dejamos reintento automático para que, cuando la otra instancia libere
+      // el getUpdates, este proceso pueda recuperar el bot solo.
+     ctx.shuttingDown = false;
+
+      setTimeout(() => {
+        if (!ctx.botStarted && !ctx.startingNow && !ctx.shuttingDown) {
+          startContext(ctx).catch((e) => {
+            logLine(`[${ctx.tenantId}] retry start after conflict error: ${e?.message || e}`, 'error');
+          });
+        }
+      }, Math.max(5000, LOCK_STALE_MS + 1000));
+
       return;
     }
     await updateLockState(ctx, 'polling_error');
