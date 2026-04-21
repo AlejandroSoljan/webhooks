@@ -229,7 +229,6 @@ function createContext(cfg) {
     botStarted: false,
     startingNow: false,
     bot: null,
-    ownsLock: false,
     knownChats: 0,
     lastSeenAt: null,
     telegramSelfId: '',
@@ -242,6 +241,7 @@ function createContext(cfg) {
     heartbeatBusy: false,
     outboundBusy: false,
     shuttingDown: false,
+    ownsLock: false,
     timers: {
       heartbeat: null,
       action: null,
@@ -815,23 +815,17 @@ function attachBotHandlers(ctx) {
     await handleIncomingTelegramMessage(ctx, msg);
   });
   ctx.bot.on('polling_error', async (err) => {
-    const msg = String(err?.message || err || '');
+    const msg = String(err?.message || err);
     logLine(`[${ctx.tenantId}] Telegram polling_error: ${msg}`, 'error');
-
-    if (/409\s+Conflict|terminated by other getUpdates request/i.test(msg)) {
+    if (/409 Conflict/i.test(msg)) {
       await stopContext(ctx, 'conflict');
       return;
     }
-
-    if (!ctx.shuttingDown) {
-      await updateLockState(ctx, 'polling_error');
-    }
+    await updateLockState(ctx, 'polling_error');
   });
   ctx.bot.on('webhook_error', async (err) => {
     logLine(`[${ctx.tenantId}] Telegram webhook_error: ${err?.message || err}`, 'error');
-    if (!ctx.shuttingDown) {
-      await updateLockState(ctx, 'webhook_error');
-    }
+    await updateLockState(ctx, 'webhook_error');
   });
 }
 
@@ -889,13 +883,11 @@ async function heartbeatTick(ctx) {
     if (ctx.ownsLock) {
       await updateLockState(ctx, ctx.botState || 'online');
     }
-
     const pol = await getPolicySafe(ctx);
     if (pol && pol.disabled === true) {
       await stopContext(ctx, 'disabled');
       return;
     }
-
     if (!ctx.botStarted && !ctx.startingNow && !ctx.shuttingDown) {
       await startContext(ctx);
     }
@@ -1048,7 +1040,6 @@ async function consultaApiMensajes(ctx) {
 
 async function startContext(ctx) {
   if (ctx.botStarted || ctx.startingNow) return getContextStatus(ctx);
-
   const pol = await getPolicySafe(ctx);
   if (pol && pol.disabled === true) {
     ctx.botState = 'disabled';
@@ -1071,14 +1062,10 @@ async function startContext(ctx) {
     ctx.botState = 'starting';
     await updateLockState(ctx, 'starting');
     await createBotIfNeeded(ctx);
-
     const me = await ctx.bot.getMe();
     ctx.telegramSelfId = String(me?.id || '');
     ctx.telegramSelfUsername = String(me?.username || ctx.config.telegram_bot_username || '');
-    if (ctx.telegramSelfUsername) {
-      manager.byUsername.set(String(ctx.telegramSelfUsername).toLowerCase(), ctx.tenantId);
-    }
-
+    if (ctx.telegramSelfUsername) manager.byUsername.set(String(ctx.telegramSelfUsername).toLowerCase(), ctx.tenantId);
     await ctx.bot.startPolling({ restart: true });
     ctx.botStarted = true;
     ctx.botState = 'online';
@@ -1094,17 +1081,16 @@ async function startContext(ctx) {
     ctx.timers.expiry = setInterval(() => { controlarHoraMsgOnce(ctx).catch(() => {}); }, EXPIRY_POLL_MS);
     scheduleOutboundPoller(ctx);
 
+    // warm known chat count
     try {
       const db = await getDb();
       ctx.knownChats = await db.collection('tg_chat_registry').countDocuments({ tenantId: ctx.tenantId });
     } catch {}
-
     return getContextStatus(ctx);
   } catch (e) {
     ctx.botStarted = false;
     ctx.botState = 'error';
     logLine(`[${ctx.tenantId}] Error al inicializar Telegram: ${e?.message || e}`, 'error');
-
     try {
       if (ctx.bot && typeof ctx.bot.removeAllListeners === 'function') {
         ctx.bot.removeAllListeners('message');
@@ -1112,13 +1098,9 @@ async function startContext(ctx) {
         ctx.bot.removeAllListeners('webhook_error');
       }
     } catch {}
-
     try {
-      if (ctx.bot && typeof ctx.bot.stopPolling === 'function') {
-        await ctx.bot.stopPolling({ cancel: true });
-      }
+      if (ctx.bot && typeof ctx.bot.stopPolling === 'function') await ctx.bot.stopPolling({ cancel: true });
     } catch {}
-
     ctx.bot = null;
     await updateLockState(ctx, 'error');
     await forceReleaseLock(ctx, 'error');
