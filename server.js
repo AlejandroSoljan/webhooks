@@ -43,10 +43,16 @@ const server = app.listen(PORT, () => {
   try {
     const status = await runtime.startTelegramRuntime();
     console.log('🤖 Telegram runtime:', {
-      tenantId: status?.tenantId,
-      botState: status?.botState,
-      botStarted: status?.botStarted,
-      username: status?.telegramBotUsername,
+      total: status?.total || 0,
+      started: status?.started || 0,
+      tenants: Array.isArray(status?.items)
+        ? status.items.map((x) => ({
+            tenantId: x.tenantId,
+            botState: x.botState,
+            botStarted: x.botStarted,
+            username: x.telegramBotUsername,
+          }))
+        : [],
     });
   } catch (e) {
     console.error('❌ No se pudo iniciar Telegram:', e?.message || e);
