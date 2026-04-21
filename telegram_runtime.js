@@ -2,7 +2,7 @@
 /*version:1.00.00   21/04/2026   */
 
 const TelegramBot = require('node-telegram-bot-api');
-const mongoose = require('mongoose');
+const { getDb } = require('./db');
 const os = require('os');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
@@ -21,13 +21,10 @@ const instanceId = process.env.INSTANCE_ID || `${os.hostname()}-${process.pid}-$
 let lockAcquiredAt = null;
 let tenantId = process.env.TENANT_ID || '';
 let numero = process.env.NUMERO || '';
-let mongo_uri = process.env.MONGO_URI || '';
-let mongo_db = process.env.MONGO_DB || '';
 let status_token = process.env.STATUS_TOKEN || '';
 let telegram_bot_token = process.env.TELEGRAM_BOT_TOKEN || '';
 let telegram_bot_username = process.env.TELEGRAM_BOT_USERNAME || '';
 let tenantConfig = null;
-let mongoReady = false;
 
 let LockModel = null;
 let ActionModel = null;
@@ -193,63 +190,15 @@ function applyTenantConfig(conf) {
 function RecuperarJsonConf() {
   const boot = readBootstrapFromFile();
   if (!tenantId && boot.tenantId) tenantId = String(boot.tenantId).trim().toUpperCase();
-  if (!mongo_uri && (boot.mongo_uri || boot.mongoUri)) mongo_uri = String(boot.mongo_uri || boot.mongoUri).trim();
-  if (!mongo_db && (boot.mongo_db || boot.mongoDb || boot.dbName)) mongo_db = String(boot.mongo_db || boot.mongoDb || boot.dbName).trim();
   applyTenantConfig(boot);
 }
 
 async function ensureMongo() {
   try {
-    if (mongoReady && mongoose?.connection?.readyState === 1 && mongoose?.connection?.db) {
-      initMongoModelsIfNeeded();
-      return true;
-    }
-
-    if (globalThis.__asistoTgRuntimeMongoConnectingPromise) {
-      const ok = await globalThis.__asistoTgRuntimeMongoConnectingPromise;
-      if (ok) initMongoModelsIfNeeded();
-      return ok;
-    }
-
-    if (!mongo_uri) return false;
-
-    globalThis.__asistoTgRuntimeMongoConnectingPromise = (async () => {
-      try {
-        await mongoose.connect(mongo_uri, {
-          dbName: (mongo_db || tenantId || 'asisto'),
-          autoIndex: true,
-          serverSelectionTimeoutMS: 15000
-        });
-
-        if (!mongoose.connection.db) {
-          await new Promise((resolve, reject) => {
-            const t = setTimeout(() => reject(new Error('mongo_db_not_ready')), 15000);
-            mongoose.connection.once('connected', () => {
-              clearTimeout(t);
-              resolve();
-            });
-          });
-        }
-
-        mongoReady = true;
-        initMongoModelsIfNeeded();
-        return true;
-      } catch (e) {
-        try { await mongoose.disconnect(); } catch {}
-        mongoReady = false;
-        EscribirLog('Mongo connect error: ' + String(e?.message || e), 'error');
-        return false;
-      } finally {
-        globalThis.__asistoTgRuntimeMongoConnectingPromise = null;
-      }
-    })();
-
-    const ok = await globalThis.__asistoTgRuntimeMongoConnectingPromise;
-    if (ok) initMongoModelsIfNeeded();
-    return ok;
+    await getDb();
+    initMongoModelsIfNeeded();
+    return true;
   } catch (e) {
-    mongoReady = false;
-    globalThis.__asistoTgRuntimeMongoConnectingPromise = null;
     EscribirLog('ensureMongo error: ' + String(e?.message || e), 'error');
     return false;
   }
@@ -257,12 +206,13 @@ async function ensureMongo() {
 
 async function loadTenantConfigFromDbMinimal() {
   try {
-    if (!tenantId || !mongo_uri) return null;
+    if (!tenantId) return null;
     const ok = await ensureMongo();
-    if (!ok || !mongoose?.connection?.db) return null;
+    if (!ok) return null;
 
+    const db = await getDb();
     const collName = String(process.env.ASISTO_CONFIG_COLLECTION || 'tenant_config').trim() || 'tenant_config';
-    const coll = mongoose.connection.db.collection(collName);
+    const coll = db.collection(collName);
 
     let doc = await coll.findOne({ _id: tenantId });
     if (!doc) doc = await coll.findOne({ tenantId: tenantId });
@@ -300,100 +250,14 @@ async function refreshTenantConfigFromDbPerMessage() {
 
 function initMongoModelsIfNeeded() {
   try {
-    if (!mongoose?.connection?.db) return;
-
-    if (!PolicyModel) {
-      const PolicySchema = new mongoose.Schema({
-        _id: { type: String },
-        tenantid: { type: String },
-        tenantId: { type: String, index: true },
-        numero: { type: String, index: true },
-        disabled: { type: Boolean, default: false }
-      }, { collection: 'tg_bot_policies' });
-      PolicyModel = mongoose.models.TgBotPolicy || mongoose.model('TgBotPolicy', PolicySchema);
-    }
-
-    if (!HistoryModel) {
-      const HistorySchema = new mongoose.Schema({
-        lockId: { type: String, index: true },
-        event: { type: String, index: true },
-        host: { type: String },
-        pid: { type: Number },
-        detail: { type: mongoose.Schema.Types.Mixed },
-        at: { type: Date, default: Date.now, index: true }
-      }, { collection: 'tg_bot_history' });
-      HistoryModel = mongoose.models.TgBotHistory || mongoose.model('TgBotHistory', HistorySchema);
-    }
-
-    if (!LockModel) {
-      const LockSchema = new mongoose.Schema({
-        _id: { type: String },
-        tenantId: { type: String },
-        tenantid: { type: String, index: true },
-        numero: { type: String },
-        holderId: { type: String },
-        host: { type: String },
-        pid: { type: Number },
-        state: { type: String },
-        startedAt: { type: Date },
-        lastSeenAt: { type: Date },
-        botId: { type: String },
-        botUsername: { type: String }
-      }, { collection: 'tg_locks' });
-      LockModel = mongoose.models.TgLock || mongoose.model('TgLock', LockSchema);
-    }
-
-    if (!ActionModel) {
-      const ActionSchema = new mongoose.Schema({
-        lockId: { type: String, index: true },
-        action: { type: String, index: true },
-        reason: { type: String },
-        requestedBy: { type: String },
-        requestedAt: { type: Date, default: Date.now, index: true },
-        consumedAt: { type: Date },
-        doneAt: { type: Date, index: true },
-        doneBy: { type: String },
-        result: { type: String }
-      }, { collection: 'tg_bot_actions' });
-      ActionModel = mongoose.models.TgBotAction || mongoose.model('TgBotAction', ActionSchema);
-    }
-
-    if (!MessageLogModel) {
-      const MessageLogSchema = new mongoose.Schema({
-        tenantId: { type: String, index: true },
-        numero: { type: String, index: true },
-        contact: { type: String, index: true },
-        direction: { type: String, index: true },
-        messageType: { type: String, index: true },
-        body: { type: String },
-        bodyLength: { type: Number },
-        hasMedia: { type: Boolean, default: false },
-        at: { type: Date, default: Date.now, index: true },
-        atLocal: { type: String },
-        dayKey: { type: String, index: true }
-      }, { collection: 'tg_bot_message_log' });
-      MessageLogModel = mongoose.models.TgBotMessageLog || mongoose.model('TgBotMessageLog', MessageLogSchema);
-    }
-
-    if (!ChatRegistryModel) {
-      const ChatRegistrySchema = new mongoose.Schema({
-        _id: { type: String },
-        tenantId: { type: String, index: true },
-        numero: { type: String, index: true },
-        chatId: { type: String, index: true },
-        userId: { type: String, index: true },
-        chatType: { type: String },
-        username: { type: String },
-        firstName: { type: String },
-        lastName: { type: String },
-        title: { type: String },
-        isKnown: { type: Boolean, default: true },
-        blocked: { type: Boolean, default: false },
-        firstSeenAt: { type: Date, default: Date.now },
-        lastSeenAt: { type: Date, default: Date.now }
-      }, { collection: 'tg_chat_registry' });
-      ChatRegistryModel = mongoose.models.TgChatRegistry || mongoose.model('TgChatRegistry', ChatRegistrySchema);
-    }
+    // Usa la misma conexión Mongo del proyecto (db.js)
+    // y deja referencias a las colecciones para reutilizar el resto del código.
+    if (!PolicyModel) PolicyModel = 'tg_bot_policies';
+    if (!HistoryModel) HistoryModel = 'tg_bot_history';
+    if (!LockModel) LockModel = 'tg_locks';
+    if (!ActionModel) ActionModel = 'tg_bot_actions';
+    if (!MessageLogModel) MessageLogModel = 'tg_bot_message_log';
+    if (!ChatRegistryModel) ChatRegistryModel = 'tg_chat_registry';
   } catch (e) {
     EscribirLog('initMongoModelsIfNeeded error: ' + String(e?.message || e), 'error');
   }
@@ -403,7 +267,8 @@ async function pushHistory(event, detail) {
   try {
     if (!await ensureMongo()) return null;
     if (!HistoryModel || !lockId) return null;
-    return await HistoryModel.create({
+    const db = await getDb();
+    return await db.collection(HistoryModel).insertOne({
       lockId,
       event: String(event || ''),
       host: os.hostname(),
@@ -453,6 +318,7 @@ async function logMessageStat(direction, contact, payload) {
     if (!tenantId || !numero) return;
     if (!await ensureMongo()) return;
     if (!MessageLogModel) return;
+    const db = await getDb();
 
     const dir = String(direction || '').trim().toLowerCase();
     if (dir !== 'in' && dir !== 'out') return;
@@ -480,7 +346,7 @@ async function logMessageStat(direction, contact, payload) {
     const cleanContact = String(contact || '').trim();
     if (!cleanContact) return;
 
-    await MessageLogModel.create({
+    await db.collection(MessageLogModel).insertOne({
       tenantId: String(tenantId || ''),
       numero: String(numero || ''),
       contact: cleanContact,
@@ -525,19 +391,20 @@ async function getPolicySafe() {
   try {
     if (!await ensureMongo()) return null;
     if (!PolicyModel) return null;
+    const db = await getDb();
 
     if (tenantId && numero) {
       const tid = String(tenantId);
       const num = String(numero);
-      const p = await PolicyModel.findOne({
+      const p = await db.collection(PolicyModel).findOne({
         numero: num,
         $or: [{ tenantId: tid }, { tenantid: tid }]
-      }).lean();
+      });
       if (p) return p;
     }
 
     if (lockId) {
-      const p2 = await PolicyModel.findById(lockId).lean();
+      const p2 = await db.collection(PolicyModel).findOne({ _id: lockId });
       if (p2) return p2;
     }
 
@@ -553,9 +420,10 @@ async function updateLockStateSafe(state) {
     if (!lockId) return;
     if (!await ensureMongo()) return;
     if (!LockModel) return;
+    const db = await getDb();
 
     const now = new Date();
-    await LockModel.updateOne(
+    await db.collection(LockModel).updateOne(
       { _id: lockId },
       {
         $set: {
@@ -582,7 +450,8 @@ async function updateLockStateSafe(state) {
 async function getLockDocSafe() {
   try {
     if (await ensureMongo() && LockModel && lockId) {
-      const doc = await LockModel.findById(lockId).lean();
+      const db = await getDb();
+      const doc = await db.collection(LockModel).findOne({ _id: lockId });
       if (doc) return doc;
     }
   } catch {}
@@ -621,6 +490,7 @@ async function updateChatRegistryFromMessage(msg) {
     if (!msg || !msg.chat) return;
     if (!await ensureMongo()) return;
     if (!ChatRegistryModel) return;
+    const db = await getDb();
 
     const chatId = String(msg.chat.id || '');
     if (!chatId) return;
@@ -628,7 +498,7 @@ async function updateChatRegistryFromMessage(msg) {
     const from = msg.from || {};
     const keyId = `${tenantId}:${chatId}`;
 
-    await ChatRegistryModel.updateOne(
+    await db.collection(ChatRegistryModel).updateOne(
       { _id: keyId },
       {
         $setOnInsert: {
@@ -661,7 +531,8 @@ async function getChatRegistry(chatId) {
   try {
     if (!await ensureMongo()) return null;
     if (!ChatRegistryModel) return null;
-    return await ChatRegistryModel.findOne({ _id: `${tenantId}:${String(chatId)}` }).lean();
+    const db = await getDb();
+    return await db.collection(ChatRegistryModel).findOne({ _id: `${tenantId}:${String(chatId)}` });
   } catch {
     return null;
   }
@@ -742,7 +613,7 @@ async function safeSendTelegram(chatId, content, opts = {}) {
     if (/bot was blocked by the user|chat not found|forbidden/i.test(msg)) {
       try {
         if (await ensureMongo() && ChatRegistryModel) {
-          await ChatRegistryModel.updateOne(
+          await db.collection(ChatRegistryModel).updateOne(
             { _id: `${tenantId}:${String(destination)}` },
             { $set: { blocked: true, lastSeenAt: new Date() } },
             { upsert: true }
@@ -1153,7 +1024,7 @@ async function forceReleaseLock(finalState) {
   try {
     if (!await ensureMongo()) return;
     if (!lockId || !LockModel) return;
-    await LockModel.updateOne(
+    await db.collection(LockModel).updateOne(
       { _id: lockId },
       {
         $set: {
@@ -1236,27 +1107,29 @@ async function pollActionsOnce() {
   if (actionBusy || !isOwner || !lockId) return;
   if (!await ensureMongo()) return;
   if (!ActionModel) return;
+  const db = await getDb();
 
   actionBusy = true;
   try {
-    const doc = await ActionModel.findOneAndUpdate(
+    const docRes = await db.collection(ActionModel).findOneAndUpdate(
       { lockId, doneAt: { $exists: false } },
       { $set: { doneAt: new Date(), doneBy: instanceId } },
       { sort: { requestedAt: 1 }, returnDocument: 'after' }
-    ).lean();
+    );
+    const doc = docRes?.value ?? docRes;
 
     if (!doc) return;
 
     try {
       const reqAt = doc.requestedAt ? new Date(doc.requestedAt) : null;
       if (lockAcquiredAt && reqAt && reqAt.getTime() < lockAcquiredAt.getTime()) {
-        await ActionModel.updateOne({ _id: doc._id }, { $set: { result: 'stale_ignored' } });
+        await db.collection(ActionModel).updateOne({ _id: doc._id }, { $set: { result: 'stale_ignored' } });
         return;
       }
     } catch {}
 
     const result = await handleActionDoc(doc);
-    await ActionModel.updateOne({ _id: doc._id }, { $set: { result } });
+    await db.collection(ActionModel).updateOne({ _id: doc._id }, { $set: { result } });
   } catch (e) {
     EscribirLog('pollActionsOnce error: ' + String(e?.message || e), 'error');
   } finally {
@@ -1420,11 +1293,10 @@ async function startTelegramRuntime() {
   shuttingDown = false;
   RecuperarJsonConf();
   if (tenantId) tenantId = String(tenantId).trim().toUpperCase();
-  if (!mongo_db) mongo_db = 'Cluster0';
   await loadTenantConfigFromDbMinimal();
 
-  if (!tenantId || !mongo_uri) {
-    throw new Error('Falta tenantId/mongo_uri en configuracion.json o variables');
+  if (!tenantId) {
+    throw new Error('Falta tenantId en configuracion.json o variables');
   }
 
   if (!telegram_bot_token) {
@@ -1474,7 +1346,8 @@ function mountTelegramRoutes(app) {
         ? (String(req.query.tenantId || tenantId || '').trim() ? { tenantId: String(req.query.tenantId || tenantId || '').trim() } : {})
         : { tenantId: String(req.user?.tenantId || tenantId || '').trim() };
 
-      const items = await ChatRegistryModel.find(tenantFilter).sort({ lastSeenAt: -1 }).limit(limit).lean();
+      const db = await getDb();
+      const items = await db.collection(ChatRegistryModel).find(tenantFilter).sort({ lastSeenAt: -1 }).limit(limit).toArray();
       return res.json({ ok: true, items });
     } catch (e) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
