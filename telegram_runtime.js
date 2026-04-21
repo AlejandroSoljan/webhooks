@@ -620,23 +620,6 @@ function rememberJson(ctx, chatId, json) {
   }
 }
  
-function resetJsonLoteState(ctx, indice) {
-  if (indice === -1 || !ctx.jsonGlobal[indice]) return;
-  ctx.jsonGlobal[indice][1] = 0;
-  ctx.jsonGlobal[indice][2] = '';
-  ctx.jsonGlobal[indice][3] = '';
-}
-
-function normalizeLoteItems(rawJson) {
-  if (!Array.isArray(rawJson)) return [];
-  return rawJson.filter((item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
-    if (Object.prototype.hasOwnProperty.call(item, 'cod_error')) return true;
-    if (Object.prototype.hasOwnProperty.call(item, 'msj_error')) return true;
-    if (Object.prototype.hasOwnProperty.call(item, 'Respuesta')) return true;
-   return false;
-  });
-}
 
 async function safeSendTelegram(ctx, chatId, content, opts = {}) {
   if (!ctx.bot) throw new Error('telegram_bot_not_ready');
@@ -724,21 +707,16 @@ async function procesarMensajeLotes(ctx, json, message) {
   if (indice === -1) return;
 
   const now = new Date();
-
-  
   const segDesde = Math.min(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
   const segHasta = Math.max(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
   const segundos = Math.random() * (segHasta - segDesde) + segDesde;
-  const l_json = normalizeLoteItems(ctx.jsonGlobal[indice][2]);
-  const tam_json = Array.isArray(l_json) ? l_json.length : 0;
-  const cantLim = Math.max(1, Number(ctx.config.cant_lim) || 0);
+  const l_json = ctx.jsonGlobal[indice][2];
+  let tam_json = 0;
 
-  ctx.jsonGlobal[indice][2] = l_json;
   ctx.jsonGlobal[indice][3] = now;
 
-  if (!tam_json) {
-    resetJsonLoteState(ctx, indice);
-    return;
+  for (const _ in (ctx.jsonGlobal[indice][2] || [])) {
+    tam_json = tam_json + 1;
   }
 
   for (let i = ctx.jsonGlobal[indice][1]; i < tam_json; i++) {
@@ -751,34 +729,43 @@ async function procesarMensajeLotes(ctx, json, message) {
     }
 
     if (mensaje === '' || mensaje === null || mensaje === undefined) {
-      if (tam_json - 1 === i) {
-        resetJsonLoteState(ctx, indice);
-      }
-      continue;
-    }
+    } else {
+      mensaje = String(mensaje).replaceAll('|', '
+');
 
-    mensaje = String(mensaje).replaceAll('|', '\n');
+      if (i <= Number(ctx.config.cant_lim || 0) + ctx.jsonGlobal[indice][1] - 1) {
+        await safeSendTelegram(ctx, chatId, mensaje);
+        await sleep(segundos);
 
-    if (i <= cantLim + ctx.jsonGlobal[indice][1] - 1) {
-      await safeSendTelegram(ctx, chatId, mensaje);
-      await sleep(segundos);
-      if (tam_json - 1 === i) {
-        resetJsonLoteState(ctx, indice);
+        if (tam_json - 1 === i) {
+          ctx.jsonGlobal[indice][1] = 0;
+          ctx.jsonGlobal[indice][2] = '';
+          ctx.jsonGlobal[indice][3] = '';
+        }
+      } else {
+        let msg_loc = String(ctx.config.msg_lim || '').replaceAll('|', '
+');
+
+        if (tam_json <= i + Number(ctx.config.cant_lim || 0)) {
+          msg_loc = msg_loc.replace('<recuento>', String(tam_json - i));
+        } else {
+          msg_loc = msg_loc.replace('<recuento>', String(Number(ctx.config.cant_lim || 0) + 1));
+        }
+
+        msg_loc = msg_loc.replace('<recuento_lote>', String(tam_json - 2));
+        msg_loc = msg_loc.replace('<recuento_pendiente>', String(tam_json - i));
+
+        if (msg_loc === '' || msg_loc === null || msg_loc === undefined) {
+        } else {
+          await safeSendTelegram(ctx, chatId, msg_loc);
+        }
+
+        ctx.jsonGlobal[indice][1] = i;
+        ctx.jsonGlobal[indice][3] = now;
         return;
       }
-    } else {
-      let msg_loc = String(ctx.config.msg_lim || '').replaceAll('|', '\n');
-      if (tam_json <= i + cantLim) msg_loc = msg_loc.replace('<recuento>', String(tam_json - i));
-      else msg_loc = msg_loc.replace('<recuento>', String(cantLim + 1));
-      msg_loc = msg_loc.replace('<recuento_lote>', String(Math.max(tam_json - 2, 0)));
-      msg_loc = msg_loc.replace('<recuento_pendiente>', String(Math.max(tam_json - i, 0)));
-      if (msg_loc) await safeSendTelegram(ctx, chatId, msg_loc);
-      ctx.jsonGlobal[indice][1] = i;
-      ctx.jsonGlobal[indice][3] = now;
-      return;
     }
   }
-  resetJsonLoteState(ctx, indice);
 }
 
 async function controlarHoraMsgOnce(ctx) {
@@ -873,7 +860,9 @@ async function handleIncomingTelegramMessage(ctx, msg) {
 
     const bodyUpper = String(body || '').trim().toUpperCase();
     if (valor_i !== 0 && bodyUpper === 'N') {
-      if (ctx.config.msg_can) await safeSendTelegram(ctx, chatId, ctx.config.msg_can);
+      if (!(ctx.config.msg_can === '' || ctx.config.msg_can === undefined || Number(ctx.config.msg_can) === 0)) {
+        await safeSendTelegram(ctx, chatId, ctx.config.msg_can);
+      }
       ctx.jsonGlobal[indice_telefono][2] = '';
       ctx.jsonGlobal[indice_telefono][1] = 0;
       ctx.jsonGlobal[indice_telefono][3] = '';
@@ -881,12 +870,13 @@ async function handleIncomingTelegramMessage(ctx, msg) {
     }
 
     if (valor_i !== 0 && bodyUpper !== 'N' && bodyUpper !== 'S') {
-      await safeSendTelegram(ctx, chatId, '🤔 *No entiendo*,\nPor favor ingrese *S* o *N* para mostrar los siguientes resultados\n', { parse_mode: 'Markdown' });
+      await safeSendTelegram(ctx, chatId, '🤔 *No entiendo*, \nPor favor ingrese *S* o *N* para mostrar los siguientes resultados\n ');
       return;
     }
 
     if (valor_i !== 0 && bodyUpper === 'S') {
       await procesarMensajeLotes(ctx, ctx.jsonGlobal[indice_telefono][2], { from: chatId, body });
+      return;
     }
   } catch (e) {
     logLine(`[${ctx.tenantId}] handleIncomingTelegramMessage error: ${e?.message || e}`, 'error');
