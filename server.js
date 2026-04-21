@@ -76,7 +76,7 @@ async function shutdown(signal) {
 
   try {
     server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 10000).unref();
+    setTimeout(() => process.exit(0), 10000);
   } catch {
     process.exit(0);
   }

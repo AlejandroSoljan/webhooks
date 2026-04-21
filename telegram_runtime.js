@@ -16,6 +16,7 @@ const REFRESH_CONFIG_MS = Math.max(15000, Number(process.env.TG_REFRESH_CONFIG_M
 const HEARTBEAT_MS = Math.max(5000, Number(process.env.TG_HEARTBEAT_MS || 5000) || 5000);
 const ACTION_POLL_MS = Math.max(3000, Number(process.env.TG_ACTION_POLL_MS || 4000) || 4000);
 const EXPIRY_POLL_MS = Math.max(3000, Number(process.env.TG_EXPIRY_POLL_MS || 5000) || 5000);
+const LOCK_STALE_MS = Math.max(15000, Number(process.env.TG_LOCK_STALE_MS || 30000) || 30000);
 
 const fetchJson = (...args) => {
   if (typeof fetch === 'function') return fetch(...args);
@@ -228,6 +229,7 @@ function createContext(cfg) {
     botStarted: false,
     startingNow: false,
     bot: null,
+    ownsLock: false,
     knownChats: 0,
     lastSeenAt: null,
     telegramSelfId: '',
@@ -291,13 +293,73 @@ async function getPolicySafe(ctx) {
   }
 }
 
+function lockStateAllowsTakeover(state) {
+  const s = normalizeString(state, '').toLowerCase();
+  return ['offline', 'removed', 'disabled', 'error', 'conflict', 'reconfiguring', 'released', 'sigterm', 'sigint', 'sigbreak', 'stopped'].includes(s);
+}
+
+async function acquireLock(ctx, desiredState = 'starting') {
+  try {
+    const db = await getDb();
+    const coll = db.collection('tg_locks');
+    const now = new Date();
+    const staleBefore = new Date(Date.now() - LOCK_STALE_MS);
+
+    try {
+      await coll.updateOne(
+        {
+          _id: ctx.lockId,
+          $or: [
+            { holderId: instanceId },
+            { holderId: { $exists: false } },
+            { holderId: null },
+            { lastSeenAt: { $lt: staleBefore } },
+            { state: { $in: ['offline', 'removed', 'disabled', 'error', 'conflict', 'reconfiguring', 'released', 'SIGTERM', 'SIGINT', 'SIGBREAK', 'stopped'] } }
+          ]
+        },
+        {
+          $set: {
+            tenantId: ctx.tenantId,
+            tenantid: ctx.tenantId,
+            numero: ctx.numero,
+            holderId: instanceId,
+            host: os.hostname(),
+            pid: process.pid,
+            state: desiredState,
+            startedAt: ctx.lockAcquiredAt || now,
+            lastSeenAt: now,
+            botId: String(ctx.telegramSelfId || ''),
+            botUsername: String(ctx.telegramSelfUsername || ctx.telegramBotUsername || ''),
+          }
+        },
+        { upsert: true }
+      );
+    } catch (e) {
+      if (!(String(e?.code || '') === '11000' || /duplicate key/i.test(String(e?.message || e)))) {
+        throw e;
+      }
+    }
+
+    const doc = await coll.findOne({ _id: ctx.lockId });
+    ctx.ownsLock = !!doc && String(doc.holderId || '') === instanceId;
+    if (ctx.ownsLock) ctx.lastSeenAt = doc.lastSeenAt || now;
+    return ctx.ownsLock;
+  } catch (e) {
+    logLine(`[${ctx.tenantId}] acquireLock error: ${e?.message || e}`, 'error');
+    ctx.ownsLock = false;
+    return false;
+  }
+}
+
 async function updateLockState(ctx, state) {
   try {
     ctx.botState = normalizeString(state, ctx.botState || 'idle');
     ctx.lastSeenAt = new Date();
+    if (!ctx.ownsLock) return;
+
     const db = await getDb();
     await db.collection('tg_locks').updateOne(
-      { _id: ctx.lockId },
+      { _id: ctx.lockId, holderId: instanceId },
       {
         $set: {
           tenantId: ctx.tenantId,
@@ -313,7 +375,7 @@ async function updateLockState(ctx, state) {
           botUsername: String(ctx.telegramSelfUsername || ctx.telegramBotUsername || ''),
         }
       },
-      { upsert: true }
+      { upsert: false }
     );
   } catch (e) {
     logLine(`[${ctx.tenantId}] updateLockState error: ${e?.message || e}`, 'error');
@@ -322,15 +384,16 @@ async function updateLockState(ctx, state) {
 
 async function forceReleaseLock(ctx, finalState = 'offline') {
   try {
+    if (!ctx.ownsLock) return;
     const db = await getDb();
     await db.collection('tg_locks').updateOne(
-      { _id: ctx.lockId },
+      { _id: ctx.lockId, holderId: instanceId },
       {
         $set: {
           tenantId: ctx.tenantId,
           tenantid: ctx.tenantId,
           numero: ctx.numero,
-          holderId: instanceId,
+          holderId: null,
           host: os.hostname(),
           pid: process.pid,
           state: String(finalState || 'offline'),
@@ -341,10 +404,12 @@ async function forceReleaseLock(ctx, finalState = 'offline') {
           botUsername: String(ctx.telegramSelfUsername || ctx.telegramBotUsername || ''),
         }
       },
-      { upsert: true }
+      { upsert: false }
     );
   } catch (e) {
     logLine(`[${ctx.tenantId}] forceReleaseLock error: ${e?.message || e}`, 'error');
+  } finally {
+    ctx.ownsLock = false;
   }
 }
 
@@ -750,12 +815,23 @@ function attachBotHandlers(ctx) {
     await handleIncomingTelegramMessage(ctx, msg);
   });
   ctx.bot.on('polling_error', async (err) => {
-    logLine(`[${ctx.tenantId}] Telegram polling_error: ${err?.message || err}`, 'error');
-    await updateLockState(ctx, 'polling_error');
+    const msg = String(err?.message || err || '');
+    logLine(`[${ctx.tenantId}] Telegram polling_error: ${msg}`, 'error');
+
+    if (/409\s+Conflict|terminated by other getUpdates request/i.test(msg)) {
+      await stopContext(ctx, 'conflict');
+      return;
+    }
+
+    if (!ctx.shuttingDown) {
+      await updateLockState(ctx, 'polling_error');
+    }
   });
   ctx.bot.on('webhook_error', async (err) => {
     logLine(`[${ctx.tenantId}] Telegram webhook_error: ${err?.message || err}`, 'error');
-    await updateLockState(ctx, 'webhook_error');
+    if (!ctx.shuttingDown) {
+      await updateLockState(ctx, 'webhook_error');
+    }
   });
 }
 
@@ -780,12 +856,24 @@ async function stopContext(ctx, reason = 'offline') {
   try { if (ctx.timers.outbound) clearTimeout(ctx.timers.outbound); } catch {}
   try { if (ctx.timers.expiry) clearInterval(ctx.timers.expiry); } catch {}
   ctx.timers.heartbeat = ctx.timers.action = ctx.timers.outbound = ctx.timers.expiry = null;
+
+  const bot = ctx.bot;
+  ctx.bot = null;
+
   try {
-    if (ctx.bot && typeof ctx.bot.stopPolling === 'function') {
-      await ctx.bot.stopPolling({ cancel: true, reason });
+    if (bot && typeof bot.removeAllListeners === 'function') {
+      bot.removeAllListeners('message');
+      bot.removeAllListeners('polling_error');
+      bot.removeAllListeners('webhook_error');
     }
   } catch {}
-  ctx.bot = null;
+
+  try {
+    if (bot && typeof bot.stopPolling === 'function') {
+      await bot.stopPolling({ cancel: true, reason });
+    }
+  } catch {}
+
   ctx.botStarted = false;
   ctx.startingNow = false;
   ctx.botState = String(reason || 'offline');
@@ -798,12 +886,16 @@ async function heartbeatTick(ctx) {
   if (ctx.heartbeatBusy) return;
   ctx.heartbeatBusy = true;
   try {
-    await updateLockState(ctx, ctx.botState || 'online');
+    if (ctx.ownsLock) {
+      await updateLockState(ctx, ctx.botState || 'online');
+    }
+
     const pol = await getPolicySafe(ctx);
     if (pol && pol.disabled === true) {
       await stopContext(ctx, 'disabled');
       return;
     }
+
     if (!ctx.botStarted && !ctx.startingNow && !ctx.shuttingDown) {
       await startContext(ctx);
     }
@@ -956,10 +1048,11 @@ async function consultaApiMensajes(ctx) {
 
 async function startContext(ctx) {
   if (ctx.botStarted || ctx.startingNow) return getContextStatus(ctx);
+
   const pol = await getPolicySafe(ctx);
   if (pol && pol.disabled === true) {
     ctx.botState = 'disabled';
-    await updateLockState(ctx, 'disabled');
+    ctx.ownsLock = false;
     await pushHistory(ctx, 'policy_disabled', { by: 'policy', disabled: true });
     return getContextStatus(ctx);
   }
@@ -967,14 +1060,25 @@ async function startContext(ctx) {
   ctx.startingNow = true;
   ctx.shuttingDown = false;
   try {
-    ctx.lockAcquiredAt = ctx.lockAcquiredAt || new Date();
+    ctx.lockAcquiredAt = new Date();
+
+    const acquired = await acquireLock(ctx, 'starting');
+    if (!acquired) {
+      ctx.botState = 'standby';
+      return getContextStatus(ctx);
+    }
+
     ctx.botState = 'starting';
     await updateLockState(ctx, 'starting');
     await createBotIfNeeded(ctx);
+
     const me = await ctx.bot.getMe();
     ctx.telegramSelfId = String(me?.id || '');
     ctx.telegramSelfUsername = String(me?.username || ctx.config.telegram_bot_username || '');
-    if (ctx.telegramSelfUsername) manager.byUsername.set(String(ctx.telegramSelfUsername).toLowerCase(), ctx.tenantId);
+    if (ctx.telegramSelfUsername) {
+      manager.byUsername.set(String(ctx.telegramSelfUsername).toLowerCase(), ctx.tenantId);
+    }
+
     await ctx.bot.startPolling({ restart: true });
     ctx.botStarted = true;
     ctx.botState = 'online';
@@ -990,19 +1094,34 @@ async function startContext(ctx) {
     ctx.timers.expiry = setInterval(() => { controlarHoraMsgOnce(ctx).catch(() => {}); }, EXPIRY_POLL_MS);
     scheduleOutboundPoller(ctx);
 
-    // warm known chat count
     try {
       const db = await getDb();
       ctx.knownChats = await db.collection('tg_chat_registry').countDocuments({ tenantId: ctx.tenantId });
     } catch {}
+
     return getContextStatus(ctx);
   } catch (e) {
     ctx.botStarted = false;
     ctx.botState = 'error';
     logLine(`[${ctx.tenantId}] Error al inicializar Telegram: ${e?.message || e}`, 'error');
-    try { if (ctx.bot && typeof ctx.bot.stopPolling === 'function') await ctx.bot.stopPolling({ cancel: true }); } catch {}
+
+    try {
+      if (ctx.bot && typeof ctx.bot.removeAllListeners === 'function') {
+        ctx.bot.removeAllListeners('message');
+        ctx.bot.removeAllListeners('polling_error');
+        ctx.bot.removeAllListeners('webhook_error');
+      }
+    } catch {}
+
+    try {
+      if (ctx.bot && typeof ctx.bot.stopPolling === 'function') {
+        await ctx.bot.stopPolling({ cancel: true });
+      }
+    } catch {}
+
     ctx.bot = null;
     await updateLockState(ctx, 'error');
+    await forceReleaseLock(ctx, 'error');
     return getContextStatus(ctx);
   } finally {
     ctx.startingNow = false;
