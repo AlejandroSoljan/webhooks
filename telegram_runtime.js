@@ -229,15 +229,33 @@ function getContextStatus(ctx) {
   };
 }
 
-function contextSignature(cfg) {
+function botConnectionSignature(cfg) {
   return JSON.stringify({
     token: cfg.telegram_bot_token,
     username: cfg.telegram_bot_username,
+  });
+}
+
+function runtimeConfigSignature(cfg) {
+  return JSON.stringify({
     numero: cfg.numero,
     api: cfg.api,
     api2: cfg.api2,
     api3: cfg.api3,
     key: cfg.key,
+    seg_desde: cfg.seg_desde,
+    seg_hasta: cfg.seg_hasta,
+    seg_msg: cfg.seg_msg,
+    seg_tele: cfg.seg_tele,
+    cant_lim: cfg.cant_lim,
+    msg_lim: cfg.msg_lim,
+    time_cad: cfg.time_cad,
+    msg_cad: cfg.msg_cad,
+    msg_can: cfg.msg_can,
+    msg_inicio: cfg.msg_inicio,
+    msg_fin: cfg.msg_fin,
+    status_token: cfg.status_token,
+    nom_chatbot: cfg.nom_chatbot,
   });
 }
 
@@ -596,9 +614,23 @@ function rememberJson(ctx, chatId, json) {
     ctx.jsonGlobal[indice][0] = chatId;
     ctx.jsonGlobal[indice][2] = json;
     ctx.jsonGlobal[indice][3] = now;
+    ctx.jsonGlobal[indice][4] = false;
   } else {
-    ctx.jsonGlobal.push([chatId, 0, json, now]);
+    ctx.jsonGlobal.push([chatId, 0, json, now, false]);
   }
+}
+
+function resetContinuationState(ctx, indice) {
+  if (indice === -1 || !ctx.jsonGlobal[indice]) return;
+  ctx.jsonGlobal[indice][1] = 0;
+  ctx.jsonGlobal[indice][2] = '';
+  ctx.jsonGlobal[indice][3] = '';
+  ctx.jsonGlobal[indice][4] = false;
+}
+
+function hasPendingContinuation(ctx, indice) {
+  if (indice === -1 || !ctx.jsonGlobal[indice]) return false;
+  return ctx.jsonGlobal[indice][4] === true;
 }
 
 async function safeSendTelegram(ctx, chatId, content, opts = {}) {
@@ -699,14 +731,17 @@ async function procesarMensajeLotes(ctx, json, message) {
   if (indice === -1) return;
 
   const now = new Date();
-
-  
   const segDesde = Math.min(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
   const segHasta = Math.max(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
   const segundos = Math.random() * (segHasta - segDesde) + segDesde;
   const l_json = ctx.jsonGlobal[indice][2];
-  const tam_json = Array.isArray(l_json) ? l_json.length : 0;
+  let tam_json = 0;
+
   ctx.jsonGlobal[indice][3] = now;
+
+  for (const _ in (ctx.jsonGlobal[indice][2] || [])) {
+    tam_json = tam_json + 1;
+  }
 
   for (let i = ctx.jsonGlobal[indice][1]; i < tam_json; i++) {
     let mensaje = '';
@@ -717,27 +752,38 @@ async function procesarMensajeLotes(ctx, json, message) {
       mensaje = l_json[i]?.Respuesta;
     }
 
-    if (mensaje === '' || mensaje === null || mensaje === undefined) continue;
-    mensaje = String(mensaje).replaceAll('|', '\n');
-
-    if (i <= Number(ctx.config.cant_lim || 0) + ctx.jsonGlobal[indice][1] - 1) {
-      await safeSendTelegram(ctx, chatId, mensaje);
-      await sleep(segundos);
-      if (tam_json - 1 === i) {
-        ctx.jsonGlobal[indice][1] = 0;
-        ctx.jsonGlobal[indice][2] = '';
-        ctx.jsonGlobal[indice][3] = '';
-      }
+    if (mensaje === '' || mensaje === null || mensaje === undefined) {
     } else {
-      let msg_loc = String(ctx.config.msg_lim || '').replaceAll('|', '\n');
-      if (tam_json <= i + Number(ctx.config.cant_lim || 0)) msg_loc = msg_loc.replace('<recuento>', String(tam_json - i));
-      else msg_loc = msg_loc.replace('<recuento>', String(Number(ctx.config.cant_lim || 0) + 1));
-      msg_loc = msg_loc.replace('<recuento_lote>', String(Math.max(tam_json - 2, 0)));
-      msg_loc = msg_loc.replace('<recuento_pendiente>', String(Math.max(tam_json - i, 0)));
-      if (msg_loc) await safeSendTelegram(ctx, chatId, msg_loc);
-      ctx.jsonGlobal[indice][1] = i;
-      ctx.jsonGlobal[indice][3] = now;
-      return;
+      mensaje = String(mensaje).replaceAll('|', '\n');
+
+      if (i <= Number(ctx.config.cant_lim || 0) + ctx.jsonGlobal[indice][1] - 1) {
+        await safeSendTelegramIfReady(ctx, chatId, mensaje);
+        await sleep(segundos);
+
+        if (tam_json - 1 === i) {
+          resetContinuationState(ctx, indice);
+        }
+      } else {
+        let msg_loc = String(ctx.config.msg_lim || '').replaceAll('|', '\n');
+
+        if (tam_json <= i + Number(ctx.config.cant_lim || 0)) {
+          msg_loc = msg_loc.replace('<recuento>', String(tam_json - i));
+        } else {
+          msg_loc = msg_loc.replace('<recuento>', String(Number(ctx.config.cant_lim || 0) + 1));
+        }
+
+        msg_loc = msg_loc.replace('<recuento_lote>', String(tam_json - 2));
+        msg_loc = msg_loc.replace('<recuento_pendiente>', String(tam_json - i));
+
+        if (msg_loc !== '' && msg_loc !== null && msg_loc !== undefined) {
+          await safeSendTelegramIfReady(ctx, chatId, msg_loc);
+        }
+
+        ctx.jsonGlobal[indice][1] = i;
+        ctx.jsonGlobal[indice][3] = now;
+        ctx.jsonGlobal[indice][4] = true;
+        return;
+      }
     }
   }
 }
@@ -769,9 +815,10 @@ async function handleIncomingTelegramMessage(ctx, msg) {
 
     const indice_telefono = indexOf2d(ctx, chatId);
     const valor_i = indice_telefono === -1 ? 0 : ctx.jsonGlobal[indice_telefono][1];
+    const pendingContinuation = hasPendingContinuation(ctx, indice_telefono);
     logLine(`[${ctx.tenantId}] ${chatId} ${ctx.telegramSelfId} message ${body}`, 'event');
 
-    if (valor_i === 0) {
+    if (!pendingContinuation) {
       if (!body) {
         logLine(`[${ctx.tenantId}] mensaje telegram no texto -> ignorado`, 'event');
         return;
@@ -833,20 +880,19 @@ async function handleIncomingTelegramMessage(ctx, msg) {
     }
 
     const bodyUpper = String(body || '').trim().toUpperCase();
-    if (valor_i !== 0 && bodyUpper === 'N') {
+    if (pendingContinuation && bodyUpper === 'N') {
       if (ctx.config.msg_can) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_can);
-      ctx.jsonGlobal[indice_telefono][2] = '';
-      ctx.jsonGlobal[indice_telefono][1] = 0;
-      ctx.jsonGlobal[indice_telefono][3] = '';
+      resetContinuationState(ctx, indice_telefono);
       return;
     }
 
-    if (valor_i !== 0 && bodyUpper !== 'N' && bodyUpper !== 'S') {
+    if (pendingContinuation && bodyUpper !== 'N' && bodyUpper !== 'S') {
       await safeSendTelegramIfReady(ctx, chatId, '🤔 *No entiendo*,\nPor favor ingrese *S* o *N* para mostrar los siguientes resultados\n', { parse_mode: 'Markdown' });
       return;
     }
 
-    if (valor_i !== 0 && bodyUpper === 'S') {
+    if (pendingContinuation && bodyUpper === 'S') {
+      ctx.jsonGlobal[indice_telefono][4] = false;
       await procesarMensajeLotes(ctx, ctx.jsonGlobal[indice_telefono][2], { from: chatId, body });
     }
   } catch (e) {
@@ -1123,7 +1169,9 @@ async function startContext(ctx) {
     try { if (ctx.timers.expiry) clearInterval(ctx.timers.expiry); } catch {}
     ctx.timers.heartbeat = setInterval(() => { heartbeatTick(ctx).catch(() => {}); }, HEARTBEAT_MS);
     ctx.timers.action = setInterval(() => { pollActionsOnce(ctx).catch(() => {}); }, ACTION_POLL_MS);
-    ctx.timers.expiry = setInterval(() => { controlarHoraMsgOnce(ctx).catch(() => {}); }, EXPIRY_POLL_MS);
+    // WhatsApp no está levantando este timer de expiración en el flujo actual.
+    // Para que Telegram se comporte igual, no reseteamos la continuación automáticamente acá.
+    ctx.timers.expiry = null;
     scheduleOutboundPoller(ctx);
 
     // warm known chat count
@@ -1164,23 +1212,30 @@ async function ensureContextForConfig(cfg) {
     return ctx;
   }
 
-  const prevSig = contextSignature(existing.config);
-  const nextSig = contextSignature(cfg);
+  const prevBotSig = botConnectionSignature(existing.config);
+  const nextBotSig = botConnectionSignature(cfg);
+  const prevRuntimeSig = runtimeConfigSignature(existing.config);
+  const nextRuntimeSig = runtimeConfigSignature(cfg);
   existing.config = { ...existing.config, ...cfg, ...getErrorConfig() };
   existing.numero = existing.config.numero;
   existing.statusToken = existing.config.status_token || existing.statusToken || '';
   existing.lockId = `${existing.tenantId}:${existing.numero || 'telegram'}`;
 
-  if (prevSig !== nextSig) {
-    logLine(`[${cfg.tenantId}] cambio de configuración Telegram detectado -> reiniciando bot`, 'event');
+  if (prevBotSig !== nextBotSig) {
+    logLine(`[${cfg.tenantId}] cambio de token/username Telegram detectado -> reiniciando bot`, 'event');
     await stopContext(existing, 'reconfiguring');
     existing.lockAcquiredAt = new Date();
     existing.botState = 'idle';
     existing.telegramSelfId = '';
     existing.telegramSelfUsername = '';
     await startContext(existing);
-  } else if (!existing.botStarted && !existing.startingNow) {
-    await startContext(existing);
+  } else {
+    if (prevRuntimeSig !== nextRuntimeSig) {
+      logLine(`[${cfg.tenantId}] configuración Telegram actualizada sin reinicio de bot`, 'event');
+    }
+    if (!existing.botStarted && !existing.startingNow) {
+      await startContext(existing);
+    }
   }
   return existing;
 }
