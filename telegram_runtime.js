@@ -288,6 +288,7 @@ function createContext(cfg) {
       action: null,
       outbound: null,
       expiry: null,
+      retry: null,
     },
   };
 }
@@ -871,13 +872,15 @@ function attachBotHandlers(ctx) {
     if (/409 Conflict/i.test(msg)) {
       await stopContext(ctx, 'conflict');
 
-      // ✅ Conflicto de polling: no es un shutdown definitivo.
-      // Dejamos reintento automático para que, cuando la otra instancia libere
-      // el getUpdates, este proceso pueda recuperar el bot solo.
-     ctx.shuttingDown = false;
+      // Conflicto de polling: solo reintentamos si el runtime sigue activo.
+      if (!manager.started) return;
 
-      setTimeout(() => {
-        if (!ctx.botStarted && !ctx.startingNow && !ctx.shuttingDown) {
+      ctx.shuttingDown = false;
+
+      try { if (ctx.timers.retry) clearTimeout(ctx.timers.retry); } catch {}
+      ctx.timers.retry = setTimeout(() => {
+        ctx.timers.retry = null;
+        if (manager.started && !ctx.botStarted && !ctx.startingNow && !ctx.shuttingDown) {
           startContext(ctx).catch((e) => {
             logLine(`[${ctx.tenantId}] retry start after conflict error: ${e?.message || e}`, 'error');
           });
@@ -914,7 +917,8 @@ async function stopContext(ctx, reason = 'offline') {
   try { if (ctx.timers.action) clearInterval(ctx.timers.action); } catch {}
   try { if (ctx.timers.outbound) clearTimeout(ctx.timers.outbound); } catch {}
   try { if (ctx.timers.expiry) clearInterval(ctx.timers.expiry); } catch {}
-  ctx.timers.heartbeat = ctx.timers.action = ctx.timers.outbound = ctx.timers.expiry = null;
+  try { if (ctx.timers.retry) clearTimeout(ctx.timers.retry); } catch {}
+  ctx.timers.heartbeat = ctx.timers.action = ctx.timers.outbound = ctx.timers.expiry = ctx.timers.retry = null;
 
   const bot = ctx.bot;
   ctx.bot = null;
@@ -1131,6 +1135,9 @@ async function startContext(ctx) {
     ctx.telegramSelfId = String(me?.id || '');
     ctx.telegramSelfUsername = String(me?.username || ctx.config.telegram_bot_username || '');
     if (ctx.telegramSelfUsername) manager.byUsername.set(String(ctx.telegramSelfUsername).toLowerCase(), ctx.tenantId);
+    try {
+      await ctx.bot.stopPolling({ cancel: true });
+    } catch {}
     await ctx.bot.startPolling({ restart: true });
     ctx.botStarted = true;
     ctx.botState = 'online';
