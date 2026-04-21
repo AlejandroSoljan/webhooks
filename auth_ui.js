@@ -88,7 +88,6 @@ function requiredAccessForPath(p) {
   if (path.startsWith("/admin/wweb") || path.startsWith("/api/wweb")) return ["wweb"];
   // Sesiones Telegram
   if (path.startsWith("/admin/telegram") || path.startsWith("/api/tg")) return ["telegram"];
- 
 
   // UI wrapper
   if (path.startsWith("/ui/")) {
@@ -1635,6 +1634,7 @@ function usersAdminPage({ user, users, msg, err }) {
         { key: "comportamiento", title: "Comportamiento" },
         { key: "leads", title: "Leads" },
         { key: "wweb", title: "Sesiones WhatsApp Web" },
+        { key: "telegram", title: "Sesiones Telegram" },
         { key: "users", title: "Sesiones de usuarios" },
         { key: "tenant_config", title: "Tenant Config" },
       ];
@@ -2967,7 +2967,6 @@ function mountAuthRoutes(app) {
       ...(isAdmin ? [
         { title: "Leads", href: "/admin/leads", badge: "Admin", desc: "Mensajes del formulario de contacto" },
         { title: "Sesiones WhatsApp Web", href: "/admin/wweb", badge: "Admin", desc: "Control de sesiones (wwebjs)" },
-         { title: "Sesiones Telegram", href: "/ui/telegram", badge: "Admin", desc: "Estado de bots, chats y acciones por tenant" },
         { title: "Usuarios", href: "/admin/users", badge: "Admin", desc: "Alta/baja y reseteo de contraseñas" },
         { title: "Tenant Config", href: "/ui/tenant_config", badge: "Admin", desc: "Configuración por tenant" },
         { title: "Logs Conversaciones", href: "/api/logs/conversations", badge: "API", desc: "Listado de conversaciones" },
