@@ -1269,6 +1269,45 @@ function getTelegramStatus() {
   };
 }
 
+function tgArYmd(date) {
+  try {
+    const dt = date || new Date();
+    return new Intl.DateTimeFormat('sv-SE', {
+      timeZone: AR_TZ,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(dt);
+  } catch {
+    return (date || new Date()).toISOString().slice(0, 10);
+  }
+}
+
+function tgArDateRange(fromYmd, toYmd) {
+  const from = String(fromYmd || '').trim() || tgArYmd(new Date());
+  const to = String(toYmd || '').trim() || from;
+  const start = new Date(`${from}T00:00:00.000-03:00`);
+  const end = new Date(`${to}T23:59:59.999-03:00`);
+  return {
+    start,
+    end: new Date(end.getTime() + 1),
+  };
+}
+
+function tgHumanizeMs(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n < 0) return '-';
+  const mins = Math.floor(n / 60000);
+  const d = Math.floor(mins / 1440);
+  const h = Math.floor((mins % 1440) / 60);
+  const m = mins % 60;
+  const parts = [];
+  if (d) parts.push(`${d}d`);
+  if (h || d) parts.push(`${h}h`);
+  parts.push(`${m}m`);
+  return parts.join(' ');
+}
+
 
 function telegramAdminEmbedPage() {
   return `<!doctype html>
@@ -1280,54 +1319,179 @@ function telegramAdminEmbedPage() {
   <style>
     :root{--bg:#f8fafc;--panel:#ffffff;--text:#0f172a;--muted:#64748b;--border:rgba(148,163,184,.24);--accent:#0e6b66;--danger:#b42318;--shadow:0 16px 38px rgba(15,23,42,.10);--radius:18px}
     *{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
-    .page{padding:16px}.head{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px}.head h1{margin:0;font-size:24px}.sub{margin-top:4px;font-size:13px;color:var(--muted)}
-    .actions{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer}.btn:hover{background:#f8fafc}.btnDanger{color:var(--danger)}
-    .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}.metric{font-size:28px;font-weight:800;line-height:1}.label{font-size:12px;color:var(--muted);margin-top:6px}
-    .layout{display:grid;grid-template-columns:1.25fr .95fr;gap:14px}.panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}.panelHead{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-end;gap:10px}.panelHead h2{margin:0;font-size:16px}.small{font-size:12px;color:var(--muted)}
-    .tgModal{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:16px}.tgModal[hidden]{display:none !important}.tgModalBackdrop{position:absolute;inset:0;background:rgba(15,23,42,.55)}
-    .tgModalCard{position:relative;width:min(980px,96vw);max-height:calc(100vh - 32px);overflow:auto;background:#fff;color:var(--text);border-radius:18px;padding:18px;box-shadow:0 20px 60px rgba(15,23,42,.35);border:1px solid var(--border)}
-    .tgModalHead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:14px;flex-wrap:wrap}
-    .tgStatsCards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
-    .tgStatsTableWrap{overflow:auto;border:1px solid var(--border);border-radius:14px}
-    .tgStatsTable th,.tgStatsTable td{padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px}
-    .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}.filters label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted)}.inp{min-width:220px;border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:#fff;color:var(--text)}
-    .tableWrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:12px 14px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;font-size:13px}th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;background:#fff;position:sticky;top:0}.tenantName{font-weight:800}
-    .status{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:1px solid var(--border);font-size:11px;font-weight:700;background:#fff}.status.on{background:rgba(14,107,102,.08);color:var(--accent);border-color:rgba(14,107,102,.18)}.status.off{background:rgba(148,163,184,.08);color:#475569}.status.err{background:rgba(180,35,24,.08);color:var(--danger);border-color:rgba(180,35,24,.18)}
-    .rowActions{display:flex;gap:8px;flex-wrap:wrap}.rowActions .btn{padding:8px 10px;border-radius:10px;font-size:12px}.msg{margin-bottom:12px;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:#fff;font-size:13px}.msg.err{border-color:rgba(240,68,56,.25);background:rgba(240,68,56,.08);color:#991b1b}.msg.ok{border-color:rgba(14,107,102,.22);background:rgba(14,107,102,.08);color:#0f5132}.empty{padding:18px;color:var(--muted);font-size:13px}code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px}
-     @media (max-width:1100px){.layout{grid-template-columns:1fr}.tgStatsCards{grid-template-columns:repeat(2,minmax(0,1fr))}}@media (max-width:640px){.tgStatsCards{grid-template-columns:1fr}.tgModalCard{padding:14px}}
+    .page{padding:16px}
+    .toolbar{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+    .toolbar h1{margin:0 0 4px;font-size:24px}
+    .sub{font-size:13px;color:var(--muted)}
+    .toolbarActions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .btn,.btn2{border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer;color:var(--text)}
+    .btn:hover,.btn2:hover{background:#f8fafc}
+    .btnDanger{color:var(--danger)}
+    .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
+    .filters{display:grid;grid-template-columns:minmax(240px,1fr) 220px;gap:12px;align-items:end;margin-bottom:14px}
+    .filters label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted)}
+    .inp{width:100%;border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:#fff;color:var(--text)}
+    .msg{margin-bottom:12px;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:#fff;font-size:13px}
+    .msg.err{border-color:rgba(240,68,56,.25);background:rgba(240,68,56,.08);color:#991b1b}
+    .msg.ok{border-color:rgba(14,107,102,.22);background:rgba(14,107,102,.08);color:#0f5132}
+    .tableWrap{overflow:auto;max-width:100%;-webkit-overflow-scrolling:touch;padding-bottom:120px}
+    .tableWrap[data-loading="1"]{opacity:.75}
+    .tgTable{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0}
+    .tgTable thead th{position:sticky;top:0;background:#fff;z-index:2}
+    .tgTable tbody tr{position:relative;z-index:1}
+    .tgTable tbody tr:nth-child(even){background:rgba(16,24,40,.02)}
+    .tgTable tbody tr.rowMenuOpen{z-index:120}
+    .tgTable td,.tgTable th{padding:12px 14px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;font-size:13px;white-space:normal;word-break:break-word}
+    .tgTable th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+    .tgTable th:nth-child(1){width:160px}
+    .tgTable th:nth-child(2){width:240px}
+    .tgTable th:nth-child(3){width:180px}
+    .tgTable th:nth-child(4){width:150px}
+    .tgTable th:nth-child(5){width:180px}
+    .tgTable th:nth-child(6){width:220px}
+    .cellMain{font-weight:800}
+    .cellSub{font-size:12px;color:var(--muted);margin-top:2px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
+    .status{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:1px solid var(--border);font-size:11px;font-weight:700;background:#fff}
+    .status.on{background:rgba(14,107,102,.08);color:var(--accent);border-color:rgba(14,107,102,.18)}
+    .status.off{background:rgba(148,163,184,.08);color:#475569}
+    .status.err{background:rgba(180,35,24,.08);color:var(--danger);border-color:rgba(180,35,24,.18)}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700}
+    .badgeOk{background:#1f7a3a1a;color:#1f7a3a;border:1px solid #1f7a3a55}
+    .badgeWarn{background:#b453091a;color:#b45309;border:1px solid #b4530955}
+    .wa-actions-cell{position:relative;z-index:1;overflow:visible}
+    .wa-actions-cell.menuCellOpen{z-index:220}
+    .actionBar{display:flex;gap:10px;align-items:center;justify-content:flex-start;flex-wrap:wrap}
+    .btnMenu{padding:8px 12px;border-radius:12px;white-space:nowrap}
+    .caret{opacity:.7;margin-left:6px}
+    .menuWrap{position:relative;display:inline-block;overflow:visible;z-index:260}
+    .menu{position:absolute;right:0;top:calc(100% + 8px);min-width:200px;background:#fff;border:1px solid rgba(15,23,42,.12);box-shadow:0 12px 28px rgba(2,8,23,.18);border-radius:14px;padding:8px;display:none;z-index:320}
+    .menu.up{top:auto;bottom:calc(100% + 8px)}
+    .menuItem{width:100%;text-align:left;padding:10px 12px;border:0;background:transparent;border-radius:10px;cursor:pointer;font-size:14px;color:var(--text)}
+    .menuItem:hover{background:rgba(15,23,42,.06)}
+    .menuSep{height:1px;background:rgba(15,23,42,.10);margin:8px 6px}
+    .empty{padding:18px;color:var(--muted);font-size:13px}
+    body.modalOpen{overflow:hidden}
+    .modal{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:16px}
+    .modal[hidden]{display:none !important}
+    .modalBackdrop{position:absolute;inset:0;background:rgba(0,0,0,.55)}
+    .modalCard{position:relative;width:min(980px,96vw);max-height:calc(100vh - 32px);overflow:auto;background:#fff;border-radius:16px;padding:14px 14px 16px;box-shadow:0 20px 60px rgba(0,0,0,.35);color:#0f172a}
+    .modalHeader{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+    .statsModalCard .small,.statsModalCard label,.statsModalCard #statsMeta,.statsModalCard #statsSub{color:#475467}
+    .statsCards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:8px}
+    .statsMiniCard{background:rgba(16,24,40,.03);border:1px solid rgba(16,24,40,.08);border-radius:12px;padding:10px 12px;color:#0f172a}
+    .statsMiniCard .cellMain{color:#0f172a !important;font-weight:800}
+    .statsTableWrap{max-height:48vh;overflow:auto;padding-bottom:0}
+    .statsTable{width:100%;table-layout:fixed}
+    .statsTable th:nth-child(1){width:190px}
+    .statsTable th:nth-child(2),.statsTable th:nth-child(3),.statsTable th:nth-child(4){width:90px}
+    .statsTable th:nth-child(5){width:180px}
+    @media (max-width:960px){.filters{grid-template-columns:1fr}}
+    @media (max-width:820px){
+      .toolbar{align-items:stretch}
+      .toolbarActions{width:100%}
+      .toolbarActions .btn2{flex:1 1 auto;justify-content:center}
+      .tableWrap{overflow:visible;padding-bottom:24px}
+      .tgTable,.tgTable thead,.tgTable tbody,.tgTable th,.tgTable td,.tgTable tr{display:block;width:100%}
+      .tgTable thead{display:none}
+      .tgTable tbody{display:grid;gap:12px}
+      .tgTable tbody tr{border:1px solid rgba(148,163,184,.22);border-radius:14px;padding:10px 12px;background:#fff !important;box-shadow:0 8px 18px rgba(15,23,42,.06);z-index:1}
+      .tgTable td{border:0;padding:8px 0}
+      .tgTable td + td{border-top:1px solid rgba(148,163,184,.14)}
+      .menu{right:auto;left:0;min-width:min(240px,82vw)}
+    }
     </style>
 </head>
 <body>
   <div class="page">
-    <div class="head"><div><h1>Sesiones Telegram</h1><div class="sub">Estado de bots, chats y acciones por tenant</div></div><div class="actions"><button class="btn" id="tgStatsBtn" type="button">Estadísticas</button><button class="btn" id="tgReloadBtn" type="button">Recargar</button><button class="btn" id="tgRefreshBtn" type="button">Actualizar</button></div></div>
-     <div id="tgMsg"></div>
-     <div class="filters"><label>Buscar<input class="inp" id="tgSearch" type="search" placeholder="Tenant, bot o chat" /></label><label>Estado<select class="inp" id="tgStateFilter"><option value="">Todos</option><option value="started">Iniciados</option><option value="stopped">Detenidos</option><option value="disabled">Deshabilitados</option></select></label></div>
-    <div class="layout">
-      <section class="panel"><div class="panelHead"><div><h2>Sesiones</h2><div class="small" id="tgStatusMeta">Sin datos.</div></div></div><div class="tableWrap"><table><thead><tr><th>Tenant</th><th>Bot</th><th>Estado</th><th>Chats</th><th>Última actividad</th><th>Acciones</th></tr></thead><tbody id="tgBody"></tbody></table></div></section>
-      <section class="panel"><div class="panelHead"><div><h2>Chats registrados</h2><div class="small">Últimos chats conocidos por tenant.</div></div></div><div class="tableWrap" id="tgChats"></div></section>
+
+    <div class="toolbar">
+      <div>
+        <h1>Sesiones Telegram</h1>
+        <div class="sub">Muestra las sesiones activas por tenant. Acciones: reiniciar, bloquear/habilitar y estadísticas.</div>
+      </div>
+      <div class="toolbarActions">
+        <button class="btn2" id="tgReloadBtn" type="button">Recargar</button>
+        <button class="btn2" id="tgRefreshBtn" type="button">Actualizar</button>
+        <span id="tgStatus" class="small" style="opacity:.85"></span>
+      </div>
     </div>
-    <div class="tgModal" id="tgStatsModal" hidden>
-      <div class="tgModalBackdrop" data-tg-stats-close="1"></div>
-      <div class="tgModalCard" role="dialog" aria-modal="true" aria-label="Estadísticas Telegram">
-        <div class="tgModalHead">
+
+    <div class="filters">
+      <label>Buscar sesión
+        <input class="inp" id="tgSearch" type="search" placeholder="Tenant, número, bot o holder"/>
+      </label>
+      <label>Estado
+        <select class="inp" id="tgStateFilter">
+          <option value="all">Todos</option>
+          <option value="active">Activas</option>
+          <option value="inactive">Inactivas</option>
+          <option value="starting">starting</option>
+          <option value="online">online</option>
+          <option value="offline">offline</option>
+          <option value="standby">standby</option>
+          <option value="disabled">disabled</option>
+          <option value="conflict">conflict</option>
+          <option value="error">error</option>
+        </select>
+      </label>
+    </div>
+
+    <div id="tgMsg" class="small" style="margin-top:10px"></div>
+
+    <div class="card">
+      <div class="tableWrap" id="tgTableWrap">
+        <table class="tgTable">
+          <thead>
+            <tr>
+              <th>Sesión</th>
+              <th>Bot</th>
+              <th>Estado</th>
+              <th>Chats</th>
+              <th>Última actividad</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="tgBody">
+            <tr><td colspan="6" class="small">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="modal" id="statsModal" hidden>
+      <div class="modalBackdrop" data-stats-close="1"></div>
+      <div class="modalCard statsModalCard" role="dialog" aria-modal="true" aria-label="Estadísticas Telegram">
+        <div class="modalHeader">
           <div>
-            <h2 style="margin:0 0 4px">Estadísticas Telegram</h2>
-            <div class="small" id="tgStatsMeta">Resumen general por tenant.</div>
+            <div id="statsTitle" style="font-weight:800">Estadísticas</div>
+            <div id="statsSub" class="small" style="opacity:.85"></div>
           </div>
-          <button class="btn" id="tgStatsClose" type="button">Cerrar</button>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <label class="small">Desde <input type="date" id="statsFrom"/></label>
+            <label class="small">Hasta <input type="date" id="statsTo"/></label>
+            <button id="statsApply" class="btn2" type="button">Ver</button>
+            <button id="statsClose" class="btn2" type="button">Cerrar</button>
+          </div>
         </div>
-        <div class="tgStatsCards">
-          <div class="card"><div class="metric" id="tgMetricTotal">0</div><div class="label">Bots configurados</div></div>
-          <div class="card"><div class="metric" id="tgMetricStarted">0</div><div class="label">Bots iniciados</div></div>
-          <div class="card"><div class="metric" id="tgMetricChats">0</div><div class="label">Chats conocidos</div></div>
-          <div class="card"><div class="metric" id="tgMetricBlocked">0</div><div class="label">Chats bloqueados</div></div>
-        </div>
-        <div class="panel">
-          <div class="panelHead"><div><h2>Detalle por tenant</h2><div class="small">Mismo enfoque que WhatsApp, en ventana modal.</div></div></div>
-          <div class="tgStatsTableWrap">
-            <table class="tgStatsTable">
-              <thead><tr><th>Tenant</th><th>Bot</th><th>Estado</th><th>Chats</th><th>Bloqueados</th><th>Última actividad</th></tr></thead>
-              <tbody id="tgStatsBody"></tbody>
+        <div id="statsMeta" class="small" style="margin:10px 0"></div>
+        <div id="statsCards" class="statsCards"></div>
+        <div class="card" style="margin-top:12px; padding:10px 12px">
+          <div class="cellMain" style="margin-bottom:6px">Contactos del rango</div>
+          <div class="tableWrap statsTableWrap">
+            <table class="statsTable">
+              <thead>
+                <tr>
+                  <th>Contacto</th>
+                  <th>Entrada</th>
+                  <th>Salida</th>
+                  <th>Total</th>
+                  <th>Último mensaje</th>
+                </tr>
+              </thead>
+              <tbody id="statsContactsBody">
+                <tr><td colspan="5" class="small">Sin datos.</td></tr>
+              </tbody>
             </table>
           </div>
         </div>
@@ -1337,33 +1501,439 @@ function telegramAdminEmbedPage() {
   </div>
   <script>
     (function(){
-     const msgEl=document.getElementById('tgMsg'), totalEl=document.getElementById('tgMetricTotal'), startedEl=document.getElementById('tgMetricStarted'), chatsEl=document.getElementById('tgMetricChats'), blockedEl=document.getElementById('tgMetricBlocked'), bodyEl=document.getElementById('tgBody'), chatsWrap=document.getElementById('tgChats'), metaEl=document.getElementById('tgStatusMeta'), searchEl=document.getElementById('tgSearch'), stateEl=document.getElementById('tgStateFilter'), reloadBtn=document.getElementById('tgReloadBtn'), refreshBtn=document.getElementById('tgRefreshBtn'), statsBtn=document.getElementById('tgStatsBtn'), statsModal=document.getElementById('tgStatsModal'), statsClose=document.getElementById('tgStatsClose'), statsBody=document.getElementById('tgStatsBody'), statsMeta=document.getElementById('tgStatsMeta');
-       let state={items:[],chats:[]};
-      const esc=(v)=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
-      async function api(url, opts){ const res=await fetch(url, Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}}, opts||{})); let data=null; try{data=await res.json();}catch{} if(!res.ok) throw new Error((data&&(data.error||data.message))||('HTTP '+res.status)); return data||{}; }
-      function setMsg(kind, text){ msgEl.innerHTML=text?'<div class="msg '+(kind==='err'?'err':'ok')+'">'+esc(text)+'</div>':''; }
-      function statusPill(item){ const raw=String(item.botState||'').toLowerCase(); const cls=item.botStarted?'status on':(raw==='error'||raw==='conflict'?'status err':'status off'); return '<span class="'+cls+'">'+esc(item.botState||'-')+'</span>'; }
-      function rowMatches(item,q,filter){ const hay=[item.tenantId,item.numero,item.telegramBotUsername,item.telegramBotId,item.botState,item.lastSeenAt].join(' ').toLowerCase(); if(q && !hay.includes(q)) return false; if(filter==='started' && !item.botStarted) return false; if(filter==='stopped' && item.botStarted) return false; if(filter==='disabled' && String(item.botState||'').toLowerCase()!=='disabled') return false; return true; }
-      function setStatsOpen(open){ if(!statsModal) return; if(open){ statsModal.hidden=false; document.body.classList.add('modalOpen'); } else { statsModal.hidden=true; document.body.classList.remove('modalOpen'); } }
-      function renderStats(){ const items=Array.isArray(state.items)?state.items:[]; const chats=Array.isArray(state.chats)?state.chats:[]; totalEl.textContent=String(items.length||0); startedEl.textContent=String(items.filter((x)=>x.botStarted).length||0); chatsEl.textContent=String(chats.length||0); blockedEl.textContent=String(chats.filter((x)=>x.blocked).length||0);
-        const grouped=new Map();
-        items.forEach((item)=>{ grouped.set(item.tenantId,{ item, chats:0, blocked:0, lastSeen:item.lastSeenAt||null }); });
-        chats.forEach((chat)=>{ const key=chat.tenantId; const row=grouped.get(key)||{ item:{ tenantId:key, numero:chat.numero||'', telegramBotUsername:'', botState:'-', botStarted:false, knownChats:0, lastSeenAt:null }, chats:0, blocked:0, lastSeen:null }; row.chats+=1; if(chat.blocked) row.blocked+=1; if(chat.lastSeenAt && (!row.lastSeen || new Date(chat.lastSeenAt)>new Date(row.lastSeen))) row.lastSeen=chat.lastSeenAt; grouped.set(key,row); });
-        const rows=Array.from(grouped.values()).sort((a,b)=>String(a.item.tenantId||'').localeCompare(String(b.item.tenantId||'')));
-        if(statsMeta) statsMeta.textContent=rows.length?('Resumen actualizado '+new Date().toLocaleString('es-AR')):'Sin datos para mostrar.';
-        if(statsBody) statsBody.innerHTML=rows.length?rows.map((row)=>{ const item=row.item||{}; const botLabel=item.telegramBotUsername?('@'+String(item.telegramBotUsername).replace(/^@+/,'')):'Sin username'; const lastSeen=row.lastSeen?new Date(row.lastSeen).toLocaleString('es-AR'):(item.lastSeenAt?new Date(item.lastSeenAt).toLocaleString('es-AR'):'-'); return '<tr>'+'<td><div class="tenantName">'+esc(item.tenantId||'-')+'</div><div class="small">'+esc(item.numero||'-')+'</div></td>'+'<td><div>'+esc(botLabel)+'</div><div class="small"><code>'+esc(item.telegramBotId||'-')+'</code></div></td>'+'<td>'+statusPill(item)+'</td>'+'<td>'+esc(String(row.chats || item.knownChats || 0))+'</td>'+'<td>'+esc(String(row.blocked || 0))+'</td>'+'<td>'+esc(lastSeen)+'</td>'+'</tr>'; }).join(''):'<tr><td colspan="6" class="empty">No hay estadísticas disponibles.</td></tr>'; }
-      function render(){ const q=String(searchEl.value||'').trim().toLowerCase(), filter=String(stateEl.value||'').trim(); const items=(state.items||[]).filter((item)=>rowMatches(item,q,filter)); const chats=(state.chats||[]).filter((chat)=>{ const hay=[chat.tenantId,chat.numero,chat.chatId,chat.username,chat.firstName,chat.lastName,chat.title,chat.chatType].join(' ').toLowerCase(); return !q || hay.includes(q); }); renderStats(); metaEl.textContent=items.length?('Mostrando '+items.length+' sesión'+(items.length===1?'':'es')+' · actualizado '+new Date().toLocaleString('es-AR')):'Sin sesiones visibles.'; bodyEl.innerHTML=!items.length?'<tr><td colspan="6" class="empty">No hay sesiones Telegram visibles.</td></tr>':items.map((item)=>{ const botLabel=item.telegramBotUsername?('@'+String(item.telegramBotUsername).replace(/^@+/,'')):'Sin username'; const lastSeen=item.lastSeenAt?new Date(item.lastSeenAt).toLocaleString('es-AR'):'-'; return '<tr>'+'<td><div class="tenantName">'+esc(item.tenantId)+'</div><div class="small">'+esc(item.numero||'-')+'</div></td>'+'<td><div>'+esc(botLabel)+'</div><div class="small"><code>'+esc(item.telegramBotId||'-')+'</code></div></td>'+'<td>'+statusPill(item)+'</td>'+'<td>'+esc(String(item.knownChats||0))+'</td>'+'<td>'+esc(lastSeen)+'</td>'+'<td><div class="rowActions"><button class="btn" type="button" data-action="start" data-tenant="'+esc(item.tenantId)+'">Iniciar</button><button class="btn btnDanger" type="button" data-action="release" data-tenant="'+esc(item.tenantId)+'">Detener</button></div></td>'+'</tr>'; }).join(''); chatsWrap.innerHTML=!chats.length?'<div class="empty">No hay chats registrados.</div>':'<table><thead><tr><th>Tenant</th><th>Chat</th><th>Usuario</th><th>Tipo</th><th>Última vez</th></tr></thead><tbody>'+chats.slice(0,200).map((chat)=>{ const displayName=[chat.firstName,chat.lastName].filter(Boolean).join(' ').trim()||chat.title||chat.username||'-'; return '<tr>'+'<td><div class="tenantName">'+esc(chat.tenantId)+'</div><div class="small">'+esc(chat.numero||'-')+'</div></td>'+'<td><div><code>'+esc(chat.chatId||'-')+'</code></div>'+(chat.blocked?'<div class="small" style="color:#b42318">Bloqueado</div>':'')+'</td>'+'<td><div>'+esc(displayName)+'</div><div class="small">'+esc(chat.username?('@'+String(chat.username).replace(/^@+/,'')):'-')+'</div></td>'+'<td>'+esc(chat.chatType||'-')+'</td>'+'<td>'+esc(chat.lastSeenAt?new Date(chat.lastSeenAt).toLocaleString('es-AR'):'-')+'</td>'+'</tr>'; }).join('')+'</tbody></table>'; }
-      async function load(){ setMsg('',''); const [statusRes,chatsRes]=await Promise.all([api('/api/tg/status'), api('/api/tg/chats')]); state.items=Array.isArray(statusRes.items)?statusRes.items:[]; state.chats=Array.isArray(chatsRes.items)?chatsRes.items:[]; render(); }
-      async function runAction(action, tenantId){ try{ setMsg('',''); const url=action==='start'?'/api/tg/start':'/api/tg/release'; await api(url,{method:'POST',body:JSON.stringify({tenantId})}); await load(); setMsg('ok',(action==='start'?'Bot iniciado':'Bot detenido')+' para '+tenantId+'.'); }catch(e){ setMsg('err', e.message||String(e)); } }
-      reloadBtn.addEventListener('click', async ()=>{ try{ setMsg('',''); await api('/api/tg/reload',{method:'POST',body:'{}'}); await load(); setMsg('ok','Sesiones Telegram recargadas.'); }catch(e){ setMsg('err', e.message||String(e)); } });
-      refreshBtn.addEventListener('click', ()=>{ load().catch((e)=>setMsg('err', e.message||String(e))); });
-      if(statsBtn) statsBtn.addEventListener('click', ()=>{ renderStats(); setStatsOpen(true); });
-      if(statsClose) statsClose.addEventListener('click', ()=>setStatsOpen(false));
-      if(statsModal) statsModal.addEventListener('click', (ev)=>{ const target=ev.target; if(target && target.getAttribute && target.getAttribute('data-tg-stats-close')) setStatsOpen(false); });
-      document.addEventListener('keydown', (ev)=>{ if(ev.key==='Escape') setStatsOpen(false); });
+     var body = document.getElementById('tgBody');
+      var msg = document.getElementById('tgMsg');
+      var statusEl = document.getElementById('tgStatus');
+     var tableWrap = document.getElementById('tgTableWrap');
+      var searchEl = document.getElementById('tgSearch');
+      var stateFilterEl = document.getElementById('tgStateFilter');
+      var reloadBtn = document.getElementById('tgReloadBtn');
+      var refreshBtn = document.getElementById('tgRefreshBtn');
+      var inflight = false;
+      var lastHtml = null;
+      var lastItems = [];
+      var lastNowMs = Date.now();
 
-      searchEl.addEventListener('input', render); stateEl.addEventListener('change', render); bodyEl.addEventListener('click', (ev)=>{ const btn=ev.target.closest('button[data-action]'); if(!btn) return; runAction(btn.getAttribute('data-action'), btn.getAttribute('data-tenant')); });
-      load().catch((e)=>setMsg('err', e.message||String(e)));
+      var statsModal = document.getElementById('statsModal');
+      var statsTitle = document.getElementById('statsTitle');
+     var statsSub = document.getElementById('statsSub');
+      var statsMeta = document.getElementById('statsMeta');
+      var statsCards = document.getElementById('statsCards');
+      var statsFrom = document.getElementById('statsFrom');
+      var statsTo = document.getElementById('statsTo');
+      var statsApply = document.getElementById('statsApply');
+      var statsClose = document.getElementById('statsClose');
+      var statsContactsBody = document.getElementById('statsContactsBody');
+     var statsTenant = '';
+      var statsNumero = '';
+
+      function esc(s){
+        return String(s == null ? '' : s)
+          .replace(/&/g,'&amp;')
+          .replace(/</g,'&lt;')
+          .replace(/>/g,'&gt;')
+          .replace(/"/g,'&quot;')
+          .replace(/'/g,'&#39;');
+      }
+
+      function api(path, opts){
+        opts = opts || {};
+        opts.headers = Object.assign({ 'Content-Type':'application/json' }, (opts.headers || {}));
+        return fetch(path, Object.assign({ credentials:'same-origin' }, opts)).then(function(r){
+          return r.text().then(function(t){
+            var data = null;
+            try { data = t ? JSON.parse(t) : null; } catch(e) {}
+            if(!r.ok){
+              var err = (data && (data.error || data.message)) ? (data.error || data.message) : ('HTTP ' + r.status);
+              throw new Error(err);
+            }
+            return data || {};
+          });
+        });
+      }
+
+      function setMsg(kind, text){
+        msg.innerHTML = text ? '<div class="msg ' + (kind === 'err' ? 'err' : 'ok') + '">' + esc(text) + '</div>' : '';
+      }
+
+      function fmtDate(v){
+       if(!v) return '';
+        try { return new Date(v).toLocaleString('es-AR'); } catch(e) { return String(v); }
+      }
+
+      function fmtDurationMs(ms){
+        var n = Number(ms);
+        if(!isFinite(n) || n < 0) return '-';
+        var mins = Math.floor(n / 60000);
+        var d = Math.floor(mins / 1440);
+        var h = Math.floor((mins % 1440) / 60);
+        var m = mins % 60;
+        var parts = [];
+        if(d) parts.push(d + 'd');
+        if(h || d) parts.push(h + 'h');
+        parts.push(m + 'm');
+        return parts.join(' ');
+      }
+
+      function toYmd(d){
+        try {
+          var y = d.getFullYear();
+          var m = String(d.getMonth() + 1).padStart(2, '0');
+          var day = String(d.getDate()).padStart(2, '0');
+          return y + '-' + m + '-' + day;
+        } catch(e) { return ''; }
+      }
+      function normalizedState(item, nowMs){
+        var st = String((item && item.botState) || '').trim().toLowerCase();
+        var last = item && item.lastSeenAt ? new Date(item.lastSeenAt).getTime() : 0;
+        var active = !!(last && (nowMs - last) <= 30000);
+        if (st === 'disabled') return 'disabled';
+        if (st) return st;
+        return active ? 'active' : 'inactive';
+      }
+
+      function lockSearchText(item){
+        return [
+          item && item.tenantId || '',
+          item && item.numero || '',
+          item && item.telegramBotUsername || '',
+          item && item.telegramBotId || '',
+          item && item.lockId || '',
+          item && item.botState || ''
+        ].join(' ').toLowerCase();
+      }
+
+      function applyFiltersAndSort(items, nowMs){
+        var out = Array.isArray(items) ? items.slice() : [];
+        var q = searchEl ? String(searchEl.value || '').trim().toLowerCase() : '';
+        var sf = stateFilterEl ? String(stateFilterEl.value || 'all').trim().toLowerCase() : 'all';
+
+        out.sort(function(a,b){
+          var ta = String(a && a.tenantId || '').toLowerCase();
+          var tb = String(b && b.tenantId || '').toLowerCase();
+          if (ta !== tb) return ta.localeCompare(tb, 'es', { sensitivity:'base' });
+          var na = String(a && a.numero || '').toLowerCase();
+          var nb = String(b && b.numero || '').toLowerCase();
+          return na.localeCompare(nb, 'es', { sensitivity:'base', numeric:true });
+       });
+
+        if (q) out = out.filter(function(item){ return lockSearchText(item).indexOf(q) >= 0; });
+
+        if (sf && sf !== 'all') {
+          out = out.filter(function(item){
+            var ns = normalizedState(item, nowMs);
+            if (sf === 'active') return ['active','online','starting'].indexOf(ns) >= 0;
+            if (sf === 'inactive') return ['inactive','offline','standby','conflict','error'].indexOf(ns) >= 0;
+            return ns === sf;
+          });
+        }
+
+        return out;
+      }
+
+      function statusPill(item, nowMs){
+        var raw = String(item.botState || '').toLowerCase();
+        var last = item.lastSeenAt ? new Date(item.lastSeenAt).getTime() : 0;
+        var active = !!(last && (nowMs - last) <= 30000);
+        var cls = active && raw !== 'disabled' ? 'status on' : ((raw === 'error' || raw === 'conflict') ? 'status err' : 'status off');
+        return '<span class="' + cls + '">' + esc(item.botState || '-') + '</span>';
+      }
+
+      function renderRow(item, nowMs){
+        var menuId = 'm_' + String(item.lockId || item.tenantId || '').replace(/[^a-zA-Z0-9_-]/g,'') + '_' + Math.floor(Math.random() * 1e6);
+        var botLabel = item.telegramBotUsername ? ('@' + String(item.telegramBotUsername).replace(/^@+/, '')) : 'Sin username';
+        var isDisabled = String(item.botState || '').toLowerCase() === 'disabled';
+        var ageSec = item.lastSeenAt ? Math.round((nowMs - new Date(item.lastSeenAt).getTime()) / 1000) : null;
+        var ageHtml = ageSec != null ? ('<div class="cellSub">hace ' + esc(ageSec) + 's</div>') : '';
+        var actions = ''
+          + '<div class="menuWrap">'
+          +   '<button class="btn2 btnMenu" type="button" data-action="menu" data-menu="' + esc(menuId) + '" aria-haspopup="true" aria-expanded="false">Acciones <span class="caret">▾</span></button>'
+          +   '<div class="menu" id="' + esc(menuId) + '" role="menu" aria-hidden="true">'
+          +     '<button class="menuItem" type="button" role="menuitem" data-action="restart" data-tenant="' + esc(item.tenantId) + '">Reiniciar</button>'
+          +     '<button class="menuItem" type="button" role="menuitem" data-action="toggle" data-tenant="' + esc(item.tenantId) + '" data-numero="' + esc(item.numero || '') + '" data-disabled="' + (isDisabled ? '1' : '0') + '">' + (isDisabled ? 'Habilitar' : 'Bloquear') + '</button>'
+          +     '<div class="menuSep"></div>'
+          +     '<button class="menuItem" type="button" role="menuitem" data-action="stats" data-tenant="' + esc(item.tenantId) + '" data-numero="' + esc(item.numero || '') + '">Estadísticas</button>'
+          +   '</div>'
+          + '</div>';
+
+        return ''
+          + '<tr class="tgRow">'
+          +   '<td><div class="cellMain">' + esc(item.tenantId) + '</div><div class="cellSub">' + esc(item.numero || '-') + '</div></td>'
+          +   '<td><div class="cellMain">' + esc(botLabel) + '</div><div class="cellSub mono">' + esc(item.telegramBotId || '-') + '</div><div class="cellSub mono">' + esc(item.lockId || '-') + '</div></td>'
+          +   '<td>' + statusPill(item, nowMs) + ageHtml + '</td>'
+          +   '<td><div class="cellMain">' + esc(String(item.knownChats || 0)) + '</div></td>'
+          +   '<td><div class="cellMain">' + esc(fmtDate(item.lastSeenAt) || '-') + '</div><div class="cellSub">' + esc(fmtDate(item.startedAt) ? ('Inicio: ' + fmtDate(item.startedAt)) : '-') + '</div></td>'
+          +   '<td class="wa-actions-cell"><div class="actionBar">' + actions + '</div></td>'
+          + '</tr>';
+      }
+
+      function renderCurrentSessions(){
+        var nowMs = lastNowMs || Date.now();
+        var items = applyFiltersAndSort(lastItems, nowMs);
+        var html = '';
+        if (!items.length) html = '<tr><td colspan="6" class="small">No hay sesiones para los filtros seleccionados.</td></tr>';
+        else html = items.map(function(item){ return renderRow(item, nowMs); }).join('');
+
+        if (html !== lastHtml) {
+          var sx = tableWrap ? tableWrap.scrollLeft : 0;
+          var sy = tableWrap ? tableWrap.scrollTop : 0;
+          body.innerHTML = html;
+          if (tableWrap) {
+            tableWrap.scrollLeft = sx;
+            tableWrap.scrollTop = sy;
+          }
+          lastHtml = html;
+        }
+      }
+
+      function setLoading(on){
+        if (!tableWrap) return;
+        if (on) tableWrap.setAttribute('data-loading','1');
+        else tableWrap.removeAttribute('data-loading');
+      }
+
+      function closeAllMenus(){
+        document.querySelectorAll('.menu[aria-hidden="false"]').forEach(function(m){
+          m.setAttribute('aria-hidden','true');
+          m.style.display = 'none';
+        });
+        document.querySelectorAll('button[data-action="menu"][aria-expanded="true"]').forEach(function(b){
+          b.setAttribute('aria-expanded','false');
+        });
+        document.querySelectorAll('.wa-actions-cell.menuCellOpen').forEach(function(cell){
+          cell.classList.remove('menuCellOpen');
+        });
+        document.querySelectorAll('.tgRow.rowMenuOpen').forEach(function(row){
+          row.classList.remove('rowMenuOpen');
+        });
+      }
+
+      function positionMenu(btn){
+        try {
+          var wrap = btn && btn.closest ? btn.closest('.menuWrap') : null;
+          if (!wrap) return;
+          var menu = wrap.querySelector('.menu');
+          if (!menu) return;
+          menu.classList.remove('up');
+          var rect = menu.getBoundingClientRect();
+          var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+          if (rect.bottom > (vh - 12)) menu.classList.add('up');
+        } catch(e) {}
+      }
+
+      function toggleMenu(menuId, btn){
+        var m = document.getElementById(menuId);
+        if (!m) return;
+        var isOpen = (m.getAttribute('aria-hidden') === 'false');
+        closeAllMenus();
+        if (isOpen) return;
+        var cell = btn && btn.closest ? btn.closest('.wa-actions-cell') : null;
+        var row = btn && btn.closest ? btn.closest('.tgRow') : null;
+        if (cell) cell.classList.add('menuCellOpen');
+        if (row) row.classList.add('rowMenuOpen');
+        m.setAttribute('aria-hidden','false');
+        m.style.display = 'block';
+        btn.setAttribute('aria-expanded','true');
+        positionMenu(btn);
+      }
+
+      async function load(opts){
+        opts = opts || {};
+        var initial = !!opts.initial;
+        if (document.hidden && !opts.force) return;
+        if (inflight) return;
+        inflight = true;
+
+        if (initial && body && !body.__didInitial) {
+          body.innerHTML = '<tr><td colspan="6" class="small">Cargando…</td></tr>';
+          body.__didInitial = true;
+        }
+
+        setLoading(true);
+        return api('/api/tg/status', { method:'GET' })
+          .then(function(data){
+            lastItems = Array.isArray(data.items) ? data.items : [];
+            lastNowMs = data.now ? new Date(data.now).getTime() : Date.now();
+            renderCurrentSessions();
+            if (statusEl) statusEl.textContent = 'Última actualización: ' + new Date(lastNowMs).toLocaleTimeString('es-AR');
+            if (msg) msg.textContent = '';
+          })
+          .catch(function(e){
+            if (statusEl) statusEl.textContent = 'Error actualizando: ' + (e.message || e);
+            if (lastHtml == null) {
+              body.innerHTML = '<tr><td colspan="6" class="small">Error: ' + esc(e.message || e) + '</td></tr>';
+              lastHtml = body.innerHTML;
+            }
+          })
+          .finally(function(){
+            inflight = false;
+            setLoading(false);
+          });
+      }
+
+      async function doRestart(tenantId){
+        closeAllMenus();
+        if (!confirm('¿Reiniciar esta sesión de Telegram?')) return;
+        try {
+          await api('/api/tg/restart', { method:'POST', body: JSON.stringify({ tenantId: tenantId }) });
+          await load({ force:true });
+          setMsg('ok', 'Reinicio solicitado para ' + tenantId + '.');
+        } catch(e) {
+          setMsg('err', e.message || String(e));
+        }
+      }
+
+      async function doToggle(tenantId, numero, currentlyDisabled){
+        closeAllMenus();
+        var nextDisabled = !currentlyDisabled;
+        var label = nextDisabled ? 'bloquear' : 'habilitar';
+        if (!confirm('¿' + label.toUpperCase() + ' esta sesión? ' + tenantId + ' · ' + numero)) return;
+        try {
+          await api('/api/tg/policy', { method:'POST', body: JSON.stringify({ tenantId: tenantId, disabled: nextDisabled }) });
+          await load({ force:true });
+          setMsg('ok', nextDisabled ? 'Sesión bloqueada.' : 'Sesión habilitada.');
+        } catch(e) {
+          setMsg('err', e.message || String(e));
+        }
+      }
+
+      function statsSetOpen(open){
+        if(!statsModal) return;
+        if(open){ statsModal.hidden = false; document.body.classList.add('modalOpen'); }
+        else { statsModal.hidden = true; document.body.classList.remove('modalOpen'); }
+      }
+
+      function closeStats(){ statsSetOpen(false); }
+
+      function statsCard(label, value, sub){
+        return '<div class="statsMiniCard">'
+          + '<div class="small" style="opacity:.8; color:#475467">' + esc(label) + '</div>'
+          + '<div class="cellMain" style="font-size:22px; margin-top:4px; color:#0f172a; font-weight:800">' + esc(value) + '</div>'
+          + (sub ? ('<div class="small" style="margin-top:4px; color:#475467">' + esc(sub) + '</div>') : '')
+          + '</div>';
+      }
+
+      function renderStats(data){
+        var summary = data && data.summary ? data.summary : {};
+        var overall = data && data.overall ? data.overall : {};
+        var contacts = Array.isArray(data && data.contacts) ? data.contacts : [];
+        statsMeta.textContent = 'Rango: ' + (data.from || '-') + ' a ' + (data.to || '-') + ' · Último mensaje global: ' + (overall.lastMessageAt ? fmtDate(overall.lastMessageAt) : '-');
+        statsCards.innerHTML = ''
+          + statsCard('Mensajes entrada', String(summary.incoming || 0))
+          + statsCard('Mensajes salida', String(summary.outgoing || 0))
+          + statsCard('Mensajes totales', String(summary.total || 0))
+          + statsCard('Contactos', String(summary.contacts || 0))
+          + statsCard('Último mensaje del rango', summary.lastAt ? fmtDate(summary.lastAt) : '-')
+          + statsCard('Inactividad actual', overall.inactivityLabel || fmtDurationMs(overall.inactivityMs || 0));
+
+        if (!contacts.length) {
+          statsContactsBody.innerHTML = '<tr><td colspan="5" class="small">No hay mensajes en el rango seleccionado.</td></tr>';
+          return;
+        }
+
+        statsContactsBody.innerHTML = contacts.map(function(c){
+          return '<tr>'
+            + '<td class="mono">' + esc(c.contact || '-') + '</td>'
+            + '<td>' + esc(String(c.incoming || 0)) + '</td>'
+            + '<td>' + esc(String(c.outgoing || 0)) + '</td>'
+            + '<td>' + esc(String(c.total || 0)) + '</td>'
+            + '<td>' + esc(c.lastAt ? fmtDate(c.lastAt) : '-') + '</td>'
+            + '</tr>';
+        }).join('');
+      }
+
+      function loadStats(){
+        if (!statsTenant || !statsNumero) return;
+        statsMeta.textContent = 'Cargando…';
+        statsCards.innerHTML = '';
+        statsContactsBody.innerHTML = '<tr><td colspan="5" class="small">Cargando…</td></tr>';
+        return api('/api/tg/stats?tenantId=' + encodeURIComponent(statsTenant) + '&numero=' + encodeURIComponent(statsNumero) + '&from=' + encodeURIComponent(statsFrom.value || '') + '&to=' + encodeURIComponent(statsTo.value || ''), { method:'GET' })
+          .then(renderStats)
+          .catch(function(e){
+            statsMeta.textContent = 'Error: ' + (e.message || e);
+            statsContactsBody.innerHTML = '<tr><td colspan="5" class="small">Error cargando estadísticas.</td></tr>';
+          });
+      }
+
+      function openStats(tenantId, numero){
+        closeAllMenus();
+        statsTenant = String(tenantId || '');
+        statsNumero = String(numero || '');
+        var today = toYmd(new Date());
+        if (statsTitle) statsTitle.textContent = 'Estadísticas · ' + statsNumero;
+        if (statsSub) statsSub.textContent = 'tenant: ' + statsTenant;
+        if (statsFrom && !statsFrom.value) statsFrom.value = today;
+        if (statsTo && !statsTo.value) statsTo.value = statsFrom.value || today;
+        statsSetOpen(true);
+        loadStats();
+      }
+
+      if (statsApply) statsApply.addEventListener('click', loadStats);
+      if (statsClose) statsClose.addEventListener('click', closeStats);
+      if (statsModal) statsModal.addEventListener('click', function(ev){
+        var t = ev && ev.target;
+        if (t && t.getAttribute && t.getAttribute('data-stats-close')) closeStats();
+      });
+
+      reloadBtn.addEventListener('click', async function(){
+        try {
+          setMsg('', '');
+          await api('/api/tg/reload', { method:'POST', body:'{}' });
+          await load({ force:true });
+          setMsg('ok', 'Sesiones Telegram recargadas.');
+        } catch(e) {
+          setMsg('err', e.message || String(e));
+        }
+      });
+
+      refreshBtn.addEventListener('click', function(){ load({ force:true }).catch(function(e){ setMsg('err', e.message || String(e)); }); });
+
+      body.addEventListener('click', function(e){
+        var btn = e.target && e.target.closest ? e.target.closest('button[data-action]') : null;
+        if (!btn) return;
+        var act = btn.getAttribute('data-action');
+        var tenant = btn.getAttribute('data-tenant') || '';
+        var numero = btn.getAttribute('data-numero') || '';
+        var disabledFlag = btn.getAttribute('data-disabled');
+        var currentlyDisabled = (disabledFlag === '1' || disabledFlag === 'true');
+
+        if (act === 'menu') {
+          var menuId = btn.getAttribute('data-menu') || '';
+          if (!menuId) return;
+          toggleMenu(menuId, btn);
+          e.preventDefault();
+          return;
+        }
+        if (act === 'restart') return doRestart(tenant);
+        if (act === 'toggle') return doToggle(tenant, numero, currentlyDisabled);
+        if (act === 'stats') return openStats(tenant, numero);
+      });
+
+      if (searchEl) searchEl.addEventListener('input', function(){ closeAllMenus(); renderCurrentSessions(); });
+      if (stateFilterEl) stateFilterEl.addEventListener('change', function(){ closeAllMenus(); renderCurrentSessions(); });
+
+      document.addEventListener('click', function(e){
+        var inside = e.target && e.target.closest ? e.target.closest('.menuWrap') : null;
+        if (!inside) closeAllMenus();
+      });
+      document.addEventListener('keydown', function(e){
+        if (e.key === 'Escape') {
+          closeAllMenus();
+          closeStats();
+        }
+      });
+      window.addEventListener('resize', function(){
+        document.querySelectorAll('.menu[aria-hidden="false"]').forEach(function(menu){
+          var wrap = menu.closest('.menuWrap');
+          var btn = wrap ? wrap.querySelector('button[data-action="menu"]') : null;
+          if (btn) positionMenu(btn);
+        });
+      });
+
+      window.__tgReload = function(){ return load({ force:true }); };
+      load({ initial:true });
+      setInterval(function(){ if (document.hidden) return; load(); }, 8000);
+      document.addEventListener('visibilitychange', function(){ if (!document.hidden) load(); });
     })();
   </script>
 </body>
@@ -1423,6 +1993,91 @@ function mountTelegramRoutes(app) {
     }
   });
 
+  app.get('/api/tg/stats', auth.requireAuth, auth.requireAdmin, async (req, res) => {
+    try {
+      const role = String(req.user?.role || '').toLowerCase();
+      const isSuper = role === 'superadmin';
+      const tenantId = String(req.query?.tenantId || (!isSuper ? (req.user?.tenantId || 'default') : '')).trim().toUpperCase();
+      const numero = String(req.query?.numero || '').trim();
+      if (!tenantId || !numero) return res.status(400).json({ ok: false, error: 'tenantId y numero requeridos' });
+      if (!isSuper && tenantId !== String(req.user?.tenantId || 'default').trim().toUpperCase()) return res.status(403).json({ ok: false, error: 'forbidden' });
+
+      const from = String(req.query?.from || tgArYmd(new Date())).trim();
+      const to = String(req.query?.to || from).trim();
+      const { start, end } = tgArDateRange(from, to);
+      const db = await getDb();
+      const coll = db.collection('tg_bot_message_log');
+      const baseMatch = { tenantId, numero };
+      const rangeMatch = { ...baseMatch, at: { $gte: start, $lt: end } };
+
+      const [summaryRows, contactRows, overallLast] = await Promise.all([
+        coll.aggregate([
+          { $match: rangeMatch },
+          { $group: {
+            _id: null,
+            incoming: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
+            outgoing: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } },
+            total: { $sum: 1 },
+            contactsSet: { $addToSet: '$contact' },
+            firstAt: { $min: '$at' },
+            lastAt: { $max: '$at' }
+          } }
+        ]).toArray(),
+        coll.aggregate([
+          { $match: rangeMatch },
+          { $group: {
+            _id: '$contact',
+            incoming: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
+            outgoing: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } },
+            total: { $sum: 1 },
+            firstAt: { $min: '$at' },
+            lastAt: { $max: '$at' }
+          } },
+          { $sort: { total: -1, lastAt: -1 } },
+          { $limit: 1000 }
+        ]).toArray(),
+        coll.find(baseMatch).sort({ at: -1 }).limit(1).toArray(),
+      ]);
+
+      const summary = summaryRows[0] || { incoming: 0, outgoing: 0, total: 0, contactsSet: [], firstAt: null, lastAt: null };
+      const lastOverall = overallLast[0] || null;
+      const inactivityMs = lastOverall?.at ? Math.max(0, Date.now() - new Date(lastOverall.at).getTime()) : null;
+
+      return res.status(200).json({
+        ok: true,
+        tenantId,
+        numero,
+        from,
+        to,
+        range: { start, end },
+        summary: {
+          incoming: Number(summary.incoming || 0),
+          outgoing: Number(summary.outgoing || 0),
+          total: Number(summary.total || 0),
+          contacts: Array.isArray(summary.contactsSet) ? summary.contactsSet.filter(Boolean).length : 0,
+          firstAt: summary.firstAt || null,
+          lastAt: summary.lastAt || null,
+        },
+        overall: {
+          lastMessageAt: lastOverall?.at || null,
+          inactivityMs,
+          inactivityLabel: inactivityMs == null ? '' : tgHumanizeMs(inactivityMs),
+        },
+        contacts: (contactRows || []).map((r) => ({
+          contact: String(r._id || ''),
+          incoming: Number(r.incoming || 0),
+          outgoing: Number(r.outgoing || 0),
+          total: Number(r.total || 0),
+          firstAt: r.firstAt || null,
+          lastAt: r.lastAt || null,
+        })),
+      });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: 'Error leyendo estadísticas.' });
+    }
+  });
+
+
   app.post('/api/tg/reload', auth.requireAuth, auth.requireAdmin, async (_req, res) => {
     try {
       const status = await refreshManagerFromDb();
@@ -1454,6 +2109,58 @@ function mountTelegramRoutes(app) {
       ctx.shuttingDown = false;
       const status = await startContext(ctx);
       return res.json({ ok: true, item: status });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  app.post('/api/tg/restart', auth.requireAuth, auth.requireAdmin, async (req, res) => {
+    try {
+      const visible = getVisibleContexts(req);
+      const tenantId = normalizeString(req?.body?.tenantId || req?.query?.tenantId || req?.query?.tenant || '', '').toUpperCase();
+      const ctx = tenantId ? visible.find((x) => x.tenantId === tenantId) : visible[0];
+      if (!ctx) return res.status(404).json({ ok: false, error: 'tenant_not_found' });
+      await stopContext(ctx, 'restarting');
+      ctx.shuttingDown = false;
+      ctx.lockAcquiredAt = new Date();
+      const status = await startContext(ctx);
+      return res.json({ ok: true, item: status });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  app.post('/api/tg/policy', auth.requireAuth, auth.requireAdmin, async (req, res) => {
+    try {
+      const visible = getVisibleContexts(req);
+      const tenantId = normalizeString(req?.body?.tenantId || req?.query?.tenantId || req?.query?.tenant || '', '').toUpperCase();
+      const disabled = !!req?.body?.disabled;
+      const ctx = tenantId ? visible.find((x) => x.tenantId === tenantId) : visible[0];
+      if (!ctx) return res.status(404).json({ ok: false, error: 'tenant_not_found' });
+      const db = await getDb();
+      await db.collection('tg_bot_policies').updateOne(
+        { numero: ctx.numero, tenantId: ctx.tenantId },
+        {
+          $set: {
+            tenantId: ctx.tenantId,
+            tenantid: ctx.tenantId,
+            numero: ctx.numero,
+            disabled,
+            updatedAt: new Date(),
+          }
+        },
+        { upsert: true }
+      );
+
+      if (disabled) {
+        await stopContext(ctx, 'disabled');
+      } else {
+        ctx.shuttingDown = false;
+        ctx.botState = 'idle';
+        await startContext(ctx);
+      }
+
+      return res.json({ ok: true, item: getContextStatus(ctx), disabled });
     } catch (e) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
