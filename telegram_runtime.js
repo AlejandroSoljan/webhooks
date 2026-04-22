@@ -1308,6 +1308,224 @@ function tgHumanizeMs(ms) {
   return parts.join(' ');
 }
 
+function getArDayRangeFromYmd(ymd, endOfDay = false) {
+  const raw = normalizeString(ymd, '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  return new Date(`${raw}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}-03:00`);
+}
+
+function getTodayArYmd() {
+  try {
+    return new Intl.DateTimeFormat('sv-SE', {
+      timeZone: AR_TZ,
+      year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+function formatInactivityLabel(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n < 0) return '-';
+  const mins = Math.floor(n / 60000);
+  const days = Math.floor(mins / 1440);
+  const hours = Math.floor((mins % 1440) / 60);
+  const minutes = mins % 60;
+  const parts = [];
+  if (days) parts.push(`${days}d`);
+  if (hours || days) parts.push(`${hours}h`);
+  parts.push(`${minutes}m`);
+  return parts.join(' ');
+}
+
+async function getTelegramSessionStats(tenantId, numero, fromYmd, toYmd) {
+  const db = await getDb();
+  const coll = db.collection('tg_bot_message_log');
+  const tenant = normalizeString(tenantId, '').toUpperCase();
+  const num = normalizeString(numero, '');
+  const todayYmd = getTodayArYmd();
+
+  const filterBase = { tenantId: tenant, numero: num };
+  const fromDate = getArDayRangeFromYmd(fromYmd || todayYmd, false) || getArDayRangeFromYmd(todayYmd, false);
+  const toDate = getArDayRangeFromYmd(toYmd || fromYmd || todayYmd, true) || getArDayRangeFromYmd(todayYmd, true);
+  const rangeFilter = {
+    ...filterBase,
+    at: { $gte: fromDate, $lte: toDate }
+  };
+
+  const [summaryRows, contactRows, latestOverall, latestRange, todayRows] = await Promise.all([
+    coll.aggregate([
+      { $match: rangeFilter },
+      {
+        $group: {
+          _id: '$direction',
+          count: { $sum: 1 },
+          lastAt: { $max: '$at' },
+          contacts: { $addToSet: '$contact' }
+        }
+      }
+    ]).toArray(),
+    coll.aggregate([
+      { $match: rangeFilter },
+      {
+        $group: {
+          _id: '$contact',
+          incoming: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
+          outgoing: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } },
+          total: { $sum: 1 },
+          lastAt: { $max: '$at' }
+        }
+      },
+      { $sort: { total: -1, lastAt: -1, _id: 1 } },
+      { $limit: 200 }
+    ]).toArray(),
+    coll.find(filterBase).sort({ at: -1 }).limit(1).next(),
+    coll.find(rangeFilter).sort({ at: -1 }).limit(1).next(),
+    coll.aggregate([
+      { $match: { ...filterBase, dayKey: todayYmd } },
+      {
+        $group: {
+          _id: '$direction',
+          count: { $sum: 1 },
+          contacts: { $addToSet: '$contact' }
+        }
+      }
+    ]).toArray(),
+  ]);
+
+  let incoming = 0;
+  let outgoing = 0;
+  const rangeContacts = new Set();
+  let summaryLastAt = latestRange?.at || null;
+  for (const row of (summaryRows || [])) {
+    if (String(row?._id || '') === 'in') incoming = Number(row?.count || 0);
+    if (String(row?._id || '') === 'out') outgoing = Number(row?.count || 0);
+    for (const contact of (row?.contacts || [])) {
+      if (contact != null && String(contact).trim()) rangeContacts.add(String(contact).trim());
+    }
+    if (row?.lastAt && (!summaryLastAt || new Date(row.lastAt) > new Date(summaryLastAt))) summaryLastAt = row.lastAt;
+  }
+
+  let todayIncoming = 0;
+  let todayOutgoing = 0;
+  const todayContacts = new Set();
+  for (const row of (todayRows || [])) {
+    if (String(row?._id || '') === 'in') todayIncoming = Number(row?.count || 0);
+    if (String(row?._id || '') === 'out') todayOutgoing = Number(row?.count || 0);
+    for (const contact of (row?.contacts || [])) {
+      if (contact != null && String(contact).trim()) todayContacts.add(String(contact).trim());
+    }
+  }
+
+  const lastMessageAt = latestOverall?.at || null;
+  const inactivityMs = lastMessageAt ? Math.max(0, Date.now() - new Date(lastMessageAt).getTime()) : null;
+
+  return {
+    tenantId: tenant,
+    numero: num,
+    from: fromYmd || todayYmd,
+    to: toYmd || fromYmd || todayYmd,
+    summary: {
+      incoming,
+      outgoing,
+      total: incoming + outgoing,
+      contacts: rangeContacts.size,
+      lastAt: summaryLastAt || null,
+    },
+    overall: {
+      lastMessageAt,
+      inactivityMs,
+      inactivityLabel: formatInactivityLabel(inactivityMs),
+    },
+    statsToday: {
+      incoming: todayIncoming,
+      outgoing: todayOutgoing,
+      contacts: todayContacts.size,
+    },
+    contacts: (contactRows || []).map((row) => ({
+      contact: String(row?._id || ''),
+      incoming: Number(row?.incoming || 0),
+      outgoing: Number(row?.outgoing || 0),
+      total: Number(row?.total || 0),
+      lastAt: row?.lastAt || null,
+    })),
+  };
+}
+
+async function getTelegramSessionRows(req) {
+  const visible = getVisibleContexts(req);
+  if (!visible.length) return [];
+  const db = await getDb();
+  const todayYmd = getTodayArYmd();
+
+  const items = [];
+  for (const ctx of visible) {
+    const [lockDoc, policyDoc, latestMsg, todayRows] = await Promise.all([
+      db.collection('tg_locks').findOne({ _id: ctx.lockId }),
+      db.collection('tg_bot_policies').findOne({
+        numero: ctx.numero,
+        $or: [{ tenantId: ctx.tenantId }, { tenantid: ctx.tenantId }]
+      }),
+      db.collection('tg_bot_message_log').find({ tenantId: ctx.tenantId, numero: ctx.numero }).sort({ at: -1 }).limit(1).next(),
+      db.collection('tg_bot_message_log').aggregate([
+        { $match: { tenantId: ctx.tenantId, numero: ctx.numero, dayKey: todayYmd } },
+        {
+          $group: {
+            _id: '$direction',
+            count: { $sum: 1 },
+            contacts: { $addToSet: '$contact' }
+          }
+        }
+      ]).toArray(),
+    ]);
+
+    let todayIncoming = 0;
+    let todayOutgoing = 0;
+    const todayContacts = new Set();
+    for (const row of (todayRows || [])) {
+      if (String(row?._id || '') === 'in') todayIncoming = Number(row?.count || 0);
+      if (String(row?._id || '') === 'out') todayOutgoing = Number(row?.count || 0);
+      for (const contact of (row?.contacts || [])) {
+        if (contact != null && String(contact).trim()) todayContacts.add(String(contact).trim());
+      }
+    }
+
+    const lastMessageAt = latestMsg?.at || null;
+    const inactivityMs = lastMessageAt ? Math.max(0, Date.now() - new Date(lastMessageAt).getTime()) : null;
+
+    items.push({
+      ...getContextStatus(ctx),
+      host: lockDoc?.host || '',
+      holderId: lockDoc?.holderId || '',
+      pid: lockDoc?.pid || null,
+      policy: {
+        disabled: !!policyDoc?.disabled,
+        mode: normalizeString(policyDoc?.mode, 'any'),
+        pinnedHost: normalizeString(policyDoc?.pinnedHost, ''),
+        blockedHosts: Array.isArray(policyDoc?.blockedHosts) ? policyDoc.blockedHosts.map((x) => String(x)) : [],
+      },
+      statsToday: {
+        incoming: todayIncoming,
+        outgoing: todayOutgoing,
+        contacts: todayContacts.size,
+      },
+      lastMessageAt,
+      inactivityMs,
+      inactivityLabel: formatInactivityLabel(inactivityMs),
+    });
+  }
+
+  return items.sort((a, b) => {
+    const ta = String(a.tenantId || '');
+    const tb = String(b.tenantId || '');
+    if (ta !== tb) return ta.localeCompare(tb);
+    return String(a.numero || '').localeCompare(String(b.numero || ''), 'es', { numeric: true, sensitivity: 'base' });
+  });
+}
+
+
+
 
 function telegramAdminEmbedPage() {
   return `<!doctype html>
@@ -1317,49 +1535,45 @@ function telegramAdminEmbedPage() {
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Sesiones Telegram · Asisto</title>
   <style>
-    :root{--bg:#f8fafc;--panel:#ffffff;--text:#0f172a;--muted:#64748b;--border:rgba(148,163,184,.24);--accent:#0e6b66;--danger:#b42318;--shadow:0 16px 38px rgba(15,23,42,.10);--radius:18px}
-    *{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
-    .page{padding:16px}
-    .toolbar{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
-    .toolbar h1{margin:0 0 4px;font-size:24px}
-    .sub{font-size:13px;color:var(--muted)}
-    .toolbarActions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-    .btn,.btn2{border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer;color:var(--text)}
-    .btn:hover,.btn2:hover{background:#f8fafc}
-    .btnDanger{color:var(--danger)}
-    .card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
-    .filters{display:grid;grid-template-columns:minmax(240px,1fr) 220px;gap:12px;align-items:end;margin-bottom:14px}
-    .filters label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted)}
-    .inp{width:100%;border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:#fff;color:var(--text)}
-    .msg{margin-bottom:12px;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:#fff;font-size:13px}
-    .msg.err{border-color:rgba(240,68,56,.25);background:rgba(240,68,56,.08);color:#991b1b}
-    .msg.ok{border-color:rgba(14,107,102,.22);background:rgba(14,107,102,.08);color:#0f5132}
-    .tableWrap{overflow:auto;max-width:100%;-webkit-overflow-scrolling:touch;padding-bottom:120px}
+    :root{--text:#0f172a;--muted:#64748b;--border:rgba(148,163,184,.24);--accent:#0e6b66;--danger:#b42318;--shadow:0 16px 38px rgba(15,23,42,.10);--radius:18px}
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:transparent;color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+    .appWide{width:100%;max-width:1240px;margin:0 auto;padding:16px}
+    .toolbar{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .toolbarActions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .small{font-size:12px;color:#667085}
+    .msg{padding:10px 12px;border-radius:12px;font-size:14px;margin-top:10px}
+    .msg.ok{background:rgba(70,200,140,.10);border:1px solid rgba(70,200,140,.35);color:#166534}
+    .msg.err{background:rgba(240,68,56,.10);border:1px solid rgba(240,68,56,.25);color:#991b1b}
+    .btn2{border:1px solid rgba(16,24,40,.12);background:#fff;border-radius:10px;padding:8px 10px;cursor:pointer;font-weight:650;margin-right:6px}
+    .btnDanger{border-color:rgba(240,68,56,.32);color:#b42318}
+    .wwebFilters{display:grid;grid-template-columns:minmax(260px,1fr) 220px;gap:12px;align-items:end;margin-top:12px}
+    .wwebFilterItem{min-width:0}
+    .wwebFilterItem label{display:block;margin-bottom:6px}
+    .inp{width:100%;height:40px;border-radius:12px;border:1px solid rgba(148,163,184,.45);padding:0 12px;font-size:14px;box-sizing:border-box;background:#fff;color:#0f172a}
+    .card{background:#fff;border:1px solid rgba(148,163,184,.22);border-radius:16px;padding:16px;box-shadow:0 10px 24px rgba(15,23,42,.06);overflow:visible}
+    .tableWrap{overflow:auto;max-width:100%;-webkit-overflow-scrolling:touch;padding-bottom:140px}
     .tableWrap[data-loading="1"]{opacity:.75}
-    .tgTable{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0}
-    .tgTable thead th{position:sticky;top:0;background:#fff;z-index:2}
-    .tgTable tbody tr{position:relative;z-index:1}
-    .tgTable tbody tr:nth-child(even){background:rgba(16,24,40,.02)}
-    .tgTable tbody tr.rowMenuOpen{z-index:120}
-    .tgTable td,.tgTable th{padding:12px 14px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;font-size:13px;white-space:normal;word-break:break-word}
-    .tgTable th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
-    .tgTable th:nth-child(1){width:160px}
-    .tgTable th:nth-child(2){width:240px}
-    .tgTable th:nth-child(3){width:180px}
-    .tgTable th:nth-child(4){width:150px}
-    .tgTable th:nth-child(5){width:180px}
-    .tgTable th:nth-child(6){width:220px}
-    .cellMain{font-weight:800}
-    .cellSub{font-size:12px;color:var(--muted);margin-top:2px}
-    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}
-    .status{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:1px solid var(--border);font-size:11px;font-weight:700;background:#fff}
-    .status.on{background:rgba(14,107,102,.08);color:var(--accent);border-color:rgba(14,107,102,.18)}
-    .status.off{background:rgba(148,163,184,.08);color:#475569}
-    .status.err{background:rgba(180,35,24,.08);color:var(--danger);border-color:rgba(180,35,24,.18)}
+   .wwebTable{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0}
+    .wwebTable thead th{position:sticky;top:0;background:#fff;z-index:2}
+    .wwebTable tbody tr{position:relative;z-index:1}
+    .wwebTable tbody tr:nth-child(even){background:rgba(16,24,40,.02)}
+    .wwebTable tbody tr.rowMenuOpen{z-index:120}
+    .wwebTable td,.wwebTable th{padding:10px;border-bottom:1px solid rgba(230,234,239,1);text-align:left;vertical-align:top;white-space:normal;word-break:break-word}
+    .wwebTable th{color:#475467;font-weight:700;font-size:13px}
+    .wwebTable th:nth-child(1){width:220px}
+    .wwebTable th:nth-child(2){width:200px}
+    .wwebTable th:nth-child(3){width:240px}
+    .wwebTable th:nth-child(4){width:180px}
+    .wwebTable th:nth-child(5){width:260px}
+    .cellMain{font-weight:700}
+    .cellSub{font-size:12px;opacity:.85;margin-top:2px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
     .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700}
     .badgeOk{background:#1f7a3a1a;color:#1f7a3a;border:1px solid #1f7a3a55}
     .badgeWarn{background:#b453091a;color:#b45309;border:1px solid #b4530955}
-    .wa-actions-cell{position:relative;z-index:1;overflow:visible}
+    .badgeDanger{background:#b4231814;color:#b42318;border:1px solid rgba(180,35,24,.28)}
+    .wa-actions-cell{position:relative;z-index:1}
     .wa-actions-cell.menuCellOpen{z-index:220}
     .actionBar{display:flex;gap:10px;align-items:center;justify-content:flex-start;flex-wrap:wrap}
     .btnMenu{padding:8px 12px;border-radius:12px;white-space:nowrap}
@@ -1367,37 +1581,40 @@ function telegramAdminEmbedPage() {
     .menuWrap{position:relative;display:inline-block;overflow:visible;z-index:260}
     .menu{position:absolute;right:0;top:calc(100% + 8px);min-width:200px;background:#fff;border:1px solid rgba(15,23,42,.12);box-shadow:0 12px 28px rgba(2,8,23,.18);border-radius:14px;padding:8px;display:none;z-index:320}
     .menu.up{top:auto;bottom:calc(100% + 8px)}
-    .menuItem{width:100%;text-align:left;padding:10px 12px;border:0;background:transparent;border-radius:10px;cursor:pointer;font-size:14px;color:var(--text)}
+    .menuItem{width:100%;text-align:left;padding:10px 12px;border:0;background:transparent;border-radius:10px;cursor:pointer;font-size:14px}
     .menuItem:hover{background:rgba(15,23,42,.06)}
     .menuSep{height:1px;background:rgba(15,23,42,.10);margin:8px 6px}
-    .empty{padding:18px;color:var(--muted);font-size:13px}
     body.modalOpen{overflow:hidden}
     .modal{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:16px}
     .modal[hidden]{display:none !important}
     .modalBackdrop{position:absolute;inset:0;background:rgba(0,0,0,.55)}
-    .modalCard{position:relative;width:min(980px,96vw);max-height:calc(100vh - 32px);overflow:auto;background:#fff;border-radius:16px;padding:14px 14px 16px;box-shadow:0 20px 60px rgba(0,0,0,.35);color:#0f172a}
+    .modalCard{position:relative;width:min(980px,96vw);background:#fff;border-radius:16px;padding:14px 14px 16px;box-shadow:0 20px 60px rgba(0,0,0,.35);color:#0f172a}
     .modalHeader{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
     .statsModalCard .small,.statsModalCard label,.statsModalCard #statsMeta,.statsModalCard #statsSub{color:#475467}
     .statsCards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:8px}
     .statsMiniCard{background:rgba(16,24,40,.03);border:1px solid rgba(16,24,40,.08);border-radius:12px;padding:10px 12px;color:#0f172a}
     .statsMiniCard .cellMain{color:#0f172a !important;font-weight:800}
+    .statsMiniCard .small{color:#475467 !important}
     .statsTableWrap{max-height:48vh;overflow:auto;padding-bottom:0}
-    .statsTable{width:100%;table-layout:fixed}
+    .statsTable{width:100%;table-layout:fixed;border-collapse:collapse}
+    .statsTable th,.statsTable td{padding:10px;border-bottom:1px solid rgba(230,234,239,1);font-size:13px;text-align:left}
     .statsTable th:nth-child(1){width:190px}
     .statsTable th:nth-child(2),.statsTable th:nth-child(3),.statsTable th:nth-child(4){width:90px}
     .statsTable th:nth-child(5){width:180px}
-    @media (max-width:960px){.filters{grid-template-columns:1fr}}
+    @media (max-width:960px){.wwebFilters{grid-template-columns:1fr}}
     @media (max-width:820px){
+      .appWide{max-width:100%}
       .toolbar{align-items:stretch}
       .toolbarActions{width:100%}
       .toolbarActions .btn2{flex:1 1 auto;justify-content:center}
       .tableWrap{overflow:visible;padding-bottom:24px}
-      .tgTable,.tgTable thead,.tgTable tbody,.tgTable th,.tgTable td,.tgTable tr{display:block;width:100%}
-      .tgTable thead{display:none}
-      .tgTable tbody{display:grid;gap:12px}
-      .tgTable tbody tr{border:1px solid rgba(148,163,184,.22);border-radius:14px;padding:10px 12px;background:#fff !important;box-shadow:0 8px 18px rgba(15,23,42,.06);z-index:1}
-      .tgTable td{border:0;padding:8px 0}
-      .tgTable td + td{border-top:1px solid rgba(148,163,184,.14)}
+      .wwebTable,.wwebTable thead,.wwebTable tbody,.wwebTable th,.wwebTable td,.wwebTable tr{display:block;width:100%}
+      .wwebTable thead{display:none}
+      .wwebTable tbody{display:grid;gap:12px}
+      .wwebTable tbody tr{border:1px solid rgba(148,163,184,.22);border-radius:14px;padding:10px 12px;background:#fff !important;box-shadow:0 8px 18px rgba(15,23,42,.06);z-index:1}
+      .wwebTable td{border:0;padding:8px 0}
+      .wwebTable td + td{border-top:1px solid rgba(148,163,184,.14)}
+      .actionBar{justify-content:flex-start}
       .menu{right:auto;left:0;min-width:min(240px,82vw)}
     }
     </style>
