@@ -1,81 +1,27 @@
 /*script:telegram_runtime*/
-/*version:1.00.00   21/04/2026   */
+/*version:2.00.00   21/04/2026   */
 
 const TelegramBot = require('node-telegram-bot-api');
-const mongoose = require('mongoose');
+const { getDb } = require('./db');
+const auth = require('./auth_ui');
 const os = require('os');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
-const auth = require('./auth_ui');
+
+const AR_TZ = 'America/Argentina/Cordoba';
+const instanceId = process.env.INSTANCE_ID || `${os.hostname()}-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
+const CONFIG_COLLECTION = String(process.env.ASISTO_CONFIG_COLLECTION || 'tenant_config').trim() || 'tenant_config';
+const REFRESH_CONFIG_MS = Math.max(15000, Number(process.env.TG_REFRESH_CONFIG_MS || 60000) || 60000);
+const HEARTBEAT_MS = Math.max(5000, Number(process.env.TG_HEARTBEAT_MS || 5000) || 5000);
+const ACTION_POLL_MS = Math.max(3000, Number(process.env.TG_ACTION_POLL_MS || 4000) || 4000);
+const EXPIRY_POLL_MS = Math.max(3000, Number(process.env.TG_EXPIRY_POLL_MS || 5000) || 5000);
+const LOCK_STALE_MS = Math.max(15000, Number(process.env.TG_LOCK_STALE_MS || 30000) || 30000);
 
 const fetchJson = (...args) => {
   if (typeof fetch === 'function') return fetch(...args);
   return import('node-fetch').then(({ default: fetchFn }) => fetchFn(...args));
 };
-
-const AR_TZ = 'America/Argentina/Cordoba';
-const instanceId = process.env.INSTANCE_ID || `${os.hostname()}-${process.pid}-${crypto.randomBytes(4).toString('hex')}`;
-
-let lockAcquiredAt = null;
-let tenantId = process.env.TENANT_ID || '';
-let numero = process.env.NUMERO || '';
-let mongo_uri = process.env.MONGO_URI || '';
-let mongo_db = process.env.MONGO_DB || '';
-let status_token = process.env.STATUS_TOKEN || '';
-let telegram_bot_token = process.env.TELEGRAM_BOT_TOKEN || '';
-let telegram_bot_username = process.env.TELEGRAM_BOT_USERNAME || '';
-let tenantConfig = null;
-let mongoReady = false;
-
-let LockModel = null;
-let ActionModel = null;
-let PolicyModel = null;
-let HistoryModel = null;
-let MessageLogModel = null;
-let ChatRegistryModel = null;
-
-let heartbeatTimer = null;
-let actionTimer = null;
-let outboundTimer = null;
-let expiryTimer = null;
-let actionBusy = false;
-let heartbeatBusy = false;
-let outboundBusy = false;
-let shuttingDown = false;
-let runtimeStarted = false;
-
-let bot = null;
-let botStarted = false;
-let startingNow = false;
-let isOwner = false;
-let lockId = '';
-let localBotState = 'idle';
-let telegram_self_id = '';
-let telegram_self_username = '';
-
-let seg_desde = 8000;
-let seg_hasta = 12000;
-let seg_msg = 5000;
-let seg_tele = 3000;
-let api = 'http://managermsm.ddns.net:2002/v200/api/Api_Chat_Cab/ProcesarMensajePost';
-let api2 = 'http://managermsm.ddns.net:2002/v200/api/Api_Mensajes/Consulta_no_enviados';
-let api3 = 'http://managermsm.ddns.net:2002/v200/api/Api_Mensajes/Actualiza_mensaje';
-let key = 'FMM0325*';
-let msg_inicio = '';
-let msg_fin = '';
-let cant_lim = 0;
-let msg_lim = 'Continuar? S / N';
-let time_cad = 0;
-let email_err = '';
-let msg_cad = '';
-let msg_can = '';
-let msg_errores = '';
-let nom_chatbot = '';
-
-const jsonGlobal = []; // [chatId, indiceActual, jsonPendiente, fechaUltimoMovimiento]
-const recentOutgoingStatIds = new Map();
 
 const signatures = {
   JVBERi0: 'application/pdf',
@@ -85,10 +31,28 @@ const signatures = {
   '/9j/': 'image/jpg'
 };
 
-const logFilePath_event = path.join(__dirname, 'telegram_runtime_event.log');
-const logFilePath_error = path.join(__dirname, 'telegram_runtime_error.log');
+const logFilePathEvent = path.join(__dirname, 'telegram_runtime_event.log');
+const logFilePathError = path.join(__dirname, 'telegram_runtime_error.log');
 
-let routesMounted = false;
+const manager = {
+  started: false,
+  routesMounted: false,
+  refreshTimer: null,
+  refreshing: false,
+  contexts: new Map(), // tenantId -> ctx
+  byUsername: new Map(),
+};
+
+function logLine(message, type = 'event') {
+  try {
+    const line = `[${new Date().toISOString()}] ${String(message || '')}\n`;
+    const target = String(type || 'event').toLowerCase() === 'error' ? logFilePathError : logFilePathEvent;
+    fs.appendFileSync(target, line, 'utf8');
+    console.log(line.trim());
+  } catch (e) {
+    try { console.log('telegram_runtime log error', e?.message || e); } catch {}
+  }
+}
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -108,312 +72,402 @@ function nowArgentinaISO() {
   }
 }
 
-function EscribirLog(mensaje, tipo) {
-  try {
-    const linea = `[${new Date().toISOString()}] ${String(mensaje || '')}\n`;
-    const target = String(tipo || 'event').toLowerCase() === 'error' ? logFilePath_error : logFilePath_event;
-    fs.appendFileSync(target, linea, 'utf8');
-    console.log(linea.trim());
-  } catch (e) {
-    try { console.log('Log error', e?.message || e); } catch {}
-  }
+function normalizeString(value, fallback = '') {
+  if (value === undefined || value === null) return fallback;
+  const s = String(value).trim();
+  return s || fallback;
 }
 
-function readBootstrapFromFile() {
+function normalizeNumber(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function normalizeChatId(value) {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'number') return value;
+  const raw = String(value).trim();
+  if (!raw) return '';
+  if (/^-?\d+$/.test(raw)) {
+    const n = Number(raw);
+    if (Number.isSafeInteger(n)) return n;
+  }
+  return raw;
+}
+
+function detectMimeType(base64) {
+  const token = String(base64 || '').slice(0, 12);
+  for (const prefix of Object.keys(signatures)) {
+    if (token.startsWith(prefix)) return signatures[prefix];
+  }
+  return 'application/octet-stream';
+}
+
+function buildMediaPayloadFromBase64(base64, filename, caption) {
+  const mimetype = detectMimeType(base64);
+  const safeName = normalizeString(filename, `archivo_${Date.now()}`);
+  return {
+    type: 'media',
+    mimetype,
+    filename: safeName,
+    caption: normalizeString(caption, ''),
+    buffer: Buffer.from(String(base64 || ''), 'base64')
+  };
+
+}
+
+function getApiBotNumber(ctx) {
+  return String(
+    ctx?.config?.numero ||
+    ctx?.numero ||
+    ctx?.telegramSelfId ||
+    ''
+  ).trim();
+}
+
+function buildTelegramIdReply(msg) {
+  const userId = String(msg?.from?.id || '').trim();
+  const chatId = String(msg?.chat?.id || '').trim();
+  const username = String(msg?.from?.username || '').trim();
+  const parts = [];
+
+  if (userId) parts.push(`Tu ID de Telegram es: ${userId}`);
+  if (chatId && chatId !== userId) parts.push(`ID del chat: ${chatId}`);
+  if (username) parts.push(`Usuario: @${username}`);
+
+  return parts.length ? parts.join('\n') : 'No pude obtener tu ID de Telegram.';
+}
+
+function getErrorConfig() {
   try {
-    const candidates = [
-      path.join(__dirname, 'configuracion.json'),
-      path.join(process.cwd(), 'configuracion.json')
-    ];
-
-    let p = null;
-    for (const candidate of candidates) {
-      if (fs.existsSync(candidate)) {
-        p = candidate;
-        break;
-      }
-    }
-
-    if (!p) return {};
-
-    const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
-    const obj = (raw && raw.configuracion && typeof raw.configuracion === 'object') ? raw.configuracion : raw;
-    return obj && typeof obj === 'object' ? obj : {};
+    const raw = JSON.parse(fs.readFileSync(path.join(__dirname, 'configuracion_errores.json'), 'utf8'));
+    const conf = (raw && raw.configuracion && typeof raw.configuracion === 'object') ? raw.configuracion : raw;
+    return {
+      msg_errores: normalizeString(conf?.msg_error, ''),
+      email_err: normalizeString(conf?.email_err, ''),
+    };
   } catch {
-    return {};
+    return { msg_errores: '', email_err: '' };
   }
 }
 
-function applyTenantConfig(conf) {
-  if (!conf || typeof conf !== 'object') return;
-
-  const hasValue = (v) => v !== undefined && v !== null && !(typeof v === 'string' && v.trim() === '');
-  const asNumber = (v, current) => {
-    if (!hasValue(v)) return current;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : current;
+function baseTenantDefaults() {
+  return {
+    numero: '',
+    status_token: '',
+    telegram_bot_token: '',
+    telegram_bot_username: '',
+    seg_desde: 8000,
+    seg_hasta: 12000,
+    seg_msg: 5000,
+    seg_tele: 3000,
+    api: 'http://managermsm.ddns.net:2002/v200/api/Api_Chat_Cab/ProcesarMensajePost',
+    api2: 'http://managermsm.ddns.net:2002/v200/api/Api_Mensajes/Consulta_no_enviados',
+    api3: 'http://managermsm.ddns.net:2002/v200/api/Api_Mensajes/Actualiza_mensaje',
+    key: 'FMM0325*',
+    msg_inicio: '',
+    msg_fin: '',
+    cant_lim: 0,
+    msg_lim: 'Continuar? S / N',
+    time_cad: 0,
+    msg_cad: '',
+    msg_can: '',
+    nom_chatbot: '',
   };
-  const asString = (v, current = '') => {
-    if (!hasValue(v)) return current;
-    return String(v).trim();
-  };
-
-  if (!numero && (conf.numero || conf.NUMERO)) numero = asString(conf.numero || conf.NUMERO, numero);
-  if (conf.status_token !== undefined) status_token = asString(conf.status_token, status_token);
-
-  seg_desde = asNumber(conf.seg_desde, seg_desde);
-  seg_hasta = asNumber(conf.seg_hasta, seg_hasta);
-  seg_msg = asNumber(conf.seg_msg, seg_msg);
-  seg_tele = asNumber(conf.seg_tele, seg_tele);
-  if (conf.api !== undefined) api = String(conf.api);
-  if (conf.api2 !== undefined) api2 = String(conf.api2);
-  if (conf.api3 !== undefined) api3 = String(conf.api3);
-  if (conf.key !== undefined) key = String(conf.key);
-  if (conf.msg_inicio !== undefined) msg_inicio = String(conf.msg_inicio ?? '');
-  if (conf.msg_fin !== undefined) msg_fin = String(conf.msg_fin ?? '');
-  cant_lim = asNumber(conf.cant_lim, cant_lim);
-  if (conf.msg_lim !== undefined) msg_lim = String(conf.msg_lim ?? '');
-  time_cad = asNumber(conf.time_cad, time_cad);
-  if (conf.msg_cad !== undefined) msg_cad = String(conf.msg_cad ?? '');
-  if (conf.msg_can !== undefined) msg_can = String(conf.msg_can ?? '');
-  if (conf.nom_emp !== undefined) nom_chatbot = String(conf.nom_emp);
-  if (conf.nom_chatbot !== undefined) nom_chatbot = String(conf.nom_chatbot);
-
-  telegram_bot_token = asString(
-    conf.telegram_bot_token || conf.bot_token || conf.token_bot_telegram || conf.telegramToken,
-    telegram_bot_token
-  );
-
-  telegram_bot_username = asString(
-    conf.telegram_bot_username || conf.bot_username || conf.username_bot_telegram || conf.telegramBotUsername,
-    telegram_bot_username
-  );
 }
 
-function RecuperarJsonConf() {
-  const boot = readBootstrapFromFile();
-  if (!tenantId && boot.tenantId) tenantId = String(boot.tenantId).trim().toUpperCase();
-  if (!mongo_uri && (boot.mongo_uri || boot.mongoUri)) mongo_uri = String(boot.mongo_uri || boot.mongoUri).trim();
-  if (!mongo_db && (boot.mongo_db || boot.mongoDb || boot.dbName)) mongo_db = String(boot.mongo_db || boot.mongoDb || boot.dbName).trim();
-  applyTenantConfig(boot);
+function normalizeTenantDoc(doc) {
+  if (!doc || typeof doc !== 'object') return null;
+  const conf = (doc.configuracion && typeof doc.configuracion === 'object') ? doc.configuracion : doc;
+  const tenantId = normalizeString(doc.tenantId || doc._id || conf.tenantId || conf._id, '').toUpperCase();
+  const token = normalizeString(
+    conf.telegram_bot_token || conf.bot_token || conf.token_bot_telegram || conf.telegramToken || doc.telegram_bot_token,
+    ''
+  );
+  if (!tenantId || !token) return null;
+
+  const out = baseTenantDefaults();
+  out.tenantId = tenantId;
+  out.numero = normalizeString(conf.numero || conf.NUMERO || doc.numero || `telegram_${tenantId}`, `telegram_${tenantId}`);
+  out.status_token = normalizeString(conf.status_token || doc.status_token || process.env.STATUS_TOKEN || '', '');
+  out.telegram_bot_token = token;
+  out.telegram_bot_username = normalizeString(
+    conf.telegram_bot_username || conf.bot_username || conf.username_bot_telegram || conf.telegramBotUsername || doc.telegram_bot_username,
+    ''
+  );
+  out.seg_desde = normalizeNumber(conf.seg_desde ?? doc.seg_desde, out.seg_desde);
+  out.seg_hasta = normalizeNumber(conf.seg_hasta ?? doc.seg_hasta, out.seg_hasta);
+  out.seg_msg = normalizeNumber(conf.seg_msg ?? doc.seg_msg, out.seg_msg);
+  out.seg_tele = normalizeNumber(conf.seg_tele ?? doc.seg_tele, out.seg_tele);
+  out.api = normalizeString(conf.api || doc.api, out.api);
+  out.api2 = normalizeString(conf.api2 || doc.api2, out.api2);
+  out.api3 = normalizeString(conf.api3 || doc.api3, out.api3);
+  out.key = normalizeString(conf.key || doc.key, out.key);
+  out.msg_inicio = normalizeString(conf.msg_inicio ?? doc.msg_inicio, '');
+  out.msg_fin = normalizeString(conf.msg_fin ?? doc.msg_fin, '');
+  out.cant_lim = normalizeNumber(conf.cant_lim ?? doc.cant_lim, 0);
+  out.msg_lim = normalizeString(conf.msg_lim ?? doc.msg_lim, out.msg_lim);
+  out.time_cad = normalizeNumber(conf.time_cad ?? doc.time_cad, 0);
+  out.msg_cad = normalizeString(conf.msg_cad ?? doc.msg_cad, '');
+  out.msg_can = normalizeString(conf.msg_can ?? doc.msg_can, '');
+  out.nom_chatbot = normalizeString(conf.nom_chatbot || conf.nom_emp || doc.nom_chatbot || doc.nom_emp, '');
+  return out;
 }
 
-async function ensureMongo() {
-  try {
-    if (mongoReady && mongoose?.connection?.readyState === 1 && mongoose?.connection?.db) {
-      initMongoModelsIfNeeded();
-      return true;
-    }
+function getContextStatus(ctx) {
+  return {
+    tenantId: ctx.tenantId,
+    numero: ctx.numero,
+    lockId: ctx.lockId,
+    botState: ctx.botState,
+    botStarted: !!ctx.botStarted,
+    telegramBotUsername: ctx.telegramSelfUsername || ctx.telegramBotUsername || '',
+    telegramBotId: ctx.telegramSelfId || '',
+    startedAt: ctx.lockAcquiredAt || null,
+    lastSeenAt: ctx.lastSeenAt || null,
+    knownChats: ctx.knownChats || 0,
+  };
+}
 
-    if (globalThis.__asistoTgRuntimeMongoConnectingPromise) {
-      const ok = await globalThis.__asistoTgRuntimeMongoConnectingPromise;
-      if (ok) initMongoModelsIfNeeded();
-      return ok;
-    }
+function botConnectionSignature(cfg) {
+  return JSON.stringify({
+    token: cfg.telegram_bot_token,
+    username: cfg.telegram_bot_username,
+  });
+}
 
-    if (!mongo_uri) return false;
+function runtimeConfigSignature(cfg) {
+  return JSON.stringify({
+    numero: cfg.numero,
+    api: cfg.api,
+    api2: cfg.api2,
+    api3: cfg.api3,
+    key: cfg.key,
+    seg_desde: cfg.seg_desde,
+    seg_hasta: cfg.seg_hasta,
+    seg_msg: cfg.seg_msg,
+    seg_tele: cfg.seg_tele,
+    cant_lim: cfg.cant_lim,
+    msg_lim: cfg.msg_lim,
+    time_cad: cfg.time_cad,
+    msg_cad: cfg.msg_cad,
+    msg_can: cfg.msg_can,
+    msg_inicio: cfg.msg_inicio,
+    msg_fin: cfg.msg_fin,
+    status_token: cfg.status_token,
+    nom_chatbot: cfg.nom_chatbot,
+  });
+}
 
-    globalThis.__asistoTgRuntimeMongoConnectingPromise = (async () => {
-      try {
-        await mongoose.connect(mongo_uri, {
-          dbName: (mongo_db || tenantId || 'asisto'),
-          autoIndex: true,
-          serverSelectionTimeoutMS: 15000
-        });
+function createContext(cfg) {
+  const errCfg = getErrorConfig();
+  return {
+    tenantId: cfg.tenantId,
+    numero: cfg.numero,
+    lockId: `${cfg.tenantId}:${cfg.numero || 'telegram'}`,
+    lockAcquiredAt: new Date(),
+    botState: 'idle',
+    botStarted: false,
+    startingNow: false,
+    bot: null,
+    knownChats: 0,
+    lastSeenAt: null,
+    telegramSelfId: '',
+    telegramSelfUsername: '',
+    config: { ...cfg, msg_errores: errCfg.msg_errores },
+    statusToken: cfg.status_token || '',
+    jsonGlobal: [],
+    recentOutgoingStatIds: new Map(),
+    actionBusy: false,
+    heartbeatBusy: false,
+    outboundBusy: false,
+    shuttingDown: false,
+    ownsLock: false,
+    timers: {
+      heartbeat: null,
+      action: null,
+      outbound: null,
+      expiry: null,
+    },
+  };
+}
 
-        if (!mongoose.connection.db) {
-          await new Promise((resolve, reject) => {
-            const t = setTimeout(() => reject(new Error('mongo_db_not_ready')), 15000);
-            mongoose.connection.once('connected', () => {
-              clearTimeout(t);
-              resolve();
-            });
-          });
-        }
-
-        mongoReady = true;
-        initMongoModelsIfNeeded();
-        return true;
-      } catch (e) {
-        try { await mongoose.disconnect(); } catch {}
-        mongoReady = false;
-        EscribirLog('Mongo connect error: ' + String(e?.message || e), 'error');
-        return false;
-      } finally {
-        globalThis.__asistoTgRuntimeMongoConnectingPromise = null;
-      }
-    })();
-
-    const ok = await globalThis.__asistoTgRuntimeMongoConnectingPromise;
-    if (ok) initMongoModelsIfNeeded();
-    return ok;
-  } catch (e) {
-    mongoReady = false;
-    globalThis.__asistoTgRuntimeMongoConnectingPromise = null;
-    EscribirLog('ensureMongo error: ' + String(e?.message || e), 'error');
-    return false;
+async function getTenantConfigsFromDb() {
+  const db = await getDb();
+  const rows = await db.collection(CONFIG_COLLECTION).find({}).toArray();
+  const configs = [];
+  for (const row of rows || []) {
+    const normalized = normalizeTenantDoc(row);
+    if (normalized) configs.push(normalized);
   }
+
+  if (!configs.length) {
+    const fallback = normalizeTenantDoc({
+      _id: normalizeString(process.env.TENANT_ID, ''),
+      telegram_bot_token: normalizeString(process.env.TELEGRAM_BOT_TOKEN, ''),
+      telegram_bot_username: normalizeString(process.env.TELEGRAM_BOT_USERNAME, ''),
+      numero: normalizeString(process.env.NUMERO, ''),
+      status_token: normalizeString(process.env.STATUS_TOKEN, ''),
+      api: process.env.TG_API || undefined,
+      api2: process.env.TG_API2 || undefined,
+      api3: process.env.TG_API3 || undefined,
+      key: process.env.TG_API_KEY || undefined,
+    });
+    if (fallback) configs.push(fallback);
+  }
+
+  return configs;
 }
 
-async function loadTenantConfigFromDbMinimal() {
+async function getPolicySafe(ctx) {
   try {
-    if (!tenantId || !mongo_uri) return null;
-    const ok = await ensureMongo();
-    if (!ok || !mongoose?.connection?.db) return null;
-
-    const collName = String(process.env.ASISTO_CONFIG_COLLECTION || 'tenant_config').trim() || 'tenant_config';
-    const coll = mongoose.connection.db.collection(collName);
-
-    let doc = await coll.findOne({ _id: tenantId });
-    if (!doc) doc = await coll.findOne({ tenantId: tenantId });
-    if (!doc) return null;
-
-    const conf = (doc && doc.configuracion && typeof doc.configuracion === 'object') ? doc.configuracion : doc;
-    tenantConfig = conf;
-    applyTenantConfig(conf);
-    return conf;
-  } catch (e) {
-    EscribirLog('loadTenantConfigFromDbMinimal error: ' + String(e?.message || e), 'error');
+    const db = await getDb();
+    const coll = db.collection('tg_bot_policies');
+    const p = await coll.findOne({
+      numero: ctx.numero,
+      $or: [{ tenantId: ctx.tenantId }, { tenantid: ctx.tenantId }]
+    });
+    if (p) return p;
+    return await coll.findOne({ _id: ctx.lockId });
+  } catch {
     return null;
   }
 }
 
-async function refreshTenantConfigFromDbPerMessage() {
-  try {
-    const conf = await loadTenantConfigFromDbMinimal();
-    if (conf && typeof conf === 'object') {
-      tenantConfig = conf;
-      applyTenantConfig(conf);
-      return conf;
-    }
-  } catch (e) {
-    EscribirLog('refreshTenantConfigFromDbPerMessage error: ' + String(e?.message || e), 'error');
-  }
-
-  if (tenantConfig && typeof tenantConfig === 'object') {
-    applyTenantConfig(tenantConfig);
-    return tenantConfig;
-  }
-
-  return null;
+function lockStateAllowsTakeover(state) {
+  const s = normalizeString(state, '').toLowerCase();
+  return ['offline', 'removed', 'disabled', 'error', 'conflict', 'reconfiguring', 'released', 'sigterm', 'sigint', 'sigbreak', 'stopped'].includes(s);
 }
 
-function initMongoModelsIfNeeded() {
+async function acquireLock(ctx, desiredState = 'starting') {
   try {
-    if (!mongoose?.connection?.db) return;
+    const db = await getDb();
+    const coll = db.collection('tg_locks');
+    const now = new Date();
+    const staleBefore = new Date(Date.now() - LOCK_STALE_MS);
 
-    if (!PolicyModel) {
-      const PolicySchema = new mongoose.Schema({
-        _id: { type: String },
-        tenantid: { type: String },
-        tenantId: { type: String, index: true },
-        numero: { type: String, index: true },
-        disabled: { type: Boolean, default: false }
-      }, { collection: 'tg_bot_policies' });
-      PolicyModel = mongoose.models.TgBotPolicy || mongoose.model('TgBotPolicy', PolicySchema);
+    try {
+      await coll.updateOne(
+        {
+          _id: ctx.lockId,
+          $or: [
+            { holderId: instanceId },
+            { holderId: { $exists: false } },
+            { holderId: null },
+            { lastSeenAt: { $lt: staleBefore } },
+            { state: { $in: ['offline', 'removed', 'disabled', 'error', 'conflict', 'reconfiguring', 'released', 'SIGTERM', 'SIGINT', 'SIGBREAK', 'stopped'] } }
+          ]
+        },
+        {
+          $set: {
+            tenantId: ctx.tenantId,
+            tenantid: ctx.tenantId,
+            numero: ctx.numero,
+            holderId: instanceId,
+            host: os.hostname(),
+            pid: process.pid,
+            state: desiredState,
+            startedAt: ctx.lockAcquiredAt || now,
+            lastSeenAt: now,
+            botId: String(ctx.telegramSelfId || ''),
+            botUsername: String(ctx.telegramSelfUsername || ctx.telegramBotUsername || ''),
+          }
+        },
+        { upsert: true }
+      );
+    } catch (e) {
+      if (!(String(e?.code || '') === '11000' || /duplicate key/i.test(String(e?.message || e)))) {
+        throw e;
+      }
     }
 
-    if (!HistoryModel) {
-      const HistorySchema = new mongoose.Schema({
-        lockId: { type: String, index: true },
-        event: { type: String, index: true },
-        host: { type: String },
-        pid: { type: Number },
-        detail: { type: mongoose.Schema.Types.Mixed },
-        at: { type: Date, default: Date.now, index: true }
-      }, { collection: 'tg_bot_history' });
-      HistoryModel = mongoose.models.TgBotHistory || mongoose.model('TgBotHistory', HistorySchema);
-    }
-
-    if (!LockModel) {
-      const LockSchema = new mongoose.Schema({
-        _id: { type: String },
-        tenantId: { type: String },
-        tenantid: { type: String, index: true },
-        numero: { type: String },
-        holderId: { type: String },
-        host: { type: String },
-        pid: { type: Number },
-        state: { type: String },
-        startedAt: { type: Date },
-        lastSeenAt: { type: Date },
-        botId: { type: String },
-        botUsername: { type: String }
-      }, { collection: 'tg_locks' });
-      LockModel = mongoose.models.TgLock || mongoose.model('TgLock', LockSchema);
-    }
-
-    if (!ActionModel) {
-      const ActionSchema = new mongoose.Schema({
-        lockId: { type: String, index: true },
-        action: { type: String, index: true },
-        reason: { type: String },
-        requestedBy: { type: String },
-        requestedAt: { type: Date, default: Date.now, index: true },
-        consumedAt: { type: Date },
-        doneAt: { type: Date, index: true },
-        doneBy: { type: String },
-        result: { type: String }
-      }, { collection: 'tg_bot_actions' });
-      ActionModel = mongoose.models.TgBotAction || mongoose.model('TgBotAction', ActionSchema);
-    }
-
-    if (!MessageLogModel) {
-      const MessageLogSchema = new mongoose.Schema({
-        tenantId: { type: String, index: true },
-        numero: { type: String, index: true },
-        contact: { type: String, index: true },
-        direction: { type: String, index: true },
-        messageType: { type: String, index: true },
-        body: { type: String },
-        bodyLength: { type: Number },
-        hasMedia: { type: Boolean, default: false },
-        at: { type: Date, default: Date.now, index: true },
-        atLocal: { type: String },
-        dayKey: { type: String, index: true }
-      }, { collection: 'tg_bot_message_log' });
-      MessageLogModel = mongoose.models.TgBotMessageLog || mongoose.model('TgBotMessageLog', MessageLogSchema);
-    }
-
-    if (!ChatRegistryModel) {
-      const ChatRegistrySchema = new mongoose.Schema({
-        _id: { type: String },
-        tenantId: { type: String, index: true },
-        numero: { type: String, index: true },
-        chatId: { type: String, index: true },
-        userId: { type: String, index: true },
-        chatType: { type: String },
-        username: { type: String },
-        firstName: { type: String },
-        lastName: { type: String },
-        title: { type: String },
-        isKnown: { type: Boolean, default: true },
-        blocked: { type: Boolean, default: false },
-        firstSeenAt: { type: Date, default: Date.now },
-        lastSeenAt: { type: Date, default: Date.now }
-      }, { collection: 'tg_chat_registry' });
-      ChatRegistryModel = mongoose.models.TgChatRegistry || mongoose.model('TgChatRegistry', ChatRegistrySchema);
-    }
+    const doc = await coll.findOne({ _id: ctx.lockId });
+    ctx.ownsLock = !!doc && String(doc.holderId || '') === instanceId;
+    if (ctx.ownsLock) ctx.lastSeenAt = doc.lastSeenAt || now;
+    return ctx.ownsLock;
   } catch (e) {
-    EscribirLog('initMongoModelsIfNeeded error: ' + String(e?.message || e), 'error');
+    logLine(`[${ctx.tenantId}] acquireLock error: ${e?.message || e}`, 'error');
+    ctx.ownsLock = false;
+    return false;
   }
 }
 
-async function pushHistory(event, detail) {
+async function updateLockState(ctx, state) {
   try {
-    if (!await ensureMongo()) return null;
-    if (!HistoryModel || !lockId) return null;
-    return await HistoryModel.create({
-      lockId,
+    ctx.botState = normalizeString(state, ctx.botState || 'idle');
+    ctx.lastSeenAt = new Date();
+    if (!ctx.ownsLock) return;
+
+    const db = await getDb();
+    await db.collection('tg_locks').updateOne(
+      { _id: ctx.lockId, holderId: instanceId },
+      {
+        $set: {
+          tenantId: ctx.tenantId,
+          tenantid: ctx.tenantId,
+          numero: ctx.numero,
+          holderId: instanceId,
+          host: os.hostname(),
+          pid: process.pid,
+          state: ctx.botState,
+          startedAt: ctx.lockAcquiredAt || new Date(),
+          lastSeenAt: ctx.lastSeenAt,
+          botId: String(ctx.telegramSelfId || ''),
+          botUsername: String(ctx.telegramSelfUsername || ctx.telegramBotUsername || ''),
+        }
+      },
+      { upsert: false }
+    );
+  } catch (e) {
+    logLine(`[${ctx.tenantId}] updateLockState error: ${e?.message || e}`, 'error');
+  }
+}
+
+async function forceReleaseLock(ctx, finalState = 'offline') {
+  try {
+    if (!ctx.ownsLock) return;
+    const db = await getDb();
+    await db.collection('tg_locks').updateOne(
+      { _id: ctx.lockId, holderId: instanceId },
+      {
+        $set: {
+          tenantId: ctx.tenantId,
+          tenantid: ctx.tenantId,
+          numero: ctx.numero,
+          holderId: null,
+          host: os.hostname(),
+          pid: process.pid,
+          state: String(finalState || 'offline'),
+          releasedAt: new Date(),
+          releasedBy: instanceId,
+          lastSeenAt: new Date(),
+          botId: String(ctx.telegramSelfId || ''),
+          botUsername: String(ctx.telegramSelfUsername || ctx.telegramBotUsername || ''),
+        }
+      },
+      { upsert: false }
+    );
+  } catch (e) {
+    logLine(`[${ctx.tenantId}] forceReleaseLock error: ${e?.message || e}`, 'error');
+  } finally {
+    ctx.ownsLock = false;
+  }
+}
+
+async function pushHistory(ctx, event, detail) {
+  try {
+    const db = await getDb();
+    await db.collection('tg_bot_history').insertOne({
+      lockId: ctx.lockId,
+      tenantId: ctx.tenantId,
+      numero: ctx.numero,
       event: String(event || ''),
       host: os.hostname(),
       pid: process.pid,
       detail: detail || null,
       at: new Date()
     });
-  } catch {
-    return null;
-  }
+  } catch {}
 }
 
 function arDatePartsForStats(date) {
@@ -424,49 +478,30 @@ function arDatePartsForStats(date) {
       hour: '2-digit', minute: '2-digit', second: '2-digit',
       hour12: false
     }).formatToParts(date || new Date());
-
     const map = {};
-    for (const p of (parts || [])) {
-      if (p && p.type) map[p.type] = p.value;
-    }
-
-    const y = map.year || '0000';
-    const m = map.month || '00';
-    const d = map.day || '00';
-    const hh = map.hour || '00';
-    const mm = map.minute || '00';
-    const ss = map.second || '00';
-
+    for (const p of (parts || [])) if (p && p.type) map[p.type] = p.value;
     return {
-      dayKey: `${y}-${m}-${d}`,
-      atLocal: `${y}-${m}-${d}T${hh}:${mm}:${ss}`
+      dayKey: `${map.year || '0000'}-${map.month || '00'}-${map.day || '00'}`,
+      atLocal: `${map.year || '0000'}-${map.month || '00'}-${map.day || '00'}T${map.hour || '00'}:${map.minute || '00'}:${map.second || '00'}`
     };
   } catch {
-    const dt = date || new Date();
-    const iso = dt.toISOString();
+    const iso = (date || new Date()).toISOString();
     return { dayKey: iso.slice(0, 10), atLocal: iso.slice(0, 19) };
   }
 }
 
-async function logMessageStat(direction, contact, payload) {
+async function logMessageStat(ctx, direction, contact, payload) {
   try {
-    if (!tenantId || !numero) return;
-    if (!await ensureMongo()) return;
-    if (!MessageLogModel) return;
-
-    const dir = String(direction || '').trim().toLowerCase();
+    const dir = normalizeString(direction, '').toLowerCase();
     if (dir !== 'in' && dir !== 'out') return;
-
     const now = new Date();
     const parts = arDatePartsForStats(now);
-
     let messageType = 'text';
     let hasMedia = false;
     let body = '';
 
     if (typeof payload === 'string') {
       body = payload;
-      messageType = 'text';
     } else if (payload && typeof payload === 'object') {
       if (typeof payload.body === 'string') body = payload.body;
       if (typeof payload.caption === 'string' && !body) body = payload.caption;
@@ -476,25 +511,22 @@ async function logMessageStat(direction, contact, payload) {
       if (!messageType || messageType === 'undefined') messageType = hasMedia ? 'media' : 'text';
     }
 
-    body = String(body || '');
-    const cleanContact = String(contact || '').trim();
-    if (!cleanContact) return;
-
-    await MessageLogModel.create({
-      tenantId: String(tenantId || ''),
-      numero: String(numero || ''),
-      contact: cleanContact,
+    const db = await getDb();
+    await db.collection('tg_bot_message_log').insertOne({
+      tenantId: ctx.tenantId,
+      numero: ctx.numero,
+      contact: String(contact || '').trim(),
       direction: dir,
       messageType: messageType || (hasMedia ? 'media' : 'text'),
-      body,
-      bodyLength: body.length,
+      body: String(body || ''),
+      bodyLength: String(body || '').length,
       hasMedia: !!hasMedia,
       at: now,
       atLocal: parts.atLocal,
-      dayKey: parts.dayKey
+      dayKey: parts.dayKey,
     });
   } catch (e) {
-    EscribirLog('logMessageStat error: ' + String(e?.message || e), 'error');
+    logLine(`[${ctx.tenantId}] logMessageStat error: ${e?.message || e}`, 'error');
   }
 }
 
@@ -509,132 +541,33 @@ function getOutgoingStatMessageId(messageLike) {
   }
 }
 
-function rememberOutgoingStatLogged(messageLike) {
+function rememberOutgoingStatLogged(ctx, messageLike) {
   try {
     const id = getOutgoingStatMessageId(messageLike);
     if (!id) return;
     const now = Date.now();
-    recentOutgoingStatIds.set(id, now);
-    for (const [k, ts] of recentOutgoingStatIds.entries()) {
-      if (!ts || (now - ts) > 10 * 60 * 1000) recentOutgoingStatIds.delete(k);
+    ctx.recentOutgoingStatIds.set(id, now);
+    for (const [k, ts] of ctx.recentOutgoingStatIds.entries()) {
+      if (!ts || (now - ts) > 10 * 60 * 1000) ctx.recentOutgoingStatIds.delete(k);
     }
   } catch {}
 }
 
-async function getPolicySafe() {
-  try {
-    if (!await ensureMongo()) return null;
-    if (!PolicyModel) return null;
-
-    if (tenantId && numero) {
-      const tid = String(tenantId);
-      const num = String(numero);
-      const p = await PolicyModel.findOne({
-        numero: num,
-        $or: [{ tenantId: tid }, { tenantid: tid }]
-      }).lean();
-      if (p) return p;
-    }
-
-    if (lockId) {
-      const p2 = await PolicyModel.findById(lockId).lean();
-      if (p2) return p2;
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-async function updateLockStateSafe(state) {
-  try {
-    localBotState = String(state || localBotState || 'idle');
-    if (!lockId) return;
-    if (!await ensureMongo()) return;
-    if (!LockModel) return;
-
-    const now = new Date();
-    await LockModel.updateOne(
-      { _id: lockId },
-      {
-        $set: {
-          tenantId,
-          tenantid: tenantId,
-          numero,
-          holderId: instanceId,
-          host: os.hostname(),
-          pid: process.pid,
-          state: localBotState,
-          startedAt: lockAcquiredAt || now,
-          lastSeenAt: now,
-          botId: String(telegram_self_id || ''),
-          botUsername: String(telegram_self_username || telegram_bot_username || '')
-        }
-      },
-      { upsert: true }
-    );
-  } catch (e) {
-    EscribirLog('updateLockStateSafe error: ' + String(e?.message || e), 'error');
-  }
-}
-
-async function getLockDocSafe() {
-  try {
-    if (await ensureMongo() && LockModel && lockId) {
-      const doc = await LockModel.findById(lockId).lean();
-      if (doc) return doc;
-    }
-  } catch {}
-
-  return {
-    _id: lockId || `${tenantId}:${numero}`,
-    tenantId,
-    tenantid: tenantId,
-    numero,
-    holderId: instanceId,
-    host: os.hostname(),
-    pid: process.pid,
-    state: localBotState,
-    startedAt: lockAcquiredAt || null,
-    lastSeenAt: new Date(),
-    botId: telegram_self_id,
-    botUsername: telegram_self_username || telegram_bot_username
-  };
-}
-
-function normalizeChatId(value) {
-  if (value === undefined || value === null) return '';
-  if (typeof value === 'number') return value;
-
-  const raw = String(value).trim();
-  if (!raw) return '';
-  if (/^-?\d+$/.test(raw)) {
-    const n = Number(raw);
-    if (Number.isSafeInteger(n)) return n;
-  }
-  return raw;
-}
-
-async function updateChatRegistryFromMessage(msg) {
+async function updateChatRegistryFromMessage(ctx, msg) {
   try {
     if (!msg || !msg.chat) return;
-    if (!await ensureMongo()) return;
-    if (!ChatRegistryModel) return;
-
     const chatId = String(msg.chat.id || '');
     if (!chatId) return;
-
     const from = msg.from || {};
-    const keyId = `${tenantId}:${chatId}`;
-
-    await ChatRegistryModel.updateOne(
+    const keyId = `${ctx.tenantId}:${chatId}`;
+    const db = await getDb();
+    await db.collection('tg_chat_registry').updateOne(
       { _id: keyId },
       {
         $setOnInsert: {
           _id: keyId,
-          tenantId: String(tenantId || ''),
-          numero: String(numero || ''),
+          tenantId: ctx.tenantId,
+          numero: ctx.numero,
           chatId,
           firstSeenAt: new Date()
         },
@@ -653,47 +586,59 @@ async function updateChatRegistryFromMessage(msg) {
       { upsert: true }
     );
   } catch (e) {
-    EscribirLog('updateChatRegistryFromMessage error: ' + String(e?.message || e), 'error');
+    logLine(`[${ctx.tenantId}] updateChatRegistry error: ${e?.message || e}`, 'error');
   }
 }
 
-async function getChatRegistry(chatId) {
+async function getChatRegistry(ctx, chatId) {
   try {
-    if (!await ensureMongo()) return null;
-    if (!ChatRegistryModel) return null;
-    return await ChatRegistryModel.findOne({ _id: `${tenantId}:${String(chatId)}` }).lean();
+    const db = await getDb();
+    return await db.collection('tg_chat_registry').findOne({ _id: `${ctx.tenantId}:${String(chatId)}` });
   } catch {
     return null;
   }
 }
 
-function detectMimeType(b64) {
-  const token = String(b64 || '').slice(0, 12);
-  for (const prefix of Object.keys(signatures)) {
-    if (token.startsWith(prefix)) return signatures[prefix];
+function indexOf2d(ctx, itemToFind) {
+  const normalized = String(itemToFind);
+  for (let i = 0; i < ctx.jsonGlobal.length; i++) {
+    if (String(ctx.jsonGlobal[i][0]) === normalized) return i;
   }
-  return 'application/octet-stream';
+  return -1;
 }
 
-function buildMediaPayloadFromBase64(base64, filename, caption) {
-  const mimetype = detectMimeType(base64);
-  const safeName = String(filename || '').trim() || `archivo_${Date.now()}`;
-  return {
-    type: 'media',
-    mimetype,
-    filename: safeName,
-    caption: String(caption || ''),
-    buffer: Buffer.from(String(base64 || ''), 'base64')
-  };
+function rememberJson(ctx, chatId, json) {
+  const indice = indexOf2d(ctx, chatId);
+  const now = new Date();
+  if (indice !== -1) {
+    ctx.jsonGlobal[indice][0] = chatId;
+    ctx.jsonGlobal[indice][2] = json;
+    ctx.jsonGlobal[indice][3] = now;
+    ctx.jsonGlobal[indice][4] = false;
+  } else {
+    ctx.jsonGlobal.push([chatId, 0, json, now, false]);
+  }
 }
 
-async function safeSendTelegram(chatId, content, opts = {}) {
-  if (!bot) throw new Error('telegram_bot_not_ready');
+function resetContinuationState(ctx, indice) {
+  if (indice === -1 || !ctx.jsonGlobal[indice]) return;
+  ctx.jsonGlobal[indice][1] = 0;
+  ctx.jsonGlobal[indice][2] = '';
+  ctx.jsonGlobal[indice][3] = '';
+  ctx.jsonGlobal[indice][4] = false;
+}
+
+function hasPendingContinuation(ctx, indice) {
+  if (indice === -1 || !ctx.jsonGlobal[indice]) return false;
+  return ctx.jsonGlobal[indice][4] === true;
+}
+
+async function safeSendTelegram(ctx, chatId, content, opts = {}) {
+  if (!ctx.bot) throw new Error('telegram_bot_not_ready');
   const destination = normalizeChatId(chatId);
   if (destination === '' || destination === null) throw new Error('telegram_chat_id_missing');
 
   let sent = null;
-
   try {
     if (typeof content === 'object' && content !== null && (content.buffer || content.base64 || content.type === 'media')) {
       const payload = { ...content };
@@ -704,61 +649,62 @@ async function safeSendTelegram(chatId, content, opts = {}) {
       const fileOptions = { filename, contentType: mimetype };
 
       if (mimetype.startsWith('image/')) {
-        sent = await bot.sendPhoto(destination, buffer, { caption, disable_notification: false }, fileOptions);
+        sent = await ctx.bot.sendPhoto(destination, buffer, { caption, disable_notification: false }, fileOptions);
       } else if (mimetype.startsWith('video/')) {
-        sent = await bot.sendVideo(destination, buffer, { caption, disable_notification: false }, fileOptions);
+        sent = await ctx.bot.sendVideo(destination, buffer, { caption, disable_notification: false }, fileOptions);
       } else {
-        sent = await bot.sendDocument(destination, buffer, { caption, disable_notification: false }, fileOptions);
+        sent = await ctx.bot.sendDocument(destination, buffer, { caption, disable_notification: false }, fileOptions);
       }
 
-      await logMessageStat('out', destination, {
-        body: '',
-        caption,
-        type: mimetype.startsWith('image/') ? 'photo' : mimetype.startsWith('video/') ? 'video' : 'document',
-        mimetype,
-        filename,
-        hasMedia: true,
-        buffer: true
+      await logMessageStat(ctx, 'out', destination, {
+        body: '', caption, type: mimetype.startsWith('image/') ? 'photo' : mimetype.startsWith('video/') ? 'video' : 'document',
+        mimetype, filename, hasMedia: true, buffer: true,
       });
     } else {
       const text = String(content ?? '');
-      sent = await bot.sendMessage(destination, text, {
+      sent = await ctx.bot.sendMessage(destination, text, {
         disable_web_page_preview: true,
         disable_notification: false,
-        ...opts
+        ...opts,
       });
-
-      await logMessageStat('out', destination, {
-        body: text,
-        type: 'text',
-        hasMedia: false
-      });
+      await logMessageStat(ctx, 'out', destination, { body: text, type: 'text', hasMedia: false });
     }
 
-    rememberOutgoingStatLogged(sent);
+    rememberOutgoingStatLogged(ctx, sent);
     return sent;
   } catch (e) {
     const msg = String(e?.message || e);
     if (/bot was blocked by the user|chat not found|forbidden/i.test(msg)) {
       try {
-        if (await ensureMongo() && ChatRegistryModel) {
-          await ChatRegistryModel.updateOne(
-            { _id: `${tenantId}:${String(destination)}` },
-            { $set: { blocked: true, lastSeenAt: new Date() } },
-            { upsert: true }
-          );
-        }
+        const db = await getDb();
+        await db.collection('tg_chat_registry').updateOne(
+          { _id: `${ctx.tenantId}:${String(destination)}` },
+          { $set: { blocked: true, lastSeenAt: new Date() } },
+          { upsert: true }
+        );
       } catch {}
     }
     throw e;
   }
 }
 
-async function actualizar_estado_mensaje(baseUrl, estado, tipo, nombre, contacto, direccion, email, idRenglon, idDest) {
+
+async function safeSendTelegramIfReady(ctx, chatId, content, opts = {}) {
+  if (!ctx || !ctx.bot || ctx.shuttingDown || !ctx.botStarted) return null;
+  try {
+    return await safeSendTelegram(ctx, chatId, content, opts);
+  } catch (e) {
+    const msg = String(e?.message || e || '');
+    if (/telegram_bot_not_ready/i.test(msg)) return null;
+    throw e;
+  }
+}
+
+async function actualizarEstadoMensaje(ctx, estado, tipo, nombre, contacto, direccion, email, idRenglon, idDest) {
   try {
     const params = new URLSearchParams();
-    params.set('key', String(key || ''));
-    params.set('nro_tel_from', String(telegram_self_id || numero || ''));
+    params.set('key', String(ctx.config.key || ''));
+    params.set('nro_tel_from', getApiBotNumber(ctx));
     params.set('estado', String(estado || ''));
     if (tipo !== undefined && tipo !== null) params.set('tipo', String(tipo));
     if (nombre !== undefined && nombre !== null) params.set('nombre', String(nombre));
@@ -768,225 +714,144 @@ async function actualizar_estado_mensaje(baseUrl, estado, tipo, nombre, contacto
     if (idRenglon !== undefined && idRenglon !== null) params.set('Id_msj_renglon', String(idRenglon));
     if (idDest !== undefined && idDest !== null) params.set('Id_msj_dest', String(idDest));
 
-    const url = `${baseUrl}?${params.toString()}`;
+    const url = `${ctx.config.api3}?${params.toString()}`;
     const resp = await fetchJson(url, { method: 'GET' });
     if (!resp.ok) {
       const txt = await resp.text().catch(() => '');
-      EscribirLog('actualizar_estado_mensaje ERROR ' + txt, 'error');
+      logLine(`[${ctx.tenantId}] actualizar_estado_mensaje ERROR ${txt}`, 'error');
     }
   } catch (e) {
-    EscribirLog('actualizar_estado_mensaje error: ' + String(e?.message || e), 'error');
+    logLine(`[${ctx.tenantId}] actualizar_estado_mensaje error: ${e?.message || e}`, 'error');
   }
 }
 
-function recuperar_json(chatId, json) {
-  const indice = indexOf2d(chatId);
-  const now = new Date();
-
-  if (indice !== -1) {
-    jsonGlobal[indice][0] = chatId;
-    jsonGlobal[indice][2] = json;
-    jsonGlobal[indice][3] = now;
-  } else {
-    jsonGlobal.push([chatId, 0, json, now]);
-  }
-}
-
-function indexOf2d(itemToFind) {
-  const normalized = String(itemToFind);
-  for (let i = 0; i < jsonGlobal.length; i++) {
-    if (String(jsonGlobal[i][0]) === normalized) return i;
-  }
-  return -1;
-}
-
-async function procesar_mensaje(json, message) {
-  RecuperarJsonConfMensajes();
-
+async function procesarMensajeLotes(ctx, json, message) {
   const chatId = String(message.from);
-  const indice = indexOf2d(chatId);
+  const indice = indexOf2d(ctx, chatId);
   if (indice === -1) return;
 
   const now = new Date();
-  const segundos = Math.random() * (Math.max(seg_hasta, seg_desde) - Math.min(seg_hasta, seg_desde)) + Math.min(seg_hasta, seg_desde);
-  const l_json = jsonGlobal[indice][2];
+  const segDesde = Math.min(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
+  const segHasta = Math.max(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
+  const segundos = Math.random() * (segHasta - segDesde) + segDesde;
+  const l_json = ctx.jsonGlobal[indice][2];
   let tam_json = 0;
 
-  jsonGlobal[indice][3] = now;
+  ctx.jsonGlobal[indice][3] = now;
 
-  for (const _ of (l_json || [])) {
-    tam_json += 1;
+  for (const _ in (ctx.jsonGlobal[indice][2] || [])) {
+    tam_json = tam_json + 1;
   }
 
-  for (let i = jsonGlobal[indice][1]; i < tam_json; i++) {
+  for (let i = ctx.jsonGlobal[indice][1]; i < tam_json; i++) {
     let mensaje = '';
-
-    if (l_json[i].cod_error) {
+    if (l_json[i]?.cod_error) {
       mensaje = l_json[i].msj_error;
-      EscribirLog('Error API en procesar_mensaje()', 'error');
-      await EnviarEmail('ChatBot Api error', mensaje);
+      logLine(`[${ctx.tenantId}] Error API en procesarMensajeLotes()`, 'error');
     } else {
-      mensaje = l_json[i].Respuesta;
+      mensaje = l_json[i]?.Respuesta;
     }
 
     if (mensaje === '' || mensaje === null || mensaje === undefined) {
-      continue;
-    }
-
-    mensaje = String(mensaje).replaceAll('|', '\n');
-
-    if (i <= cant_lim + jsonGlobal[indice][1] - 1) {
-      await safeSendTelegram(chatId, mensaje);
-      await sleep(segundos);
-      if (tam_json - 1 === i) {
-        jsonGlobal[indice][1] = 0;
-        jsonGlobal[indice][2] = '';
-        jsonGlobal[indice][3] = '';
-      }
     } else {
-      let msg_loc = String(msg_lim || '').replaceAll('|', '\n');
-      if (tam_json <= i + cant_lim) {
-        msg_loc = msg_loc.replace('<recuento>', String(tam_json - i));
+      mensaje = String(mensaje).replaceAll('|', '\n');
+
+      if (i <= Number(ctx.config.cant_lim || 0) + ctx.jsonGlobal[indice][1] - 1) {
+        await safeSendTelegramIfReady(ctx, chatId, mensaje);
+        await sleep(segundos);
+
+        if (tam_json - 1 === i) {
+          resetContinuationState(ctx, indice);
+        }
       } else {
-        msg_loc = msg_loc.replace('<recuento>', String(cant_lim + 1));
+        let msg_loc = String(ctx.config.msg_lim || '').replaceAll('|', '\n');
+
+        if (tam_json <= i + Number(ctx.config.cant_lim || 0)) {
+          msg_loc = msg_loc.replace('<recuento>', String(tam_json - i));
+        } else {
+          msg_loc = msg_loc.replace('<recuento>', String(Number(ctx.config.cant_lim || 0) + 1));
+        }
+
+        msg_loc = msg_loc.replace('<recuento_lote>', String(tam_json - 2));
+        msg_loc = msg_loc.replace('<recuento_pendiente>', String(tam_json - i));
+
+        if (msg_loc !== '' && msg_loc !== null && msg_loc !== undefined) {
+          await safeSendTelegramIfReady(ctx, chatId, msg_loc);
+        }
+
+        ctx.jsonGlobal[indice][1] = i;
+        ctx.jsonGlobal[indice][3] = now;
+        ctx.jsonGlobal[indice][4] = true;
+        return;
       }
-      msg_loc = msg_loc.replace('<recuento_lote>', String(Math.max(tam_json - 2, 0)));
-      msg_loc = msg_loc.replace('<recuento_pendiente>', String(Math.max(tam_json - i, 0)));
-      if (msg_loc) await safeSendTelegram(chatId, msg_loc);
-      jsonGlobal[indice][1] = i;
-      jsonGlobal[indice][3] = now;
-      return;
     }
   }
 }
 
-async function controlar_hora_msg_once() {
+async function controlarHoraMsgOnce(ctx) {
   try {
-    for (const item of jsonGlobal) {
+    for (const item of ctx.jsonGlobal) {
       if (!item || !item[3]) continue;
       const fecha_msg = item[3].getTime ? item[3].getTime() : 0;
       const diferencia = Date.now() - fecha_msg;
-
-      if (fecha_msg && time_cad > 0 && diferencia > time_cad) {
-        if (msg_cad) await safeSendTelegram(item[0], msg_cad);
+      if (fecha_msg && Number(ctx.config.time_cad || 0) > 0 && diferencia > Number(ctx.config.time_cad || 0)) {
+        if (ctx.config.msg_cad) await safeSendTelegram(ctx, item[0], ctx.config.msg_cad);
         item[3] = '';
         item[2] = '';
         item[1] = 0;
       }
     }
   } catch (e) {
-    EscribirLog('controlar_hora_msg_once error: ' + String(e?.message || e), 'error');
+    logLine(`[${ctx.tenantId}] controlarHoraMsgOnce error: ${e?.message || e}`, 'error');
   }
 }
 
-function RecuperarJsonConfMensajes() {
-  let jsonError = null;
-  try { jsonError = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'configuracion_errores.json'))); } catch {}
+async function handleIncomingTelegramMessage(ctx, msg) {
   try {
-    if (jsonError && jsonError.configuracion) {
-      email_err = jsonError.configuracion.email_err;
-      msg_errores = jsonError.configuracion.msg_error;
-    }
-  } catch {}
-
-  if (tenantConfig && typeof tenantConfig === 'object') {
-    applyTenantConfig(tenantConfig);
-    return;
-  }
-
-  try {
-    const raw = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'configuracion.json')));
-    const conf = (raw && raw.configuracion && typeof raw.configuracion === 'object') ? raw.configuracion : raw;
-    if (conf && typeof conf === 'object') applyTenantConfig(conf);
-  } catch {}
-}
-
-async function EnviarEmail(subject, texto) {
-  try {
-    if (!email_err) return false;
-    const jsonError = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'configuracion_errores.json')));
-    const cfg = jsonError.configuracion || {};
-    if (!cfg.smtp || !cfg.user || !cfg.pass || !cfg.email_sal) return false;
-
-    const transporter = nodemailer.createTransport({
-      host: cfg.smtp,
-      port: Number(cfg.puerto || 587),
-      secure: Number(cfg.puerto || 587) === 465,
-      auth: {
-        user: cfg.user,
-        pass: cfg.pass
-      }
-    });
-
-    await transporter.sendMail({
-      from: cfg.email_sal,
-      to: cfg.email_err || email_err,
-      subject: String(subject || 'Asisto Telegram'),
-      text: String(texto || '')
-    });
-
-    return true;
-  } catch (e) {
-    EscribirLog('EnviarEmail error: ' + String(e?.message || e), 'error');
-    return false;
-  }
-}
-
-async function handleIncomingTelegramMessage(msg) {
-  try {
-    await refreshTenantConfigFromDbPerMessage();
-    RecuperarJsonConfMensajes();
-    await updateChatRegistryFromMessage(msg);
-
+    await updateChatRegistryFromMessage(ctx, msg);
     const chatId = String(msg?.chat?.id || '');
     const body = typeof msg?.text === 'string' ? msg.text : '';
-
     if (!chatId) return;
 
-    const indice_telefono = indexOf2d(chatId);
-    const valor_i = indice_telefono === -1 ? 0 : jsonGlobal[indice_telefono][1];
+    const indice_telefono = indexOf2d(ctx, chatId);
+    const valor_i = indice_telefono === -1 ? 0 : ctx.jsonGlobal[indice_telefono][1];
+    const pendingContinuation = hasPendingContinuation(ctx, indice_telefono);
+    logLine(`[${ctx.tenantId}] ${chatId} ${ctx.telegramSelfId} message ${body}`, 'event');
 
-    EscribirLog(`${chatId} ${telegram_self_id} message ${body}`, 'event');
-
-    if (valor_i === 0) {
+    if (!pendingContinuation) {
       if (!body) {
-        EscribirLog('mensaje telegram no texto -> ignorado', 'event');
+        logLine(`[${ctx.tenantId}] mensaje telegram no texto -> ignorado`, 'event');
         return;
       }
 
-      const segundos = Math.random() * (Math.max(seg_hasta, seg_desde) - Math.min(seg_hasta, seg_desde)) + Math.min(seg_hasta, seg_desde);
+      const trimmedBody = String(body || '').trim();
       const telefonoFrom = chatId;
-      const telefonoTo = String(telegram_self_id || numero || '');
+      const telefonoTo = getApiBotNumber(ctx);
+      await logMessageStat(ctx, 'in', telefonoFrom, { body, type: 'text', hasMedia: false });
 
-      try {
-        await logMessageStat('in', telefonoFrom, { body, type: 'text', hasMedia: false });
-      } catch {}
-
-      if (msg_inicio) {
-        await safeSendTelegram(chatId, msg_inicio);
+      if (trimmedBody === '/id') {
+        await safeSendTelegramIfReady(ctx, chatId, buildTelegramIdReply(msg));
+        return;
       }
 
-      const jsonTexto = {
-        Tel_Origen: telefonoFrom,
-        Tel_Destino: telefonoTo,
-        Mensaje: body,
-        Respuesta: ''
-      };
 
-      EscribirLog('Mensaje ' + JSON.stringify(jsonTexto), 'event');
+      const segDesde = Math.min(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
+      const segHasta = Math.max(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
+      const segundos = Math.random() * (segHasta - segDesde) + segDesde;
 
+      if (ctx.config.msg_inicio) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_inicio);
+
+      const jsonTexto = { Tel_Origen: telefonoFrom, Tel_Destino: telefonoTo, Mensaje: body, Respuesta: '' };
       let timeoutId;
       try {
         const controller = new AbortController();
         timeoutId = setTimeout(() => controller.abort(), 55000);
-
-        const resp = await fetchJson(api, {
+        const resp = await fetchJson(ctx.config.api, {
           method: 'POST',
           body: JSON.stringify(jsonTexto),
           headers: { 'Content-type': 'application/json; charset=UTF-8' },
-          signal: controller.signal
+          signal: controller.signal,
         });
-
         clearTimeout(timeoutId);
 
         const raw = await resp.text();
@@ -995,459 +860,437 @@ async function handleIncomingTelegramMessage(msg) {
 
         if (!resp.ok) {
           const detalle = json ? JSON.stringify(json) : raw;
-          EscribirLog('Error ApiTelegram - Response ERROR ' + detalle, 'error');
-          await EnviarEmail('ApiTelegram - Response ERROR', detalle);
-          if (msg_errores) await safeSendTelegram(chatId, msg_errores);
+          logLine(`[${ctx.tenantId}] Error ApiTelegram - Response ERROR ${detalle}`, 'error');
+          if (ctx.config.msg_errores) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_errores);
           return 'error';
         }
 
-        recuperar_json(chatId, json);
-        await procesar_mensaje(json, { from: chatId, body });
-
-        if (msg_fin) {
-          await safeSendTelegram(chatId, msg_fin);
-        }
-
+        rememberJson(ctx, chatId, json);
+        await procesarMensajeLotes(ctx, json, { from: chatId, body });
+        if (ctx.config.msg_fin) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_fin);
         await sleep(segundos);
         return 'ok';
       } catch (err) {
         clearTimeout(timeoutId);
-        const detalle = 'Error Chatbot Telegram ' + (err?.message || err) + ' ' + JSON.stringify(jsonTexto);
-        EscribirLog(detalle, 'error');
-        await EnviarEmail('Chatbot Telegram Error', detalle);
-        if (msg_errores) await safeSendTelegram(chatId, msg_errores);
+        const detalle = `Error Chatbot Telegram ${err?.message || err} ${JSON.stringify(jsonTexto)}`;
+        logLine(`[${ctx.tenantId}] ${detalle}`, 'error');
+        if (ctx.config.msg_errores) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_errores);
         return 'error';
       }
     }
 
     const bodyUpper = String(body || '').trim().toUpperCase();
-
-    if (valor_i !== 0 && bodyUpper === 'N') {
-      if (msg_can) await safeSendTelegram(chatId, msg_can);
-      jsonGlobal[indice_telefono][2] = '';
-      jsonGlobal[indice_telefono][1] = 0;
-      jsonGlobal[indice_telefono][3] = '';
+    if (pendingContinuation && bodyUpper === 'N') {
+      if (ctx.config.msg_can) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_can);
+      resetContinuationState(ctx, indice_telefono);
       return;
     }
 
-    if (valor_i !== 0 && bodyUpper !== 'N' && bodyUpper !== 'S') {
-      await safeSendTelegram(chatId, '🤔 *No entiendo*,\nPor favor ingrese *S* o *N* para mostrar los siguientes resultados\n', { parse_mode: 'Markdown' });
+    if (pendingContinuation && bodyUpper !== 'N' && bodyUpper !== 'S') {
+      await safeSendTelegramIfReady(ctx, chatId, '🤔 *No entiendo*,\nPor favor ingrese *S* o *N* para mostrar los siguientes resultados\n', { parse_mode: 'Markdown' });
       return;
     }
 
-    if (valor_i !== 0 && bodyUpper === 'S') {
-      await procesar_mensaje(jsonGlobal[indice_telefono][2], { from: chatId, body });
+    if (pendingContinuation && bodyUpper === 'S') {
+      ctx.jsonGlobal[indice_telefono][4] = false;
+      await procesarMensajeLotes(ctx, ctx.jsonGlobal[indice_telefono][2], { from: chatId, body });
     }
   } catch (e) {
-    EscribirLog('handleIncomingTelegramMessage error: ' + String(e?.message || e), 'error');
+    logLine(`[${ctx.tenantId}] handleIncomingTelegramMessage error: ${e?.message || e}`, 'error');
   }
 }
 
-function attachBotHandlers() {
-  if (!bot) return;
-
-  bot.on('message', async (msg) => {
-    await handleIncomingTelegramMessage(msg);
+function attachBotHandlers(ctx) {
+  if (!ctx.bot) return;
+  ctx.bot.on('message', async (msg) => {
+    await handleIncomingTelegramMessage(ctx, msg);
   });
-
-  bot.on('polling_error', async (err) => {
-    EscribirLog('Telegram polling_error: ' + String(err?.message || err), 'error');
-    await updateLockStateSafe('polling_error');
+  ctx.bot.on('polling_error', async (err) => {
+    const msg = String(err?.message || err);
+    logLine(`[${ctx.tenantId}] Telegram polling_error: ${msg}`, 'error');
+    if (/409 Conflict/i.test(msg)) {
+      await stopContext(ctx, 'conflict');
+      return;
+    }
+    await updateLockState(ctx, 'polling_error');
   });
-
-  bot.on('webhook_error', async (err) => {
-    EscribirLog('Telegram webhook_error: ' + String(err?.message || err), 'error');
-    await updateLockStateSafe('webhook_error');
+  ctx.bot.on('webhook_error', async (err) => {
+    logLine(`[${ctx.tenantId}] Telegram webhook_error: ${err?.message || err}`, 'error');
+    await updateLockState(ctx, 'webhook_error');
   });
 }
 
-async function createBotIfNeeded() {
-  if (bot) return bot;
-  if (!telegram_bot_token) throw new Error('telegram_bot_token_missing');
-
-  bot = new TelegramBot(telegram_bot_token, {
+async function createBotIfNeeded(ctx) {
+  if (ctx.bot) return ctx.bot;
+  if (!ctx.config.telegram_bot_token) throw new Error('telegram_bot_token_missing');
+  ctx.bot = new TelegramBot(ctx.config.telegram_bot_token, {
     polling: {
       autoStart: false,
       interval: 300,
-      params: {
-        timeout: 10,
-        allowed_updates: ['message']
-      }
+      params: { timeout: 10, allowed_updates: ['message'] }
     }
   });
-
-  attachBotHandlers();
-  return bot;
+  attachBotHandlers(ctx);
+  return ctx.bot;
 }
 
-async function startBotInitialize() {
-  if (botStarted) return;
-  if (!isOwner) return;
-  if (startingNow) return;
+async function stopContext(ctx, reason = 'offline') {
+  ctx.shuttingDown = true;
+  try { if (ctx.timers.heartbeat) clearInterval(ctx.timers.heartbeat); } catch {}
+  try { if (ctx.timers.action) clearInterval(ctx.timers.action); } catch {}
+  try { if (ctx.timers.outbound) clearTimeout(ctx.timers.outbound); } catch {}
+  try { if (ctx.timers.expiry) clearInterval(ctx.timers.expiry); } catch {}
+  ctx.timers.heartbeat = ctx.timers.action = ctx.timers.outbound = ctx.timers.expiry = null;
 
-  const pol = await getPolicySafe();
-  if (pol && pol.disabled === true) {
-    await updateLockStateSafe('disabled');
-    await pushHistory('policy_disabled', { by: 'policy', disabled: true });
-    return;
-  }
-
-  startingNow = true;
+  const bot = ctx.bot;
+  ctx.bot = null;
 
   try {
-    await createBotIfNeeded();
-    const me = await bot.getMe();
-    telegram_self_id = String(me?.id || '');
-    telegram_self_username = String(me?.username || telegram_bot_username || '');
-    await bot.startPolling({ restart: true });
-    botStarted = true;
-    await updateLockStateSafe('online');
-    EscribirLog('Telegram listo!', 'event');
-    startOutboundPoller();
-    startExpiryPoller();
-  } catch (e) {
-    botStarted = false;
-    EscribirLog('Error al inicializar Telegram: ' + String(e?.message || e), 'error');
-    try {
-      if (bot && typeof bot.stopPolling === 'function') await bot.stopPolling({ cancel: true });
-    } catch {}
-    bot = null;
-  } finally {
-    startingNow = false;
-  }
+    if (bot && typeof bot.removeAllListeners === 'function') {
+      bot.removeAllListeners('message');
+      bot.removeAllListeners('polling_error');
+      bot.removeAllListeners('webhook_error');
+    }
+  } catch {}
+
+  try {
+    if (bot && typeof bot.stopPolling === 'function') {
+      await bot.stopPolling({ cancel: true, reason });
+    }
+  } catch {}
+
+  ctx.botStarted = false;
+  ctx.startingNow = false;
+  ctx.botState = String(reason || 'offline');
+  await updateLockState(ctx, ctx.botState);
+  await forceReleaseLock(ctx, ctx.botState);
+  logLine(`[${ctx.tenantId}] Telegram detenido (${ctx.botState})`, 'event');
 }
 
-async function heartbeatTick() {
+async function heartbeatTick(ctx) {
+  if (ctx.heartbeatBusy) return;
+  ctx.heartbeatBusy = true;
   try {
-    if (heartbeatBusy) return;
-    heartbeatBusy = true;
-    if (!isOwner || !lockId) return;
-
-    await updateLockStateSafe(localBotState || 'online');
-
-    const pol = await getPolicySafe();
-    const disabled = !!(pol && pol.disabled === true);
-    if (disabled) {
-      await releaseBotOwnership('disabled');
+    if (ctx.ownsLock) {
+      await updateLockState(ctx, ctx.botState || 'online');
+    }
+    const pol = await getPolicySafe(ctx);
+    if (pol && pol.disabled === true) {
+      await stopContext(ctx, 'disabled');
       return;
     }
-
-    if (isOwner && !botStarted && !startingNow) {
-      await startBotInitialize();
+    if (!ctx.botStarted && !ctx.startingNow && !ctx.shuttingDown) {
+      await startContext(ctx);
     }
   } catch (e) {
-    EscribirLog('heartbeatTick error: ' + String(e?.message || e), 'error');
+    logLine(`[${ctx.tenantId}] heartbeatTick error: ${e?.message || e}`, 'error');
   } finally {
-    heartbeatBusy = false;
+    ctx.heartbeatBusy = false;
   }
 }
 
-function startHeartbeat() {
-  try { if (heartbeatTimer) clearInterval(heartbeatTimer); } catch {}
-  heartbeatTick().catch(() => {});
-  heartbeatTimer = setInterval(() => { heartbeatTick().catch(() => {}); }, 5000);
-}
-
-async function forceReleaseLock(finalState) {
-  const st = String(finalState || 'offline');
-  try {
-    if (!await ensureMongo()) return;
-    if (!lockId || !LockModel) return;
-    await LockModel.updateOne(
-      { _id: lockId },
-      {
-        $set: {
-          tenantId,
-          tenantid: tenantId,
-          numero,
-          holderId: instanceId,
-          host: os.hostname(),
-          pid: process.pid,
-          state: st,
-          lastSeenAt: new Date(),
-          releasedAt: new Date(),
-          releasedBy: instanceId,
-          botId: String(telegram_self_id || ''),
-          botUsername: String(telegram_self_username || telegram_bot_username || '')
-        }
-      },
-      { upsert: true }
-    );
-  } catch (e) {
-    EscribirLog('forceReleaseLock error: ' + String(e?.message || e), 'error');
-  }
-}
-
-async function releaseBotOwnership(finalState) {
-  try {
-    try { if (outboundTimer) { clearTimeout(outboundTimer); outboundTimer = null; } } catch {}
-    try { if (expiryTimer) { clearInterval(expiryTimer); expiryTimer = null; } } catch {}
-    if (bot && typeof bot.stopPolling === 'function') {
-      try { await bot.stopPolling({ cancel: true, reason: 'release' }); } catch {}
+function scheduleOutboundPoller(ctx) {
+ /* try { if (ctx.timers.outbound) clearTimeout(ctx.timers.outbound); } catch {}
+  ctx.timers.outbound = setTimeout(async () => {
+    try {
+      await consultaApiMensajes(ctx);
+    } catch (e) {
+      logLine(`[${ctx.tenantId}] outbound tick error: ${e?.message || e}`, 'error');
+    } finally {
+      if (!ctx.shuttingDown && ctx.botStarted) scheduleOutboundPoller(ctx);
     }
-    bot = null;
-    botStarted = false;
-    localBotState = String(finalState || 'offline');
-    await updateLockStateSafe(localBotState);
-    await forceReleaseLock(localBotState);
-    isOwner = false;
-  } catch (e) {
-    EscribirLog('releaseBotOwnership error: ' + String(e?.message || e), 'error');
-  }
+  }, Math.max(1000, Number(ctx.config.seg_tele) || 3000));*/
 }
 
-async function handleActionDoc(doc) {
+async function handleActionDoc(ctx, doc) {
   const action = String(doc?.action || '').toLowerCase();
   const reason = String(doc?.reason || '');
-
-  try {
-    if (action === 'restart') {
-      EscribirLog('Accion RESTART recibida: ' + reason, 'event');
-      await releaseBotOwnership('restarting');
-      isOwner = true;
-      lockAcquiredAt = new Date();
-      await startBotInitialize();
-      return 'restarted';
-    }
-
-    if (action === 'release') {
-      EscribirLog('Accion RELEASE recibida: ' + reason, 'event');
-      await releaseBotOwnership('offline');
-      return 'released';
-    }
-
-    if (action === 'resetauth') {
-      EscribirLog('Accion RESET AUTH recibida: ' + reason, 'event');
-      await releaseBotOwnership('offline');
-      isOwner = true;
-      lockAcquiredAt = new Date();
-      await startBotInitialize();
-      return 'restarted_no_qr';
-    }
-
-    return 'ignored';
-  } catch (e) {
-    EscribirLog('Error manejando accion ' + action + ': ' + String(e?.message || e), 'error');
-    return 'error';
+  if (action === 'restart' || action === 'resetauth') {
+    logLine(`[${ctx.tenantId}] Accion ${action.toUpperCase()} recibida: ${reason}`, 'event');
+    await stopContext(ctx, action === 'restart' ? 'restarting' : 'offline');
+    ctx.shuttingDown = false;
+    ctx.lockAcquiredAt = new Date();
+    await startContext(ctx);
+    return action === 'restart' ? 'restarted' : 'restarted_no_qr';
   }
+  if (action === 'release') {
+    logLine(`[${ctx.tenantId}] Accion RELEASE recibida: ${reason}`, 'event');
+    await stopContext(ctx, 'offline');
+    return 'released';
+  }
+  return 'ignored';
 }
 
-async function pollActionsOnce() {
-  if (actionBusy || !isOwner || !lockId) return;
-  if (!await ensureMongo()) return;
-  if (!ActionModel) return;
-
-  actionBusy = true;
+async function pollActionsOnce(ctx) {
+  if (ctx.actionBusy || !ctx.lockId) return;
+  ctx.actionBusy = true;
   try {
-    const doc = await ActionModel.findOneAndUpdate(
-      { lockId, doneAt: { $exists: false } },
+    const db = await getDb();
+    const coll = db.collection('tg_bot_actions');
+    const doc = await coll.findOneAndUpdate(
+      { lockId: ctx.lockId, doneAt: { $exists: false } },
       { $set: { doneAt: new Date(), doneBy: instanceId } },
       { sort: { requestedAt: 1 }, returnDocument: 'after' }
-    ).lean();
-
-    if (!doc) return;
+    );
+    const row = doc?.value || doc;
+    if (!row) return;
 
     try {
-      const reqAt = doc.requestedAt ? new Date(doc.requestedAt) : null;
-      if (lockAcquiredAt && reqAt && reqAt.getTime() < lockAcquiredAt.getTime()) {
-        await ActionModel.updateOne({ _id: doc._id }, { $set: { result: 'stale_ignored' } });
+      const reqAt = row.requestedAt ? new Date(row.requestedAt) : null;
+      if (ctx.lockAcquiredAt && reqAt && reqAt.getTime() < ctx.lockAcquiredAt.getTime()) {
+        await coll.updateOne({ _id: row._id }, { $set: { result: 'stale_ignored' } });
         return;
       }
     } catch {}
 
-    const result = await handleActionDoc(doc);
-    await ActionModel.updateOne({ _id: doc._id }, { $set: { result } });
+    const result = await handleActionDoc(ctx, row);
+    await coll.updateOne({ _id: row._id }, { $set: { result } });
   } catch (e) {
-    EscribirLog('pollActionsOnce error: ' + String(e?.message || e), 'error');
+    logLine(`[${ctx.tenantId}] pollActionsOnce error: ${e?.message || e}`, 'error');
   } finally {
-    actionBusy = false;
+    ctx.actionBusy = false;
   }
 }
 
-function startActionPoller() {
-  try { if (actionTimer) clearInterval(actionTimer); } catch {}
-  actionTimer = setInterval(() => { pollActionsOnce().catch(() => {}); }, 4000);
-}
-
-async function ConsultaApiMensajes() {
-  if (outboundBusy) return;
-  outboundBusy = true;
-
+async function consultaApiMensajes(ctx) {
+  if (ctx.outboundBusy) return;
+  ctx.outboundBusy = true;
   try {
-    if (!botStarted || !bot) return;
-    const botFrom = String(telegram_self_id || numero || '');
+    if (!ctx.botStarted || !ctx.bot) return;
+    const botFrom = getApiBotNumber(ctx);
     if (!botFrom) return;
 
-    const url = `${api2}?key=${encodeURIComponent(key)}&nro_tel_from=${encodeURIComponent(botFrom)}`;
-    const url_confirma_msg = `${api3}`;
-
-    RecuperarJsonConfMensajes();
+    const url = `${ctx.config.api2}?key=${encodeURIComponent(ctx.config.key)}&nro_tel_from=${encodeURIComponent(botFrom)}`;
     const resp = await fetchJson(url, { method: 'GET' });
     if (!resp.ok) {
       const raw = await resp.text().catch(() => '');
-      EscribirLog('ConsultaApiMensajes resp error: ' + raw, 'error');
+      logLine(`[${ctx.tenantId}] ConsultaApiMensajes resp error: ${raw}`, 'error');
       return;
     }
 
-    const json = await resp.json();
+    const json = await resp.json().catch(() => null);
     if (!Array.isArray(json) || !json[0]) return;
 
     const mensajes = Array.isArray(json[0].mensajes) ? json[0].mensajes : [];
     const destinatarios = Array.isArray(json[0].destinatarios) ? json[0].destinatarios : [];
 
-    for (let i = 0; i < destinatarios.length; i++) {
-      const destinatario = destinatarios[i] || {};
-      const idRenglon = destinatario.Id_msj_renglon;
-      const idDest = destinatario.Id_msj_dest;
-      const nro_tel = String(destinatario.Nro_tel || '').trim();
-      const respuestas = mensajes.filter((element) => String(element.Id_msj_renglon) === String(idRenglon));
+    for (const destinatario of destinatarios) {
+      const idRenglon = destinatario?.Id_msj_renglon;
+      const idDest = destinatario?.Id_msj_dest;
+      const nro_tel = String(destinatario?.Nro_tel || '').trim();
+      const respuestas = mensajes.filter((element) => String(element?.Id_msj_renglon) === String(idRenglon));
 
-      for (let j = 0; j < respuestas.length; j++) {
-        const respuesta = respuestas[j] || {};
+      for (const respuesta of respuestas) {
         const chatId = normalizeChatId(nro_tel);
-        const Msj = respuesta.Msj == null ? '' : String(respuesta.Msj);
-        const contenido = respuesta.Content;
-        const Content_nombre = respuesta.Content_nombre || 'archivo';
+        const Msj = respuesta?.Msj == null ? '' : String(respuesta.Msj);
+        const contenido = respuesta?.Content;
+        const Content_nombre = respuesta?.Content_nombre || 'archivo';
 
         if (chatId === '' || chatId === null) {
-          await actualizar_estado_mensaje(url_confirma_msg, 'I', null, null, null, null, null, idRenglon, idDest);
+          await actualizarEstadoMensaje(ctx, 'I', null, null, null, null, null, idRenglon, idDest);
           continue;
         }
 
-        const chatData = await getChatRegistry(String(chatId));
+        const chatData = await getChatRegistry(ctx, String(chatId));
         if (!chatData) {
-          EscribirLog('Telegram destino no conocido: ' + String(chatId), 'event');
-          await actualizar_estado_mensaje(url_confirma_msg, 'I', null, null, null, null, null, idRenglon, idDest);
+          logLine(`[${ctx.tenantId}] Telegram destino no conocido: ${String(chatId)}`, 'event');
+          await actualizarEstadoMensaje(ctx, 'I', null, null, null, null, null, idRenglon, idDest);
           continue;
         }
 
         try {
           if (contenido != null && contenido !== '') {
             const mediaPayload = buildMediaPayloadFromBase64(contenido, Content_nombre, Msj);
-            await safeSendTelegram(chatId, mediaPayload, { caption: Msj });
+            await safeSendTelegram(ctx, chatId, mediaPayload, { caption: Msj });
           } else {
-            await safeSendTelegram(chatId, Msj);
+            await safeSendTelegram(ctx, chatId, Msj);
           }
 
           const contacto = [chatData.firstName, chatData.lastName].filter(Boolean).join(' ').trim() || chatData.title || chatData.username || '';
           const tipo = chatData.chatType === 'private' ? 'C' : 'B';
           const nombre = contacto || chatData.username || '';
           const direccion = chatData.chatType;
-          const email = '';
+          await actualizarEstadoMensaje(ctx, 'E', tipo, nombre, contacto, direccion, '', idRenglon, idDest);
 
-          await actualizar_estado_mensaje(url_confirma_msg, 'E', tipo, nombre, contacto, direccion, email, idRenglon, idDest);
-          seg_msg = Math.random() * (Math.max(seg_hasta, seg_desde) - Math.min(seg_hasta, seg_desde)) + Math.min(seg_hasta, seg_desde);
-          await sleep(seg_msg);
+          const segDesde = Math.min(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
+          const segHasta = Math.max(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
+          const segMsg = Math.random() * (segHasta - segDesde) + segDesde;
+          await sleep(segMsg);
         } catch (e) {
-          EscribirLog('Error enviando cola Telegram: ' + String(e?.message || e), 'error');
-          await actualizar_estado_mensaje(url_confirma_msg, 'I', null, null, null, null, null, idRenglon, idDest);
+          logLine(`[${ctx.tenantId}] Error enviando cola Telegram: ${e?.message || e}`, 'error');
+          await actualizarEstadoMensaje(ctx, 'I', null, null, null, null, null, idRenglon, idDest);
         }
       }
     }
   } catch (e) {
-    EscribirLog('ConsultaApiMensajes error: ' + String(e?.message || e), 'error');
+    logLine(`[${ctx.tenantId}] ConsultaApiMensajes error: ${e?.message || e}`, 'error');
   } finally {
-    outboundBusy = false;
+    ctx.outboundBusy = false;
   }
 }
 
-function scheduleOutboundPoller() {
-  try { if (outboundTimer) clearTimeout(outboundTimer); } catch {}
-  outboundTimer = setTimeout(async () => {
-    try {
-      await refreshTenantConfigFromDbPerMessage();
-      await ConsultaApiMensajes();
-    } catch (e) {
-      EscribirLog('scheduleOutboundPoller tick error: ' + String(e?.message || e), 'error');
-    } finally {
-      if (!shuttingDown && isOwner) scheduleOutboundPoller();
-    }
-  }, Math.max(1000, Number(seg_tele) || 3000));
-}
+async function startContext(ctx) {
+  if (ctx.botStarted || ctx.startingNow) return getContextStatus(ctx);
+  const pol = await getPolicySafe(ctx);
+  if (pol && pol.disabled === true) {
+    ctx.botState = 'disabled';
+    ctx.ownsLock = false;
+    await pushHistory(ctx, 'policy_disabled', { by: 'policy', disabled: true });
+    return getContextStatus(ctx);
+  }
 
-function startOutboundPoller() {
-  scheduleOutboundPoller();
-}
-
-function startExpiryPoller() {
-  try { if (expiryTimer) clearInterval(expiryTimer); } catch {}
-  expiryTimer = setInterval(() => {
-    controlar_hora_msg_once().catch(() => {});
-  }, 5000);
-}
-
-async function bootstrapWithLock() {
+  ctx.startingNow = true;
+  ctx.shuttingDown = false;
   try {
-    lockId = `${tenantId}:${numero || 'telegram'}`;
-    isOwner = true;
-    if (!lockAcquiredAt) lockAcquiredAt = new Date();
+    ctx.lockAcquiredAt = new Date();
 
-    await updateLockStateSafe('starting');
-    startHeartbeat();
-    startActionPoller();
+    const acquired = await acquireLock(ctx, 'starting');
+    if (!acquired) {
+      ctx.botState = 'standby';
+      return getContextStatus(ctx);
+    }
 
-    EscribirLog('Inicio directo Telegram -> inicializando bot...', 'event');
-    await startBotInitialize();
-    return true;
+    ctx.botState = 'starting';
+    await updateLockState(ctx, 'starting');
+    await createBotIfNeeded(ctx);
+    const me = await ctx.bot.getMe();
+    ctx.telegramSelfId = String(me?.id || '');
+    ctx.telegramSelfUsername = String(me?.username || ctx.config.telegram_bot_username || '');
+    if (ctx.telegramSelfUsername) manager.byUsername.set(String(ctx.telegramSelfUsername).toLowerCase(), ctx.tenantId);
+    await ctx.bot.startPolling({ restart: true });
+    ctx.botStarted = true;
+    ctx.botState = 'online';
+    await updateLockState(ctx, 'online');
+    await pushHistory(ctx, 'lock_acquired', { holderId: instanceId, host: os.hostname() });
+    logLine(`[${ctx.tenantId}] Telegram listo como @${ctx.telegramSelfUsername || ctx.config.telegram_bot_username || ''}`, 'event');
+
+    try { if (ctx.timers.heartbeat) clearInterval(ctx.timers.heartbeat); } catch {}
+    try { if (ctx.timers.action) clearInterval(ctx.timers.action); } catch {}
+    try { if (ctx.timers.expiry) clearInterval(ctx.timers.expiry); } catch {}
+    ctx.timers.heartbeat = setInterval(() => { heartbeatTick(ctx).catch(() => {}); }, HEARTBEAT_MS);
+    ctx.timers.action = setInterval(() => { pollActionsOnce(ctx).catch(() => {}); }, ACTION_POLL_MS);
+    // WhatsApp no está levantando este timer de expiración en el flujo actual.
+    // Para que Telegram se comporte igual, no reseteamos la continuación automáticamente acá.
+    ctx.timers.expiry = null;
+    scheduleOutboundPoller(ctx);
+
+    // warm known chat count
+    try {
+      const db = await getDb();
+      ctx.knownChats = await db.collection('tg_chat_registry').countDocuments({ tenantId: ctx.tenantId });
+    } catch {}
+    return getContextStatus(ctx);
   } catch (e) {
-    EscribirLog('bootstrap directo Telegram error: ' + String(e?.message || e), 'error');
-    return false;
+    ctx.botStarted = false;
+    ctx.botState = 'error';
+    logLine(`[${ctx.tenantId}] Error al inicializar Telegram: ${e?.message || e}`, 'error');
+    try {
+      if (ctx.bot && typeof ctx.bot.removeAllListeners === 'function') {
+        ctx.bot.removeAllListeners('message');
+        ctx.bot.removeAllListeners('polling_error');
+        ctx.bot.removeAllListeners('webhook_error');
+      }
+    } catch {}
+    try {
+      if (ctx.bot && typeof ctx.bot.stopPolling === 'function') await ctx.bot.stopPolling({ cancel: true });
+    } catch {}
+    ctx.bot = null;
+    await updateLockState(ctx, 'error');
+    await forceReleaseLock(ctx, 'error');
+    return getContextStatus(ctx);
+  } finally {
+    ctx.startingNow = false;
   }
 }
 
-async function getTelegramStatus() {
-  const lock = await getLockDocSafe();
+async function ensureContextForConfig(cfg) {
+  const existing = manager.contexts.get(cfg.tenantId);
+  if (!existing) {
+    const ctx = createContext(cfg);
+    manager.contexts.set(cfg.tenantId, ctx);
+    await startContext(ctx);
+    return ctx;
+  }
+
+  const prevBotSig = botConnectionSignature(existing.config);
+  const nextBotSig = botConnectionSignature(cfg);
+  const prevRuntimeSig = runtimeConfigSignature(existing.config);
+  const nextRuntimeSig = runtimeConfigSignature(cfg);
+  existing.config = { ...existing.config, ...cfg, ...getErrorConfig() };
+  existing.numero = existing.config.numero;
+  existing.statusToken = existing.config.status_token || existing.statusToken || '';
+  existing.lockId = `${existing.tenantId}:${existing.numero || 'telegram'}`;
+
+  if (prevBotSig !== nextBotSig) {
+    logLine(`[${cfg.tenantId}] cambio de token/username Telegram detectado -> reiniciando bot`, 'event');
+    await stopContext(existing, 'reconfiguring');
+    existing.lockAcquiredAt = new Date();
+    existing.botState = 'idle';
+    existing.telegramSelfId = '';
+    existing.telegramSelfUsername = '';
+    await startContext(existing);
+  } else {
+    if (prevRuntimeSig !== nextRuntimeSig) {
+      logLine(`[${cfg.tenantId}] configuración Telegram actualizada sin reinicio de bot`, 'event');
+    }
+    if (!existing.botStarted && !existing.startingNow) {
+      await startContext(existing);
+    }
+  }
+  return existing;
+}
+
+async function refreshManagerFromDb() {
+  if (manager.refreshing) return getTelegramStatus();
+  manager.refreshing = true;
+  try {
+    const configs = await getTenantConfigsFromDb();
+    const desiredIds = new Set(configs.map((cfg) => cfg.tenantId));
+
+    for (const cfg of configs) {
+      await ensureContextForConfig(cfg);
+    }
+
+    for (const [tenantId, ctx] of Array.from(manager.contexts.entries())) {
+      if (!desiredIds.has(tenantId)) {
+        await stopContext(ctx, 'removed');
+        manager.contexts.delete(tenantId);
+      }
+    }
+
+    if (!configs.length) {
+      logLine('Telegram runtime omitido: no hay tenants con telegram_bot_token en tenant_config/env.', 'event');
+    }
+
+    return getTelegramStatus();
+  } finally {
+    manager.refreshing = false;
+  }
+}
+
+function getVisibleContexts(req) {
+  const role = String(req?.user?.role || '').toLowerCase();
+  const isSuper = role === 'superadmin';
+  const tenantQuery = normalizeString(req?.query?.tenantId || req?.query?.tenant || '', '');
+  if (isSuper) {
+    if (tenantQuery) return Array.from(manager.contexts.values()).filter((ctx) => ctx.tenantId === tenantQuery.toUpperCase());
+    return Array.from(manager.contexts.values());
+  }
+  const userTenant = normalizeString(req?.user?.tenantId || '', '').toUpperCase();
+  if (!userTenant) return [];
+  const ctx = manager.contexts.get(userTenant);
+  return ctx ? [ctx] : [];
+}
+
+function getTelegramStatus() {
+  const items = Array.from(manager.contexts.values()).map(getContextStatus).sort((a, b) => a.tenantId.localeCompare(b.tenantId));
   return {
     ok: true,
     now: nowArgentinaISO(),
-    tenantId,
-    numero,
-    instanceId,
-    lockId,
-    isOwner,
-    runtimeStarted,
-    botStarted,
-    botState: localBotState,
-    telegramBotUsername: telegram_self_username || telegram_bot_username,
-    telegramBotId: telegram_self_id,
-    lock
+    total: items.length,
+    started: items.filter((x) => x.botStarted).length,
+    items,
   };
-}
-
-async function startTelegramRuntime() {
-  if (runtimeStarted) return getTelegramStatus();
-
-  shuttingDown = false;
-  RecuperarJsonConf();
-  if (tenantId) tenantId = String(tenantId).trim().toUpperCase();
-  if (!mongo_db) mongo_db = 'Cluster0';
-  await loadTenantConfigFromDbMinimal();
-
-  if (!tenantId || !mongo_uri) {
-    throw new Error('Falta tenantId/mongo_uri en configuracion.json o variables');
-  }
-
-  if (!telegram_bot_token) {
-    localBotState = 'disabled';
-    EscribirLog('Telegram runtime omitido: falta telegram_bot_token en tenant_config/env.', 'event');
-    runtimeStarted = true;
-    return getTelegramStatus();
-  }
-
-  await bootstrapWithLock();
-  runtimeStarted = true;
-  return getTelegramStatus();
-}
-
-async function stopTelegramRuntime(signal = 'STOP') {
-  shuttingDown = true;
-  runtimeStarted = false;
-  try { EscribirLog('[SHUTDOWN] ' + signal + ' -> cerrando Telegram...', 'event'); } catch {}
-  try { if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; } } catch {}
-  try { if (actionTimer) { clearInterval(actionTimer); actionTimer = null; } } catch {}
-  try { if (outboundTimer) { clearTimeout(outboundTimer); outboundTimer = null; } } catch {}
-  try { if (expiryTimer) { clearInterval(expiryTimer); expiryTimer = null; } } catch {}
-  try { await releaseBotOwnership('offline'); } catch {}
 }
 
 
@@ -1463,9 +1306,11 @@ function telegramAdminEmbedPage() {
     *{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--text)}
     .page{padding:16px}.toolbar{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px}.toolbar h1{margin:0 0 4px;font-size:24px}
     .small{font-size:12px;color:var(--muted)}.actions{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer}.btnDanger{color:var(--danger)}
+    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-bottom:14px}.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
+    .metric{font-size:28px;font-weight:800;line-height:1}.metricLabel{font-size:12px;color:var(--muted);margin-top:6px}
     .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}.filters label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted)}
     .inp{min-width:220px;border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:#fff;color:var(--text)}
-    .stack{display:grid;grid-template-columns:1fr;gap:14px}.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
+    .layout{display:grid;grid-template-columns:1.25fr .95fr;gap:14px}.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
     .panelHead{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border)}.panelHead h2{margin:0;font-size:16px}
     .tableWrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:12px 14px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;font-size:13px}
     th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;background:#fff;position:sticky;top:0}.tenantName{font-weight:800}
@@ -1474,98 +1319,42 @@ function telegramAdminEmbedPage() {
     .rowActions{display:flex;gap:8px;flex-wrap:wrap}.rowActions .btn{padding:8px 10px;border-radius:10px;font-size:12px}
     .msg{margin-bottom:12px;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:#fff;font-size:13px}.msg.err{border-color:rgba(240,68,56,.25);background:rgba(240,68,56,.08);color:#991b1b}.msg.ok{border-color:rgba(14,107,102,.22);background:rgba(14,107,102,.08);color:#0f5132}
     .empty{padding:18px;color:var(--muted);font-size:13px}code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px}
-    .modal[hidden]{display:none !important}.modal{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px}.modalBackdrop{position:absolute;inset:0;background:rgba(15,23,42,.55)}
-    .modalCard{position:relative;width:min(980px,96vw);max-height:calc(100vh - 32px);overflow:auto;background:#fff;border:1px solid var(--border);border-radius:22px;box-shadow:0 20px 60px rgba(15,23,42,.25);padding:18px}
-    .modalHead{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px}.modalHead h2{margin:0;font-size:22px}
-    .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.metricCard{background:#fff;border:1px solid var(--border);border-radius:18px;padding:16px;box-shadow:var(--shadow)}
-    .metric{font-size:32px;font-weight:800;line-height:1}.metricLabel{font-size:12px;color:var(--muted);margin-top:6px}
-    body.modalOpen{overflow:hidden}
-    @media (max-width: 980px){ .modalCard{padding:14px} }
+    @media (max-width: 980px){ .layout{grid-template-columns:1fr} }
   </style>
 </head>
 <body>
   <div class="page">
-    <div class="toolbar">
-      <div>
-        <h1>Sesiones Telegram</h1>
-        <div class="small">Estado de bots, chats y acciones por tenant.</div>
-      </div>
-      <div class="actions">
-        <button class="btn" id="tgOpenStatsBtn" type="button">Estadísticas</button>
-        <button class="btn" id="tgReloadBtn" type="button">Recargar</button>
-        <button class="btn" id="tgRefreshBtn" type="button">Actualizar</button>
-      </div>
-    </div>
+    <div class="toolbar"><div><h1>Sesiones Telegram</h1><div class="small">Monitoreo multi-tenant de bots, chats registrados y acciones operativas.</div></div><div class="actions"><button class="btn" id="tgReloadBtn" type="button">Recargar bots</button><button class="btn" id="tgRefreshBtn" type="button">Actualizar vista</button></div></div>
     <div id="tgMsg"></div>
-    <div class="filters">
-      <label>Buscar<input class="inp" id="tgSearch" type="search" placeholder="Tenant, bot o chat" /></label>
-      <label>Estado<select class="inp" id="tgStateFilter"><option value="">Todos</option><option value="started">Iniciados</option><option value="stopped">Detenidos</option><option value="disabled">Deshabilitados</option></select></label>
-    </div>
-    <div class="stack">
-      <section class="panel">
-        <div class="panelHead"><div><h2>Sesiones</h2><div class="small" id="tgStatusMeta">Sin datos todavía.</div></div></div>
-        <div class="tableWrap">
-          <table>
-            <thead><tr><th>Tenant</th><th>Bot</th><th>Estado</th><th>Chats</th><th>Última actividad</th><th>Acciones</th></tr></thead>
-            <tbody id="tgBody"></tbody>
-          </table>
-        </div>
-      </section>
-      <section class="panel">
-        <div class="panelHead"><div><h2>Chats registrados</h2><div class="small">Últimos chats conocidos por tenant.</div></div></div>
-        <div id="tgChats" class="tableWrap"></div>
-      </section>
+    <div class="cards"><div class="card"><div class="metric" id="tgMetricTotal">0</div><div class="metricLabel">Bots configurados</div></div><div class="card"><div class="metric" id="tgMetricStarted">0</div><div class="metricLabel">Bots iniciados</div></div><div class="card"><div class="metric" id="tgMetricChats">0</div><div class="metricLabel">Chats conocidos</div></div><div class="card"><div class="metric" id="tgMetricBlocked">0</div><div class="metricLabel">Chats bloqueados</div></div></div>
+    <div class="filters"><label>Buscar tenant / bot / chat<input class="inp" id="tgSearch" type="search" placeholder="Ej: CARICO, @bot, 549..." /></label><label>Estado<select class="inp" id="tgStateFilter"><option value="">Todos</option><option value="started">Iniciados</option><option value="stopped">Detenidos</option><option value="disabled">Deshabilitados</option></select></label></div>
+    <div class="layout">
+      <section class="panel"><div class="panelHead"><div><h2>Bots por tenant</h2><div class="small" id="tgStatusMeta">Sin datos todavía.</div></div></div><div class="tableWrap"><table><thead><tr><th>Tenant</th><th>Bot</th><th>Estado</th><th>Chats</th><th>Última actividad</th><th>Acciones</th></tr></thead><tbody id="tgBody"></tbody></table></div></section>
+      <section class="panel"><div class="panelHead"><div><h2>Chats registrados</h2><div class="small">Últimos chats conocidos por los bots visibles.</div></div></div><div id="tgChats" class="tableWrap"></div></section>
     </div>
   </div>
-
-  <div class="modal" id="tgStatsModal" hidden>
-    <div class="modalBackdrop" data-close-stats="1"></div>
-    <div class="modalCard" role="dialog" aria-modal="true" aria-labelledby="tgStatsTitle">
-      <div class="modalHead">
-        <div>
-          <h2 id="tgStatsTitle">Estadísticas Telegram</h2>
-          <div class="small" id="tgStatsMeta">Actualizado hace instantes.</div>
-        </div>
-        <button class="btn" type="button" data-close-stats="1">Cerrar</button>
-      </div>
-      <div class="metrics">
-        <div class="metricCard"><div class="metric" id="tgMetricTotal">0</div><div class="metricLabel">Bots configurados</div></div>
-        <div class="metricCard"><div class="metric" id="tgMetricStarted">0</div><div class="metricLabel">Bots iniciados</div></div>
-        <div class="metricCard"><div class="metric" id="tgMetricChats">0</div><div class="metricLabel">Chats conocidos</div></div>
-        <div class="metricCard"><div class="metric" id="tgMetricBlocked">0</div><div class="metricLabel">Chats bloqueados</div></div>
-      </div>
-    </div>
-  </div>
-
   <script>
     (function(){
-      const msgEl=document.getElementById('tgMsg'), totalEl=document.getElementById('tgMetricTotal'), startedEl=document.getElementById('tgMetricStarted'), chatsEl=document.getElementById('tgMetricChats'), blockedEl=document.getElementById('tgMetricBlocked'), bodyEl=document.getElementById('tgBody'), chatsWrap=document.getElementById('tgChats'), metaEl=document.getElementById('tgStatusMeta'), statsMetaEl=document.getElementById('tgStatsMeta'), searchEl=document.getElementById('tgSearch'), stateEl=document.getElementById('tgStateFilter'), reloadBtn=document.getElementById('tgReloadBtn'), refreshBtn=document.getElementById('tgRefreshBtn'), openStatsBtn=document.getElementById('tgOpenStatsBtn'), statsModal=document.getElementById('tgStatsModal');
+      const msgEl=document.getElementById('tgMsg'), totalEl=document.getElementById('tgMetricTotal'), startedEl=document.getElementById('tgMetricStarted'), chatsEl=document.getElementById('tgMetricChats'), blockedEl=document.getElementById('tgMetricBlocked'), bodyEl=document.getElementById('tgBody'), chatsWrap=document.getElementById('tgChats'), metaEl=document.getElementById('tgStatusMeta'), searchEl=document.getElementById('tgSearch'), stateEl=document.getElementById('tgStateFilter'), reloadBtn=document.getElementById('tgReloadBtn'), refreshBtn=document.getElementById('tgRefreshBtn');
       let state={items:[],chats:[]};
       const esc=(v)=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
       async function api(url, opts){ const res=await fetch(url, Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}}, opts||{})); let data=null; try{data=await res.json();}catch{} if(!res.ok) throw new Error((data&&(data.error||data.message))||('HTTP '+res.status)); return data||{}; }
       function setMsg(kind, text){ if(!text){ msgEl.innerHTML=''; return; } msgEl.innerHTML='<div class="msg '+(kind==='err'?'err':'ok')+'">'+esc(text)+'</div>'; }
       function statusPill(item){ const cls=item.botStarted?'statusPill is-on':'statusPill is-off'; const label=item.botStarted?(item.botState||'started'):(item.botState||'stopped'); return '<span class="'+cls+'">'+esc(label)+'</span>'; }
       function rowMatches(item,q,filter){ const hay=[item.tenantId,item.numero,item.telegramBotUsername,item.telegramBotId,item.botState,item.lastSeenAt].join(' ').toLowerCase(); if(q && !hay.includes(q)) return false; if(filter==='started' && !item.botStarted) return false; if(filter==='stopped' && item.botStarted) return false; if(filter==='disabled' && String(item.botState||'').toLowerCase()!=='disabled') return false; return true; }
-      function openStats(){ statsModal.hidden=false; document.body.classList.add('modalOpen'); }
-      function closeStats(){ statsModal.hidden=true; document.body.classList.remove('modalOpen'); }
       function render(){
         const q=String(searchEl.value||'').trim().toLowerCase(), filter=String(stateEl.value||'').trim();
         const items=(state.items||[]).filter((item)=>rowMatches(item,q,filter));
         const chats=(state.chats||[]).filter((chat)=>{ const hay=[chat.tenantId,chat.numero,chat.chatId,chat.username,chat.firstName,chat.lastName,chat.title,chat.chatType].join(' ').toLowerCase(); return !q || hay.includes(q); });
         totalEl.textContent=String(state.items.length||0); startedEl.textContent=String((state.items||[]).filter((x)=>x.botStarted).length||0); chatsEl.textContent=String((state.chats||[]).length||0); blockedEl.textContent=String((state.chats||[]).filter((x)=>x.blocked).length||0);
-        const updatedText='Actualizado '+new Date().toLocaleString('es-AR');
-        statsMetaEl.textContent=updatedText;
-        metaEl.textContent=items.length?('Mostrando '+items.length+' sesión'+(items.length===1?'':'es')+' · '+updatedText.toLowerCase()):'Sin sesiones visibles para el filtro actual.';
-        bodyEl.innerHTML=!items.length?'<tr><td colspan="6" class="empty">No hay bots visibles con el filtro actual.</td></tr>':items.map((item)=>{ const knownChats=Number(item.knownChats||0); const botLabel=item.telegramBotUsername?('@'+String(item.telegramBotUsername).replace(/^@+/,'')):'Sin username'; const lastSeen=item.lastSeenAt?new Date(item.lastSeenAt).toLocaleString('es-AR'):'-'; return '<tr>'+'<td><div class="tenantName">'+esc(item.tenantId)+'</div><div class="small">'+esc(item.numero||'-')+'</div></td>'+'<td><div>'+esc(botLabel)+'</div><div class="small"><code>'+esc(item.telegramBotId||'-')+'</code></div></td>'+'<td>'+statusPill(item)+'</td>'+'<td>'+esc(String(knownChats))+'</td>'+'<td><div>'+esc(lastSeen)+'</div></td>'+'<td><div class="rowActions"><button class="btn" type="button" data-action="start" data-tenant="'+esc(item.tenantId)+'">Iniciar</button><button class="btn btnDanger" type="button" data-action="release" data-tenant="'+esc(item.tenantId)+'">Detener</button></div></td>'+'</tr>'; }).join('');
+        metaEl.textContent=items.length?('Mostrando '+items.length+' bot'+(items.length===1?'':'s')+' · actualizado '+new Date().toLocaleString('es-AR')):'Sin bots visibles para el filtro actual.';
+        bodyEl.innerHTML=!items.length?'<tr><td colspan="6" class="empty">No hay bots visibles con el filtro actual.</td></tr>':items.map((item)=>{ const knownChats=Number(item.knownChats||0); const botLabel=item.telegramBotUsername?('@'+String(item.telegramBotUsername).replace(/^@+/,'')):'Sin username'; const lastSeen=item.lastSeenAt?new Date(item.lastSeenAt).toLocaleString('es-AR'):'-'; return '<tr>'+'<td><div class="tenantName">'+esc(item.tenantId)+'</div><div class="small">'+esc(item.numero||'-')+'</div></td>'+'<td><div>'+esc(botLabel)+'</div><div class="small"><code>'+esc(item.telegramBotId||'-')+'</code></div></td>'+'<td>'+statusPill(item)+'</td>'+'<td><span class="chatPill">'+esc(String(knownChats))+' chats</span></td>'+'<td><div>'+esc(lastSeen)+'</div></td>'+'<td><div class="rowActions"><button class="btn" type="button" data-action="start" data-tenant="'+esc(item.tenantId)+'">Iniciar</button><button class="btn btnDanger" type="button" data-action="release" data-tenant="'+esc(item.tenantId)+'">Detener</button></div></td>'+'</tr>'; }).join('');
         chatsWrap.innerHTML=!chats.length?'<div class="empty">No hay chats registrados.</div>':'<table><thead><tr><th>Tenant</th><th>Chat</th><th>Usuario</th><th>Tipo</th><th>Última vez</th></tr></thead><tbody>'+chats.slice(0,200).map((chat)=>{ const displayName=[chat.firstName,chat.lastName].filter(Boolean).join(' ').trim()||chat.title||chat.username||'-'; return '<tr>'+'<td><div class="tenantName">'+esc(chat.tenantId)+'</div><div class="small">'+esc(chat.numero||'-')+'</div></td>'+'<td><div><code>'+esc(chat.chatId||'-')+'</code></div>'+(chat.blocked?'<div class="small" style="color:#b42318">Bloqueado</div>':'')+'</td>'+'<td><div>'+esc(displayName)+'</div><div class="small">'+esc(chat.username?('@'+String(chat.username).replace(/^@+/,'')):'-')+'</div></td>'+'<td>'+esc(chat.chatType||'-')+'</td>'+'<td>'+esc(chat.lastSeenAt?new Date(chat.lastSeenAt).toLocaleString('es-AR'):'-')+'</td>'+'</tr>'; }).join('')+'</tbody></table>';
       }
-      async function load(){ setMsg('',''); const [statusRes,chatsRes]=await Promise.all([api('/api/tg/status'), api('/api/tg/chats')]); state.items=Array.isArray(statusRes.items)?statusRes.items:[]; state.chats=Array.isArray(chatsRes.items)?chatsRes.items:[]; render(); }
+      async function load(){ setMsg('',''); const [statusRes, chatsRes]=await Promise.all([api('/api/tg/status'), api('/api/tg/chats')]); state.items=Array.isArray(statusRes.items)?statusRes.items:[]; state.chats=Array.isArray(chatsRes.items)?chatsRes.items:[]; render(); }
       async function runAction(action, tenantId){ try{ setMsg('',''); const url=action==='start'?'/api/tg/start':'/api/tg/release'; await api(url,{method:'POST',body:JSON.stringify({tenantId})}); await load(); setMsg('ok',(action==='start'?'Bot iniciado':'Bot detenido')+' para '+tenantId+'.'); }catch(e){ setMsg('err', e.message||String(e)); } }
-      reloadBtn.addEventListener('click', async ()=>{ try{ setMsg('',''); await api('/api/tg/reload',{method:'POST',body:'{}'}); await load(); setMsg('ok','Sesiones Telegram recargadas.'); }catch(e){ setMsg('err', e.message||String(e)); } });
+      reloadBtn.addEventListener('click', async ()=>{ try{ setMsg('',''); await api('/api/tg/reload',{method:'POST',body:'{}'}); await load(); setMsg('ok','Bots recargados desde tenant_config.'); }catch(e){ setMsg('err', e.message||String(e)); } });
       refreshBtn.addEventListener('click', ()=>{ load().catch((e)=>setMsg('err', e.message||String(e))); });
-      openStatsBtn.addEventListener('click', openStats);
-      statsModal.addEventListener('click', (ev)=>{ if(ev.target.closest('[data-close-stats="1"]')) closeStats(); });
-      document.addEventListener('keydown', (ev)=>{ if(ev.key==='Escape') closeStats(); });
       searchEl.addEventListener('input', render); stateEl.addEventListener('change', render);
       bodyEl.addEventListener('click', (ev)=>{ const btn=ev.target.closest('button[data-action]'); if(!btn) return; runAction(btn.getAttribute('data-action'), btn.getAttribute('data-tenant')); });
       load().catch((e)=>setMsg('err', e.message||String(e)));
@@ -1575,54 +1364,109 @@ function telegramAdminEmbedPage() {
 </html>`;
 }
 
+
+
 function mountTelegramRoutes(app) {
-  if (!app || routesMounted) return;
-  routesMounted = true;
+  if (manager.routesMounted) return;
+  manager.routesMounted = true;
 
-  app.get('/api/tg/status', auth.requireAdmin, async (_req, res) => {
+  app.get('/api/tg/status', auth.requireAuth, auth.requireAdmin, async (req, res) => {
     try {
-      const status = await getTelegramStatus();
+      const visible = getVisibleContexts(req).map(getContextStatus);
+      return res.json({ ok: true, now: nowArgentinaISO(), total: visible.length, items: visible });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  app.get('/api/tg/chats', auth.requireAuth, auth.requireAdmin, async (req, res) => {
+    try {
+      const visible = getVisibleContexts(req);
+      const tenantFilter = visible.map((ctx) => ctx.tenantId);
+      if (!tenantFilter.length) return res.json({ ok: true, items: [] });
+      const db = await getDb();
+      const chatRows = await db.collection('tg_chat_registry')
+        .find({ tenantId: { $in: tenantFilter } })
+        .sort({ tenantId: 1, lastSeenAt: -1 })
+        .limit(1000)
+        .toArray();
+      return res.json({
+        ok: true,
+        items: chatRows.map((r) => ({
+          tenantId: r.tenantId,
+          numero: r.numero,
+          chatId: r.chatId,
+          username: r.username || '',
+          firstName: r.firstName || '',
+          lastName: r.lastName || '',
+          title: r.title || '',
+          chatType: r.chatType || '',
+          blocked: !!r.blocked,
+          lastSeenAt: r.lastSeenAt || null,
+          firstSeenAt: r.firstSeenAt || null,
+        }))
+      });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  app.post('/api/tg/reload', auth.requireAuth, auth.requireAdmin, async (_req, res) => {
+    try {
+      const status = await refreshManagerFromDb();
       return res.json(status);
     } catch (e) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
   });
 
-  app.get('/api/tg/chats', auth.requireAdmin, async (req, res) => {
+  app.post('/api/tg/release', auth.requireAuth, auth.requireAdmin, async (req, res) => {
     try {
-      const limit = Math.max(1, Math.min(Number(req.query.limit || 100), 500));
-      if (!await ensureMongo() || !ChatRegistryModel) {
-        return res.json({ ok: true, items: [] });
-      }
-
-      const tenantFilter = String(req.user?.role || '').toLowerCase() === 'superadmin'
-        ? (String(req.query.tenantId || tenantId || '').trim() ? { tenantId: String(req.query.tenantId || tenantId || '').trim() } : {})
-        : { tenantId: String(req.user?.tenantId || tenantId || '').trim() };
-
-      const items = await ChatRegistryModel.find(tenantFilter).sort({ lastSeenAt: -1 }).limit(limit).lean();
-      return res.json({ ok: true, items });
+      const visible = getVisibleContexts(req);
+      const tenantId = normalizeString(req?.body?.tenantId || req?.query?.tenantId || req?.query?.tenant || '', '').toUpperCase();
+      const ctx = tenantId ? visible.find((x) => x.tenantId === tenantId) : visible[0];
+      if (!ctx) return res.status(404).json({ ok: false, error: 'tenant_not_found' });
+      await stopContext(ctx, 'offline');
+      return res.json({ ok: true, item: getContextStatus(ctx) });
     } catch (e) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
   });
 
-  app.post('/api/tg/release', auth.requireAdmin, async (_req, res) => {
+  app.post('/api/tg/start', auth.requireAuth, auth.requireAdmin, async (req, res) => {
     try {
-      await stopTelegramRuntime('ADMIN_RELEASE');
-      return res.json({ ok: true, released: true });
+      const visible = getVisibleContexts(req);
+      const tenantId = normalizeString(req?.body?.tenantId || req?.query?.tenantId || req?.query?.tenant || '', '').toUpperCase();
+      const ctx = tenantId ? visible.find((x) => x.tenantId === tenantId) : visible[0];
+      if (!ctx) return res.status(404).json({ ok: false, error: 'tenant_not_found' });
+      ctx.shuttingDown = false;
+      const status = await startContext(ctx);
+      return res.json({ ok: true, item: status });
     } catch (e) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
   });
+}
 
-  app.post('/api/tg/start', auth.requireAdmin, async (_req, res) => {
-    try {
-      const status = await startTelegramRuntime();
-      return res.json(status);
-    } catch (e) {
-      return res.status(500).json({ ok: false, error: String(e?.message || e) });
-    }
-  });
+async function startTelegramRuntime() {
+  if (manager.started) return getTelegramStatus();
+  manager.started = true;
+  await refreshManagerFromDb();
+  try { if (manager.refreshTimer) clearInterval(manager.refreshTimer); } catch {}
+  manager.refreshTimer = setInterval(() => { refreshManagerFromDb().catch(() => {}); }, REFRESH_CONFIG_MS);
+  return getTelegramStatus();
+}
+
+async function stopTelegramRuntime(signal = 'STOP') {
+  try { if (manager.refreshTimer) clearInterval(manager.refreshTimer); } catch {}
+  manager.refreshTimer = null;
+  manager.started = false;
+  for (const ctx of Array.from(manager.contexts.values())) {
+    await stopContext(ctx, signal);
+  }
+  manager.contexts.clear();
+  manager.byUsername.clear();
+  return { ok: true, stopped: true };
 }
 
 module.exports = {
