@@ -1370,6 +1370,15 @@ function mountTelegramRoutes(app) {
   if (manager.routesMounted) return;
   manager.routesMounted = true;
 
+  app.get('/admin/telegram', auth.requireAuth, auth.requireAdmin, async (_req, res) => {
+    try {
+     return res.status(200).send(telegramAdminEmbedPage());
+    } catch (e) {
+      return res.status(500).send(String(e?.message || e));
+    }
+  });
+
+
   app.get('/api/tg/status', auth.requireAuth, auth.requireAdmin, async (req, res) => {
     try {
       const items = await getTelegramSessionRows(req);
