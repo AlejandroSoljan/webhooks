@@ -6088,8 +6088,8 @@ app.get("/productos", async (req, res) => {
         <td class="col-price"><input class="importe" type="number" step="0.01" value="${escAttr(p.importe ?? "")}" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" value="${escAttr(p.cantidad ?? "")}" placeholder="0" /></td>
         <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación...">${escText(p.observacion || "")}</textarea></td>
-       <td class="col-active">
-          <label class="switch">
+        <td class="col-active">
+          <label class="active-check" title="Activo">
             <input class="active" type="checkbox" ${p.active !== false ? "checked" : ""} />
             <span></span>
           </label>
@@ -6108,85 +6108,87 @@ app.get("/productos", async (req, res) => {
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <style>
         :root{
-          --bg:#f7f9fc;
+          --bg:#f8fafc;
           --card:#ffffff;
-          --line:#e3eaf3;
-          --line-strong:#d2dceb;
-          --text:#13294b;
-          --muted:#70839e;
-          --primary:#284b79;
-          --primary-2:#365d91;
-          --primary-soft:#f2f6fb;
-          --danger:#8d6670;
-          --danger-bg:#fbf7f8;
-          --danger-line:#e5d8dd;
-          --success:#6f8f80;
-          --success-bg:#eef5f0;
-          --success-line:#cbdbd0;
-          --shadow:0 10px 24px rgba(15,23,42,.06);
-          --shadow-soft:0 6px 18px rgba(15,23,42,.04);
-           --radius:18px;
-          --control-h:44px;
+          --line:#e6edf5;
+          --line-strong:#d8e2ee;
+          --text:#17304f;
+          --muted:#7a8da5;
+          --primary:#264a78;
+          --primary-2:#315683;
+          --primary-soft:#f4f8fc;
+          --danger:#8f7480;
+          --danger-bg:#fffafb;
+          --danger-line:#eadde2;
+          --success:#7d9689;
+          --success-bg:#f1f6f3;
+          --success-line:#d7e2db;
+          --shadow:0 8px 20px rgba(15,23,42,.045);
+          --shadow-soft:0 4px 12px rgba(15,23,42,.035);
+          --radius:18px;
+          --control-h:38px;
         }
         *{box-sizing:border-box}
         html,body{margin:0;padding:0;background:transparent;color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
         body{padding:16px 18px 22px;overflow-x:hidden}
         .page{width:100%;max-width:none;margin:0 auto}
-        .hero{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap;margin-bottom:18px}
-        .hero h1{margin:0;font-size:22px;line-height:1.1;letter-spacing:-.01em}
-        .hero p{margin:6px 0 0;color:var(--muted);font-size:14px}
-        .hero-side{display:flex;gap:10px;flex-wrap:wrap}
+        .hero{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:16px}
+        .hero h1{margin:0;font-size:21px;line-height:1.08;letter-spacing:-.01em}
+        .hero p{margin:5px 0 0;color:var(--muted);font-size:13px}
+        .hero-side{display:flex;gap:8px;flex-wrap:wrap}
         .chip{
           display:inline-flex;align-items:center;justify-content:center;gap:6px;
-          min-height:40px;padding:0 14px;border-radius:999px;background:#fff;border:1px solid var(--line);
-          font-size:12px;font-weight:700;color:var(--primary);box-shadow:var(--shadow-soft)
+          min-height:34px;padding:0 13px;border-radius:999px;background:#fff;border:1px solid var(--line);
+          font-size:12px;font-weight:700;color:var(--primary);box-shadow:none
         }
         .toolbar{
-          background:var(--card);border:1px solid var(--line);border-radius:22px;padding:18px;
-          box-shadow:var(--shadow);display:flex;gap:14px;align-items:flex-end;justify-content:space-between;
-          flex-wrap:wrap;margin-bottom:18px
+          background:var(--card);border:1px solid var(--line);border-radius:20px;padding:16px 18px;
+          box-shadow:var(--shadow);display:flex;flex-direction:column;gap:12px;align-items:stretch;
+          margin-bottom:18px
         }
-        .toolbar-left{display:flex;gap:14px;align-items:flex-end;flex:1 1 620px;min-width:280px;flex-wrap:wrap}
-        .search{position:relative;flex:1 1 390px;min-width:280px}
+        .toolbar-search{width:100%}
+        .toolbar-bottom{display:flex;gap:10px;align-items:flex-end;justify-content:space-between;flex-wrap:wrap}
+        .search{position:relative;display:block;width:100%}
         .search input,.filter-select{
-          width:100%;height:var(--control-h);border-radius:14px;border:1px solid var(--line-strong);
-          padding:0 15px;background:#fbfdff;font-size:14px;outline:none;color:var(--text);
+          width:100%;height:var(--control-h);border-radius:13px;border:1px solid var(--line-strong);
+          padding:0 13px;background:#fcfdff;font-size:13px;outline:none;color:var(--text);
           transition:border-color .18s ease, box-shadow .18s ease, background .18s ease
         }
-        .search input::placeholder{color:#93a3b8}
+        .search input::placeholder{color:#95a5b9}
         .search input:focus,.filter-select:focus{
-          border-color:#9eb4d1;box-shadow:0 0 0 4px rgba(54,93,145,.08);background:#fff
+          border-color:#a9bcd3;box-shadow:0 0 0 4px rgba(54,93,145,.07);background:#fff
         }
-        .filterBox{display:flex;flex-direction:column;gap:7px;min-width:190px}
-        .filterBox label{font-size:12px;color:var(--muted);font-weight:700;padding-left:2px}
-        .toolbar-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+        .filterBox{display:flex;flex-direction:column;gap:5px;min-width:156px;max-width:170px}
+        .filterBox label{font-size:11px;color:var(--muted);font-weight:700;padding-left:2px}
+        .toolbar-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
         .btn{
           appearance:none;border:1px solid var(--line-strong);background:#fff;color:var(--text);
-          border-radius:14px;height:var(--control-h);padding:0 16px;font-weight:700;font-size:13px;
+          border-radius:13px;height:var(--control-h);padding:0 14px;font-weight:700;font-size:12px;
           cursor:pointer;transition:background .18s ease,border-color .18s ease,box-shadow .18s ease,color .18s ease;
-          line-height:1;display:inline-flex;align-items:center;justify-content:center;min-width:132px
+          line-height:1;display:inline-flex;align-items:center;justify-content:center;min-width:112px
         }
         .btn:hover{box-shadow:var(--shadow-soft);background:#fff}
         .btn-primary{background:var(--primary);border-color:var(--primary);color:#fff}
         .btn-primary:hover{background:var(--primary-2);border-color:var(--primary-2)}
-        .btn-soft{background:var(--soft);border-color:var(--line);color:var(--primary)}
-        .btn-danger{background:var(--danger-bg);border-color:#f5c3bd;color:var(--danger)}
-        .flash{display:none;margin:0 0 14px;padding:12px 14px;border-radius:14px;font-size:13px;font-weight:600}
+        .btn-soft{background:var(--primary-soft);border-color:var(--line);color:var(--primary)}
+        .btn-danger{background:var(--danger-bg);border-color:var(--danger-line);color:var(--danger)}
+        .btn-danger:hover{background:#fff5f7;border-color:#e4d3da;color:#7f646f}
+        .flash{display:none;margin:0 0 14px;padding:11px 13px;border-radius:13px;font-size:12px;font-weight:600}
         .flash.show{display:block}
         .flash.ok{background:var(--success-bg);border:1px solid rgba(12,122,67,.22);color:var(--success)}
         .flash.err{background:var(--danger-bg);border:1px solid rgba(180,35,24,.22);color:var(--danger)}
-        .table-card{background:var(--card);border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow);overflow:hidden}
-        .table-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:18px 18px 12px;border-bottom:1px solid var(--line)}
-        .table-head h2{margin:0;font-size:16px}
-        .table-head p{margin:4px 0 0;color:var(--muted);font-size:13px}
+        .table-card{background:var(--card);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);overflow:hidden}
+        .table-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:16px 18px 11px;border-bottom:1px solid var(--line)}
+        .table-head h2{margin:0;font-size:15px}
+        .table-head p{margin:4px 0 0;color:var(--muted);font-size:12px}
         .table-wrap{overflow-x:hidden;overflow-y:auto}
         table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;min-width:0}
         thead th{
-          position:sticky;top:0;z-index:1;background:#f8fbfe;color:#5a7291;font-size:11px;letter-spacing:.05em;
+          position:sticky;top:0;z-index:1;background:#fbfdff;color:#667d99;font-size:11px;letter-spacing:.05em;
           text-transform:uppercase;padding:12px 10px;border-bottom:1px solid var(--line);text-align:left
         }
         tbody td{padding:12px 10px;border-bottom:1px solid #edf2f7;vertical-align:top;background:#fff}
-        tbody tr:hover td{background:#fcfdff}
+        tbody tr:hover td{background:#fdfefe}
         tbody tr:last-child td{border-bottom:none}
          tbody tr.row-dirty td{background:#fffdf8}
         tbody tr.row-dirty td{background:#fffcf1}
@@ -6199,30 +6201,24 @@ app.get("/productos", async (req, res) => {
         .col-active{width:8%;text-align:center}
         .col-actions{width:10%}
         input[type=text],input[type=number],textarea{
-          width:100%;border:1px solid var(--line-strong);border-radius:14px;background:#fbfdff;padding:10px 12px;
+          width:100%;border:1px solid var(--line-strong);border-radius:14px;background:#fcfdff;padding:9px 12px;
           font-size:13px;color:var(--text);outline:none;transition:border-color .18s ease,box-shadow .18s ease,background .18s ease
         }
         input[type=text]:focus,input[type=number]:focus,textarea:focus{
-          border-color:#9eb4d1;box-shadow:0 0 0 4px rgba(54,93,145,.08);background:#fff
+          border-color:#a9bcd3;box-shadow:0 0 0 4px rgba(54,93,145,.07);background:#fff
         }
         textarea{min-height:76px;resize:vertical;line-height:1.4}
-         .switch{position:relative;display:inline-flex;align-items:center;width:48px;height:28px}
-        .switch span{
-          display:block;width:48px;height:28px;border-radius:999px;background:#e5edf5;border:1px solid #d4deeb;
-          position:relative;transition:background .18s ease,border-color .18s ease
+        .active-check{display:inline-flex;align-items:center;justify-content:center;width:100%;padding-top:4px}
+        .active-check input{
+          width:16px;height:16px;margin:0;cursor:pointer;accent-color:#859a8d;
         }
-        .switch span:before{
-          content:"";position:absolute;left:3px;top:3px;width:20px;height:20px;border-radius:50%;
-          background:#fff;box-shadow:0 2px 6px rgba(15,23,42,.14);transition:left .18s ease, background .18s ease
-        }
-        .switch input:checked + span{background:var(--success-bg);border-color:var(--success-line)}
-        .switch input:checked + span:before{left:23px;background:var(--success)}
+       
         .actions-stack{display:grid;grid-template-columns:1fr;gap:6px;align-items:start}
-        .actions-stack .btn{width:100%;min-width:0;height:40px}
+        .actions-stack .btn{width:100%;min-width:0;height:38px}
         .empty-row td{padding:34px 20px;text-align:center;color:var(--muted);font-weight:600}
         .row-draft td{background:#fffdf8}
         @media (max-width: 1180px){
-          .toolbar-actions .btn{min-width:124px}
+          .toolbar-actions .btn{min-width:104px}
         }
         @media (max-width: 1100px){
           .col-desc{width:20%}
@@ -6236,8 +6232,8 @@ app.get("/productos", async (req, res) => {
         @media (max-width: 960px){
           body{padding:12px}
           .toolbar{padding:14px}
-          .toolbar-left,.toolbar-actions{width:100%}
-          .toolbar-actions .btn{flex:1 1 180px}
+          .toolbar-bottom,.toolbar-actions{width:100%}
+          .toolbar-actions .btn{flex:1 1 148px}
           .table-card{border-radius:20px}
           .table-wrap{overflow:auto}
           table{min-width:1080px}
@@ -6258,10 +6254,12 @@ app.get("/productos", async (req, res) => {
         </div>
 <div id="flash" class="flash" role="status" aria-live="polite"></div>
         <div class="toolbar">
-          <div class="toolbar-left">
+         <div class="toolbar-search">
             <label class="search">
               <input id="searchInput" type="text" placeholder="Buscar por descripción, tag, observación, importe o cantidad..." />
             </label>
+          </div>
+          <div class="toolbar-bottom">
             <div class="filterBox">
               <label for="statusFilter">Filtro</label>
               <select id="statusFilter" class="filter-select">
@@ -6270,11 +6268,11 @@ app.get("/productos", async (req, res) => {
                 <option value="inactive">Inactivos</option>
               </select>
             </div>
-          </div>
-          <div class="toolbar-actions">
-            <button id="btnSaveAll" class="btn btn-primary" type="button">Guardar cambios</button>
-            <button id="btnAdd" class="btn btn-soft" type="button">Nuevo producto</button>
-            <button id="btnReload" class="btn" type="button">Recargar</button>
+            <div class="toolbar-actions">
+              <button id="btnSaveAll" class="btn btn-primary" type="button">Guardar cambios</button>
+              <button id="btnAdd" class="btn btn-soft" type="button">Nuevo producto</button>
+              <button id="btnReload" class="btn" type="button">Recargar</button>
+            </div>
           </div>
         </div>
 
@@ -6311,9 +6309,9 @@ app.get("/productos", async (req, res) => {
         <td class="col-qty"><input class="cantidad" type="number" step="1" placeholder="0" /></td>
         <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación..."></textarea></td>
         <td class="col-active">
-          <label class="switch">
+          <label class="active-check" title="Activo">
             <input class="active" type="checkbox" checked />
-            <span></span>
+           
           </label>
         </td>
         <td class="col-actions">
