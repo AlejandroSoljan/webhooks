@@ -614,23 +614,9 @@ function rememberJson(ctx, chatId, json) {
     ctx.jsonGlobal[indice][0] = chatId;
     ctx.jsonGlobal[indice][2] = json;
     ctx.jsonGlobal[indice][3] = now;
-    ctx.jsonGlobal[indice][4] = false;
   } else {
-    ctx.jsonGlobal.push([chatId, 0, json, now, false]);
+    ctx.jsonGlobal.push([chatId, 0, json, now]);
   }
-}
-
-function resetContinuationState(ctx, indice) {
-  if (indice === -1 || !ctx.jsonGlobal[indice]) return;
-  ctx.jsonGlobal[indice][1] = 0;
-  ctx.jsonGlobal[indice][2] = '';
-  ctx.jsonGlobal[indice][3] = '';
-  ctx.jsonGlobal[indice][4] = false;
-}
-
-function hasPendingContinuation(ctx, indice) {
-  if (indice === -1 || !ctx.jsonGlobal[indice]) return false;
-  return ctx.jsonGlobal[indice][4] === true;
 }
 
 async function safeSendTelegram(ctx, chatId, content, opts = {}) {
@@ -688,18 +674,6 @@ async function safeSendTelegram(ctx, chatId, content, opts = {}) {
   }
 }
 
-
-async function safeSendTelegramIfReady(ctx, chatId, content, opts = {}) {
-  if (!ctx || !ctx.bot || ctx.shuttingDown || !ctx.botStarted) return null;
-  try {
-    return await safeSendTelegram(ctx, chatId, content, opts);
-  } catch (e) {
-    const msg = String(e?.message || e || '');
-    if (/telegram_bot_not_ready/i.test(msg)) return null;
-    throw e;
-  }
-}
-
 async function actualizarEstadoMensaje(ctx, estado, tipo, nombre, contacto, direccion, email, idRenglon, idDest) {
   try {
     const params = new URLSearchParams();
@@ -731,17 +705,14 @@ async function procesarMensajeLotes(ctx, json, message) {
   if (indice === -1) return;
 
   const now = new Date();
+
+  
   const segDesde = Math.min(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
   const segHasta = Math.max(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
   const segundos = Math.random() * (segHasta - segDesde) + segDesde;
   const l_json = ctx.jsonGlobal[indice][2];
-  let tam_json = 0;
-
+  const tam_json = Array.isArray(l_json) ? l_json.length : 0;
   ctx.jsonGlobal[indice][3] = now;
-
-  for (const _ in (ctx.jsonGlobal[indice][2] || [])) {
-    tam_json = tam_json + 1;
-  }
 
   for (let i = ctx.jsonGlobal[indice][1]; i < tam_json; i++) {
     let mensaje = '';
@@ -752,38 +723,27 @@ async function procesarMensajeLotes(ctx, json, message) {
       mensaje = l_json[i]?.Respuesta;
     }
 
-    if (mensaje === '' || mensaje === null || mensaje === undefined) {
-    } else {
-      mensaje = String(mensaje).replaceAll('|', '\n');
+    if (mensaje === '' || mensaje === null || mensaje === undefined) continue;
+    mensaje = String(mensaje).replaceAll('|', '\n');
 
-      if (i <= Number(ctx.config.cant_lim || 0) + ctx.jsonGlobal[indice][1] - 1) {
-        await safeSendTelegramIfReady(ctx, chatId, mensaje);
-        await sleep(segundos);
-
-        if (tam_json - 1 === i) {
-          resetContinuationState(ctx, indice);
-        }
-      } else {
-        let msg_loc = String(ctx.config.msg_lim || '').replaceAll('|', '\n');
-
-        if (tam_json <= i + Number(ctx.config.cant_lim || 0)) {
-          msg_loc = msg_loc.replace('<recuento>', String(tam_json - i));
-        } else {
-          msg_loc = msg_loc.replace('<recuento>', String(Number(ctx.config.cant_lim || 0) + 1));
-        }
-
-        msg_loc = msg_loc.replace('<recuento_lote>', String(tam_json - 2));
-        msg_loc = msg_loc.replace('<recuento_pendiente>', String(tam_json - i));
-
-        if (msg_loc !== '' && msg_loc !== null && msg_loc !== undefined) {
-          await safeSendTelegramIfReady(ctx, chatId, msg_loc);
-        }
-
-        ctx.jsonGlobal[indice][1] = i;
-        ctx.jsonGlobal[indice][3] = now;
-        ctx.jsonGlobal[indice][4] = true;
-        return;
+    if (i <= Number(ctx.config.cant_lim || 0) + ctx.jsonGlobal[indice][1] - 1) {
+      await safeSendTelegram(ctx, chatId, mensaje);
+      await sleep(segundos);
+      if (tam_json - 1 === i) {
+        ctx.jsonGlobal[indice][1] = 0;
+        ctx.jsonGlobal[indice][2] = '';
+        ctx.jsonGlobal[indice][3] = '';
       }
+    } else {
+      let msg_loc = String(ctx.config.msg_lim || '').replaceAll('|', '\n');
+      if (tam_json <= i + Number(ctx.config.cant_lim || 0)) msg_loc = msg_loc.replace('<recuento>', String(tam_json - i));
+      else msg_loc = msg_loc.replace('<recuento>', String(Number(ctx.config.cant_lim || 0) + 1));
+      msg_loc = msg_loc.replace('<recuento_lote>', String(Math.max(tam_json - 2, 0)));
+      msg_loc = msg_loc.replace('<recuento_pendiente>', String(Math.max(tam_json - i, 0)));
+      if (msg_loc) await safeSendTelegram(ctx, chatId, msg_loc);
+      ctx.jsonGlobal[indice][1] = i;
+      ctx.jsonGlobal[indice][3] = now;
+      return;
     }
   }
 }
@@ -815,10 +775,9 @@ async function handleIncomingTelegramMessage(ctx, msg) {
 
     const indice_telefono = indexOf2d(ctx, chatId);
     const valor_i = indice_telefono === -1 ? 0 : ctx.jsonGlobal[indice_telefono][1];
-    const pendingContinuation = hasPendingContinuation(ctx, indice_telefono);
     logLine(`[${ctx.tenantId}] ${chatId} ${ctx.telegramSelfId} message ${body}`, 'event');
 
-    if (!pendingContinuation) {
+    if (valor_i === 0) {
       if (!body) {
         logLine(`[${ctx.tenantId}] mensaje telegram no texto -> ignorado`, 'event');
         return;
@@ -830,7 +789,7 @@ async function handleIncomingTelegramMessage(ctx, msg) {
       await logMessageStat(ctx, 'in', telefonoFrom, { body, type: 'text', hasMedia: false });
 
       if (trimmedBody === '/id') {
-        await safeSendTelegramIfReady(ctx, chatId, buildTelegramIdReply(msg));
+        await safeSendTelegram(ctx, chatId, buildTelegramIdReply(msg));
         return;
       }
 
@@ -839,7 +798,7 @@ async function handleIncomingTelegramMessage(ctx, msg) {
       const segHasta = Math.max(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
       const segundos = Math.random() * (segHasta - segDesde) + segDesde;
 
-      if (ctx.config.msg_inicio) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_inicio);
+      if (ctx.config.msg_inicio) await safeSendTelegram(ctx, chatId, ctx.config.msg_inicio);
 
       const jsonTexto = { Tel_Origen: telefonoFrom, Tel_Destino: telefonoTo, Mensaje: body, Respuesta: '' };
       let timeoutId;
@@ -861,38 +820,39 @@ async function handleIncomingTelegramMessage(ctx, msg) {
         if (!resp.ok) {
           const detalle = json ? JSON.stringify(json) : raw;
           logLine(`[${ctx.tenantId}] Error ApiTelegram - Response ERROR ${detalle}`, 'error');
-          if (ctx.config.msg_errores) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_errores);
+          if (ctx.config.msg_errores) await safeSendTelegram(ctx, chatId, ctx.config.msg_errores);
           return 'error';
         }
 
         rememberJson(ctx, chatId, json);
         await procesarMensajeLotes(ctx, json, { from: chatId, body });
-        if (ctx.config.msg_fin) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_fin);
+        if (ctx.config.msg_fin) await safeSendTelegram(ctx, chatId, ctx.config.msg_fin);
         await sleep(segundos);
         return 'ok';
       } catch (err) {
         clearTimeout(timeoutId);
         const detalle = `Error Chatbot Telegram ${err?.message || err} ${JSON.stringify(jsonTexto)}`;
         logLine(`[${ctx.tenantId}] ${detalle}`, 'error');
-        if (ctx.config.msg_errores) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_errores);
+        if (ctx.config.msg_errores) await safeSendTelegram(ctx, chatId, ctx.config.msg_errores);
         return 'error';
       }
     }
 
     const bodyUpper = String(body || '').trim().toUpperCase();
-    if (pendingContinuation && bodyUpper === 'N') {
-      if (ctx.config.msg_can) await safeSendTelegramIfReady(ctx, chatId, ctx.config.msg_can);
-      resetContinuationState(ctx, indice_telefono);
+    if (valor_i !== 0 && bodyUpper === 'N') {
+      if (ctx.config.msg_can) await safeSendTelegram(ctx, chatId, ctx.config.msg_can);
+      ctx.jsonGlobal[indice_telefono][2] = '';
+      ctx.jsonGlobal[indice_telefono][1] = 0;
+      ctx.jsonGlobal[indice_telefono][3] = '';
       return;
     }
 
-    if (pendingContinuation && bodyUpper !== 'N' && bodyUpper !== 'S') {
-      await safeSendTelegramIfReady(ctx, chatId, '🤔 *No entiendo*,\nPor favor ingrese *S* o *N* para mostrar los siguientes resultados\n', { parse_mode: 'Markdown' });
+    if (valor_i !== 0 && bodyUpper !== 'N' && bodyUpper !== 'S') {
+      await safeSendTelegram(ctx, chatId, '🤔 *No entiendo*,\nPor favor ingrese *S* o *N* para mostrar los siguientes resultados\n', { parse_mode: 'Markdown' });
       return;
     }
 
-    if (pendingContinuation && bodyUpper === 'S') {
-      ctx.jsonGlobal[indice_telefono][4] = false;
+    if (valor_i !== 0 && bodyUpper === 'S') {
       await procesarMensajeLotes(ctx, ctx.jsonGlobal[indice_telefono][2], { from: chatId, body });
     }
   } catch (e) {
@@ -1169,9 +1129,7 @@ async function startContext(ctx) {
     try { if (ctx.timers.expiry) clearInterval(ctx.timers.expiry); } catch {}
     ctx.timers.heartbeat = setInterval(() => { heartbeatTick(ctx).catch(() => {}); }, HEARTBEAT_MS);
     ctx.timers.action = setInterval(() => { pollActionsOnce(ctx).catch(() => {}); }, ACTION_POLL_MS);
-    // WhatsApp no está levantando este timer de expiración en el flujo actual.
-    // Para que Telegram se comporte igual, no reseteamos la continuación automáticamente acá.
-    ctx.timers.expiry = null;
+    ctx.timers.expiry = setInterval(() => { controlarHoraMsgOnce(ctx).catch(() => {}); }, EXPIRY_POLL_MS);
     scheduleOutboundPoller(ctx);
 
     // warm known chat count
@@ -1216,6 +1174,9 @@ async function ensureContextForConfig(cfg) {
   const nextBotSig = botConnectionSignature(cfg);
   const prevRuntimeSig = runtimeConfigSignature(existing.config);
   const nextRuntimeSig = runtimeConfigSignature(cfg);
+  const oldNumero = existing.numero;
+  const oldLockId = existing.lockId;
+
   existing.config = { ...existing.config, ...cfg, ...getErrorConfig() };
   existing.numero = existing.config.numero;
   existing.statusToken = existing.config.status_token || existing.statusToken || '';
@@ -1224,14 +1185,29 @@ async function ensureContextForConfig(cfg) {
   if (prevBotSig !== nextBotSig) {
     logLine(`[${cfg.tenantId}] cambio de token/username Telegram detectado -> reiniciando bot`, 'event');
     await stopContext(existing, 'reconfiguring');
+    if (oldLockId && oldLockId !== existing.lockId) {
+      try {
+        const db = await getDb();
+        await db.collection('tg_locks').deleteOne({ _id: oldLockId });
+      } catch (e) {
+        logLine(`[${cfg.tenantId}] cleanup lock anterior error: ${e?.message || e}`, 'error');
+      }
+    }
     existing.lockAcquiredAt = new Date();
     existing.botState = 'idle';
     existing.telegramSelfId = '';
     existing.telegramSelfUsername = '';
+    await sleep(1200);
     await startContext(existing);
   } else {
     if (prevRuntimeSig !== nextRuntimeSig) {
       logLine(`[${cfg.tenantId}] configuración Telegram actualizada sin reinicio de bot`, 'event');
+      if (oldNumero !== existing.numero) {
+        logLine(`[${cfg.tenantId}] numero API Telegram: ${oldNumero || '-'} -> ${existing.numero || '-'}`, 'event');
+      }
+      if (existing.ownsLock) {
+        await updateLockState(existing, existing.botState || (existing.botStarted ? 'online' : 'idle'));
+      }
     }
     if (!existing.botStarted && !existing.startingNow) {
       await startContext(existing);
@@ -1294,6 +1270,155 @@ function getTelegramStatus() {
 }
 
 
+
+function tgArYmd(date) {
+  try {
+    const dt = date || new Date();
+    return new Intl.DateTimeFormat('sv-SE', {
+      timeZone: AR_TZ,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(dt);
+  } catch {
+    return (date || new Date()).toISOString().slice(0, 10);
+  }
+}
+
+function tgArDateRange(fromYmd, toYmd) {
+  const from = String(fromYmd || '').trim() || tgArYmd(new Date());
+  const to = String(toYmd || '').trim() || from;
+  const start = new Date(`${from}T00:00:00.000-03:00`);
+  const end = new Date(`${to}T23:59:59.999-03:00`);
+  return { start, end: new Date(end.getTime() + 1) };
+}
+
+function tgHumanizeMs(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n < 0) return '-';
+  const mins = Math.floor(n / 60000);
+  const d = Math.floor(mins / 1440);
+  const h = Math.floor((mins % 1440) / 60);
+  const m = mins % 60;
+  const parts = [];
+  if (d) parts.push(`${d}d`);
+  if (h || d) parts.push(`${h}h`);
+  parts.push(`${m}m`);
+  return parts.join(' ');
+}
+
+async function getTelegramSessionStats(tenantId, numero, fromYmd, toYmd) {
+  const db = await getDb();
+  const coll = db.collection('tg_bot_message_log');
+  const tenant = normalizeString(tenantId, '').toUpperCase();
+  const num = normalizeString(numero, '');
+  const from = String(fromYmd || tgArYmd(new Date())).trim();
+  const to = String(toYmd || from).trim();
+  const { start, end } = tgArDateRange(from, to);
+  const baseMatch = { tenantId: tenant, numero: num };
+  const rangeMatch = { ...baseMatch, at: { $gte: start, $lt: end } };
+
+  const [summaryRows, contactRows, overallLast] = await Promise.all([
+    coll.aggregate([
+      { $match: rangeMatch },
+      { $group: {
+        _id: null,
+        incoming: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
+        outgoing: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } },
+        total: { $sum: 1 },
+        contactsSet: { $addToSet: '$contact' },
+        firstAt: { $min: '$at' },
+        lastAt: { $max: '$at' }
+      } }
+    ]).toArray(),
+    coll.aggregate([
+      { $match: rangeMatch },
+      { $group: {
+        _id: '$contact',
+        incoming: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
+        outgoing: { $sum: { $cond: [{ $eq: ['$direction', 'out'] }, 1, 0] } },
+        total: { $sum: 1 },
+        firstAt: { $min: '$at' },
+        lastAt: { $max: '$at' }
+      } },
+      { $sort: { total: -1, lastAt: -1 } },
+      { $limit: 1000 }
+    ]).toArray(),
+    coll.find(baseMatch).sort({ at: -1 }).limit(1).toArray(),
+  ]);
+
+  const summary = summaryRows[0] || { incoming: 0, outgoing: 0, total: 0, contactsSet: [], firstAt: null, lastAt: null };
+  const lastOverall = overallLast[0] || null;
+  const inactivityMs = lastOverall?.at ? Math.max(0, Date.now() - new Date(lastOverall.at).getTime()) : null;
+
+  return {
+    ok: true,
+    tenantId: tenant,
+    numero: num,
+    from,
+    to,
+    summary: {
+      incoming: Number(summary.incoming || 0),
+      outgoing: Number(summary.outgoing || 0),
+      total: Number(summary.total || 0),
+      contacts: Array.isArray(summary.contactsSet) ? summary.contactsSet.filter(Boolean).length : 0,
+      firstAt: summary.firstAt || null,
+      lastAt: summary.lastAt || null,
+    },
+    overall: {
+      lastMessageAt: lastOverall?.at || null,
+      inactivityMs,
+      inactivityLabel: inactivityMs == null ? '' : tgHumanizeMs(inactivityMs),
+    },
+    contacts: (contactRows || []).map((r) => ({
+      contact: String(r._id || ''),
+      incoming: Number(r.incoming || 0),
+      outgoing: Number(r.outgoing || 0),
+      total: Number(r.total || 0),
+      firstAt: r.firstAt || null,
+      lastAt: r.lastAt || null,
+    })),
+  };
+}
+
+async function getTelegramSessionRows(req) {
+  const visible = getVisibleContexts(req);
+  if (!visible.length) return [];
+  const db = await getDb();
+
+  const items = [];
+  for (const ctx of visible) {
+    const [lockDoc, policyDoc] = await Promise.all([
+      db.collection('tg_locks').findOne({ _id: ctx.lockId }),
+      db.collection('tg_bot_policies').findOne({
+        numero: ctx.numero,
+        $or: [{ tenantId: ctx.tenantId }, { tenantid: ctx.tenantId }]
+      }),
+    ]);
+
+    items.push({
+      ...getContextStatus(ctx),
+      host: lockDoc?.host || '',
+      holderId: lockDoc?.holderId || '',
+      pid: lockDoc?.pid || null,
+      policy: {
+        disabled: !!policyDoc?.disabled,
+        mode: normalizeString(policyDoc?.mode, 'any'),
+        pinnedHost: normalizeString(policyDoc?.pinnedHost, ''),
+        blockedHosts: Array.isArray(policyDoc?.blockedHosts) ? policyDoc.blockedHosts.map((x) => String(x)) : [],
+      },
+    });
+  }
+
+  return items.sort((a, b) => {
+    const ta = String(a.tenantId || '');
+    const tb = String(b.tenantId || '');
+    if (ta !== tb) return ta.localeCompare(tb);
+    return String(a.numero || '').localeCompare(String(b.numero || ''), 'es', { numeric: true, sensitivity: 'base' });
+  });
+}
+
+
 function telegramAdminEmbedPage() {
   return `<!doctype html>
 <html lang="es">
@@ -1302,62 +1427,608 @@ function telegramAdminEmbedPage() {
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Sesiones Telegram · Asisto</title>
   <style>
-    :root{--bg:#f8fafc;--card:#ffffff;--text:#0f172a;--muted:#64748b;--border:rgba(148,163,184,.24);--primary:#0e6b66;--danger:#b42318;--shadow:0 14px 36px rgba(15,23,42,.10);--radius:18px}
-    *{box-sizing:border-box}html,body{margin:0;padding:0;background:transparent;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--text)}
-    .page{padding:16px}.toolbar{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px}.toolbar h1{margin:0 0 4px;font-size:24px}
-    .small{font-size:12px;color:var(--muted)}.actions{display:flex;gap:8px;flex-wrap:wrap}.btn{border:1px solid var(--border);background:#fff;border-radius:12px;padding:10px 14px;font-weight:700;cursor:pointer}.btnDanger{color:var(--danger)}
-    .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-bottom:14px}.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow)}
-    .metric{font-size:28px;font-weight:800;line-height:1}.metricLabel{font-size:12px;color:var(--muted);margin-top:6px}
-    .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}.filters label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted)}
-    .inp{min-width:220px;border:1px solid var(--border);border-radius:12px;padding:10px 12px;background:#fff;color:var(--text)}
-    .layout{display:grid;grid-template-columns:1.25fr .95fr;gap:14px}.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
-    .panelHead{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--border)}.panelHead h2{margin:0;font-size:16px}
-    .tableWrap{overflow:auto}table{width:100%;border-collapse:collapse}th,td{padding:12px 14px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top;font-size:13px}
-    th{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;background:#fff;position:sticky;top:0}.tenantName{font-weight:800}
-    .statusPill,.chatPill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:1px solid var(--border);font-size:11px;font-weight:700;background:#fff}
-    .statusPill.is-on{background:rgba(14,107,102,.08);color:var(--primary);border-color:rgba(14,107,102,.18)}.statusPill.is-off{background:rgba(148,163,184,.08);color:#475569}
-    .rowActions{display:flex;gap:8px;flex-wrap:wrap}.rowActions .btn{padding:8px 10px;border-radius:10px;font-size:12px}
-    .msg{margin-bottom:12px;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:#fff;font-size:13px}.msg.err{border-color:rgba(240,68,56,.25);background:rgba(240,68,56,.08);color:#991b1b}.msg.ok{border-color:rgba(14,107,102,.22);background:rgba(14,107,102,.08);color:#0f5132}
-    .empty{padding:18px;color:var(--muted);font-size:13px}code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:12px}
-    @media (max-width: 980px){ .layout{grid-template-columns:1fr} }
+    :root{--text:#0f172a;--muted:#64748b;--border:rgba(148,163,184,.24);--primary:#0e6b66;--danger:#b42318;--shadow:0 16px 38px rgba(15,23,42,.10);--radius:18px}
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;background:transparent;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--text)}
+    .appWide{width:100%;max-width:1240px;margin:0 auto;padding:16px}
+    .toolbar{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .toolbar h2{margin:0 0 6px;font-size:24px}
+    .toolbarActions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .small{font-size:12px;color:#667085}
+    .msg{padding:10px 12px;border-radius:12px;font-size:14px;margin-top:10px}
+    .msg.ok{background:rgba(70,200,140,.10);border:1px solid rgba(70,200,140,.35);color:#166534}
+    .msg.err{background:rgba(240,68,56,.10);border:1px solid rgba(240,68,56,.25);color:#991b1b}
+    .btn2{border:1px solid rgba(16,24,40,.12);background:#fff;border-radius:10px;padding:8px 10px;cursor:pointer;font-weight:650;margin-right:6px}
+    .btnDanger{border-color:rgba(240,68,56,.32);color:#b42318}
+    .card{background:#fff;border:1px solid rgba(148,163,184,.22);border-radius:16px;padding:16px;box-shadow:0 10px 24px rgba(15,23,42,.06);overflow:visible}
+    .tableWrap{overflow:auto;max-width:100%;-webkit-overflow-scrolling:touch;padding-bottom:140px}
+    .tableWrap[data-loading="1"]{opacity:.75}
+    .wwebFilters{display:grid;grid-template-columns:minmax(260px,1fr) 220px;gap:12px;align-items:end;margin-top:12px}
+    .wwebFilterItem{min-width:0}
+    .wwebFilterItem label{display:block;margin-bottom:6px}
+    .inp{width:100%;height:40px;border-radius:12px;border:1px solid rgba(148,163,184,.45);padding:0 12px;font-size:14px;box-sizing:border-box;background:#fff;color:#0f172a}
+    .wwebTable{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0}
+    .wwebTable thead th{position:sticky;top:0;background:#fff;z-index:2}
+    .wwebTable tbody tr{position:relative;z-index:1}
+    .wwebTable tbody tr:nth-child(even){background:rgba(16,24,40,.02)}
+    .wwebTable tbody tr.rowMenuOpen{z-index:120}
+    .wwebTable td,.wwebTable th{padding:10px;border-bottom:1px solid rgba(230,234,239,1);text-align:left;vertical-align:top;white-space:normal;word-break:break-word}
+    .wwebTable th{color:#475467;font-weight:700;font-size:13px}
+    .wwebTable th:nth-child(1){width:170px}
+    .wwebTable th:nth-child(2){width:220px}
+    .wwebTable th:nth-child(3){width:180px}
+    .wwebTable th:nth-child(4){width:170px}
+    .wwebTable th:nth-child(5){width:220px}
+    .wwebTable th:nth-child(6){width:260px}
+    .cellMain{font-weight:700}
+    .cellSub{font-size:12px;opacity:.85;margin-top:2px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700}
+    .badgeOk{background:#1f7a3a1a;color:#1f7a3a;border:1px solid #1f7a3a55}
+    .badgeWarn{background:#b453091a;color:#b45309;border:1px solid #b4530955}
+    .badgeDanger{background:#b4231814;color:#b42318;border:1px solid rgba(180,35,24,.28)}
+    .wa-actions-cell{position:relative;z-index:1}
+    .wa-actions-cell.menuCellOpen{z-index:220}
+    .actionBar{display:flex;gap:10px;align-items:center;justify-content:flex-start;flex-wrap:wrap}
+    .btnMenu{padding:8px 12px;border-radius:12px;white-space:nowrap}
+    .caret{opacity:.7;margin-left:6px}
+    .menuWrap{position:relative;display:inline-block;overflow:visible;z-index:260}
+    .menu{position:absolute;right:0;top:calc(100% + 8px);min-width:200px;background:#fff;border:1px solid rgba(15,23,42,.12);box-shadow:0 12px 28px rgba(2,8,23,.18);border-radius:14px;padding:8px;display:none;z-index:320}
+    .menu.up{top:auto;bottom:calc(100% + 8px)}
+    .menuItem{width:100%;text-align:left;padding:10px 12px;border:0;background:transparent;border-radius:10px;cursor:pointer;font-size:14px}
+    .menuItem:hover{background:rgba(15,23,42,.06)}
+    .menuSep{height:1px;background:rgba(15,23,42,.10);margin:8px 6px}
+    body.modalOpen{overflow:hidden}
+    .modal{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;padding:16px}
+    .modal[hidden]{display:none !important}
+    .modalBackdrop{position:absolute;inset:0;background:rgba(0,0,0,.55)}
+    .modalCard{position:relative;width:min(980px,96vw);background:#fff;border-radius:16px;padding:14px 14px 16px;box-shadow:0 20px 60px rgba(0,0,0,.35)}
+    .modalHeader{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+    .statsModalCard{color:#0f172a}
+    .statsModalCard .small,.statsModalCard label,.statsModalCard #statsMeta,.statsModalCard #statsSub{color:#475467}
+    .statsCards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:8px}
+    .statsMiniCard{background:rgba(16,24,40,.03);border:1px solid rgba(16,24,40,.08);border-radius:12px;padding:10px 12px;color:#0f172a}
+    .statsMiniCard .cellMain{color:#0f172a !important;font-weight:800}
+    .statsMiniCard .small{color:#475467 !important}
+    .statsTableWrap{max-height:48vh;overflow:auto;padding-bottom:0}
+    .statsTable{width:100%;table-layout:fixed}
+    .statsTable th:nth-child(1){width:190px}
+    .statsTable th:nth-child(2), .statsTable th:nth-child(3), .statsTable th:nth-child(4){width:90px}
+    .statsTable th:nth-child(5){width:180px}
+    @media (max-width:960px){.wwebFilters{grid-template-columns:1fr}}
+    @media (max-width:820px){
+      .appWide{max-width:100%}
+      .toolbar{align-items:stretch}
+      .toolbarActions{width:100%}
+      .toolbarActions .btn2,.toolbarActions a.btn2{flex:1 1 auto;justify-content:center}
+      .tableWrap{overflow:visible;padding-bottom:24px}
+      .wwebTable,.wwebTable thead,.wwebTable tbody,.wwebTable th,.wwebTable td,.wwebTable tr{display:block;width:100%}
+      .wwebTable thead{display:none}
+      .wwebTable tbody{display:grid;gap:12px}
+      .wwebTable tbody tr{border:1px solid rgba(148,163,184,.22);border-radius:14px;padding:10px 12px;background:#fff !important;box-shadow:0 8px 18px rgba(15,23,42,.06);z-index:1}
+      .wwebTable td{border:0;padding:8px 0}
+      .wwebTable td + td{border-top:1px solid rgba(148,163,184,.14)}
+      .actionBar{justify-content:flex-start}
+      .menu{right:auto;left:0;min-width:min(240px,82vw)}
+    }
   </style>
 </head>
 <body>
-  <div class="page">
-    <div class="toolbar"><div><h1>Sesiones Telegram</h1><div class="small">Monitoreo multi-tenant de bots, chats registrados y acciones operativas.</div></div><div class="actions"><button class="btn" id="tgReloadBtn" type="button">Recargar bots</button><button class="btn" id="tgRefreshBtn" type="button">Actualizar vista</button></div></div>
-    <div id="tgMsg"></div>
-    <div class="cards"><div class="card"><div class="metric" id="tgMetricTotal">0</div><div class="metricLabel">Bots configurados</div></div><div class="card"><div class="metric" id="tgMetricStarted">0</div><div class="metricLabel">Bots iniciados</div></div><div class="card"><div class="metric" id="tgMetricChats">0</div><div class="metricLabel">Chats conocidos</div></div><div class="card"><div class="metric" id="tgMetricBlocked">0</div><div class="metricLabel">Chats bloqueados</div></div></div>
-    <div class="filters"><label>Buscar tenant / bot / chat<input class="inp" id="tgSearch" type="search" placeholder="Ej: CARICO, @bot, 549..." /></label><label>Estado<select class="inp" id="tgStateFilter"><option value="">Todos</option><option value="started">Iniciados</option><option value="stopped">Detenidos</option><option value="disabled">Deshabilitados</option></select></label></div>
-    <div class="layout">
-      <section class="panel"><div class="panelHead"><div><h2>Bots por tenant</h2><div class="small" id="tgStatusMeta">Sin datos todavía.</div></div></div><div class="tableWrap"><table><thead><tr><th>Tenant</th><th>Bot</th><th>Estado</th><th>Chats</th><th>Última actividad</th><th>Acciones</th></tr></thead><tbody id="tgBody"></tbody></table></div></section>
-      <section class="panel"><div class="panelHead"><div><h2>Chats registrados</h2><div class="small">Últimos chats conocidos por los bots visibles.</div></div></div><div id="tgChats" class="tableWrap"></div></section>
+  <div class="appWide">
+    <div class="toolbar">
+      <div>
+        <h2>Sesiones Telegram</h2>
+        <div class="small">Muestra las sesiones activas por tenant. Acciones: reiniciar, bloquear/habilitar y estadísticas.</div>
+      </div>
+      <div class="toolbarActions">
+        <button class="btn2" type="button" onclick="window.__tgReload && window.__tgReload()">Actualizar</button>
+        <span id="tgStatus" class="small" style="opacity:.85"></span>
+      </div>
+    </div>
+
+    <div class="wwebFilters">
+      <div class="wwebFilterItem wwebFilterItem--search">
+        <label class="small" for="tgSearch">Buscar sesión</label>
+        <input class="inp" id="tgSearch" type="search" placeholder="Tenant, número, bot o holder"/>
+      </div>
+      <div class="wwebFilterItem">
+        <label class="small" for="tgStateFilter">Estado</label>
+        <select class="inp" id="tgStateFilter">
+          <option value="all">Todos</option>
+          <option value="active">Activas</option>
+          <option value="inactive">Inactivas</option>
+          <option value="starting">starting</option>
+          <option value="online">online</option>
+          <option value="offline">offline</option>
+          <option value="standby">standby</option>
+          <option value="disabled">disabled</option>
+          <option value="conflict">conflict</option>
+          <option value="error">error</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="tgMsg" class="small" style="margin-top:10px"></div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="tableWrap" id="tgTableWrap">
+        <table class="wwebTable">
+          <thead>
+            <tr>
+              <th>Sesión</th>
+              <th>Bot</th>
+              <th>Estado</th>
+              <th>Chats</th>
+              <th>Última actividad</th>
+              <th style="width:260px">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="tgBody">
+            <tr><td colspan="6" class="small">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="modal" id="statsModal" hidden>
+      <div class="modalBackdrop" data-stats-close="1"></div>
+      <div class="modalCard statsModalCard" role="dialog" aria-modal="true" aria-label="Estadísticas Telegram">
+        <div class="modalHeader">
+          <div>
+            <div id="statsTitle" style="font-weight:800">Estadísticas</div>
+            <div id="statsSub" class="small" style="opacity:.85"></div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <label class="small">Desde <input type="date" id="statsFrom"/></label>
+            <label class="small">Hasta <input type="date" id="statsTo"/></label>
+            <button id="statsApply" class="btn2" type="button">Ver</button>
+            <button id="statsClose" class="btn2" type="button">Cerrar</button>
+          </div>
+        </div>
+        <div id="statsMeta" class="small" style="margin:10px 0"></div>
+        <div id="statsCards" class="statsCards"></div>
+        <div class="card" style="margin-top:12px; padding:10px 12px">
+          <div class="cellMain" style="margin-bottom:6px">Contactos del rango</div>
+          <div class="tableWrap statsTableWrap">
+            <table class="statsTable">
+              <thead>
+                <tr>
+                  <th>Contacto</th>
+                  <th>Entrada</th>
+                  <th>Salida</th>
+                  <th>Total</th>
+                  <th>Último mensaje</th>
+                </tr>
+              </thead>
+              <tbody id="statsContactsBody">
+                <tr><td colspan="5" class="small">Sin datos.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
+
   <script>
     (function(){
-      const msgEl=document.getElementById('tgMsg'), totalEl=document.getElementById('tgMetricTotal'), startedEl=document.getElementById('tgMetricStarted'), chatsEl=document.getElementById('tgMetricChats'), blockedEl=document.getElementById('tgMetricBlocked'), bodyEl=document.getElementById('tgBody'), chatsWrap=document.getElementById('tgChats'), metaEl=document.getElementById('tgStatusMeta'), searchEl=document.getElementById('tgSearch'), stateEl=document.getElementById('tgStateFilter'), reloadBtn=document.getElementById('tgReloadBtn'), refreshBtn=document.getElementById('tgRefreshBtn');
-      let state={items:[],chats:[]};
-      const esc=(v)=>String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
-      async function api(url, opts){ const res=await fetch(url, Object.assign({credentials:'same-origin',headers:{'Content-Type':'application/json'}}, opts||{})); let data=null; try{data=await res.json();}catch{} if(!res.ok) throw new Error((data&&(data.error||data.message))||('HTTP '+res.status)); return data||{}; }
-      function setMsg(kind, text){ if(!text){ msgEl.innerHTML=''; return; } msgEl.innerHTML='<div class="msg '+(kind==='err'?'err':'ok')+'">'+esc(text)+'</div>'; }
-      function statusPill(item){ const cls=item.botStarted?'statusPill is-on':'statusPill is-off'; const label=item.botStarted?(item.botState||'started'):(item.botState||'stopped'); return '<span class="'+cls+'">'+esc(label)+'</span>'; }
-      function rowMatches(item,q,filter){ const hay=[item.tenantId,item.numero,item.telegramBotUsername,item.telegramBotId,item.botState,item.lastSeenAt].join(' ').toLowerCase(); if(q && !hay.includes(q)) return false; if(filter==='started' && !item.botStarted) return false; if(filter==='stopped' && item.botStarted) return false; if(filter==='disabled' && String(item.botState||'').toLowerCase()!=='disabled') return false; return true; }
-      function render(){
-        const q=String(searchEl.value||'').trim().toLowerCase(), filter=String(stateEl.value||'').trim();
-        const items=(state.items||[]).filter((item)=>rowMatches(item,q,filter));
-        const chats=(state.chats||[]).filter((chat)=>{ const hay=[chat.tenantId,chat.numero,chat.chatId,chat.username,chat.firstName,chat.lastName,chat.title,chat.chatType].join(' ').toLowerCase(); return !q || hay.includes(q); });
-        totalEl.textContent=String(state.items.length||0); startedEl.textContent=String((state.items||[]).filter((x)=>x.botStarted).length||0); chatsEl.textContent=String((state.chats||[]).length||0); blockedEl.textContent=String((state.chats||[]).filter((x)=>x.blocked).length||0);
-        metaEl.textContent=items.length?('Mostrando '+items.length+' bot'+(items.length===1?'':'s')+' · actualizado '+new Date().toLocaleString('es-AR')):'Sin bots visibles para el filtro actual.';
-        bodyEl.innerHTML=!items.length?'<tr><td colspan="6" class="empty">No hay bots visibles con el filtro actual.</td></tr>':items.map((item)=>{ const knownChats=Number(item.knownChats||0); const botLabel=item.telegramBotUsername?('@'+String(item.telegramBotUsername).replace(/^@+/,'')):'Sin username'; const lastSeen=item.lastSeenAt?new Date(item.lastSeenAt).toLocaleString('es-AR'):'-'; return '<tr>'+'<td><div class="tenantName">'+esc(item.tenantId)+'</div><div class="small">'+esc(item.numero||'-')+'</div></td>'+'<td><div>'+esc(botLabel)+'</div><div class="small"><code>'+esc(item.telegramBotId||'-')+'</code></div></td>'+'<td>'+statusPill(item)+'</td>'+'<td><span class="chatPill">'+esc(String(knownChats))+' chats</span></td>'+'<td><div>'+esc(lastSeen)+'</div></td>'+'<td><div class="rowActions"><button class="btn" type="button" data-action="start" data-tenant="'+esc(item.tenantId)+'">Iniciar</button><button class="btn btnDanger" type="button" data-action="release" data-tenant="'+esc(item.tenantId)+'">Detener</button></div></td>'+'</tr>'; }).join('');
-        chatsWrap.innerHTML=!chats.length?'<div class="empty">No hay chats registrados.</div>':'<table><thead><tr><th>Tenant</th><th>Chat</th><th>Usuario</th><th>Tipo</th><th>Última vez</th></tr></thead><tbody>'+chats.slice(0,200).map((chat)=>{ const displayName=[chat.firstName,chat.lastName].filter(Boolean).join(' ').trim()||chat.title||chat.username||'-'; return '<tr>'+'<td><div class="tenantName">'+esc(chat.tenantId)+'</div><div class="small">'+esc(chat.numero||'-')+'</div></td>'+'<td><div><code>'+esc(chat.chatId||'-')+'</code></div>'+(chat.blocked?'<div class="small" style="color:#b42318">Bloqueado</div>':'')+'</td>'+'<td><div>'+esc(displayName)+'</div><div class="small">'+esc(chat.username?('@'+String(chat.username).replace(/^@+/,'')):'-')+'</div></td>'+'<td>'+esc(chat.chatType||'-')+'</td>'+'<td>'+esc(chat.lastSeenAt?new Date(chat.lastSeenAt).toLocaleString('es-AR'):'-')+'</td>'+'</tr>'; }).join('')+'</tbody></table>';
+      var body = document.getElementById('tgBody');
+      var msg = document.getElementById('tgMsg');
+      var statusEl = document.getElementById('tgStatus');
+      var tableWrap = document.getElementById('tgTableWrap');
+      var searchEl = document.getElementById('tgSearch');
+      var stateFilterEl = document.getElementById('tgStateFilter');
+      var inflight = false;
+      var lastHtml = null;
+      var lastItems = [];
+      var lastNowMs = Date.now();
+
+      var statsModal = document.getElementById('statsModal');
+      var statsTitle = document.getElementById('statsTitle');
+      var statsSub = document.getElementById('statsSub');
+      var statsMeta = document.getElementById('statsMeta');
+      var statsCards = document.getElementById('statsCards');
+      var statsFrom = document.getElementById('statsFrom');
+      var statsTo = document.getElementById('statsTo');
+      var statsApply = document.getElementById('statsApply');
+      var statsClose = document.getElementById('statsClose');
+      var statsContactsBody = document.getElementById('statsContactsBody');
+      var statsTenant = '';
+      var statsNumero = '';
+
+      function fmtDate(v){
+        if(!v) return "";
+        try { return new Date(v).toLocaleString(); } catch (e) { return String(v); }
       }
-      async function load(){ setMsg('',''); const [statusRes, chatsRes]=await Promise.all([api('/api/tg/status'), api('/api/tg/chats')]); state.items=Array.isArray(statusRes.items)?statusRes.items:[]; state.chats=Array.isArray(chatsRes.items)?chatsRes.items:[]; render(); }
-      async function runAction(action, tenantId){ try{ setMsg('',''); const url=action==='start'?'/api/tg/start':'/api/tg/release'; await api(url,{method:'POST',body:JSON.stringify({tenantId})}); await load(); setMsg('ok',(action==='start'?'Bot iniciado':'Bot detenido')+' para '+tenantId+'.'); }catch(e){ setMsg('err', e.message||String(e)); } }
-      reloadBtn.addEventListener('click', async ()=>{ try{ setMsg('',''); await api('/api/tg/reload',{method:'POST',body:'{}'}); await load(); setMsg('ok','Bots recargados desde tenant_config.'); }catch(e){ setMsg('err', e.message||String(e)); } });
-      refreshBtn.addEventListener('click', ()=>{ load().catch((e)=>setMsg('err', e.message||String(e))); });
-      searchEl.addEventListener('input', render); stateEl.addEventListener('change', render);
-      bodyEl.addEventListener('click', (ev)=>{ const btn=ev.target.closest('button[data-action]'); if(!btn) return; runAction(btn.getAttribute('data-action'), btn.getAttribute('data-tenant')); });
-      load().catch((e)=>setMsg('err', e.message||String(e)));
+
+      function escapeHtml(s){
+        return String(s == null ? "" : s)
+          .replace(/&/g,"&amp;")
+          .replace(/</g,"&lt;")
+          .replace(/>/g,"&gt;")
+          .replace(/"/g,"&quot;")
+          .replace(/'/g,"&#39;");
+      }
+
+      function api(path, opts){
+        opts = opts || {};
+        opts.headers = Object.assign({ "Content-Type":"application/json" }, (opts.headers||{}));
+        return fetch(path, opts).then(function(r){
+          return r.text().then(function(t){
+            var data = null;
+            try { data = t ? JSON.parse(t) : null; } catch(e) {}
+            if(!r.ok){
+              var err = (data && (data.error || data.message)) ? (data.error || data.message) : ("HTTP " + r.status);
+              throw new Error(err);
+            }
+            return data || {};
+          });
+        });
+      }
+
+      function normalizedState(item, nowMs){
+        var st = String((item && item.botState) || '').trim().toLowerCase();
+        var last = item && item.lastSeenAt ? new Date(item.lastSeenAt).getTime() : 0;
+        var active = !!(last && (nowMs - last) <= 30000);
+        if (st === 'disabled') return 'disabled';
+        if (st) return st;
+        return active ? 'active' : 'inactive';
+      }
+
+      function lockSearchText(item){
+        return [
+          item && item.tenantId || '',
+          item && item.numero || '',
+          item && item.telegramBotUsername || '',
+          item && item.telegramBotId || '',
+          item && item.lockId || '',
+          item && item.botState || ''
+        ].join(' ').toLowerCase();
+      }
+
+      function applyFiltersAndSort(items, nowMs){
+        var out = Array.isArray(items) ? items.slice() : [];
+        var q = searchEl ? String(searchEl.value || '').trim().toLowerCase() : '';
+        var sf = stateFilterEl ? String(stateFilterEl.value || 'all').trim().toLowerCase() : 'all';
+
+        out.sort(function(a,b){
+          var ta = String(a && a.tenantId || '').toLowerCase();
+          var tb = String(b && b.tenantId || '').toLowerCase();
+          if (ta !== tb) return ta.localeCompare(tb, 'es', { sensitivity: 'base' });
+          var na = String(a && (a.numero || '') || '').toLowerCase();
+          var nb = String(b && (b.numero || '') || '').toLowerCase();
+          return na.localeCompare(nb, 'es', { sensitivity: 'base', numeric: true });
+        });
+
+        if (q) {
+          out = out.filter(function(item){
+            return lockSearchText(item).indexOf(q) >= 0;
+          });
+        }
+
+        if (sf && sf !== 'all') {
+          out = out.filter(function(item){
+            var ns = normalizedState(item, nowMs);
+            if (sf === 'active') return ['active','online','starting'].indexOf(ns) >= 0;
+            if (sf === 'inactive') return ['inactive','offline','standby','conflict','error'].indexOf(ns) >= 0;
+            return ns === sf;
+          });
+        }
+
+        return out;
+      }
+
+      function renderStatus(item, nowMs){
+        var st = String(item.botState || '').trim().toLowerCase();
+        var last = item.lastSeenAt ? new Date(item.lastSeenAt).getTime() : 0;
+        var active = !!(last && (nowMs - last) <= 30000);
+        if (st === 'error' || st === 'conflict') return '<span class="badge badgeDanger">' + escapeHtml(item.botState || '-') + '</span>';
+        if (st === 'disabled') return '<span class="badge badgeWarn">' + escapeHtml(item.botState || '-') + '</span>';
+        if (active || item.botStarted) return '<span class="badge badgeOk">' + escapeHtml(item.botState || 'online') + '</span>';
+        return '<span class="badge badgeWarn">' + escapeHtml(item.botState || 'offline') + '</span>';
+      }
+
+      function renderRow(item, nowMs){
+        var menuId = 'm_' + String(item.lockId || '').replace(/[^a-zA-Z0-9_-]/g,'') + '_' + Math.floor(Math.random()*1e6);
+        var isDisabled = !!(item && item.policy && item.policy.disabled);
+        var botLabel = item.telegramBotUsername ? ('@' + String(item.telegramBotUsername).replace(/^@+/, '')) : 'Sin username';
+        var ageSec = item.lastSeenAt ? Math.round((nowMs - new Date(item.lastSeenAt).getTime()) / 1000) : null;
+        var ageHtml = (ageSec !== null) ? ('<div class="cellSub">hace ' + ageSec + 's</div>') : '';
+
+        var actions = ''
+          + '<div class="menuWrap">'
+          +   '<button class="btn2 btnMenu" type="button" data-action="menu" data-menu="' + escapeHtml(menuId) + '" aria-haspopup="true" aria-expanded="false" title="Acciones">Acciones <span class="caret">▾</span></button>'
+          +   '<div class="menu" id="' + escapeHtml(menuId) + '" role="menu" aria-hidden="true">'
+          +     '<button class="menuItem" type="button" role="menuitem" data-action="restart" data-tenant="' + escapeHtml(item.tenantId || '') + '">Reiniciar</button>'
+          +     '<button class="menuItem" type="button" role="menuitem" data-action="toggle" data-tenant="' + escapeHtml(item.tenantId || '') + '" data-numero="' + escapeHtml(item.numero || '') + '" data-disabled="' + (isDisabled ? '1' : '0') + '">' + (isDisabled ? 'Habilitar' : 'Bloquear') + '</button>'
+          +     '<div class="menuSep"></div>'
+          +     '<button class="menuItem" type="button" role="menuitem" data-action="stats" data-tenant="' + escapeHtml(item.tenantId || '') + '" data-numero="' + escapeHtml(item.numero || '') + '">Estadísticas</button>'
+          +   '</div>'
+          + '</div>';
+
+        return ''
+          + '<tr class="wwebRow">'
+          + '<td><div class="cellMain">' + escapeHtml(item.tenantId || '-') + '</div><div class="cellSub">' + escapeHtml(item.numero || '-') + '</div></td>'
+          + '<td><div class="cellMain">' + escapeHtml(botLabel) + '</div><div class="cellSub mono">' + escapeHtml(item.telegramBotId || '-') + '</div><div class="cellSub mono">' + escapeHtml(item.lockId || '-') + '</div></td>'
+          + '<td>' + renderStatus(item, nowMs) + ageHtml + '</td>'
+          + '<td><div class="cellMain">' + escapeHtml(String(item.knownChats || 0)) + '</div></td>'
+          + '<td><div class="cellSub"><b>Inicio:</b> ' + escapeHtml(fmtDate(item.startedAt) || '-') + '</div><div class="cellSub"><b>Heartbeat:</b> ' + escapeHtml(fmtDate(item.lastSeenAt) || '-') + '</div></td>'
+          + '<td class="wa-actions-cell"><div class="actionBar">' + actions + '</div></td>'
+          + '</tr>';
+      }
+
+      function renderCurrentItems(){
+        var nowMs = lastNowMs || Date.now();
+        var items = applyFiltersAndSort(lastItems, nowMs);
+
+        var html = '';
+        if(!items.length){
+          html = '<tr><td colspan="6" class="small">No hay sesiones para los filtros seleccionados.</td></tr>';
+        } else {
+          html = items.map(function(item){ return renderRow(item, nowMs); }).join('');
+        }
+
+        if(html !== lastHtml){
+          var sx = tableWrap ? tableWrap.scrollLeft : 0;
+          var sy = tableWrap ? tableWrap.scrollTop : 0;
+          body.innerHTML = html;
+          if(tableWrap){
+            tableWrap.scrollLeft = sx;
+            tableWrap.scrollTop = sy;
+          }
+          lastHtml = html;
+        }
+      }
+
+      function setLoading(on){
+        if(!tableWrap) return;
+        if(on) tableWrap.setAttribute('data-loading','1');
+        else tableWrap.removeAttribute('data-loading');
+      }
+
+      function closeAllMenus(){
+        document.querySelectorAll('.menu[aria-hidden="false"]').forEach(function(m){
+          m.setAttribute('aria-hidden','true');
+          m.style.display = 'none';
+        });
+        document.querySelectorAll('button[data-action="menu"][aria-expanded="true"]').forEach(function(b){
+          b.setAttribute('aria-expanded','false');
+        });
+        document.querySelectorAll('.wa-actions-cell.menuCellOpen').forEach(function(cell){
+          cell.classList.remove('menuCellOpen');
+        });
+        document.querySelectorAll('.wwebRow.rowMenuOpen').forEach(function(row){
+          row.classList.remove('rowMenuOpen');
+        });
+      }
+
+      function positionWaActionsMenu(btn){
+        try{
+          var wrap = btn && btn.closest ? btn.closest('.menuWrap') : null;
+          if(!wrap) return;
+          var menu = wrap.querySelector('.menu');
+          if(!menu) return;
+          menu.classList.remove('up');
+          var rect = menu.getBoundingClientRect();
+          var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+          if(rect.bottom > (vh - 12)) menu.classList.add('up');
+        } catch(e){}
+      }
+
+      function toggleMenu(menuId, btn){
+        var m = document.getElementById(menuId);
+        if(!m) return;
+        var isOpen = (m.getAttribute('aria-hidden') === 'false');
+        closeAllMenus();
+        if(isOpen) return;
+        var cell = btn && btn.closest ? btn.closest('.wa-actions-cell') : null;
+        var row = btn && btn.closest ? btn.closest('.wwebRow') : null;
+        if(cell) cell.classList.add('menuCellOpen');
+        if(row) row.classList.add('rowMenuOpen');
+        m.setAttribute('aria-hidden','false');
+        m.style.display = 'block';
+        btn.setAttribute('aria-expanded','true');
+        positionWaActionsMenu(btn);
+      }
+
+      function statsSetOpen(open){
+        if(!statsModal) return;
+        if(open){ statsModal.hidden = false; document.body.classList.add('modalOpen'); }
+        else { statsModal.hidden = true; document.body.classList.remove('modalOpen'); }
+      }
+      function closeStats(){ statsSetOpen(false); }
+      function toYmd(d){
+        try {
+          var y = d.getFullYear();
+          var m = String(d.getMonth()+1).padStart(2,'0');
+          var day = String(d.getDate()).padStart(2,'0');
+          return y + '-' + m + '-' + day;
+        } catch(e){ return ''; }
+      }
+      function fmtDurationMs(ms){
+        var n = Number(ms);
+        if(!isFinite(n) || n < 0) return '-';
+        var mins = Math.floor(n/60000);
+        var d = Math.floor(mins/1440);
+        var h = Math.floor((mins%1440)/60);
+        var m = mins%60;
+        var parts = [];
+        if(d) parts.push(d + 'd');
+        if(h || d) parts.push(h + 'h');
+        parts.push(m + 'm');
+        return parts.join(' ');
+      }
+      function statsCard(label, value, sub){
+        return '<div class="statsMiniCard">'
+          + '<div class="small" style="opacity:.8; color:#475467">' + escapeHtml(label) + '</div>'
+          + '<div class="cellMain" style="font-size:22px; margin-top:4px; color:#0f172a; font-weight:800">' + escapeHtml(value) + '</div>'
+          + (sub ? ('<div class="small" style="margin-top:4px; color:#475467">' + escapeHtml(sub) + '</div>') : '')
+          + '</div>';
+      }
+      function renderStats(data){
+        var summary = data && data.summary ? data.summary : {};
+        var overall = data && data.overall ? data.overall : {};
+        var contacts = Array.isArray(data && data.contacts) ? data.contacts : [];
+        statsMeta.textContent = 'Rango: ' + (data.from || '-') + ' a ' + (data.to || '-')
+          + ' · Último mensaje global: ' + (overall.lastMessageAt ? fmtDate(overall.lastMessageAt) : '-');
+        statsCards.innerHTML = ''
+          + statsCard('Mensajes entrada', String(summary.incoming || 0))
+          + statsCard('Mensajes salida', String(summary.outgoing || 0))
+          + statsCard('Mensajes totales', String(summary.total || 0))
+          + statsCard('Contactos', String(summary.contacts || 0))
+          + statsCard('Último mensaje del rango', summary.lastAt ? fmtDate(summary.lastAt) : '-')
+          + statsCard('Inactividad actual', overall.inactivityLabel || fmtDurationMs(overall.inactivityMs || 0));
+
+        if(!contacts.length){
+          statsContactsBody.innerHTML = '<tr><td colspan="5" class="small">No hay mensajes en el rango seleccionado.</td></tr>';
+          return;
+        }
+        statsContactsBody.innerHTML = contacts.map(function(c){
+          return '<tr>'
+            + '<td class="mono">' + escapeHtml(c.contact || '-') + '</td>'
+            + '<td>' + escapeHtml(String(c.incoming || 0)) + '</td>'
+            + '<td>' + escapeHtml(String(c.outgoing || 0)) + '</td>'
+            + '<td>' + escapeHtml(String(c.total || 0)) + '</td>'
+            + '<td>' + escapeHtml(c.lastAt ? fmtDate(c.lastAt) : '-') + '</td>'
+            + '</tr>';
+        }).join('');
+      }
+      function loadStats(){
+        if(!statsTenant || !statsNumero) return;
+        statsMeta.textContent = 'Cargando…';
+        statsCards.innerHTML = '';
+        statsContactsBody.innerHTML = '<tr><td colspan="5" class="small">Cargando…</td></tr>';
+        return api('/api/tg/stats?tenantId=' + encodeURIComponent(statsTenant) + '&numero=' + encodeURIComponent(statsNumero)
+          + '&from=' + encodeURIComponent(statsFrom.value || '') + '&to=' + encodeURIComponent(statsTo.value || ''), { method:'GET' })
+          .then(renderStats)
+          .catch(function(e){
+            statsMeta.textContent = 'Error: ' + (e.message || e);
+            statsContactsBody.innerHTML = '<tr><td colspan="5" class="small">Error cargando estadísticas.</td></tr>';
+          });
+      }
+      function openStats(tenant, numero){
+        closeAllMenus();
+        statsTenant = String(tenant || '');
+        statsNumero = String(numero || '');
+        var today = toYmd(new Date());
+        if(statsTitle) statsTitle.textContent = 'Estadísticas · ' + statsNumero;
+        if(statsSub) statsSub.textContent = 'tenant: ' + statsTenant;
+        if(statsFrom && !statsFrom.value) statsFrom.value = today;
+        if(statsTo && !statsTo.value) statsTo.value = statsFrom.value || today;
+        statsSetOpen(true);
+        loadStats();
+      }
+      if(statsApply) statsApply.addEventListener('click', loadStats);
+      if(statsClose) statsClose.addEventListener('click', closeStats);
+      if(statsModal) statsModal.addEventListener('click', function(ev){
+        var t = ev && ev.target;
+        if(t && t.getAttribute && t.getAttribute('data-stats-close')) closeStats();
+      });
+
+      function load(opts){
+        opts = opts || {};
+        var initial = !!opts.initial;
+        if(document.hidden && !opts.force) return;
+        if(inflight) return;
+        inflight = true;
+
+        if(initial && body && !body.__didInitial){
+          body.innerHTML = '<tr><td colspan="6" class="small">Cargando…</td></tr>';
+          body.__didInitial = true;
+        }
+
+        setLoading(true);
+        return api('/api/tg/status', { method:'GET' })
+          .then(function(data){
+            lastItems = Array.isArray(data.items) ? data.items : [];
+            lastNowMs = data.now ? new Date(data.now).getTime() : Date.now();
+            renderCurrentItems();
+            if(statusEl){ statusEl.textContent = 'Última actualización: ' + new Date(lastNowMs).toLocaleTimeString(); }
+            if(msg) msg.textContent = '';
+          })
+          .catch(function(e){
+            if(statusEl){ statusEl.textContent = 'Error actualizando: ' + (e.message || e); }
+            if(lastHtml == null){
+              body.innerHTML = '<tr><td colspan="6" class="small">Error: ' + escapeHtml(e.message || e) + '</td></tr>';
+              lastHtml = body.innerHTML;
+            }
+          })
+          .finally(function(){
+            inflight = false;
+            setLoading(false);
+          });
+      }
+
+      function doRestart(tenantId){
+        closeAllMenus();
+        if(!confirm('¿Reiniciar esta sesión de Telegram?')) return;
+        api('/api/tg/restart', { method:'POST', body: JSON.stringify({ tenantId: String(tenantId || '') }) })
+          .then(function(){ setMsg('ok', 'Reinicio solicitado.'); return load({ force:true }); })
+          .catch(function(e){ setMsg('err', e.message || e); });
+      }
+
+      function setMsg(kind, text){
+        if(!msg) return;
+        if(!text){ msg.innerHTML = ''; return; }
+        msg.innerHTML = '<div class="msg ' + (kind === 'err' ? 'err' : 'ok') + '">' + escapeHtml(text) + '</div>';
+      }
+
+      function doToggle(tenantId, numero, currentlyDisabled){
+        closeAllMenus();
+        var nextDisabled = !currentlyDisabled;
+        var label = nextDisabled ? 'bloquear' : 'habilitar';
+        if(!confirm('¿' + label.toUpperCase() + ' esta sesión? ' + tenantId + ' · ' + numero)) return;
+        api('/api/tg/policy', { method:'POST', body: JSON.stringify({ tenantId: tenantId, disabled: nextDisabled }) })
+          .then(function(){ setMsg('ok', nextDisabled ? 'Sesión bloqueada.' : 'Sesión habilitada.'); return load({ force:true }); })
+          .catch(function(e){ setMsg('err', e.message || e); });
+      }
+
+      body.addEventListener('click', function(e){
+        var btn = e.target && e.target.closest ? e.target.closest('button[data-action]') : null;
+        if(!btn) return;
+        var act = btn.getAttribute('data-action');
+        var tenant = btn.getAttribute('data-tenant') || "";
+        var numero = btn.getAttribute('data-numero') || "";
+        var disabledFlag = btn.getAttribute('data-disabled');
+        var currentlyDisabled = (disabledFlag === '1' || disabledFlag === 'true');
+
+        if(act === 'menu'){
+          var menuId = btn.getAttribute('data-menu') || '';
+          if(!menuId) return;
+          toggleMenu(menuId, btn);
+          e.preventDefault();
+          return;
+        }
+        if(act === 'restart') return doRestart(tenant);
+        if(act === 'toggle') return doToggle(tenant, numero, currentlyDisabled);
+        if(act === 'stats') return openStats(tenant, numero);
+      });
+
+      document.addEventListener('click', function(e){
+        var inside = e.target && e.target.closest ? e.target.closest('.menuWrap') : null;
+        if(!inside) closeAllMenus();
+      });
+      document.addEventListener('keydown', function(e){
+        if(e.key === 'Escape'){
+          closeAllMenus();
+          closeStats();
+        }
+      });
+      window.addEventListener('resize', function(){
+        document.querySelectorAll('.menu[aria-hidden="false"]').forEach(function(menu){
+          var wrap = menu.closest('.menuWrap');
+          var btn = wrap ? wrap.querySelector('button[data-action="menu"]') : null;
+          if(btn) positionWaActionsMenu(btn);
+        });
+      });
+
+      if (searchEl) searchEl.addEventListener('input', function(){ closeAllMenus(); renderCurrentItems(); });
+      if (stateFilterEl) stateFilterEl.addEventListener('change', function(){ closeAllMenus(); renderCurrentItems(); });
+
+      window.__tgReload = function(){ return load({ force:true }); };
+      load({ initial:true });
+      setInterval(function(){ if(document.hidden) return; load(); }, 8000);
+      document.addEventListener('visibilitychange', function(){ if(!document.hidden) load(); });
     })();
   </script>
 </body>
@@ -1372,12 +2043,11 @@ function mountTelegramRoutes(app) {
 
   app.get('/admin/telegram', auth.requireAuth, auth.requireAdmin, async (_req, res) => {
     try {
-     return res.status(200).send(telegramAdminEmbedPage());
+      return res.status(200).send(telegramAdminEmbedPage());
     } catch (e) {
       return res.status(500).send(String(e?.message || e));
     }
   });
-
 
   app.get('/api/tg/status', auth.requireAuth, auth.requireAdmin, async (req, res) => {
     try {
@@ -1389,6 +2059,21 @@ function mountTelegramRoutes(app) {
         started: items.filter((x) => x && x.botStarted).length,
         items
       });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  app.get('/api/tg/stats', auth.requireAuth, auth.requireAdmin, async (req, res) => {
+    try {
+      const role = String(req.user?.role || '').toLowerCase();
+      const isSuper = role === 'superadmin';
+      const tenantId = String(req.query?.tenantId || (!isSuper ? (req.user?.tenantId || 'default') : '')).trim().toUpperCase();
+      const numero = String(req.query?.numero || '').trim();
+      if (!tenantId || !numero) return res.status(400).json({ ok: false, error: 'tenantId y numero requeridos' });
+      if (!isSuper && tenantId !== String(req.user?.tenantId || 'default').trim().toUpperCase()) return res.status(403).json({ ok: false, error: 'forbidden' });
+      const stats = await getTelegramSessionStats(tenantId, numero, String(req.query?.from || '').trim(), String(req.query?.to || '').trim());
+      return res.status(200).json(stats);
     } catch (e) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
@@ -1461,7 +2146,52 @@ function mountTelegramRoutes(app) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
     }
   });
+
+  app.post('/api/tg/restart', auth.requireAuth, auth.requireAdmin, async (req, res) => {
+    try {
+      const visible = getVisibleContexts(req);
+      const tenantId = normalizeString(req?.body?.tenantId || req?.query?.tenantId || req?.query?.tenant || '', '').toUpperCase();
+      const ctx = tenantId ? visible.find((x) => x.tenantId === tenantId) : visible[0];
+      if (!ctx) return res.status(404).json({ ok: false, error: 'tenant_not_found' });
+      await stopContext(ctx, 'restarting');
+      ctx.shuttingDown = false;
+      ctx.lockAcquiredAt = new Date();
+      const status = await startContext(ctx);
+      return res.json({ ok: true, item: status });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
+
+  app.post('/api/tg/policy', auth.requireAuth, auth.requireAdmin, async (req, res) => {
+    try {
+      const visible = getVisibleContexts(req);
+      const tenantId = normalizeString(req?.body?.tenantId || req?.query?.tenantId || req?.query?.tenant || '', '').toUpperCase();
+      const disabled = !!req?.body?.disabled;
+      const ctx = tenantId ? visible.find((x) => x.tenantId === tenantId) : visible[0];
+      if (!ctx) return res.status(404).json({ ok: false, error: 'tenant_not_found' });
+      const db = await getDb();
+      await db.collection('tg_bot_policies').updateOne(
+        { numero: ctx.numero, tenantId: ctx.tenantId },
+        { $set: { tenantId: ctx.tenantId, tenantid: ctx.tenantId, numero: ctx.numero, disabled, updatedAt: new Date() } },
+        { upsert: true }
+      );
+
+      if (disabled) {
+        await stopContext(ctx, 'disabled');
+      } else {
+        ctx.shuttingDown = false;
+        ctx.botState = 'idle';
+        await startContext(ctx);
+      }
+
+      return res.json({ ok: true, item: getContextStatus(ctx), disabled });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: String(e?.message || e) });
+    }
+  });
 }
+
 
 async function startTelegramRuntime() {
   if (manager.started) return getTelegramStatus();
