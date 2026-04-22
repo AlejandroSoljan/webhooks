@@ -5811,15 +5811,18 @@ app.get("/admin/ticket/:convId", async (req, res) => {
 
 
 
-// GET /api/products  → lista (activos por defecto; ?all=true para todos)
+// GET /api/products  → lista (activos por defecto; status=all|active|inactive)
 app.get("/api/products", async (req, res) => {
   try {
     const db = await getDb();
     const tenant = resolveTenantId(req);
-    const q = req.query.all === "true" ? {} : { active: { $ne: false } };
+    const status = String(req.query.status || "").trim().toLowerCase();
+    const allFlag = req.query.all === "true" || status === "all";
+    const inactiveFlag = status === "inactive";
+    const q = inactiveFlag ? { active: false } : (allFlag ? {} : { active: { $ne: false } });
     if (tenant) q.tenantId = tenant; else if (TENANT_ID) q.tenantId = TENANT_ID;
     const items = await db.collection("products")
-      .find(q).sort({ createdAt: -1, descripcion: 1 }).toArray();
+      .find(q).sort({ active: -1, descripcion: 1, createdAt: -1 }).toArray();
     res.json(items.map(it => ({ ...it, _id: String(it._id) })));
   } catch (e) {
     console.error("GET /api/products error:", e);
@@ -5918,6 +5921,105 @@ app.put("/api/products/:id", async (req, res) => {
   }
 });
 
+// POST /api/products/bulk-save  → guardar cambios masivos
+app.post("/api/products/bulk-save", async (req, res) => {
+  try {
+    const db = await getDb();
+    const tenant = resolveTenantId(req);
+    const tenantValue = tenant || TENANT_ID || DEFAULT_TENANT_ID || null;
+    const rows = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (!rows.length) return res.json({ ok: true, created: 0, updated: 0, skipped: 0 });
+
+    const now = new Date();
+    const ops = [];
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+
+    for (const raw of rows) {
+      if (!raw || typeof raw !== "object") { skipped++; continue; }
+
+      let descripcion = String(raw.descripcion || "").trim();
+      const tag = String(raw.tag || "").trim();
+      const observacion = String(raw.observacion || "").trim();
+      let active = raw.active;
+      if (typeof active !== "boolean") active = !!active;
+
+      const emptyDraft = !String(raw._id || "").trim()
+        && !descripcion
+        && !tag
+        && !String(raw.importe ?? "").trim()
+        && !String(raw.cantidad ?? "").trim()
+        && !observacion;
+      if (emptyDraft) { skipped++; continue; }
+
+      if (!descripcion) {
+        return res.status(400).json({ error: "descripcion requerida" });
+      }
+
+      let imp = null;
+      if (typeof raw.importe === "number") imp = raw.importe;
+      else if (typeof raw.importe === "string") {
+        const n = Number(raw.importe.replace(/[^\d.,-]/g, "").replace(",", "."));
+        imp = Number.isFinite(n) ? n : null;
+      }
+
+      let qty = null;
+      if (typeof raw.cantidad === "number") {
+        qty = Number.isFinite(raw.cantidad) ? Math.trunc(raw.cantidad) : null;
+      } else if (typeof raw.cantidad === "string") {
+        const t = raw.cantidad.trim();
+        if (t) {
+          const n = parseInt(t.replace(/[^\d-]/g, ""), 10);
+          qty = Number.isFinite(n) ? n : null;
+        }
+      }
+
+      const doc = { tenantId: tenantValue, descripcion, observacion, active, updatedAt: now };
+      if (tag) doc.tag = tag; else doc.tag = "";
+      if (qty !== null) doc.cantidad = qty; else doc.cantidad = null;
+      if (imp !== null) doc.importe = imp; else doc.importe = null;
+
+      const id = String(raw._id || "").trim();
+      if (id) {
+        ops.push({
+          updateOne: {
+            filter: { _id: new ObjectId(id), ...(tenantValue ? { tenantId: tenantValue } : {}) },
+            update: { $set: doc },
+            upsert: false
+          }
+        });
+        updated++;
+      } else {
+        ops.push({
+          insertOne: {
+            document: { ...doc, createdAt: now }
+          }
+        });
+        created++;
+      }
+    }
+
+    if (!ops.length) return res.json({ ok: true, created: 0, updated: 0, skipped });
+
+    const result = await db.collection("products").bulkWrite(ops, { ordered: true });
+    res.json({
+      ok: true,
+      created,
+      updated,
+      skipped,
+      result: {
+        insertedCount: Number(result?.insertedCount || 0),
+        modifiedCount: Number(result?.modifiedCount || 0),
+        matchedCount: Number(result?.matchedCount || 0)
+      }
+    });
+  } catch (e) {
+    console.error("POST /api/products/bulk-save error:", e);
+    res.status(500).json({ error: "internal" });
+  }
+});
+
 // DELETE /api/products/:id  → eliminar
 app.delete("/api/products/:id", async (req, res) => {
   try {
@@ -5973,9 +6075,8 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
 app.get("/productos", async (req, res) => {
   try {
     const db = await getDb();
-    const verTodos = req.query.all === "true";
     const tenant = resolveTenantId(req);
-    const filtro = verTodos ? {} : { active: { $ne: false } };
+    const filtro = {};
     if (tenant) filtro.tenantId = tenant; else if (TENANT_ID) filtro.tenantId = TENANT_ID;
     const productos = await db.collection("products").find(filtro).sort({ active: -1, descripcion: 1, createdAt: -1 }).toArray();
 
@@ -5995,9 +6096,9 @@ app.get("/productos", async (req, res) => {
         </td>
         <td class="col-actions">
           <div class="actions-stack">
-            <button class="save btn btn-primary" type="button">Guardar</button>
+  
             <button class="del btn btn-danger" type="button">Eliminar</button>
-            <button class="toggle btn btn-soft" type="button">${p.active !== false ? "Inactivar" : "Reactivar"}</button>
+          
           </div>
         </td>
       </tr>`).join("");
@@ -6020,6 +6121,8 @@ app.get("/productos", async (req, res) => {
           --soft:#eff4fb;
           --success:#0c7a43;
           --success-bg:#ecfdf3;
+          --warning:#b54708;
+          --warning-bg:#fffaeb;
           --shadow:0 12px 26px rgba(16,24,40,.08);
           --radius:18px;
         }
@@ -6033,9 +6136,13 @@ app.get("/productos", async (req, res) => {
         .hero-side{display:flex;gap:8px;flex-wrap:wrap}
         .chip{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:999px;background:#fff;border:1px solid var(--line);font-size:12px;font-weight:700;color:var(--primary)}
         .toolbar{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px;box-shadow:var(--shadow);display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:16px}
+        .toolbar-left{display:flex;gap:12px;align-items:center;flex:1 1 540px;min-width:280px;flex-wrap:wrap}
         .search{position:relative;flex:1 1 360px;min-width:260px}
         .search input{width:100%;height:46px;border-radius:14px;border:1px solid var(--line-strong);padding:0 16px;background:#fff;font-size:14px;outline:none;color:var(--text)}
-        .search input:focus{border-color:#88a7d4;box-shadow:0 0 0 4px rgba(31,90,168,.08)}
+        .search input:focus,.filter-select:focus{border-color:#88a7d4;box-shadow:0 0 0 4px rgba(31,90,168,.08)}
+        .filterBox{display:flex;flex-direction:column;gap:6px;min-width:180px}
+        .filterBox label{font-size:12px;color:var(--muted);font-weight:700}
+        .filter-select{height:46px;border-radius:14px;border:1px solid var(--line-strong);padding:0 14px;background:#fff;font-size:14px;outline:none;color:var(--text)}
         .toolbar-actions{display:flex;gap:10px;flex-wrap:wrap}
         .btn{appearance:none;border:1px solid var(--line-strong);background:#fff;color:var(--text);border-radius:12px;padding:10px 14px;font-weight:700;font-size:13px;cursor:pointer;transition:.18s ease;line-height:1}
         .btn:hover{transform:translateY(-1px);box-shadow:0 8px 18px rgba(16,24,40,.08)}
@@ -6043,6 +6150,10 @@ app.get("/productos", async (req, res) => {
         .btn-primary:hover{background:var(--primary-2);border-color:var(--primary-2)}
         .btn-soft{background:var(--soft);border-color:var(--line);color:var(--primary)}
         .btn-danger{background:var(--danger-bg);border-color:#f5c3bd;color:var(--danger)}
+        .flash{display:none;margin:0 0 14px;padding:12px 14px;border-radius:14px;font-size:13px;font-weight:600}
+        .flash.show{display:block}
+        .flash.ok{background:var(--success-bg);border:1px solid rgba(12,122,67,.22);color:var(--success)}
+        .flash.err{background:var(--danger-bg);border:1px solid rgba(180,35,24,.22);color:var(--danger)}
         .table-card{background:var(--card);border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow);overflow:hidden}
         .table-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;padding:18px 18px 12px;border-bottom:1px solid var(--line)}
         .table-head h2{margin:0;font-size:16px}
@@ -6053,12 +6164,14 @@ app.get("/productos", async (req, res) => {
         tbody td{padding:10px 8px;border-bottom:1px solid #edf2f7;vertical-align:top;background:#fff}
         tbody tr:hover td{background:#fbfdff}
         tbody tr:last-child td{border-bottom:none}
+        tbody tr.row-dirty td{background:#fffcf1}
         .col-desc{width:24%}
+        .col-tag{width:12%}
         .col-price{width:11%}
         .col-qty{width:10%}
         .col-obs{width:27%}
         .col-active{width:8%;text-align:center}
-        .col-actions{width:20%}
+        .col-actions{width:8%}
         input[type=text],input[type=number],textarea{
           width:100%;border:1px solid var(--line-strong);border-radius:12px;background:#fff;padding:9px 10px;font-size:13px;color:var(--text);outline:none;transition:.18s ease
         }
@@ -6073,9 +6186,8 @@ app.get("/productos", async (req, res) => {
         .switch span:before{content:"";position:absolute;left:3px;top:3px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(16,24,40,.14);transition:.18s ease}
         .switch input:checked + span{background:#dff7e9;border-color:#9bdfbb}
         .switch input:checked + span:before{left:23px;background:#0c7a43}
-        .actions-stack{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;align-items:start}
+        .actions-stack{display:grid;grid-template-columns:1fr;gap:6px;align-items:start}
         .actions-stack .btn{width:100%;justify-content:center;padding:8px 8px;font-size:12px;white-space:nowrap}
-        .actions-stack .btn .ic{font-size:13px;line-height:1}
         .empty-row td{padding:32px 20px;text-align:center;color:var(--muted);font-weight:600}
         .row-draft td{background:#fffcf1}
         @media (max-width: 1100px){
@@ -6085,36 +6197,46 @@ app.get("/productos", async (req, res) => {
           .col-qty{width:9%}
           .col-obs{width:20%}
           .col-active{width:8%}
-          .col-actions{width:21%}
-          .actions-stack{grid-template-columns:1fr}
+          .col-actions{width:10%}
         }
         @media (max-width: 960px){
           body{padding:12px}
           .table-card{border-radius:18px}
           .table-wrap{overflow:auto}
           table{min-width:1080px}
-          .actions-stack{grid-template-columns:1fr}
+          
         }
       </style></head><body>
       <div class="page">
         <div class="hero">
           <div>
             <h1>Productos</h1>
-            <p>Administrá el catálogo del tenant, activá o desactivá artículos y actualizá importes sin tocar la lógica.</p>
+            <p>Administrá el catálogo del Usuario.</p>
           </div>
           <div class="hero-side">
-            <span class="chip" id="metaMode">${verTodos ? "Mostrando todos" : "Solo activos"}</span>
+            <span class="chip" id="metaFilter">Todos</span>
             <span class="chip" id="metaCount">0 productos</span>
+             <span class="chip" id="metaDirty">0 cambios pendientes</span>
           </div>
         </div>
-
+<div id="flash" class="flash" role="status" aria-live="polite"></div>
         <div class="toolbar">
-          <label class="search">
-            <input id="searchInput" type="text" placeholder="Buscar por descripción, tag, observación, importe o cantidad..." />
-          </label>
+          <div class="toolbar-left">
+            <label class="search">
+              <input id="searchInput" type="text" placeholder="Buscar por descripción, tag, observación, importe o cantidad..." />
+            </label>
+            <div class="filterBox">
+              <label for="statusFilter">Filtro</label>
+              <select id="statusFilter" class="filter-select">
+                <option value="all">Todos</option>
+                <option value="active">Activos</option>
+                <option value="inactive">Inactivos</option>
+              </select>
+            </div>
+          </div>
           <div class="toolbar-actions">
-            <a class="btn btn-soft" href="/productos${verTodos ? "" : "?all=true"}">${verTodos ? "Ver solo activos" : "Ver todos"}</a>
-            <button id="btnAdd" class="btn btn-primary" type="button">Nuevo producto</button>
+            <button id="btnSaveAll" class="btn btn-primary" type="button">Guardar cambios</button>
+            <button id="btnAdd" class="btn btn-soft" type="button">Nuevo producto</button>
             <button id="btnReload" class="btn" type="button">Recargar</button>
           </div>
         </div>
@@ -6123,7 +6245,7 @@ app.get("/productos", async (req, res) => {
           <div class="table-head">
             <div>
               <h2>Listado</h2>
-              <p id="tableHint">Editá directamente sobre la tabla y guardá cada fila cuando termines.</p>
+              <p id="tableHint">Editá varios productos y usá “Guardar cambios” .</p>
             </div>
           </div>
           <div class="table-wrap">
@@ -6159,10 +6281,7 @@ app.get("/productos", async (req, res) => {
         </td>
         <td class="col-actions">
           <div class="actions-stack">
-            <button class="save btn btn-primary" type="button" title="Guardar" aria-label="Guardar"><span class="ic">💾</span></button>
-            <button class="del btn btn-danger" type="button" title="Eliminar" aria-label="Eliminar"><span class="ic">🗑️</span></button>
-            <button class="toggle btn btn-soft" type="button" title="Inactivar / Reactivar" aria-label="Inactivar o reactivar"><span class="ic">⏸️</span></button>
-          </div>
+            <button class="del btn btn-danger" type="button" title="Eliminar" aria-label="Eliminar">Eliminar</button>          </div>
         </td>
       </tr></template>
 
@@ -6171,65 +6290,115 @@ app.get("/productos", async (req, res) => {
         function all(s,c){return Array.from((c||document).querySelectorAll(s))}
         async function j(url,opts){
           const r=await fetch(url,opts||{});
-          if(!r.ok)throw new Error('HTTP '+r.status);
+          if(!r.ok){
+            let message='HTTP '+r.status;
+            try{
+              const data=await r.json();
+              if(data && (data.error || data.message)) message=data.error || data.message;
+            }catch(_){}
+            throw new Error(message);
+          }
           const ct=r.headers.get('content-type')||'';
           return ct.includes('application/json')?r.json():r.text();
+        }
+
+        function setFlash(kind,text){
+          const el=q('#flash');
+          if(!el) return;
+          if(!text){
+            el.className='flash';
+            el.textContent='';
+            return;
+          }
+          el.className='flash show ' + (kind==='err'?'err':'ok');
+          el.textContent=String(text);
         }
 
         function setRowValues(tr,it){
           tr.dataset.id=it && it._id ? String(it._id) : '';
           tr.dataset.draft = it && it._id ? '' : '1';
+          tr.dataset.dirty = '';
           tr.classList.toggle('row-draft', !(it && it._id));
+           tr.classList.remove('row-dirty');
           q('.descripcion',tr).value=it && it.descripcion ? it.descripcion : '';
           q('.tag',tr).value=it && it.tag ? it.tag : '';
           q('.importe',tr).value=(it && (typeof it.importe==='number' || it.importe)) ? it.importe : '';
           q('.cantidad',tr).value=(it && (typeof it.cantidad==='number' || it.cantidad)) ? it.cantidad : '';
           q('.observacion',tr).value=it && it.observacion ? it.observacion : '';
           q('.active',tr).checked=!(it && it.active===false);
-          q('.toggle',tr).innerHTML = '<span class="ic">' + (!(it && it.active===false) ? '⏸️' : '▶️') + '</span>';
+          
         }
 
-        function visibleRows(){
+        function dataRows(){
           return all('#productRows tr').filter(tr => !tr.classList.contains('empty-row'));
+        }
+
+        function markDirty(tr){
+          if(!tr) return;
+          tr.dataset.dirty='1';
+          tr.classList.add('row-dirty');
+          updateMeta();
+        }
+
+        function clearDirty(tr){
+          if(!tr) return;
+          tr.dataset.dirty='';
+          tr.classList.remove('row-dirty');
+        }
+
+        function currentFilterValue(){
+          return String((q('#statusFilter') && q('#statusFilter').value) || 'all');
+        }
+
+        function rowMatches(tr, term, status){
+          const haystack=[
+            q('.descripcion',tr)?.value||'',
+            q('.tag',tr)?.value||'',
+            q('.observacion',tr)?.value||'',
+            q('.importe',tr)?.value||'',
+            q('.cantidad',tr)?.value||''
+          ].join(' ').toLowerCase();
+          const active = !!q('.active',tr)?.checked;
+          const matchTerm=!term || haystack.includes(term);
+          const matchStatus = status==='all' ? true : (status==='active' ? active : !active);
+          return matchTerm && matchStatus;
         }
 
         function updateMeta(){
           const term=(q('#searchInput').value||'').trim().toLowerCase();
-          let total=0, visibles=0, activos=0;
-          visibleRows().forEach(tr=>{
-            total++;
-            const haystack=[
-              q('.descripcion',tr)?.value||'',
-              q('.tag',tr)?.value||'',
-              q('.observacion',tr)?.value||'',
-              q('.importe',tr)?.value||'',
-              q('.cantidad',tr)?.value||''
-            ].join(' ').toLowerCase();
-            const show=!term || haystack.includes(term);
+          const status=currentFilterValue();
+          const rows=dataRows();
+          let visibles=0, dirty=0;
+          rows.forEach(tr=>{
+            const show=rowMatches(tr, term, status);
             tr.style.display=show?'':'none';
             if(show) visibles++;
-            if(q('.active',tr)?.checked) activos++;
+            if(tr.dataset.dirty==='1') dirty++;
           });
-          q('#metaCount').textContent = visibles + ' / ' + total + ' visibles';
-          q('#tableHint').textContent = total
-            ? (term ? 'Filtrando ' + visibles + ' de ' + total + ' productos.' : 'Editá directamente sobre la tabla y guardá cada fila cuando termines.')
+          const filterLabel = status==='active' ? 'Activos' : (status==='inactive' ? 'Inactivos' : 'Todos');
+          q('#metaFilter').textContent = filterLabel;
+          q('#metaCount').textContent = visibles + ' / ' + rows.length + ' visibles';
+          q('#metaDirty').textContent = dirty + ' cambios pendientes';
+          q('#tableHint').textContent = rows.length
+            ? (term || status!=='all'
+                ? ('Filtrando ' + visibles + ' de ' + rows.length + ' productos. Los cambios se guardan de forma masiva.')
+                : 'Editá varios productos y usá “Guardar cambios” para persistir todo junto.')
             : 'No hay productos para mostrar.';
         }
 
         function bindRow(tr){
-          q('.save',tr).addEventListener('click',()=>saveRow(tr));
+          
           q('.del',tr).addEventListener('click',()=>deleteRow(tr));
-          q('.toggle',tr).addEventListener('click',()=>toggleRow(tr));
-          all('input,textarea',tr).forEach(el=>el.addEventListener('input',updateMeta));
-          q('.active',tr).addEventListener('change',()=>{
-            q('.toggle',tr).innerHTML = '<span class="ic">' + (q('.active',tr).checked ? '⏸️' : '▶️') + '</span>';
-            updateMeta();
+          all('input,textarea',tr).forEach(el=>{
+            const evt = el.tagName==='TEXTAREA' ? 'input' : 'input';
+            el.addEventListener(evt,()=>markDirty(tr));
+            if(el.type==='checkbox') el.addEventListener('change',()=>markDirty(tr));
           });
         }
 
         function showEmptyIfNeeded(){
           const tb=q('#productRows');
-          const rows=visibleRows();
+          const rows=dataRows();
           const currentEmpty=q('.empty-row',tb);
           if(!rows.length){
             if(!currentEmpty){
@@ -6243,10 +6412,29 @@ app.get("/productos", async (req, res) => {
           }
         }
 
+        function buildPayloadFromRow(tr){
+          return {
+            _id: tr.dataset.id || '',
+            descripcion:q('.descripcion',tr).value.trim(),
+            tag:q('.tag',tr).value.trim(),
+            importe:q('.importe',tr).value.trim(),
+            cantidad:q('.cantidad',tr).value.trim(),
+            observacion:q('.observacion',tr).value.trim(),
+            active:q('.active',tr).checked
+          };
+        }
+
+        function isBlankDraft(payload){
+          return !payload._id
+            && !payload.descripcion
+            && !payload.tag
+            && !String(payload.importe || '').trim()
+            && !String(payload.cantidad || '').trim()
+            && !payload.observacion;
+        }
+
         async function reload(){
-          const url=new URL(location.href);
-          const allFlag=url.searchParams.get('all')==='true';
-          const data=await j('/api/products'+(allFlag?'?all=true':''));
+           const data=await j('/api/products?status=all');
           const tb=q('#productRows');
           tb.innerHTML='';
           if(Array.isArray(data) && data.length){
@@ -6261,62 +6449,74 @@ app.get("/productos", async (req, res) => {
           updateMeta();
         }
 
-        async function saveRow(tr){
-          const payload={
-            descripcion:q('.descripcion',tr).value.trim(),
-            tag:q('.tag',tr).value.trim(),
-            importe:q('.importe',tr).value.trim(),
-            cantidad:q('.cantidad',tr).value.trim(),
-            observacion:q('.observacion',tr).value.trim(),
-            active:q('.active',tr).checked
-          };
-          if(!payload.descripcion){ alert('Descripción requerida'); return; }
-          const id=tr.dataset.id;
-          if(id){
-            await j('/api/products/'+encodeURIComponent(id),{
-              method:'PUT',
-              headers:{'Content-Type':'application/json'},
-              body:JSON.stringify(payload)
-            });
-          }else{
-            await j('/api/products',{
+        async function saveAll(){
+          const rows=dataRows();
+          if(!rows.length){ setFlash('ok','No hay cambios para guardar.'); return; }
+          const payloads=[];
+          for(const tr of rows){
+            const payload=buildPayloadFromRow(tr);
+            if(isBlankDraft(payload)) continue;
+            if(!payload.descripcion){
+              alert('Descripción requerida en todos los productos antes de guardar.');
+              q('.descripcion',tr).focus();
+              return;
+            }
+            payloads.push(payload);
+          }
+          if(!payloads.length){
+            setFlash('ok','No hay cambios para guardar.');
+            return;
+          }
+          const btn=q('#btnSaveAll');
+          const prev=btn.textContent;
+          btn.disabled=true;
+          btn.textContent='Guardando...';
+          try{
+            await j('/api/products/bulk-save',{
               method:'POST',
               headers:{'Content-Type':'application/json'},
-              body:JSON.stringify(payload)
+              body:JSON.stringify({ items: payloads })
             });
+            setFlash('ok','Se guardaron todos los cambios del catálogo.');
+            await reload();
+          }catch(e){
+            setFlash('err', e.message||String(e));
+          }finally{
+            btn.disabled=false;
+            btn.textContent=prev;
           }
-          await reload();
+          
         }
 
         async function deleteRow(tr){
           const id=tr.dataset.id;
-          if(!id){ tr.remove(); showEmptyIfNeeded(); updateMeta(); return; }
+          if(!id){
+            tr.remove();
+            showEmptyIfNeeded();
+            updateMeta();
+            return;
+          }
           if(!confirm('¿Eliminar definitivamente este producto?')) return;
           await j('/api/products/'+encodeURIComponent(id),{method:'DELETE'});
-          await reload();
+          tr.remove();
+          showEmptyIfNeeded();
+          updateMeta();
+          setFlash('ok','Producto eliminado.');
         }
 
-        async function toggleRow(tr){
-          const id=tr.dataset.id;
-          if(!id){ alert('Primero guardá el nuevo producto.'); return; }
-          const active=q('.active',tr).checked;
-          const path=active
-            ? ('/api/products/'+encodeURIComponent(id)+'/inactivate')
-            : ('/api/products/'+encodeURIComponent(id)+'/reactivate');
-          await j(path,{method:'POST'});
-          await reload();
-        }
+       
 
-        q('#btnReload').addEventListener('click',reload);
+        q('#btnReload').addEventListener('click',()=>reload().catch(e=>setFlash('err', e.message||String(e))));
+        q('#btnSaveAll').addEventListener('click',()=>saveAll());
         q('#btnAdd').addEventListener('click',()=>{
           const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);
           bindRow(tr);
           q('#productRows').prepend(tr);
           showEmptyIfNeeded();
-          updateMeta();
+          markDirty(tr);
           q('.descripcion',tr).focus();
         });
-        q('#searchInput').addEventListener('input',updateMeta);
+        q('#statusFilter').addEventListener('change',updateMeta);
 
         all('#productRows tr').forEach(tr=>{
           if(!tr.classList.contains('empty-row')) bindRow(tr);
