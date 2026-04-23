@@ -89,6 +89,7 @@ const path = require("path");
 
 // ⬇️ Auth UI (login + sesiones + admin usuarios)
 const auth = require("./auth_ui");
+const { mountWebAccessRoutes } = require("./web_access_stats");
 // Servir assets estáticos locales (logo.png)
 // Servir assets estáticos:
 // 1) Logos del slider en /static/clientes -> <proyecto>/static/clientes
@@ -105,6 +106,7 @@ auth.mountAuthRoutes(app);
 app.use("/ui", auth.requireAuth);
 // Protege rutas sensibles (admin/api/ui) detrás de login
 auth.protectRoutes(app);
+mountWebAccessRoutes(app, auth);
 
 
 // ===================== Tenant Channels (WhatsApp/OpenAI por tenant/canal) =====================

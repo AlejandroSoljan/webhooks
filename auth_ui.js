@@ -14,6 +14,7 @@ const crypto = require("crypto");
 const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
+const { recordWebAccessLogin } = require("./web_access_stats");
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://www.asistobot.com.ar"; // ej: https://tudominio.com
 
 
@@ -46,6 +47,7 @@ const ACCESS_PAGES = [
   { key: "telegram", title: "Sesiones Telegram" },
   { key: "users", title: "Usuarios" },
   { key: "tenant_config", title: "Dominio Config" },
+  { key: "web_access", title: "Ingresos Web" },
 ];
 
 function normalizeAllowedPages(value) {
@@ -88,11 +90,14 @@ function requiredAccessForPath(p) {
   if (path.startsWith("/admin/wweb") || path.startsWith("/api/wweb")) return ["wweb"];
   // Sesiones Telegram
   if (path.startsWith("/admin/telegram") || path.startsWith("/api/tg")) return ["telegram"];
+  // Ingresos web
+  if (path.startsWith("/admin/web-access") || path.startsWith("/api/web-access")) return ["web_access"];
+ 
 
   // UI wrapper
   if (path.startsWith("/ui/")) {
     const seg = path.split("/")[2] || "";
-    if (["admin", "inbox", "productos", "horarios", "comportamiento", "tenant_config", "telegram"].includes(seg)) return [seg];
+    if (["admin", "inbox", "productos", "horarios", "comportamiento", "tenant_config", "telegram", "web_access"].includes(seg)) return [seg];
   }
 
   // Pantallas directas
@@ -1073,6 +1078,7 @@ function getNavItemsForUser(user) {
   if (isAdmin && hasAccess(user, "telegram")) items.push({ key: "telegram", title: "Sesiones Telegram", href: "/ui/telegram" });
   if (isAdmin && hasAccess(user, "users")) items.push({ key: "users", title: "Usuarios", href: "/admin/users" });
   if (isAdmin && hasAccess(user, "tenant_config")) items.push({ key: "tenant_config", title: "Dominio Config", href: "/ui/tenant_config" });
+  if (isAdmin && hasAccess(user, "web_access")) items.push({ key: "web_access", title: "Ingresos Web", href: "/ui/web_access" });
 
   return items;
 }
@@ -1637,6 +1643,7 @@ function usersAdminPage({ user, users, msg, err }) {
         { key: "telegram", title: "Sesiones Telegram" },
         { key: "users", title: "Sesiones de usuarios" },
         { key: "tenant_config", title: "Dominio Config" },
+         { key: "web_access", title: "Ingresos Web" },
       ];
       const IS_SUPER = ${isSuper ? "true" : "false"};
       const USERS = ${JSON.stringify(userItems).replace(/</g, '\\u003c')};
@@ -1711,6 +1718,7 @@ function usersAdminPage({ user, users, msg, err }) {
         if (allowedKeys.includes("telegram")) items.push({ key: "telegram", title: "Sesiones Telegram", href: "/ui/telegram" });
         if (allowedKeys.includes("users")) items.push({ key: "users", title: "Sesiones de usuarios", href: "/admin/users" });
         if (allowedKeys.includes("tenant_config")) items.push({ key: "tenant_config", title: "Dominio Config", href: "/ui/tenant_config" });
+        if (allowedKeys.includes("web_access")) items.push({ key: "web_access", title: "Ingresos Web", href: "/ui/web_access" });
 
         const desired = items.some((it) => it.href === selectedHref) ? selectedHref : "/app";
         return {
@@ -2910,6 +2918,7 @@ function mountAuthRoutes(app) {
 
       const payload = makeSessionPayload(user);
       setSessionCookie(res, payload);
+      try { await recordWebAccessLogin({ req, user, success: true, detail: { to } }); } catch {}
       const safeTo = to.startsWith("/") ? to : "/app";
       const redirectTo = (!to || safeTo === "/app")
         ? normalizeDefaultPage(user, user?.defaultPage || "/app")
@@ -2984,6 +2993,7 @@ function mountAuthRoutes(app) {
         { title: "Sesiones WhatsApp Web", href: "/admin/wweb", badge: "Admin", desc: "Control de sesiones (wwebjs)" },
         { title: "Usuarios", href: "/admin/users", badge: "Admin", desc: "Alta/baja y reseteo de contraseñas" },
         { title: "Dominio Config", href: "/ui/tenant_config", badge: "Admin", desc: "Configuración por dominio" },
+        { title: "Ingresos Web", href: "/ui/web_access", badge: "Admin", desc: "Estadísticas de ingresos al panel" },
         { title: "Logs Conversaciones", href: "/api/logs/conversations", badge: "API", desc: "Listado de conversaciones" },
         { title: "Logs Mensajes", href: "/api/logs/messages", badge: "API", desc: "Mensajes por conversación" },
         { title: "Behavior API", href: "/api/behavior", badge: "API", desc: "Get/Set behavior" },
@@ -3015,6 +3025,7 @@ function mountAuthRoutes(app) {
       comportamiento: { title: "Comportamiento", desc: "Prompt, reglas y configuración del asistente", badge: "UI", src: "/comportamiento", active: "comportamiento" },
       tenant_config: { title: "Dominio Config", desc: "Configuración general por dominio", badge: "Admin", src: "/admin/tenant-config?embed=1", active: "tenant_config" },
       telegram: { title: "Sesiones Telegram", desc: "Estado de bots, chats y acciones por tenant", badge: "Admin", src: "/admin/telegram?embed=1", active: "telegram" },
+      web_access: { title: "Ingresos Web", desc: "Estadísticas de accesos al panel web", badge: "Admin", src: "/admin/web-access?embed=1", active: "web_access" },
     };
 
     const conf = map[page];
