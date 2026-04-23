@@ -6671,7 +6671,7 @@ app.get("/horarios", async (req, res) => {
         <div class="toolbar">
           <div class="toolbar-left">
             <div class="field small">
-              <label for="tenant">Tenant</label>
+              <label for="tenant">Dominio</label>
               <input id="tenant" type="text" value="${tenant.replace(/"/g,'&quot;')}" />
             </div>
           </div>
@@ -6846,7 +6846,7 @@ app.get("/comportamiento", async (req, res) => {
       input[type=text]{padding:6px 8px}</style></head><body>
       <h1>Comportamiento del Bot</h1>
       <div class="row">
-        <label>Tenant:&nbsp;<input id="tenant" type="text" value="${tenant}" /></label>
+        <label>Dominio:&nbsp;<input id="tenant" type="text" value="${tenant}" /></label>
         <button id="btnReload">Recargar</button>
         <button id="btnSave">Guardar</button>
       </div>
@@ -6858,7 +6858,7 @@ app.get("/comportamiento", async (req, res) => {
           </select>
         </label>
       </div>
-      <p></p><textarea id="txt" placeholder="Escribí aquí el comportamiento para este tenant..."></textarea>
+     <p></p><textarea id="txt" placeholder="Escribí aquí el comportamiento para este dominio..."></textarea>
       <script>
         async function load(){
           const t = document.getElementById('tenant').value || '';
@@ -6927,7 +6927,7 @@ app.get("/canales", async (req, res) => {
 </head>
 <body>
   <h1>Canales (WhatsApp / Instagram / OpenAI)</h1>
-  <div class="muted">Configurá por <b>tenantId</b> un canal de WhatsApp o Instagram y la API key de OpenAI (colección <code>tenant_channels</code>). Podés marcar un canal como <b>Default</b> por tenant.</div>
+  <div class="muted">Configurá por <b>dominio</b> un canal de WhatsApp o Instagram y la API key de OpenAI (colección <code>tenant_channels</code>). Podés marcar un canal como <b>Default</b> por dominio.</div>
 
   <div id="msg"></div>
 
@@ -6935,7 +6935,7 @@ app.get("/canales", async (req, res) => {
     <div class="card">
       <h3 style="margin:0 0 8px">Crear / actualizar</h3>
       <form id="f">
-        <label>TenantId</label>
+        <label>Dominio</label>
         <input name="tenantId" value="${String(tenant||'').replace(/"/g,'&quot;')}" placeholder="default"/>
 
         <label>Tipo de canal</label>
@@ -6978,7 +6978,7 @@ app.get("/canales", async (req, res) => {
 
         <label style="display:flex;gap:10px;align-items:center;margin-top:12px">
           <input type="checkbox" name="isDefault" value="1" style="width:auto"/>
-          <span>Canal default (por tenant)</span>
+          <span>Canal default (por dominio)</span>
         </label>
        <div class="actions" style="margin-top:12px">
           <button type="submit">Guardar</button>
@@ -6995,7 +6995,7 @@ app.get("/canales", async (req, res) => {
         <table>
           <thead>
             <tr>
-              <th>Tenant</th>
+               <th>Dominio</th>
               <th>Tipo</th>
               <th>Canal ID</th>
               <th>Display</th>

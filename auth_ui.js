@@ -45,7 +45,7 @@ const ACCESS_PAGES = [
   { key: "wweb", title: "Sesiones WhatsApp Web" },
   { key: "telegram", title: "Sesiones Telegram" },
   { key: "users", title: "Usuarios" },
-  { key: "tenant_config", title: "Tenant Config" },
+  { key: "tenant_config", title: "Dominio Config" },
 ];
 
 function normalizeAllowedPages(value) {
@@ -1072,7 +1072,7 @@ function getNavItemsForUser(user) {
   if (isAdmin && hasAccess(user, "wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
   if (isAdmin && hasAccess(user, "telegram")) items.push({ key: "telegram", title: "Sesiones Telegram", href: "/ui/telegram" });
   if (isAdmin && hasAccess(user, "users")) items.push({ key: "users", title: "Usuarios", href: "/admin/users" });
-  if (isAdmin && hasAccess(user, "tenant_config")) items.push({ key: "tenant_config", title: "Tenant Config", href: "/ui/tenant_config" });
+  if (isAdmin && hasAccess(user, "tenant_config")) items.push({ key: "tenant_config", title: "Dominio Config", href: "/ui/tenant_config" });
 
   return items;
 }
@@ -1312,7 +1312,7 @@ function appMenuPage({ user, routes }) {
         </div>` : ""}
 
         <div class="homeMeta">
-          <span class="homeMetaItem">Tenant: ${htmlEscape(user.tenantId)}</span>
+          <span class="homeMetaItem">Dominio: ${htmlEscape(user.tenantId)}</span>
           <span class="homeMetaItem">Rol: ${htmlEscape(user.role)}</span>
         </div>
       </section>
@@ -1456,7 +1456,7 @@ function usersAdminPage({ user, users, msg, err }) {
         <div>
           <h2 style="margin:0 0 6px">Usuarios</h2>
           <div class="small">Listado de usuarios del panel. Editá cada cuenta desde un modal y creá nuevas sin salir de esta pantalla.</div>
-          <div class="small">Reglas: <strong>admin</strong> gestiona sólo su tenant; <strong>superadmin</strong> puede gestionar todos.</div>
+          <div class="small">Reglas: <strong>admin</strong> gestiona sólo su dominio; <strong>superadmin</strong> puede gestionar todos.</div>
         </div>
         <div class="usersToolbarActions">
           <button class="btn2 btnOk" type="button" id="usersBtnCreate">Nuevo usuario</button>
@@ -1474,7 +1474,7 @@ function usersAdminPage({ user, users, msg, err }) {
             <thead>
               <tr>
                 <th>Usuario</th>
-                <th>Tenant</th>
+                <th>Dominio</th>
                 <th>Rol</th>
                 <th>Acceso</th>
                 <th>Inicio</th>
@@ -1513,7 +1513,7 @@ function usersAdminPage({ user, users, msg, err }) {
               <input name="password" type="password" required placeholder="••••••••" />
             </div>
             <div class="usersFieldRow">
-              <label>Tenant</label>
+              <label>Dominio</label>
               ${createTenantField}
             </div>
             <div class="usersFieldRow">
@@ -1573,7 +1573,7 @@ function usersAdminPage({ user, users, msg, err }) {
               <input value="" data-user-edit-username readonly />
             </div>
             <div class="usersFieldRow">
-              <label>Tenant</label>
+              <label>Dominio</label>
               <input name="tenantId" value="" />
             </div>
             <div class="usersFieldRow">
@@ -1636,7 +1636,7 @@ function usersAdminPage({ user, users, msg, err }) {
         { key: "wweb", title: "Sesiones WhatsApp Web" },
         { key: "telegram", title: "Sesiones Telegram" },
         { key: "users", title: "Sesiones de usuarios" },
-        { key: "tenant_config", title: "Tenant Config" },
+        { key: "tenant_config", title: "Dominio Config" },
       ];
       const IS_SUPER = ${isSuper ? "true" : "false"};
       const USERS = ${JSON.stringify(userItems).replace(/</g, '\\u003c')};
@@ -1710,7 +1710,7 @@ function usersAdminPage({ user, users, msg, err }) {
         if (allowedKeys.includes("wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
         if (allowedKeys.includes("telegram")) items.push({ key: "telegram", title: "Sesiones Telegram", href: "/ui/telegram" });
         if (allowedKeys.includes("users")) items.push({ key: "users", title: "Sesiones de usuarios", href: "/admin/users" });
-        if (allowedKeys.includes("tenant_config")) items.push({ key: "tenant_config", title: "Tenant Config", href: "/ui/tenant_config" });
+        if (allowedKeys.includes("tenant_config")) items.push({ key: "tenant_config", title: "Dominio Config", href: "/ui/tenant_config" });
 
         const desired = items.some((it) => it.href === selectedHref) ? selectedHref : "/app";
         return {
@@ -1765,7 +1765,7 @@ function usersAdminPage({ user, users, msg, err }) {
         resetForm.querySelector('input[name="userId"]').value = userData.id;
         deleteForm.querySelector('input[name="userId"]').value = userData.id;
         editTitle.textContent = 'Editar usuario: ' + (userData.username || '');
-        editMeta.textContent = 'Tenant: ' + (userData.tenantId || '-') + ' · Rol: ' + (userData.role || '-') + (userData.updatedAt ? ' · Actualizado: ' + userData.updatedAt : '');
+        editMeta.textContent = 'Dominio: ' + (userData.tenantId || '-') + ' · Rol: ' + (userData.role || '-') + (userData.updatedAt ? ' · Actualizado: ' + userData.updatedAt : '');
         editUsername.value = userData.username || '';
         editTenantInput.value = userData.tenantId || '';
         fillEditRoleOptions(userData.role || 'user');
@@ -1786,7 +1786,7 @@ function usersAdminPage({ user, users, msg, err }) {
         resetForm.querySelector('input[name="newPassword"]').value = '';
 
         if (selfLocked) {
-          editHint.innerHTML = 'No se permite cambiar tu propio rol, tenant, bloqueo ni accesos desde esta pantalla. Podés resetear tu contraseña abajo.';
+          editHint.innerHTML = 'No se permite cambiar tu propio rol, dominio, bloqueo ni accesos desde esta pantalla. Podés resetear tu contraseña abajo.';
         } else {
           editHint.innerHTML = 'Actualizá los accesos del usuario y elegí su ventana de inicio. Si marcás <strong>Usuarios</strong>, el selector incluirá <strong>Sesiones de usuarios</strong>.';
         }
@@ -1829,7 +1829,7 @@ function wwebSessionsAdminPage({ user }) {
       <div class="toolbar">
         <div>
           <h2 style="margin:0 0 6px">Sesiones WhatsApp Web</h2>
-          <div class="small">Muestra las sesiones activas de <code>whatsapp-web.js</code> por tenant/número (colección <code>wa_locks</code>).</div>
+          <div class="small">Muestra las sesiones activas de <code>whatsapp-web.js</code> por dominio/número (colección <code>wa_locks</code>).</div>
           <div class="small">Acciones: <strong>Reiniciar</strong> reinicia la sesión de WhatsApp en la PC dueña. <strong>Bloquear/Habilitar</strong> pausa o permite el inicio de WhatsApp. <strong>Reset Auth</strong> fuerza pedir QR nuevamente (y si sos superadmin también limpia el backup remoto).</div>
         <div class="toolbarActions">
           <button class="btn2" type="button" onclick="window.__wwebReload && window.__wwebReload()">Actualizar</button>
@@ -1841,7 +1841,7 @@ function wwebSessionsAdminPage({ user }) {
       <div class="wwebFilters">
         <div class="wwebFilterItem wwebFilterItem--search">
           <label class="small" for="wwebSearch">Buscar sesión</label>
-          <input class="inp" id="wwebSearch" type="search" placeholder="Tenant, número, host o holder"/>
+          <input class="inp" id="wwebSearch" type="search" placeholder="Dominio, número, host o holder"/>
         </div>
         <div class="wwebFilterItem">
           <label class="small" for="wwebStateFilter">Estado</label>
@@ -2037,7 +2037,7 @@ function wwebSessionsAdminPage({ user }) {
         qrLockId = String(lockId || '');
         lastQrSrc = null;
         if(qrTitle) qrTitle.textContent = 'QR · ' + (numero || '-');
-        if(qrSub) qrSub.textContent = 'tenant: ' + (tenantId || '-') + ' · lock: ' + qrLockId;
+        if(qrSub) qrSub.textContent = 'dominio: ' + (tenantId || '-') + ' · lock: ' + qrLockId;
         if(qrMeta) qrMeta.textContent = '';
         if(qrImg){ qrImg.removeAttribute('src'); qrImg.style.display = 'none'; }
         if(qrEmpty){ qrEmpty.style.display = 'block'; qrEmpty.textContent = 'Esperando QR…'; }
@@ -2155,7 +2155,7 @@ function wwebSessionsAdminPage({ user }) {
         statsNumero = String(numero || '');
         var today = toYmd(new Date());
         if(statsTitle) statsTitle.textContent = 'Estadísticas · ' + statsNumero;
-        if(statsSub) statsSub.textContent = 'tenant: ' + statsTenant;
+        if(statsSub) statsSub.textContent = 'dominio: ' + statsTenant;
         if(statsFrom && !statsFrom.value) statsFrom.value = today;
         if(statsTo && !statsTo.value) statsTo.value = today;
         if(statsFrom && !statsFrom.value) statsFrom.value = today;
@@ -2960,7 +2960,7 @@ function mountAuthRoutes(app) {
     const routes = [
       { title: "Inicio", href: "/app", badge: "", desc: "Panel principal" },
       { title: "Conversaciones", href: "/ui/admin", badge: "Admin UI", desc: "Panel de conversaciones" },
-      { title: "Productos", href: "/ui/productos", badge: "UI", desc: "Catálogo del tenant" },
+      { title: "Productos", href: "/ui/productos", badge: "UI", desc: "Catálogo del dominio" },
       { title: "Horarios", href: "/ui/horarios", badge: "UI", desc: "Configuración de horarios" },
       { title: "Comportamiento", href: "/ui/comportamiento", badge: "UI", desc: "Behavior prompt/config" },
       // APIs solo para admin/superadmin:
@@ -2968,7 +2968,7 @@ function mountAuthRoutes(app) {
         { title: "Leads", href: "/admin/leads", badge: "Admin", desc: "Mensajes del formulario de contacto" },
         { title: "Sesiones WhatsApp Web", href: "/admin/wweb", badge: "Admin", desc: "Control de sesiones (wwebjs)" },
         { title: "Usuarios", href: "/admin/users", badge: "Admin", desc: "Alta/baja y reseteo de contraseñas" },
-        { title: "Tenant Config", href: "/ui/tenant_config", badge: "Admin", desc: "Configuración por tenant" },
+        { title: "Dominio Config", href: "/ui/tenant_config", badge: "Admin", desc: "Configuración por dominio" },
         { title: "Logs Conversaciones", href: "/api/logs/conversations", badge: "API", desc: "Listado de conversaciones" },
         { title: "Logs Mensajes", href: "/api/logs/messages", badge: "API", desc: "Mensajes por conversación" },
         { title: "Behavior API", href: "/api/behavior", badge: "API", desc: "Get/Set behavior" },
@@ -2995,10 +2995,10 @@ function mountAuthRoutes(app) {
     const map = {
       admin: { title: "Conversaciones", desc: "Panel de conversaciones y seguimiento", badge: "Admin UI", src: "/admin", active: "admin" },
       inbox: { title: "Inbox", desc: "Bandeja de conversaciones estilo chat", badge: "Admin UI", src: "/admin/inbox", active: "inbox" },
-      productos: { title: "Productos", desc: "Catálogo y mantenimiento del tenant", badge: "UI", src: "/productos", active: "productos" },
+      productos: { title: "Productos", desc: "Catálogo y mantenimiento del dominio", badge: "UI", src: "/productos", active: "productos" },
       horarios: { title: "Horarios", desc: "Configuración de disponibilidad", badge: "UI", src: "/horarios", active: "horarios" },
       comportamiento: { title: "Comportamiento", desc: "Prompt, reglas y configuración del asistente", badge: "UI", src: "/comportamiento", active: "comportamiento" },
-      tenant_config: { title: "Tenant Config", desc: "Configuración general por tenant", badge: "Admin", src: "/admin/tenant-config?embed=1", active: "tenant_config" },
+      tenant_config: { title: "Dominio Config", desc: "Configuración general por dominio", badge: "Admin", src: "/admin/tenant-config?embed=1", active: "tenant_config" },
       telegram: { title: "Sesiones Telegram", desc: "Estado de bots, chats y acciones por tenant", badge: "Admin", src: "/admin/telegram?embed=1", active: "telegram" },
     };
 
@@ -3123,7 +3123,7 @@ function mountAuthRoutes(app) {
 
       if (!ObjectId.isValid(userId)) return res.redirect("/admin/users?err=" + encodeURIComponent("userId inválido."));
       if (String(req.user?.uid) === userId) {
-        return res.redirect("/admin/users?err=" + encodeURIComponent("No se permite editar tu propio rol/tenant/bloqueo."));
+        return res.redirect("/admin/users?err=" + encodeURIComponent("No se permite editar tu propio rol/dominio/bloqueo."));
       }
 
       const db = await getDb();
@@ -3140,7 +3140,7 @@ function mountAuthRoutes(app) {
       // Permisos
       if (actorRole !== "superadmin") {
         if (String(target.tenantId || "") !== actorTenant) {
-          return res.redirect("/admin/users?err=" + encodeURIComponent("No autorizado para ese tenant."));
+          return res.redirect("/admin/users?err=" + encodeURIComponent("No autorizado para ese dominio."));
         }
         if (String(target.role || "") === "superadmin") {
           return res.redirect("/admin/users?err=" + encodeURIComponent("No podés modificar un superadmin."));
@@ -3192,7 +3192,7 @@ function mountAuthRoutes(app) {
       if (!target) return res.redirect("/admin/users?err=" + encodeURIComponent("Usuario no encontrado."));
       if (actorRole !== "superadmin") {
         if (String(target.tenantId || "") !== actorTenant) {
-          return res.redirect("/admin/users?err=" + encodeURIComponent("No autorizado para ese tenant."));
+          return res.redirect("/admin/users?err=" + encodeURIComponent("No autorizado para ese dominio."));
         }
         if (String(target.role || "") === "superadmin") {
           return res.redirect("/admin/users?err=" + encodeURIComponent("No podés modificar un superadmin."));
@@ -3235,7 +3235,7 @@ function mountAuthRoutes(app) {
 
       if (actorRole !== "superadmin") {
         if (String(target.tenantId || "") !== actorTenant) {
-          return res.redirect("/admin/users?err=" + encodeURIComponent("No autorizado para ese tenant."));
+          return res.redirect("/admin/users?err=" + encodeURIComponent("No autorizado para ese dominio."));
         }
         if (String(target.role || "") === "superadmin") {
           return res.redirect("/admin/users?err=" + encodeURIComponent("No podés eliminar un superadmin."));
@@ -3307,26 +3307,26 @@ function mountAuthRoutes(app) {
 
       <div class="tc-toolbar">
         <div>
-          <h1 style="margin:0 0 4px">Tenant Config</h1>
-          <div class="small">Editá la colección <code>tenant_config</code>. Cada documento usa <code>_id = tenantId</code>. Al hacer clic en <b>Editar</b> se abre un modal con la configuración.</div>
+          <h1 style="margin:0 0 4px">Dominio Config</h1>
+          <div class="small">Editá la colección <code>tenant_config</code>. Cada documento usa <code>_id</code> como dominio. Al hacer clic en <b>Editar</b> se abre un modal con la configuración.</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <button class="btn2" type="button" id="tc_btnReload">Actualizar</button>
-          ${isSuper ? `<button class="btn" type="button" id="tc_btnNew">Nuevo tenant</button>` : ``}
-          <div class="small">${isSuper ? "Superadmin" : "Admin"} · tenant: <b>${htmlEscape(tenantId)}</b></div>
-        </div>
+          ${isSuper ? `<button class="btn" type="button" id="tc_btnNew">Nuevo dominio</button>` : ``}
+          <div class="small">${isSuper ? "Superadmin" : "Admin"} · dominio: <b>${htmlEscape(tenantId)}</b></div>
+       </div>
       </div>
 
       <div id="tc_msg" style="margin:10px 0"></div>
 
       <div class="card">
-        <h3 style="margin:0 0 8px">Tenants</h3>
+        <h3 style="margin:0 0 8px">Dominios</h3>
         <div class="small">Se listan al ingresar. Usá “Editar” para abrir la configuración en un modal.</div>
         <div class="tc-listwrap">
           <table class="tbl" style="margin:0">
             <thead>
               <tr>
-                <th>Tenant</th>
+                <th>Dominio</th>
                 <th>Empresa</th>
                 <th>Número</th>
                 <th>TAG deseado</th>
@@ -3345,25 +3345,25 @@ function mountAuthRoutes(app) {
         <div class="tc-modal" role="dialog" aria-modal="true" aria-labelledby="tc_modalTitle">
           <div class="tc-modal-head">
             <div>
-              <div id="tc_modalTitle" style="font-weight:700;font-size:18px">Editar tenant</div>
+               <div id="tc_modalTitle" style="font-weight:700;font-size:18px">Editar dominio</div>
               <div class="small">Modificá campos libres y guardá la configuración.</div>
             </div>
             <button class="tc-close" type="button" id="tc_btnCloseModal">Cerrar</button>
           </div>
           <div class="tc-modal-body">
             <form id="tc_form">
-              <label class="small">TenantId</label>
+              <label class="small">Dominio</label>
               <input class="inp" id="tc_tenant" name="tenantId" value="${htmlEscape(tenantId)}" ${isSuper ? "" : "readonly"} placeholder="default"/>
               ${isSuper ? `
               <div id="tc_copyWrap" style="margin-top:10px">
                 <label class="small">Copiar configuración desde</label>
                 <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
                   <select class="inp" id="tc_copyFrom" style="flex:1 1 280px">
-                    <option value="">Seleccionar tenant…</option>
+                    <option value="">Seleccionar dominio…</option>
                   </select>
                   <button class="btn2" type="button" id="tc_btnCopy">Copiar</button>
                 </div>
-                <div class="small" style="margin-top:6px">Carga los campos del tenant seleccionado para crear uno nuevo o reutilizarlos en el actual.</div>
+                <div class="small" style="margin-top:6px">Carga los campos del dominio seleccionado para crear uno nuevo o reutilizarlos en el actual.</div>
               </div>` : ``}
 
               <div class="small" style="margin-top:10px; color:#64748b">Campos</div>
@@ -3445,7 +3445,7 @@ function mountAuthRoutes(app) {
         }
 
         function openModal(title){
-          modalTitle.textContent = title || 'Editar tenant';
+          modalTitle.textContent = title || 'Editar dominio';
           modalBackdrop.classList.add('open');
           modalBackdrop.setAttribute('aria-hidden', 'false');
           setTimeout(() => { try { tenantEl.focus(); } catch {} }, 30);
@@ -3495,7 +3495,7 @@ function mountAuthRoutes(app) {
         function renderCopyOptions(items){
           if (!copyFromEl) return;
           const currentTenant = String(tenantEl && tenantEl.value || '').trim();
-          const opts = ['<option value="">Seleccionar tenant…</option>']
+          const opts = ['<option value="">Seleccionar dominio…</option>']
             .concat((Array.isArray(items) ? items : []).map(function(it){
               const id = String(it && it._id || '').trim();
               if (!id) return '';
@@ -3509,10 +3509,10 @@ function mountAuthRoutes(app) {
 
         async function copyFromTenant(sourceTenantId){
           const sourceId = String(sourceTenantId || '').trim();
-          if (!sourceId) throw new Error('Seleccioná un tenant para copiar.');
+          if (!sourceId) throw new Error('Seleccioná un dominio para copiar.');
           const j = await apiGet(sourceId);
           const doc = j && j.item ? j.item : null;
-          if (!doc) throw new Error('No existe configuración para el tenant origen.');
+          if (!doc) throw new Error('No existe configuración para el dominio origen.');
           setFieldsFromDoc(doc.data || {});
           renderMeta({ createdAt: doc.createdAt, updatedAt: doc.updatedAt });
           return doc;
@@ -3656,7 +3656,7 @@ function mountAuthRoutes(app) {
             renderMeta({ createdAt: doc.createdAt, updatedAt: doc.updatedAt });
             setFieldsFromDoc(doc.data || {});
             renderCopyOptions(tenantListCache);
-            if (openAfterLoad) openModal('Editar tenant · ' + tid);
+            if (openAfterLoad) openModal('Editar dominio · ' + tid);
           } catch (e) {
             console.error('[tenant_config] get error:', e);
             setMsg('err', e?.message || String(e));
@@ -3674,7 +3674,7 @@ function mountAuthRoutes(app) {
             try {
               setMsg('', '');
               const sourceId = String(copyFromEl.value || '').trim();
-              if (!sourceId) throw new Error('Seleccioná un tenant para copiar.');
+              if (!sourceId) throw new Error('Seleccioná un dominio para copiar.');
               await copyFromTenant(sourceId);
               setMsg('ok', 'Configuración copiada desde ' + sourceId + '.');
             } catch (e) {
@@ -3700,7 +3700,7 @@ function mountAuthRoutes(app) {
             try {
               const tid = String(tenantEl.value||'').trim();
               if (!tid) return;
-              if (!confirm('¿Eliminar la config del tenant '+tid+'?')) return;
+              if (!confirm('¿Eliminar la config del dominio '+tid+'?')) return;
               await apiDelete(tid);
               setMsg('ok', 'Eliminado ✅');
               currentId = null;
@@ -3765,7 +3765,7 @@ function mountAuthRoutes(app) {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Tenant Config · Asisto</title>
+  <title>Dominio Config · Asisto</title>
   <style>
     html,body{margin:0;padding:0;background:transparent;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
     .embedWrap{padding:16px}
@@ -3781,7 +3781,7 @@ function mountAuthRoutes(app) {
 
       return res.status(200).send(
         appShell({
-          title: "Tenant Config · Asisto",
+          title: "Dominio Config · Asisto",
           user: req.user,
           active: "tenant_config",
           main: inner,
