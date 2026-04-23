@@ -2247,6 +2247,7 @@ function wwebSessionsAdminPage({ user }) {
           +     '<div class="menuSep"></div>'
           +     '<button class="menuItem" type="button" role="menuitem" data-action="resetauth" data-id="' + escapeHtml(lock._id) + '">Reset Auth</button>'
           +     '<button class="menuItem" type="button" role="menuitem" data-action="stats" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Estadísticas</button>'
+          +     (IS_SUPER ? ('<div class="menuSep"></div><button class="menuItem menuItemDanger" type="button" role="menuitem" data-action="delete_session" data-id="' + escapeHtml(lock._id) + '">Borrar sesión</button>') : '')
           +   '</div>'
           + '</div>'
           + '<button class="btn2 btnQr" type="button" data-action="qr" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '"' + (canQr ? '' : ' disabled') + ' title="QR">QR</button>';
@@ -2464,6 +2465,19 @@ function wwebSessionsAdminPage({ user }) {
           .catch(function(e){ alert('Error: ' + (e.message || e)); });
       }
 
+      function doDeleteSession(lockId){
+        closeAllMenus();
+        if(!IS_SUPER) return;
+        if(!confirm('¿Borrar esta sesión? Esto eliminará lock, política, acciones pendientes y el backup remoto para forzar una sesión nueva.')) return;
+       api('/api/wweb/delete-session', {
+          method:'POST',
+          body: JSON.stringify({ lockId: String(lockId || '') })
+        })
+          .then(function(){ msg.textContent = 'Sesión borrada.'; return load({ force:true }); })
+          .catch(function(e){ alert('Error: ' + (e.message || e)); });
+      }
+
+
       body.addEventListener('click', function(e){
         var btn = e.target && e.target.closest ? e.target.closest('button[data-action]') : null;
         if(!btn) return;
@@ -2490,6 +2504,7 @@ function wwebSessionsAdminPage({ user }) {
         if(act === 'toggle') return doToggle(tenant, numero, currentlyDisabled);
         if(act === 'resetauth') return doResetAuth(id);
         if(act === 'stats') return openStats(tenant, numero);
+        if(act === 'delete_session') return doDeleteSession(id);
         if(act === 'qr') return openQr(id, tenant, numero);
 
             });
@@ -4357,6 +4372,58 @@ function mountAuthRoutes(app) {
     } catch (e) {
       console.error("[wweb] release error:", e);
       return res.status(500).json({ error: "Error liberando sesión." });
+    }
+  });
+
+ 
+  app.post("/api/wweb/delete-session", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const role = String(req.user?.role || "").toLowerCase();
+      if (role !== "superadmin") return res.status(403).json({ error: "forbidden" });
+
+      const lockId = String(req.body?.lockId || "").trim();
+      if (!lockId) return res.status(400).json({ error: "lockId inválido." });
+
+      const db = await getDb();
+      const lock = await db.collection("wa_locks").findOne({ _id: lockId });
+      if (!lock) return res.status(404).json({ error: "Lock no encontrado." });
+
+      const tenantId = String(lock.tenantId || "").trim();
+      const numero = String(lock.numero || lock.number || lock.phone || "").trim();
+      const now = new Date();
+      const by = String(req.user?.email || req.user?.user || req.user?.username || "");
+
+      await db.collection("wa_locks").deleteOne({ _id: lockId });
+      await db.collection("wa_wweb_policies").deleteMany({ tenantId, numero });
+      await db.collection("wa_wweb_actions").deleteMany({ lockId });
+
+      const filesColl = db.collection("wa_localauth.files");
+      const chunksColl = db.collection("wa_localauth.chunks");
+      const filenames = [
+        `LocalAuth-asisto_${tenantId}_${numero}.zip`,
+        `LocalAuth-super_${tenantId}_${numero}.zip`
+      ];
+      for (const filename of filenames) {
+        const files = await filesColl.find({ filename }).toArray();
+        for (const f of (files || [])) {
+          try { await chunksColl.deleteMany({ files_id: f._id }); } catch {}
+          try { await filesColl.deleteOne({ _id: f._id }); } catch {}
+        }
+      }
+
+      await db.collection("wa_wweb_history").insertOne({
+        tenantId,
+        numero,
+        event: "session_deleted",
+        host: lock.host || lock.hostname || "",
+        by,
+        at: now,
+      });
+
+      return res.status(200).json({ ok: true, deleted: true, lockId, tenantId, numero });
+    } catch (e) {
+      console.error("[wweb] delete-session error:", e);
+      return res.status(500).json({ error: "Error borrando sesión." });
     }
   });
 
