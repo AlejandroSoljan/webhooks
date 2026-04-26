@@ -376,6 +376,81 @@ function invalidateTenantAiConfigCache(tenantId = DEFAULT_TENANT_ID) {
   _tenantAiConfigCache.delete(_tenantAiCacheKey(tenantId));
 }
 
+
+async function recordTokenUsage(entry = {}) {
+  try {
+    const tenant = String(entry.tenantId || DEFAULT_TENANT_ID || "default").trim() || "default";
+    const kind = String(entry.kind || "").trim().toLowerCase();
+    if (!tenant || !kind) return null;
+
+    const inputTokens = Number(entry.inputTokens);
+    const outputTokens = Number(entry.outputTokens);
+    let totalTokens = Number(entry.totalTokens);
+
+    const safeInput = Number.isFinite(inputTokens) ? Math.max(0, inputTokens) : 0;
+    const safeOutput = Number.isFinite(outputTokens) ? Math.max(0, outputTokens) : 0;
+    if (!Number.isFinite(totalTokens)) totalTokens = safeInput + safeOutput;
+    totalTokens = Math.max(0, totalTokens);
+
+    const db = await getDb();
+    await db.collection("ai_token_usage_log").insertOne({
+      tenantId: tenant,
+      kind,
+      provider: String(entry.provider || "openai").trim() || "openai",
+      model: String(entry.model || "").trim() || null,
+      inputTokens: safeInput,
+      outputTokens: safeOutput,
+      totalTokens,
+      meta: (entry.meta && typeof entry.meta === "object") ? entry.meta : null,
+      createdAt: new Date()
+    });
+    return true;
+  } catch (e) {
+    console.warn("[tokens] recordTokenUsage error:", e?.message || e);
+    return null;
+  }
+}
+
+function parseTokenUsagePair(usage, fallbackKind = "message") {
+  if (usage == null) {
+    return { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  }
+
+  if (typeof usage === "number") {
+    const total = Number.isFinite(usage) ? Math.max(0, usage) : 0;
+    if (fallbackKind === "audio") {
+      return { inputTokens: total, outputTokens: 0, totalTokens: total };
+    }
+    return { inputTokens: total, outputTokens: 0, totalTokens: total };
+  }
+
+  const u = (usage && typeof usage === "object") ? usage : {};
+  const inputTokens = Number(
+    u.input_tokens ??
+    u.prompt_tokens ??
+    u.audio_tokens ??
+    u.tokens ??
+    0
+  );
+  const outputTokens = Number(
+    u.output_tokens ??
+    u.completion_tokens ??
+    u.text_tokens ??
+    0
+  );
+  const totalTokensRaw = Number(
+    u.total_tokens ??
+    u.total ??
+    (Number.isFinite(inputTokens) ? inputTokens : 0) + (Number.isFinite(outputTokens) ? outputTokens : 0)
+  );
+
+  const safeInput = Number.isFinite(inputTokens) ? Math.max(0, inputTokens) : 0;
+  const safeOutput = Number.isFinite(outputTokens) ? Math.max(0, outputTokens) : 0;
+  const safeTotal = Number.isFinite(totalTokensRaw) ? Math.max(0, totalTokensRaw) : (safeInput + safeOutput);
+  return { inputTokens: safeInput, outputTokens: safeOutput, totalTokens: safeTotal };
+}
+
+
 function modelUsesMaxCompletionTokens(modelName) {
   const m = String(modelName || "").trim().toLowerCase();
   return m.startsWith("gpt-5");
@@ -692,6 +767,17 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
       if (r.ok) {
         const j = await r.json().catch(() => ({}));
         if (j && typeof j.text === "string" && j.text.trim()) {
+          const usageInfo = parseTokenUsagePair(j.tokens || j.usage || null, "audio");
+          await recordTokenUsage({
+            tenantId,
+            kind: "audio",
+            provider: "external",
+           model: "external-transcribe",
+            inputTokens: usageInfo.inputTokens,
+            outputTokens: usageInfo.outputTokens,
+            totalTokens: usageInfo.totalTokens,
+            meta: { engine: "external" }
+         });
           return { text: j.text, usage: j.tokens || j.usage || null, engine: "external" };
         }
       } else {
@@ -730,6 +816,17 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
     ).trim();
     const r = await client.audio.transcriptions.create({ file: fileObj, model });
     const text = (r.text || "").trim();
+    const usageInfo = parseTokenUsagePair(r.usage || null, "audio");
+    await recordTokenUsage({
+      tenantId,
+      kind: "audio",
+      provider: "openai",
+      model,
+      inputTokens: usageInfo.inputTokens,
+      outputTokens: usageInfo.outputTokens,
+      totalTokens: usageInfo.totalTokens,
+      meta: { engine: "openai" }
+    });
     return { text, usage: r.usage || null, engine: "openai" };
   } catch (e) {
     console.error("STT OpenAI error:", e.message);
@@ -1325,6 +1422,17 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
         temperature,
          max_tokens: maxTokens || null,
         usage
+      });
+        const usageInfo = parseTokenUsagePair(usage, "message");
+       await recordTokenUsage({
+        tenantId,
+        kind: "message",
+        provider: "openai",
+        model: responseModel || model,
+        inputTokens: usageInfo.inputTokens,
+        outputTokens: usageInfo.outputTokens,
+        totalTokens: usageInfo.totalTokens,
+        meta: { temperature, maxTokens: maxTokens || null }
       });
       //console.log("[openai] response.data =>\n" + JSON.stringify(response.data, null, 2));
     } catch (e) {

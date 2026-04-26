@@ -48,6 +48,7 @@ const ACCESS_PAGES = [
   { key: "users", title: "Usuarios" },
   { key: "tenant_config", title: "Dominio Config" },
   { key: "web_access", title: "Ingresos Web" },
+  { key: "token_control", title: "Control de Tokens" },
 ];
 
 function normalizeAllowedPages(value) {
@@ -92,12 +93,14 @@ function requiredAccessForPath(p) {
   if (path.startsWith("/admin/telegram") || path.startsWith("/api/tg")) return ["telegram"];
   // Ingresos web
   if (path.startsWith("/admin/web-access") || path.startsWith("/api/web-access")) return ["web_access"];
+  // Control de tokens
+  if (path.startsWith("/admin/token-control") || path.startsWith("/api/token-control")) return ["token_control"];
  
 
   // UI wrapper
   if (path.startsWith("/ui/")) {
     const seg = path.split("/")[2] || "";
-    if (["admin", "inbox", "productos", "horarios", "comportamiento", "tenant_config", "telegram", "web_access"].includes(seg)) return [seg];
+    if (["admin", "inbox", "productos", "horarios", "comportamiento", "tenant_config", "telegram", "web_access", "token_control"].includes(seg)) return [seg];
   }
 
   // Pantallas directas
@@ -1079,6 +1082,7 @@ function getNavItemsForUser(user) {
   if (isAdmin && hasAccess(user, "users")) items.push({ key: "users", title: "Usuarios", href: "/admin/users" });
   if (isAdmin && hasAccess(user, "tenant_config")) items.push({ key: "tenant_config", title: "Dominio Config", href: "/ui/tenant_config" });
   if (isAdmin && hasAccess(user, "web_access")) items.push({ key: "web_access", title: "Ingresos Web", href: "/ui/web_access" });
+  if (isAdmin && hasAccess(user, "token_control")) items.push({ key: "token_control", title: "Control de Tokens", href: "/ui/token_control" });
 
   return items;
 }
@@ -1644,6 +1648,7 @@ function usersAdminPage({ user, users, msg, err }) {
         { key: "users", title: "Sesiones de usuarios" },
         { key: "tenant_config", title: "Dominio Config" },
          { key: "web_access", title: "Ingresos Web" },
+          { key: "token_control", title: "Control de Tokens" },
       ];
       const IS_SUPER = ${isSuper ? "true" : "false"};
       const USERS = ${JSON.stringify(userItems).replace(/</g, '\\u003c')};
@@ -1719,6 +1724,7 @@ function usersAdminPage({ user, users, msg, err }) {
         if (allowedKeys.includes("users")) items.push({ key: "users", title: "Sesiones de usuarios", href: "/admin/users" });
         if (allowedKeys.includes("tenant_config")) items.push({ key: "tenant_config", title: "Dominio Config", href: "/ui/tenant_config" });
         if (allowedKeys.includes("web_access")) items.push({ key: "web_access", title: "Ingresos Web", href: "/ui/web_access" });
+        if (allowedKeys.includes("token_control")) items.push({ key: "token_control", title: "Control de Tokens", href: "/ui/token_control" });
 
         const desired = items.some((it) => it.href === selectedHref) ? selectedHref : "/app";
         return {
@@ -2994,6 +3000,7 @@ function mountAuthRoutes(app) {
         { title: "Usuarios", href: "/admin/users", badge: "Admin", desc: "Alta/baja y reseteo de contraseñas" },
         { title: "Dominio Config", href: "/ui/tenant_config", badge: "Admin", desc: "Configuración por dominio" },
         { title: "Ingresos Web", href: "/ui/web_access", badge: "Admin", desc: "Estadísticas de ingresos al panel" },
+        { title: "Control de Tokens", href: "/ui/token_control", badge: "Admin", desc: "Consumo y costos estimados de tokens por dominio" },
         { title: "Logs Conversaciones", href: "/api/logs/conversations", badge: "API", desc: "Listado de conversaciones" },
         { title: "Logs Mensajes", href: "/api/logs/messages", badge: "API", desc: "Mensajes por conversación" },
         { title: "Behavior API", href: "/api/behavior", badge: "API", desc: "Get/Set behavior" },
@@ -3026,6 +3033,7 @@ function mountAuthRoutes(app) {
       tenant_config: { title: "Dominio Config", desc: "Configuración general por dominio", badge: "Admin", src: "/admin/tenant-config?embed=1", active: "tenant_config" },
       telegram: { title: "Sesiones Telegram", desc: "Estado de bots, chats y acciones por tenant", badge: "Admin", src: "/admin/telegram?embed=1", active: "telegram" },
       web_access: { title: "Ingresos Web", desc: "Estadísticas de accesos al panel web", badge: "Admin", src: "/admin/web-access?embed=1", active: "web_access" },
+      token_control: { title: "Control de Tokens", desc: "Consumo y costos estimados de tokens por dominio", badge: "Admin", src: "/admin/token-control?embed=1", active: "token_control" },
     };
 
     const conf = map[page];
@@ -3410,6 +3418,7 @@ function mountAuthRoutes(app) {
                 <button class="btn" type="submit" id="tc_btnSave">Guardar</button>
                 <button class="btn2" type="button" id="tc_btnAdd">Agregar campo</button>
                 <button class="btn2" type="button" id="tc_btnAddTag">Agregar TAG versión</button>
+                <button class="btn2" type="button" id="tc_btnAddTokenCosts">Agregar costos tokens</button>
                 <button class="btn2" type="button" id="tc_btnClear">Limpiar</button>
                 ${isSuper ? `<button class="btn2 btnDanger" type="button" id="tc_btnDelete">Eliminar</button>` : ``}
               </div>
@@ -3431,6 +3440,7 @@ function mountAuthRoutes(app) {
         const metaEl = document.getElementById('tc_meta');
         const btnAdd = document.getElementById('tc_btnAdd');
         const btnAddTag = document.getElementById('tc_btnAddTag');
+        const btnAddTokenCosts = document.getElementById('tc_btnAddTokenCosts');
         const btnClear = document.getElementById('tc_btnClear');
         const btnReload = document.getElementById('tc_btnReload');
         const btnNew = document.getElementById('tc_btnNew');
@@ -3509,6 +3519,16 @@ function mountAuthRoutes(app) {
           if (valInput && (valInput.value === '' || String(valInput.value).trim() === '')) valInput.value = value || '';
           try { valInput && valInput.focus(); } catch {}
           return row;
+        }
+
+        function addTokenCostFields(){
+          const defs = [
+            ['token_cost_chat_input_per_1k', '0'],
+            ['token_cost_chat_output_per_1k', '0'],
+            ['token_cost_audio_input_per_1k', '0'],
+            ['token_cost_audio_output_per_1k', '0']
+          ];
+          defs.forEach(([field, value]) => ensureFieldRow(field, value));
         }
 
         function setFieldsFromDoc(doc){
@@ -3695,6 +3715,7 @@ function mountAuthRoutes(app) {
 
         btnAdd.addEventListener('click', ()=> addRow('', ''));
         if (btnAddTag) btnAddTag.addEventListener('click', ()=> ensureFieldRow('release_tag', 'v4.00.16'));
+        if (btnAddTokenCosts) btnAddTokenCosts.addEventListener('click', ()=> addTokenCostFields());
         if (btnCopy && copyFromEl) {
           btnCopy.addEventListener('click', async ()=> {
             try {
