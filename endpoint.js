@@ -4,7 +4,6 @@
 
 require("dotenv").config();
 const express = require("express");
-
 const app = express();
 
 const crypto = require("crypto");
@@ -699,128 +698,10 @@ const {
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
   DEFAULT_TENANT_ID, setAssistantPedidoSnapshot, replaceLastAssistantHistory, calcularDistanciaKm,
   geocodeAddress, reverseGeocode, getStoreCoords, pickEnvioProductByDistance,clearEndedFlag,analyzeImageExternal,
-  ensureEnvioSmart,hasContext,sendChannelMedia,
+  ensureEnvioSmart,hasContext,
 } = require("./logic");
 
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
-
-
-const ADMIN_UPLOAD_MAX_BYTES = Number(process.env.ADMIN_UPLOAD_MAX_BYTES || 25 * 1024 * 1024);
-
-function parseMultipartContentDisposition(value) {
-  const out = {};
-  const parts = String(value || "").split(";").map(p => p.trim()).filter(Boolean);
-  out.type = parts.shift() || "";
-  for (const part of parts) {
-    const eq = part.indexOf("=");
-    if (eq === -1) continue;
-    const key = part.slice(0, eq).trim().toLowerCase();
-    let val = part.slice(eq + 1).trim();
-   if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
-    out[key] = val.replace(/%22/g, '"');
-  }
-  return out;
-}
-
-function addMultipartFile(req, fieldName, fileObj) {
-  req.files ||= {};
-  if (!req.files[fieldName]) {
-    req.files[fieldName] = fileObj;
-  } else if (Array.isArray(req.files[fieldName])) {
-    req.files[fieldName].push(fileObj);
-  } else {
-    req.files[fieldName] = [req.files[fieldName], fileObj];
-  }
-}
-
-// Parser multipart mínimo para /api/admin/send-file.
-// Evita depender de express-fileupload en producción/Render.
-function adminUploadMiddleware(req, res, next) {
-  const ct = String(req.headers["content-type"] || "");
-  if (!/^multipart\/form-data/i.test(ct)) return next();
-
-  const m = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(ct);
-  const boundary = String((m && (m[1] || m[2])) || "").trim();
-  if (!boundary) return res.status(400).json({ error: "multipart_boundary_required" });
-  const chunks = [];
-  let total = 0;
-  let aborted = false;
-
-  req.on("data", (chunk) => {
-    if (aborted) return;
-    total += chunk.length;
-    if (total > ADMIN_UPLOAD_MAX_BYTES) {
-      aborted = true;
-      try { req.destroy(); } catch {}
-      return res.status(413).json({ error: "file_too_large", maxBytes: ADMIN_UPLOAD_MAX_BYTES });
-   }
-    chunks.push(chunk);
-  });
-
-  req.on("error", (err) => {
-    if (aborted) return;
-    aborted = true;
-    return next(err);
-  });
-
-  req.on("end", () => {
-    if (aborted) return;
-    try {
-      req.body ||= {};
-      req.files ||= {};
-
-      // latin1 mantiene correspondencia 1 byte = 1 char, útil para rearmar buffers binarios.
-      const raw = Buffer.concat(chunks).toString("latin1");
-      const boundaryMarker = "--" + boundary;
-      const parts = raw.split(boundaryMarker);
-
-      for (let part of parts) {
-        if (!part || part === "--" || part === "--\r\n") continue;
-        if (part.startsWith("\r\n")) part = part.slice(2);
-       if (part.endsWith("--\r\n")) part = part.slice(0, -4);
-        else if (part.endsWith("--")) part = part.slice(0, -2);
-        if (!part.trim()) continue;
-
-        const headerEnd = part.indexOf("\r\n\r\n");
-        if (headerEnd === -1) continue;
-
-        const headerBlock = part.slice(0, headerEnd);
-        let bodyBinary = part.slice(headerEnd + 4);
-       if (bodyBinary.endsWith("\r\n")) bodyBinary = bodyBinary.slice(0, -2);
-
-        const headers = {};
-        for (const line of headerBlock.split("\r\n")) {
-          const idx = line.indexOf(":");
-          if (idx === -1) continue;
-          headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
-        }
-
-        const disp = parseMultipartContentDisposition(headers["content-disposition"] || "");
-        const fieldName = String(disp.name || "").trim();
-       if (!fieldName) continue;
-
-        const filename = String(disp.filename || "").trim();
-        const bodyBuffer = Buffer.from(bodyBinary, "latin1");
-
-        if (filename) {
-          addMultipartFile(req, fieldName, {
-           name: filename,
-            data: bodyBuffer,
-            size: bodyBuffer.length,
-            mimetype: headers["content-type"] || "application/octet-stream",
-            mimeType: headers["content-type"] || "application/octet-stream",
-          });
-        } else {
-          req.body[fieldName] = bodyBuffer.toString("utf8");
-        }
-      }
-
-      return next();
-    } catch (e) {
-      return next(e);
-    }
-  });
-}
 
 function isValidSignature(req) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
@@ -2097,61 +1978,6 @@ async function listConversations(limit = 50, tenantId, deliveredFilter = null) {
   return out;
 }
 
-function normalizeInboxContactKey(waId) {
-  const raw = String(waId || "").trim();
-  if (!raw) return "sin-numero";
-  const digits = raw.replace(/\D+/g, "");
-  return digits || raw.toLowerCase();
-}
-
-function groupConversationsByPhone(conversations = []) {
-  const groups = new Map();
-
-  for (const c of Array.isArray(conversations) ? conversations : []) {
-    const key = normalizeInboxContactKey(c?.waId);
-    if (!groups.has(key)) {
-      groups.set(key, {
-        ...c,
-        _id: String(c?._id || ""),
-        contactKey: key,
-        conversationIds: [],
-        conversationCount: 0,
-        allStatuses: [],
-        manualOpen: false,
-      });
-    }
-
-    const g = groups.get(key);
-    const convId = String(c?._id || "");
-    if (convId && !g.conversationIds.includes(convId)) g.conversationIds.push(convId);
-    g.conversationCount = g.conversationIds.length;
-    g.manualOpen = !!g.manualOpen || !!c?.manualOpen;
-
-    const status = String(c?.status || "").trim();
-    if (status && !g.allStatuses.includes(status)) g.allStatuses.push(status);
-
-    const currentLast = g.lastAt ? new Date(g.lastAt).getTime() : 0;
-    const candidateLast = c?.lastAt ? new Date(c.lastAt).getTime() : 0;
-    if (candidateLast >= currentLast) {
-      Object.assign(g, {
-        ...c,
-        _id: convId || g._id,
-        contactKey: key,
-        conversationIds: g.conversationIds,
-        conversationCount: g.conversationCount,
-        allStatuses: g.allStatuses,
-        manualOpen: g.manualOpen,
-      });
-    }
-  }
-
-  return Array.from(groups.values()).sort((a, b) => {
-    const ta = a?.lastAt ? new Date(a.lastAt).getTime() : 0;
-    const tb = b?.lastAt ? new Date(b.lastAt).getTime() : 0;
-    return tb - ta;
-  });
-}
-
 // Mensajes por conversación
 // Mensajes por conversación (colección `messages`)
 async function getConversationMessagesByConvId(convId, limit = 500, tenantId) {
@@ -2186,17 +2012,6 @@ app.get("/api/logs/conversations", async (req, res) => {
 });
 
 // Mensajes de una conversación
-// ---------- Inbox WhatsApp: contactos agrupados por teléfono ----------
-app.get("/api/admin/inbox-conversations", async (req, res) => {
-  try {
-    const limit = Math.max(1, Math.min(parseInt(req.query.limit || "200", 10), 500));
-    const rows = await listConversations(limit, resolveTenantId(req));
-    res.json(groupConversationsByPhone(rows));
-  } catch (e) {
-    console.error("GET /api/admin/inbox-conversations error:", e);
-    res.status(500).json({ error: "internal" });
-  }
-});
 
 // ---------- Media proxy (para ver/descargar adjuntos en /admin y /admin/inbox) ----------
 function _safeFileName(name) {
@@ -2276,15 +2091,6 @@ function buildMediaDescriptorForAdmin(m, tenantId) {
     const cachedCacheId = m?.meta?.media?.cacheId || null;
     const cachedUrl = cachedPublicUrl || (cachedCacheId ? (`/cache/media/${cachedCacheId}`) : null);
 
-    // fallback: adjuntos enviados desde el inbox admin
-    if (!mediaId && m?.meta?.media?.mediaId) {
-      mediaId = String(m.meta.media.mediaId);
-      filename = String(m?.meta?.media?.filename || filename || "archivo").trim();
-      mime = String(m?.meta?.media?.mime || mime || "").trim();
-      if (!caption) caption = String(m?.meta?.media?.caption || "").trim();
-    }
-
-
     let url = mediaId ? (`/api/media/${String(m._id)}`) : cachedUrl;
     if (!url) return null;
 
@@ -2355,14 +2161,6 @@ app.get("/api/media/:msgId", async (req, res) => {
       mimeHint = raw?.sticker?.mime_type || "";
       filename = "sticker";
     }
-
-    // Adjuntos enviados desde el inbox admin: guardamos el mediaId devuelto por WhatsApp.
-    if (!mediaId && msgDoc?.meta?.media?.mediaId) {
-      mediaId = String(msgDoc.meta.media.mediaId);
-      mimeHint = String(msgDoc?.meta?.media?.mime || mimeHint || "");
-      filename = String(msgDoc?.meta?.media?.filename || filename || "archivo").trim();
-    }
-
 
     // fallback: si el webhook guardó cacheId/publicUrl (ej imagen analizada), usamos eso
     if (!mediaId) {
@@ -2453,59 +2251,6 @@ app.get("/api/logs/messages", async (req, res) => {
   }
 });
 
-async function getConversationMessagesByConvIds(convIds = [], limit = 500, tenantId) {
-  const ids = (Array.isArray(convIds) ? convIds : [])
-    .map(x => String(x || "").trim())
-    .filter(x => ObjectId.isValid(x))
-    .slice(0, 100)
-    .map(x => new ObjectId(x));
-  if (!ids.length) return [];
-  const db = await getDb();
-  return db.collection("messages")
-    .find(withTenant({ conversationId: { $in: ids } }, tenantId))
-    .sort({ ts: 1, createdAt: 1 })
-    .limit(limit)
-    .toArray();
-}
-
-app.get("/api/admin/inbox-messages", async (req, res) => {
-  try {
-    const { convId, convIds, waId } = req.query;
-    if (!convId && !convIds && !waId) return res.status(400).json({ error: "convId_convIds_or_waId_required" });
-    const t = resolveTenantId(req);
-   const convIdList = String(convIds || "")
-      .split(",")
-      .map(x => x.trim())
-      .filter(Boolean);
-
-    let rows = [];
-    if (convIdList.length) {
-      rows = await getConversationMessagesByConvIds(convIdList, 500, t);
-    } else if (convId) {
-      rows = await getConversationMessagesByConvId(convId, 500, t);
-    } else {
-      const db = await getDb();
-      const convs = await db.collection("conversations")
-        .find(withTenant({ waId: String(waId) }, t), { projection: { _id: 1 } })
-        .sort({ updatedAt: -1, openedAt: -1 })
-        .limit(100)
-        .toArray();
-      rows = await getConversationMessagesByConvIds(convs.map(c => String(c._id)), 500, t);
-    }
-
-    res.json(rows.map(m => ({
-      _id: String(m._id),
-      role: m.role,
-      content: m.content,
-      type: m.type,
-      media: buildMediaDescriptorForAdmin(m, t),
-      createdAt: m.ts || m.createdAt
-    })));
-  } catch (e) {
-    console.error("GET /api/admin/inbox-messages error:", e);
-    res.status(500).json({ error: "internal" });
-  }
-});
 
 // ---------- Meta de conversación para admin (incluye manualOpen) ----------
 app.get("/api/admin/conversation-meta", async (req, res) => {
@@ -2557,73 +2302,12 @@ app.get("/api/admin/conversation-meta", async (req, res) => {
   }
 });
 
-app.get("/api/admin/inbox-conversation-meta", async (req, res) => {
-  try {
-    const { convId, convIds, waId } = req.query;
-    if (!convId && !convIds && !waId) {
-      return res.status(400).json({ error: "convId_convIds_or_waId_required" });
-    }
-    const tenant = resolveTenantId(req);
-    const db = await getDb();
-
-    const convIdList = String(convIds || "")
-      .split(",")
-      .map(x => x.trim())
-      .filter(x => ObjectId.isValid(x))
-      .slice(0, 100)
-      .map(x => new ObjectId(x));
-
-    let groupedConvs = [];
-    if (convIdList.length) {
-      groupedConvs = await db.collection("conversations")
-        .find(withTenant({ _id: { $in: convIdList } }, tenant))
-        .sort({ updatedAt: -1, openedAt: -1 })
-        .toArray();
-    } else if (waId) {
-      groupedConvs = await db.collection("conversations")
-        .find(withTenant({ waId: String(waId) }, tenant))
-        .sort({ updatedAt: -1, openedAt: -1 })
-        .limit(100)
-        .toArray();
-    } else {
-      const conv = await db.collection("conversations").findOne(
-        withTenant({ _id: new ObjectId(String(convId)) }, tenant)
-      );
-      if (conv) groupedConvs = [conv];
-    }
-
-    const conv = groupedConvs[0] || null;
-    if (!conv) return res.status(404).json({ error: "conv_not_found" });
-
-    res.json({
-      convId: String(conv._id),
-     waId: conv.waId,
-      contactName: conv.contactName || "",
-      status: adminStatusLabel(conv),
-      manualOpen: groupedConvs.some(c => !!c.manualOpen),
-      conversationCount: groupedConvs.length || 1,
-      conversationIds: groupedConvs.map(c => String(c._id)),
-      kitchenSent: !!conv.kitchenSent,
-      kitchenAt: conv.kitchenAt || null,
-      delivered: !!conv.delivered,
-      displayPhoneNumber: conv.displayPhoneNumber || "",
-      phoneNumberId: conv.phoneNumberId || "",
-      instagramPageId: conv.instagramPageId || "",
-      instagramAccountId: conv.instagramAccountId || "",
-      channelType: conv.channelType || "whatsapp"
-    });
-  } catch (e) {
-    console.error("GET /api/admin/inbox-conversation-meta error:", e);
-    res.status(500).json({ error: "internal" });
-  }
-});
-
 
 // ---------- Página /admin/inbox (UI estilo WhatsApp Web) ----------
 app.get("/admin/inbox", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
-    const conversations = groupConversationsByPhone(await listConversations(200, tenant));
+    const conversations = await listConversations(200, tenant);
     const urlConvId = String(req.query.convId || "");
 
     const initialConvs = JSON.stringify(conversations || []);
@@ -2737,13 +2421,12 @@ app.get("/admin/inbox", async (req, res) => {
       border:1px solid var(--border);
       padding:2px 6px;border-radius:999px;
     }
-    .conv-count{
-      font-size:10px;
-      color:var(--muted);
-      border:1px solid var(--border);
-      padding:2px 6px;
-      border-radius:999px;
-      white-space:nowrap;
+     .conv-delivered{
+      font-size:12px;
+      color:var(--accent);
+      margin-left:6px;
+      font-weight:800;
+      line-height:1;
     }
     .conv-last{
       font-size:11px;color:var(--muted);
@@ -2835,9 +2518,9 @@ app.get("/admin/inbox", async (req, res) => {
       padding:10px;
     }
     .send-form{
-      display:flex;gap:8px;align-items:center;
+      display:flex;gap:8px;
     }
-    .text-input{
+    .send-form input{
       flex:1;
       padding:12px 12px;
       border-radius:10px;
@@ -2846,26 +2529,6 @@ app.get("/admin/inbox", async (req, res) => {
       color:var(--text);
       outline:none;
       font-size:13px;
-    }
-    .attach-btn{
-      width:42px;height:42px;
-      display:flex;align-items:center;justify-content:center;
-      border-radius:10px;
-      border:1px solid var(--border);
-      background:#0f1a20;
-      color:var(--text);
-      cursor:pointer;
-      font-size:19px;
-      flex:0 0 42px;
-    }
-    .attach-btn:hover{background:#16252d}
-    .file-selected{
-      max-width:180px;
-      white-space:nowrap;
-      overflow:hidden;
-      text-overflow:ellipsis;
-      display:none;
-      align-items:center;
     }
     .send-form button{
       padding:0 14px;
@@ -2986,7 +2649,10 @@ app.get("/admin/inbox", async (req, res) => {
             <input type="checkbox" id="manualToggle" />
             <span>Pausar bot</span>
           </label>
-         
+          <label class="toggle">
+            <input type="checkbox" id="deliveredToggle" />
+            <span>Entregado</span>
+          </label>
         </div>
       </div>
 
@@ -2996,10 +2662,7 @@ app.get("/admin/inbox", async (req, res) => {
 
       <div class="chat-footer">
         <form id="sendForm" class="send-form">
-          <input id="fileInput" type="file" style="display:none" />
-          <label for="fileInput" class="attach-btn" title="Adjuntar archivo">📎</label>
-          <input id="msgInput" class="text-input" placeholder="Escribí un mensaje..." autocomplete="off" />
-          <small id="fileHint" class="pill file-selected"></small>
+          <input id="msgInput" placeholder="Escribí un mensaje..." autocomplete="off" />
           <small id="pauseHint" class="pill" style="display:flex;align-items:center">Bot activo</small>
           <button id="sendBtn" type="submit" disabled>Enviar</button>
         </form>
@@ -3013,14 +2676,10 @@ app.get("/admin/inbox", async (req, res) => {
 
   const qs = new URLSearchParams(location.search);
   const TENANT = qs.get("tenant") || "";
-  const PRESELECT = qs.get("convId") || "";
-  const PRESELECT_WA = qs.get("waId") || "";
+  const PRESELECT = ${JSON.stringify(urlConvId || "")};
 
   let conversations = Array.isArray(window.__INITIAL_CONVS__) ? window.__INITIAL_CONVS__ : [];
   let activeConvId = "";
-  let activeConvIds = [];
-  let activeWaId = "";
-  let activeContactKey = "";
   let activeStatusLabel = "";
 
   const convListEl = document.getElementById("convList");
@@ -3031,15 +2690,13 @@ app.get("/admin/inbox", async (req, res) => {
   const chatName = document.getElementById("chatName");
   const chatSub = document.getElementById("chatSub");
   const chatStatus = document.getElementById("chatStatus");
- 
+  const deliveredToggle = document.getElementById("deliveredToggle");
   const manualToggle = document.getElementById("manualToggle");
  const pauseHint = document.getElementById("pauseHint");
 
   const chatBody = document.getElementById("chatBody");
   const sendForm = document.getElementById("sendForm");
   const msgInput = document.getElementById("msgInput");
-  const fileInput = document.getElementById("fileInput");
-  const fileHint = document.getElementById("fileHint");
   const sendBtn = document.getElementById("sendBtn");
 
   function api(url){
@@ -3070,21 +2727,6 @@ app.get("/admin/inbox", async (req, res) => {
     }catch{ return ""; }
   }
 
-  function esc(s){
-    return String(s ?? "")
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  }
-
-  function normalizeContactKey(waId){
-    const raw = String(waId || "").trim();
-    const digits = raw.replace(/\D+/g, "");
-    return digits || raw.toLowerCase() || "sin-numero";
-  }
-
   function syncManualUi(isManual){
     const paused = !!isManual;
     if (manualToggle) manualToggle.checked = paused;
@@ -3102,29 +2744,26 @@ app.get("/admin/inbox", async (req, res) => {
     });
 
     convListEl.innerHTML = rows.map(c => {
-      const id = String(c._id || "");
-      const convIds = Array.isArray(c.conversationIds) ? c.conversationIds.map(String).filter(Boolean) : (id ? [id] : []);
-      const waId = String(c.waId || "");
-      const key = String(c.contactKey || normalizeContactKey(waId));
-      const name = c.contactName && c.contactName !== "-" ? c.contactName : (waId || "Sin nombre");
+      const id = c._id;
+      const name = c.contactName && c.contactName !== "-" ? c.contactName : (c.waId || "Sin nombre");
       const last = c.lastAt ? fmtTime(c.lastAt) : "";
-      const count = Number(c.conversationCount || (Array.isArray(c.conversationIds) ? c.conversationIds.length : 1)) || 1;
-      const status = count > 1 ? (count + " chats") : (c.status || "OPEN");
+      const status = c.status || "OPEN";
       const manual = c.manualOpen ? "BOT PAUSADO" : "BOT";
-      const cls = key === activeContactKey ? "conv-item active" : "conv-item";
+      const deliveredMark = c.delivered ? '<span class="conv-delivered" title="Entregado">✓</span>' : '';
+      const cls = id === activeConvId ? "conv-item active" : "conv-item";
       return \`
-        <div class="\${cls}" data-id="\${esc(id)}" data-convs="\${esc(convIds.join(','))}" data-wa="\${esc(waId)}" data-key="\${esc(key)}">
-          <div class="avatar">\${esc(initials(name))}</div>
+        <div class="\${cls}" data-id="\${id}">
+          <div class="avatar">\${initials(name)}</div>
           <div class="conv-meta">
             <div class="conv-row">
-              <div class="conv-name">\${esc(name)}</div>
-              <span class="conv-count">\${esc(status)}</span>
+              <div class="conv-name">\${name}</div>
+               <span class="conv-status">\${status}</span>\${deliveredMark}
             </div>
             <div class="conv-row">
-              <div class="conv-wa">\${esc(waId)}</div>
-              <span class="pill">\${esc(manual)}</span>
+              <div class="conv-wa">\${c.waId || ""}</div>
+              <span class="pill">\${manual}</span>
             </div>
-            <div class="conv-last">\${esc(last)}</div>
+            <div class="conv-last">\${last}</div>
           </div>
         </div>
       \`;
@@ -3133,11 +2772,8 @@ app.get("/admin/inbox", async (req, res) => {
     // bind clicks
     convListEl.querySelectorAll(".conv-item").forEach(el => {
       el.addEventListener("click", () => {
-        const convId = el.getAttribute("data-id") || "";
-        const convIds = String(el.getAttribute("data-convs") || "").split(",").map(x => x.trim()).filter(Boolean);
-        const waId = el.getAttribute("data-wa") || "";
-        const key = el.getAttribute("data-key") || normalizeContactKey(waId);
-        if (waId || convId || convIds.length) selectContact({ convId, convIds, waId, contactKey: key });
+        const id = el.getAttribute("data-id");
+        if (id) selectConversation(id);
       });
     });
 
@@ -3147,39 +2783,27 @@ app.get("/admin/inbox", async (req, res) => {
   }
 
   async function refreshConversations(){
-    const r = await fetch(api("/api/admin/inbox-conversations?limit=200"));
+    const r = await fetch(api("/api/logs/conversations?limit=200"));
     conversations = await r.json();
     renderList();
   }
 
-  function setUrlContact(convId, waId){
+  function setUrlConv(id){
     const u = new URL(location.href);
-    if (convId) u.searchParams.set("convId", convId);
+    if (id) u.searchParams.set("convId", id);
     else u.searchParams.delete("convId");
-    if (waId) u.searchParams.set("waId", waId);
-    else u.searchParams.delete("waId");
     if (TENANT) u.searchParams.set("tenant", TENANT);
     history.replaceState(null, "", u.toString());
   }
 
-  async function loadMetaContact({ convId = "", convIds = [], waId = "" } = {}){
-    const qs = Array.isArray(convIds) && convIds.length
-      ? ("convIds=" + encodeURIComponent(convIds.join(",")))
-      : waId
-      ? ("waId=" + encodeURIComponent(waId))
-      : ("convId=" + encodeURIComponent(convId));
-    const r = await fetch(api("/api/admin/inbox-conversation-meta?" + qs));
+  async function loadMeta(convId){
+    const r = await fetch(api("/api/admin/conversation-meta?convId=" + encodeURIComponent(convId)));
     if (!r.ok) throw new Error("meta_error");
     return r.json();
   }
 
-  async function loadMessagesContact({ convId = "", convIds = [], waId = "" } = {}){
-    const qs = Array.isArray(convIds) && convIds.length
-      ? ("convIds=" + encodeURIComponent(convIds.join(",")))
-      : waId
-      ? ("waId=" + encodeURIComponent(waId))
-      : ("convId=" + encodeURIComponent(convId));
-    const r = await fetch(api("/api/admin/inbox-messages?" + qs));
+  async function loadMessages(convId){
+    const r = await fetch(api("/api/logs/messages?convId=" + encodeURIComponent(convId)));
     if (!r.ok) throw new Error("messages_error");
     return r.json();
   }
@@ -3350,37 +2974,30 @@ app.get("/admin/inbox", async (req, res) => {
   }
 
 
-  async function selectContact({ convId = "", convIds = [], waId = "", contactKey = "" } = {}){
-    activeConvId = String(convId || "");
-    activeConvIds = Array.isArray(convIds) ? convIds.map(String).filter(Boolean) : [];
-    activeWaId = String(waId || "");
-    activeContactKey = String(contactKey || normalizeContactKey(activeWaId));
-    setUrlContact(activeConvId, activeWaId);
+  async function selectConversation(convId){
+    activeConvId = convId;
+    setUrlConv(convId);
     renderList();
 
-   sendBtn.disabled = !(activeWaId || activeConvId);
+    sendBtn.disabled = !convId;
 
     chatBody.innerHTML = '<div class="empty">Cargando...</div>';
 
     try{
-      const meta = await loadMetaContact({ convId: activeConvId, convIds: activeConvIds, waId: activeWaId });
-      activeConvId = String(meta.convId || activeConvId || "");
-      activeConvIds = Array.isArray(meta.conversationIds) ? meta.conversationIds.map(String).filter(Boolean) : (activeConvIds.length ? activeConvIds : (activeConvId ? [activeConvId] : []));
-      activeWaId = String(meta.waId || activeWaId || "");
-      activeContactKey = contactKey || normalizeContactKey(activeWaId);
-
+      const meta = await loadMeta(convId);
       const name = meta.contactName || meta.waId || "Chat";
       chatAvatar.textContent = initials(name);
       chatName.textContent = name;
-      const ch = (meta.displayPhoneNumber || meta.phoneNumberId || meta.instagramPageId || meta.instagramAccountId || "");
-      const channelLabel = String(meta.channelType || 'whatsapp').toLowerCase() === 'instagram' ? 'Instagram' : 'WhatsApp';
-      const count = Number(meta.conversationCount || 1);
-      chatSub.textContent = meta.waId
-        ? (channelLabel + ': ' + meta.waId + (ch ? (' · Canal: ' + ch) : '') + (count > 1 ? (' · ' + count + ' conversaciones') : ''))
-        : "";
+       const ch = (meta.displayPhoneNumber || meta.phoneNumberId || meta.instagramPageId || meta.instagramAccountId || "");
+       const channelLabel = String(meta.channelType || 'whatsapp').toLowerCase() === 'instagram' ? 'Instagram' : 'WhatsApp';
+       chatSub.textContent = meta.waId
+         ? (channelLabel + ': ' + meta.waId + (ch ? (' · Canal: ' + ch) : ''))
+         : "";
       activeStatusLabel = meta.status || "";
       syncManualUi(!!meta.manualOpen);
-      const msgs = await loadMessagesContact({ convId: activeConvId, convIds: activeConvIds, waId: activeWaId });
+      if (deliveredToggle) deliveredToggle.checked = !!meta.delivered;
+
+      const msgs = await loadMessages(convId);
       renderMessages(msgs);
     }catch(e){
       chatBody.innerHTML = '<div class="empty">No se pudo cargar la conversación.</div>';
@@ -3390,16 +3007,12 @@ app.get("/admin/inbox", async (req, res) => {
   // Toggle pausa bot / modo humano
   if (manualToggle) {
     manualToggle.addEventListener("change", async () => {
-      if (!activeWaId && !activeConvId) return;
+      if (!activeConvId) return;
       try{
-        const r = await fetch(api("/api/admin/inbox-conversation-manual"), {
+        const r = await fetch(api("/api/admin/conversation-manual"), {
           method:"POST",
           headers:{ "Content-Type":"application/json" },
-          body: JSON.stringify(activeConvIds.length
-            ? { convIds: activeConvIds, manualOpen: manualToggle.checked }
-            : activeWaId
-              ? { waId: activeWaId, manualOpen: manualToggle.checked }
-              : { convId: activeConvId, manualOpen: manualToggle.checked })
+          body: JSON.stringify({ convId: activeConvId, manualOpen: manualToggle.checked })
         });
         const j = await r.json().catch(() => null);
         syncManualUi(j && typeof j.manualOpen === "boolean" ? j.manualOpen : manualToggle.checked);
@@ -3410,67 +3023,44 @@ app.get("/admin/inbox", async (req, res) => {
   }
 
 
-  function updateFileHint(){
-    const f = fileInput && fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
-    if (!fileHint) return;
-    if (!f) {
-      fileHint.style.display = "none";
-      fileHint.textContent = "";
-      return;
-    }
-    fileHint.style.display = "flex";
-    fileHint.title = "Click para quitar adjunto";
-    fileHint.textContent = "📎 " + f.name;
+  // Toggle entregado/no entregado
+  if (deliveredToggle) {
+    deliveredToggle.addEventListener("change", async () => {
+      if (!activeConvId) return;
+      try{
+        await fetch(api("/api/admin/conversation-delivered"), {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({ convId: activeConvId, delivered: deliveredToggle.checked })
+        });
+        // refrescamos lista para que se refleje el check
+        await refreshConversations();
+      }catch{}
+    });
   }
-
-  if (fileInput) fileInput.addEventListener("change", updateFileHint);
-  if (fileHint) fileHint.addEventListener("click", () => {
-    if (fileInput) fileInput.value = "";
-    updateFileHint();
-  });
 
 
 
   // Enviar mensaje manual
   sendForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    if (!activeWaId && !activeConvId) return;
+    if (!activeConvId) return;
     const text = String(msgInput.value || "").trim();
-    const file = fileInput && fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
-    if (!text && !file) return;
+    if (!text) return;
 
     sendBtn.disabled = true;
 
     try{
-      if (file) {
-        const fd = new FormData();
-        if (activeWaId) fd.append("waId", activeWaId);
-        else fd.append("convId", activeConvId);
-        if (text) fd.append("text", text);
-        fd.append("file", file);
-        const r = await fetch(api("/api/admin/send-file"), {
-          method:"POST",
-          body: fd
-        });
-        if (!r.ok) throw new Error("send_file_error");
-        fileInput.value = "";
-        updateFileHint();
-      } else {
-        await fetch(api("/api/admin/send-message"), {
-         method:"POST",
-          headers:{ "Content-Type":"application/json" },
-          body: JSON.stringify(activeWaId
-            ? { waId: activeWaId, text }
-            : { convId: activeConvId, text })
-        });
-      }
+      await fetch(api("/api/admin/send-message"), {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({ convId: activeConvId, text })
+      });
       msgInput.value = "";
-      const msgs = await loadMessagesContact({ convId: activeConvId, convIds: activeConvIds, waId: activeWaId });
+      const msgs = await loadMessages(activeConvId);
       renderMessages(msgs);
       await refreshConversations();
-    }catch(e){
-      alert("No se pudo enviar el mensaje o adjunto.");
-    }
+    }catch(e){}
     finally{
       sendBtn.disabled = false;
       msgInput.focus();
@@ -3489,15 +3079,10 @@ app.get("/admin/inbox", async (req, res) => {
 
   // Init
   renderList();
-    if (PRESELECT_WA) {
-    const row = conversations.find(c => String(c.waId || "") === PRESELECT_WA) || null;
-    selectContact({ convId: row?._id || "", convIds: row?.conversationIds || [], waId: PRESELECT_WA, contactKey: row?.contactKey || normalizeContactKey(PRESELECT_WA) });
-  } else if (PRESELECT) {
-    const row = conversations.find(c => String(c._id || "") === PRESELECT || (Array.isArray(c.conversationIds) && c.conversationIds.includes(PRESELECT))) || null;
-    selectContact({ convId: row?._id || PRESELECT, convIds: row?.conversationIds || [PRESELECT], waId: row?.waId || "", contactKey: row?.contactKey || normalizeContactKey(row?.waId || "") });
-
+  if (PRESELECT) {
+    selectConversation(PRESELECT);
   } else if (conversations[0] && conversations[0]._id) {
-    selectContact({ convId: conversations[0]._id, convIds: conversations[0].conversationIds || [conversations[0]._id], waId: conversations[0].waId || "", contactKey: conversations[0].contactKey || normalizeContactKey(conversations[0].waId || "") });
+    selectConversation(conversations[0]._id);
   }
 </script>
 </body>
@@ -3652,151 +3237,6 @@ app.post("/api/admin/conversation-manual", async (req, res) => {
   }
 });
 
-
-app.post("/api/admin/inbox-conversation-manual", async (req, res) => {
-  try {
-    const { convId, convIds, waId, manualOpen } = req.body || {};
-    const convIdList = Array.isArray(convIds)
-      ? convIds.map(x => String(x || "").trim()).filter(x => ObjectId.isValid(x)).slice(0, 100)
-      : String(convIds || "").split(",").map(x => x.trim()).filter(x => ObjectId.isValid(x)).slice(0, 100);
-    if (!convId && !convIdList.length && !waId) {
-      return res.status(400).json({ error: "convId_convIds_or_waId_required" });
-    }
-    const tenant = resolveTenantId(req);
-    const db = await getDb();
-
-    let filter;
-    if (convIdList.length) {
-      filter = withTenant({ _id: { $in: convIdList.map(x => new ObjectId(x)) } }, tenant);
-    } else if (convId) {
-      filter = withTenant({ _id: new ObjectId(String(convId)) }, tenant);
-    } else {
-      filter = withTenant({ waId: String(waId) }, tenant);
-    }
-
-    const flag = !!manualOpen;
-    await db.collection("conversations").updateMany(
-      filter,
-      { $set: { manualOpen: flag, updatedAt: new Date() } }
-    );
-    res.json({ ok: true, waId: waId ? String(waId) : null, convIds: convIdList, manualOpen: flag });
-  } catch (e) {
-    console.error("POST /api/admin/inbox-conversation-manual error:", e);
-    res.status(500).json({ error: "internal" });
-  }
-});
-
-
-function pickAdminUploadFile(req) {
-  const f = req?.files?.file || req?.files?.attachment || req?.files?.media || null;
-  return Array.isArray(f) ? f[0] : f;
-}
-
-function inferOutboundMediaKind(mime, filename = "") {
-  const mt = String(mime || "").toLowerCase();
-  const fn = String(filename || "").toLowerCase();
-  if (mt.startsWith("image/")) return "image";
-  if (mt.startsWith("audio/")) return "audio";
-  if (mt.startsWith("video/")) return "video";
-  if (/\.(jpe?g|png|webp|gif)$/i.test(fn)) return "image";
-  if (/\.(mp3|wav|ogg|opus|m4a)$/i.test(fn)) return "audio";
-  if (/\.(mp4|mov|webm)$/i.test(fn)) return "video";
-  return "document";
-}
-
-
-// ---------- Enviar adjunto manual al cliente desde /admin/inbox ----------
-app.post("/api/admin/send-file", adminUploadMiddleware, async (req, res) => {
-  try {
-    const { convId, waId, text } = req.body || {};
-    const upload = pickAdminUploadFile(req);
-    if (!upload || !upload.data || !upload.data.length) {
-      return res.status(400).json({ error: "file_required" });
-    }
-
-    const tenant = resolveTenantId(req);
-    const db = await getDb();
-
-    let conv = null;
-    if (convId) {
-      conv = await db.collection("conversations").findOne(
-        withTenant({ _id: new ObjectId(String(convId)) }, tenant)
-      );
-    } else if (waId) {
-      conv = await db.collection("conversations").findOne(
-        withTenant({ waId: String(waId) }, tenant),
-        { sort: { updatedAt: -1, openedAt: -1 } }
-      );
-    }
-
-    if (!conv) return res.status(404).json({ error: "conv_not_found" });
-
-    const filename = _safeFileName(upload.name || "archivo");
-    const mime = String(upload.mimetype || upload.mimeType || "application/octet-stream").trim() || "application/octet-stream";
-    const caption = String(text || "").trim();
-    const kind = inferOutboundMediaKind(mime, filename);
-
-    const to = conv.waId;
-    const channelType = String(conv.channelType || "whatsapp").trim().toLowerCase() || "whatsapp";
-    if (channelType === "instagram") {
-      return res.status(400).json({ error: "instagram_file_not_supported" });
-    }
-
-    let rt = null;
-    try {
-      const convPhoneNumberId = conv.phoneNumberId || null;
-      if (convPhoneNumberId) rt = await getRuntimeByPhoneNumberId(convPhoneNumberId);
-    } catch {}
-
-    const channelOpts = {
-      channelType,
-      whatsappToken: rt?.whatsappToken || null,
-      phoneNumberId: rt?.phoneNumberId || conv.phoneNumberId || null,
-    };
-
-    const sent = await sendChannelMedia(to, {
-      buffer: upload.data,
-      filename,
-      mime,
-      caption,
-      type: kind,
-    }, channelOpts);
-
-    const now = new Date();
-    const cacheId = putInCache(upload.data, mime);
-    await saveMessageDoc({
-      tenantId: tenant,
-      conversationId: conv._id,
-      waId: to,
-      role: "assistant",
-      content: caption || `[Archivo enviado: ${filename}]`,
-      type: kind,
-      meta: {
-        from: "admin",
-        media: {
-          outbound: true,
-          mediaId: sent?.mediaId || null,
-          kind,
-          filename,
-          mime,
-          caption: caption || null,
-          cacheId,
-        }
-      },
-    });
-
-    await db.collection("conversations").updateOne(
-      { _id: conv._id },
-      { $set: { lastAssistantTs: now, updatedAt: now } }
-    );
-
-    res.json({ ok: true, mediaId: sent?.mediaId || null, kind, filename });
-  } catch (e) {
-    console.error("POST /api/admin/send-file error:", e?.response?.data || e?.message || e);
-    res.status(500).json({ error: "internal" });
-  }
-});
- 
 
 // ---------- Enviar mensaje manual al cliente desde /admin ----------
 app.post("/api/admin/send-message", async (req, res) => {

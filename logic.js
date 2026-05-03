@@ -707,70 +707,6 @@ async function sendWhatsAppMessage(to, text, opts = {}) {
   }
 }
 
-
-function inferWhatsAppMediaType(mime, filename = "") {
-  const mt = String(mime || "").toLowerCase();
-  const fn = String(filename || "").toLowerCase();
-  if (mt.startsWith("image/")) return "image";
-  if (mt.startsWith("audio/")) return "audio";
-  if (mt.startsWith("video/")) return "video";
-  if (/\.(jpe?g|png|webp|gif)$/i.test(fn)) return "image";
-  if (/\.(mp3|wav|ogg|opus|m4a)$/i.test(fn)) return "audio";
-  if (/\.(mp4|mov|webm)$/i.test(fn)) return "video";
-  return "document";
-}
-
-async function uploadWhatsAppMedia(buffer, filename, mime, opts = {}) {
-  const pid = String(opts.phoneNumberId || PHONE_NUMBER_ID || "").trim();
-  const token = String(opts.whatsappToken || WHATSAPP_TOKEN || "").trim();
-  if (!pid) throw new Error("missing_phone_number_id");
-  if (!token) throw new Error("missing_whatsapp_token");
-  if (!buffer || !Buffer.isBuffer(buffer) || !buffer.length) throw new Error("missing_media_buffer");
-
-  const safeName = String(filename || "archivo").trim() || "archivo";
-  const safeMime = String(mime || "application/octet-stream").trim() || "application/octet-stream";
-  const fd = new FormData();
-  fd.append("messaging_product", "whatsapp");
-  fd.append("file", new Blob([buffer], { type: safeMime }), safeName);
-
-  const resp = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${pid}/media`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: fd,
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok || !data?.id) {
-    throw new Error(`whatsapp_media_upload_failed_${resp.status}: ${safeStringify(data)}`);
-  }
-  return data.id;
-}
-
-async function sendWhatsAppMedia(to, media = {}, opts = {}) {
-  const pid = String(opts.phoneNumberId || PHONE_NUMBER_ID || "").trim();
-  const token = String(opts.whatsappToken || WHATSAPP_TOKEN || "").trim();
-  if (!pid) throw new Error("missing_phone_number_id");
-  if (!token) throw new Error("missing_whatsapp_token");
-
-  const filename = String(media.filename || "archivo").trim() || "archivo";
-  const mime = String(media.mime || "application/octet-stream").trim() || "application/octet-stream";
-  const type = String(media.type || inferWhatsAppMediaType(mime, filename)).trim().toLowerCase();
-  const caption = String(media.caption || "").trim();
-  const mediaId = await uploadWhatsAppMedia(media.buffer, filename, mime, opts);
-
-  const mediaPayload = { id: mediaId };
-  if (type === "document") mediaPayload.filename = filename;
-  if (caption && ["image", "video", "document"].includes(type)) mediaPayload.caption = caption;
-
-  await axios.post(
-    `https://graph.facebook.com/${GRAPH_API_VERSION}/${pid}/messages`,
-    { messaging_product: "whatsapp", to, type, [type]: mediaPayload },
-    { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
-  );
-
-  return { mediaId, type, filename, mime };
-}
-
-
 async function sendInstagramMessage(to, text, opts = {}) {
   try {
     const body = String(text ?? "").trim();
@@ -803,14 +739,6 @@ async function sendChannelMessage(to, text, opts = {}) {
     return sendInstagramMessage(to, text, opts);
   }
   return sendWhatsAppMessage(to, text, opts);
-}
-
-async function sendChannelMedia(to, media = {}, opts = {}) {
-  const channelType = String(opts.channelType || "whatsapp").trim().toLowerCase();
-  if (channelType === "instagram") {
-    throw new Error("instagram_media_not_supported");
-  }
-  return sendWhatsAppMedia(to, media, opts);
 }
 
 // ================== Media (audio) ==================
@@ -1898,10 +1826,8 @@ module.exports = {
 
   // whatsapp + media + stt
   sendWhatsAppMessage,
-  sendWhatsAppMedia,
   sendInstagramMessage,
   sendChannelMessage,
-  sendChannelMedia,
   getMediaInfo,
   downloadMediaBuffer,
   transcribeAudioExternal,
