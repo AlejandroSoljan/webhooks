@@ -38,7 +38,7 @@ function ensureBodyParsers(app) {
 // ===== Accesos por usuario (pantallas/endpoints) =====
 const ACCESS_PAGES = [
   { key: "admin", title: "Conversaciones" },
-  { key: "inbox", title: "Inbox" },
+  { key: "inbox", title: "WhatsApp" },
   { key: "productos", title: "Productos" },
   { key: "horarios", title: "Horarios" },
   { key: "comportamiento", title: "Comportamiento" },
@@ -1072,6 +1072,7 @@ function getNavItemsForUser(user) {
   const items = [{ key: "home", title: "Inicio", href: "/app" }];
 
   if (hasAccess(user, "admin")) items.push({ key: "admin", title: "Conversaciones", href: "/ui/admin" });
+  if (hasAccess(user, "inbox")) items.push({ key: "inbox", title: "WhatsApp", href: "/ui/inbox" });
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
@@ -1638,7 +1639,7 @@ function usersAdminPage({ user, users, msg, err }) {
     (function(){
       const ACCESS_PAGES = [
         { key: "admin", title: "Conversaciones" },
-        { key: "inbox", title: "Inbox" },
+        { key: "inbox", title: "WhatsApp" },
         { key: "productos", title: "Productos" },
         { key: "horarios", title: "Horarios" },
         { key: "comportamiento", title: "Comportamiento" },
@@ -2990,6 +2991,7 @@ function mountAuthRoutes(app) {
     const routes = [
       { title: "Inicio", href: "/app", badge: "", desc: "Panel principal" },
       { title: "Conversaciones", href: "/ui/admin", badge: "Admin UI", desc: "Panel de conversaciones" },
+      { title: "WhatsApp", href: "/ui/inbox", badge: "Admin UI", desc: "Bandeja tipo WhatsApp para responder y pausar el bot" },
       { title: "Productos", href: "/ui/productos", badge: "UI", desc: "Catálogo del dominio" },
       { title: "Horarios", href: "/ui/horarios", badge: "UI", desc: "Configuración de horarios" },
       { title: "Comportamiento", href: "/ui/comportamiento", badge: "UI", desc: "Behavior prompt/config" },
@@ -3026,7 +3028,7 @@ function mountAuthRoutes(app) {
 
     const map = {
       admin: { title: "Conversaciones", desc: "Panel de conversaciones y seguimiento", badge: "Admin UI", src: "/admin", active: "admin" },
-      inbox: { title: "Inbox", desc: "Bandeja de conversaciones estilo chat", badge: "Admin UI", src: "/admin/inbox", active: "inbox" },
+      inbox: { title: "WhatsApp", desc: "Bandeja WhatsApp para responder clientes y pausar el bot por conversación", badge: "Admin UI", src: "/admin/inbox", active: "inbox" },
       productos: { title: "Productos", desc: "Catálogo y mantenimiento del dominio", badge: "UI", src: "/productos", active: "productos" },
       horarios: { title: "Horarios", desc: "Configuración de disponibilidad", badge: "UI", src: "/horarios", active: "horarios" },
       comportamiento: { title: "Comportamiento", desc: "Prompt, reglas y configuración del asistente", badge: "UI", src: "/comportamiento", active: "comportamiento" },

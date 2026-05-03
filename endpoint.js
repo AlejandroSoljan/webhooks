@@ -2317,7 +2317,7 @@ app.get("/admin/inbox", async (req, res) => {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Admin | Inbox</title>
+  <title>Admin | WhatsApp</title>
   <style>
     :root{
       --bg:#0b141a;
@@ -2623,7 +2623,7 @@ app.get("/admin/inbox", async (req, res) => {
     <!-- SIDEBAR -->
     <aside class="sidebar">
       <div class="side-header">
-        <h1>Inbox</h1>
+        <h1>WhatsApp</h1>
         <button id="refreshBtn" class="pill" title="Actualizar">↻ Actualizar</button>
       </div>
       <div class="search">
@@ -2647,7 +2647,7 @@ app.get("/admin/inbox", async (req, res) => {
           <span id="chatStatus" class="pill"></span>
           <label class="toggle">
             <input type="checkbox" id="manualToggle" />
-            <span>Modo humano</span>
+            <span>Pausar bot</span>
           </label>
           <label class="toggle">
             <input type="checkbox" id="deliveredToggle" />
@@ -2663,6 +2663,7 @@ app.get("/admin/inbox", async (req, res) => {
       <div class="chat-footer">
         <form id="sendForm" class="send-form">
           <input id="msgInput" placeholder="Escribí un mensaje..." autocomplete="off" />
+          <small id="pauseHint" class="pill" style="display:flex;align-items:center">Bot activo</small>
           <button id="sendBtn" type="submit" disabled>Enviar</button>
         </form>
       </div>
@@ -2679,6 +2680,7 @@ app.get("/admin/inbox", async (req, res) => {
 
   let conversations = Array.isArray(window.__INITIAL_CONVS__) ? window.__INITIAL_CONVS__ : [];
   let activeConvId = "";
+  let activeStatusLabel = "";
 
   const convListEl = document.getElementById("convList");
   const searchInput = document.getElementById("searchInput");
@@ -2689,6 +2691,8 @@ app.get("/admin/inbox", async (req, res) => {
   const chatSub = document.getElementById("chatSub");
   const chatStatus = document.getElementById("chatStatus");
   const deliveredToggle = document.getElementById("deliveredToggle");
+  const manualToggle = document.getElementById("manualToggle");
+ const pauseHint = document.getElementById("pauseHint");
 
   const chatBody = document.getElementById("chatBody");
   const sendForm = document.getElementById("sendForm");
@@ -2723,6 +2727,14 @@ app.get("/admin/inbox", async (req, res) => {
     }catch{ return ""; }
   }
 
+  function syncManualUi(isManual){
+    const paused = !!isManual;
+    if (manualToggle) manualToggle.checked = paused;
+    if (pauseHint) pauseHint.textContent = paused ? "Bot pausado" : "Bot activo";
+    if (chatStatus) chatStatus.textContent = paused ? "BOT PAUSADO" : (activeStatusLabel || "");
+  }
+
+
   function renderList(){
     const f = String(searchInput.value || "").toLowerCase().trim();
     const rows = conversations.filter(c => {
@@ -2736,6 +2748,7 @@ app.get("/admin/inbox", async (req, res) => {
       const name = c.contactName && c.contactName !== "-" ? c.contactName : (c.waId || "Sin nombre");
       const last = c.lastAt ? fmtTime(c.lastAt) : "";
       const status = c.status || "OPEN";
+      const manual = c.manualOpen ? "BOT PAUSADO" : "BOT";
       const deliveredMark = c.delivered ? '<span class="conv-delivered" title="Entregado">✓</span>' : '';
       const cls = id === activeConvId ? "conv-item active" : "conv-item";
       return \`
@@ -2744,7 +2757,7 @@ app.get("/admin/inbox", async (req, res) => {
           <div class="conv-meta">
             <div class="conv-row">
               <div class="conv-name">\${name}</div>
-               <span class="conv-status">${status}</span>${deliveredMark}
+               <span class="conv-status">\${status}</span>\${deliveredMark}
             </div>
             <div class="conv-row">
               <div class="conv-wa">\${c.waId || ""}</div>
@@ -2980,7 +2993,8 @@ app.get("/admin/inbox", async (req, res) => {
        chatSub.textContent = meta.waId
          ? (channelLabel + ': ' + meta.waId + (ch ? (' · Canal: ' + ch) : ''))
          : "";
-      chatStatus.textContent = meta.status || "";
+      activeStatusLabel = meta.status || "";
+      syncManualUi(!!meta.manualOpen);
       if (deliveredToggle) deliveredToggle.checked = !!meta.delivered;
 
       const msgs = await loadMessages(convId);
@@ -2990,19 +3004,23 @@ app.get("/admin/inbox", async (req, res) => {
     }
   }
 
-  // Toggle humano/bot
-  manualToggle.addEventListener("change", async () => {
-    if (!activeConvId) return;
-    try{
-      await fetch(api("/api/admin/conversation-manual"), {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({ convId: activeConvId, manualOpen: manualToggle.checked })
-      });
-      // refrescamos lista para que refleje pill HUMANO/BOT
-      await refreshConversations();
-    }catch{}
-  });
+  // Toggle pausa bot / modo humano
+  if (manualToggle) {
+    manualToggle.addEventListener("change", async () => {
+      if (!activeConvId) return;
+      try{
+        const r = await fetch(api("/api/admin/conversation-manual"), {
+          method:"POST",
+          headers:{ "Content-Type":"application/json" },
+          body: JSON.stringify({ convId: activeConvId, manualOpen: manualToggle.checked })
+        });
+        const j = await r.json().catch(() => null);
+        syncManualUi(j && typeof j.manualOpen === "boolean" ? j.manualOpen : manualToggle.checked);
+        // refrescamos lista para que refleje pill BOT/BOT PAUSADO
+        await refreshConversations();
+      }catch{}
+    });
+  }
 
 
   // Toggle entregado/no entregado
