@@ -4,7 +4,7 @@
 
 require("dotenv").config();
 const express = require("express");
-const fileUpload = require("express-fileupload");
+
 const app = express();
 
 const crypto = require("crypto");
@@ -704,10 +704,123 @@ const {
 
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
-const adminUploadMiddleware = fileUpload({
-  limits: { fileSize: Number(process.env.ADMIN_UPLOAD_MAX_BYTES || 25 * 1024 * 1024) },
-  abortOnLimit: true,
-});
+
+const ADMIN_UPLOAD_MAX_BYTES = Number(process.env.ADMIN_UPLOAD_MAX_BYTES || 25 * 1024 * 1024);
+
+function parseMultipartContentDisposition(value) {
+  const out = {};
+  const parts = String(value || "").split(";").map(p => p.trim()).filter(Boolean);
+  out.type = parts.shift() || "";
+  for (const part of parts) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    const key = part.slice(0, eq).trim().toLowerCase();
+    let val = part.slice(eq + 1).trim();
+   if (val.startsWith('"') && val.endsWith('"')) val = val.slice(1, -1);
+    out[key] = val.replace(/%22/g, '"');
+  }
+  return out;
+}
+
+function addMultipartFile(req, fieldName, fileObj) {
+  req.files ||= {};
+  if (!req.files[fieldName]) {
+    req.files[fieldName] = fileObj;
+  } else if (Array.isArray(req.files[fieldName])) {
+    req.files[fieldName].push(fileObj);
+  } else {
+    req.files[fieldName] = [req.files[fieldName], fileObj];
+  }
+}
+
+// Parser multipart mínimo para /api/admin/send-file.
+// Evita depender de express-fileupload en producción/Render.
+function adminUploadMiddleware(req, res, next) {
+  const ct = String(req.headers["content-type"] || "");
+  if (!/^multipart\/form-data/i.test(ct)) return next();
+
+  const m = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(ct);
+  const boundary = String((m && (m[1] || m[2])) || "").trim();
+  if (!boundary) return res.status(400).json({ error: "multipart_boundary_required" });
+  const chunks = [];
+  let total = 0;
+  let aborted = false;
+
+  req.on("data", (chunk) => {
+    if (aborted) return;
+    total += chunk.length;
+    if (total > ADMIN_UPLOAD_MAX_BYTES) {
+      aborted = true;
+      try { req.destroy(); } catch {}
+      return res.status(413).json({ error: "file_too_large", maxBytes: ADMIN_UPLOAD_MAX_BYTES });
+   }
+    chunks.push(chunk);
+  });
+
+  req.on("error", (err) => {
+    if (aborted) return;
+    aborted = true;
+    return next(err);
+  });
+
+  req.on("end", () => {
+    if (aborted) return;
+    try {
+      req.body ||= {};
+      req.files ||= {};
+
+      // latin1 mantiene correspondencia 1 byte = 1 char, útil para rearmar buffers binarios.
+      const raw = Buffer.concat(chunks).toString("latin1");
+      const boundaryMarker = "--" + boundary;
+      const parts = raw.split(boundaryMarker);
+
+      for (let part of parts) {
+        if (!part || part === "--" || part === "--\r\n") continue;
+        if (part.startsWith("\r\n")) part = part.slice(2);
+       if (part.endsWith("--\r\n")) part = part.slice(0, -4);
+        else if (part.endsWith("--")) part = part.slice(0, -2);
+        if (!part.trim()) continue;
+
+        const headerEnd = part.indexOf("\r\n\r\n");
+        if (headerEnd === -1) continue;
+
+        const headerBlock = part.slice(0, headerEnd);
+        let bodyBinary = part.slice(headerEnd + 4);
+       if (bodyBinary.endsWith("\r\n")) bodyBinary = bodyBinary.slice(0, -2);
+
+        const headers = {};
+        for (const line of headerBlock.split("\r\n")) {
+          const idx = line.indexOf(":");
+          if (idx === -1) continue;
+          headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
+        }
+
+        const disp = parseMultipartContentDisposition(headers["content-disposition"] || "");
+        const fieldName = String(disp.name || "").trim();
+       if (!fieldName) continue;
+
+        const filename = String(disp.filename || "").trim();
+        const bodyBuffer = Buffer.from(bodyBinary, "latin1");
+
+        if (filename) {
+          addMultipartFile(req, fieldName, {
+           name: filename,
+            data: bodyBuffer,
+            size: bodyBuffer.length,
+            mimetype: headers["content-type"] || "application/octet-stream",
+            mimeType: headers["content-type"] || "application/octet-stream",
+          });
+        } else {
+          req.body[fieldName] = bodyBuffer.toString("utf8");
+        }
+      }
+
+      return next();
+    } catch (e) {
+      return next(e);
+    }
+  });
+}
 
 function isValidSignature(req) {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
@@ -2900,6 +3013,7 @@ app.get("/admin/inbox", async (req, res) => {
 
   const qs = new URLSearchParams(location.search);
   const TENANT = qs.get("tenant") || "";
+  const PRESELECT = qs.get("convId") || "";
   const PRESELECT_WA = qs.get("waId") || "";
 
   let conversations = Array.isArray(window.__INITIAL_CONVS__) ? window.__INITIAL_CONVS__ : [];
