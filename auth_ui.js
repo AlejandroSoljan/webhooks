@@ -39,7 +39,7 @@ function ensureBodyParsers(app) {
 const ACCESS_PAGES = [
   { key: "admin", title: "Conversaciones" },
   { key: "inbox", title: "WhatsApp" },
-  { key: "Fleteros", title: "Viajes Fleteros" },
+  { key: "fleteros", title: "Viajes Fleteros" },
   { key: "productos", title: "Productos" },
   { key: "horarios", title: "Horarios" },
   { key: "comportamiento", title: "Comportamiento" },
