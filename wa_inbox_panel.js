@@ -409,6 +409,32 @@ function buildInboxMediaDescriptor(m, tenantId) {
   };
 }
 
+function cleanInboxContentForDisplay(message, media) {
+  const text = String(message?.content || "").trim();
+  if (!text) return "";
+  if (!media) return text;
+
+  // El backend puede guardar texto técnico generado por visión/STT para que el bot
+  // procese imágenes, por ejemplo: "El usuario envió una imagen... Lectura preliminar...".
+  // En este panel estilo WhatsApp no mostramos ese texto auxiliar: solo el adjunto/caption.
+  const normalized = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const syntheticMediaText =
+    normalized.startsWith("el usuario envio una imagen") ||
+    normalized.startsWith("el usuario envio un audio") ||
+    normalized.startsWith("el usuario envio un video") ||
+    normalized.startsWith("el usuario envio un documento") ||
+    normalized.startsWith("el usuario envio un archivo") ||
+    /^\[archivo enviado:/i.test(text);
+
+  return syntheticMediaText ? "" : text;
+}
+
 async function getRuntimeForConversation(conv, tenantId) {
   let rt = null;
   try {
@@ -644,20 +670,20 @@ function inboxHtml(initialConvs, tenant) {
   <title>Admin | WhatsApp Web</title>
   <style>
     :root{--bg:#0b141a;--panel:#111b21;--panel2:#202c33;--text:#e9edef;--muted:#aebac1;--accent:#00a884;--bubbleMe:#005c4b;--bubbleThem:#202c33;--border:rgba(255,255,255,.08);--danger:#ff6b6b;}
-    *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--text);height:100vh;overflow:hidden}.app{display:flex;height:100vh;width:100vw}.sidebar{width:370px;min-width:280px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column}.side-header{padding:13px 12px;background:var(--panel2);display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border)}.side-header h1{font-size:16px;margin:0 8px 0 0;font-weight:650}.pill{font-size:10px;padding:3px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted);background:#0f1a20}.btn{border:1px solid var(--border);border-radius:10px;background:#0f1a20;color:var(--text);cursor:pointer;padding:8px 10px}.btn:hover{background:#16252d}.search{padding:10px 12px;border-bottom:1px solid var(--border)}.search input{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:#0f1a20;color:var(--text);outline:none;font-size:13px}.conv-list{overflow:auto;flex:1}.conv-item{padding:12px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;gap:10px;align-items:flex-start}.conv-item:hover{background:#0f1a20}.conv-item.active{background:#0d2420}.avatar{width:38px;height:38px;border-radius:50%;background:#2a3942;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#d1d7db;flex:0 0 38px}.conv-meta{flex:1;min-width:0}.conv-row{display:flex;justify-content:space-between;gap:8px;align-items:center}.conv-name{font-size:14px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.conv-wa{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.conv-last{font-size:11px;color:var(--muted);margin-top:3px}.chat{flex:1;display:flex;flex-direction:column;background:#0b141a}.chat-header{background:var(--panel2);padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px}.chat-title{display:flex;align-items:center;gap:10px;min-width:0}.chat-title .name{font-size:15px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.chat-title .sub{font-size:11px;color:var(--muted)}.chat-actions{display:flex;align-items:center;gap:8px;font-size:11px;flex-wrap:wrap;justify-content:flex-end}.toggle{display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid var(--border);border-radius:10px;background:#0f1a20}.toggle input{transform:translateY(1px)}.chat-body{flex:1;overflow:auto;padding:18px 16px 8px}.empty{color:var(--muted);font-size:13px;padding:20px}.msg-row{display:flex;flex-direction:column}.msg{max-width:72%;padding:8px 10px;border-radius:10px;margin:6px 0;font-size:13.5px;line-height:1.32;word-wrap:break-word;white-space:pre-wrap}.msg.them{background:var(--bubbleThem);border-top-left-radius:4px;align-self:flex-start}.msg.me{background:var(--bubbleMe);border-top-right-radius:4px;align-self:flex-end}.msg-text:empty{display:none}.msg-meta{font-size:10px;color:rgba(255,255,255,.55);margin-top:4px;text-align:right}.media-wrap{margin-top:6px}.media-img{max-width:310px;border-radius:10px;display:block}.media-video{max-width:330px;border-radius:10px;display:block}.media-pdf{width:330px;max-width:100%;height:380px;border:0;border-radius:10px;display:block;background:#fff}.media-file{display:inline-flex;gap:8px;align-items:center;color:rgba(255,255,255,.92);text-decoration:none;border:1px solid var(--border);border-radius:10px;padding:10px;background:rgba(255,255,255,.04);max-width:330px}.media-links{display:flex;gap:10px;align-items:center;margin-top:5px}.media-links a{font-size:11px;color:rgba(255,255,255,.82);text-decoration:underline}.chat-footer{border-top:1px solid var(--border);background:var(--panel);padding:10px}.send-form{display:flex;gap:8px;align-items:center}.text-input{flex:1;padding:12px;border-radius:10px;border:1px solid var(--border);background:#0f1a20;color:var(--text);outline:none;font-size:13px}.attach-btn{width:42px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:10px;border:1px solid var(--border);background:#0f1a20;color:var(--text);cursor:pointer;font-size:19px;flex:0 0 42px}.attach-btn:hover{background:#16252d}.file-selected{max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:none;align-items:center;cursor:pointer}.send-btn{height:42px;border-radius:10px;border:1px solid var(--border);background:var(--accent);color:white;cursor:pointer;font-weight:700;padding:0 16px}.send-btn:disabled{opacity:.5;cursor:not-allowed}.error-pill{color:#ffd0d0;border-color:rgba(255,107,107,.35);background:rgba(255,107,107,.08)}
-    @media(max-width:760px){.app{display:block}.sidebar{width:100%;height:42vh}.chat{height:58vh}.msg{max-width:88%}.chat-header{align-items:flex-start}.chat-actions{max-width:190px}.file-selected{max-width:120px}.media-img,.media-video{max-width:230px}}
+    *{box-sizing:border-box} html,body{margin:0;width:100%;height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--text);overflow:hidden}.app{display:flex;height:100vh;height:100dvh;width:100vw;overflow:hidden}.sidebar{width:370px;min-width:280px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column}.side-header{height:50px;padding:8px 12px;background:var(--panel2);display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border)}.side-header h1{font-size:16px;margin:0 8px 0 0;font-weight:650}.pill{font-size:10px;padding:3px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted);background:#0f1a20}.btn{border:1px solid var(--border);border-radius:10px;background:#0f1a20;color:var(--text);cursor:pointer;padding:8px 10px}.btn:hover{background:#16252d}.refresh-status{font-size:10px;color:var(--muted);min-width:64px;text-align:right}.search{padding:10px 12px;border-bottom:1px solid var(--border)}.search input{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:#0f1a20;color:var(--text);outline:none;font-size:13px}.conv-list{overflow:auto;flex:1;-webkit-overflow-scrolling:touch}.conv-item{padding:12px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;gap:10px;align-items:flex-start}.conv-item:hover{background:#0f1a20}.conv-item.active{background:#0d2420}.avatar{width:38px;height:38px;border-radius:50%;background:#2a3942;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#d1d7db;flex:0 0 38px}.conv-meta{flex:1;min-width:0}.conv-row{display:flex;justify-content:space-between;gap:8px;align-items:center}.conv-name{font-size:14px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.conv-wa{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.conv-last{font-size:11px;color:var(--muted);margin-top:3px}.chat{flex:1;display:flex;flex-direction:column;background:#0b141a;min-width:0}.chat-header{min-height:50px;background:var(--panel2);padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px}.chat-title{display:flex;align-items:center;gap:10px;min-width:0}.chat-title .name{font-size:15px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.chat-title .sub{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:48vw}.back-btn{display:none;border:0;background:transparent;color:var(--text);font-size:24px;line-height:1;cursor:pointer;padding:6px 2px}.chat-actions{display:flex;align-items:center;gap:8px;font-size:11px;flex-wrap:wrap;justify-content:flex-end}.toggle{display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid var(--border);border-radius:10px;background:#0f1a20;white-space:nowrap}.toggle input{transform:translateY(1px)}.chat-body{flex:1;overflow:auto;padding:14px 16px 8px;-webkit-overflow-scrolling:touch}.empty{color:var(--muted);font-size:13px;padding:20px}.msg-row{display:flex;flex-direction:column}.msg{max-width:72%;padding:8px 10px;border-radius:10px;margin:6px 0;font-size:13.5px;line-height:1.32;word-wrap:break-word;white-space:pre-wrap}.msg.them{background:var(--bubbleThem);border-top-left-radius:4px;align-self:flex-start}.msg.me{background:var(--bubbleMe);border-top-right-radius:4px;align-self:flex-end}.msg-text:empty{display:none}.msg-meta{font-size:10px;color:rgba(255,255,255,.55);margin-top:4px;text-align:right}.media-wrap{margin-top:6px}.media-img{max-width:310px;border-radius:10px;display:block}.media-video{max-width:330px;border-radius:10px;display:block}.media-pdf{width:330px;max-width:100%;height:380px;border:0;border-radius:10px;display:block;background:#fff}.media-file{display:inline-flex;gap:8px;align-items:center;color:rgba(255,255,255,.92);text-decoration:none;border:1px solid var(--border);border-radius:10px;padding:10px;background:rgba(255,255,255,.04);max-width:330px}.media-links{display:flex;gap:10px;align-items:center;margin-top:5px}.media-links a{font-size:11px;color:rgba(255,255,255,.82);text-decoration:underline}.chat-footer{border-top:1px solid var(--border);background:var(--panel);padding:10px}.send-form{display:flex;gap:8px;align-items:center}.text-input{flex:1;min-width:0;padding:12px;border-radius:10px;border:1px solid var(--border);background:#0f1a20;color:var(--text);outline:none;font-size:13px}.attach-btn{width:42px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:10px;border:1px solid var(--border);background:#0f1a20;color:var(--text);cursor:pointer;font-size:19px;flex:0 0 42px}.attach-btn:hover{background:#16252d}.file-selected{max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:none;align-items:center;cursor:pointer}.send-btn{height:42px;border-radius:10px;border:1px solid var(--border);background:var(--accent);color:white;cursor:pointer;font-weight:700;padding:0 16px}.send-btn:disabled{opacity:.5;cursor:not-allowed}.error-pill{color:#ffd0d0;border-color:rgba(255,107,107,.35);background:rgba(255,107,107,.08)}
+    @media(max-width:760px){.app{position:relative;display:block;height:100dvh}.sidebar,.chat{position:absolute;inset:0;width:100%;height:100%;min-width:0;transition:transform .18s ease;background:var(--panel)}.chat{transform:translateX(100%);background:var(--bg)}.app.mobile-chat-open .sidebar{transform:translateX(-28%);pointer-events:none}.app.mobile-chat-open .chat{transform:translateX(0)}.side-header{height:48px}.side-header h1{font-size:15px}.btn{padding:7px 9px}.search{padding:8px}.conv-item{padding:11px 10px}.chat-header{height:52px;min-height:52px;padding:6px 8px}.back-btn{display:inline-flex}.chat-title{gap:8px;flex:1}.chat-title .avatar{width:34px;height:34px;flex-basis:34px;font-size:12px}.chat-title .name{font-size:14px}.chat-title .sub{max-width:45vw;font-size:10px}.chat-actions{gap:4px}.chat-actions .pill{display:none}.toggle{font-size:10px;padding:4px 6px}.chat-body{padding:10px 8px 6px}.msg{max-width:86%;font-size:13px}.media-img,.media-video{max-width:min(74vw,310px)}.media-pdf{height:330px}.chat-footer{padding:8px}.send-form{gap:6px}.attach-btn{width:38px;height:38px;flex-basis:38px}.text-input{height:38px;padding:9px 10px}.send-btn{height:38px;padding:0 12px}.pauseHint{display:none}.file-selected{position:absolute;bottom:54px;left:54px;right:72px;max-width:none}#pauseHint{display:none}.app:not(.mobile-chat-open) .chat{visibility:hidden}.app.mobile-chat-open .chat{visibility:visible}}
   </style>
 </head>
 <body>
   <div class="app">
     <aside class="sidebar">
-      <div class="side-header"><h1>WhatsApp</h1><button id="refreshBtn" class="btn" type="button">↻ Actualizar</button></div>
+      <div class="side-header"><h1>WhatsApp</h1><button id="refreshBtn" class="btn" type="button">↻</button><span id="refreshStatus" class="refresh-status"></span></div>
       <div class="search"><input id="searchInput" placeholder="Buscar contacto o número..."/></div>
       <div id="convList" class="conv-list"></div>
     </aside>
     <main class="chat">
       <div class="chat-header">
-        <div class="chat-title"><div class="avatar" id="chatAvatar">?</div><div><div class="name" id="chatName">Seleccioná un chat</div><div class="sub" id="chatSub"></div></div></div>
+        <div class="chat-title"><button id="backBtn" class="back-btn" type="button" aria-label="Volver a contactos">‹</button><div class="avatar" id="chatAvatar">?</div><div><div class="name" id="chatName">Seleccioná un chat</div><div class="sub" id="chatSub"></div></div></div>
         <div class="chat-actions"><span id="chatStatus" class="pill"></span><label class="toggle"><input type="checkbox" id="manualToggle"/><span>Pausar bot</span></label></div>
       </div>
       <div id="chatBody" class="chat-body"><div class="empty">No hay conversación seleccionada.</div></div>
@@ -686,10 +712,15 @@ let activeWaId = "";
 let activeContactKey = "";
 let activeStatusLabel = "";
 let refreshTimer = null;
+let lastConversationsSig = "";
+let lastMessagesSig = "";
+const appEl = document.querySelector(".app");
 
 const convListEl = document.getElementById("convList");
 const searchInput = document.getElementById("searchInput");
 const refreshBtn = document.getElementById("refreshBtn");
+const refreshStatus = document.getElementById("refreshStatus");
+const backBtn = document.getElementById("backBtn");
 const chatAvatar = document.getElementById("chatAvatar");
 const chatName = document.getElementById("chatName");
 const chatSub = document.getElementById("chatSub");
@@ -712,6 +743,15 @@ function esc(s){return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;"
 function initials(v){const s=String(v||"").trim(); if(!s)return"?"; const p=s.split(/\s+/).filter(Boolean); if(p.length>=2)return(p[0][0]+p[1][0]).toUpperCase(); return s.slice(0,2).toUpperCase();}
 function normalizeContactKey(waId){const raw=String(waId||"").trim(); if(!raw)return"sin-numero"; let value=raw.replace(/^whatsapp:/i,"").replace(/@c\.us$/i,"").replace(/@s\.whatsapp\.net$/i,"").trim(); const digits=value.replace(/\D+/g,""); if(!digits)return value.toLowerCase(); if(digits.startsWith("549")&&digits.length>=12)return digits; if(digits.startsWith("54")&&digits.length>=11){const rest=digits.slice(2); return rest.startsWith("9")?digits:"549"+rest;} if(digits.length===10)return "549"+digits; if(digits.length===11&&digits.startsWith("9"))return "54"+digits; return digits;}
 function fmtTime(d){try{const dt=new Date(d); if(Number.isNaN(dt.getTime()))return""; return dt.toLocaleString("es-AR",{hour:"2-digit",minute:"2-digit",day:"2-digit",month:"2-digit"});}catch{return"";}}
+function isMobile(){return window.matchMedia && window.matchMedia("(max-width:760px)").matches;}
+function listUrl(){const u=new URL(location.href); u.searchParams.delete("convId"); u.searchParams.delete("waId"); if(TENANT)u.searchParams.set("tenant",TENANT); return u;}
+function showContacts(updateUrl=false){if(appEl)appEl.classList.remove("mobile-chat-open"); if(isMobile()&&updateUrl)history.replaceState({waInboxView:"list"},"",listUrl().toString());}
+function showChat(){if(appEl)appEl.classList.add("mobile-chat-open");}
+function setRefreshStatus(text){if(!refreshStatus)return; refreshStatus.textContent=text||""; if(text)setTimeout(()=>{if(refreshStatus.textContent===text)refreshStatus.textContent="";},1200);}
+function sigForConversations(rows){try{return JSON.stringify((rows||[]).map(c=>[c.contactKey,c._id,c.waId,c.contactName,c.conversationCount,c.manualOpen,c.lastAt,c.status]));}catch{return String(Date.now());}}
+function sigForMessages(rows){try{return JSON.stringify((rows||[]).map(m=>[m._id,m.role,m.content,m.type,m.createdAt,m.media&&m.media.url,m.media&&m.media.filename]));}catch{return String(Date.now());}}
+function visibleMessageText(m){const txt=String((m&&m.content)||"").trim(); if(!txt)return""; if(!m.media)return txt; const n=txt.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim(); if(n.startsWith("el usuario envio una imagen")||n.startsWith("el usuario envio un audio")||n.startsWith("el usuario envio un video")||n.startsWith("el usuario envio un documento")||n.startsWith("el usuario envio un archivo")||/^\[archivo enviado:/i.test(txt))return""; return txt;}
+
 function syncManualUi(isManual){const paused=!!isManual; manualToggle.checked=paused; pauseHint.textContent=paused?"Bot pausado":"Bot activo"; chatStatus.textContent=paused?"BOT PAUSADO":(activeStatusLabel||""); chatStatus.classList.toggle("error-pill", paused);}
 function selectedPayload(){return activeConvIds.length ? { convIds: activeConvIds, waId: activeWaId, convId: activeConvId } : (activeWaId ? { waId: activeWaId, convId: activeConvId } : { convId: activeConvId });}
 
@@ -733,17 +773,22 @@ function renderList(){
   convListEl.querySelectorAll(".conv-item").forEach(el=>el.addEventListener("click",()=>selectContact({convId:el.dataset.id||"",convIds:String(el.dataset.convs||"").split(",").filter(Boolean),waId:el.dataset.wa||"",contactKey:el.dataset.key||""})));
   if(!rows.length) convListEl.innerHTML='<div class="empty">Sin resultados.</div>';
 }
-async function refreshConversations(keepActive=true){
+async function refreshConversations(keepActive=true,{force=false}={}){
   const r=await fetch(api("/api/admin/wa-inbox/conversations?limit=500"));
   if(!r.ok) throw new Error("conversations_error");
-  conversations=await r.json();
+  const next=await r.json();
+  const sig=sigForConversations(next);
+  if(!force && sig===lastConversationsSig) return false;
+  lastConversationsSig=sig;
+  conversations=next;
   renderList();
   if(keepActive && activeContactKey){
     const row=conversations.find(c=>String(c.contactKey||normalizeContactKey(c.waId))===activeContactKey);
     if(row){activeConvIds=row.conversationIds||activeConvIds; activeConvId=row._id||activeConvId; activeWaId=row.waId||activeWaId;}
   }
+    return true;
 }
-function setUrlContact(){const u=new URL(location.href); if(activeConvId)u.searchParams.set("convId",activeConvId); else u.searchParams.delete("convId"); if(activeWaId)u.searchParams.set("waId",activeWaId); else u.searchParams.delete("waId"); if(TENANT)u.searchParams.set("tenant",TENANT); history.replaceState(null,"",u.toString());}
+function setUrlContact(pushHistory=false){const u=new URL(location.href); if(activeConvId)u.searchParams.set("convId",activeConvId); else u.searchParams.delete("convId"); if(activeWaId)u.searchParams.set("waId",activeWaId); else u.searchParams.delete("waId"); if(TENANT)u.searchParams.set("tenant",TENANT); const state={waInboxView:"chat"}; if(pushHistory&&isMobile())history.pushState(state,"",u.toString()); else history.replaceState(state,"",u.toString());}
 async function loadMeta(){const p=new URLSearchParams(); if(activeConvIds.length)p.set("convIds",activeConvIds.join(",")); else if(activeWaId)p.set("waId",activeWaId); else p.set("convId",activeConvId); const r=await fetch(api("/api/admin/wa-inbox/meta?"+p.toString())); if(!r.ok)throw new Error("meta_error"); return r.json();}
 async function loadMessages(){const p=new URLSearchParams(); if(activeConvIds.length)p.set("convIds",activeConvIds.join(",")); else if(activeWaId)p.set("waId",activeWaId); else p.set("convId",activeConvId); const r=await fetch(api("/api/admin/wa-inbox/messages?"+p.toString())); if(!r.ok)throw new Error("messages_error"); return r.json();}
 function downloadUrl(url){const u=new URL(url, location.origin); u.searchParams.set("download","1"); return u.toString();}
@@ -761,24 +806,28 @@ function buildMediaNode(m){
   if(isPdf){const frame=document.createElement("iframe"); frame.className="media-pdf"; frame.src=url; wrap.appendChild(frame); links.appendChild(open); links.appendChild(dl); wrap.appendChild(links); return wrap;}
   const a=document.createElement("a"); a.className="media-file"; a.href=downloadUrl(url); a.textContent="📎 "+filename; wrap.appendChild(a); links.appendChild(open); links.appendChild(dl); wrap.appendChild(links); return wrap;
 }
-function renderMessages(msgs){
+function renderMessages(msgs,{stickToBottom=true}={}){
   if(!Array.isArray(msgs)||!msgs.length){chatBody.innerHTML='<div class="empty">Sin mensajes todavía.</div>';return;}
+  const wasNearBottom=(chatBody.scrollHeight-chatBody.scrollTop-chatBody.clientHeight)<90;
   chatBody.innerHTML=""; const frag=document.createDocumentFragment();
-  msgs.forEach(m=>{const row=document.createElement("div"); row.className="msg-row"; row.style.alignItems=m.role==="user"?"flex-start":"flex-end"; const bubble=document.createElement("div"); bubble.className="msg "+(m.role==="user"?"them":"me"); const txt=document.createElement("div"); txt.className="msg-text"; txt.textContent=String(m.content||""); bubble.appendChild(txt); const media=buildMediaNode(m); if(media)bubble.appendChild(media); const meta=document.createElement("div"); meta.className="msg-meta"; meta.textContent=m.createdAt?fmtTime(m.createdAt):""; bubble.appendChild(meta); row.appendChild(bubble); frag.appendChild(row);});
-  chatBody.appendChild(frag); chatBody.scrollTop=chatBody.scrollHeight;
+  msgs.forEach(m=>{const row=document.createElement("div"); row.className="msg-row"; row.style.alignItems=m.role==="user"?"flex-start":"flex-end"; const bubble=document.createElement("div"); bubble.className="msg "+(m.role==="user"?"them":"me"); const txt=document.createElement("div"); txt.className="msg-text"; txt.textContent=visibleMessageText(m); bubble.appendChild(txt); const media=buildMediaNode(m); if(media)bubble.appendChild(media); const meta=document.createElement("div"); meta.className="msg-meta"; meta.textContent=m.createdAt?fmtTime(m.createdAt):""; bubble.appendChild(meta); row.appendChild(bubble); frag.appendChild(row);});
+  chatBody.appendChild(frag); if(stickToBottom||wasNearBottom)chatBody.scrollTop=chatBody.scrollHeight;
 }
-async function selectContact({convId="",convIds=[],waId="",contactKey=""}={}){
-  activeConvId=String(convId||""); activeConvIds=Array.isArray(convIds)?convIds.map(String).filter(Boolean):[]; activeWaId=String(waId||""); activeContactKey=String(contactKey||normalizeContactKey(activeWaId)); setUrlContact(); renderList(); sendBtn.disabled=!(activeWaId||activeConvId||activeConvIds.length); chatBody.innerHTML='<div class="empty">Cargando...</div>';
-  try{const meta=await loadMeta(); activeConvId=String(meta.convId||activeConvId||""); activeConvIds=Array.isArray(meta.conversationIds)?meta.conversationIds.map(String).filter(Boolean):activeConvIds; activeWaId=String(meta.waId||activeWaId||""); activeContactKey=meta.contactKey||activeContactKey||normalizeContactKey(activeWaId); const name=meta.contactName||meta.waId||"Chat"; chatAvatar.textContent=initials(name); chatName.textContent=name; const ch=meta.displayPhoneNumber||meta.phoneNumberId||""; chatSub.textContent=meta.waId?("WhatsApp: "+meta.waId+(ch?" · Canal: "+ch:"")+(meta.conversationCount>1?" · "+meta.conversationCount+" conversaciones":"")):""; activeStatusLabel=meta.status||""; syncManualUi(!!meta.manualOpen); const msgs=await loadMessages(); renderMessages(msgs);}catch(e){chatBody.innerHTML='<div class="empty">No se pudo cargar la conversación.</div>';}
+async function selectContact({convId="",convIds=[],waId="",contactKey="",pushHistory=true}={}){
+  activeConvId=String(convId||""); activeConvIds=Array.isArray(convIds)?convIds.map(String).filter(Boolean):[]; activeWaId=String(waId||""); activeContactKey=String(contactKey||normalizeContactKey(activeWaId)); setUrlContact(pushHistory); showChat(); renderList(); sendBtn.disabled=!(activeWaId||activeConvId||activeConvIds.length); chatBody.innerHTML='<div class="empty">Cargando...</div>'; lastMessagesSig="";
+  try{const meta=await loadMeta(); activeConvId=String(meta.convId||activeConvId||""); activeConvIds=Array.isArray(meta.conversationIds)?meta.conversationIds.map(String).filter(Boolean):activeConvIds; activeWaId=String(meta.waId||activeWaId||""); activeContactKey=meta.contactKey||activeContactKey||normalizeContactKey(activeWaId); const name=meta.contactName||meta.waId||"Chat"; chatAvatar.textContent=initials(name); chatName.textContent=name; const ch=meta.displayPhoneNumber||meta.phoneNumberId||""; chatSub.textContent=meta.waId?(meta.waId+(ch?" · "+ch:"")+(meta.conversationCount>1?" · "+meta.conversationCount+" conversaciones":"")):""; activeStatusLabel=meta.status||""; syncManualUi(!!meta.manualOpen); const msgs=await loadMessages(); lastMessagesSig=sigForMessages(msgs); renderMessages(msgs,{stickToBottom:true});}catch(e){chatBody.innerHTML='<div class="empty">No se pudo cargar la conversación.</div>';}
 }
 async function refreshActiveMessages(){if(!activeContactKey)return; try{const msgs=await loadMessages(); renderMessages(msgs); await refreshConversations(true);}catch{}}
 manualToggle.addEventListener("change",async()=>{if(!activeWaId&&!activeConvId&&!activeConvIds.length)return; try{const r=await fetch(api("/api/admin/wa-inbox/manual"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...selectedPayload(),manualOpen:manualToggle.checked})}); const j=await r.json().catch(()=>null); if(!r.ok)throw new Error(j&&j.error?j.error:"manual_error"); syncManualUi(!!j.manualOpen); await refreshConversations(true);}catch(e){alert("No se pudo cambiar la pausa del bot: "+(e.message||e)); syncManualUi(!manualToggle.checked);}});
 function updateFileHint(){const f=fileInput.files&&fileInput.files[0]; if(!f){fileHint.style.display="none"; fileHint.textContent=""; return;} fileHint.style.display="flex"; fileHint.textContent="📎 "+f.name;}
 fileInput.addEventListener("change",updateFileHint); fileHint.addEventListener("click",()=>{fileInput.value=""; updateFileHint();});
 sendForm.addEventListener("submit",async(e)=>{e.preventDefault(); if(!activeWaId&&!activeConvId&&!activeConvIds.length)return; const text=String(msgInput.value||"").trim(); const file=fileInput.files&&fileInput.files[0]; if(!text&&!file)return; sendBtn.disabled=true; try{if(file){const fd=new FormData(); Object.entries(selectedPayload()).forEach(([k,v])=>{if(Array.isArray(v))fd.append(k,v.join(",")); else if(v)fd.append(k,v);}); if(text)fd.append("text",text); fd.append("file",file); const r=await fetch(api("/api/admin/wa-inbox/send-file"),{method:"POST",body:fd}); const j=await r.json().catch(()=>null); if(!r.ok)throw new Error((j&&j.detail)|| (j&&j.error) || "send_file_error"); fileInput.value=""; updateFileHint();}else{const r=await fetch(api("/api/admin/wa-inbox/send-message"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...selectedPayload(),text})}); const j=await r.json().catch(()=>null); if(!r.ok)throw new Error((j&&j.detail)|| (j&&j.error) || "send_message_error");} msgInput.value=""; await refreshActiveMessages();}catch(err){alert("No se pudo enviar: "+(err.message||err));}finally{sendBtn.disabled=false; msgInput.focus();}});
-searchInput.addEventListener("input",renderList); refreshBtn.addEventListener("click",async()=>{refreshBtn.textContent="↻ ..."; try{await refreshConversations(true); if(activeContactKey)await refreshActiveMessages();}finally{refreshBtn.textContent="↻ Actualizar";}});
-renderList();
-(function init(){let row=null; if(PRESELECT_WA)row=conversations.find(c=>String(c.waId||"")===PRESELECT_WA); if(!row&&PRESELECT_CONV)row=conversations.find(c=>String(c._id||"")===PRESELECT_CONV || (Array.isArray(c.conversationIds)&&c.conversationIds.includes(PRESELECT_CONV))); if(!row)row=conversations[0]; if(row)selectContact({convId:row._id||"",convIds:row.conversationIds||[],waId:row.waId||"",contactKey:row.contactKey||normalizeContactKey(row.waId||"")}); refreshTimer=setInterval(async()=>{try{await refreshConversations(true); if(activeContactKey){const msgs=await loadMessages(); renderMessages(msgs);}}catch{}},15000);})();
+searchInput.addEventListener("input",renderList);
+if(backBtn)backBtn.addEventListener("click",()=>showContacts(true));
+window.addEventListener("popstate",()=>{if(isMobile())showContacts(false);});
+refreshBtn.addEventListener("click",async()=>{try{await refreshConversations(true,{force:true}); if(activeContactKey)await refreshActiveMessages({force:true}); setRefreshStatus("Actualizado");}catch{setRefreshStatus("Error");}});
+renderList(); lastConversationsSig=sigForConversations(conversations); history.replaceState({waInboxView:(PRESELECT_CONV||PRESELECT_WA)?"chat":"list"},"",location.href);
+(function init(){let row=null; if(PRESELECT_WA)row=conversations.find(c=>String(c.waId||"")===PRESELECT_WA); if(!row&&PRESELECT_CONV)row=conversations.find(c=>String(c._id||"")===PRESELECT_CONV || (Array.isArray(c.conversationIds)&&c.conversationIds.includes(PRESELECT_CONV))); if(row)selectContact({convId:row._id||"",convIds:row.conversationIds||[],waId:row.waId||"",contactKey:row.contactKey||normalizeContactKey(row.waId||""),pushHistory:false}); else showContacts(false); refreshTimer=setInterval(async()=>{try{const changed=await refreshConversations(true); if(activeContactKey)await refreshActiveMessages(); if(changed)setRefreshStatus("Nuevo");}catch{}},7000);})();
  </script>
 </body>
 </html>`;
@@ -861,14 +910,17 @@ function mountWhatsAppInboxPanel(app, { auth } = {}) {
         .sort({ ts: 1, createdAt: 1, _id: 1 })
         .limit(1000)
         .toArray();
-      res.json(rows.map((m) => ({
-        _id: String(m._id),
-        role: m.role,
-        content: m.content,
-        type: m.type,
-        media: buildInboxMediaDescriptor(m, tenant),
-        createdAt: m.ts || m.createdAt,
-      })));
+      res.json(rows.map((m) => {
+        const media = buildInboxMediaDescriptor(m, tenant);
+        return {
+          _id: String(m._id),
+          role: m.role,
+          content: cleanInboxContentForDisplay(m, media),
+          type: m.type,
+          media,
+          createdAt: m.ts || m.createdAt,
+        };
+      }));
     } catch (e) {
       console.error("GET /api/admin/wa-inbox/messages error:", e?.message || e);
       errorJson(res, 500, "internal");

@@ -1072,7 +1072,7 @@ function getNavItemsForUser(user) {
   const items = [{ key: "home", title: "Inicio", href: "/app" }];
 
   if (hasAccess(user, "admin")) items.push({ key: "admin", title: "Conversaciones", href: "/ui/admin" });
-  if (hasAccess(user, "inbox")) items.push({ key: "inbox", title: "WhatsApp", href: "/ui/inbox" });
+  if (hasAccess(user, "inbox")) items.push({ key: "inbox", title: "WhatsApp", href: "/admin/inbox" });
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
@@ -2991,7 +2991,7 @@ function mountAuthRoutes(app) {
     const routes = [
       { title: "Inicio", href: "/app", badge: "", desc: "Panel principal" },
       { title: "Conversaciones", href: "/ui/admin", badge: "Admin UI", desc: "Panel de conversaciones" },
-      { title: "WhatsApp", href: "/ui/inbox", badge: "Admin UI", desc: "Bandeja tipo WhatsApp para responder y pausar el bot" },
+      { title: "WhatsApp", href: "/admin/inbox", badge: "Admin UI", desc: "Bandeja WhatsApp " },
       { title: "Productos", href: "/ui/productos", badge: "UI", desc: "Catálogo del dominio" },
       { title: "Horarios", href: "/ui/horarios", badge: "UI", desc: "Configuración de horarios" },
       { title: "Comportamiento", href: "/ui/comportamiento", badge: "UI", desc: "Behavior prompt/config" },
@@ -3025,6 +3025,13 @@ function mountAuthRoutes(app) {
     if (!hasAccess(req.user, page)) {
       return res.status(403).send("403 - No autorizado");
     }
+     
+    if (page === "inbox") {
+      const original = String(req.originalUrl || "");
+      const qs = original.includes("?") ? original.split("?").slice(1).join("?") : "";
+      return res.redirect(302, "/admin/inbox" + (qs ? ("?" + qs) : ""));
+    }
+
 
     const map = {
       admin: { title: "Conversaciones", desc: "Panel de conversaciones y seguimiento", badge: "Admin UI", src: "/admin", active: "admin" },
