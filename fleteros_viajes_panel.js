@@ -689,16 +689,7 @@ function panelHtml({ tenantId, user }) {
     </div>
 
     <section class="card">
-      <div class="sectionTitle"><h2>Viajes cargados</h2><span class="step">↺</span></div>
-      <button id="btnToggleTrips" class="btn2" style="width:100%" type="button">Buscar viajes ya cargados</button>
-      <div id="tripsPanel" class="tripsPanel">
-        <label>Buscar por cliente, origen, destino, patente, fletero o chofer</label>
-        <input id="tripSearchInput" autocomplete="off" placeholder="Ej: Acopio, Rosario, AB123CD..."/>
-        <div id="tripResults" class="tripResults"></div>
-      </div>
-    </section>
-
-    <section class="card">
+      
       <div class="sectionTitle"><h2>Datos principales</h2><span class="step">1</span></div>
       <div class="row">
         <div data-autocomplete="clientes">
@@ -770,6 +761,16 @@ function panelHtml({ tenantId, user }) {
       </div>
       <div id="lastTrip" class="lastTrip"></div>
     </div>
+
+    <section class="card">
+      <div class="sectionTitle"><h2>Viajes cargados</h2><span class="step">↺</span></div>
+      <button id="btnToggleTrips" class="btn2" style="width:100%" type="button">Buscar viajes ya cargados</button>
+      <div id="tripsPanel" class="tripsPanel">
+        <label>Buscar por cliente, origen, destino, patente, fletero o chofer</label>
+        <input id="tripSearchInput" autocomplete="off" placeholder="Ej: Acopio, Rosario, AB123CD..."/>
+        <div id="tripResults" class="tripResults"></div>
+      </div>
+    </section>
   </main>
 
   <div id="toast" class="toast"></div>
