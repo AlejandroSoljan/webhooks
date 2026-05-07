@@ -91,6 +91,7 @@ const path = require("path");
 const auth = require("./auth_ui");
 const { mountWebAccessRoutes } = require("./web_access_stats");
 const { mountTokenControlRoutes } = require("./token_control_stats");
+const { mountFleterosViajesPanel } = require("./fleteros_viajes_panel");
 // Servir assets estáticos locales (logo.png)
 // Servir assets estáticos:
 // 1) Logos del slider en /static/clientes -> <proyecto>/static/clientes
@@ -109,6 +110,7 @@ app.use("/ui", auth.requireAuth);
 auth.protectRoutes(app);
 mountWebAccessRoutes(app, auth);
 mountTokenControlRoutes(app, auth);
+mountFleterosViajesPanel(app, { auth });
  
 
 
