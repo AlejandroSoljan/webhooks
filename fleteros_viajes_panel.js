@@ -676,8 +676,7 @@ function panelHtml({ tenantId, user }) {
 <body>
   <header class="top">
     <h1>Carga de viaje</h1>
-    <p>Panel móvil para registrar viajes de fleteros.</p>
-    <div class="toolbar">
+     <div class="toolbar">
       <span class="tenant">Dominio: <b id="tenantLabel">${safeTenant}</b>${safeUser ? ' · ' + safeUser : ''}</span>
       <a href="/app">Volver</a>
     </div>
@@ -751,7 +750,7 @@ function panelHtml({ tenantId, user }) {
           <div class="kv"><small>Chofer</small><b id="vChofer">-</b></div>
         </div>
       </div>
-      <p class="hint">Al seleccionar el chasis se completan automáticamente patente, fletero y chofer desde Mongo.</p>
+     
     </section>
 
     <section class="card">
