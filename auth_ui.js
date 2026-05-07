@@ -39,6 +39,7 @@ function ensureBodyParsers(app) {
 const ACCESS_PAGES = [
   { key: "admin", title: "Conversaciones" },
   { key: "inbox", title: "WhatsApp" },
+  { key: "Fleteros", title: "Viajes Fleteros" },
   { key: "productos", title: "Productos" },
   { key: "horarios", title: "Horarios" },
   { key: "comportamiento", title: "Comportamiento" },
@@ -86,7 +87,8 @@ function requiredAccessForPath(p) {
   if (path.startsWith("/admin/tenant-config") || path.startsWith("/api/tenant-config")) return ["tenant_config"];
   // Leads (contacto)
   if (path.startsWith("/admin/leads")) return ["leads"];
-
+  // Panel de carga de viajes de fleteros
+  if (path.startsWith("/admin/fleteros") || path.startsWith("/api/fleteros")) return ["fleteros"];
   // Sesiones WhatsApp Web (whatsapp-web.js)
   if (path.startsWith("/admin/wweb") || path.startsWith("/api/wweb")) return ["wweb"];
   // Sesiones Telegram
@@ -1073,6 +1075,7 @@ function getNavItemsForUser(user) {
 
   if (hasAccess(user, "admin")) items.push({ key: "admin", title: "Conversaciones", href: "/ui/admin" });
   if (hasAccess(user, "inbox")) items.push({ key: "inbox", title: "WhatsApp", href: "/admin/inbox" });
+  if (hasAccess(user, "fleteros")) items.push({ key: "fleteros", title: "Viajes Fleteros", href: "/admin/fleteros/viajes" });
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
@@ -1640,6 +1643,7 @@ function usersAdminPage({ user, users, msg, err }) {
       const ACCESS_PAGES = [
         { key: "admin", title: "Conversaciones" },
         { key: "inbox", title: "WhatsApp" },
+         { key: "fleteros", title: "Viajes Fleteros" },
         { key: "productos", title: "Productos" },
         { key: "horarios", title: "Horarios" },
         { key: "comportamiento", title: "Comportamiento" },
@@ -1716,6 +1720,7 @@ function usersAdminPage({ user, users, msg, err }) {
       function buildDefaultPageOptions(allowedKeys, selectedHref){
         const items = [{ key: "home", title: "Inicio", href: "/app" }];
         if (allowedKeys.includes("admin")) items.push({ key: "admin", title: "Conversaciones", href: "/ui/admin" });
+        if (allowedKeys.includes("fleteros")) items.push({ key: "fleteros", title: "Viajes Fleteros", href: "/admin/fleteros/viajes" });
         if (allowedKeys.includes("productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
         if (allowedKeys.includes("horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
         if (allowedKeys.includes("comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
@@ -2992,6 +2997,7 @@ function mountAuthRoutes(app) {
       { title: "Inicio", href: "/app", badge: "", desc: "Panel principal" },
       { title: "Conversaciones", href: "/ui/admin", badge: "Admin UI", desc: "Panel de conversaciones" },
       { title: "WhatsApp", href: "/admin/inbox", badge: "Admin UI", desc: "Bandeja WhatsApp " },
+      { title: "Viajes Fleteros", href: "/admin/fleteros/viajes", badge: "Panel", desc: "Carga móvil de viajes de fleteros" },
       { title: "Productos", href: "/ui/productos", badge: "UI", desc: "Catálogo del dominio" },
       { title: "Horarios", href: "/ui/horarios", badge: "UI", desc: "Configuración de horarios" },
       { title: "Comportamiento", href: "/ui/comportamiento", badge: "UI", desc: "Behavior prompt/config" },
