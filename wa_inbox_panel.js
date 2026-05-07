@@ -435,6 +435,57 @@ function cleanInboxContentForDisplay(message, media) {
   return syntheticMediaText ? "" : text;
 }
 
+function buildInboxMessagesFilter(conversationIds, tenantId) {
+  const stringIds = [];
+  const objectIds = [];
+
+  for (const value of Array.isArray(conversationIds) ? conversationIds : []) {
+    const id = String(value || "").trim();
+    if (!id) continue;
+    if (!stringIds.includes(id)) stringIds.push(id);
+    if (ObjectId.isValid(id) && !objectIds.some((x) => String(x) === id)) {
+      objectIds.push(new ObjectId(id));
+    }
+  }
+
+  const alternatives = [];
+  if (objectIds.length) alternatives.push({ conversationId: { $in: objectIds } });
+  if (stringIds.length) alternatives.push({ conversationId: { $in: stringIds } });
+
+  const base = alternatives.length > 1
+    ? { $or: alternatives }
+    : (alternatives[0] || { _id: { $exists: false } });
+
+  return withTenant(base, tenantId);
+}
+
+function toInboxMessageDto(message, tenantId) {
+  let media = null;
+  try {
+    media = buildInboxMediaDescriptor(message, tenantId);
+  } catch (e) {
+    console.warn("[wa-inbox] media descriptor skipped", String(message?._id || ""), e?.message || e);
+  }
+
+  let content = "";
+  try {
+    content = cleanInboxContentForDisplay(message, media);
+  } catch (e) {
+    console.warn("[wa-inbox] content cleanup skipped", String(message?._id || ""), e?.message || e);
+    content = String(message?.content || "");
+  }
+
+  return {
+    _id: String(message?._id || ""),
+    role: String(message?.role || ""),
+    content,
+    type: String(message?.type || "text"),
+    media,
+    createdAt: message?.ts || message?.createdAt || null,
+  };
+}
+
+
 async function getRuntimeForConversation(conv, tenantId) {
   let rt = null;
   try {
@@ -789,8 +840,9 @@ async function refreshConversations(keepActive=true,{force=false}={}){
     return true;
 }
 function setUrlContact(pushHistory=false){const u=new URL(location.href); if(activeConvId)u.searchParams.set("convId",activeConvId); else u.searchParams.delete("convId"); if(activeWaId)u.searchParams.set("waId",activeWaId); else u.searchParams.delete("waId"); if(TENANT)u.searchParams.set("tenant",TENANT); const state={waInboxView:"chat"}; if(pushHistory&&isMobile())history.pushState(state,"",u.toString()); else history.replaceState(state,"",u.toString());}
-async function loadMeta(){const p=new URLSearchParams(); if(activeConvIds.length)p.set("convIds",activeConvIds.join(",")); else if(activeWaId)p.set("waId",activeWaId); else p.set("convId",activeConvId); const r=await fetch(api("/api/admin/wa-inbox/meta?"+p.toString())); if(!r.ok)throw new Error("meta_error"); return r.json();}
-async function loadMessages(){const p=new URLSearchParams(); if(activeConvIds.length)p.set("convIds",activeConvIds.join(",")); else if(activeWaId)p.set("waId",activeWaId); else p.set("convId",activeConvId); const r=await fetch(api("/api/admin/wa-inbox/messages?"+p.toString())); if(!r.ok)throw new Error("messages_error"); return r.json();}
+async function responseError(r, fallback){let detail=""; try{detail=await r.text();}catch{} try{const j=detail?JSON.parse(detail):null; if(j)detail=j.detail||j.error||j.message||detail;}catch{} detail=String(detail||"").trim(); return new Error(fallback+"_"+r.status+(detail?": "+detail.slice(0,180):""));}
+async function loadMeta(){const p=new URLSearchParams(); if(activeConvIds.length)p.set("convIds",activeConvIds.join(",")); else if(activeWaId)p.set("waId",activeWaId); else p.set("convId",activeConvId); const r=await fetch(api("/api/admin/wa-inbox/meta?"+p.toString())); if(!r.ok)throw await responseError(r,"meta_error"); return r.json();}
+async function loadMessages(){const p=new URLSearchParams(); if(activeConvIds.length)p.set("convIds",activeConvIds.join(",")); else if(activeWaId)p.set("waId",activeWaId); else p.set("convId",activeConvId); const r=await fetch(api("/api/admin/wa-inbox/messages?"+p.toString())); if(!r.ok)throw await responseError(r,"messages_error"); return r.json();}
 function downloadUrl(url){const u=new URL(url, location.origin); u.searchParams.set("download","1"); return u.toString();}
 function buildMediaNode(m){
   const md=m&&m.media; if(!md||!md.url)return null;
@@ -815,7 +867,7 @@ function renderMessages(msgs,{stickToBottom=true}={}){
 }
 async function selectContact({convId="",convIds=[],waId="",contactKey="",pushHistory=true}={}){
   activeConvId=String(convId||""); activeConvIds=Array.isArray(convIds)?convIds.map(String).filter(Boolean):[]; activeWaId=String(waId||""); activeContactKey=String(contactKey||normalizeContactKey(activeWaId)); setUrlContact(pushHistory); showChat(); renderList(); sendBtn.disabled=!(activeWaId||activeConvId||activeConvIds.length); chatBody.innerHTML='<div class="empty">Cargando...</div>'; lastMessagesSig="";
-  try{const meta=await loadMeta(); activeConvId=String(meta.convId||activeConvId||""); activeConvIds=Array.isArray(meta.conversationIds)?meta.conversationIds.map(String).filter(Boolean):activeConvIds; activeWaId=String(meta.waId||activeWaId||""); activeContactKey=meta.contactKey||activeContactKey||normalizeContactKey(activeWaId); const name=meta.contactName||meta.waId||"Chat"; chatAvatar.textContent=initials(name); chatName.textContent=name; const ch=meta.displayPhoneNumber||meta.phoneNumberId||""; chatSub.textContent=meta.waId?(meta.waId+(ch?" · "+ch:"")+(meta.conversationCount>1?" · "+meta.conversationCount+" conversaciones":"")):""; activeStatusLabel=meta.status||""; syncManualUi(!!meta.manualOpen); const msgs=await loadMessages(); lastMessagesSig=sigForMessages(msgs); renderMessages(msgs,{stickToBottom:true});}catch(e){chatBody.innerHTML='<div class="empty">No se pudo cargar la conversación.</div>';}
+  try{const meta=await loadMeta(); activeConvId=String(meta.convId||activeConvId||""); activeConvIds=Array.isArray(meta.conversationIds)?meta.conversationIds.map(String).filter(Boolean):activeConvIds; activeWaId=String(meta.waId||activeWaId||""); activeContactKey=meta.contactKey||activeContactKey||normalizeContactKey(activeWaId); const name=meta.contactName||meta.waId||"Chat"; chatAvatar.textContent=initials(name); chatName.textContent=name; const ch=meta.displayPhoneNumber||meta.phoneNumberId||""; chatSub.textContent=meta.waId?(meta.waId+(ch?" · "+ch:"")+(meta.conversationCount>1?" · "+meta.conversationCount+" conversaciones":"")):""; activeStatusLabel=meta.status||""; syncManualUi(!!meta.manualOpen); const msgs=await loadMessages(); lastMessagesSig=sigForMessages(msgs); renderMessages(msgs,{stickToBottom:true});}catch(e){chatBody.innerHTML='<div class="empty">No se pudo cargar la conversación.<br><small>'+esc(e&&e.message?e.message:e)+'</small></div>'; console.error("wa-inbox selectContact", e);}
 }
 async function refreshActiveMessages(){if(!activeContactKey)return; try{const msgs=await loadMessages(); renderMessages(msgs); await refreshConversations(true);}catch{}}
 manualToggle.addEventListener("change",async()=>{if(!activeWaId&&!activeConvId&&!activeConvIds.length)return; try{const r=await fetch(api("/api/admin/wa-inbox/manual"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...selectedPayload(),manualOpen:manualToggle.checked})}); const j=await r.json().catch(()=>null); if(!r.ok)throw new Error(j&&j.error?j.error:"manual_error"); syncManualUi(!!j.manualOpen); await refreshConversations(true);}catch(e){alert("No se pudo cambiar la pausa del bot: "+(e.message||e)); syncManualUi(!manualToggle.checked);}});
@@ -906,24 +958,14 @@ function mountWhatsAppInboxPanel(app, { auth } = {}) {
       if (!ids.length) return res.json([]);
       const db = await getDb();
       const rows = await db.collection("messages")
-        .find(withTenant({ conversationId: { $in: ids } }, tenant))
+        .find(buildInboxMessagesFilter(ids, tenant))
         .sort({ ts: 1, createdAt: 1, _id: 1 })
         .limit(1000)
         .toArray();
-      res.json(rows.map((m) => {
-        const media = buildInboxMediaDescriptor(m, tenant);
-        return {
-          _id: String(m._id),
-          role: m.role,
-          content: cleanInboxContentForDisplay(m, media),
-          type: m.type,
-          media,
-          createdAt: m.ts || m.createdAt,
-        };
-      }));
+      res.json(rows.map((m) => toInboxMessageDto(m, tenant)));
     } catch (e) {
-      console.error("GET /api/admin/wa-inbox/messages error:", e?.message || e);
-      errorJson(res, 500, "internal");
+       console.error("GET /api/admin/wa-inbox/messages error:", e?.stack || e?.message || e);
+      errorJson(res, 500, "internal", e?.message || e);
     }
   });
 
