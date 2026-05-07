@@ -2250,6 +2250,11 @@ app.get("/api/logs/messages", async (req, res) => {
     res.status(500).json({ error: "internal" });
   }
 });
+// ---------- WhatsApp Inbox nuevo (aislado) ----------
+// Monta rutas nuevas /api/admin/wa-inbox/* y una UI /admin/inbox antes del legacy.
+// No modifica endpoints existentes de Conversaciones.
+const { mountWhatsAppInboxPanel } = require("./wa_inbox_panel");
+mountWhatsAppInboxPanel(app, { auth });
 
 
 // ---------- Meta de conversación para admin (incluye manualOpen) ----------
