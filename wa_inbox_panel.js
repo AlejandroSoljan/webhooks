@@ -3,14 +3,14 @@
 
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
-const { getRuntimeByPhoneNumberId } = require("./tenant_runtime");
+const { getRuntimeByPhoneNumberId, getRuntimeByTenantId } = require("./tenant_runtime");
 const {
   DEFAULT_TENANT_ID,
   putInCache,
   getFromCache,
   getMediaInfo,
   downloadMediaBuffer,
-  sendWhatsAppMedia,
+  
 } = require("./logic");
 
 const TENANT_ID = (process.env.TENANT_ID || "").trim();
@@ -77,16 +77,86 @@ function lastConversationDate(conv) {
 
 function normalizePhoneKey(waId) {
   const raw = String(waId || "").trim();
-  const digits = raw.replace(/\D+/g, "");
-  return digits || raw.toLowerCase() || "sin-numero";
+  if (!raw) return "";
+
+  // WhatsApp Cloud espera y suele guardar el identificador como número, pero
+  // hay datos legacy que pueden venir como +54..., 5434..., 3462...,
+  // whatsapp:+54..., 549...@c.us, etc. Unificamos esos formatos.
+  let value = raw
+    .replace(/^whatsapp:/i, "")
+    .replace(/@c\.us$/i, "")
+    .replace(/@s\.whatsapp\.net$/i, "")
+    .trim();
+
+  const digits = value.replace(/\D+/g, "");
+  if (!digits) return value.toLowerCase();
+
+  // Normalización útil para Argentina: 3462xxxxxx, 543462xxxxxx y
+  // 5493462xxxxxx deben agruparse como el mismo contacto.
+  if (digits.startsWith("549") && digits.length >= 12) return digits;
+  if (digits.startsWith("54") && digits.length >= 11) {
+    const rest = digits.slice(2);
+    return rest.startsWith("9") ? digits : `549${rest}`;
+ }
+  if (digits.length === 10) return `549${digits}`;
+  if (digits.length === 11 && digits.startsWith("9")) return `54${digits}`;
+
+  return digits;
+}
+
+function normalizeCloudRecipient(value) {
+  const key = normalizePhoneKey(value);
+  const digits = String(key || "").replace(/\D+/g, "");
+  if (!digits) return "";
+  return digits;
+}
+
+function conversationContactCandidates(conv = {}) {
+  const raw = [];
+  const add = (v) => {
+    const s = String(v || "").trim();
+    if (s) raw.push(s);
+  };
+
+  add(conv.waId);
+  add(conv.contactWaId);
+  add(conv.contactPhone);
+  add(conv.customerPhone);
+  add(conv.telefono);
+  add(conv.phone);
+  add(conv.from);
+  add(conv.userPhone);
+
+  if (conv.contact && typeof conv.contact === "object") {
+    add(conv.contact.waId);
+    add(conv.contact.wa_id);
+    add(conv.contact.phone);
+    add(conv.contact.telefono);
+  }
+
+  return raw;
+}
+
+function getConversationContactKey(conv = {}) {
+  const candidates = conversationContactCandidates(conv);
+  for (const candidate of candidates) {
+    const key = normalizePhoneKey(candidate);
+    if (key) return key;
+  }
+  return String(conv?._id || "sin-numero").toLowerCase();
+}
+
+function getConversationDisplayWaId(conv = {}) {
+  const candidates = conversationContactCandidates(conv);
+  return candidates[0] || String(conv?._id || "");
 }
 
 function buildInboxContactGroups(rows = []) {
   const groups = new Map();
 
   for (const conv of Array.isArray(rows) ? rows : []) {
-    const waId = String(conv?.waId || "").trim();
-    const key = normalizePhoneKey(waId || conv?._id);
+    const waId = getConversationDisplayWaId(conv);
+    const key = getConversationContactKey(conv);
     const convId = String(conv?._id || "");
     const lastAt = lastConversationDate(conv);
     const lastAtMs = dateMs(lastAt);
@@ -183,7 +253,8 @@ async function findConversationsForInbox({ tenantId, convId, convIds, waId, cont
       .sort({ updatedAt: -1, openedAt: -1, createdAt: -1 })
       .limit(1000)
       .toArray();
-    return all.filter((c) => normalizePhoneKey(c?.waId) === String(contactKey)).slice(0, limit);
+    const wanted = normalizePhoneKey(contactKey);
+    return all.filter((c) => getConversationContactKey(c) === wanted).slice(0, limit);
   }
 
   return [];
@@ -338,11 +409,15 @@ function buildInboxMediaDescriptor(m, tenantId) {
   };
 }
 
-async function getRuntimeForConversation(conv) {
+async function getRuntimeForConversation(conv, tenantId) {
   let rt = null;
   try {
     if (conv?.phoneNumberId) rt = await getRuntimeByPhoneNumberId(conv.phoneNumberId);
   } catch {}
+  try {
+    if (!rt && tenantId) rt = await getRuntimeByTenantId(tenantId);
+  } catch {}
+
   return {
     whatsappToken: rt?.whatsappToken || WHATSAPP_TOKEN || null,
     phoneNumberId: rt?.phoneNumberId || conv?.phoneNumberId || PHONE_NUMBER_ID || null,
@@ -355,13 +430,16 @@ async function sendWhatsAppTextStrict(to, text, opts = {}) {
 
   const pid = String(opts.phoneNumberId || PHONE_NUMBER_ID || "").trim();
   const token = String(opts.whatsappToken || WHATSAPP_TOKEN || "").trim();
+  const recipient = normalizeCloudRecipient(to);
+
+  if (!recipient) throw new Error(`invalid_whatsapp_recipient: ${String(to || "")}`);
   if (!pid) throw new Error("missing_phone_number_id");
   if (!token) throw new Error("missing_whatsapp_token");
 
   const resp = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${pid}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ messaging_product: "whatsapp", to, text: { body } }),
+    body: JSON.stringify({ messaging_product: "whatsapp", to: recipient, text: { body } }),
   });
 
   const data = await resp.json().catch(() => ({}));
@@ -369,6 +447,64 @@ async function sendWhatsAppTextStrict(to, text, opts = {}) {
     throw new Error(`whatsapp_text_failed_${resp.status}: ${JSON.stringify(data)}`);
   }
   return data;
+}
+
+async function uploadWhatsAppMediaStrict({ buffer, filename, mime }, opts = {}) {
+  const pid = String(opts.phoneNumberId || PHONE_NUMBER_ID || "").trim();
+  const token = String(opts.whatsappToken || WHATSAPP_TOKEN || "").trim();
+  if (!pid) throw new Error("missing_phone_number_id");
+  if (!token) throw new Error("missing_whatsapp_token");
+  if (!buffer || !buffer.length) throw new Error("media_buffer_required");
+
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  form.append("type", String(mime || "application/octet-stream"));
+  form.append("file", new Blob([buffer], { type: String(mime || "application/octet-stream") }), safeFileName(filename || "archivo"));
+
+  const resp = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${pid}/media`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok || !data.id) {
+    throw new Error(`whatsapp_media_upload_failed_${resp.status}: ${JSON.stringify(data)}`);
+  }
+  return data.id;
+}
+
+async function sendWhatsAppMediaStrict(to, media, opts = {}) {
+  const pid = String(opts.phoneNumberId || PHONE_NUMBER_ID || "").trim();
+  const token = String(opts.whatsappToken || WHATSAPP_TOKEN || "").trim();
+  const recipient = normalizeCloudRecipient(to);
+  if (!recipient) throw new Error(`invalid_whatsapp_recipient: ${String(to || "")}`);
+  if (!pid) throw new Error("missing_phone_number_id");
+  if (!token) throw new Error("missing_whatsapp_token");
+
+  const filename = safeFileName(media?.filename || "archivo");
+  const mime = String(media?.mime || "application/octet-stream").trim() || "application/octet-stream";
+  const kindRaw = String(media?.type || inferOutboundMediaKind(mime, filename)).toLowerCase();
+  const kind = ["image", "video", "audio", "document"].includes(kindRaw) ? kindRaw : "document";
+  const mediaId = await uploadWhatsAppMediaStrict({ buffer: media?.buffer, filename, mime }, opts);
+
+  const node = { id: mediaId };
+  const caption = String(media?.caption || "").trim();
+  if ((kind === "image" || kind === "video" || kind === "document") && caption) node.caption = caption;
+  if (kind === "document" && filename) node.filename = filename;
+
+  const payload = { messaging_product: "whatsapp", to: recipient, type: kind, [kind]: node };
+  const resp = await fetch(`https://graph.facebook.com/${GRAPH_API_VERSION}/${pid}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) {
+    throw new Error(`whatsapp_media_send_failed_${resp.status}: ${JSON.stringify(data)}`);
+  }
+  return { mediaId, response: data, kind };
 }
 
 function inferOutboundMediaKind(mime, filename = "") {
@@ -574,7 +710,7 @@ function api(url){
 }
 function esc(s){return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\"/g,"&quot;").replace(/'/g,"&#39;");}
 function initials(v){const s=String(v||"").trim(); if(!s)return"?"; const p=s.split(/\s+/).filter(Boolean); if(p.length>=2)return(p[0][0]+p[1][0]).toUpperCase(); return s.slice(0,2).toUpperCase();}
-function normalizeContactKey(waId){const raw=String(waId||"").trim(); const digits=raw.replace(/\D+/g,""); return digits || raw.toLowerCase() || "sin-numero";}
+function normalizeContactKey(waId){const raw=String(waId||"").trim(); if(!raw)return"sin-numero"; let value=raw.replace(/^whatsapp:/i,"").replace(/@c\.us$/i,"").replace(/@s\.whatsapp\.net$/i,"").trim(); const digits=value.replace(/\D+/g,""); if(!digits)return value.toLowerCase(); if(digits.startsWith("549")&&digits.length>=12)return digits; if(digits.startsWith("54")&&digits.length>=11){const rest=digits.slice(2); return rest.startsWith("9")?digits:"549"+rest;} if(digits.length===10)return "549"+digits; if(digits.length===11&&digits.startsWith("9"))return "54"+digits; return digits;}
 function fmtTime(d){try{const dt=new Date(d); if(Number.isNaN(dt.getTime()))return""; return dt.toLocaleString("es-AR",{hour:"2-digit",minute:"2-digit",day:"2-digit",month:"2-digit"});}catch{return"";}}
 function syncManualUi(isManual){const paused=!!isManual; manualToggle.checked=paused; pauseHint.textContent=paused?"Bot pausado":"Bot activo"; chatStatus.textContent=paused?"BOT PAUSADO":(activeStatusLabel||""); chatStatus.classList.toggle("error-pill", paused);}
 function selectedPayload(){return activeConvIds.length ? { convIds: activeConvIds, waId: activeWaId, convId: activeConvId } : (activeWaId ? { waId: activeWaId, convId: activeConvId } : { convId: activeConvId });}
@@ -642,8 +778,8 @@ fileInput.addEventListener("change",updateFileHint); fileHint.addEventListener("
 sendForm.addEventListener("submit",async(e)=>{e.preventDefault(); if(!activeWaId&&!activeConvId&&!activeConvIds.length)return; const text=String(msgInput.value||"").trim(); const file=fileInput.files&&fileInput.files[0]; if(!text&&!file)return; sendBtn.disabled=true; try{if(file){const fd=new FormData(); Object.entries(selectedPayload()).forEach(([k,v])=>{if(Array.isArray(v))fd.append(k,v.join(",")); else if(v)fd.append(k,v);}); if(text)fd.append("text",text); fd.append("file",file); const r=await fetch(api("/api/admin/wa-inbox/send-file"),{method:"POST",body:fd}); const j=await r.json().catch(()=>null); if(!r.ok)throw new Error((j&&j.detail)|| (j&&j.error) || "send_file_error"); fileInput.value=""; updateFileHint();}else{const r=await fetch(api("/api/admin/wa-inbox/send-message"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...selectedPayload(),text})}); const j=await r.json().catch(()=>null); if(!r.ok)throw new Error((j&&j.detail)|| (j&&j.error) || "send_message_error");} msgInput.value=""; await refreshActiveMessages();}catch(err){alert("No se pudo enviar: "+(err.message||err));}finally{sendBtn.disabled=false; msgInput.focus();}});
 searchInput.addEventListener("input",renderList); refreshBtn.addEventListener("click",async()=>{refreshBtn.textContent="↻ ..."; try{await refreshConversations(true); if(activeContactKey)await refreshActiveMessages();}finally{refreshBtn.textContent="↻ Actualizar";}});
 renderList();
-(function init(){let row=null; if(PRESELECT_WA)row=conversations.find(c=>String(c.waId||"")===PRESELECT_WA); if(!row&&PRESELECT_CONV)row=conversations.find(c=>String(c._id||"")===PRESELECT_CONV || (Array.isArray(c.conversationIds)&&c.conversationIds.includes(PRESELECT_CONV))); if(!row)row=conversations[0]; if(row)selectContact({convId:row._id||"",convIds:row.conversationIds||[],waId:row.waId||"",contactKey:row.contactKey||normalizeContactKey(row.waId||"")}); refreshTimer=setInterval(refreshActiveMessages,20000);})();
-</script>
+(function init(){let row=null; if(PRESELECT_WA)row=conversations.find(c=>String(c.waId||"")===PRESELECT_WA); if(!row&&PRESELECT_CONV)row=conversations.find(c=>String(c._id||"")===PRESELECT_CONV || (Array.isArray(c.conversationIds)&&c.conversationIds.includes(PRESELECT_CONV))); if(!row)row=conversations[0]; if(row)selectContact({convId:row._id||"",convIds:row.conversationIds||[],waId:row.waId||"",contactKey:row.contactKey||normalizeContactKey(row.waId||"")}); refreshTimer=setInterval(async()=>{try{await refreshConversations(true); if(activeContactKey){const msgs=await loadMessages(); renderMessages(msgs);}}catch{}},15000);})();
+ </script>
 </body>
 </html>`;
 }
@@ -773,7 +909,7 @@ function mountWhatsAppInboxPanel(app, { auth } = {}) {
       if (!conv) return errorJson(res, 404, "conv_not_found");
       if (String(conv.channelType || "whatsapp").toLowerCase() !== "whatsapp") return errorJson(res, 400, "only_whatsapp_supported");
 
-      const waOpts = await getRuntimeForConversation(conv);
+      const waOpts = await getRuntimeForConversation(conv, tenant);
       const sent = await sendWhatsAppTextStrict(conv.waId, text, waOpts);
       await saveOutboundMessage({ tenantId: tenant, conv, content: text, type: "text", meta: { waInbox: { outbound: true, providerResponse: sent || null } } });
       res.json({ ok: true });
@@ -797,8 +933,8 @@ function mountWhatsAppInboxPanel(app, { auth } = {}) {
       const mime = String(file.mimetype || "application/octet-stream").trim() || "application/octet-stream";
       const caption = String(parsed.fields.text || parsed.fields.caption || "").trim();
       const kind = inferOutboundMediaKind(mime, filename);
-      const waOpts = await getRuntimeForConversation(conv);
-      const sent = await sendWhatsAppMedia(conv.waId, { buffer: file.data, filename, mime, caption, type: kind }, waOpts);
+      const waOpts = await getRuntimeForConversation(conv, tenant);
+      const sent = await sendWhatsAppMediaStrict(conv.waId, { buffer: file.data, filename, mime, caption, type: kind }, waOpts);
       const cacheId = putInCache(file.data, mime);
 
       await saveOutboundMessage({
@@ -854,7 +990,7 @@ function mountWhatsAppInboxPanel(app, { auth } = {}) {
 
       if (infoLocal.mediaId) {
         try {
-          const waOpts = await getRuntimeForConversation(conv || {});
+          const waOpts = await getRuntimeForConversation(conv || {}, tenant);
           const info = await getMediaInfo(infoLocal.mediaId, waOpts);
           const buffer = await downloadMediaBuffer(info.url, waOpts);
           return sendBuffer(buffer, info?.mime_type || infoLocal.mime, infoLocal.filename);
