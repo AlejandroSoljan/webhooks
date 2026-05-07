@@ -420,7 +420,7 @@ function cleanInboxContentForDisplay(message, media) {
   const normalized = text
     .toLowerCase()
     .normalize("NFD")
-    replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -712,6 +712,31 @@ function errorJson(res, status, error, detail = "") {
   return res.status(status).json({ ok: false, error, detail: detail ? String(detail).slice(0, 1000) : undefined });
 }
 
+function mediaPlaceholderBuffer(kind, mime, filename, reason = "Archivo no disponible") {
+  const label = htmlEscape(reason || "Archivo no disponible");
+  const name = htmlEscape(filename || "archivo");
+  const mt = String(mime || "").toLowerCase();
+  const k = String(kind || "").toLowerCase();
+
+  if (k === "image" || mt.startsWith("image/")) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360"><rect width="640" height="360" fill="#202c33"/><text x="50%" y="46%" dominant-baseline="middle" text-anchor="middle" fill="#e9edef" font-family="Arial, sans-serif" font-size="24">${label}</text><text x="50%" y="58%" dominant-baseline="middle" text-anchor="middle" fill="#aebac1" font-family="Arial, sans-serif" font-size="16">${name}</text></svg>`;
+    return { buffer: Buffer.from(svg), mime: "image/svg+xml", filename: "archivo-no-disponible.svg" };
+  }
+
+  const text = `${reason || "Archivo no disponible"}${filename ? `: ${filename}` : ""}`;
+  return { buffer: Buffer.from(text, "utf8"), mime: "text/plain; charset=utf-8", filename: "archivo-no-disponible.txt" };
+}
+
+function sendUnavailableMedia(res, info = {}, reason = "Archivo no disponible") {
+  const ph = mediaPlaceholderBuffer(info.kind || info.type, info.mime, info.filename, reason);
+  res.setHeader("Content-Type", ph.mime);
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-WA-Inbox-Media-Status", "unavailable");
+  res.setHeader("Content-Disposition", `inline; filename="${safeFileName(ph.filename)}"`);
+  return res.status(200).send(ph.buffer);
+}
+
+
 function inboxHtml(initialConvs, tenant) {
   return `<!doctype html>
 <html lang="es">
@@ -721,9 +746,9 @@ function inboxHtml(initialConvs, tenant) {
   <title>Admin | WhatsApp Web</title>
   <style>
     :root{--bg:#0b141a;--panel:#111b21;--panel2:#202c33;--text:#e9edef;--muted:#aebac1;--accent:#00a884;--bubbleMe:#005c4b;--bubbleThem:#202c33;--border:rgba(255,255,255,.08);--danger:#ff6b6b;}
-    *{box-sizing:border-box} html,body{margin:0;width:100%;height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--text);overflow:hidden}.app{display:flex;height:100vh;height:100dvh;width:100vw;overflow:hidden}.sidebar{width:370px;min-width:280px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column}.side-header{height:50px;padding:8px 12px;background:var(--panel2);display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border)}.side-header h1{font-size:16px;margin:0 8px 0 0;font-weight:650}.pill{font-size:10px;padding:3px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted);background:#0f1a20}.btn{border:1px solid var(--border);border-radius:10px;background:#0f1a20;color:var(--text);cursor:pointer;padding:8px 10px}.btn:hover{background:#16252d}.refresh-status{font-size:10px;color:var(--muted);min-width:64px;text-align:right}.menu-link{width:34px;height:34px;border-radius:10px;border:1px solid var(--border);background:#0f1a20;color:var(--text);text-decoration:none;display:inline-flex;align-items:center;justify-content:center;font-weight:800;flex:0 0 34px}.menu-link:hover{background:#16252d}.side-header-spacer{flex:1}.search{padding:10px 12px;border-bottom:1px solid var(--border)}.search input{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:#0f1a20;color:var(--text);outline:none;font-size:13px}.conv-list{overflow:auto;flex:1;-webkit-overflow-scrolling:touch}.conv-item{padding:12px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;gap:10px;align-items:flex-start}.conv-item:hover{background:#0f1a20}.conv-item.active{background:#0d2420}.avatar{width:38px;height:38px;border-radius:50%;background:#2a3942;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#d1d7db;flex:0 0 38px}.conv-meta{flex:1;min-width:0}.conv-row{display:flex;justify-content:space-between;gap:8px;align-items:center}.conv-name{font-size:14px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.conv-wa{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.conv-last{font-size:11px;color:var(--muted);margin-top:3px}.chat{flex:1;display:flex;flex-direction:column;background:#0b141a;min-width:0}.chat-header{min-height:50px;background:var(--panel2);padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px}.chat-title{display:flex;align-items:center;gap:10px;min-width:0}.chat-title .name{font-size:15px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.chat-title .sub{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:48vw}.back-btn{display:none;border:0;background:transparent;color:var(--text);font-size:24px;line-height:1;cursor:pointer;padding:6px 2px}.chat-actions{display:flex;align-items:center;gap:8px;font-size:11px;flex-wrap:wrap;justify-content:flex-end}.toggle{display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid var(--border);border-radius:10px;background:#0f1a20;white-space:nowrap}.toggle input{transform:translateY(1px)}.chat-body{flex:1;overflow:auto;padding:14px 16px 8px;-webkit-overflow-scrolling:touch}.empty{color:var(--muted);font-size:13px;padding:20px}.msg-row{display:flex;flex-direction:column}.msg{max-width:72%;padding:8px 10px;border-radius:10px;margin:6px 0;font-size:13.5px;line-height:1.32;word-wrap:break-word;white-space:pre-wrap}.msg.them{background:var(--bubbleThem);border-top-left-radius:4px;align-self:flex-start}.msg.me{background:var(--bubbleMe);border-top-right-radius:4px;align-self:flex-end}.msg-text:empty{display:none}.msg-meta{font-size:10px;color:rgba(255,255,255,.55);margin-top:4px;text-align:right}.media-wrap{margin-top:6px}.media-img{max-width:310px;border-radius:10px;display:block}.media-video{max-width:330px;border-radius:10px;display:block}.media-pdf{width:330px;max-width:100%;height:380px;border:0;border-radius:10px;display:block;background:#fff}.media-file{display:inline-flex;gap:8px;align-items:center;color:rgba(255,255,255,.92);text-decoration:none;border:1px solid var(--border);border-radius:10px;padding:10px;background:rgba(255,255,255,.04);max-width:330px}.media-links{display:flex;gap:10px;align-items:center;margin-top:5px}.media-links a{font-size:11px;color:rgba(255,255,255,.82);text-decoration:underline}.chat-footer{border-top:1px solid var(--border);background:var(--panel);padding:10px}.send-form{display:flex;gap:8px;align-items:center}.text-input{flex:1;min-width:0;padding:12px;border-radius:10px;border:1px solid var(--border);background:#0f1a20;color:var(--text);outline:none;font-size:13px}.attach-btn{width:42px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:10px;border:1px solid var(--border);background:#0f1a20;color:var(--text);cursor:pointer;font-size:19px;flex:0 0 42px}.attach-btn:hover{background:#16252d}.file-selected{max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:none;align-items:center;cursor:pointer}.send-btn{height:42px;border-radius:10px;border:1px solid var(--border);background:var(--accent);color:white;cursor:pointer;font-weight:700;padding:0 16px}.send-btn:disabled{opacity:.5;cursor:not-allowed}.error-pill{color:#ffd0d0;border-color:rgba(255,107,107,.35);background:rgba(255,107,107,.08)}
-    @media(max-width:760px){.app{position:relative;display:block;height:100dvh}.sidebar,.chat{position:absolute;inset:0;width:100%;height:100%;min-width:0;transition:transform .18s ease;background:var(--panel)}.chat{transform:translateX(100%);background:var(--bg)}.app.mobile-chat-open .sidebar{transform:translateX(-28%);pointer-events:none}.app.mobile-chat-open .chat{transform:translateX(0)}.side-header{height:48px}.side-header h1{font-size:15px}.btn{padding:7px 9px}.search{padding:8px}.conv-item{padding:11px 10px}.chat-header{height:52px;min-height:52px;padding:6px 8px}.back-btn{display:inline-flex}.chat-title{gap:8px;flex:1}.chat-title .avatar{width:34px;height:34px;flex-basis:34px;font-size:12px}.chat-title .name{font-size:14px}.chat-title .sub{max-width:45vw;font-size:10px}.chat-actions{gap:4px}.chat-actions .pill{display:none}.toggle{font-size:10px;padding:4px 6px}.chat-body{padding:10px 8px 6px}.msg{max-width:86%;font-size:13px}.media-img,.media-video{max-width:min(74vw,310px)}.media-pdf{height:330px}.chat-footer{padding:8px}.send-form{gap:6px}.attach-btn{width:38px;height:38px;flex-basis:38px}.text-input{height:38px;padding:9px 10px}.send-btn{height:38px;padding:0 12px}.pauseHint{display:none}.file-selected{position:absolute;bottom:54px;left:54px;right:72px;max-width:none}#pauseHint{display:none}.app:not(.mobile-chat-open) .chat{visibility:hidden}.app.mobile-chat-open .chat{visibility:visible}}
-  </style>
+    *{box-sizing:border-box} html,body{margin:0;width:100%;height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--text);overflow:hidden}.app{display:flex;height:100vh;height:100dvh;width:100vw;overflow:hidden}.sidebar{width:370px;min-width:280px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column}.side-header{height:50px;padding:8px 12px;background:var(--panel2);display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border)}.side-header h1{font-size:16px;margin:0 8px 0 0;font-weight:650}.pill{font-size:10px;padding:3px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted);background:#0f1a20}.btn{border:1px solid var(--border);border-radius:10px;background:#0f1a20;color:var(--text);cursor:pointer;padding:8px 10px}.btn:hover{background:#16252d}.refresh-status{font-size:10px;color:var(--muted);min-width:64px;text-align:right}.menu-link{width:34px;height:34px;border-radius:10px;border:1px solid var(--border);background:#0f1a20;color:var(--text);text-decoration:none;display:inline-flex;align-items:center;justify-content:center;font-weight:800;flex:0 0 34px}.menu-link:hover{background:#16252d}.back-btn{display:none;border:1px solid var(--border);background:#0f1a20;color:var(--text);border-radius:10px;cursor:pointer;padding:7px 10px;font-size:12px;font-weight:750;line-height:1;white-space:nowrap;min-height:34px}.back-btn:hover{background:#16252d}.back-btn .back-icon{font-size:16px;line-height:1;margin-right:4px}.side-header-spacer{flex:1}.search{padding:10px 12px;border-bottom:1px solid var(--border)}.search input{width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:#0f1a20;color:var(--text);outline:none;font-size:13px}.conv-list{overflow:auto;flex:1;-webkit-overflow-scrolling:touch}.conv-item{padding:12px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;gap:10px;align-items:flex-start}.conv-item:hover{background:#0f1a20}.conv-item.active{background:#0d2420}.avatar{width:38px;height:38px;border-radius:50%;background:#2a3942;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#d1d7db;flex:0 0 38px}.conv-meta{flex:1;min-width:0}.conv-row{display:flex;justify-content:space-between;gap:8px;align-items:center}.conv-name{font-size:14px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.conv-wa{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.conv-last{font-size:11px;color:var(--muted);margin-top:3px}.chat{flex:1;display:flex;flex-direction:column;background:#0b141a;min-width:0}.chat-header{min-height:50px;background:var(--panel2);padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px}.chat-title{display:flex;align-items:center;gap:10px;min-width:0}.chat-title .name{font-size:15px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.chat-title .sub{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:48vw}.chat-actions{display:flex;align-items:center;gap:8px;font-size:11px;flex-wrap:wrap;justify-content:flex-end}.toggle{display:flex;align-items:center;gap:6px;padding:5px 8px;border:1px solid var(--border);border-radius:10px;background:#0f1a20;white-space:nowrap}.toggle input{transform:translateY(1px)}.chat-body{flex:1;overflow:auto;padding:14px 16px 8px;-webkit-overflow-scrolling:touch}.empty{color:var(--muted);font-size:13px;padding:20px}.msg-row{display:flex;flex-direction:column}.msg{max-width:72%;padding:8px 10px;border-radius:10px;margin:6px 0;font-size:13.5px;line-height:1.32;word-wrap:break-word;white-space:pre-wrap}.msg.them{background:var(--bubbleThem);border-top-left-radius:4px;align-self:flex-start}.msg.me{background:var(--bubbleMe);border-top-right-radius:4px;align-self:flex-end}.msg-text:empty{display:none}.msg-meta{font-size:10px;color:rgba(255,255,255,.55);margin-top:4px;text-align:right}.media-wrap{margin-top:6px}.media-img{max-width:310px;border-radius:10px;display:block}.media-video{max-width:330px;border-radius:10px;display:block}.media-pdf{width:330px;max-width:100%;height:380px;border:0;border-radius:10px;display:block;background:#fff}.media-file{display:inline-flex;gap:8px;align-items:center;color:rgba(255,255,255,.92);text-decoration:none;border:1px solid var(--border);border-radius:10px;padding:10px;background:rgba(255,255,255,.04);max-width:330px}.media-links{display:flex;gap:10px;align-items:center;margin-top:5px}.media-links a{font-size:11px;color:rgba(255,255,255,.82);text-decoration:underline}.chat-footer{border-top:1px solid var(--border);background:var(--panel);padding:10px}.send-form{display:flex;gap:8px;align-items:center}.text-input{flex:1;min-width:0;padding:12px;border-radius:10px;border:1px solid var(--border);background:#0f1a20;color:var(--text);outline:none;font-size:13px}.attach-btn{width:42px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:10px;border:1px solid var(--border);background:#0f1a20;color:var(--text);cursor:pointer;font-size:19px;flex:0 0 42px}.attach-btn:hover{background:#16252d}.file-selected{max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:none;align-items:center;cursor:pointer}.send-btn{height:42px;border-radius:10px;border:1px solid var(--border);background:var(--accent);color:white;cursor:pointer;font-weight:700;padding:0 16px}.send-btn:disabled{opacity:.5;cursor:not-allowed}.error-pill{color:#ffd0d0;border-color:rgba(255,107,107,.35);background:rgba(255,107,107,.08)}
+    @media(max-width:760px){.app{position:relative;display:block;height:100dvh}.sidebar,.chat{position:absolute;inset:0;width:100%;height:100%;min-width:0;transition:transform .18s ease;background:var(--panel)}.chat{transform:translateX(100%);background:var(--bg)}.app.mobile-chat-open .sidebar{transform:translateX(-28%);pointer-events:none}.app.mobile-chat-open .chat{transform:translateX(0)}.side-header{height:48px}.side-header h1{font-size:15px}.btn{padding:7px 9px}.search{padding:8px}.conv-item{padding:11px 10px}.chat-header{height:52px;min-height:52px;padding:6px 8px}.back-btn{display:inline-flex;align-items:center;justify-content:center}.chat-title{gap:8px;flex:1}.chat-title .avatar{width:34px;height:34px;flex-basis:34px;font-size:12px}.chat-title .name{font-size:14px}.chat-title .sub{max-width:45vw;font-size:10px}.chat-actions{gap:4px}.chat-actions .pill{display:none}.toggle{font-size:10px;padding:4px 6px}.chat-body{padding:10px 8px 6px}.msg{max-width:86%;font-size:13px}.media-img,.media-video{max-width:min(74vw,310px)}.media-pdf{height:330px}.chat-footer{padding:8px}.send-form{gap:6px}.attach-btn{width:38px;height:38px;flex-basis:38px}.text-input{height:38px;padding:9px 10px}.send-btn{height:38px;padding:0 12px}.pauseHint{display:none}.file-selected{position:absolute;bottom:54px;left:54px;right:72px;max-width:none}#pauseHint{display:none}.app:not(.mobile-chat-open) .chat{visibility:hidden}.app.mobile-chat-open .chat{visibility:visible}}
+</style>
 </head>
 <body>
   <div class="app">
@@ -734,7 +759,7 @@ function inboxHtml(initialConvs, tenant) {
     </aside>
     <main class="chat">
       <div class="chat-header">
-        <div class="chat-title"><button id="backBtn" class="back-btn" type="button" aria-label="Volver a contactos">‹</button><a href="/app" class="menu-link" title="Volver al menú principal" aria-label="Volver al menú principal">☰</a><div class="avatar" id="chatAvatar">?</div><div><div class="name" id="chatName">Seleccioná un chat</div><div class="sub" id="chatSub"></div></div></div>
+        <div class="chat-title"><a href="/app" class="menu-link" title="Volver al menú principal" aria-label="Volver al menú principal">☰</a><button id="backBtn" class="back-btn" type="button" aria-label="Volver a contactos"><span class="back-icon">‹</span><span>Contactos</span></button><div class="avatar" id="chatAvatar">?</div><div><div class="name" id="chatName">Seleccioná un chat</div><div class="sub" id="chatSub"></div></div></div>
          <div class="chat-actions"><span id="chatStatus" class="pill"></span><label class="toggle"><input type="checkbox" id="manualToggle"/><span>Pausar bot</span></label></div>
       </div>
       <div id="chatBody" class="chat-body"><div class="empty">No hay conversación seleccionada.</div></div>
@@ -1055,11 +1080,11 @@ function mountWhatsAppInboxPanel(app, { auth } = {}) {
     try {
       const tenant = resolveTenantIdFromAuth(auth, req);
       const msgId = String(req.params.msgId || "").trim();
-      if (!ObjectId.isValid(msgId)) return res.status(400).send("invalid_id");
+      if (!ObjectId.isValid(msgId)) return sendUnavailableMedia(res, {}, "Archivo no disponible");
 
       const db = await getDb();
       const msgDoc = await db.collection("messages").findOne(withTenant({ _id: new ObjectId(msgId) }, tenant));
-      if (!msgDoc) return res.status(404).send("not_found");
+      if (!msgDoc) return sendUnavailableMedia(res, {}, "Archivo no disponible");
 
       const infoLocal = extractMessageMediaInfo(msgDoc);
       let conv = null;
@@ -1089,7 +1114,8 @@ function mountWhatsAppInboxPanel(app, { auth } = {}) {
           const buffer = await downloadMediaBuffer(info.url, waOpts);
           return sendBuffer(buffer, info?.mime_type || infoLocal.mime, infoLocal.filename);
         } catch (e) {
-          if (!infoLocal.cacheId) throw e;
+          console.warn("GET /api/admin/wa-inbox/media unavailable_from_meta:", msgId, e?.message || e);
+          if (!infoLocal.cacheId) return sendUnavailableMedia(res, infoLocal, "Archivo no disponible");
         }
       }
 
@@ -1098,10 +1124,10 @@ function mountWhatsAppInboxPanel(app, { auth } = {}) {
         if (item) return sendBuffer(item.buffer, item.mime || infoLocal.mime, infoLocal.filename);
       }
 
-      return res.status(400).send("no_media");
+      return sendUnavailableMedia(res, infoLocal, "Archivo no disponible");
     } catch (e) {
-      console.error("GET /api/admin/wa-inbox/media error:", e?.message || e);
-      return res.status(500).send("internal");
+            console.warn("GET /api/admin/wa-inbox/media unavailable:", e?.message || e);
+      return sendUnavailableMedia(res, {}, "Archivo no disponible");
     }
   });
 }
