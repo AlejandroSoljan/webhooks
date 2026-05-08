@@ -886,10 +886,18 @@ function buildChasisFromCpe(tenantId, cpe, user) {
 
 async function upsertAutoMasterDoc(db, collectionName, doc) {
   if (!doc || !doc._id) return null;
+
+  // Importante: MongoDB no permite actualizar el mismo campo en $setOnInsert y $set.
+  // El doc generado por el alta automática ya trae activo/updatedAt, por eso los
+  // sacamos del objeto de inserción y los manejamos únicamente con $set.
+  // Si no se hace esto, el endpoint /api/fleteros/cpe/parse falla con error 500
+  // cuando intenta crear cliente/origen/destino/tipo/chasis faltantes.
+  const { activo, updatedAt, ...insertDoc } = doc;
+
   await db.collection(collectionName).updateOne(
     { _id: doc._id, tenantId: doc.tenantId },
     {
-      $setOnInsert: doc,
+      $setOnInsert: insertDoc,
       $set: { updatedAt: now(), activo: true },
     },
     { upsert: true }
