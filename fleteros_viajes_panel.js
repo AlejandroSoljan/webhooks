@@ -1494,7 +1494,7 @@ function panelHtml({ tenantId, user }) {
       if (patch.fechaViaje) el('fechaViaje').value = patch.fechaViaje;
       if (patch.observaciones) {
         const prev = trim(el('observaciones').value);
-        el('observaciones').value = prev ? (prev + '\n' + patch.observaciones) : patch.observaciones;
+        el('observaciones').value = prev ? (prev + '\\n' + patch.observaciones) : patch.observaciones;
       }
 
       const ex = result.extracted || {};
