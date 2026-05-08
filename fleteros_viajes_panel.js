@@ -193,7 +193,116 @@ function dataUrlFromFile(file) {
   return `data:${mime};base64,${Buffer.from(buffer).toString('base64')}`;
 }
 
+function bufferSplit(source, separator) {
+  const src = Buffer.isBuffer(source) ? source : Buffer.from(source || '');
+  const sep = Buffer.isBuffer(separator) ? separator : Buffer.from(String(separator || ''));
+  const parts = [];
+  if (!src.length || !sep.length) return [src];
+  let start = 0;
+  let idx = src.indexOf(sep, start);
+  while (idx !== -1) {
+    parts.push(src.slice(start, idx));
+    start = idx + sep.length;
+    idx = src.indexOf(sep, start);
+  }
+  parts.push(src.slice(start));
+  return parts;
+}
+
+function trimMultipartBodyBuffer(buf) {
+  let out = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || '');
+  // Cada parte suele terminar con CRLF antes del boundary siguiente.
+  while (out.length >= 2 && out[out.length - 2] === 13 && out[out.length - 1] === 10) out = out.slice(0, -2);
+  return out;
+}
+
+function parseContentDispositionParam(header, name) {
+  const re = new RegExp(name + '="([^"]*)"', 'i');
+  const m = String(header || '').match(re);
+  return m ? m[1] : '';
+}
+
+function parseMultipartSingleFileFromBuffer(buffer, contentType) {
+  const boundaryMatch = String(contentType || '').match(/boundary=(?:(?:"([^"]+)")|([^;]+))/i);
+  const boundary = boundaryMatch ? String(boundaryMatch[1] || boundaryMatch[2] || '').trim() : '';
+  if (!boundary) return null;
+
+  const boundaryBuf = Buffer.from('--' + boundary);
+  const parts = bufferSplit(buffer, boundaryBuf);
+  const acceptedFieldNames = new Set(['file', 'cpe', 'documento', 'pdf', 'archivo']);
+
+  for (let part of parts) {
+    if (!part || !part.length) continue;
+    // Saltar prefijos/sufijos del multipart.
+    if (part.slice(0, 2).toString() === '--') continue;
+    if (part.slice(0, 2).toString() === '\r\n') part = part.slice(2);
+
+    const headerEnd = part.indexOf(Buffer.from('\r\n\r\n'));
+    if (headerEnd === -1) continue;
+
+    const headerText = part.slice(0, headerEnd).toString('latin1');
+    const body = trimMultipartBodyBuffer(part.slice(headerEnd + 4));
+    const dispositionLine = (headerText.match(/^content-disposition:\s*([^\r\n]+)/im) || [])[1] || '';
+    const contentTypeLine = (headerText.match(/^content-type:\s*([^\r\n]+)/im) || [])[1] || '';
+    const fieldName = parseContentDispositionParam(dispositionLine, 'name');
+    const fileName = parseContentDispositionParam(dispositionLine, 'filename');
+
+    if (!fileName && !acceptedFieldNames.has(fieldName)) continue;
+    if (fileName || acceptedFieldNames.has(fieldName)) {
+      if (!body.length) return null;
+      return {
+        name: cleanString(fileName || 'archivo', 180),
+        mimeType: cleanString(contentTypeLine || 'application/octet-stream', 120),
+        buffer: body,
+        size: body.length,
+      };
+    }
+  }
+  return null;
+}
+
+function parseMultipartUploadFallback(req, res, next) {
+  if (req.files || req.__cpeUploadFile) return next();
+  const ct = String(req.headers?.['content-type'] || '').toLowerCase();
+  if (!ct.includes('multipart/form-data')) return next();
+
+  const maxBytes = 15 * 1024 * 1024;
+  const chunks = [];
+  let total = 0;
+  let finished = false;
+
+  req.on('data', (chunk) => {
+    if (finished) return;
+    total += chunk.length;
+    if (total > maxBytes) {
+      finished = true;
+      try { req.destroy(); } catch {}
+      return res.status(413).json({ ok: false, error: 'file_too_large' });
+    }
+    chunks.push(chunk);
+  });
+
+  req.on('end', () => {
+    if (finished) return;
+    try {
+      const buffer = Buffer.concat(chunks);
+      const parsed = parseMultipartSingleFileFromBuffer(buffer, req.headers?.['content-type'] || '');
+      if (parsed) req.__cpeUploadFile = parsed;
+      return next();
+    } catch (e) {
+      return next(e);
+    }
+  });
+
+  req.on('error', (e) => {
+    if (finished) return;
+    finished = true;
+    next(e);
+  });
+}
+
 function getUploadedCpeFile(req) {
+  if (req?.__cpeUploadFile) return req.__cpeUploadFile;
   const files = req?.files || {};
   const f = files.file || files.cpe || files.documento || files.pdf || null;
   if (Array.isArray(f)) return f[0] || null;
@@ -222,20 +331,11 @@ function getUploadedCpeFile(req) {
 }
 
 function makeMaybeFileUploadMiddleware() {
-  const fileUpload = optionalRequire('express-fileupload');
-  if (!fileUpload) return (req, _res, next) => next();
-  const mw = fileUpload({
-    debug: false,
-    limits: { fileSize: 15 * 1024 * 1024 },
-    abortOnLimit: true,
-    useTempFiles: false,
-  });
-  return (req, res, next) => {
-    if (req.files) return next();
-    const ct = String(req.headers?.['content-type'] || '').toLowerCase();
-    if (!ct.includes('multipart/form-data')) return next();
-    return mw(req, res, next);
-  };
+  // No dependemos de express-fileupload para este endpoint: parseamos el
+  // multipart/form-data manualmente porque en algunas instalaciones el módulo
+  // no está montado o el body llega sin req.files. Esto evita el error
+  // "missing_file" aunque el navegador sí haya enviado el archivo.
+  return parseMultipartUploadFallback;
 }
 
 function firstRegex(text, regex, group = 1) {
