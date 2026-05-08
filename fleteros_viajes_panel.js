@@ -384,6 +384,163 @@ function firstRegex(text, regex, group = 1) {
   return m ? cleanString(m[group], 500) : '';
 }
 
+function sectionBetween(text, startRe, endRe) {
+  const src = String(text || '');
+  const start = src.search(startRe);
+  if (start < 0) return '';
+  const tail = src.slice(start);
+  const end = tail.slice(1).search(endRe);
+  return end >= 0 ? tail.slice(0, end + 1) : tail;
+}
+
+function cleanCpeField(value, max = 160) {
+  let out = cleanString(value, max)
+    .replace(/^(localidad|provincia|direcci[oó]n|n[°º]?\s*planta|tipo|grano\s*\/\s*especie)\s*:?\s*/i, '')
+    .replace(/\s+(localidad|provincia|direcci[oó]n|n[°º]?\s*planta|tipo|grano\s*\/\s*especie)\s*:?\s*$/i, '')
+    .replace(/^[:\-\s]+|[:\-\s]+$/g, '')
+    .trim();
+  if (/^(localidad|provincia|direcci[oó]n|n[°º]?\s*planta|tipo|grano\s*\/\s*especie)$/i.test(out)) return '';
+  if (!out.replace(/[:\-\s]/g, '')) return '';
+  return cleanString(out, max);
+}
+
+function isLikelyCpeLabel(value) {
+  const v = normalizeLoose(value);
+  if (!v) return true;
+  return /^(localidad|provincia|direccion|n planta|planta|tipo|grano especie|peso bruto kg|peso tara kg|peso neto kg|partida kms a recorrer|dominios)$/.test(v);
+}
+
+function cleanCpePlaceObject(obj) {
+  const out = { ...(obj || {}) };
+  out.localidad = cleanCpeField(out.localidad, 120);
+  out.provincia = cleanCpeField(out.provincia, 120);
+  out.direccion = cleanCpeField(out.direccion, 180);
+  out.nroPlanta = cleanCpeField(out.nroPlanta || out.nro_planta, 60);
+  if (isLikelyCpeLabel(out.localidad)) out.localidad = '';
+  if (isLikelyCpeLabel(out.provincia)) out.provincia = '';
+  if (isLikelyCpeLabel(out.direccion)) out.direccion = '';
+  if (out.nroPlanta && !/^[A-Z0-9.-]{1,20}$/i.test(out.nroPlanta)) out.nroPlanta = '';
+  if (out.nroPlanta && /^direcci/i.test(out.nroPlanta)) out.nroPlanta = '';
+  if (out.direccion && /localidad\s*:|provincia\s*:/i.test(out.direccion)) out.direccion = '';
+  return out;
+}
+
+function shouldReplaceCpeField(currentValue, fallbackValue) {
+  if (!fallbackValue) return false;
+  const cur = cleanCpeField(currentValue, 220);
+  if (!cur) return true;
+  if (isLikelyCpeLabel(cur)) return true;
+  if (/[\r\n]/.test(String(currentValue || '')) && fallbackValue) return true;
+  if (/localidad\s*:|provincia\s*:|direcci[oó]n\s*:/i.test(cur)) return true;
+  return false;
+}
+
+function parseInlineLocalidadProvincia(block) {
+  const src = compactSpaces(block);
+  const m = src.match(/Localidad\s*:?\s*([^\n\r:]{2,80}?)\s+Provincia\s*:?\s*([^\n\r:]{2,80})(?:\n|\r|$)/i);
+  if (!m) return {};
+  return {
+    localidad: cleanCpeField(m[1], 120),
+    provincia: cleanCpeField(m[2].replace(/\s+Es\s+un\s+campo.*$/i, ''), 120),
+  };
+}
+
+function parseDestinationBlockFallback(block) {
+  const lines = compactSpaces(block)
+    .split('\n')
+    .map((x) => cleanString(x, 160))
+    .filter(Boolean);
+
+  const afterDireccionIdx = lines.findIndex((x) => /^Direcci[oó]n\s*:?$/i.test(x));
+  const candidateLines = (afterDireccionIdx >= 0 ? lines.slice(afterDireccionIdx + 1) : lines)
+    .filter((x) => !/^D\s*-\s*DESTINO/i.test(x))
+    .filter((x) => !/^Es\s+un\s+campo/i.test(x))
+    .filter((x) => !/^Localidad\s*:?\s*Provincia\s*:?$/i.test(x))
+    .filter((x) => !/^Provincia\s*:?$/i.test(x))
+    .filter((x) => !/^Localidad\s*:?$/i.test(x))
+    .filter((x) => !/^Direcci[oó]n\s*:?$/i.test(x))
+    .filter((x) => !/^N[°º]?\s*Planta\s*:?$/i.test(x))
+    .map((x) => cleanCpeField(x, 160))
+    .filter(Boolean);
+
+  const out = {};
+  if (candidateLines[0] && !/\d/.test(candidateLines[0])) out.localidad = candidateLines[0];
+  const dirLine = candidateLines.find((x) => /\d/.test(x));
+  if (dirLine) {
+    const m = dirLine.match(/^(\d{2,8})\s+(.+)$/);
+    if (m) {
+      out.nroPlanta = cleanCpeField(m[1], 60);
+      out.direccion = cleanCpeField(m[2], 180);
+    } else {
+      out.direccion = cleanCpeField(dirLine, 180);
+    }
+  }
+  const provincia = candidateLines.find((x) => !/\d/.test(x) && normalizeKey(x) !== normalizeKey(out.localidad));
+  if (provincia) out.provincia = provincia;
+  return out;
+}
+
+function parsePatentesFromText(text) {
+  const flat = String(text || '').replace(/\s+/g, ' ').toUpperCase();
+  const patent = '[A-Z]{2,3}\\d{3}[A-Z]{0,2}|[A-Z]{2}\\d{3}[A-Z]{2}|[A-Z]{2}\\d{2}[A-Z]{2,3}|[A-Z0-9]{6,8}';
+  const pairRe = new RegExp('\\b(' + patent + ')\\s*[-/]\\s*(' + patent + ')\\b', 'i');
+  const m = flat.match(pairRe);
+  if (m) return [normalizePatente(m[1]), normalizePatente(m[2])].filter(Boolean);
+  return [];
+}
+
+function fixParsedCpeFromText(cpe, text) {
+  const t = compactSpaces(text);
+  const flat = t.replace(/\s+/g, ' ');
+
+  cpe.procedencia = cleanCpePlaceObject(cpe.procedencia);
+  cpe.destinoMercaderia = cleanCpePlaceObject(cpe.destinoMercaderia);
+
+  const procBlock = sectionBetween(t, /C\s*-\s*PROCEDENCIA/i, /D\s*-\s*DESTINO|E\s*-\s*DATOS|F\s*-\s*CONTINGENCIAS|G\s*-\s*DESCARGA/i);
+  if (procBlock) {
+    const locProv = parseInlineLocalidadProvincia(procBlock);
+    cpe.procedencia.localidad = cpe.procedencia.localidad || locProv.localidad || '';
+    cpe.procedencia.provincia = cpe.procedencia.provincia || locProv.provincia || '';
+    if (shouldReplaceCpeField(cpe.procedencia.direccion, '')) cpe.procedencia.direccion = '';
+    if (cpe.procedencia.nroPlanta && /^direcci/i.test(cpe.procedencia.nroPlanta)) cpe.procedencia.nroPlanta = '';
+    cpe.procedencia.esCampo = /Es\s+un\s+campo\s*:?\s*Si/i.test(procBlock) ? true : (/Es\s+un\s+campo\s*:?\s*No/i.test(procBlock) ? false : cpe.procedencia.esCampo);
+  }
+
+  const destBlock = sectionBetween(t, /D\s*-\s*DESTINO\s+DE\s+LA\s+MERCADER[IÍ]A/i, /E\s*-\s*DATOS|F\s*-\s*CONTINGENCIAS|G\s*-\s*DESCARGA/i);
+  if (destBlock) {
+    const locProv = parseInlineLocalidadProvincia(destBlock);
+    const fallback = parseDestinationBlockFallback(destBlock);
+    if (shouldReplaceCpeField(cpe.destinoMercaderia.localidad, locProv.localidad || fallback.localidad)) cpe.destinoMercaderia.localidad = locProv.localidad || fallback.localidad || '';
+    if (shouldReplaceCpeField(cpe.destinoMercaderia.provincia, locProv.provincia || fallback.provincia)) cpe.destinoMercaderia.provincia = locProv.provincia || fallback.provincia || '';
+    if (shouldReplaceCpeField(cpe.destinoMercaderia.direccion, fallback.direccion)) cpe.destinoMercaderia.direccion = fallback.direccion || '';
+    if (shouldReplaceCpeField(cpe.destinoMercaderia.nroPlanta, fallback.nroPlanta)) cpe.destinoMercaderia.nroPlanta = fallback.nroPlanta || '';
+    cpe.destinoMercaderia.esCampo = /Es\s+un\s+campo\s*:?\s*Si/i.test(destBlock) ? true : (/Es\s+un\s+campo\s*:?\s*No/i.test(destBlock) ? false : cpe.destinoMercaderia.esCampo);
+  }
+
+  cpe.procedencia = cleanCpePlaceObject(cpe.procedencia);
+  cpe.destinoMercaderia = cleanCpePlaceObject(cpe.destinoMercaderia);
+
+  const grainRow = flat.match(/\b(Ma[ií]z|Soja|Trigo|Girasol|Sorgo|Cebada|Man[ií])\b\s+([A-Za-zÁÉÍÓÚÑáéíóúñ0-9 /.-]{2,40})\s+(\d{4,6})\s+(\d{3,6})\s+(\d{3,6})/i);
+  if (grainRow) {
+    cpe.grano.especie = cleanCpeField(grainRow[1], 80);
+    cpe.grano.tipo = cleanCpeField(grainRow[2], 80) || cpe.grano.especie;
+    cpe.grano.pesoBrutoKg = cpe.grano.pesoBrutoKg ?? parseNumber(grainRow[3]);
+    cpe.grano.pesoTaraKg = cpe.grano.pesoTaraKg ?? parseNumber(grainRow[4]);
+    cpe.grano.pesoNetoKg = cpe.grano.pesoNetoKg ?? parseNumber(grainRow[5]);
+  } else {
+    cpe.grano.especie = cleanCpeField(cpe.grano.especie, 80);
+    cpe.grano.tipo = cleanCpeField(cpe.grano.tipo, 80);
+    if (isLikelyCpeLabel(cpe.grano.especie)) cpe.grano.especie = '';
+    if (isLikelyCpeLabel(cpe.grano.tipo)) cpe.grano.tipo = '';
+  }
+
+  if (!Array.isArray(cpe.transporte.dominios) || !cpe.transporte.dominios.length) {
+    cpe.transporte.dominios = parsePatentesFromText(sectionBetween(t, /E\s*-\s*DATOS\s+DEL\s+TRANSPORTE/i, /F\s*-\s*CONTINGENCIAS|G\s*-\s*DESCARGA/i) || flat);
+  }
+
+  return cpe;
+}
+
 function parseNumber(value) {
   const raw = String(value ?? '').trim();
   if (!raw) return null;
@@ -542,7 +699,7 @@ function parseCpeText(text) {
     if (nums.length) cpe.nroCpe = cleanString(nums[0].replace(/\s+/g, ''), 40);
   }
 
-  return cpe;
+  return fixParsedCpeFromText(cpe, t);
 }
 
 async function extractCpeJsonFromImageWithOpenAI(file) {
@@ -606,7 +763,7 @@ function normalizeParsedCpe(obj, rawText = '') {
   if (normalized.transporte && Array.isArray(normalized.transporte.dominios)) {
     normalized.transporte.dominios = normalized.transporte.dominios.map(normalizePatente).filter(Boolean);
   }
-  return normalized;
+  return rawText ? fixParsedCpeFromText(normalized, rawText) : normalized;
 }
 
 function levenshteinDistance(a, b) {
@@ -791,10 +948,11 @@ function buildClienteFromCpe(tenantId, cpe, user) {
 }
 
 function buildLugarFromCpe(tenantId, data, kind, user) {
-  const localidad = cleanString(data?.localidad || data?.nombre || '', 120);
-  const provincia = cleanString(data?.provincia || '', 120);
-  const direccion = cleanString(data?.direccion || '', 180);
-  const nroPlanta = cleanString(data?.nroPlanta || data?.nro_planta || '', 60);
+  const place = cleanCpePlaceObject(data || {});
+  const localidad = cleanString(place.localidad || place.nombre || '', 120);
+  const provincia = cleanString(place.provincia || '', 120);
+  const direccion = cleanString(place.direccion || '', 180);
+  const nroPlanta = cleanString(place.nroPlanta || place.nro_planta || '', 60);
   if (!localidad && !provincia && !direccion && !nroPlanta) return null;
   const nombre = titleCase(localidad || direccion || nroPlanta || kind);
   const id = stableId('lug_auto', tenantId, kind, localidad, provincia, direccion, nroPlanta);
@@ -822,8 +980,8 @@ function buildLugarFromCpe(tenantId, data, kind, user) {
 }
 
 function buildTipoCargaFromCpe(tenantId, data, user) {
-  const especie = cleanString(data?.especie || data?.tipo || data?.nombre || '', 120);
-  if (!especie) return null;
+  const especie = cleanCpeField(data?.especie || data?.tipo || data?.nombre || '', 120);
+  if (!especie || isLikelyCpeLabel(especie)) return null;
   const nombre = titleCase(especie);
   const id = stableId('tc_auto', tenantId, especie);
   const at = now();
