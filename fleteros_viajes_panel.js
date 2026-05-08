@@ -26,6 +26,7 @@ const COLLECTIONS = {
   tiposCarga: 'fleteros_tipos_carga',
   chasis: 'fleteros_chasis',
   viajes: 'fleteros_viajes',
+  cpeImports: 'fleteros_cpe_imports',
 };
 
 function htmlEscape(value) {
@@ -90,6 +91,516 @@ function cleanString(value, max = 220) {
 
 function now() {
   return new Date();
+}
+
+
+function optionalRequire(name) {
+  try { return require(name); } catch { return null; }
+}
+
+function onlyDigits(value) {
+  return String(value || '').replace(/\D+/g, '');
+}
+
+function normalizePatente(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').trim();
+}
+
+function normalizeLoose(value) {
+  return normalizeSearchText(value).replace(/[^a-z0-9ñ]+/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function compactSpaces(value) {
+  return String(value || '').replace(/\r/g, '\n').replace(/[\t ]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function stripPdfEscapes(value) {
+  return String(value || '')
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\n')
+    .replace(/\\t/g, ' ')
+    .replace(/\\\(/g, '(')
+    .replace(/\\\)/g, ')')
+    .replace(/\\\\/g, '\\');
+}
+
+function extractStringsFromPdfSegment(segment) {
+  const text = String(segment || '');
+  const parts = [];
+  let m;
+  const literalRe = /\((?:\\.|[^\\)]){1,600}\)/g;
+  while ((m = literalRe.exec(text))) {
+    const raw = m[0].slice(1, -1);
+    const clean = stripPdfEscapes(raw).trim();
+    if (clean) parts.push(clean);
+  }
+
+  const hexRe = /<([0-9A-Fa-f\s]{4,2000})>/g;
+  while ((m = hexRe.exec(text))) {
+    try {
+      const hex = m[1].replace(/\s+/g, '');
+      if (hex.length >= 4 && hex.length % 2 === 0) {
+        const buf = Buffer.from(hex, 'hex');
+        const utf16 = buf.toString('utf16le').replace(/\u0000/g, '').trim();
+        const latin = buf.toString('latin1').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '').trim();
+        const val = utf16.length >= latin.length ? utf16 : latin;
+        if (val && /[A-Za-z0-9ÁÉÍÓÚÑáéíóúñ]/.test(val)) parts.push(val);
+      }
+    } catch {}
+  }
+  return parts.join('\n');
+}
+
+async function extractPdfTextLoose(buffer) {
+  const zlib = optionalRequire('zlib');
+  const raw = Buffer.isBuffer(buffer) ? buffer.toString('latin1') : String(buffer || '');
+  const parts = [];
+
+  let m;
+  const streamRe = /(<<[\s\S]{0,2500}?>>)?\s*stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  while ((m = streamRe.exec(raw))) {
+    const dict = String(m[1] || '');
+    let data = Buffer.from(String(m[2] || ''), 'latin1');
+    if (/FlateDecode/i.test(dict) && zlib) {
+      try { data = zlib.inflateSync(data); } catch {
+        try { data = zlib.inflateRawSync(data); } catch {}
+      }
+    }
+    const extracted = extractStringsFromPdfSegment(data.toString('latin1'));
+    if (extracted) parts.push(extracted);
+  }
+
+  const rawStrings = extractStringsFromPdfSegment(raw);
+  if (rawStrings) parts.push(rawStrings);
+  return compactSpaces(parts.join('\n'));
+}
+
+async function extractPdfText(buffer) {
+  const pdfParse = optionalRequire('pdf-parse');
+  if (pdfParse) {
+    try {
+      const parsed = await pdfParse(buffer);
+      const text = compactSpaces(parsed?.text || '');
+      if (text) return text;
+    } catch {}
+  }
+  return extractPdfTextLoose(buffer);
+}
+
+function dataUrlFromFile(file) {
+  const mime = cleanString(file?.mimeType || file?.mimetype || file?.type || 'application/octet-stream', 120);
+  const buffer = file?.buffer || file?.data || Buffer.alloc(0);
+  return `data:${mime};base64,${Buffer.from(buffer).toString('base64')}`;
+}
+
+function getUploadedCpeFile(req) {
+  const files = req?.files || {};
+  const f = files.file || files.cpe || files.documento || files.pdf || null;
+  if (Array.isArray(f)) return f[0] || null;
+  if (f && (f.data || f.buffer)) {
+    return {
+      name: cleanString(f.name || f.filename || 'archivo', 180),
+      mimeType: cleanString(f.mimetype || f.mimeType || f.type || '', 120),
+      buffer: Buffer.from(f.data || f.buffer),
+      size: Number(f.size || (f.data || f.buffer || Buffer.alloc(0)).length || 0),
+    };
+  }
+
+  const body = req?.body || {};
+  const b64 = body.dataBase64 || body.base64 || body.fileBase64 || '';
+  if (b64) {
+    const clean = String(b64).replace(/^data:[^;]+;base64,/, '').replace(/\s+/g, '');
+    const buffer = Buffer.from(clean, 'base64');
+    return {
+      name: cleanString(body.fileName || body.name || 'archivo', 180),
+      mimeType: cleanString(body.mimeType || body.type || '', 120),
+      buffer,
+      size: buffer.length,
+    };
+  }
+  return null;
+}
+
+function makeMaybeFileUploadMiddleware() {
+  const fileUpload = optionalRequire('express-fileupload');
+  if (!fileUpload) return (req, _res, next) => next();
+  const mw = fileUpload({
+    debug: false,
+    limits: { fileSize: 15 * 1024 * 1024 },
+    abortOnLimit: true,
+    useTempFiles: false,
+  });
+  return (req, res, next) => {
+    if (req.files) return next();
+    const ct = String(req.headers?.['content-type'] || '').toLowerCase();
+    if (!ct.includes('multipart/form-data')) return next();
+    return mw(req, res, next);
+  };
+}
+
+function firstRegex(text, regex, group = 1) {
+  const m = String(text || '').match(regex);
+  return m ? cleanString(m[group], 500) : '';
+}
+
+function parseNumber(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const normalized = raw.replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, '');
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseEntityLabel(text, label) {
+  const escaped = String(label).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(escaped + '\\s*:?\\s*(\\d{10,11})\\s*-\\s*([^\\n\\r]+)', 'i');
+  const m = String(text || '').match(re);
+  if (!m) return null;
+  return { cuit: onlyDigits(m[1]), razonSocial: cleanString(m[2], 180) };
+}
+
+function parseAllEntities(text) {
+  const rows = [];
+  const re = /(\d{10,11})\s*-\s*([^\n\r]+)/g;
+  let m;
+  while ((m = re.exec(String(text || '')))) {
+    const cuit = onlyDigits(m[1]);
+    const razonSocial = cleanString(m[2].replace(/\s{2,}.*/, ''), 180);
+    if (cuit && razonSocial) rows.push({ cuit, razonSocial });
+  }
+  return rows;
+}
+
+function parseCpeText(text) {
+  const t = compactSpaces(text);
+  const flat = t.replace(/\s+/g, ' ');
+  const entities = parseAllEntities(t);
+
+  const titular = parseEntityLabel(t, 'Titular Carta de Porte') || entities[0] || null;
+  const destinatario = parseEntityLabel(t, 'Destinatario') || entities.find(e => /ARDION|DESTIN/i.test(e.razonSocial)) || null;
+  const destinoEntidad = parseEntityLabel(t, 'Destino') || destinatario;
+  const empresaTransportista = parseEntityLabel(t, 'Empresa Transportista') || null;
+  const fletePagador = parseEntityLabel(t, 'Flete pagador') || null;
+  const choferEntity = parseEntityLabel(t, 'Chofer') || null;
+
+  const cpe = {
+    tipoDocumento: /Carta de Porte/i.test(t) ? 'Carta de Porte Electrónica Automotor' : 'Carta de Porte',
+    ctg: firstRegex(t, /CTG\s*:?\s*(\d{8,15})/i),
+    nroCpe: firstRegex(t, /N[°º]?\s*CPE\s*:?\s*([0-9]{1,8}\s*-\s*[0-9]{1,12})/i) || firstRegex(t, /\b(\d{5}\s*-\s*\d{8})\b/),
+    fecha: firstRegex(t, /Fecha\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4})/i),
+    vencimiento: firstRegex(t, /Vencimiento\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4}(?:\s+\d{1,2}:\d{2})?)/i),
+    intervinientes: {
+      titularCartaPorte: titular,
+      destinatario,
+      destino: destinoEntidad,
+      empresaTransportista,
+      fletePagador,
+      chofer: choferEntity ? { cuit: choferEntity.cuit, nombre: choferEntity.razonSocial } : null,
+      todos: entities,
+    },
+    grano: {},
+    procedencia: {},
+    destinoMercaderia: {},
+    transporte: {},
+    descarga: {},
+    observaciones: firstRegex(t, /Observaciones\s*:?\s*([^\n\r]+)/i, 1),
+    rawTextPreview: t.slice(0, 3000),
+  };
+
+  const granoDirect = t.match(/Grano\s*\/\s*especie\s*:?\s*([^\n\r]+?)(?:\s+Tipo\s*:?\s*([^\n\r]+))?$/im);
+  if (granoDirect) {
+    cpe.grano.especie = cleanString(granoDirect[1].replace(/Tipo\s*:?\s*.*/i, ''), 80);
+    cpe.grano.tipo = cleanString(granoDirect[2] || '', 80);
+  }
+  if (!cpe.grano.especie) {
+    const m = flat.match(/\b(Ma[ií]z|Soja|Trigo|Girasol|Sorgo|Cebada|Man[ií])\b(?:\s+([A-Za-zÁÉÍÓÚÑáéíóúñ0-9 /.-]{2,40}))?\s+(\d{4,6})\s+(\d{3,6})\s+(\d{3,6})/i);
+    if (m) {
+      cpe.grano.especie = cleanString(m[1], 80);
+      cpe.grano.tipo = cleanString(m[2] || m[1], 80);
+      cpe.grano.pesoBrutoKg = parseNumber(m[3]);
+      cpe.grano.pesoTaraKg = parseNumber(m[4]);
+      cpe.grano.pesoNetoKg = parseNumber(m[5]);
+    }
+  }
+
+  const pesos = flat.match(/Peso\s+Bruto\s*\(kg\)\s*:?\s*(\d{3,6}).{0,80}?Peso\s+Tara\s*\(kg\)\s*:?\s*(\d{3,6}).{0,80}?Peso\s+Neto\s*\(kg\)\s*:?\s*(\d{3,6})/i);
+  if (pesos) {
+    cpe.grano.pesoBrutoKg = cpe.grano.pesoBrutoKg ?? parseNumber(pesos[1]);
+    cpe.grano.pesoTaraKg = cpe.grano.pesoTaraKg ?? parseNumber(pesos[2]);
+    cpe.grano.pesoNetoKg = cpe.grano.pesoNetoKg ?? parseNumber(pesos[3]);
+  }
+
+  const proc = t.match(/C\s*-\s*PROCEDENCIA([\s\S]*?)(?:D\s*-\s*DESTINO|E\s*-\s*DATOS|$)/i);
+  if (proc) {
+    const p = proc[1];
+    cpe.procedencia.esCampo = /Es\s+un\s+campo\s*:?\s*Si/i.test(p) ? true : (/Es\s+un\s+campo\s*:?\s*No/i.test(p) ? false : null);
+    cpe.procedencia.localidad = firstRegex(p, /Localidad\s*:?\s*([^\n\r]+?)(?:\s+Provincia\s*:|$)/i, 1);
+    cpe.procedencia.provincia = firstRegex(p, /Provincia\s*:?\s*([^\n\r]+)/i, 1);
+    cpe.procedencia.direccion = firstRegex(p, /Direcci[oó]n\s*:?\s*([^\n\r]+)/i, 1);
+    cpe.procedencia.nroPlanta = firstRegex(p, /N[°º]?\s*Planta\s*:?\s*([A-Z0-9.-]+)/i, 1);
+  }
+
+  const dest = t.match(/D\s*-\s*DESTINO\s+DE\s+LA\s+MERCADER[IÍ]A([\s\S]*?)(?:E\s*-\s*DATOS|F\s*-\s*CONTINGENCIAS|$)/i);
+  if (dest) {
+    const d = dest[1];
+    cpe.destinoMercaderia.esCampo = /Es\s+un\s+campo\s*:?\s*Si/i.test(d) ? true : (/Es\s+un\s+campo\s*:?\s*No/i.test(d) ? false : null);
+    cpe.destinoMercaderia.nroPlanta = firstRegex(d, /N[°º]?\s*Planta\s*:?\s*([A-Z0-9.-]+)/i, 1);
+    cpe.destinoMercaderia.direccion = firstRegex(d, /Direcci[oó]n\s*:?\s*([^\n\r]+?)(?:\s+Localidad\s*:|$)/i, 1) || firstRegex(d, /\b([A-ZÁÉÍÓÚÑa-záéíóúñ. ]+\s+\d{1,6})\b/);
+    cpe.destinoMercaderia.localidad = firstRegex(d, /Localidad\s*:?\s*([^\n\r]+?)(?:\s+Provincia\s*:|$)/i, 1);
+    cpe.destinoMercaderia.provincia = firstRegex(d, /Provincia\s*:?\s*([^\n\r]+)/i, 1);
+  }
+
+  if (!cpe.procedencia.localidad) {
+    const m = flat.match(/Localidad\s*:?\s*([A-ZÁÉÍÓÚÑa-záéíóúñ ]{2,50})\s+Provincia\s*:?\s*([A-ZÁÉÍÓÚÑa-záéíóúñ ]{2,50})/i);
+    if (m) { cpe.procedencia.localidad = cleanString(m[1], 80); cpe.procedencia.provincia = cleanString(m[2], 80); }
+  }
+  if (!cpe.destinoMercaderia.localidad) {
+    const locs = [...flat.matchAll(/Localidad\s*:?\s*([A-ZÁÉÍÓÚÑa-záéíóúñ ]{2,50})\s+Provincia\s*:?\s*([A-ZÁÉÍÓÚÑa-záéíóúñ ]{2,50})/gi)];
+    if (locs[1]) { cpe.destinoMercaderia.localidad = cleanString(locs[1][1], 80); cpe.destinoMercaderia.provincia = cleanString(locs[1][2], 80); }
+  }
+
+  const dom = flat.match(/Dominios?\s*:?\s*([A-Z]{2,3}\d{3}[A-Z]{0,2}|[A-Z]{2}\d{3}[A-Z]{2}|[A-Z]{2}\d{2}[A-Z]{2,3}|[A-Z0-9]{6,8})\s*[-/]\s*([A-Z]{2,3}\d{3}[A-Z]{0,2}|[A-Z]{2}\d{3}[A-Z]{2}|[A-Z]{2}\d{2}[A-Z]{2,3}|[A-Z0-9]{6,8})/i);
+  if (dom) cpe.transporte.dominios = [normalizePatente(dom[1]), normalizePatente(dom[2])].filter(Boolean);
+  cpe.transporte.partida = firstRegex(flat, /Partida\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?)/i, 1);
+  cpe.transporte.kmsRecorrer = parseNumber(firstRegex(flat, /Kms?\.?(?:\s+a\s+recorrer)?\s*:?\s*(\d+(?:[\.,]\d+)?)/i, 1));
+  cpe.transporte.tarifaReferencia = parseNumber(firstRegex(flat, /Tarifa\s+de\s+Referencia\s*:?\s*(\d+(?:[\.,]\d+)?)/i, 1));
+  cpe.transporte.tarifa = parseNumber(firstRegex(flat, /(?:^|\s)Tarifa\s*:?\s*(\d+(?:[\.,]\d+)?)/i, 1));
+
+  cpe.descarga.fechaArribo = firstRegex(flat, /Fecha\s+Arribo\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?)/i, 1);
+  cpe.descarga.fechaDescarga = firstRegex(flat, /Fecha\s+Descarga\s*:?\s*(\d{1,2}\/\d{1,2}\/\d{4}\s+\d{1,2}:\d{2}(?::\d{2})?)/i, 1);
+
+  if (!cpe.nroCpe) {
+    const nums = [...flat.matchAll(/\b\d{5}\s*-\s*\d{8}\b/g)].map(x => x[0]);
+    if (nums.length) cpe.nroCpe = cleanString(nums[0].replace(/\s+/g, ''), 40);
+  }
+
+  return cpe;
+}
+
+async function extractCpeJsonFromImageWithOpenAI(file) {
+  const apiKey = String(process.env.OPENAI_API_KEY || process.env.ASISTO_OPENAI_API_KEY || '').trim();
+  if (!apiKey) return null;
+  const doFetch = globalThis.fetch || optionalRequire('node-fetch');
+  if (!doFetch) return null;
+  const model = String(process.env.OPENAI_CPE_MODEL || 'gpt-4o-mini').trim() || 'gpt-4o-mini';
+  const prompt = [
+    'Extraé los datos de esta Carta de Porte Electrónica Automotor argentina.',
+    'Devolvé exclusivamente JSON válido, sin markdown.',
+    'Usá estas claves: tipoDocumento, ctg, nroCpe, fecha, vencimiento, intervinientes, grano, procedencia, destinoMercaderia, transporte, descarga, observaciones.',
+    'En intervinientes usá objetos con cuit y razonSocial/nombre. En transporte.dominios devolvé un array de patentes.'
+  ].join(' ');
+
+  const payload = {
+    model,
+    temperature: 0,
+    response_format: { type: 'json_object' },
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        { type: 'image_url', image_url: { url: dataUrlFromFile(file), detail: 'high' } },
+      ],
+    }],
+  };
+
+  const r = await doFetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) {
+    const detail = await r.text().catch(() => '');
+    throw new Error('openai_vision_failed:' + detail.slice(0, 160));
+  }
+  const j = await r.json();
+  const content = String(j?.choices?.[0]?.message?.content || '').trim();
+  if (!content) return null;
+  return JSON.parse(content);
+}
+
+function normalizeParsedCpe(obj, rawText = '') {
+  const cpe = obj && typeof obj === 'object' ? obj : {};
+  const normalized = {
+    tipoDocumento: cleanString(cpe.tipoDocumento || cpe.tipo_documento || 'Carta de Porte Electrónica Automotor', 120),
+    ctg: onlyDigits(cpe.ctg || cpe.CTG || ''),
+    nroCpe: cleanString(cpe.nroCpe || cpe.nro_cpe || cpe.numeroCpe || cpe.numero_cpe || '', 60),
+    fecha: cleanString(cpe.fecha || '', 40),
+    vencimiento: cleanString(cpe.vencimiento || '', 60),
+    intervinientes: cpe.intervinientes || {},
+    grano: cpe.grano || {},
+    procedencia: cpe.procedencia || {},
+    destinoMercaderia: cpe.destinoMercaderia || cpe.destino_mercaderia || {},
+    transporte: cpe.transporte || {},
+    descarga: cpe.descarga || {},
+    observaciones: cleanString(cpe.observaciones || '', 1200),
+    rawTextPreview: cleanString(rawText || cpe.rawTextPreview || '', 3000),
+  };
+  if (normalized.transporte && Array.isArray(normalized.transporte.dominios)) {
+    normalized.transporte.dominios = normalized.transporte.dominios.map(normalizePatente).filter(Boolean);
+  }
+  return normalized;
+}
+
+function scoreTextMatch(haystack, needle, weight = 70) {
+  const h = normalizeLoose(haystack);
+  const n = normalizeLoose(needle);
+  if (!h || !n) return 0;
+  if (h === n) return weight;
+  if (h.includes(n) || n.includes(h)) return Math.max(40, Math.trunc(weight * 0.85));
+  const tokens = n.split(' ').filter(x => x.length > 2);
+  if (!tokens.length) return 0;
+  const matched = tokens.filter(tok => h.includes(tok)).length;
+  return Math.trunc(weight * (matched / tokens.length) * 0.75);
+}
+
+function matchStatus(score) {
+  if (score >= 70) return 'matched';
+  if (score >= 40) return 'candidate';
+  return 'not_found';
+}
+
+async function findBestCliente(db, tenantId, entities) {
+  const docs = await db.collection(COLLECTIONS.clientes).find({ tenantId, activo: { $ne: false } }).limit(1000).toArray();
+  let best = { score: 0, item: null, reason: '' };
+  const list = (entities || []).filter(Boolean);
+  for (const doc of docs) {
+    let score = 0;
+    let reason = '';
+    for (const ent of list) {
+      const entCuit = onlyDigits(ent.cuit || ent.CUIT || '');
+      const docCuit = onlyDigits(doc.cuit || '');
+      if (entCuit && docCuit && entCuit === docCuit) {
+        score = Math.max(score, 100); reason = 'cuit';
+      }
+      const nameScore = scoreTextMatch(doc.nombre, ent.razonSocial || ent.nombre || ent.razon_social, 82);
+      if (nameScore > score) { score = nameScore; reason = 'nombre'; }
+    }
+    if (score > best.score) best = { score, item: doc, reason };
+  }
+  return { status: matchStatus(best.score), score: best.score, reason: best.reason, item: best.item ? mapCliente(best.item) : null };
+}
+
+async function findBestLugar(db, tenantId, data) {
+  const docs = await db.collection(COLLECTIONS.lugares).find({ tenantId, activo: { $ne: false } }).limit(1000).toArray();
+  let best = { score: 0, item: null, reason: '' };
+  const targetName = [data?.nombre, data?.localidad, data?.provincia].filter(Boolean).join(' ');
+  for (const doc of docs) {
+    let score = 0;
+    score += scoreTextMatch(doc.localidad, data?.localidad, 45);
+    score += scoreTextMatch(doc.provincia, data?.provincia, 25);
+    score += scoreTextMatch(doc.direccion, data?.direccion, 25);
+    score = Math.max(score, scoreTextMatch(doc.nombre, targetName, 75));
+    score = Math.min(100, score);
+    if (score > best.score) best = { score, item: doc, reason: 'localidad/provincia' };
+  }
+  return { status: matchStatus(best.score), score: best.score, reason: best.reason, item: best.item ? mapLugar(best.item) : null };
+}
+
+async function findBestTipoCarga(db, tenantId, data) {
+  const docs = await db.collection(COLLECTIONS.tiposCarga).find({ tenantId, activo: { $ne: false } }).limit(1000).toArray();
+  const target = [data?.especie, data?.tipo, data?.nombre].filter(Boolean).join(' ');
+  let best = { score: 0, item: null, reason: '' };
+  for (const doc of docs) {
+    const score = Math.max(
+      scoreTextMatch(doc.nombre, target, 92),
+      scoreTextMatch(doc.descripcion, target, 65),
+      scoreTextMatch(doc.unidad, target, 25)
+    );
+    if (score > best.score) best = { score, item: doc, reason: 'tipo_carga' };
+  }
+  return { status: matchStatus(best.score), score: best.score, reason: best.reason, item: best.item ? mapTipoCarga(best.item) : null };
+}
+
+async function findBestChasis(db, tenantId, dominios, chofer) {
+  const docs = await db.collection(COLLECTIONS.chasis).find({ tenantId, activo: { $ne: false } }).limit(1000).toArray();
+  const plates = (dominios || []).map(normalizePatente).filter(Boolean);
+  let best = { score: 0, item: null, reason: '' };
+  for (const doc of docs) {
+    let score = 0;
+    let reason = '';
+    const ch = normalizePatente(doc.patenteChasis);
+    const tr = normalizePatente(doc.patenteTractor);
+    if (plates.includes(ch)) { score = 100; reason = 'patente_chasis'; }
+    else if (plates.includes(tr)) { score = 92; reason = 'patente_tractor'; }
+    const choferScore = Math.max(
+      scoreTextMatch(doc.chofer?.nombre, chofer?.nombre || chofer?.razonSocial, 55),
+      onlyDigits(doc.chofer?.documento) && onlyDigits(chofer?.cuit) && onlyDigits(chofer?.cuit).endsWith(onlyDigits(doc.chofer?.documento)) ? 50 : 0
+    );
+    if (choferScore > score) { score = choferScore; reason = 'chofer'; }
+    if (score > best.score) best = { score, item: doc, reason };
+  }
+  return { status: matchStatus(best.score), score: best.score, reason: best.reason, item: best.item ? mapChasis(best.item) : null };
+}
+
+function buildCpeObservaciones(cpe) {
+  const parts = [];
+  if (cpe?.ctg) parts.push('CTG: ' + cpe.ctg);
+  if (cpe?.nroCpe) parts.push('CPE: ' + cpe.nroCpe);
+  if (cpe?.grano?.pesoNetoKg) parts.push('Peso neto: ' + cpe.grano.pesoNetoKg + ' kg');
+  if (cpe?.observaciones) parts.push('Obs. CPE: ' + cpe.observaciones);
+  return parts.join(' | ');
+}
+
+function dateFromCpe(cpe) {
+  const raw = String(cpe?.transporte?.partida || cpe?.fecha || '').trim();
+  const m = raw.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (!m) return '';
+  return `${m[3]}-${String(m[2]).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`;
+}
+
+async function validateCpeAgainstFleteros(db, tenantId, cpe) {
+  const inter = cpe?.intervinientes || {};
+  const clienteEntities = [inter.destinatario, inter.destino, inter.fletePagador, inter.titularCartaPorte, ...(Array.isArray(inter.todos) ? inter.todos.slice(0, 6) : [])].filter(Boolean);
+  const [cliente, origen, destino, tipoCarga, chasis] = await Promise.all([
+    findBestCliente(db, tenantId, clienteEntities),
+    findBestLugar(db, tenantId, cpe?.procedencia || {}),
+    findBestLugar(db, tenantId, cpe?.destinoMercaderia || {}),
+    findBestTipoCarga(db, tenantId, cpe?.grano || {}),
+    findBestChasis(db, tenantId, cpe?.transporte?.dominios || [], inter.chofer || {}),
+  ]);
+
+  const warnings = [];
+  if (cliente.status !== 'matched') warnings.push('No se encontró cliente exacto por CUIT o razón social.');
+  if (origen.status !== 'matched') warnings.push('No se encontró origen exacto por localidad/provincia/dirección.');
+  if (destino.status !== 'matched') warnings.push('No se encontró destino exacto por localidad/provincia/dirección.');
+  if (tipoCarga.status !== 'matched') warnings.push('No se encontró tipo de carga exacto para ' + (cpe?.grano?.especie || 'la especie informada') + '.');
+  if (chasis.status !== 'matched') warnings.push('No se encontró chasis exacto por patente. Dominios detectados: ' + ((cpe?.transporte?.dominios || []).join(' - ') || 'sin datos'));
+  if (cpe?.grano?.pesoNetoKg && cpe?.descarga?.pesoNetoKg && cpe.grano.pesoNetoKg !== cpe.descarga.pesoNetoKg) {
+    warnings.push('El peso neto de carga y descarga difieren.');
+  }
+
+  const matches = { cliente, origen, destino, tipoCarga, chasis };
+  const formPatch = {
+    clienteId: cliente.status === 'matched' && cliente.item ? cliente.item.id : '',
+    origenId: origen.status === 'matched' && origen.item ? origen.item.id : '',
+    destinoId: destino.status === 'matched' && destino.item ? destino.item.id : '',
+    tipoCargaId: tipoCarga.status === 'matched' && tipoCarga.item ? tipoCarga.item.id : '',
+    chasisId: chasis.status === 'matched' && chasis.item ? chasis.item.id : '',
+    fechaViaje: dateFromCpe(cpe),
+    observaciones: buildCpeObservaciones(cpe),
+    cpe: {
+      ctg: cpe?.ctg || '',
+      nroCpe: cpe?.nroCpe || '',
+      fecha: cpe?.fecha || '',
+      vencimiento: cpe?.vencimiento || '',
+      pesoNetoKg: cpe?.grano?.pesoNetoKg || null,
+      dominios: cpe?.transporte?.dominios || [],
+    },
+  };
+  return { matches, warnings, formPatch };
+}
+
+function normalizeCpeBody(cpe) {
+  if (!cpe || typeof cpe !== 'object') return null;
+  return {
+    ctg: cleanString(cpe.ctg, 40),
+    nroCpe: cleanString(cpe.nroCpe || cpe.nro_cpe, 60),
+    fecha: cleanString(cpe.fecha, 40),
+    vencimiento: cleanString(cpe.vencimiento, 60),
+    pesoNetoKg: parseNumber(cpe.pesoNetoKg),
+    dominios: Array.isArray(cpe.dominios) ? cpe.dominios.map(normalizePatente).filter(Boolean) : [],
+    raw: cpe.raw && typeof cpe.raw === 'object' ? cpe.raw : undefined,
+  };
 }
 
 function buildDemoDocs(tenantId = DEFAULT_TENANT_ID) {
@@ -333,6 +844,10 @@ async function ensureFleterosIndexes(db) {
     db.collection(COLLECTIONS.viajes).createIndex({ tenantId: 1, createdAt: -1 }),
     db.collection(COLLECTIONS.viajes).createIndex({ tenantId: 1, fechaViaje: -1, createdAt: -1 }),
     db.collection(COLLECTIONS.viajes).createIndex({ tenantId: 1, chasisId: 1, createdAt: -1 }),
+    db.collection(COLLECTIONS.viajes).createIndex({ tenantId: 1, 'cpe.ctg': 1 }),
+    db.collection(COLLECTIONS.viajes).createIndex({ tenantId: 1, 'cpe.nroCpe': 1 }),
+    db.collection(COLLECTIONS.cpeImports).createIndex({ tenantId: 1, createdAt: -1 }),
+    db.collection(COLLECTIONS.cpeImports).createIndex({ tenantId: 1, ctg: 1 }),
   ]);
 }
 
@@ -456,6 +971,8 @@ function mapViaje(doc) {
     choferNombre: doc.choferNombre || '',
     fechaViaje: doc.fechaViaje || '',
     observaciones: doc.observaciones || '',
+    cpe: doc.cpe || null,
+    cpeImportId: doc.cpeImportId ? String(doc.cpeImportId) : '',
     estado: doc.estado || 'REGISTRADO',
     snapshot: doc.snapshot || null,
     createdAt: dateToPublic(doc.createdAt),
@@ -513,6 +1030,8 @@ function buildViajeSearchFilter(tenantId, q) {
 
 function buildViajeDoc({ tenantId, body, cliente, origen, destino, tipoCarga, chasis, user }) {
   const at = now();
+  const cpe = normalizeCpeBody(body.cpe || body.cpeData || null);
+  const cpeImportId = cleanString(body.cpeImportId, 80);
   return {
     tenantId,
     clienteId: String(cliente._id),
@@ -532,6 +1051,8 @@ function buildViajeDoc({ tenantId, body, cliente, origen, destino, tipoCarga, ch
     choferNombre: String(chasis.chofer?.nombre || ''),
     fechaViaje: cleanString(body.fechaViaje, 20) || null,
     observaciones: cleanString(body.observaciones, 1000),
+    cpe,
+    cpeImportId: ObjectId.isValid(cpeImportId) ? new ObjectId(cpeImportId) : null,
     estado: 'REGISTRADO',
     source: 'panel_fleteros_mobile',
     payloadApiPendiente: {
@@ -545,6 +1066,8 @@ function buildViajeDoc({ tenantId, body, cliente, origen, destino, tipoCarga, ch
       choferId: String(chasis.chofer?.id || ''),
       fechaViaje: cleanString(body.fechaViaje, 20) || null,
       observaciones: cleanString(body.observaciones, 1000),
+      cpe,
+      cpeImportId,
       tenantId,
     },
     snapshot: {
@@ -649,6 +1172,15 @@ function panelHtml({ tenantId, user }) {
     .btn:disabled{opacity:.55;cursor:not-allowed;box-shadow:none}
     .btn2{border:1px solid rgba(148,163,184,.35);background:#fff;color:#0f172a;border-radius:14px;padding:10px 12px;font-weight:750;cursor:pointer}
     .hint{color:var(--muted);font-size:12px;line-height:1.35;margin-top:8px}
+    .fileBox{border:1px dashed rgba(14,107,102,.40);border-radius:16px;background:#f0fdfa;padding:12px;margin-top:8px}
+    .fileBox input{background:#fff}
+    .cpePanel{display:none;margin-top:10px;border-radius:16px;border:1px solid rgba(14,107,102,.18);background:#f8fafc;padding:12px;font-size:13px;line-height:1.42}
+    .cpePanel.show{display:block}
+    .cpePanel h3{margin:0 0 8px;font-size:14px;color:#0f172a}
+    .cpeGrid{display:grid;grid-template-columns:1fr;gap:8px}
+    .cpeLine{background:#fff;border:1px solid rgba(148,163,184,.24);border-radius:12px;padding:9px}
+    .cpeLine small{display:block;color:var(--muted);font-size:11px;margin-bottom:2px}
+    .cpeWarn{margin-top:8px;padding:9px;border-radius:12px;background:#fff7ed;color:#9a3412;border:1px solid rgba(194,65,12,.20)}
     .toast{position:fixed;left:12px;right:12px;bottom:12px;z-index:50;padding:13px 14px;border-radius:16px;box-shadow:0 18px 48px rgba(16,24,40,.22);font-weight:750;display:none}
     .toast.show{display:block}
     .toast.ok{background:#ecfdf3;color:#027a48;border:1px solid rgba(2,122,72,.22)}
@@ -669,7 +1201,7 @@ function panelHtml({ tenantId, user }) {
     .toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:10px}
     .toolbar a{color:#fff;text-decoration:none;font-size:12px;opacity:.9}
     @media (min-width:680px){
-      .wrap{padding-top:18px}.row{grid-template-columns:1fr 1fr}.top h1{font-size:24px}.card{padding:18px}.grid2{grid-template-columns:repeat(4,1fr)}.miniActions{grid-template-columns:1fr 1fr}
+      .wrap{padding-top:18px}.row{grid-template-columns:1fr 1fr}.top h1{font-size:24px}.card{padding:18px}.grid2{grid-template-columns:repeat(4,1fr)}.miniActions{grid-template-columns:1fr 1fr}.cpeGrid{grid-template-columns:repeat(2,1fr)}
     }
   </style>
 </head>
@@ -687,6 +1219,20 @@ function panelHtml({ tenantId, user }) {
       <span id="editBannerText">Editando viaje cargado.</span>
       <button id="btnCancelEdit" class="btn2" type="button">Nuevo viaje</button>
     </div>
+
+    <section class="card">
+      <div class="sectionTitle"><h2>Leer Carta de Porte</h2><span class="step">CPE</span></div>
+      <div class="fileBox">
+        <label>Subí una foto o PDF de la carta de porte</label>
+        <input id="cpeFile" type="file" accept="application/pdf,image/*,.pdf,.jpg,.jpeg,.png,.webp"/>
+        <div class="miniActions">
+          <button id="btnParseCpe" class="btn2" type="button">Leer y completar</button>
+          <button id="btnClearCpe" class="btn2" type="button">Quitar carta</button>
+        </div>
+        <div class="hint">El sistema extrae CTG, CPE, cliente, origen, destino, tipo de carga, patentes y chofer. Luego valida coincidencias contra los datos cargados del dominio.</div>
+      </div>
+      <div id="cpePanel" class="cpePanel"></div>
+    </section>
 
     <section class="card">
       
@@ -777,7 +1323,7 @@ function panelHtml({ tenantId, user }) {
 
   <script>
   (function(){
-    const state = { cliente:null, origen:null, destino:null, tipoCarga:null, chasis:null, editingId:null };
+    const state = { cliente:null, origen:null, destino:null, tipoCarga:null, chasis:null, editingId:null, cpe:null, cpeImportId:null };
     const typeToState = { 'clientes':'cliente', 'origen':'origen', 'destino':'destino', 'tipos-carga':'tipoCarga', 'chasis':'chasis' };
     const typeToApi = { 'clientes':'clientes', 'origen':'lugares', 'destino':'lugares', 'tipos-carga':'tipos-carga', 'chasis':'chasis' };
     const debounceTimers = {};
@@ -904,6 +1450,101 @@ function panelHtml({ tenantId, user }) {
       input.addEventListener('focus', function(){ if (trim(input.value)) search(type, input.value).catch(function(){}); });
     }
 
+
+    function renderCpePanel(result){
+      const panel = el('cpePanel');
+      if (!panel) return;
+      if (!result) { panel.className = 'cpePanel'; panel.innerHTML = ''; return; }
+      const cpe = result.extracted || {};
+      const matches = result.matches || {};
+      function matchLabel(m){
+        if (!m) return 'Sin validar';
+        const status = m.status === 'matched' ? 'Coincide' : (m.status === 'candidate' ? 'Posible coincidencia' : 'No encontrado');
+        const item = m.item && (m.item.label || m.item.nombre || m.item.patenteChasis) ? ' · ' + (m.item.label || m.item.nombre || m.item.patenteChasis) : '';
+        return status + item;
+      }
+      const lines = [
+        ['CTG / CPE', [cpe.ctg || '-', cpe.nroCpe || '-'].join(' · ')],
+        ['Cliente', matchLabel(matches.cliente)],
+        ['Origen', matchLabel(matches.origen)],
+        ['Destino', matchLabel(matches.destino)],
+        ['Tipo de carga', matchLabel(matches.tipoCarga)],
+        ['Chasis / dominios', matchLabel(matches.chasis)],
+      ];
+      const warnings = (result.warnings || []).map(function(w){ return '<div>• ' + esc(w) + '</div>'; }).join('');
+      panel.className = 'cpePanel show';
+      panel.innerHTML = '<h3>Carta de porte interpretada</h3><div class="cpeGrid">' +
+        lines.map(function(row){ return '<div class="cpeLine"><small>' + esc(row[0]) + '</small><b>' + esc(row[1]) + '</b></div>'; }).join('') +
+        '</div>' + (warnings ? '<div class="cpeWarn"><b>Revisar:</b>' + warnings + '</div>' : '<div class="hint">Todos los datos principales tuvieron coincidencia.</div>');
+    }
+
+    function applyCpeResult(result){
+      if (!result || !result.ok) return;
+      state.cpe = result.formPatch && result.formPatch.cpe ? result.formPatch.cpe : null;
+      state.cpeImportId = result.cpeImportId || null;
+      renderCpePanel(result);
+      const m = result.matches || {};
+      if (m.cliente && m.cliente.status === 'matched' && m.cliente.item) setSelected('clientes', m.cliente.item);
+      if (m.origen && m.origen.status === 'matched' && m.origen.item) setSelected('origen', m.origen.item);
+      if (m.destino && m.destino.status === 'matched' && m.destino.item) setSelected('destino', m.destino.item);
+      if (m.tipoCarga && m.tipoCarga.status === 'matched' && m.tipoCarga.item) setSelected('tipos-carga', m.tipoCarga.item);
+      if (m.chasis && m.chasis.status === 'matched' && m.chasis.item) setSelected('chasis', m.chasis.item);
+
+      const patch = result.formPatch || {};
+      if (patch.fechaViaje) el('fechaViaje').value = patch.fechaViaje;
+      if (patch.observaciones) {
+        const prev = trim(el('observaciones').value);
+        el('observaciones').value = prev ? (prev + '\n' + patch.observaciones) : patch.observaciones;
+      }
+
+      const ex = result.extracted || {};
+      if ((!m.origen || m.origen.status !== 'matched') && ex.procedencia) {
+        el('origenInput').value = [ex.procedencia.localidad, ex.procedencia.provincia].filter(Boolean).join(' - ');
+      }
+      if ((!m.destino || m.destino.status !== 'matched') && ex.destinoMercaderia) {
+        el('destinoInput').value = [ex.destinoMercaderia.localidad, ex.destinoMercaderia.provincia].filter(Boolean).join(' - ');
+      }
+      if ((!m.tipoCarga || m.tipoCarga.status !== 'matched') && ex.grano) {
+        el('tipos-cargaInput').value = [ex.grano.especie, ex.grano.tipo].filter(Boolean).join(' ');
+      }
+      if ((!m.chasis || m.chasis.status !== 'matched') && ex.transporte && Array.isArray(ex.transporte.dominios)) {
+        el('chasisInput').value = ex.transporte.dominios.join(' - ');
+      }
+      validate();
+    }
+
+    async function parseCpe(){
+      const fileInput = el('cpeFile');
+      const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+      if (!file) { toast('Seleccioná una foto o PDF de la carta de porte', false); return; }
+      const btn = el('btnParseCpe');
+      btn.disabled = true;
+      const old = btn.textContent;
+      btn.textContent = 'Leyendo...';
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const r = await fetch('/api/fleteros/cpe/parse', { method:'POST', body: fd, headers:{ 'Accept':'application/json' } });
+        const j = await r.json().catch(function(){ return {}; });
+        if (!r.ok || !j.ok) throw new Error(j.error || 'cpe_parse_failed');
+        applyCpeResult(j);
+        toast('Carta de porte leída. Revisá las coincidencias antes de guardar.', true);
+      } catch(e) {
+        toast('No se pudo leer la carta de porte: ' + (e.message || 'error'), false);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = old;
+      }
+    }
+
+    function clearCpe(){
+      state.cpe = null;
+      state.cpeImportId = null;
+      const input = el('cpeFile');
+      if (input) input.value = '';
+      renderCpePanel(null);
+    }
+
     function tripRefFromSnapshot(trip, key, fallback){
       if (trip && trip.snapshot && trip.snapshot[key]) return trip.snapshot[key];
       return fallback;
@@ -942,6 +1583,9 @@ function panelHtml({ tenantId, user }) {
       setSelected('chasis', chasis);
       el('fechaViaje').value = trip.fechaViaje || todayIso();
       el('observaciones').value = trip.observaciones || '';
+      state.cpe = trip.cpe || null;
+      state.cpeImportId = trip.cpeImportId || null;
+      if (trip.cpe) renderCpePanel({ ok:true, extracted:{ ctg: trip.cpe.ctg, nroCpe: trip.cpe.nroCpe }, matches:{}, warnings:[], formPatch:{ cpe: trip.cpe } });
       el('tripsPanel').className = 'tripsPanel';
       updateEditUi();
       validate();
@@ -1007,6 +1651,7 @@ function panelHtml({ tenantId, user }) {
       state.tipoCarga = null;
       state.chasis = null;
       state.editingId = null;
+      clearCpe();
       ['clientes','origen','destino','tipos-carga','chasis'].forEach(function(type){
         const input = el(type + 'Input');
         if (input) input.value = '';
@@ -1033,7 +1678,9 @@ function panelHtml({ tenantId, user }) {
           tipoCargaId: state.tipoCarga.id,
           chasisId: state.chasis.id,
           fechaViaje: el('fechaViaje').value || '',
-          observaciones: el('observaciones').value || ''
+          observaciones: el('observaciones').value || '',
+          cpe: state.cpe,
+          cpeImportId: state.cpeImportId
         };
         const isEdit = !!state.editingId;
         const r = await fetch(isEdit ? ('/api/fleteros/viajes/' + encodeURIComponent(state.editingId)) : '/api/fleteros/viajes', {
@@ -1062,6 +1709,8 @@ function panelHtml({ tenantId, user }) {
     }
 
     ['clientes','origen','destino','tipos-carga','chasis'].forEach(bindAutocomplete);
+    el('btnParseCpe').addEventListener('click', parseCpe);
+    el('btnClearCpe').addEventListener('click', clearCpe);
     el('btnToggleTrips').addEventListener('click', toggleTrips);
     el('tripSearchInput').addEventListener('input', function(){
       clearTimeout(debounceTimers.__trips);
@@ -1083,6 +1732,7 @@ function panelHtml({ tenantId, user }) {
 function mountFleterosViajesPanel(app, { auth } = {}) {
   if (!app) throw new Error('express_app_required');
   const requireAuth = requireAuthMiddleware(auth);
+  const maybeUploadCpe = makeMaybeFileUploadMiddleware();
 
   app.get('/admin/fleteros/viajes', requireAuth, async (req, res) => {
     try {
@@ -1147,6 +1797,81 @@ function mountFleterosViajesPanel(app, { auth } = {}) {
       res.json({ ok: true, ...status });
     } catch (e) {
       console.error('GET /api/fleteros/status error:', e);
+      res.status(500).json({ ok: false, error: 'internal' });
+    }
+  });
+
+  app.post('/api/fleteros/cpe/parse', requireAuth, maybeUploadCpe, async (req, res) => {
+    try {
+      const tenantId = resolveTenantId(req, auth);
+      const file = getUploadedCpeFile(req);
+      if (!file || !file.buffer || !file.buffer.length) {
+        return res.status(400).json({ ok: false, error: 'missing_file' });
+      }
+      if (file.size > 15 * 1024 * 1024) {
+        return res.status(413).json({ ok: false, error: 'file_too_large' });
+      }
+
+      const mime = String(file.mimeType || '').toLowerCase();
+      const name = String(file.name || '').toLowerCase();
+      let rawText = '';
+      let extracted = null;
+      let parser = 'text';
+
+      if (mime.includes('pdf') || name.endsWith('.pdf')) {
+        parser = 'pdf';
+        rawText = await extractPdfText(file.buffer);
+        if (!rawText || rawText.length < 20) {
+          return res.status(422).json({ ok: false, error: 'pdf_text_not_found', detail: 'El PDF no tiene texto legible. Probá con una imagen clara o instalá pdf-parse.' });
+        }
+        extracted = parseCpeText(rawText);
+      } else if (mime.startsWith('image/') || /\.(jpg|jpeg|png|webp)$/i.test(name)) {
+        parser = 'openai_vision';
+        const imageJson = await extractCpeJsonFromImageWithOpenAI(file);
+        if (!imageJson) {
+          return res.status(422).json({ ok: false, error: 'image_parser_not_configured', detail: 'Para leer fotos configurá OPENAI_API_KEY o subí un PDF con texto.' });
+        }
+        extracted = normalizeParsedCpe(imageJson, '');
+      } else {
+        return res.status(400).json({ ok: false, error: 'unsupported_file_type' });
+      }
+
+      extracted = normalizeParsedCpe(extracted, rawText);
+      const db = await getDb();
+      await ensureFleterosIndexes(db).catch(() => {});
+      const validation = await validateCpeAgainstFleteros(db, tenantId, extracted);
+
+      const importDoc = {
+        tenantId,
+        fileName: cleanString(file.name, 180),
+        mimeType: cleanString(file.mimeType, 120),
+        size: Number(file.size || file.buffer.length || 0),
+        parser,
+        ctg: extracted.ctg || '',
+        nroCpe: extracted.nroCpe || '',
+        extracted,
+        matches: validation.matches,
+        warnings: validation.warnings,
+        createdBy: {
+          uid: String(req.user?.uid || ''),
+          username: String(req.user?.username || ''),
+          role: String(req.user?.role || ''),
+        },
+        createdAt: now(),
+      };
+      const r = await db.collection(COLLECTIONS.cpeImports).insertOne(importDoc);
+
+      res.json({
+        ok: true,
+        tenantId,
+        cpeImportId: String(r.insertedId || ''),
+        extracted,
+        ...validation,
+      });
+    } catch (e) {
+      console.error('POST /api/fleteros/cpe/parse error:', e);
+      const msg = String(e?.message || e || '');
+      if (msg.startsWith('openai_vision_failed')) return res.status(502).json({ ok: false, error: 'openai_vision_failed' });
       res.status(500).json({ ok: false, error: 'internal' });
     }
   });
@@ -1294,6 +2019,8 @@ module.exports = {
   buildDemoDocs,
   seedFleterosDemoData,
   getFleterosBaseDataStatus,
+  parseCpeText,
+  validateCpeAgainstFleteros,
   mountFleterosViajesPanel,
 };
 
