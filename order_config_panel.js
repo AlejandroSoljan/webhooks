@@ -88,6 +88,19 @@ const MESSAGE_FIELDS = [
   ["fallbackReady", "Pedido completo / fallback"],
 ];
 
+const FINALIZATION_FIELDS = [
+  [
+    "postCompletionReuseMinutes",
+    "Minutos para mantener la misma conversación después de confirmar",
+    "0 mantiene el comportamiento actual. Si cargás 10, 15, 30, etc., los mensajes posteriores al pedido confirmado quedan dentro de la misma conversación durante ese tiempo."
+  ],
+  [
+    "politeFollowupReply",
+    "Respuesta para agradecimientos o cierres después de confirmar",
+    "Se usa si el cliente responde algo corto como gracias, ok, listo, 👍 después de que el pedido ya quedó confirmado."
+  ],
+];
+
 function renderOrderConfigPanel({ tenant, config, user }) {
   const cfg = normalizeOrderConfig(config || {}, tenant);
   const defaults = normalizeOrderConfig(DEFAULT_ORDER_CONFIG, tenant);
@@ -122,6 +135,19 @@ function renderOrderConfigPanel({ tenant, config, user }) {
     </label>
   `).join("");
 
+  const finalizationRows = FINALIZATION_FIELDS.map(([key, label, desc]) => {
+    const value = cfg.finalizationPolicy?.[key] ?? defaults.finalizationPolicy?.[key] ?? "";
+    const type = key === "postCompletionReuseMinutes" ? "number" : "text";
+    const attrs = key === "postCompletionReuseMinutes" ? 'min="0" max="1440" step="1"' : "";
+    return `
+      <label class="field">
+        <span>${htmlEscape(label)}</span>
+        <input type="${type}" ${attrs} data-finalization="${htmlEscape(key)}" value="${htmlEscape(value)}" />
+        <small>${htmlEscape(desc)}</small>
+      </label>
+    `;
+  }).join("");
+
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -133,7 +159,7 @@ function renderOrderConfigPanel({ tenant, config, user }) {
     *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;background:#f3f6f8;color:var(--text)}
     .wrap{max-width:1180px;margin:0 auto;padding:20px}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
     h1{margin:0;font-size:24px}.muted{color:var(--muted);font-size:13px;margin:6px 0 0;line-height:1.45}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.tenantBox{display:flex;gap:8px;align-items:center;background:#fff;border:1px solid var(--border);border-radius:14px;padding:8px 10px}.tenantBox input{width:180px;border:1px solid var(--border);border-radius:10px;padding:8px}.btn{border:0;background:var(--primary);color:#fff;border-radius:12px;padding:10px 13px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.btn.secondary{background:#fff;color:var(--text);border:1px solid var(--border)}.btn.danger{background:#fff;color:var(--danger);border:1px solid rgba(180,35,24,.25)}
-    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.card{background:#fff;border:1px solid var(--border);border-radius:18px;padding:16px;box-shadow:0 10px 22px rgba(15,23,42,.05)}.card h3{margin:0 0 4px;font-size:17px}.checks{display:flex;flex-direction:column;gap:10px;margin-top:12px}.checkRow{display:flex;gap:10px;align-items:flex-start;padding:10px;border:1px solid var(--border);border-radius:14px;background:var(--soft)}.checkRow input{width:18px;height:18px;margin-top:2px}.checkRow span{display:flex;flex-direction:column;gap:3px}.checkRow small{color:var(--muted);font-size:12px;line-height:1.35}.wide{grid-column:1/-1}.messages{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.field{display:flex;flex-direction:column;gap:6px}.field span{font-size:13px;color:#475467;font-weight:650}.field input{border:1px solid var(--border);border-radius:12px;padding:10px;font-size:14px}.notice{border:1px solid rgba(14,107,102,.2);background:rgba(14,107,102,.07);border-radius:14px;padding:12px;margin-bottom:14px;color:#134e4a;font-size:13px}.status{font-size:13px;color:var(--muted);min-height:20px}.jsonBox{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;background:#0b1726;color:#d1fae5;border-radius:14px;padding:12px;max-height:260px;overflow:auto;font-size:12px}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}.card{background:#fff;border:1px solid var(--border);border-radius:18px;padding:16px;box-shadow:0 10px 22px rgba(15,23,42,.05)}.card h3{margin:0 0 4px;font-size:17px}.checks{display:flex;flex-direction:column;gap:10px;margin-top:12px}.checkRow{display:flex;gap:10px;align-items:flex-start;padding:10px;border:1px solid var(--border);border-radius:14px;background:var(--soft)}.checkRow input{width:18px;height:18px;margin-top:2px}.checkRow span{display:flex;flex-direction:column;gap:3px}.checkRow small{color:var(--muted);font-size:12px;line-height:1.35}.wide{grid-column:1/-1}.messages{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.field{display:flex;flex-direction:column;gap:6px}.field span{font-size:13px;color:#475467;font-weight:650}.field input{border:1px solid var(--border);border-radius:12px;padding:10px;font-size:14px}.field small{color:var(--muted);font-size:12px;line-height:1.35}.notice{border:1px solid rgba(14,107,102,.2);background:rgba(14,107,102,.07);border-radius:14px;padding:12px;margin-bottom:14px;color:#134e4a;font-size:13px}.status{font-size:13px;color:var(--muted);min-height:20px}.jsonBox{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;background:#0b1726;color:#d1fae5;border-radius:14px;padding:12px;max-height:260px;overflow:auto;font-size:12px}
     @media(max-width:760px){.wrap{padding:12px}.grid,.messages{grid-template-columns:1fr}.tenantBox{width:100%;align-items:stretch;flex-direction:column}.tenantBox input{width:100%}.toolbar{width:100%}.btn{flex:1}.card{border-radius:14px;padding:12px}}
   </style>
 </head>
@@ -177,6 +203,11 @@ function renderOrderConfigPanel({ tenant, config, user }) {
         <div class="messages">${messageRows}</div>
       </section>
       <section class="card wide">
+        <h3>Post-confirmación</h3>
+        <p class="muted">Controla qué pasa cuando el cliente escribe después de que el pedido quedó confirmado. Sirve para evitar que un “gracias” abra automáticamente una conversación nueva.</p>
+        <div class="messages">${finalizationRows}</div>
+      </section>
+      <section class="card wide">
         <h3>Vista JSON</h3>
         <p class="muted">Referencia técnica de lo que se va a guardar.</p>
         <pre id="jsonPreview" class="jsonBox"></pre>
@@ -201,6 +232,17 @@ function collect(){
     const v = String(el.value || "").trim();
     cfg.messages[el.dataset.message] = v || DEFAULTS.messages[el.dataset.message] || "";
   });
+  cfg.finalizationPolicy ||= {};
+  document.querySelectorAll("[data-finalization]").forEach(el => {
+    const key = el.dataset.finalization;
+    if (key === "postCompletionReuseMinutes") {
+      const n = Number(el.value);
+      cfg.finalizationPolicy[key] = Number.isFinite(n) ? Math.max(0, Math.min(1440, Math.trunc(n))) : 0;
+    } else {
+      const v = String(el.value || "").trim();
+      cfg.finalizationPolicy[key] = v || DEFAULTS.finalizationPolicy?.[key] || "";
+    }
+  });
   return cfg;
 }
 function paint(cfg){
@@ -210,6 +252,7 @@ function paint(cfg){
   document.querySelectorAll("[data-feature]").forEach(el => { el.checked = current.features?.[el.dataset.feature] !== false; });
   document.querySelectorAll("[data-required]").forEach(el => { el.checked = current.requiredFields?.[el.dataset.required] !== false; });
   document.querySelectorAll("[data-message]").forEach(el => { el.value = current.messages?.[el.dataset.message] || DEFAULTS.messages?.[el.dataset.message] || ""; });
+  document.querySelectorAll("[data-finalization]").forEach(el => { el.value = current.finalizationPolicy?.[el.dataset.finalization] ?? DEFAULTS.finalizationPolicy?.[el.dataset.finalization] ?? ""; });
   updatePreview();
 }
 function updatePreview(){ preview.textContent = JSON.stringify(collect(), null, 2); }

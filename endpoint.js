@@ -93,7 +93,14 @@ const { mountWebAccessRoutes } = require("./web_access_stats");
 const { mountTokenControlRoutes } = require("./token_control_stats");
 const { mountFleterosViajesPanel } = require("./fleteros_viajes_panel");
 const { mountOrderConfigPanel } = require("./order_config_panel");
-const { loadOrderConfig, orderFeatureEnabled, orderRequiredEnabled, orderMessage } = require("./order_config");
+const {
+  loadOrderConfig,
+  orderFeatureEnabled,
+  orderRequiredEnabled,
+  orderMessage,
+  orderPostCompletionReuseMinutes,
+  orderPoliteFollowupReply,
+} = require("./order_config");
 // Servir assets estáticos locales (logo.png)
 // Servir assets estáticos:
 // 1) Logos del slider en /static/clientes -> <proyecto>/static/clientes
@@ -962,25 +969,89 @@ async function saveLog(entry) {
  
 // ================== Persistencia de conversaciones y mensajes ==================
 // ================== Persistencia de conversaciones y mensajes ==================
-async function upsertConversation(waId, init = {}, tenantId) {
+function findOneAndUpdateDoc(result) {
+  if (!result) return null;
+  if (result.value) return result.value;
+  if (result._id) return result;
+  return null;
+}
+
+function recentCompletedWindowCutoff(minutes) {
+  const n = Number(minutes);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return new Date(Date.now() - Math.min(1440, Math.trunc(n)) * 60 * 1000);
+}
+
+function conversationIsRecentlyCompleted(conv, minutes) {
+  const cutoff = recentCompletedWindowCutoff(minutes);
+  if (!conv || !cutoff) return false;
+  const status = String(conv.status || conv.pedidoEstado || "").trim().toUpperCase();
+  if (status !== "COMPLETED") return false;
+  const closedMs = Date.parse(conv.closedAt || conv.updatedAt || "");
+  return Number.isFinite(closedMs) && closedMs >= cutoff.getTime();
+}
+
+async function upsertConversation(waId, init = {}, tenantId, options = {}) {
   const db = await getDb();
   const now = new Date();
   const tenant = String(tenantId || TENANT_ID || DEFAULT_TENANT_ID || "default");
+  const reuseCompletedWithinMinutes = Math.max(0, Math.min(1440, Number(options.reuseCompletedWithinMinutes || 0)));
 
-   // 👉 Solo conversaciones abiertas: si la última está finalizada/cancelada, se creará un registro nuevo
+   // 👉 Primero reutilizamos conversaciones abiertas.
   const filter = { waId: String(waId), tenantId: tenant, finalized: { $ne: true }, status: { $nin: ["COMPLETED", "CANCELLED"] } };
   const update = {
     $setOnInsert: { createdAt: now, openedAt: now, status: "OPEN", manualOpen: false },
    
     $set: { updatedAt: now, ...init },
   };
-  // Para driver moderno
+
+
+  const openRes = await db.collection("conversations").findOneAndUpdate(
+    filter,
+    { $set: { updatedAt: now, ...init } },
+    { upsert: false, returnDocument: "after", sort: { updatedAt: -1, openedAt: -1, createdAt: -1 } }
+  );
+  const openDoc = findOneAndUpdateDoc(openRes);
+  if (openDoc) return openDoc;
+
+  // ✅ Opcional por dominio: después de confirmar, seguir usando la MISMA conversación
+  // durante una ventana de cortesía. Evita que un "gracias" o mensaje posterior
+  // abra automáticamente otra conversación/pedido.
+  const cutoff = recentCompletedWindowCutoff(reuseCompletedWithinMinutes);
+  if (cutoff) {
+    const recentCompletedFilter = {
+      waId: String(waId),
+      tenantId: tenant,
+      finalized: true,
+      status: "COMPLETED",
+      $or: [
+        { closedAt: { $gte: cutoff } },
+        { closedAt: { $exists: false }, updatedAt: { $gte: cutoff } },
+      ],
+    };
+    const recentRes = await db.collection("conversations").findOneAndUpdate(
+      recentCompletedFilter,
+      { $set: { updatedAt: now, postCompletionReusedAt: now, ...init } },
+      { upsert: false, returnDocument: "after", sort: { closedAt: -1, updatedAt: -1 } }
+    );
+    const recentDoc = findOneAndUpdateDoc(recentRes);
+    if (recentDoc) {
+      console.log("[conv] reutilizando conversación COMPLETED dentro de ventana post-confirmación", {
+        convId: String(recentDoc._id || ""),
+        waId: String(waId || ""),
+        tenant,
+        reuseCompletedWithinMinutes,
+      });
+      return recentDoc;
+    }
+  }
+
+  // Si no hay abierta ni una COMPLETED reutilizable, crear una nueva como antes.
   const opts = { upsert: true, returnDocument: "after" };
-  // Si tu driver es 4.x antiguo, usar en su lugar: { upsert:true, returnOriginal:false }
 
   const res = await db.collection("conversations").findOneAndUpdate(filter, update, opts);
-  if (res && res.value) return res.value;
-  // (Quitar fallback insertOne para evitar duplicados en condiciones de carrera)
+  const doc = findOneAndUpdateDoc(res);
+  if (doc) return doc;
   return await db.collection("conversations").findOne(filter);
 }
 // ------- helper para cerrar conversación (finalizar/cancelar) -------
@@ -7594,7 +7665,9 @@ const aiOpts = {
          displayPhoneNumber: runtime?.displayPhoneNumber || null,
          instagramAccountId: channelOpts?.instagramAccountId || null,
          instagramPageId: channelOpts?.instagramPageId || null,
-       }, tenant);
+       }, tenant, {
+         reuseCompletedWithinMinutes: orderPostCompletionReuseMinutes(orderConfig),
+       });
      } catch (e) { console.error("upsertConversation:", e?.message); }
      // Guardamos phoneNumberId para poder responder/operar por el mismo canal luego (admin, etc.)
  
@@ -7649,6 +7722,35 @@ console.log("[convId] "+ convId);
       console.log("[webhook] conversación en modo manualOpen=true; se omite respuesta automática.");
       return res.sendStatus(200);
    }
+
+    // ✅ Si el pedido ya fue confirmado y estamos dentro de la ventana configurada,
+   // los cierres cortos tipo "gracias", "ok", "listo" no deben iniciar otro pedido
+    // ni llamar al modelo. Esto también funciona si el proceso se reinició y se perdió
+    // el flag en memoria, porque se basa en closedAt/status persistidos.
+    try {
+      const reuseMinutes = orderPostCompletionReuseMinutes(orderConfig);
+      if (convId && conversationIsRecentlyCompleted(conv, reuseMinutes) && isPoliteClosingMessage(text)) {
+        const politeReply = orderPoliteFollowupReply(orderConfig);
+        await require("./logic").sendChannelMessage(from, politeReply, channelOpts);
+        try {
+         await saveMessageDoc({
+            tenantId: tenant,
+            conversationId: convId,
+            waId: from,
+            role: "assistant",
+            content: politeReply,
+            type: "text",
+            meta: { model: "backend-post-completion", kind: "polite-followup" }
+         });
+        } catch (e) {
+          console.error("saveMessage(assistant polite post-completion):", e?.message);
+        }
+        return res.sendStatus(200);
+      }
+    } catch (e) {
+      console.warn("[post-completion] polite followup error:", e?.message || e);
+    }
+
 
     // ==============================
     // ✅ Fast-path backend: si la conversación está esperando comprobante

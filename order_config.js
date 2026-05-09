@@ -34,13 +34,19 @@ const DEFAULT_ORDER_CONFIG = Object.freeze({
     nombre: true,
   }),
   messages: Object.freeze({
-    missingItems: "¿Qué te gustaría pedir? 😊",
+   missingItems: "¿Qué te gustaría pedir? 😊",
     missingEntrega: "¿Lo retirás o te lo enviamos? 😊",
     missingAddress: "¿A qué dirección te lo enviamos? 😊",
     missingPayment: "¿Vas a pagar en efectivo o por transferencia? 😊",
     missingHora: "¿Para qué hora te gustaría hacer el pedido? 😊",
     missingNombre: "¿A nombre de quién hacemos el pedido? 😊",
     fallbackReady: "Perfecto 😊 ¿Querés confirmar o cambiar algo?",
+  }),
+  finalizationPolicy: Object.freeze({
+    // 0 = comportamiento histórico: al cerrar COMPLETED, el próximo mensaje abre otra conversación.
+    // >0 = durante esa ventana, los mensajes posteriores al pedido confirmado quedan en la misma conversación.
+    postCompletionReuseMinutes: 0,
+    politeFollowupReply: "¡Gracias! 😊 Cuando quieras hacemos otro pedido.",
   }),
 });
 
@@ -60,6 +66,17 @@ function boolOrDefault(value, fallback) {
     if (["0", "false", "no", "off"].includes(s)) return false;
   }
   return fallback;
+}
+
+function numberOrDefault(value, fallback, min = 0, max = 1440) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(n)));
+}
+
+function stringOrDefault(value, fallback) {
+  const s = String(value ?? "").trim();
+  return s || fallback;
 }
 
 function normalizeOrderConfig(input = {}, tenantId = "default") {
@@ -83,6 +100,18 @@ function normalizeOrderConfig(input = {}, tenantId = "default") {
     if (s) out.messages[key] = s;
   }
 
+  const srcFinalization = src.finalizationPolicy && typeof src.finalizationPolicy === "object" ? src.finalizationPolicy : {};
+  out.finalizationPolicy.postCompletionReuseMinutes = numberOrDefault(
+    srcFinalization.postCompletionReuseMinutes,
+    out.finalizationPolicy.postCompletionReuseMinutes,
+    0,
+    1440
+  );
+  out.finalizationPolicy.politeFollowupReply = stringOrDefault(
+    srcFinalization.politeFollowupReply,
+    out.finalizationPolicy.politeFollowupReply
+  );
+
   return out;
 }
 
@@ -101,6 +130,19 @@ function orderMessage(config, key) {
   return cfg.messages[key] || DEFAULT_ORDER_CONFIG.messages[key] || "";
 }
 
+function orderPostCompletionReuseMinutes(config) {
+  const cfg = normalizeOrderConfig(config || {});
+  return numberOrDefault(cfg.finalizationPolicy?.postCompletionReuseMinutes, 0, 0, 1440);
+}
+
+function orderPoliteFollowupReply(config) {
+  const cfg = normalizeOrderConfig(config || {});
+  return stringOrDefault(
+    cfg.finalizationPolicy?.politeFollowupReply,
+    DEFAULT_ORDER_CONFIG.finalizationPolicy.politeFollowupReply
+  );
+}
+
 async function loadOrderConfig(tenantId = "default") {
   const tenant = String(tenantId || "default").trim() || "default";
   const key = cfgId(tenant);
@@ -109,7 +151,7 @@ async function loadOrderConfig(tenantId = "default") {
 
   let doc = null;
   try {
-    const db = await getDb();
+   const db = await getDb();
     doc = await db.collection(ORDER_CONFIG_COLLECTION).findOne({ _id: key });
   } catch (e) {
     console.warn("[order-config] load error:", e?.message || e);
@@ -131,6 +173,7 @@ async function saveOrderConfig(tenantId, payload = {}, meta = {}) {
     features: normalized.features,
     requiredFields: normalized.requiredFields,
     messages: normalized.messages,
+    finalizationPolicy: normalized.finalizationPolicy,
     updatedAt: now,
     updatedBy: String(meta.updatedBy || "").trim() || null,
   };
@@ -166,6 +209,8 @@ module.exports = {
   orderFeatureEnabled,
   orderRequiredEnabled,
   orderMessage,
+  orderPostCompletionReuseMinutes,
+  orderPoliteFollowupReply,
   loadOrderConfig,
   saveOrderConfig,
   listOrderConfigs,
