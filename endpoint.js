@@ -92,6 +92,8 @@ const auth = require("./auth_ui");
 const { mountWebAccessRoutes } = require("./web_access_stats");
 const { mountTokenControlRoutes } = require("./token_control_stats");
 const { mountFleterosViajesPanel } = require("./fleteros_viajes_panel");
+const { mountOrderConfigPanel } = require("./order_config_panel");
+const { loadOrderConfig, orderFeatureEnabled, orderRequiredEnabled, orderMessage } = require("./order_config");
 // Servir assets estáticos locales (logo.png)
 // Servir assets estáticos:
 // 1) Logos del slider en /static/clientes -> <proyecto>/static/clientes
@@ -111,7 +113,7 @@ auth.protectRoutes(app);
 mountWebAccessRoutes(app, auth);
 mountTokenControlRoutes(app, auth);
 mountFleterosViajesPanel(app, { auth });
- 
+mountOrderConfigPanel(app, { auth }); 
 
 
 // ===================== Tenant Channels (WhatsApp/OpenAI por tenant/canal) =====================
@@ -1602,33 +1604,38 @@ function isExplicitUserConfirmation(text, opts = {}) {
 }
 
 
-function nextRequiredQuestionFromPedido(pedido) {
+function nextRequiredQuestionFromPedido(pedido, orderConfig = null) {
   const p = normalizePedidoDateTimeFields(cloneJsonSafe(pedido) || {});
-  if (!pedidoHasAnyItems(p)) return "¿Qué te gustaría pedir? 😊";
-  if (!pedidoEntregaValue(p)) return "¿Lo retirás o te lo enviamos? 😊";
-  if (pedidoIsDomicilio(p) && !pedidoHasAddress(p)) return "¿A qué dirección te lo enviamos? 😊";
-  if (pedidoIsDomicilio(p) && pedidoHasAddress(p) && !pedidoHasPago(p)) return "¿Vas a pagar en efectivo o por transferencia? 😊";
-  if (!pedidoHasHora(p)) return "¿Para qué hora te gustaría hacer el pedido? 😊";
-  if (!pedidoHasNombreCompleto(p)) return "¿A nombre de quién hacemos el pedido? 😊";
-  return "Perfecto 😊 ¿Querés confirmar o cambiar algo?";
+  if (orderRequiredEnabled(orderConfig, "items") && !pedidoHasAnyItems(p)) return orderMessage(orderConfig, "missingItems");
+  if (orderRequiredEnabled(orderConfig, "entrega") && !pedidoEntregaValue(p)) return orderMessage(orderConfig, "missingEntrega");
+  if (orderRequiredEnabled(orderConfig, "addressForDelivery") && pedidoIsDomicilio(p) && !pedidoHasAddress(p)) return orderMessage(orderConfig, "missingAddress");
+  if (orderRequiredEnabled(orderConfig, "paymentForDelivery") && pedidoIsDomicilio(p) && pedidoHasAddress(p) && !pedidoHasPago(p)) return orderMessage(orderConfig, "missingPayment");
+  if (orderRequiredEnabled(orderConfig, "hora") && !pedidoHasHora(p)) return orderMessage(orderConfig, "missingHora");
+  if (orderRequiredEnabled(orderConfig, "nombre") && !pedidoHasNombreCompleto(p)) return orderMessage(orderConfig, "missingNombre");
+  return orderMessage(orderConfig, "fallbackReady");
 }
 
 function pedidoHasRequiredFieldsForClose(pedido) {
   const p = normalizePedidoDateTimeFields(cloneJsonSafe(pedido) || {});
-  if (!pedidoHasAnyItems(p)) return false;
-  if (!pedidoEntregaValue(p)) return false;
-  if (pedidoIsDomicilio(p) && !pedidoHasAddress(p)) return false;
-  if (pedidoIsDomicilio(p) && !pedidoHasPago(p)) return false;
-  if (!pedidoHasHora(p)) return false;
-  if (!pedidoHasNombreCompleto(p)) return false;
+  if (orderRequiredEnabled(orderConfig, "items") && !pedidoHasAnyItems(p)) return false;
+  if (orderRequiredEnabled(orderConfig, "entrega") && !pedidoEntregaValue(p)) return false;
+  if (orderRequiredEnabled(orderConfig, "addressForDelivery") && pedidoIsDomicilio(p) && !pedidoHasAddress(p)) return false;
+  if (orderRequiredEnabled(orderConfig, "paymentForDelivery") && pedidoIsDomicilio(p) && !pedidoHasPago(p)) return false;
+  if (orderRequiredEnabled(orderConfig, "hora") && !pedidoHasHora(p)) return false;
+  if (orderRequiredEnabled(orderConfig, "nombre") && !pedidoHasNombreCompleto(p)) return false;
   return true;
 }
 
-function applyCriticalPedidoGuards({ pedido, responseText, estado, currentText }) {
+function applyCriticalPedidoGuards({ pedido, responseText, estado, currentText, orderConfig = null }) {
   let nextPedido = normalizePedidoDateTimeFields(cloneJsonSafe(pedido) || { Entrega: "", Domicilio: {}, items: [], total_pedido: 0 });
   let nextResponse = String(responseText || "").trim();
   let nextEstado = String(estado || "IN_PROGRESS").trim() || "IN_PROGRESS";
   const guardHits = [];
+
+  if (!orderFeatureEnabled(orderConfig, "backendGuards")) {
+    return { pedido: nextPedido, responseText: nextResponse, estado: nextEstado, guardHits };
+  }
+
 
   const userCancelled = isExplicitUserCancellation(currentText);
   const assistantCancelled =
@@ -1644,7 +1651,9 @@ function applyCriticalPedidoGuards({ pedido, responseText, estado, currentText }
   }
 
 
-  const missingMilanesaQuestion = nextMissingMilanesaQuestionFromText(currentText, nextPedido);
+  const missingMilanesaQuestion = (orderFeatureEnabled(orderConfig, "productRules") && orderFeatureEnabled(orderConfig, "milanesaMentionGuard"))
+    ? nextMissingMilanesaQuestionFromText(currentText, nextPedido)
+    : "";
   if (missingMilanesaQuestion) {
     nextEstado = "IN_PROGRESS";
     nextResponse = missingMilanesaQuestion;
@@ -1653,7 +1662,7 @@ function applyCriticalPedidoGuards({ pedido, responseText, estado, currentText }
   }
 
 
-  if (pedidoIsDomicilio(nextPedido) && !pedidoHasAddress(nextPedido)) {
+  if (orderRequiredEnabled(orderConfig, "addressForDelivery") && pedidoIsDomicilio(nextPedido) && !pedidoHasAddress(nextPedido)) {
     nextEstado = "IN_PROGRESS";
     nextPedido.distancia_km = null;
     stripEnvioItemsFromPedido(nextPedido);
@@ -1661,27 +1670,27 @@ function applyCriticalPedidoGuards({ pedido, responseText, estado, currentText }
       const { pedidoCorr } = recalcAndDetectMismatch(nextPedido);
       nextPedido = pedidoCorr;
     } catch {}
-    nextResponse = "¿A qué dirección te lo enviamos? 😊";
+    nextResponse = orderMessage(orderConfig, "missingAddress");
     guardHits.push("delivery_address_required");
   }
 
-  if (asksPaymentQuestion(nextResponse) && !(pedidoIsDomicilio(nextPedido) && pedidoHasAddress(nextPedido))) {
+  if (orderRequiredEnabled(orderConfig, "paymentForDelivery") && asksPaymentQuestion(nextResponse) && !(pedidoIsDomicilio(nextPedido) && pedidoHasAddress(nextPedido))) {
     nextEstado = "IN_PROGRESS";
-    nextResponse = nextRequiredQuestionFromPedido(nextPedido);
+    nextResponse = nextRequiredQuestionFromPedido(nextPedido, orderConfig);
     guardHits.push("payment_only_after_address");
   }
 
-  if (pedidoIsDomicilio(nextPedido) && pedidoHasAddress(nextPedido) && !pedidoHasPago(nextPedido)) {
+  if (orderRequiredEnabled(orderConfig, "paymentForDelivery") && pedidoIsDomicilio(nextPedido) && pedidoHasAddress(nextPedido) && !pedidoHasPago(nextPedido)) {
     if (!asksPaymentQuestion(nextResponse)) {
       nextEstado = "IN_PROGRESS";
-      nextResponse = "¿Vas a pagar en efectivo o por transferencia? 😊";
+      nextResponse = orderMessage(orderConfig, "missingPayment");
       guardHits.push("force_payment_question");
     }
   }
 
-  if (asksChickenCondimentQuestion(nextResponse) && !pedidoHasChickenMainItem(nextPedido)) {
+  if (orderFeatureEnabled(orderConfig, "productRules") && orderFeatureEnabled(orderConfig, "chickenCondimentGuard") && asksChickenCondimentQuestion(nextResponse) && !pedidoHasChickenMainItem(nextPedido)) {
     nextEstado = "IN_PROGRESS";
-    nextResponse = nextRequiredQuestionFromPedido(nextPedido);
+    nextResponse = nextRequiredQuestionFromPedido(nextPedido, orderConfig);
     guardHits.push("invalid_chicken_condiment_question");
   }
 
@@ -1691,9 +1700,9 @@ function applyCriticalPedidoGuards({ pedido, responseText, estado, currentText }
     guardHits.push("resolved_milanesa_type_no_reask");
   }
 
-  if ((looksLikeSummaryOrConfirmation(nextResponse) || /^(COMPLETED|PENDIENTE)$/i.test(nextEstado)) && !pedidoHasRequiredFieldsForClose(nextPedido)) {
+  if ((looksLikeSummaryOrConfirmation(nextResponse) || /^(COMPLETED|PENDIENTE)$/i.test(nextEstado)) && !pedidoHasRequiredFieldsForClose(nextPedido, orderConfig)) {
     nextEstado = "IN_PROGRESS";
-    nextResponse = nextRequiredQuestionFromPedido(nextPedido);
+    nextResponse = nextRequiredQuestionFromPedido(nextPedido, orderConfig);
     guardHits.push("summary_blocked_missing_required_fields");
   }
 
@@ -7448,6 +7457,7 @@ try {
   else runtime = await getRuntimeByPhoneNumberId(phoneNumberIdInbound);
 } catch {}
 const tenant = String(runtime?.tenantId || DEFAULT_TENANT_ID || TENANT_ID || "default").trim();
+const orderConfig = await loadOrderConfig(tenant);
 
 const channelOpts = {
   channelType,
@@ -7497,12 +7507,15 @@ const aiOpts = {
         const id = putInCache(buf, info.mime_type || "image/jpeg");
         const publicImageUrl = `${req.protocol}://${req.get("host")}/cache/media/${id}`;
 
-        const img = await analyzeImageExternal({
-          publicImageUrl,
-          mime: info.mime_type,
-          purpose: "payment-proof",
-          ...aiOpts
-        });
+        let img = null;
+        if (orderFeatureEnabled(orderConfig, "transferReceiptAnalysis")) {
+          img = await analyzeImageExternal({
+            publicImageUrl,
+            mime: info.mime_type,
+            purpose: "payment-proof",
+            ...aiOpts
+          });
+        }
 
         // Texto que alimenta al modelo conversacional
         text = img?.userText || "[imagen recibida]";
@@ -7646,7 +7659,7 @@ console.log("[convId] "+ convId);
       const flowStatus = normalizeTransferFlowStatus(conv?.transferFlowStatus || "");
       const inboundReceipt = isInboundTransferReceiptMedia(msg);
 
-      if (convId && inboundReceipt && flowStatus === "PENDIENTE_COMPROBANTE_TRANSFERENCIA") {
+      if (orderFeatureEnabled(orderConfig, "paymentTransferFlow") && orderFeatureEnabled(orderConfig, "transferReceiptAnalysis") && convId && inboundReceipt && flowStatus === "PENDIENTE_COMPROBANTE_TRANSFERENCIA") {
         const pedidoPrev = await loadLastPedidoSnapshot(tenant, convId);
         const pagoPrev = String(pedidoPrev?.Pago || "").trim();
 
@@ -7860,7 +7873,7 @@ if (debounceMs > 0 && msg.type === "text") {
     let responseText = "Perdón, hubo un error. ¿Podés repetir?";
     let estado = null;
     let pedido = null;
-    let transferFlowStatusToPersist = transferFlowStatusBeforeMessage;
+    let transferFlowStatusToPersist = orderFeatureEnabled(orderConfig, "paymentTransferFlow") ? transferFlowStatusBeforeMessage : "";
     const prevPedidoSnapshot = convId ? await loadLastPedidoSnapshot(tenant, convId) : null;
 
     try {
@@ -7914,7 +7927,9 @@ if (debounceMs > 0 && msg.type === "text") {
       // 💰 Hidratar precios desde catálogo ANTES de recalcular (evita “Pollo entero @ 0”)
       try { pedido = await hydratePricesFromCatalog(pedido, tenant || null); } catch {}
       // 🚚 Asegurar ítem Envío con geocoding/distancia (awaitable, sin race)
-      try { pedido = await ensureEnvioSmart(pedido, tenant || null); } catch {}
+      if (orderFeatureEnabled(orderConfig, "deliveryDistance")) {
+        try { pedido = await ensureEnvioSmart(pedido, tenant || null); } catch {}
+      }
 
       // 🧽 Normalización defensiva: si el modelo puso la HORA en `Entrega`, corrige campos.
       if (pedido && typeof pedido.Entrega === "string" && /^\d{1,2}:\d{2}$/.test(pedido.Entrega)) {
@@ -7950,14 +7965,14 @@ if (debounceMs > 0 && msg.type === "text") {
     // forzar pregunta de dirección y evitar resumen/confirmación.
     // ==============================
     try {
-      if (pedidoIsDomicilio(pedido) && !pedidoHasAddress(pedido)) {
+      if (orderFeatureEnabled(orderConfig, "backendGuards") && orderRequiredEnabled(orderConfig, "addressForDelivery") && pedidoIsDomicilio(pedido) && !pedidoHasAddress(pedido)) {
         estado = "IN_PROGRESS";
         pedido = stripEnvioItemsFromPedido(pedido || {});
         try {
           const { pedidoCorr } = recalcAndDetectMismatch(pedido);
           pedido = pedidoCorr;
         } catch {}
-        responseText = "¿A qué dirección te lo enviamos? 😊";
+        responseText = orderMessage(orderConfig, "missingAddress");
       }
     } catch (e) {
       console.warn("[delivery] Guarda de dirección obligatoria falló:", e?.message || e);
@@ -7970,7 +7985,7 @@ if (debounceMs > 0 && msg.type === "text") {
         pedido = normalizePedidoDateTimeFields(pedido);
       }
 
-      if (pedido && typeof pedido === "object" && pedido.Fecha && pedido.Hora) {
+      if (orderFeatureEnabled(orderConfig, "scheduleValidation") && pedido && typeof pedido === "object" && pedido.Fecha && pedido.Hora) {
         const db = await getDb();
         const hoursDocId = `store_hours:${tenant}`;
         const docHours = await db.collection("settings").findOne({ _id: hoursDocId });
@@ -8105,7 +8120,7 @@ if (debounceMs > 0 && msg.type === "text") {
       // ¿El texto "parece" un resumen?
       const looksLikeSummary = wantsDetail || /\b(resumen del pedido|total\s*:|\btotal\b|¿\s*confirm|¿confirmas|\u00BF\s*confirm)/i.test(String(responseText || ""));
 
-      if (!hasMilanesas) {
+      if (!orderFeatureEnabled(orderConfig, "milanesaWeightLegend") || !hasMilanesas) {
         // Limpia cualquier rastro de la leyenda si no hay milanesas
         responseText = String(responseText || "")
           .replace(/\*?\s*Las milanesas se pesan al entregar; el precio se informa al momento de la entrega\.\s*\*?/i, "")
@@ -8163,7 +8178,7 @@ if (debounceMs > 0 && msg.type === "text") {
     // para búsqueda manual del operador y evitamos usar coords/distancia/envío.
     // ==============================
     try {
-      if (pedido?.Entrega?.toLowerCase() === "domicilio" && pedido?.Domicilio) {
+      if (orderFeatureEnabled(orderConfig, "geocodeAddressValidation") && pedido?.Entrega?.toLowerCase() === "domicilio" && pedido?.Domicilio) {
         const dom = (typeof pedido.Domicilio === "string")
           ? { direccion: pedido.Domicilio }
           : (pedido.Domicilio || {});
@@ -8247,7 +8262,7 @@ if (debounceMs > 0 && msg.type === "text") {
               `La vamos a dejar guardada para que el operador la busque manualmente.`;
               geoShouldPrependToSummary = true;
  
-            const nextStep = nextRequiredQuestionFromPedido(pedido);
+            const nextStep = nextRequiredQuestionFromPedido(pedido, orderConfig);
             responseText = nextStep
               ? `${geoAddressWarning}\n\n${nextStep}`
               : geoAddressWarning;
@@ -8274,7 +8289,7 @@ if (debounceMs > 0 && msg.type === "text") {
     // 5) bloquear resumen/confirmación/COMPLETED si faltan datos obligatorios
     // ==============================
     try {
-      const guardRes = applyCriticalPedidoGuards({ pedido, responseText, estado, currentText: text });
+      const guardRes = applyCriticalPedidoGuards({ pedido, responseText, estado, currentText: text, orderConfig });
       pedido = guardRes.pedido;
       responseText = guardRes.responseText;
       estado = guardRes.estado;
@@ -8291,6 +8306,8 @@ if (debounceMs > 0 && msg.type === "text") {
     try {
       const inboundCouldBeReceipt = !!(msg?.type === "image" || msg?.type === "document");
       const esperandoImporte =
+        orderFeatureEnabled(orderConfig, "paymentTransferFlow") &&
+        orderFeatureEnabled(orderConfig, "transferMilanesaFinalAmount") &&
         transferFlowStatusBeforeMessage === "PENDIENTE_IMPORTE_TRANSFERENCIA" &&
         /^transferencia$/i.test(String(pedido?.Pago || "").trim()) &&
         pedidoHasMilanesas(pedido);
@@ -8313,9 +8330,10 @@ if (debounceMs > 0 && msg.type === "text") {
     //   después de la confirmación pasar a PENDIENTE
     // ==============================
     try {
-      const pedidoListoParaCerrar = pedidoHasRequiredFieldsForClose(pedido);
-      const pagoEsTransferencia = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
-      const transferenciaConMilanesas = pagoEsTransferencia && pedidoHasMilanesas(pedido);
+      const pedidoListoParaCerrar = pedidoHasRequiredFieldsForClose(pedido, orderConfig);
+      const transferFlowEnabled = orderFeatureEnabled(orderConfig, "paymentTransferFlow");
+      const pagoEsTransferencia = transferFlowEnabled && /^transferencia$/i.test(String(pedido?.Pago || "").trim());
+      const transferenciaConMilanesas = pagoEsTransferencia && orderFeatureEnabled(orderConfig, "transferMilanesaFinalAmount") && pedidoHasMilanesas(pedido);
       const userConfirmedNow = isExplicitUserConfirmation(text, {
         lastAssistantText: lastAssistantTextBeforeUser
       });
@@ -8343,7 +8361,7 @@ if (debounceMs > 0 && msg.type === "text") {
       // Solo forzamos resumen si el asistente realmente está intentando
       // cerrar / confirmar el pedido. Si el modelo respondió otra cosa
       // (por ejemplo: "¿Qué sabor de Aquarius querés?"), NO hay que pisarlo.
-      if (pedidoListoParaCerrar && !pagoEsTransferencia && assistantTryingToClose && !userConfirmedNow) {
+      if (orderFeatureEnabled(orderConfig, "forceSummaryBeforeClose") && pedidoListoParaCerrar && !pagoEsTransferencia && assistantTryingToClose && !userConfirmedNow) {
 
         estado = "IN_PROGRESS";
         const summaryText = buildBackendSummary(pedido, {
@@ -8353,7 +8371,7 @@ if (debounceMs > 0 && msg.type === "text") {
         responseText = (geoShouldPrependToSummary && geoAddressWarning)
           ? `${geoAddressWarning}\n\n${summaryText}`
           : summaryText;
-      } else if (pedidoListoParaCerrar && pagoEsTransferencia && assistantTryingToClose && !userConfirmedNow) {
+      } else if (orderFeatureEnabled(orderConfig, "forceSummaryBeforeClose") && pedidoListoParaCerrar && pagoEsTransferencia && assistantTryingToClose && !userConfirmedNow) {
         estado = "IN_PROGRESS";
         responseText = (geoShouldPrependToSummary && geoAddressWarning)
           ? `${geoAddressWarning}\n\n${transferSummaryWithInstructions}`
@@ -8442,8 +8460,8 @@ if (debounceMs > 0 && msg.type === "text") {
     const userCancelled = !!(userWantsCancelRaw && !userCancelNeg);
 
 	const userConfirmsFast = isExplicitUserConfirmation(text);
-	const pagoEsTransferenciaFinal = /^transferencia$/i.test(String(pedido?.Pago || "").trim());
-	const willComplete = !!(!pagoEsTransferenciaFinal && userConfirmsFast && isPedidoCompleto(pedido));
+  const pagoEsTransferenciaFinal = orderFeatureEnabled(orderConfig, "paymentTransferFlow") && /^transferencia$/i.test(String(pedido?.Pago || "").trim());
+	const willComplete = !!(!pagoEsTransferenciaFinal && userConfirmsFast && pedidoHasRequiredFieldsForClose(pedido, orderConfig));
     const closeStatus =
       (userCancelled || estado === "CANCELLED")
         ? "CANCELLED"
@@ -8593,7 +8611,7 @@ if (debounceMs > 0 && msg.type === "text") {
     try {
      // 🔹 Distancia + geocoding + Envío dinámico
       let distKm = null;
-      if (pedido?.Entrega?.toLowerCase() === "domicilio" && pedido?.Domicilio) {
+      if (orderFeatureEnabled(orderConfig, "deliveryDistance") && orderFeatureEnabled(orderConfig, "geocodeAddressValidation") && pedido?.Entrega?.toLowerCase() === "domicilio" && pedido?.Domicilio) {
         const store = getStoreCoords();
         if (store) {
           let { lat, lon } = pedido.Domicilio;
