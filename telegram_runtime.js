@@ -17,6 +17,9 @@ const HEARTBEAT_MS = Math.max(5000, Number(process.env.TG_HEARTBEAT_MS || 5000) 
 const ACTION_POLL_MS = Math.max(3000, Number(process.env.TG_ACTION_POLL_MS || 4000) || 4000);
 const EXPIRY_POLL_MS = Math.max(3000, Number(process.env.TG_EXPIRY_POLL_MS || 5000) || 5000);
 const LOCK_STALE_MS = Math.max(15000, Number(process.env.TG_LOCK_STALE_MS || 30000) || 30000);
+const CONFLICT_COOLDOWN_MS = Math.max(10000, Number(process.env.TG_CONFLICT_COOLDOWN_MS || 20000) || 20000);
+const POLLING_STOP_SETTLE_MS = Math.max(500, Number(process.env.TG_POLLING_STOP_SETTLE_MS || 1800) || 1800);
+const POLLING_START_PREPARE_MS = Math.max(250, Number(process.env.TG_POLLING_START_PREPARE_MS || 1200) || 1200);
 
 const fetchJson = (...args) => {
   if (typeof fetch === 'function') return fetch(...args);
@@ -259,6 +262,43 @@ function runtimeConfigSignature(cfg) {
   });
 }
 
+function getTokenKeyFromConfig(cfg) {
+  return normalizeString(cfg?.telegram_bot_token, '');
+}
+
+function isConflictCoolingDown(ctx) {
+  return !!(ctx && ctx.conflictUntil && Number(ctx.conflictUntil) > Date.now());
+}
+
+function setConflictCooldown(ctx, reason = 'conflict') {
+  const until = Date.now() + CONFLICT_COOLDOWN_MS;
+  ctx.conflictUntil = until;
+  ctx.lastConflictAt = new Date();
+  ctx.botState = normalizeString(reason, 'conflict');
+  return until;
+}
+
+function findOtherCtxUsingSameToken(ctx) {
+  const token = getTokenKeyFromConfig(ctx?.config);
+  if (!token) return null;
+  for (const other of manager.contexts.values()) {
+    if (!other || other === ctx) continue;
+    if (getTokenKeyFromConfig(other.config) !== token) continue;
+    const state = normalizeString(other.botState, '').toLowerCase();
+    if (
+      other.startingNow ||
+      other.botStarted ||
+      !!other.bot ||
+      !!other.ownsLock ||
+      ['starting', 'online', 'conflict'].includes(state)
+    ) {
+      return other;
+    }
+  }
+  return null;
+}
+
+
 function createContext(cfg) {
   const errCfg = getErrorConfig();
   return {
@@ -283,6 +323,9 @@ function createContext(cfg) {
     outboundBusy: false,
     shuttingDown: false,
     ownsLock: false,
+    conflictUntil: 0,
+    lastConflictAt: null,
+    conflictHandling: false,
     timers: {
       heartbeat: null,
       action: null,
@@ -869,7 +912,18 @@ function attachBotHandlers(ctx) {
     const msg = String(err?.message || err);
     logLine(`[${ctx.tenantId}] Telegram polling_error: ${msg}`, 'error');
     if (/409 Conflict/i.test(msg)) {
-      await stopContext(ctx, 'conflict');
+      if (ctx.conflictHandling) return;
+      ctx.conflictHandling = true;
+      try {
+        setConflictCooldown(ctx, 'conflict');
+        await pushHistory(ctx, 'polling_conflict', {
+          message: msg,
+          retryAfterMs: CONFLICT_COOLDOWN_MS,
+        });
+        await stopContext(ctx, 'conflict');
+      } finally {
+        ctx.conflictHandling = false;
+      }
       return;
     }
     await updateLockState(ctx, 'polling_error');
@@ -919,6 +973,17 @@ async function stopContext(ctx, reason = 'offline') {
     }
   } catch {}
 
+  try {
+    if (bot && typeof bot.deleteWebHook === 'function') {
+      await bot.deleteWebHook({ drop_pending_updates: false });
+    }
+  } catch {}
+
+  if (bot) {
+    try { await sleep(POLLING_STOP_SETTLE_MS); } catch {}
+  }
+
+
   ctx.botStarted = false;
   ctx.startingNow = false;
   ctx.botState = String(reason || 'offline');
@@ -937,6 +1002,10 @@ async function heartbeatTick(ctx) {
     const pol = await getPolicySafe(ctx);
     if (pol && pol.disabled === true) {
       await stopContext(ctx, 'disabled');
+      return;
+    }
+    if (isConflictCoolingDown(ctx)) {
+      ctx.botState = 'conflict';
       return;
     }
     if (!ctx.botStarted && !ctx.startingNow && !ctx.shuttingDown) {
@@ -1089,8 +1158,22 @@ async function consultaApiMensajes(ctx) {
   }
 }
 
-async function startContext(ctx) {
+async function startContext(ctx, opts = {}) {
+  const force = !!opts.force;
   if (ctx.botStarted || ctx.startingNow) return getContextStatus(ctx);
+
+  if (!force && isConflictCoolingDown(ctx)) {
+    ctx.botState = 'conflict';
+    return getContextStatus(ctx);
+  }
+
+  const duplicateCtx = findOtherCtxUsingSameToken(ctx);
+  if (duplicateCtx) {
+    ctx.botState = 'duplicate_token';
+    logLine(`[${ctx.tenantId}] Telegram no inicia: token ya activo en ${duplicateCtx.tenantId}`, 'error');
+    return getContextStatus(ctx);
+  }
+
   const pol = await getPolicySafe(ctx);
   if (pol && pol.disabled === true) {
     ctx.botState = 'disabled';
@@ -1113,12 +1196,31 @@ async function startContext(ctx) {
     ctx.botState = 'starting';
     await updateLockState(ctx, 'starting');
     await createBotIfNeeded(ctx);
+
+    try {
+      if (ctx.bot && typeof ctx.bot.deleteWebHook === 'function') {
+        await ctx.bot.deleteWebHook({ drop_pending_updates: false });
+      }
+    } catch {}
+
+    try {
+      if (ctx.bot && typeof ctx.bot.isPolling === 'function' && ctx.bot.isPolling()) {
+        await ctx.bot.stopPolling({ cancel: true, reason: 'pre_start_cleanup' });
+        await sleep(POLLING_STOP_SETTLE_MS);
+      }
+    } catch {}
+
+
     const me = await ctx.bot.getMe();
     ctx.telegramSelfId = String(me?.id || '');
     ctx.telegramSelfUsername = String(me?.username || ctx.config.telegram_bot_username || '');
     if (ctx.telegramSelfUsername) manager.byUsername.set(String(ctx.telegramSelfUsername).toLowerCase(), ctx.tenantId);
-    await ctx.bot.startPolling({ restart: true });
+
+    await sleep(POLLING_START_PREPARE_MS);
+    await ctx.bot.startPolling({ restart: false });
+
     ctx.botStarted = true;
+    ctx.conflictUntil = 0;
     ctx.botState = 'online';
     await updateLockState(ctx, 'online');
     await pushHistory(ctx, 'lock_acquired', { holderId: instanceId, host: os.hostname() });
@@ -1140,8 +1242,15 @@ async function startContext(ctx) {
     return getContextStatus(ctx);
   } catch (e) {
     ctx.botStarted = false;
-    ctx.botState = 'error';
-    logLine(`[${ctx.tenantId}] Error al inicializar Telegram: ${e?.message || e}`, 'error');
+    const errMsg = String(e?.message || e);
+    if (/409 Conflict/i.test(errMsg)) {
+      setConflictCooldown(ctx, 'conflict');
+      logLine(`[${ctx.tenantId}] Error al inicializar Telegram (conflict): ${errMsg}`, 'error');
+    } else {
+      ctx.botState = 'error';
+      logLine(`[${ctx.tenantId}] Error al inicializar Telegram: ${errMsg}`, 'error');
+    }
+
     try {
       if (ctx.bot && typeof ctx.bot.removeAllListeners === 'function') {
         ctx.bot.removeAllListeners('message');
@@ -1153,8 +1262,8 @@ async function startContext(ctx) {
       if (ctx.bot && typeof ctx.bot.stopPolling === 'function') await ctx.bot.stopPolling({ cancel: true });
     } catch {}
     ctx.bot = null;
-    await updateLockState(ctx, 'error');
-    await forceReleaseLock(ctx, 'error');
+    await updateLockState(ctx, ctx.botState || 'error');
+    await forceReleaseLock(ctx, ctx.botState || 'error');
     return getContextStatus(ctx);
   } finally {
     ctx.startingNow = false;
@@ -1222,8 +1331,19 @@ async function refreshManagerFromDb() {
   try {
     const configs = await getTenantConfigsFromDb();
     const desiredIds = new Set(configs.map((cfg) => cfg.tenantId));
+    const tokenOwners = new Map();
 
     for (const cfg of configs) {
+
+      const tokenKey = getTokenKeyFromConfig(cfg);
+      if (tokenKey) {
+        const prevOwner = tokenOwners.get(tokenKey);
+        if (prevOwner && prevOwner !== cfg.tenantId) {
+          logLine(`[telegram_runtime] token duplicado detectado entre ${prevOwner} y ${cfg.tenantId}`, 'error');
+        } else {
+          tokenOwners.set(tokenKey, cfg.tenantId);
+        }
+      }
       await ensureContextForConfig(cfg);
     }
 
@@ -2140,7 +2260,7 @@ function mountTelegramRoutes(app) {
       const ctx = tenantId ? visible.find((x) => x.tenantId === tenantId) : visible[0];
       if (!ctx) return res.status(404).json({ ok: false, error: 'tenant_not_found' });
       ctx.shuttingDown = false;
-      const status = await startContext(ctx);
+      const status = await startContext(ctx, { force: true });
       return res.json({ ok: true, item: status });
     } catch (e) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
@@ -2156,7 +2276,7 @@ function mountTelegramRoutes(app) {
       await stopContext(ctx, 'restarting');
       ctx.shuttingDown = false;
       ctx.lockAcquiredAt = new Date();
-      const status = await startContext(ctx);
+      const status = await startContext(ctx, { force: true });
       return res.json({ ok: true, item: status });
     } catch (e) {
       return res.status(500).json({ ok: false, error: String(e?.message || e) });
