@@ -662,6 +662,22 @@ function rememberJson(ctx, chatId, json) {
   }
 }
 
+function getPendingBatchState(ctx, chatId) {
+  const indice = indexOf2d(ctx, chatId);
+  if (indice === -1) {
+    return { indice: -1, currentIndex: 0, total: 0, hasPending: false };
+  }
+
+  const entry = ctx.jsonGlobal[indice] || [];
+  const currentIndex = Number(entry[1] || 0);
+  const lote = Array.isArray(entry[2]) ? entry[2] : [];
+  const total = lote.length;
+  const hasPending = total > 0 && currentIndex > 0 && currentIndex < total;
+
+  return { indice, currentIndex, total, hasPending };
+}
+
+
 async function safeSendTelegram(ctx, chatId, content, opts = {}) {
   if (!ctx.bot) throw new Error('telegram_bot_not_ready');
   const destination = normalizeChatId(chatId);
@@ -797,7 +813,9 @@ async function controlarHoraMsgOnce(ctx) {
       if (!item || !item[3]) continue;
       const fecha_msg = item[3].getTime ? item[3].getTime() : 0;
       const diferencia = Date.now() - fecha_msg;
-      if (fecha_msg && Number(ctx.config.time_cad || 0) > 0 && diferencia > Number(ctx.config.time_cad || 0)) {
+      const timeCadRaw = Number(ctx.config.time_cad || 0) || 0;
+      const timeCadMs = timeCadRaw > 0 && timeCadRaw < 1000 ? (timeCadRaw * 1000) : timeCadRaw;
+      if (fecha_msg && timeCadMs > 0 && diferencia > timeCadMs) {
         if (ctx.config.msg_cad) await safeSendTelegram(ctx, item[0], ctx.config.msg_cad);
         item[3] = '';
         item[2] = '';
@@ -816,83 +834,87 @@ async function handleIncomingTelegramMessage(ctx, msg) {
     const body = typeof msg?.text === 'string' ? msg.text : '';
     if (!chatId) return;
 
-    const indice_telefono = indexOf2d(ctx, chatId);
-    const valor_i = indice_telefono === -1 ? 0 : ctx.jsonGlobal[indice_telefono][1];
-    logLine(`[${ctx.tenantId}] ${chatId} ${ctx.telegramSelfId} message ${body}`, 'event');
+    const trimmedBody = String(body || '').trim();
+    const bodyUpper = trimmedBody.toUpperCase();
+    const pending = getPendingBatchState(ctx, chatId);
+    logLine(`[${ctx.tenantId}] ${chatId} ${ctx.telegramSelfId} message ${body} | lote_pendiente=${pending.hasPending ? 'S' : 'N'} idx=${pending.currentIndex} total=${pending.total}`, 'event');
 
-    if (valor_i === 0) {
-      if (!body) {
+    if (pending.hasPending) {
+      if (bodyUpper === 'N') {
+        if (ctx.config.msg_can) await safeSendTelegram(ctx, chatId, ctx.config.msg_can);
+        ctx.jsonGlobal[pending.indice][2] = '';
+        ctx.jsonGlobal[pending.indice][1] = 0;
+        ctx.jsonGlobal[pending.indice][3] = '';
         logLine(`[${ctx.tenantId}] mensaje telegram no texto -> ignorado`, 'event');
         return;
       }
 
-      const trimmedBody = String(body || '').trim();
-      const telefonoFrom = chatId;
-      const telefonoTo = getApiBotNumber(ctx);
-      await logMessageStat(ctx, 'in', telefonoFrom, { body, type: 'text', hasMedia: false });
-
-      if (trimmedBody === '/id') {
-        await safeSendTelegram(ctx, chatId, buildTelegramIdReply(msg));
+      if (bodyUpper === 'S') {
+        await procesarMensajeLotes(ctx, ctx.jsonGlobal[pending.indice][2], { from: chatId, body });
         return;
       }
 
 
-      const segDesde = Math.min(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
-      const segHasta = Math.max(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
-      const segundos = Math.random() * (segHasta - segDesde) + segDesde;
-
-      if (ctx.config.msg_inicio) await safeSendTelegram(ctx, chatId, ctx.config.msg_inicio);
-
-      const jsonTexto = { Tel_Origen: telefonoFrom, Tel_Destino: telefonoTo, Mensaje: body, Respuesta: '' };
-      let timeoutId;
-      try {
-        const controller = new AbortController();
-        timeoutId = setTimeout(() => controller.abort(), 55000);
-        const resp = await fetchJson(ctx.config.api, {
-          method: 'POST',
-          body: JSON.stringify(jsonTexto),
-          headers: { 'Content-type': 'application/json; charset=UTF-8' },
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-
-        const raw = await resp.text();
-        let json = null;
-        try { json = raw ? JSON.parse(raw) : null; } catch {}
-
-        if (!resp.ok) {
-          const detalle = json ? JSON.stringify(json) : raw;
-          logLine(`[${ctx.tenantId}] Error ApiTelegram - Response ERROR ${detalle}`, 'error');
-          if (ctx.config.msg_errores) await safeSendTelegram(ctx, chatId, ctx.config.msg_errores);
-          return 'error';
-        }
-
-        rememberJson(ctx, chatId, json);
-        await procesarMensajeLotes(ctx, json, { from: chatId, body });
-        if (ctx.config.msg_fin) await safeSendTelegram(ctx, chatId, ctx.config.msg_fin);
-        await sleep(segundos);
-        return 'ok';
-      } catch (err) {
-        clearTimeout(timeoutId);
-        const detalle = `Error Chatbot Telegram ${err?.message || err} ${JSON.stringify(jsonTexto)}`;
-        logLine(`[${ctx.tenantId}] ${detalle}`, 'error');
-        if (ctx.config.msg_errores) await safeSendTelegram(ctx, chatId, ctx.config.msg_errores);
-        return 'error';
-      }
-    }
-
-    const bodyUpper = String(body || '').trim().toUpperCase();
-    if (valor_i !== 0 && bodyUpper === 'N') {
-      if (ctx.config.msg_can) await safeSendTelegram(ctx, chatId, ctx.config.msg_can);
-      ctx.jsonGlobal[indice_telefono][2] = '';
-      ctx.jsonGlobal[indice_telefono][1] = 0;
-      ctx.jsonGlobal[indice_telefono][3] = '';
-      return;
-    }
-
-    if (valor_i !== 0 && bodyUpper !== 'N' && bodyUpper !== 'S') {
       await safeSendTelegram(ctx, chatId, '🤔 *No entiendo*,\nPor favor ingrese *S* o *N* para mostrar los siguientes resultados\n', { parse_mode: 'Markdown' });
       return;
+    }
+
+    if (!body) {
+      logLine(`[${ctx.tenantId}] mensaje telegram no texto -> ignorado`, 'event');
+      return;
+    }
+
+    const telefonoFrom = chatId;
+    const telefonoTo = getApiBotNumber(ctx);
+    await logMessageStat(ctx, 'in', telefonoFrom, { body, type: 'text', hasMedia: false });
+
+    if (trimmedBody === '/id') {
+      await safeSendTelegram(ctx, chatId, buildTelegramIdReply(msg));
+      return;
+    }
+
+    const segDesde = Math.min(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
+    const segHasta = Math.max(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
+    const segundos = Math.random() * (segHasta - segDesde) + segDesde;
+
+    if (ctx.config.msg_inicio) await safeSendTelegram(ctx, chatId, ctx.config.msg_inicio);
+
+    const jsonTexto = { Tel_Origen: telefonoFrom, Tel_Destino: telefonoTo, Mensaje: body, Respuesta: '' };
+    let timeoutId;
+    try {
+      const controller = new AbortController();
+      timeoutId = setTimeout(() => controller.abort(), 55000);
+      const resp = await fetchJson(ctx.config.api, {
+        method: 'POST',
+       body: JSON.stringify(jsonTexto),
+        headers: { 'Content-type': 'application/json; charset=UTF-8' },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      const raw = await resp.text();
+      let json = null;
+      try { json = raw ? JSON.parse(raw) : null; } catch {}
+
+      if (!resp.ok) {
+        const detalle = json ? JSON.stringify(json) : raw;
+        logLine(`[${ctx.tenantId}] Error ApiTelegram - Response ERROR ${detalle}`, 'error');
+        if (ctx.config.msg_errores) await safeSendTelegram(ctx, chatId, ctx.config.msg_errores);
+        return 'error';
+     }
+
+      rememberJson(ctx, chatId, json);
+      await procesarMensajeLotes(ctx, json, { from: chatId, body });
+      if (ctx.config.msg_fin) await safeSendTelegram(ctx, chatId, ctx.config.msg_fin);
+      await sleep(segundos);
+      return 'ok';
+    } catch (err) {
+      clearTimeout(timeoutId);
+      const detalle = `Error Chatbot Telegram ${err?.message || err} ${JSON.stringify(jsonTexto)}`;
+      logLine(`[${ctx.tenantId}] ${detalle}`, 'error');
+      if (ctx.config.msg_errores) await safeSendTelegram(ctx, chatId, ctx.config.msg_errores);
+      return 'error';  
+  return;
     }
 
     if (valor_i !== 0 && bodyUpper === 'S') {
