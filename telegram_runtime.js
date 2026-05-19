@@ -827,6 +827,7 @@ async function controlarHoraMsgOnce(ctx) {
         item[2] = '';
         item[1] = 0;
         item[4] = false;
+        logLine(`[${ctx.tenantId}] lote vencido por time_cad chat=${item[0]} timeCadMs=${timeCadMs}`, 'event');
       }
     }
   } catch (e) {
@@ -848,11 +849,12 @@ async function handleIncomingTelegramMessage(ctx, msg) {
 
     if (pendingState.pending) {
       if (bodyUpper === 'N') {
-        if (ctx.config.msg_can) await safeSendTelegram(ctx, chatId, ctx.config.msg_can);
+        
         ctx.jsonGlobal[pendingState.indice][2] = '';
         ctx.jsonGlobal[pendingState.indice][1] = 0;
         ctx.jsonGlobal[pendingState.indice][3] = '';
         ctx.jsonGlobal[pendingState.indice][4] = false;
+        logLine(`[${ctx.tenantId}] lote cancelado por usuario chat=${chatId}`, 'event');
         return;
       }
 
@@ -865,6 +867,20 @@ async function handleIncomingTelegramMessage(ctx, msg) {
 
 
       await safeSendTelegram(ctx, chatId, '🤔 *No entiendo*,\nPor favor ingrese *S* o *N* para mostrar los siguientes resultados\n', { parse_mode: 'Markdown' });
+      return;
+    }
+
+    if (bodyUpper === 'N' && pendingState.indice !== -1) {
+      ctx.jsonGlobal[pendingState.indice][2] = '';
+      ctx.jsonGlobal[pendingState.indice][1] = 0;
+      ctx.jsonGlobal[pendingState.indice][3] = '';
+      ctx.jsonGlobal[pendingState.indice][4] = false;
+      logLine(`[${ctx.tenantId}] lote cancelado/limpiado sin API chat=${chatId}`, 'event');
+      return;
+    }
+
+    if ((bodyUpper === 'S' || bodyUpper === 'N') && pendingState.indice !== -1 && pendingState.total === 0) {
+      logLine(`[${ctx.tenantId}] respuesta ${bodyUpper} ignorada: lote sin datos chat=${chatId}`, 'event');
       return;
     }
 
