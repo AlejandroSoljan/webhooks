@@ -655,11 +655,25 @@ function rememberJson(ctx, chatId, json) {
   const now = new Date();
   if (indice !== -1) {
     ctx.jsonGlobal[indice][0] = chatId;
+    ctx.jsonGlobal[indice][1] = 0;
     ctx.jsonGlobal[indice][2] = json;
     ctx.jsonGlobal[indice][3] = now;
+    ctx.jsonGlobal[indice][4] = false;
   } else {
-    ctx.jsonGlobal.push([chatId, 0, json, now]);
+    ctx.jsonGlobal.push([chatId, 0, json, now, false]);
   }
+}
+
+function getPendingBatchState(ctx, chatId) {
+  const indice = indexOf2d(ctx, chatId);
+  if (indice === -1) return { indice: -1, valor_i: 0, total: 0, pending: false };
+
+  const item = ctx.jsonGlobal[indice] || [];
+  const valor_i = Number(item[1] || 0);
+  const lote = Array.isArray(item[2]) ? item[2] : [];
+ const total = lote.length;
+  const pending = item[4] === true && total > 0 && valor_i >= 0 && valor_i < total;
+  return { indice, valor_i, total, pending };
 }
 
 function getPendingBatchState(ctx, chatId) {
@@ -769,11 +783,14 @@ async function procesarMensajeLotes(ctx, json, message) {
   const segDesde = Math.min(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
   const segHasta = Math.max(Number(ctx.config.seg_desde) || 0, Number(ctx.config.seg_hasta) || 0);
   const segundos = Math.random() * (segHasta - segDesde) + segDesde;
-  const l_json = ctx.jsonGlobal[indice][2];
-  const tam_json = Array.isArray(l_json) ? l_json.length : 0;
+  const l_json = Array.isArray(ctx.jsonGlobal[indice][2]) ? ctx.jsonGlobal[indice][2] : [];
+  const tam_json = l_json.length;
+  const inicio = Math.max(0, Number(ctx.jsonGlobal[indice][1] || 0));
+   ctx.jsonGlobal[indice][3] = now;
   ctx.jsonGlobal[indice][3] = now;
+  ctx.jsonGlobal[indice][4] = false;
 
-  for (let i = ctx.jsonGlobal[indice][1]; i < tam_json; i++) {
+  for (let i = inicio; i < tam_json; i++) {
     let mensaje = '';
     if (l_json[i]?.cod_error) {
       mensaje = l_json[i].msj_error;
@@ -785,13 +802,14 @@ async function procesarMensajeLotes(ctx, json, message) {
     if (mensaje === '' || mensaje === null || mensaje === undefined) continue;
     mensaje = String(mensaje).replaceAll('|', '\n');
 
-    if (i <= Number(ctx.config.cant_lim || 0) + ctx.jsonGlobal[indice][1] - 1) {
+    if (i <= Number(ctx.config.cant_lim || 0) + inicio - 1) {
       await safeSendTelegram(ctx, chatId, mensaje);
       await sleep(segundos);
       if (tam_json - 1 === i) {
         ctx.jsonGlobal[indice][1] = 0;
         ctx.jsonGlobal[indice][2] = '';
         ctx.jsonGlobal[indice][3] = '';
+        ctx.jsonGlobal[indice][4] = false;
       }
     } else {
       let msg_loc = String(ctx.config.msg_lim || '').replaceAll('|', '\n');
@@ -801,7 +819,8 @@ async function procesarMensajeLotes(ctx, json, message) {
       msg_loc = msg_loc.replace('<recuento_pendiente>', String(Math.max(tam_json - i, 0)));
       if (msg_loc) await safeSendTelegram(ctx, chatId, msg_loc);
       ctx.jsonGlobal[indice][1] = i;
-      ctx.jsonGlobal[indice][3] = now;
+      ctx.jsonGlobal[indice][3] = new Date();
+      ctx.jsonGlobal[indice][4] = true;
       return;
     }
   }
@@ -820,6 +839,7 @@ async function controlarHoraMsgOnce(ctx) {
         item[3] = '';
         item[2] = '';
         item[1] = 0;
+        item[4] = false;
       }
     }
   } catch (e) {
@@ -836,21 +856,23 @@ async function handleIncomingTelegramMessage(ctx, msg) {
 
     const trimmedBody = String(body || '').trim();
     const bodyUpper = trimmedBody.toUpperCase();
-    const pending = getPendingBatchState(ctx, chatId);
-    logLine(`[${ctx.tenantId}] ${chatId} ${ctx.telegramSelfId} message ${body} | lote_pendiente=${pending.hasPending ? 'S' : 'N'} idx=${pending.currentIndex} total=${pending.total}`, 'event');
+    const pendingState = getPendingBatchState(ctx, chatId);
+    logLine(`[${ctx.tenantId}] ${chatId} ${ctx.telegramSelfId} message ${body} | lote_pendiente=${pendingState.pending ? 'S' : 'N'} idx=${pendingState.valor_i} total=${pendingState.total}`, 'event');
 
-    if (pending.hasPending) {
+    if (pendingState.pending) {
       if (bodyUpper === 'N') {
         if (ctx.config.msg_can) await safeSendTelegram(ctx, chatId, ctx.config.msg_can);
-        ctx.jsonGlobal[pending.indice][2] = '';
-        ctx.jsonGlobal[pending.indice][1] = 0;
-        ctx.jsonGlobal[pending.indice][3] = '';
-        logLine(`[${ctx.tenantId}] mensaje telegram no texto -> ignorado`, 'event');
+        ctx.jsonGlobal[pendingState.indice][2] = '';
+        ctx.jsonGlobal[pendingState.indice][1] = 0;
+        ctx.jsonGlobal[pendingState.indice][3] = '';
+        ctx.jsonGlobal[pendingState.indice][4] = false;
         return;
       }
 
       if (bodyUpper === 'S') {
-        await procesarMensajeLotes(ctx, ctx.jsonGlobal[pending.indice][2], { from: chatId, body });
+        ctx.jsonGlobal[pendingState.indice][4] = false;
+        ctx.jsonGlobal[pendingState.indice][3] = new Date();
+        await procesarMensajeLotes(ctx, ctx.jsonGlobal[pendingState.indice][2], { from: chatId, body });
         return;
       }
 
