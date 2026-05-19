@@ -676,20 +676,7 @@ function getPendingBatchState(ctx, chatId) {
   return { indice, valor_i, total, pending };
 }
 
-function getPendingBatchState(ctx, chatId) {
-  const indice = indexOf2d(ctx, chatId);
-  if (indice === -1) {
-    return { indice: -1, currentIndex: 0, total: 0, hasPending: false };
-  }
 
-  const entry = ctx.jsonGlobal[indice] || [];
-  const currentIndex = Number(entry[1] || 0);
-  const lote = Array.isArray(entry[2]) ? entry[2] : [];
-  const total = lote.length;
-  const hasPending = total > 0 && currentIndex > 0 && currentIndex < total;
-
-  return { indice, currentIndex, total, hasPending };
-}
 
 
 async function safeSendTelegram(ctx, chatId, content, opts = {}) {
