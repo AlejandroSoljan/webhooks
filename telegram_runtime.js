@@ -672,7 +672,10 @@ function getPendingBatchState(ctx, chatId) {
   const valor_i = Number(item[1] || 0);
   const lote = Array.isArray(item[2]) ? item[2] : [];
  const total = lote.length;
-  const pending = item[4] === true && total > 0 && valor_i >= 0 && valor_i < total;
+  // El lote está pendiente cuando hay un índice intermedio guardado.
+  // No dependemos solo de item[4], porque si esa bandera queda inconsistente,
+  // S/N se puede interpretar como consulta nueva o cancelar mal el lote.
+  const pending = total > 0 && valor_i > 0 && valor_i < total;
   return { indice, valor_i, total, pending };
 }
 
@@ -870,20 +873,12 @@ async function handleIncomingTelegramMessage(ctx, msg) {
       return;
     }
 
-    if (bodyUpper === 'N' && pendingState.indice !== -1) {
-      ctx.jsonGlobal[pendingState.indice][2] = '';
-      ctx.jsonGlobal[pendingState.indice][1] = 0;
-      ctx.jsonGlobal[pendingState.indice][3] = '';
-      ctx.jsonGlobal[pendingState.indice][4] = false;
-      logLine(`[${ctx.tenantId}] lote cancelado/limpiado sin API chat=${chatId}`, 'event');
-      return;
-    }
-
     if ((bodyUpper === 'S' || bodyUpper === 'N') && pendingState.indice !== -1 && pendingState.total === 0) {
       logLine(`[${ctx.tenantId}] respuesta ${bodyUpper} ignorada: lote sin datos chat=${chatId}`, 'event');
       return;
     }
 
+  
     if (!body) {
       logLine(`[${ctx.tenantId}] mensaje telegram no texto -> ignorado`, 'event');
       return;
