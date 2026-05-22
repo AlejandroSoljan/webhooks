@@ -21,6 +21,13 @@ const { getDb, closeDb } = require('./db');
 
 const DEFAULT_TENANT_ID = String(process.env.TENANT_ID || 'default').trim() || 'default';
 
+// Fallback provisorio para que el panel pueda consultar las APIs aunque todavía
+// no esté cargada la configuración por dominio en Mongo. Si existen variables
+// de entorno o configuración por tenant, tienen prioridad sobre estos valores.
+const DEFAULT_FLETEROS_API_URL = String(process.env.FLETEROS_API_URL || process.env.MANAGER_API_URL || 'https://managersistemas.ddns.net:4801').trim();
+const DEFAULT_FLETEROS_API_VERSION = String(process.env.FLETEROS_API_VERSION || process.env.MANAGER_API_VERSION || 'v300').trim();
+const DEFAULT_FLETEROS_API_KEY = String(process.env.FLETEROS_API_KEY || process.env.MANAGER_API_KEY || 'DemoMNG052026--').trim();
+
 const COLLECTIONS = {
   clientes: 'fleteros_clientes',
   lugares: 'fleteros_lugares',
@@ -108,46 +115,65 @@ function joinUrlParts(...parts) {
 }
 
 function normalizeFleterosApiConfig(raw = {}) {
-  const nested = raw.fleterosApi || raw.fleterosApis || raw.apiFleteros || raw.transportesApi || raw.tranApi || raw.managerApi || raw.wscpeApi || {};
+  const nested = raw.fleterosApi || raw.fleterosApis || raw.apiFleteros || raw.api_fleteros || raw.transportesApi || raw.tranApi || raw.managerApi || raw.manager || raw.wscpeApi || {};
   const url = cleanString(
-    nested.url || nested.baseUrl || nested.apiUrl || nested.Url || raw.fleterosApiUrl || raw.fleteros_url || raw.Url || process.env.FLETEROS_API_URL || '',
+    nested.url || nested.baseUrl || nested.base_url || nested.apiUrl || nested.api_url || nested.Url ||
+    raw.fleterosApiUrl || raw.fleteros_api_url || raw.fleteros_url || raw.url_api_fleteros || raw.api_url_fleteros || raw.Url || raw.url || raw.baseUrl || raw.base_url || DEFAULT_FLETEROS_API_URL,
     500
   ).replace(/\/+$/g, '');
   const version = cleanString(
-    nested.version || nested.Version || nested.apiVersion || raw.fleterosApiVersion || raw.fleteros_version || raw.Version || process.env.FLETEROS_API_VERSION || 'v300',
+    nested.version || nested.Version || nested.apiVersion || nested.api_version ||
+    raw.fleterosApiVersion || raw.fleteros_api_version || raw.fleteros_version || raw.version_api_fleteros || raw.Version || raw.version || DEFAULT_FLETEROS_API_VERSION || 'v300',
     80
   ).replace(/^\/+|\/+$/g, '');
   const key = cleanString(
-    nested.key || nested.llave || nested.Llave || nested.apiKey || raw.fleterosApiKey || raw.fleteros_key || raw.Llave || process.env.FLETEROS_API_KEY || '',
+    nested.key || nested.llave || nested.Llave || nested.apiKey || nested.api_key ||
+    raw.fleterosApiKey || raw.fleteros_api_key || raw.fleteros_key || raw.key_api_fleteros || raw.llave_api_fleteros || raw.Llave || raw.key || raw.apiKey || DEFAULT_FLETEROS_API_KEY,
     240
   );
   return { url, version, key, configured: !!(url && version && key) };
 }
 
+async function findTenantConfigCandidate(db, collectionName, tenant) {
+  try {
+    return await db.collection(collectionName).findOne({
+      $or: [
+        { tenantId: tenant },
+        { tenant_id: tenant },
+        { dominio: tenant },
+        { domain: tenant },
+        { codigo: tenant },
+        { Codigo: tenant },
+        { nombre: tenant },
+        { Nombre: tenant },
+        { _id: tenant },
+      ],
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function getTenantFleterosApiConfig(db, tenantId) {
   const tenant = String(tenantId || DEFAULT_TENANT_ID).trim() || DEFAULT_TENANT_ID;
   const candidates = [];
-  try { candidates.push(await db.collection(COLLECTIONS.apiConfig).findOne({ tenantId: tenant })); } catch {}
-  for (const col of ['tenant_config', 'tenant_configs', 'dominios_config', 'asisto_tenant_config']) {
-    try {
-      const cfg = await db.collection(col).findOne({
-        $or: [
-          { tenantId: tenant },
-          { dominio: tenant },
-          { domain: tenant },
-          { _id: tenant },
-        ],
-      });
-      if (cfg) candidates.push(cfg);
-    } catch {}
+  const explicit = await findTenantConfigCandidate(db, COLLECTIONS.apiConfig, tenant);
+  if (explicit) candidates.push(explicit);
+
+  // Buscamos también en las colecciones usadas por el resto del sistema, porque
+  // en algunos tenants la configuración vive en "tel_tenant" o variantes.
+  for (const col of ['tenant_config', 'tenant_configs', 'tel_tenant', 'tel_tenants', 'tel_tenant_config', 'dominios_config', 'dominios', 'domains', 'asisto_tenant_config']) {
+    const cfg = await findTenantConfigCandidate(db, col, tenant);
+    if (cfg) candidates.push(cfg);
   }
 
   for (const cfg of candidates) {
     const normalized = normalizeFleterosApiConfig(cfg || {});
     if (normalized.configured) return { ...normalized, source: cfg?._id ? String(cfg._id) : 'mongo' };
   }
-  const envCfg = normalizeFleterosApiConfig({});
-  return { ...envCfg, source: envCfg.configured ? 'env' : 'missing' };
+
+  const fallbackCfg = normalizeFleterosApiConfig({});
+  return { ...fallbackCfg, source: fallbackCfg.configured ? 'fallback_default' : 'missing' };
 }
 
 function maskSecret(value) {
@@ -2269,8 +2295,12 @@ function panelHtml({ tenantId, user }) {
       const apiType = typeToApi[type] || type;
       const url = '/api/fleteros/search?type=' + encodeURIComponent(apiType) + '&q=' + encodeURIComponent(q);
       const r = await fetch(url, { headers: { 'Accept':'application/json' } });
-      if (!r.ok) throw new Error('search_failed');
-      const j = await r.json();
+      const j = await r.json().catch(function(){ return {}; });
+      if (!r.ok || !j.ok) {
+        if (j.error === 'fleteros_api_config_missing') throw new Error('Falta configurar URL, versión o key de API para este dominio');
+        if (j.error === 'external_api_error') throw new Error('La API externa no respondió correctamente');
+        throw new Error(j.error || 'search_failed');
+      }
       renderResults(type, j.items || []);
     }
 
@@ -2286,10 +2316,10 @@ function panelHtml({ tenantId, user }) {
         clearTimeout(debounceTimers[type]);
         if (!trim(input.value)) { hideResults(type); return; }
         debounceTimers[type] = setTimeout(function(){
-          search(type, input.value).catch(function(){ toast('Error buscando datos', false); });
+          search(type, input.value).catch(function(e){ toast(e.message || 'Error buscando datos', false); });
         }, 220);
       });
-      input.addEventListener('focus', function(){ if (trim(input.value)) search(type, input.value).catch(function(){}); });
+      input.addEventListener('focus', function(){ if (trim(input.value)) search(type, input.value).catch(function(e){ toast(e.message || 'Error buscando datos', false); }); });
     }
 
 
@@ -2634,11 +2664,15 @@ function mountFleterosViajesPanel(app, { auth } = {}) {
       const items = await searchExternalMasters(db, tenantId, type, q, limit);
       res.json({ ok: true, tenantId, type, source: 'api_externa', items });
     } catch (e) {
-      console.error('GET /api/fleteros/search error:', e);
+      console.error('GET /api/fleteros/search error:', {
+        message: e?.message || String(e),
+        status: e?.status || null,
+        body: e?.body || '',
+      });
       if (e?.status === 409 || String(e?.message || '').includes('fleteros_api_config_missing')) {
         return res.status(409).json({ ok: false, error: 'fleteros_api_config_missing' });
       }
-      res.status(500).json({ ok: false, error: 'external_api_error' });
+      res.status(500).json({ ok: false, error: 'external_api_error', detail: String(e?.message || e || '').slice(0, 160) });
     }
   });
 
