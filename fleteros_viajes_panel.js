@@ -28,6 +28,7 @@ const COLLECTIONS = {
   chasis: 'fleteros_chasis',
   viajes: 'fleteros_viajes',
   cpeImports: 'fleteros_cpe_imports',
+  apiConfig: 'fleteros_api_config',
 };
 
 function htmlEscape(value) {
@@ -92,6 +93,272 @@ function cleanString(value, max = 220) {
 
 function now() {
   return new Date();
+}
+
+
+function joinUrlParts(...parts) {
+  return parts
+    .filter((p) => p !== undefined && p !== null && String(p).trim() !== '')
+    .map((p, idx) => {
+      const v = String(p).trim();
+      if (idx === 0) return v.replace(/\/+$/g, '');
+      return v.replace(/^\/+|\/+$/g, '');
+    })
+    .join('/');
+}
+
+function normalizeFleterosApiConfig(raw = {}) {
+  const nested = raw.fleterosApi || raw.fleterosApis || raw.apiFleteros || raw.transportesApi || raw.tranApi || raw.managerApi || raw.wscpeApi || {};
+  const url = cleanString(
+    nested.url || nested.baseUrl || nested.apiUrl || nested.Url || raw.fleterosApiUrl || raw.fleteros_url || raw.Url || process.env.FLETEROS_API_URL || '',
+    500
+  ).replace(/\/+$/g, '');
+  const version = cleanString(
+    nested.version || nested.Version || nested.apiVersion || raw.fleterosApiVersion || raw.fleteros_version || raw.Version || process.env.FLETEROS_API_VERSION || 'v300',
+    80
+  ).replace(/^\/+|\/+$/g, '');
+  const key = cleanString(
+    nested.key || nested.llave || nested.Llave || nested.apiKey || raw.fleterosApiKey || raw.fleteros_key || raw.Llave || process.env.FLETEROS_API_KEY || '',
+    240
+  );
+  return { url, version, key, configured: !!(url && version && key) };
+}
+
+async function getTenantFleterosApiConfig(db, tenantId) {
+  const tenant = String(tenantId || DEFAULT_TENANT_ID).trim() || DEFAULT_TENANT_ID;
+  const candidates = [];
+  try { candidates.push(await db.collection(COLLECTIONS.apiConfig).findOne({ tenantId: tenant })); } catch {}
+  for (const col of ['tenant_config', 'tenant_configs', 'dominios_config', 'asisto_tenant_config']) {
+    try {
+      const cfg = await db.collection(col).findOne({
+        $or: [
+          { tenantId: tenant },
+          { dominio: tenant },
+          { domain: tenant },
+          { _id: tenant },
+        ],
+      });
+      if (cfg) candidates.push(cfg);
+    } catch {}
+  }
+
+  for (const cfg of candidates) {
+    const normalized = normalizeFleterosApiConfig(cfg || {});
+    if (normalized.configured) return { ...normalized, source: cfg?._id ? String(cfg._id) : 'mongo' };
+  }
+  const envCfg = normalizeFleterosApiConfig({});
+  return { ...envCfg, source: envCfg.configured ? 'env' : 'missing' };
+}
+
+function maskSecret(value) {
+  const s = String(value || '');
+  if (!s) return '';
+  if (s.length <= 6) return '*'.repeat(s.length);
+  return s.slice(0, 3) + '*'.repeat(Math.max(3, s.length - 6)) + s.slice(-3);
+}
+
+function externalSearchValue(q) {
+  const raw = cleanString(q, 120);
+  if (!raw) return '';
+  if (/[%*]/.test(raw)) return raw.replace(/\*/g, '%');
+  return '%' + raw + '%';
+}
+
+function apiEndpointForType(type) {
+  if (type === 'clientes') return 'api/Api_Clientes/Consulta';
+  if (type === 'lugares') return 'api/Api_Tran_Lugares/Consulta';
+  if (type === 'tipos-carga') return 'api/Api_Tran_Cargas/Consulta';
+  if (type === 'chasis') return 'api/Api_Tran_Chasis/Consulta';
+  return '';
+}
+
+function buildExternalApiUrl(config, type, q, extra = {}) {
+  const path = apiEndpointForType(type);
+  if (!path) throw new Error('invalid_type');
+  const url = new URL(joinUrlParts(config.url, config.version, path));
+  url.searchParams.set('key', config.key);
+  url.searchParams.set('campo', cleanString(extra.campo || 'OTRO', 40));
+  url.searchParams.set('valor', externalSearchValue(q));
+  url.searchParams.set('error_sin_registros', 'FALSE');
+  if (type === 'tipos-carga' || type === 'chasis') url.searchParams.set('inactivos', 'N');
+  return url.toString();
+}
+
+async function fetchJsonExternal(url, timeoutMs = 15000) {
+  const doFetch = globalThis.fetch || optionalRequire('node-fetch');
+  if (!doFetch) throw new Error('fetch_not_available');
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+  try {
+    const r = await doFetch(url, { method: 'GET', headers: { Accept: 'application/json' }, signal: ctrl?.signal });
+    const text = await r.text().catch(() => '');
+    if (!r.ok) {
+      const err = new Error('external_api_http_' + r.status);
+      err.status = r.status;
+      err.body = text.slice(0, 500);
+      throw err;
+    }
+    if (!text.trim()) return [];
+    try { return JSON.parse(text); } catch {
+      const err = new Error('external_api_invalid_json');
+      err.body = text.slice(0, 500);
+      throw err;
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function mapApiCliente(row) {
+  if (!row) return null;
+  const id = cleanString(row.Codigo || row.codigo || row.Id || row.id, 80);
+  const nombre = cleanString(row.Razon_Social || row.razon_social || row.Nombre || row.nombre || row.Campo_Orden || '', 180);
+  if (!id && !nombre) return null;
+  return {
+    id: id || stableId('cli_api', 'external', nombre),
+    _id: id || stableId('cli_api', 'external', nombre),
+    source: 'api_clientes',
+    label: nombre || id,
+    sublabel: [id ? ('Cod ' + id) : '', row.Cuit || row.CUIT || '', row.Ciudad_Desc || '', row.Provincia_Desc || ''].filter(Boolean).join(' · '),
+    nombre: nombre || id,
+    codigo: id,
+    cuit: cleanString(row.Cuit || row.CUIT || '', 40),
+    telefono: cleanString(row.Telefono || row.Tel_Celular || row.Tel_Particular || '', 80),
+    localidad: cleanString(row.Ciudad_Desc || '', 120),
+    provincia: cleanString(row.Provincia_Desc || '', 120),
+    rawApi: row,
+  };
+}
+
+function mapApiLugar(row) {
+  if (!row) return null;
+  const id = cleanString(row.Cod_Lugar || row.cod_lugar || row.Codigo || row.id, 80);
+  const nombre = cleanString(row.Descripcion || row.descripcion || row.Nombre || '', 180);
+  if (!id && !nombre) return null;
+  return {
+    id: id || stableId('lug_api', 'external', nombre),
+    _id: id || stableId('lug_api', 'external', nombre),
+    source: 'api_lugares',
+    label: nombre || id,
+    sublabel: [id ? ('Cod ' + id) : '', row.Desc_Provincia || row.Provincia_Desc || ''].filter(Boolean).join(' · '),
+    nombre: nombre || id,
+    codigo: id,
+    direccion: cleanString(row.Direccion || row.direccion || '', 180),
+    localidad: cleanString(row.Localidad || row.localidad || row.Descripcion || '', 120),
+    provincia: cleanString(row.Desc_Provincia || row.Provincia_Desc || '', 120),
+    tipo: 'origen_destino',
+    rawApi: row,
+  };
+}
+
+function mapApiTipoCarga(row) {
+  if (!row) return null;
+  const id = cleanString(row.Cod_Carga || row.cod_carga || row.Codigo || row.id, 80);
+  const nombre = cleanString(row.Descripcion || row.descripcion || row.Nombre || '', 180);
+  if (!id && !nombre) return null;
+  return {
+    id: id || stableId('tc_api', 'external', nombre),
+    _id: id || stableId('tc_api', 'external', nombre),
+    source: 'api_cargas',
+    label: nombre || id,
+    sublabel: [id ? ('Cod ' + id) : '', row.Activo ? ('Activo ' + row.Activo) : ''].filter(Boolean).join(' · '),
+    nombre: nombre || id,
+    codigo: id,
+    descripcion: nombre || '',
+    unidad: 'tn',
+    rawApi: row,
+  };
+}
+
+function mapApiChasis(row) {
+  if (!row) return null;
+  const id = cleanString(row.Cod_Chasis || row.cod_chasis || row.Codigo || row.id, 80);
+  const patente = cleanString(row.Patente || row.patente || '', 80);
+  const acoplado = cleanString(row.Patente_Acoplado || row.patente_acoplado || '', 80);
+  const transportista = cleanString(row.Nom_Transportista || row.nom_transportista || '', 180);
+  const chofer = cleanString(row.Nom_Chofer || row.nom_chofer || '', 180).replace(/^,\s*$/, '');
+  if (!id && !patente) return null;
+  return {
+    id: id || stableId('cha_api', 'external', patente),
+    _id: id || stableId('cha_api', 'external', patente),
+    source: 'api_chasis',
+    label: patente || id,
+    sublabel: [acoplado ? ('Acoplado ' + acoplado) : '', transportista, chofer].filter(Boolean).join(' · '),
+    codigo: id,
+    patenteChasis: patente,
+    patenteTractor: acoplado,
+    fletero: {
+      id: cleanString(row.Cod_Transportista || '', 80),
+      nombre: transportista,
+      cuit: cleanString(row.Cuit_Transportista || row.CUIT_Transportista || '', 40),
+      telefono: '',
+    },
+    chofer: {
+      id: cleanString(row.Cod_Empleado || '', 80),
+      nombre: chofer,
+      documento: cleanString(row.Doc_Chofer || '', 40),
+      cuit: cleanString(row.Cuit_Chofer || row.CUIT_Chofer || '', 40),
+      telefono: '',
+    },
+    marca: '',
+    modelo: '',
+    rawApi: row,
+  };
+}
+
+function mapExternalApiRow(type, row) {
+  if (type === 'clientes') return mapApiCliente(row);
+  if (type === 'lugares') return mapApiLugar(row);
+  if (type === 'tipos-carga') return mapApiTipoCarga(row);
+  if (type === 'chasis') return mapApiChasis(row);
+  return null;
+}
+
+function scoreExternalItem(type, item, q) {
+  if (!item) return 0;
+  if (type === 'clientes') return Math.max(scoreTextMatch(item.nombre, q, 100), scoreTextMatch(item.cuit, q, 95), scoreTextMatch(item.codigo, q, 90));
+  if (type === 'lugares') return Math.max(scoreTextMatch(item.nombre, q, 100), scoreTextMatch(item.localidad, q, 80), scoreTextMatch(item.provincia, q, 55));
+  if (type === 'tipos-carga') return Math.max(scoreTextMatch(item.nombre, q, 100), scoreTextMatch(item.descripcion, q, 80), scoreTextMatch(item.codigo, q, 80));
+  if (type === 'chasis') return Math.max(scoreTextMatch(item.patenteChasis, q, 100), scoreTextMatch(item.patenteTractor, q, 90), scoreTextMatch(item.fletero?.nombre, q, 65), scoreTextMatch(item.chofer?.nombre, q, 65), scoreTextMatch(item.codigo, q, 80));
+  return 0;
+}
+
+async function searchExternalMasters(db, tenantId, type, q, limit = 12) {
+  const cleanQ = cleanString(q, 120);
+  if (!normalizeSearchText(cleanQ)) return [];
+  const config = await getTenantFleterosApiConfig(db, tenantId);
+  if (!config.configured) {
+    const err = new Error('fleteros_api_config_missing');
+    err.status = 409;
+    throw err;
+  }
+  const url = buildExternalApiUrl(config, type, cleanQ);
+  const json = await fetchJsonExternal(url);
+  const rows = Array.isArray(json) ? json : (Array.isArray(json?.data) ? json.data : (Array.isArray(json?.items) ? json.items : []));
+  return rows
+    .map((row) => mapExternalApiRow(type, row))
+    .filter(Boolean)
+    .map((item) => ({ item, score: scoreExternalItem(type, item, cleanQ) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((x) => x.item);
+}
+
+async function searchExternalMastersMulti(db, tenantId, type, terms, limit = 20) {
+  const seen = new Set();
+  const out = [];
+  for (const term of terms.map((x) => cleanString(x, 120)).filter((x) => normalizeSearchText(x))) {
+    let rows = [];
+    try { rows = await searchExternalMasters(db, tenantId, type, term, limit); } catch (e) { if (e.status === 409) throw e; }
+    for (const row of rows) {
+      const key = String(row.id || row._id || row.label || JSON.stringify(row.rawApi || row));
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(row);
+      if (out.length >= limit) return out;
+    }
+  }
+  return out;
 }
 
 
@@ -824,76 +1091,94 @@ function matchStatus(score) {
 }
 
 async function findBestCliente(db, tenantId, entities) {
-  const docs = await db.collection(COLLECTIONS.clientes).find({ tenantId, activo: { $ne: false } }).limit(1000).toArray();
   let best = { score: 0, item: null, reason: '' };
   const list = (entities || []).filter(Boolean);
-  for (const doc of docs) {
+  const terms = [];
+  for (const ent of list) {
+    const cuit = onlyDigits(ent.cuit || ent.CUIT || '');
+    const name = cleanString(ent.razonSocial || ent.nombre || ent.razon_social || '', 180);
+    if (cuit) terms.push(cuit);
+    if (name) terms.push(name);
+  }
+  const rows = await searchExternalMastersMulti(db, tenantId, 'clientes', terms, 30);
+  for (const item of rows) {
     let score = 0;
     let reason = '';
     for (const ent of list) {
       const entCuit = onlyDigits(ent.cuit || ent.CUIT || '');
-      const docCuit = onlyDigits(doc.cuit || '');
-      if (entCuit && docCuit && entCuit === docCuit) {
-        score = Math.max(score, 100); reason = 'cuit';
-      }
-      const nameScore = scoreTextMatch(doc.nombre, ent.razonSocial || ent.nombre || ent.razon_social, 82);
-      if (nameScore > score) { score = nameScore; reason = 'nombre'; }
+      const itemCuit = onlyDigits(item.cuit || '');
+      if (entCuit && itemCuit && entCuit === itemCuit) { score = Math.max(score, 100); reason = 'cuit_api'; }
+      const nameScore = scoreTextMatch(item.nombre || item.label, ent.razonSocial || ent.nombre || ent.razon_social, 92);
+      if (nameScore > score) { score = nameScore; reason = 'nombre_api'; }
     }
-    if (score > best.score) best = { score, item: doc, reason };
+    if (score > best.score) best = { score, item, reason };
   }
-  return { status: matchStatus(best.score), score: best.score, reason: best.reason, item: best.item ? mapCliente(best.item) : null };
+  return { status: matchStatus(best.score), score: best.score, reason: best.reason, item: best.item || null };
 }
 
 async function findBestLugar(db, tenantId, data) {
-  const docs = await db.collection(COLLECTIONS.lugares).find({ tenantId, activo: { $ne: false } }).limit(1000).toArray();
+  const terms = [
+    [data?.localidad, data?.provincia].filter(Boolean).join(' '),
+    data?.localidad,
+    data?.nombre,
+    data?.direccion,
+  ].filter(Boolean);
+  const rows = await searchExternalMastersMulti(db, tenantId, 'lugares', terms, 30);
   let best = { score: 0, item: null, reason: '' };
   const targetName = [data?.nombre, data?.localidad, data?.provincia].filter(Boolean).join(' ');
-  for (const doc of docs) {
+  for (const item of rows) {
     let score = 0;
-    score += scoreTextMatch(doc.localidad, data?.localidad, 45);
-    score += scoreTextMatch(doc.provincia, data?.provincia, 25);
-    score += scoreTextMatch(doc.direccion, data?.direccion, 25);
-    score = Math.max(score, scoreTextMatch(doc.nombre, targetName, 75));
+    score += scoreTextMatch(item.localidad || item.nombre, data?.localidad, 48);
+    score += scoreTextMatch(item.provincia, data?.provincia, 22);
+    score += scoreTextMatch(item.direccion, data?.direccion, 20);
+    score = Math.max(score, scoreTextMatch(item.nombre || item.label, targetName, 86));
     score = Math.min(100, score);
-    if (score > best.score) best = { score, item: doc, reason: 'localidad/provincia' };
+    if (score > best.score) best = { score, item, reason: 'api_lugar' };
   }
-  return { status: matchStatus(best.score), score: best.score, reason: best.reason, item: best.item ? mapLugar(best.item) : null };
+  return { status: matchStatus(best.score), score: best.score, reason: best.reason, item: best.item || null };
 }
 
 async function findBestTipoCarga(db, tenantId, data) {
-  const docs = await db.collection(COLLECTIONS.tiposCarga).find({ tenantId, activo: { $ne: false } }).limit(1000).toArray();
   const target = [data?.especie, data?.tipo, data?.nombre].filter(Boolean).join(' ');
+  const rows = await searchExternalMastersMulti(db, tenantId, 'tipos-carga', [target, data?.especie, data?.tipo, data?.nombre], 30);
   let best = { score: 0, item: null, reason: '' };
-  for (const doc of docs) {
+  for (const item of rows) {
     const score = Math.max(
-      scoreTextMatch(doc.nombre, target, 92),
-      scoreTextMatch(doc.descripcion, target, 65),
-      scoreTextMatch(doc.unidad, target, 25)
+      scoreTextMatch(item.nombre || item.label, target, 96),
+      scoreTextMatch(item.descripcion, target, 80),
+      scoreTextMatch(item.codigo, target, 60)
     );
-    if (score > best.score) best = { score, item: doc, reason: 'tipo_carga' };
+    if (score > best.score) best = { score, item, reason: 'api_tipo_carga' };
   }
-  return { status: matchStatus(best.score), score: best.score, reason: best.reason, item: best.item ? mapTipoCarga(best.item) : null };
+  return { status: matchStatus(best.score), score: best.score, reason: best.reason, item: best.item || null };
 }
 
 async function findBestChasis(db, tenantId, dominios, chofer) {
-  const docs = await db.collection(COLLECTIONS.chasis).find({ tenantId, activo: { $ne: false } }).limit(1000).toArray();
   const plates = (dominios || []).map(normalizePatente).filter(Boolean);
+  const terms = [];
+  for (const plate of plates) {
+    terms.push(plate);
+    const spaced = plate.replace(/^([A-Z]{2,3})(\d+)/, '$1 $2');
+    if (spaced !== plate) terms.push(spaced);
+  }
+  if (chofer?.nombre || chofer?.razonSocial) terms.push(chofer.nombre || chofer.razonSocial);
+  const rows = await searchExternalMastersMulti(db, tenantId, 'chasis', terms, 40);
   let best = { score: 0, item: null, reason: '' };
-  for (const doc of docs) {
+  for (const item of rows) {
     let score = 0;
     let reason = '';
-    const ch = normalizePatente(doc.patenteChasis);
-    const tr = normalizePatente(doc.patenteTractor);
-    if (plates.includes(ch)) { score = 100; reason = 'patente_chasis'; }
-    else if (plates.includes(tr)) { score = 92; reason = 'patente_tractor'; }
+    const ch = normalizePatente(item.patenteChasis);
+    const tr = normalizePatente(item.patenteTractor);
+    if (plates.includes(ch)) { score = 100; reason = 'patente_chasis_api'; }
+    else if (plates.includes(tr)) { score = 92; reason = 'patente_acoplado_api'; }
     const choferScore = Math.max(
-      scoreTextMatch(doc.chofer?.nombre, chofer?.nombre || chofer?.razonSocial, 55),
-      onlyDigits(doc.chofer?.documento) && onlyDigits(chofer?.cuit) && onlyDigits(chofer?.cuit).endsWith(onlyDigits(doc.chofer?.documento)) ? 50 : 0
+      scoreTextMatch(item.chofer?.nombre, chofer?.nombre || chofer?.razonSocial, 55),
+      onlyDigits(item.chofer?.documento) && onlyDigits(chofer?.cuit) && onlyDigits(chofer?.cuit).endsWith(onlyDigits(item.chofer?.documento)) ? 50 : 0
     );
-    if (choferScore > score) { score = choferScore; reason = 'chofer'; }
-    if (score > best.score) best = { score, item: doc, reason };
+    if (choferScore > score) { score = choferScore; reason = 'chofer_api'; }
+    if (score > best.score) best = { score, item, reason };
   }
-  return { status: matchStatus(best.score), score: best.score, reason: best.reason, item: best.item ? mapChasis(best.item) : null };
+  return { status: matchStatus(best.score), score: best.score, reason: best.reason, item: best.item || null };
 }
 
 function buildCpeObservaciones(cpe) {
@@ -913,204 +1198,10 @@ function dateFromCpe(cpe) {
 }
 
 
-function cpeClienteEntity(cpe) {
-  const inter = cpe?.intervinientes || {};
-  return inter.titularCartaPorte || inter.fletePagador || inter.destinatario || inter.destino || null;
-}
+// Las altas automáticas de datos maestros en Mongo quedan deshabilitadas.
+// Las consultas de clientes, lugares, cargas y chasis se resuelven contra las APIs externas del dominio.
 
-function cpeTransportistaEntity(cpe) {
-  return cpe?.intervinientes?.empresaTransportista || cpe?.intervinientes?.fletePagador || null;
-}
-
-function buildClienteFromCpe(tenantId, cpe, user) {
-  const ent = cpeClienteEntity(cpe);
-  const nombre = cleanString(ent?.razonSocial || ent?.razon_social || ent?.nombre || '', 180);
-  const cuit = cuitDigits(ent?.cuit || ent?.CUIT || '');
-  if (!nombre && !cuit) return null;
-  const id = stableId('cli_auto', tenantId, cuit || nombre);
-  const at = now();
-  return {
-    _id: id,
-    tenantId,
-    nombre: nombre || cuit,
-    cuit,
-    telefono: '',
-    localidad: '',
-    activo: true,
-    autoAlta: true,
-    source: 'cpe_auto_alta',
-    searchKey: buildSearchKey(nombre, cuit),
-    cuitDigits: cuit,
-    createdBy: { uid: String(user?.uid || ''), username: String(user?.username || ''), role: String(user?.role || '') },
-    createdAt: at,
-    updatedAt: at,
-  };
-}
-
-function buildLugarFromCpe(tenantId, data, kind, user) {
-  const place = cleanCpePlaceObject(data || {});
-  const localidad = cleanString(place.localidad || place.nombre || '', 120);
-  const provincia = cleanString(place.provincia || '', 120);
-  const direccion = cleanString(place.direccion || '', 180);
-  const nroPlanta = cleanString(place.nroPlanta || place.nro_planta || '', 60);
-  if (!localidad && !provincia && !direccion && !nroPlanta) return null;
-  const nombre = titleCase(localidad || direccion || nroPlanta || kind);
-  const id = stableId('lug_auto', tenantId, kind, localidad, provincia, direccion, nroPlanta);
-  const at = now();
-  return {
-    _id: id,
-    tenantId,
-    nombre,
-    tipo: 'origen_destino',
-    direccion,
-    localidad: titleCase(localidad),
-    provincia: titleCase(provincia),
-    nroPlanta,
-    esCampo: typeof data?.esCampo === 'boolean' ? data.esCampo : null,
-    activo: true,
-    autoAlta: true,
-    source: 'cpe_auto_alta',
-    searchKey: buildSearchKey(nombre, localidad, provincia, direccion, nroPlanta),
-    localidadKey: normalizeKey(localidad),
-    provinciaKey: normalizeKey(provincia),
-    createdBy: { uid: String(user?.uid || ''), username: String(user?.username || ''), role: String(user?.role || '') },
-    createdAt: at,
-    updatedAt: at,
-  };
-}
-
-function buildTipoCargaFromCpe(tenantId, data, user) {
-  const especie = cleanCpeField(data?.especie || data?.tipo || data?.nombre || '', 120);
-  if (!especie || isLikelyCpeLabel(especie)) return null;
-  const nombre = titleCase(especie);
-  const id = stableId('tc_auto', tenantId, especie);
-  const at = now();
-  return {
-    _id: id,
-    tenantId,
-    nombre,
-    descripcion: 'Alta automática desde Carta de Porte',
-    unidad: 'tn',
-    activo: true,
-    autoAlta: true,
-    source: 'cpe_auto_alta',
-    searchKey: buildSearchKey(nombre, especie, data?.tipo),
-    createdBy: { uid: String(user?.uid || ''), username: String(user?.username || ''), role: String(user?.role || '') },
-    createdAt: at,
-    updatedAt: at,
-  };
-}
-
-function buildChasisFromCpe(tenantId, cpe, user) {
-  const dominios = Array.isArray(cpe?.transporte?.dominios) ? cpe.transporte.dominios.map(normalizePatente).filter(Boolean) : [];
-  const patentePrincipal = dominios[0] || '';
-  if (!patentePrincipal) return null;
-  const patenteSecundaria = dominios.find((p) => p !== patentePrincipal) || '';
-  const transportista = cpeTransportistaEntity(cpe);
-  const chofer = cpe?.intervinientes?.chofer || null;
-  const choferCuit = cuitDigits(chofer?.cuit || '');
-  const at = now();
-  return {
-    _id: stableId('cha_auto', tenantId, patentePrincipal),
-    tenantId,
-    patenteChasis: patentePrincipal,
-    patenteTractor: patenteSecundaria,
-    fletero: {
-      id: stableId('fle_auto', tenantId, cuitDigits(transportista?.cuit || '') || transportista?.razonSocial || transportista?.nombre || 'sin_fletero'),
-      nombre: cleanString(transportista?.razonSocial || transportista?.nombre || '', 180),
-      cuit: cuitDigits(transportista?.cuit || ''),
-      telefono: '',
-    },
-    chofer: {
-      id: stableId('cho_auto', tenantId, choferCuit || chofer?.nombre || 'sin_chofer'),
-      nombre: cleanString(chofer?.nombre || chofer?.razonSocial || '', 180),
-      cuit: choferCuit,
-      documento: dniFromCuit(choferCuit),
-      telefono: '',
-    },
-    marca: '',
-    modelo: '',
-    activo: true,
-    autoAlta: true,
-    source: 'cpe_auto_alta',
-    searchKey: buildSearchKey(patentePrincipal, patenteSecundaria, transportista?.razonSocial, transportista?.nombre, chofer?.nombre),
-    patenteChasisKey: normalizePatente(patentePrincipal),
-    patenteTractorKey: normalizePatente(patenteSecundaria),
-    createdBy: { uid: String(user?.uid || ''), username: String(user?.username || ''), role: String(user?.role || '') },
-    createdAt: at,
-    updatedAt: at,
-  };
-}
-
-async function upsertAutoMasterDoc(db, collectionName, doc) {
-  if (!doc || !doc._id) return null;
-
-  // Importante: MongoDB no permite actualizar el mismo campo en $setOnInsert y $set.
-  // El doc generado por el alta automática ya trae activo/updatedAt, por eso los
-  // sacamos del objeto de inserción y los manejamos únicamente con $set.
-  // Si no se hace esto, el endpoint /api/fleteros/cpe/parse falla con error 500
-  // cuando intenta crear cliente/origen/destino/tipo/chasis faltantes.
-  const { activo, updatedAt, ...insertDoc } = doc;
-
-  await db.collection(collectionName).updateOne(
-    { _id: doc._id, tenantId: doc.tenantId },
-    {
-      $setOnInsert: insertDoc,
-      $set: { updatedAt: now(), activo: true },
-    },
-    { upsert: true }
-  );
-  return db.collection(collectionName).findOne({ _id: doc._id, tenantId: doc.tenantId });
-}
-
-async function ensureMissingCpeMasterData(db, tenantId, cpe, matches, user) {
-  const next = { ...matches };
-  const autoCreated = [];
-
-  if (!isMatchedRef(next.cliente)) {
-    const saved = await upsertAutoMasterDoc(db, COLLECTIONS.clientes, buildClienteFromCpe(tenantId, cpe, user));
-    if (saved) {
-      next.cliente = { status: 'matched', score: 100, reason: 'auto_created', autoCreated: true, item: mapCliente(saved) };
-      autoCreated.push('cliente');
-    }
-  }
-
-  if (!isMatchedRef(next.origen)) {
-    const saved = await upsertAutoMasterDoc(db, COLLECTIONS.lugares, buildLugarFromCpe(tenantId, cpe?.procedencia || {}, 'origen', user));
-    if (saved) {
-      next.origen = { status: 'matched', score: 100, reason: 'auto_created', autoCreated: true, item: mapLugar(saved) };
-      autoCreated.push('origen');
-    }
-  }
-
-  if (!isMatchedRef(next.destino)) {
-    const saved = await upsertAutoMasterDoc(db, COLLECTIONS.lugares, buildLugarFromCpe(tenantId, cpe?.destinoMercaderia || {}, 'destino', user));
-    if (saved) {
-      next.destino = { status: 'matched', score: 100, reason: 'auto_created', autoCreated: true, item: mapLugar(saved) };
-      autoCreated.push('destino');
-    }
-  }
-
-  if (!isMatchedRef(next.tipoCarga)) {
-    const saved = await upsertAutoMasterDoc(db, COLLECTIONS.tiposCarga, buildTipoCargaFromCpe(tenantId, cpe?.grano || {}, user));
-    if (saved) {
-      next.tipoCarga = { status: 'matched', score: 100, reason: 'auto_created', autoCreated: true, item: mapTipoCarga(saved) };
-      autoCreated.push('tipo de carga');
-    }
-  }
-
-  if (!isMatchedRef(next.chasis)) {
-    const saved = await upsertAutoMasterDoc(db, COLLECTIONS.chasis, buildChasisFromCpe(tenantId, cpe, user));
-    if (saved) {
-      next.chasis = { status: 'matched', score: 100, reason: 'auto_created', autoCreated: true, item: mapChasis(saved) };
-      autoCreated.push('patente/chasis');
-    }
-  }
-
-  return { matches: next, autoCreated };
-}
-
-async function validateCpeAgainstFleteros(db, tenantId, cpe, options = {}) {
+async function validateCpeAgainstFleteros(db, tenantId, cpe, _options = {}) {
   const inter = cpe?.intervinientes || {};
   // Para este panel el cliente operativo de la carta es el titular/flete pagador.
   // En el PDF de ejemplo esto da: LOS ALUXES SOCIEDAD ANONIMA.
@@ -1123,13 +1214,8 @@ async function validateCpeAgainstFleteros(db, tenantId, cpe, options = {}) {
     findBestChasis(db, tenantId, cpe?.transporte?.dominios || [], inter.chofer || {}),
   ]);
 
-  let matches = { cliente, origen, destino, tipoCarga, chasis };
-  let autoCreated = [];
-  if (options.autoCreateMissing === true) {
-    const ensured = await ensureMissingCpeMasterData(db, tenantId, cpe, matches, options.user || null);
-    matches = ensured.matches;
-    autoCreated = ensured.autoCreated;
-  }
+  const matches = { cliente, origen, destino, tipoCarga, chasis };
+  const autoCreated = [];
 
   const warnings = [];
   if (!isMatchedRef(matches.cliente)) warnings.push('No se encontró cliente exacto por CUIT o razón social.');
@@ -1137,7 +1223,6 @@ async function validateCpeAgainstFleteros(db, tenantId, cpe, options = {}) {
   if (!isMatchedRef(matches.destino)) warnings.push('No se encontró destino exacto por localidad/provincia/dirección.');
   if (!isMatchedRef(matches.tipoCarga)) warnings.push('No se encontró tipo de carga exacto para ' + (cpe?.grano?.especie || 'la especie informada') + '.');
   if (!isMatchedRef(matches.chasis)) warnings.push('No se encontró chasis exacto por patente. Dominios detectados: ' + ((cpe?.transporte?.dominios || []).join(' - ') || 'sin datos'));
-  if (autoCreated.length) warnings.push('Se dieron de alta automáticamente en Mongo: ' + autoCreated.join(', ') + '.');
   if (cpe?.grano?.pesoNetoKg && cpe?.descarga?.pesoNetoKg && cpe.grano.pesoNetoKg !== cpe.descarga.pesoNetoKg) {
     warnings.push('El peso neto de carga y descarga difieren.');
   }
@@ -1622,6 +1707,110 @@ async function findRefById(db, collectionName, tenantId, id) {
   const safeId = cleanString(id, 120);
   if (!safeId) return null;
   return db.collection(collectionName).findOne({ _id: safeId, tenantId, activo: { $ne: false } });
+}
+
+
+function objectFromSelection(value) {
+  return value && typeof value === 'object' ? value : {};
+}
+
+function selectedClienteDoc(body) {
+  const b = objectFromSelection(body.cliente);
+  const id = cleanString(body.clienteId || b.id || b._id || b.codigo, 120);
+  const nombre = cleanString(b.nombre || b.label || b.Razon_Social || '', 180);
+  if (!id || !nombre) return null;
+  return {
+    _id: id,
+    tenantId: '',
+    nombre,
+    cuit: cleanString(b.cuit || b.Cuit || '', 40),
+    telefono: cleanString(b.telefono || '', 80),
+    localidad: cleanString(b.localidad || b.Ciudad_Desc || '', 120),
+    provincia: cleanString(b.provincia || b.Provincia_Desc || '', 120),
+    source: b.source || 'api_clientes',
+    rawApi: b.rawApi || b.raw || null,
+  };
+}
+
+function selectedLugarDoc(body, key, idKey) {
+  const b = objectFromSelection(body[key]);
+  const id = cleanString(body[idKey] || b.id || b._id || b.codigo, 120);
+  const nombre = cleanString(b.nombre || b.label || b.Descripcion || '', 180);
+  if (!id || !nombre) return null;
+  return {
+    _id: id,
+    tenantId: '',
+    nombre,
+    direccion: cleanString(b.direccion || '', 180),
+    localidad: cleanString(b.localidad || b.nombre || b.label || '', 120),
+    provincia: cleanString(b.provincia || '', 120),
+    tipo: cleanString(b.tipo || 'origen_destino', 40),
+    source: b.source || 'api_lugares',
+    rawApi: b.rawApi || b.raw || null,
+  };
+}
+
+function selectedTipoCargaDoc(body) {
+  const b = objectFromSelection(body.tipoCarga);
+  const id = cleanString(body.tipoCargaId || b.id || b._id || b.codigo, 120);
+  const nombre = cleanString(b.nombre || b.label || b.Descripcion || '', 180);
+  if (!id || !nombre) return null;
+  return {
+    _id: id,
+    tenantId: '',
+    nombre,
+    descripcion: cleanString(b.descripcion || b.nombre || b.label || '', 180),
+    unidad: cleanString(b.unidad || 'tn', 30),
+    source: b.source || 'api_cargas',
+    rawApi: b.rawApi || b.raw || null,
+  };
+}
+
+function selectedChasisDoc(body) {
+  const b = objectFromSelection(body.chasis);
+  const id = cleanString(body.chasisId || b.id || b._id || b.codigo, 120);
+  const patente = cleanString(b.patenteChasis || b.patente || b.label || '', 80);
+  if (!id || !patente) return null;
+  return {
+    _id: id,
+    tenantId: '',
+    patenteChasis: patente,
+    patenteTractor: cleanString(b.patenteTractor || b.patenteAcoplado || '', 80),
+    fletero: {
+      id: cleanString(b.fletero?.id || '', 80),
+      nombre: cleanString(b.fletero?.nombre || '', 180),
+      cuit: cleanString(b.fletero?.cuit || '', 40),
+      telefono: cleanString(b.fletero?.telefono || '', 80),
+    },
+    chofer: {
+      id: cleanString(b.chofer?.id || '', 80),
+      nombre: cleanString(b.chofer?.nombre || '', 180),
+      documento: cleanString(b.chofer?.documento || '', 40),
+      cuit: cleanString(b.chofer?.cuit || '', 40),
+      telefono: cleanString(b.chofer?.telefono || '', 80),
+    },
+    marca: cleanString(b.marca || '', 80),
+    modelo: cleanString(b.modelo || '', 80),
+    source: b.source || 'api_chasis',
+    rawApi: b.rawApi || b.raw || null,
+  };
+}
+
+async function resolveViajeRefs(db, tenantId, body) {
+  let cliente = selectedClienteDoc(body);
+  let origen = selectedLugarDoc(body, 'origen', 'origenId');
+  let destino = selectedLugarDoc(body, 'destino', 'destinoId');
+  let tipoCarga = selectedTipoCargaDoc(body);
+  let chasis = selectedChasisDoc(body);
+
+  // Compatibilidad con viajes o formularios anteriores que solo enviaban IDs guardados en Mongo.
+  if (!cliente) cliente = await findRefById(db, COLLECTIONS.clientes, tenantId, body.clienteId);
+  if (!origen) origen = await findRefById(db, COLLECTIONS.lugares, tenantId, body.origenId);
+  if (!destino) destino = await findRefById(db, COLLECTIONS.lugares, tenantId, body.destinoId);
+  if (!tipoCarga) tipoCarga = await findRefById(db, COLLECTIONS.tiposCarga, tenantId, body.tipoCargaId);
+  if (!chasis) chasis = await findRefById(db, COLLECTIONS.chasis, tenantId, body.chasisId);
+
+  return { cliente, origen, destino, tipoCarga, chasis };
 }
 
 function buildViajeSearchFilter(tenantId, q) {
@@ -2112,7 +2301,7 @@ function panelHtml({ tenantId, user }) {
       const matches = result.matches || {};
       function matchLabel(m){
         if (!m) return 'Sin validar';
-        const status = m.autoCreated ? 'Alta automática' : (m.status === 'matched' ? 'Coincide' : (m.status === 'candidate' ? 'Posible coincidencia' : 'No encontrado'));
+        const status = m.status === 'matched' ? 'Coincide' : (m.status === 'candidate' ? 'Posible coincidencia' : 'No encontrado');
         const item = m.item && (m.item.label || m.item.nombre || m.item.patenteChasis) ? ' · ' + (m.item.label || m.item.nombre || m.item.patenteChasis) : '';
         return status + item;
       }
@@ -2330,6 +2519,11 @@ function panelHtml({ tenantId, user }) {
           destinoId: state.destino.id,
           tipoCargaId: state.tipoCarga.id,
           chasisId: state.chasis.id,
+          cliente: state.cliente,
+          origen: state.origen,
+          destino: state.destino,
+          tipoCarga: state.tipoCarga,
+          chasis: state.chasis,
           fechaViaje: el('fechaViaje').value || '',
           observaciones: el('observaciones').value || '',
           cpe: state.cpe,
@@ -2429,38 +2623,22 @@ function mountFleterosViajesPanel(app, { auth } = {}) {
       const q = cleanString(req.query?.q, 120);
       const limit = Math.max(1, Math.min(Number(req.query?.limit || 12), 30));
       const db = await getDb();
-      await ensureFleterosIndexes(db).catch(() => {});
-
-      let collectionName = '';
-      let mapper = null;
-      let sort = { nombre: 1 };
-
-      if (type === 'clientes') {
-        collectionName = COLLECTIONS.clientes;
-        mapper = mapCliente;
-      } else if (type === 'lugares') {
-        collectionName = COLLECTIONS.lugares;
-        mapper = mapLugar;
-      } else if (type === 'tipos-carga') {
-        collectionName = COLLECTIONS.tiposCarga;
-        mapper = mapTipoCarga;
-      } else if (type === 'chasis') {
-        collectionName = COLLECTIONS.chasis;
-        mapper = mapChasis;
-        sort = { patenteChasis: 1 };
-      } else {
+      if (!['clientes', 'lugares', 'tipos-carga', 'chasis'].includes(type)) {
         return res.status(400).json({ ok: false, error: 'invalid_type' });
       }
 
       if (!normalizeSearchText(q)) {
-        return res.json({ ok: true, tenantId, type, items: [] });
+        return res.json({ ok: true, tenantId, type, source: 'api_externa', items: [] });
       }
 
-      const rows = await fuzzySearchDocs(db, collectionName, type, tenantId, q, limit, sort);
-      res.json({ ok: true, tenantId, type, items: rows.map(mapper).filter(Boolean) });
+      const items = await searchExternalMasters(db, tenantId, type, q, limit);
+      res.json({ ok: true, tenantId, type, source: 'api_externa', items });
     } catch (e) {
       console.error('GET /api/fleteros/search error:', e);
-      res.status(500).json({ ok: false, error: 'internal' });
+      if (e?.status === 409 || String(e?.message || '').includes('fleteros_api_config_missing')) {
+        return res.status(409).json({ ok: false, error: 'fleteros_api_config_missing' });
+      }
+      res.status(500).json({ ok: false, error: 'external_api_error' });
     }
   });
 
@@ -2470,9 +2648,81 @@ function mountFleterosViajesPanel(app, { auth } = {}) {
       const db = await getDb();
       await ensureFleterosIndexes(db).catch(() => {});
       const status = await getFleterosBaseDataStatus(db, tenantId);
-      res.json({ ok: true, ...status });
+      const apiConfig = await getTenantFleterosApiConfig(db, tenantId);
+      res.json({
+        ok: true,
+        ...status,
+        showSeedDemo: false,
+        apiConfig: {
+          configured: apiConfig.configured,
+          url: apiConfig.url,
+          version: apiConfig.version,
+          hasKey: !!apiConfig.key,
+          keyMasked: maskSecret(apiConfig.key),
+          source: apiConfig.source,
+        },
+      });
     } catch (e) {
       console.error('GET /api/fleteros/status error:', e);
+      res.status(500).json({ ok: false, error: 'internal' });
+    }
+  });
+
+  app.get('/api/fleteros/api-config', requireAuth, async (req, res) => {
+    try {
+      const tenantId = resolveTenantId(req, auth);
+      const db = await getDb();
+      const cfg = await getTenantFleterosApiConfig(db, tenantId);
+      res.json({
+        ok: true,
+        tenantId,
+        item: {
+          url: cfg.url,
+          version: cfg.version,
+          configured: cfg.configured,
+          hasKey: !!cfg.key,
+          keyMasked: maskSecret(cfg.key),
+          source: cfg.source,
+        },
+      });
+    } catch (e) {
+      console.error('GET /api/fleteros/api-config error:', e);
+      res.status(500).json({ ok: false, error: 'internal' });
+    }
+  });
+
+  app.post('/api/fleteros/api-config', requireAuth, async (req, res) => {
+    try {
+      const tenantId = resolveTenantId(req, auth);
+      const body = req.body || {};
+      const db = await getDb();
+      const current = await db.collection(COLLECTIONS.apiConfig).findOne({ tenantId });
+      const url = cleanString(body.url || body.baseUrl || current?.url || '', 500).replace(/\/+$/g, '');
+      const version = cleanString(body.version || current?.version || 'v300', 80).replace(/^\/+|\/+$/g, '');
+      const incomingKey = body.key ?? body.llave ?? body.apiKey;
+      const key = incomingKey === undefined || incomingKey === null || String(incomingKey).trim() === ''
+        ? cleanString(current?.key || '', 240)
+        : cleanString(incomingKey, 240);
+      if (!url || !version || !key) return res.status(400).json({ ok: false, error: 'missing_url_version_or_key' });
+      const at = now();
+      await db.collection(COLLECTIONS.apiConfig).updateOne(
+        { tenantId },
+        {
+          $set: {
+            tenantId,
+            url,
+            version,
+            key,
+            updatedAt: at,
+            updatedBy: { uid: String(req.user?.uid || ''), username: String(req.user?.username || '') },
+          },
+          $setOnInsert: { createdAt: at },
+        },
+        { upsert: true }
+      );
+      res.json({ ok: true, tenantId, item: { url, version, configured: true, hasKey: true, keyMasked: maskSecret(key), source: COLLECTIONS.apiConfig } });
+    } catch (e) {
+      console.error('POST /api/fleteros/api-config error:', e);
       res.status(500).json({ ok: false, error: 'internal' });
     }
   });
@@ -2515,7 +2765,7 @@ function mountFleterosViajesPanel(app, { auth } = {}) {
       extracted = normalizeParsedCpe(extracted, rawText);
       const db = await getDb();
       await ensureFleterosIndexes(db).catch(() => {});
-      const validation = await validateCpeAgainstFleteros(db, tenantId, extracted, { autoCreateMissing: true, user: req.user });
+      const validation = await validateCpeAgainstFleteros(db, tenantId, extracted, { user: req.user });
 
       const importDoc = {
         tenantId,
@@ -2550,7 +2800,8 @@ function mountFleterosViajesPanel(app, { auth } = {}) {
       console.error('POST /api/fleteros/cpe/parse error:', e);
       const msg = String(e?.message || e || '');
       if (msg.startsWith('openai_vision_failed')) return res.status(502).json({ ok: false, error: 'openai_vision_failed' });
-      res.status(500).json({ ok: false, error: 'internal' });
+      if (e?.status === 409 || msg.includes('fleteros_api_config_missing')) return res.status(409).json({ ok: false, error: 'fleteros_api_config_missing' });
+      res.status(500).json({ ok: false, error: 'external_api_error' });
     }
   });
 
@@ -2605,13 +2856,7 @@ function mountFleterosViajesPanel(app, { auth } = {}) {
       const body = req.body || {};
       const db = await getDb();
 
-      const [cliente, origen, destino, tipoCarga, chasis] = await Promise.all([
-        findRefById(db, COLLECTIONS.clientes, tenantId, body.clienteId),
-        findRefById(db, COLLECTIONS.lugares, tenantId, body.origenId),
-        findRefById(db, COLLECTIONS.lugares, tenantId, body.destinoId),
-        findRefById(db, COLLECTIONS.tiposCarga, tenantId, body.tipoCargaId),
-        findRefById(db, COLLECTIONS.chasis, tenantId, body.chasisId),
-      ]);
+      const { cliente, origen, destino, tipoCarga, chasis } = await resolveViajeRefs(db, tenantId, body);
 
       const missing = [];
       if (!cliente) missing.push('cliente');
@@ -2689,13 +2934,7 @@ function mountFleterosViajesPanel(app, { auth } = {}) {
       const existing = await db.collection(COLLECTIONS.viajes).findOne({ _id: new ObjectId(id), tenantId });
       if (!existing) return res.status(404).json({ ok: false, error: 'not_found' });
 
-      const [cliente, origen, destino, tipoCarga, chasis] = await Promise.all([
-        findRefById(db, COLLECTIONS.clientes, tenantId, body.clienteId),
-        findRefById(db, COLLECTIONS.lugares, tenantId, body.origenId),
-        findRefById(db, COLLECTIONS.lugares, tenantId, body.destinoId),
-        findRefById(db, COLLECTIONS.tiposCarga, tenantId, body.tipoCargaId),
-        findRefById(db, COLLECTIONS.chasis, tenantId, body.chasisId),
-      ]);
+      const { cliente, origen, destino, tipoCarga, chasis } = await resolveViajeRefs(db, tenantId, body);
 
       const missing = [];
       if (!cliente) missing.push('cliente');
