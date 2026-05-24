@@ -3690,7 +3690,7 @@ function mountAuthRoutes(app) {
           if (/^(true|false)$/i.test(s)) return /^true$/i.test(s);
           if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
           if ((s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']')) || (s.startsWith('"') && s.endsWith('"'))) {
-            try { return JSON.parse(s); } catch {}
+            try { return JSON.parse(s); } catch (e) {}
           }
           return s;
         }
@@ -3699,7 +3699,7 @@ function mountAuthRoutes(app) {
           modalTitle.textContent = title || 'Editar dominio';
           modalBackdrop.classList.add('open');
           modalBackdrop.setAttribute('aria-hidden', 'false');
-          setTimeout(() => { try { tenantEl.focus(); } catch {} }, 30);
+          setTimeout(() => { try { tenantEl.focus(); } catch (e) {} }, 30);
         }
         function closeModal(){
           modalBackdrop.classList.remove('open');
@@ -3793,7 +3793,7 @@ function mountAuthRoutes(app) {
           const valInput = row.querySelector('[data-v]');
           if (keyInput) keyInput.value = fieldName;
           if (valInput && (valInput.value === '' || String(valInput.value).trim() === '')) valInput.value = value || '';
-          try { valInput && valInput.focus(); } catch {}
+          try { valInput && valInput.focus(); } catch (e) {}
           return row;
         }
 
@@ -4080,7 +4080,8 @@ function mountAuthRoutes(app) {
 
         btnCloseModal.addEventListener('click', closeModal);
         modalBackdrop.addEventListener('click', (e)=>{
-            positionWaActionsMenu(e.currentTarget); if(e.target === modalBackdrop) closeModal(); });
+          if(e.target === modalBackdrop) closeModal();
+        });
         document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape' && modalBackdrop.classList.contains('open')) closeModal(); });
 
         loadList();
