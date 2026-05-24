@@ -3750,7 +3750,7 @@ function mountAuthRoutes(app) {
             rmBtn.title = locked ? 'Campo solo modificable por superadmin' : '';
           }
 
-      
+              }
         function refreshProtectedRows(){
           Array.from(fieldsEl.querySelectorAll('tr')).forEach(applyRowProtection);
         }
