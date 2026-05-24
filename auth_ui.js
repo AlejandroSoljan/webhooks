@@ -3540,7 +3540,6 @@ function mountAuthRoutes(app) {
         .tc-meta{margin-top:10px;color:#64748b;font-size:12px}
         .tc-protected td{background:#f8fafc;color:#64748b}
         .tc-protected .inp{background:#eef2f7;color:#64748b;border-color:#cbd5e1}
-        .tc-protected-badge{display:inline-flex;align-items:center;margin-top:6px;padding:3px 8px;border-radius:999px;background:#e2e8f0;color:#475569;font-size:11px;font-weight:800}
         .tc-protected button[data-rm]{opacity:.45;cursor:not-allowed}
         .tc-rule-cell{white-space:nowrap}
         .tc-rule-label{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:#475569;font-weight:800}
@@ -3751,18 +3750,7 @@ function mountAuthRoutes(app) {
             rmBtn.title = locked ? 'Campo solo modificable por superadmin' : '';
           }
 
-          let badge = tr.querySelector('[data-protected-badge]');
-          if (locked && !badge) {
-            badge = document.createElement('div');
-            badge.setAttribute('data-protected-badge', '1');
-            badge.className = 'tc-protected-badge';
-            badge.textContent = 'Solo superadmin';
-            const firstTd = tr.querySelector('td');
-            if (firstTd) firstTd.appendChild(badge);
-          } else if (!locked && badge) {
-            badge.remove();
-          }
-        }
+      
         function refreshProtectedRows(){
           Array.from(fieldsEl.querySelectorAll('tr')).forEach(applyRowProtection);
         }
@@ -3772,7 +3760,7 @@ function mountAuthRoutes(app) {
           tr.innerHTML =
             '<td><input class="inp" data-k value="' + esc(key) + '" placeholder="campo"/></td>' +
             '<td><input class="inp" data-v value="' + esc(value) + '" placeholder="valor"/></td>' +
-            (isSuper ? '<td class="tc-rule-cell"><label class="tc-rule-label"><input type="checkbox" data-superonly/><span>Solo superadmin</span></label></td>' : '') +
+            (isSuper ? '<td class="tc-rule-cell"><label class="tc-rule-label" title="Permiso restringido"><input type="checkbox" data-superonly aria-label="Permiso restringido"/></label></td>' : '') +
             '<td><button class="btn2" type="button" data-rm>✕</button></td>';
           
           tr.querySelector('[data-rm]').addEventListener('click', ()=> { if (tr.getAttribute('data-protected') !== '1') tr.remove(); });
