@@ -3321,6 +3321,136 @@ function mountAuthRoutes(app) {
     return out;
   }
 
+  function normalizeTenantConfigFieldName(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function addTenantConfigFieldNamesToSet(targetSet, value) {
+    if (!targetSet) return;
+    const addOne = (v) => {
+      const name = String(v || "").trim();
+      if (name) targetSet.add(normalizeTenantConfigFieldName(name));
+    };
+
+    if (Array.isArray(value)) {
+      value.forEach(addOne);
+      return;
+    }
+
+    if (value && typeof value === "object") {
+      for (const [k, v] of Object.entries(value)) {
+        if (v === true || String(v || "").toLowerCase() === "superadmin") addOne(k);
+      }
+      return;
+    }
+
+    addOne(value);
+  }
+
+  async function loadTenantConfigSuperadminOnlyFields(db) {
+    const fields = new Set();
+
+    const readFieldsFromDoc = (doc) => {
+      if (!doc || typeof doc !== "object") return;
+      addTenantConfigFieldNamesToSet(fields, doc.fields);
+      addTenantConfigFieldNamesToSet(fields, doc.superadminOnlyFields);
+      addTenantConfigFieldNamesToSet(fields, doc.superadmin_only_fields);
+      addTenantConfigFieldNamesToSet(fields, doc.readonlyFields);
+      addTenantConfigFieldNamesToSet(fields, doc.readonly_fields);
+
+      const explicitField = doc.field || doc.key || doc.name || doc.variable || doc.varName || doc.var_name;
+      if (
+        explicitField &&
+        (doc.superadminOnly === true ||
+          doc.superadmin_only === true ||
+          doc.onlySuperadmin === true ||
+          doc.only_superadmin === true ||
+          doc.readonlyForAdmin === true ||
+          doc.readonly_for_admin === true ||
+          String(doc.role || "").toLowerCase() === "superadmin")
+      ) {
+       addTenantConfigFieldNamesToSet(fields, explicitField);
+      }
+
+      const id = String(doc._id || "").trim();
+      if (
+        id &&
+        !id.startsWith("__") &&
+        id !== "superadmin_only_fields" &&
+        (doc.superadminOnly === true ||
+          doc.superadmin_only === true ||
+          doc.onlySuperadmin === true ||
+          doc.only_superadmin === true ||
+          doc.readonlyForAdmin === true ||
+          doc.readonly_for_admin === true ||
+          String(doc.role || "").toLowerCase() === "superadmin")
+      ) {
+        addTenantConfigFieldNamesToSet(fields, id);
+      }
+    };
+    try {
+      const docs = await db.collection("tenant_config_field_rules").find({
+        $or: [
+          { _id: "superadmin_only_fields" },
+          { superadminOnly: true },
+          { superadmin_only: true },
+          { onlySuperadmin: true },
+          { only_superadmin: true },
+          { readonlyForAdmin: true },
+          { readonly_for_admin: true },
+          { role: "superadmin" },
+        ]
+      }).limit(2000).toArray();
+      docs.forEach(readFieldsFromDoc);
+    } catch (e) {
+      console.warn("[tenant-config] no se pudieron leer reglas de tenant_config_field_rules:", e?.message || e);
+    }
+
+    try {
+      const docs = await db.collection("settings").find({
+        _id: {
+         $in: [
+            "tenant_config_superadmin_only_fields",
+            "tenant_config_field_rules",
+            "tenant_config_field_permissions",
+          ]
+        }
+      }).limit(20).toArray();
+      docs.forEach(readFieldsFromDoc);
+    } catch (e) {
+      console.warn("[tenant-config] no se pudieron leer reglas desde settings:", e?.message || e);
+    }
+
+    return Array.from(fields).filter(Boolean).sort();
+  }
+
+ function tenantConfigIsSuperadminOnlyField(fieldName, superadminOnlyFields) {
+    const key = normalizeTenantConfigFieldName(fieldName);
+    if (!key) return false;
+    return new Set(Array.isArray(superadminOnlyFields) ? superadminOnlyFields.map(normalizeTenantConfigFieldName) : []).has(key);
+  }
+
+  function removeSuperadminOnlyFieldsFromData(data, superadminOnlyFields) {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+    const out = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (tenantConfigIsSuperadminOnlyField(k, superadminOnlyFields)) continue;
+      out[k] = v;
+    }
+    return out;
+  }
+
+  function pickSuperadminOnlyFieldsFromData(data, superadminOnlyFields) {
+    if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+    const out = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (tenantConfigIsSuperadminOnlyField(k, superadminOnlyFields)) out[k] = v;
+    }
+    return out;
+  }
+
+
+
   function tenantConfigAdminPage({ user, initialTenantId }) {
     const role = String(user?.role || "");
     const isSuper = role === "superadmin";
@@ -3353,6 +3483,10 @@ function mountAuthRoutes(app) {
         .tc-modal-body{padding:16px 18px 18px}
         .tc-close{height:40px;border:1px solid rgba(148,163,184,.35);background:#fff;border-radius:12px;padding:0 12px;cursor:pointer;font-weight:700}
         .tc-meta{margin-top:10px;color:#64748b;font-size:12px}
+        .tc-protected td{background:#f8fafc;color:#64748b}
+        .tc-protected .inp{background:#eef2f7;color:#64748b;border-color:#cbd5e1}
+        .tc-protected-badge{display:inline-flex;align-items:center;margin-top:6px;padding:3px 8px;border-radius:999px;background:#e2e8f0;color:#475569;font-size:11px;font-weight:800}
+        .tc-protected button[data-rm]{opacity:.45;cursor:not-allowed}
         body.dark .card{background:#0f172a;border-color:rgba(148,163,184,.18)}
         body.dark .btn2, body.dark .inp, body.dark .tc-close{background:#111827;color:#e5e7eb;border-color:rgba(148,163,184,.28)}
         body.dark .tbl thead th{background:#111827;color:#e5e7eb}
@@ -3476,6 +3610,7 @@ function mountAuthRoutes(app) {
         let currentId = null;
         let currentDocMeta = null;
         let tenantListCache = [];
+        let superadminOnlyFields = new Set();
 
         function esc(s){
           return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -3513,6 +3648,54 @@ function mountAuthRoutes(app) {
           modalBackdrop.setAttribute('aria-hidden', 'true');
         }
 
+        function normalizeFieldName(name){
+          return String(name || '').trim().toLowerCase();
+        }
+
+        function syncSuperadminOnlyFields(fields){
+          superadminOnlyFields = new Set((Array.isArray(fields) ? fields : []).map(normalizeFieldName).filter(Boolean));
+          refreshProtectedRows();
+        }
+
+        function isSuperadminOnlyField(name){
+          if (isSuper) return false;
+          const key = normalizeFieldName(name);
+          return !!key && superadminOnlyFields.has(key);
+       }
+
+        function applyRowProtection(tr){
+          if (!tr) return;
+          const keyInput = tr.querySelector('[data-k]');
+          const valInput = tr.querySelector('[data-v]');
+          const rmBtn = tr.querySelector('[data-rm]');
+          const fieldName = String(keyInput && keyInput.value || '').trim();
+          const locked = isSuperadminOnlyField(fieldName);
+
+          tr.classList.toggle('tc-protected', locked);
+          tr.setAttribute('data-protected', locked ? '1' : '0');
+          if (keyInput) keyInput.readOnly = locked;
+          if (valInput) valInput.readOnly = locked;
+          if (rmBtn) {
+            rmBtn.disabled = locked;
+            rmBtn.title = locked ? 'Campo solo modificable por superadmin' : '';
+          }
+
+          let badge = tr.querySelector('[data-protected-badge]');
+          if (locked && !badge) {
+            badge = document.createElement('div');
+            badge.setAttribute('data-protected-badge', '1');
+            badge.className = 'tc-protected-badge';
+            badge.textContent = 'Solo superadmin';
+            const firstTd = tr.querySelector('td');
+            if (firstTd) firstTd.appendChild(badge);
+          } else if (!locked && badge) {
+            badge.remove();
+          }
+        }
+        function refreshProtectedRows(){
+          Array.from(fieldsEl.querySelectorAll('tr')).forEach(applyRowProtection);
+        }
+
         function addRow(key='', value=''){
           const tr = document.createElement('tr');
           tr.innerHTML =
@@ -3520,7 +3703,14 @@ function mountAuthRoutes(app) {
             '<td><input class="inp" data-v value="' + esc(value) + '" placeholder="valor"/></td>' +
             '<td><button class="btn2" type="button" data-rm>✕</button></td>';
           tr.querySelector('[data-rm]').addEventListener('click', ()=> tr.remove());
+          tr.querySelector('[data-rm]').addEventListener('click', ()=> { if (tr.getAttribute('data-protected') !== '1') tr.remove(); });
+          const keyInput = tr.querySelector('[data-k]');
+          if (keyInput) {
+            keyInput.addEventListener('input', ()=> applyRowProtection(tr));
+            keyInput.addEventListener('blur', ()=> applyRowProtection(tr));
+          }
           fieldsEl.appendChild(tr);
+          applyRowProtection(tr);
           return tr;
         }
 
@@ -3558,6 +3748,7 @@ function mountAuthRoutes(app) {
           const entries = Object.entries(doc || {});
           if (!entries.length) addRow('', '');
           for (const [k,v] of entries) addRow(k, normalizeValueForInput(v));
+          refreshProtectedRows();
         }
 
         function renderCopyOptions(items){
@@ -3594,6 +3785,7 @@ function mountAuthRoutes(app) {
             const k = String(r.querySelector('[data-k]')?.value || '').trim();
             const vRaw = r.querySelector('[data-v]')?.value;
             if (!k) continue;
+            if (isSuperadminOnlyField(k)) continue;
             if (keys.has(k)) throw new Error('Campo duplicado: ' + k);
             keys.add(k);
             doc[k] = parseValue(vRaw);
@@ -3605,6 +3797,7 @@ function mountAuthRoutes(app) {
           const r = await fetch('/api/tenant-config', { headers: { 'Accept':'application/json' }, credentials: 'same-origin' });
           const j = await r.json().catch(()=>null);
           if(!r.ok) throw new Error((j && (j.error||j.message)) || ('HTTP '+r.status));
+          if (j && j.superadminOnlyFields) syncSuperadminOnlyFields(j.superadminOnlyFields);
           return j;
         }
 
@@ -3873,12 +4066,13 @@ function mountAuthRoutes(app) {
       const requested = String(req.query?.tenantId || "").trim();
       const tenantId = requested || (isSuper ? "" : String(req.user?.tenantId || "default"));
       const col = db.collection("tenant_config");
+      const superadminOnlyFields = await loadTenantConfigSuperadminOnlyFields(db);
 
       if (tenantId) {
         const doc = await col.findOne({ _id: tenantId });
-        if (!doc) return res.json({ ok:true, item: null });
-        return res.json({ ok:true, item: { _id: doc._id, createdAt: doc.createdAt || null, updatedAt: doc.updatedAt || null, data: stripTenantConfigDoc(doc) } });
-      }
+           if (!doc) return res.json({ ok:true, item: null, superadminOnlyFields });
+           return res.json({ ok:true, item: { _id: doc._id, createdAt: doc.createdAt || null, updatedAt: doc.updatedAt || null, data: stripTenantConfigDoc(doc) }, superadminOnlyFields });
+    }
 
       // listado (superadmin)
       const items = await col
@@ -3886,7 +4080,7 @@ function mountAuthRoutes(app) {
         .sort({ _id: 1 })
         .limit(500)
         .toArray();
-      return res.json({ ok:true, items });
+      return res.json({ ok:true, items, superadminOnlyFields });
     } catch (e) {
       return res.status(500).json({ ok:false, error: String(e?.message || e) });
     }
@@ -3912,14 +4106,24 @@ function mountAuthRoutes(app) {
       const col = db.collection("tenant_config");
       const now = new Date();
 
-      const existing = await col.findOne(
-        { _id: tenantId },
-        { projection: { _id: 1, createdAt: 1 } }
-      );
+     const superadminOnlyFields = await loadTenantConfigSuperadminOnlyFields(db);
+
+      const existing = await col.findOne({ _id: tenantId });
+      const existingData = stripTenantConfigDoc(existing);
+      const safeData = isSuper
+        ? data
+        : removeSuperadminOnlyFieldsFromData(data, superadminOnlyFields);
+      const protectedExistingData = isSuper
+        ? {}
+        : pickSuperadminOnlyFieldsFromData(existingData, superadminOnlyFields);
+      const finalData = isSuper
+        ? safeData
+        : { ...protectedExistingData, ...safeData };
+ 
 
       const replacement = {
         _id: tenantId,
-        ...data,
+        ...finalData,
         createdAt: existing?.createdAt || now,
         updatedAt: now,
       };
@@ -3930,7 +4134,11 @@ function mountAuthRoutes(app) {
         { upsert: true }
       );
 
-      return res.json({ ok:true });
+      const protectedFieldsIgnored = isSuper
+        ? []
+        : Object.keys(data || {}).filter((k) => tenantConfigIsSuperadminOnlyField(k, superadminOnlyFields));
+
+      return res.json({ ok:true, protectedFieldsIgnored });
     } catch (e) {
       return res.status(500).json({ ok:false, error: String(e?.message || e) });
     }
