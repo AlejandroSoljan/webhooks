@@ -279,7 +279,7 @@ async function findLockByPhone(db, { numero, tenantId }) {
   );
 }
 
-function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route, apiKey, actionMessage }) {
+function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route, apiKey, actionMessage, clearMsgParam }) {
   const isDisabled = !!policy?.disabled;
   const isBlocked = !!policy?.blocked;
   const rawState = normalizeState(lock?.state);
@@ -396,6 +396,13 @@ function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route
       </table>
     </div>`}
   </div>
+  ${clearMsgParam ? `<script>
+    try {
+      var u = new URL(window.location.href);
+      u.searchParams.delete("msg");
+      window.history.replaceState(null, "", u.toString());
+    } catch (e) {}
+  </script>` : ""}
 </body>
 </html>`;
 }
@@ -458,6 +465,22 @@ function mountWwebPhoneAccess(app, options = {}) {
 
       let policy = await findPolicyByLockId(db, getLockId(lock, tenantId, numero));
       let actionMessage = String(req.query?.msg || "").trim();
+      let clearMsgParam = false;
+
+      // Si quedó msg=Reinicio solicitado en la URL, no lo sigas mostrando
+      // cuando el script ya volvió a iniciar y generó QR o está online.
+      // Además limpiamos el parámetro msg del WebControl para que el auto-refresh
+      // no lo vuelva a mostrar más adelante.
+      if (actionMessage) {
+        const msgNorm = actionMessage.toLowerCase();
+        const stateNorm = normalizeState(lock?.state);
+        const scriptStarted = stateNorm === "qr" || stateNorm === "online" || !!lock?.lastQrAt || !!lock?.startedAt;
+
+        if (msgNorm.includes("reinicio") && scriptStarted) {
+          actionMessage = "";
+         clearMsgParam = true;
+        }
+      }
 
       if (action) {
         if (String(admin) !== "1") {
@@ -493,6 +516,7 @@ function mountWwebPhoneAccess(app, options = {}) {
         route: req.path,
         apiKey,
         actionMessage,
+        clearMsgParam,
       }));
     } catch (err) {
       console.error("GET wweb phone access error:", err);
