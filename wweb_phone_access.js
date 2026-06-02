@@ -172,9 +172,7 @@ function htmlPage({ lock, numero, tenantId, admin, refreshSeconds }) {
   if (lastSeenAt) rows.push(["Última señal", formatDate(lastSeenAt)]);
   if (lastQrAt && state === "qr") rows.push(["Fecha QR", formatDate(lastQrAt)]);
   if (isAdmin) {
-    if (lockId) rows.push(["Lock", lockId]);
-    if (lock?.pid) rows.push(["PID", String(lock.pid)]);
-    if (lock?.holderId || lock?.instanceId) rows.push(["Instancia", String(lock.holderId || lock.instanceId)]);
+    // No mostrar Lock, PID ni Instancia en esta vista embebida.
     if (lock?.runtimeVersion || lock?.currentVersion) rows.push(["Versión", String(lock.runtimeVersion || lock.currentVersion)]);
     if (lock?.desiredTag || lock?.targetTag) rows.push(["Target", String(lock.desiredTag || lock.targetTag)]);
   }
@@ -187,34 +185,54 @@ function htmlPage({ lock, numero, tenantId, admin, refreshSeconds }) {
   ${refresh > 0 ? `<meta http-equiv="refresh" content="${refresh}">` : ""}
   <title>WhatsApp</title>
   <style>
-    html, body { margin:0; padding:0; background:#fff; color:#111; font-family:Arial, Helvetica, sans-serif; }
-    .wrap { box-sizing:border-box; width:100%; min-height:100vh; padding:16px; }
-    .box { max-width:520px; margin:0 auto; border:1px solid #ddd; border-radius:8px; padding:16px; }
-    .title { font-size:20px; font-weight:700; margin:0 0 12px 0; }
-    .state { display:inline-block; padding:6px 10px; border-radius:999px; font-size:13px; font-weight:700; background:#eee; }
+    html, body { margin:0; padding:0; background:#fff; color:#111; font-family:Arial, Helvetica, sans-serif; overflow:hidden; }
+    .wrap { box-sizing:border-box; width:100vw; min-height:100vh; padding:10px; display:flex; align-items:center; justify-content:center; }
+    .box { box-sizing:border-box; width:min(980px, 100%); min-height:260px; border:1px solid #ddd; border-radius:8px; padding:14px; }
+    .box.qr-mode { width:min(760px, 100%); min-height:300px; display:flex; align-items:center; justify-content:center; gap:22px; }
+    .qr-left { flex:0 0 330px; text-align:center; }
+    .qr-right { flex:1; min-width:260px; }
+    .title { font-size:22px; font-weight:700; margin:0 0 10px 0; }
+    .state { display:inline-block; padding:7px 12px; border-radius:999px; font-size:14px; font-weight:700; background:#eee; }
     .state.qr { background:#fff3cd; color:#7a5200; }
     .state.online { background:#d1e7dd; color:#0f5132; }
     .state.offline, .state.error { background:#f8d7da; color:#842029; }
-    .qr { text-align:center; margin:16px 0; }
-    .qr img { width:min(320px, 86vw); height:auto; image-rendering:auto; }
-    table { width:100%; border-collapse:collapse; margin-top:12px; font-size:14px; }
+    .qr { text-align:center; margin:0; }
+    .qr img { width:300px; max-width:42vw; height:auto; image-rendering:auto; }
+    table { width:100%; border-collapse:collapse; margin-top:12px; font-size:15px; }
     td { padding:8px 6px; border-bottom:1px solid #eee; vertical-align:top; }
-    td:first-child { width:38%; color:#555; font-weight:700; }
-    .msg { margin-top:14px; padding:12px; background:#f6f6f6; border-radius:6px; font-size:14px; }
+    td:first-child { width:34%; color:#555; font-weight:700; }
+    .msg { margin-top:14px; padding:12px; background:#f6f6f6; border-radius:6px; font-size:15px; line-height:1.35; }
+    .info-mode { display:block; }
+    @media (max-width: 640px) {
+      html, body { overflow:auto; }
+      .box.qr-mode { display:block; min-height:auto; }
+      .qr-left { flex:auto; }
+      .qr-right { min-width:0; margin-top:10px; }
+      .qr img { width:min(280px, 88vw); max-width:88vw; }
+    }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="box">
+    ${showQr ? `
+    <div class="box qr-mode">
+      <div class="qr-left">
+        <div class="qr"><img alt="QR WhatsApp" src="${escapeHtml(lock.lastQrDataUrl)}"></div>
+      </div>
+      <div class="qr-right">
+        <div class="title">Sesión WhatsApp</div>
+        <div class="state ${escapeHtml(state)}">${escapeHtml(state.toUpperCase())}</div>
+        <div class="msg">Escaneá el QR desde WhatsApp para iniciar sesión.</div>
+      </div>
+    </div>` : `
+    <div class="box info-mode">
       <div class="title">Sesión WhatsApp</div>
       <div class="state ${escapeHtml(state)}">${escapeHtml(state.toUpperCase())}</div>
-      ${showQr ? `<div class="qr"><img alt="QR WhatsApp" src="${escapeHtml(lock.lastQrDataUrl)}"></div><div class="msg">Escaneá el QR desde WhatsApp para iniciar sesión.</div>` : ""}
-      ${!showQr && state === "online" ? `<div class="msg">La sesión ya está iniciada.</div>` : ""}
-      ${!showQr && state !== "online" ? `<div class="msg">QR no disponible en este momento. Estado actual: ${escapeHtml(state)}.</div>` : ""}
+      ${state === "online" ? `<div class="msg">La sesión ya está iniciada.</div>` : `<div class="msg">QR no disponible en este momento. Estado actual: ${escapeHtml(state)}.</div>`}
       <table>
         ${rows.map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`).join("\n        ")}
       </table>
-    </div>
+    </div>`}
   </div>
 </body>
 </html>`;
@@ -232,7 +250,7 @@ function errorPage(message, status = 400) {
   <style>
     html, body { margin:0; padding:0; background:#fff; color:#111; font-family:Arial, Helvetica, sans-serif; }
     .wrap { box-sizing:border-box; width:100%; min-height:100vh; padding:16px; }
-    .box { max-width:520px; margin:0 auto; border:1px solid #ddd; border-radius:8px; padding:16px; }
+    .box { box-sizing:border-box; width:min(760px, 100%); margin:0 auto; border:1px solid #ddd; border-radius:8px; padding:16px; }
     .title { font-size:20px; font-weight:700; margin:0 0 12px 0; }
     .msg { padding:12px; background:#f8d7da; color:#842029; border-radius:6px; font-size:14px; }
   </style>
