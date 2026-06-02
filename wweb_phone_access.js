@@ -178,6 +178,7 @@ async function applyAdminAction(db, { action, lock, tenantId, numero }) {
         $setOnInsert: { _id: lockId, tenantId: parsedTenant, numero: parsedNumero },
         $set: {
           blocked: true,
+          messagesBlocked: true,
           disabled: false,
           blockMode: "messages",
           updatedAt: new Date(),
@@ -203,9 +204,15 @@ async function applyAdminAction(db, { action, lock, tenantId, numero }) {
         $setOnInsert: { _id: lockId, tenantId: parsedTenant, numero: parsedNumero },
         $set: {
           blocked: false,
+           messagesBlocked: false,
+          mensajes_bloqueados: false,
+          bloqueado: false,
           disabled: false,
           updatedAt: new Date(),
           updatedBy: "webcontrol",
+        },
+        $unset: {
+          blockMode: "",
         },
       },
       { upsert: true }
@@ -215,7 +222,7 @@ async function applyAdminAction(db, { action, lock, tenantId, numero }) {
       tenantId: parsedTenant,
       numero: parsedNumero,
       event: "phone_web_enable_messages",
-      detail: { blocked: false, disabled: false },
+      detail: { blocked: false, messagesBlocked: false, disabled: false },
     });
     return "Mensajes habilitados.";
   }
