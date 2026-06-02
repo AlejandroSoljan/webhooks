@@ -93,6 +93,7 @@ const { mountWebAccessRoutes } = require("./web_access_stats");
 const { mountTokenControlRoutes } = require("./token_control_stats");
 const { mountFleterosViajesPanel } = require("./fleteros_viajes_panel");
 const { mountOrderConfigPanel } = require("./order_config_panel");
+const { mountWwebPhoneAccess } = require("./wweb_phone_access");
 const {
   loadOrderConfig,
   orderFeatureEnabled,
@@ -121,6 +122,7 @@ mountWebAccessRoutes(app, auth);
 mountTokenControlRoutes(app, auth);
 mountFleterosViajesPanel(app, { auth });
 mountOrderConfigPanel(app, { auth }); 
+mountWwebPhoneAccess(app);
 
 
 // ===================== Tenant Channels (WhatsApp/OpenAI por tenant/canal) =====================
