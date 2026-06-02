@@ -163,23 +163,31 @@ async function applyAdminAction(db, { action, lock, tenantId, numero }) {
   }
 
   if (normalizedAction === "block" || normalizedAction === "bloquear") {
+    // Bloqueo lógico: NO cierra WhatsApp ni libera el lock.
+    // Solo deja marcada la sesión para que app_asisto_ws no responda mensajes
+    // y no ejecute ConsultaApiMensajes mientras esté bloqueada.
     await policies.updateOne(
       { _id: lockId },
       {
         $setOnInsert: { _id: lockId, tenantId: parsedTenant, numero: parsedNumero },
-        $set: { disabled: true, updatedAt: new Date(), updatedBy: "webcontrol" },
+        $set: {
+          blocked: true,
+          disabled: false,
+          blockMode: "messages",
+          updatedAt: new Date(),
+          updatedBy: "webcontrol",
+        },
       },
       { upsert: true }
     );
-    await enqueueWwebAction(db, {
+    await saveHistory(db, {
       lockId,
       tenantId: parsedTenant,
       numero: parsedNumero,
-      action: "release",
-      reason: "phone_web_block",
+      event: "phone_web_block_messages",
+      detail: { blocked: true, disabled: false, blockMode: "messages" },
     });
-    await saveHistory(db, { lockId, tenantId: parsedTenant, numero: parsedNumero, event: "phone_web_block", detail: { disabled: true } });
-    return "Sesión bloqueada.";
+    return "Mensajes bloqueados.";
   }
 
   if (normalizedAction === "enable" || normalizedAction === "habilitar") {
@@ -187,12 +195,23 @@ async function applyAdminAction(db, { action, lock, tenantId, numero }) {
       { _id: lockId },
       {
         $setOnInsert: { _id: lockId, tenantId: parsedTenant, numero: parsedNumero },
-        $set: { disabled: false, updatedAt: new Date(), updatedBy: "webcontrol" },
+        $set: {
+          blocked: false,
+          disabled: false,
+          updatedAt: new Date(),
+          updatedBy: "webcontrol",
+        },
       },
       { upsert: true }
     );
-    await saveHistory(db, { lockId, tenantId: parsedTenant, numero: parsedNumero, event: "phone_web_enable", detail: { disabled: false } });
-    return "Sesión habilitada.";
+    await saveHistory(db, {
+      lockId,
+      tenantId: parsedTenant,
+      numero: parsedNumero,
+      event: "phone_web_enable_messages",
+      detail: { blocked: false, disabled: false },
+    });
+    return "Mensajes habilitados.";
   }
 
   return "Acción no reconocida.";
@@ -262,9 +281,11 @@ async function findLockByPhone(db, { numero, tenantId }) {
 
 function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route, apiKey, actionMessage }) {
   const isDisabled = !!policy?.disabled;
-  const state = isDisabled ? "disabled" : normalizeState(lock?.state);
+  const isBlocked = !!policy?.blocked;
+  const rawState = normalizeState(lock?.state);
+  const state = isDisabled ? "disabled" : (isBlocked ? "blocked" : rawState);
   const hasQr = !!String(lock?.lastQrDataUrl || "").trim();
-  const showQr = state === "qr" && hasQr;
+  const showQr = rawState === "qr" && hasQr;
   const pc = lock?.host || lock?.hostname || lock?.pcName || "";
   const startedAt = lock?.startedAt || lock?.createdAt || null;
   const lastSeenAt = lock?.lastSeenAt || lock?.updatedAt || null;
@@ -287,7 +308,8 @@ function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route
   rows.push(["Teléfono", realNumero]);
   if (realTenantId) rows.push(["Dominio", realTenantId]);
   if (pc) rows.push(["PC", pc]);
-  if (isDisabled) rows.push(["Bloqueado", "SI"]);
+  if (isDisabled) rows.push(["Sesión cerrada", "SI"]);
+  if (isBlocked) rows.push(["Mensajes bloqueados", "SI"]);
   if (startedAt) rows.push(["Inicio script", formatDate(startedAt)]);
   if (lastSeenAt) rows.push(["Última señal", formatDate(lastSeenAt)]);
   if (lastQrAt && state === "qr") rows.push(["Fecha QR", formatDate(lastQrAt)]);
@@ -300,7 +322,7 @@ function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route
   const adminButtons = isAdmin ? `
     <div class="actions">
       <a class="btn" href="${escapeHtml(buildUrl(route, { ...baseParams, action: "restart" }))}">Reiniciar</a>
-      ${isDisabled
+      ${(isDisabled || isBlocked)
         ? `<a class="btn ok" href="${escapeHtml(buildUrl(route, { ...baseParams, action: "enable" }))}">Habilitar</a>`
         : `<a class="btn danger" href="${escapeHtml(buildUrl(route, { ...baseParams, action: "block" }))}">Bloquear</a>`}
     </div>` : "";
@@ -326,6 +348,7 @@ function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route
     .state.qr { background:#fff3cd; color:#7a5200; }
     .state.online { background:#d1e7dd; color:#0f5132; }
     .state.offline, .state.error, .state.disabled { background:#f8d7da; color:#842029; }
+    .state.blocked { background:#ffe5d0; color:#7a3b00; }
     .qr { text-align:center; margin:0; }
     .qr img { width:300px; max-width:42vw; height:auto; image-rendering:auto; }
     table { width:100%; border-collapse:collapse; margin-top:12px; font-size:15px; }
