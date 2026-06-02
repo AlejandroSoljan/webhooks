@@ -290,6 +290,7 @@ function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route
   const isBlocked = !!policy?.blocked;
   const rawState = normalizeState(lock?.state);
   const state = isDisabled ? "disabled" : (isBlocked ? "blocked" : rawState);
+  const isStarting = state === "iniciando";
   const hasQr = !!String(lock?.lastQrDataUrl || "").trim();
   const showQr = rawState === "qr" && hasQr;
   const pc = lock?.host || lock?.hostname || lock?.pcName || "";
