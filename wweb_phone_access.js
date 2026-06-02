@@ -434,7 +434,7 @@ function mountWwebPhoneAccess(app, options = {}) {
       }
 
       let policy = await findPolicyByLockId(db, getLockId(lock, tenantId, numero));
-      let actionMessage = "";
+      let actionMessage = String(req.query?.msg || "").trim();
 
       if (action) {
         if (String(admin) !== "1") {
@@ -443,7 +443,21 @@ function mountWwebPhoneAccess(app, options = {}) {
         }
 
         actionMessage = await applyAdminAction(db, { action, lock, tenantId, numero });
-        policy = await findPolicyByLockId(db, getLockId(lock, tenantId, numero));
+
+        // IMPORTANTE:
+        // Esta pantalla tiene auto-refresh. Si queda action=restart/block/enable
+        // en la URL, cada refresh vuelve a ejecutar la misma acción.
+        // Luego de ejecutar, redireccionamos a la misma pantalla SIN action.
+        const cleanUrl = buildUrl(req.path, {
+          tenantId: String(lock?.tenantId || lock?.tenantid || tenantId || ""),
+          numero: String(lock?.numero || lock?.number || lock?.phone || numero || ""),
+          admin: String(admin) === "1" ? "1" : "0",
+          refresh,
+          apiKey,
+          msg: actionMessage,
+        });
+
+        return res.redirect(303, cleanUrl);
       }
 
       return res.status(200).type("html").send(htmlPage({
