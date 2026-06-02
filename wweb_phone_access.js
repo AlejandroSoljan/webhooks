@@ -87,6 +87,117 @@ function lockIdFromParts(tenantId, numero) {
   return `${t}:${n}`;
 }
 
+function buildUrl(route, params = {}) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined || v === null || String(v) === "") continue;
+    qs.set(k, String(v));
+  }
+  const q = qs.toString();
+  return q ? `${route}?${q}` : route;
+}
+
+function getLockId(lock, tenantId, numero) {
+  const existing = String(lock?._id || "").trim();
+  if (existing) return existing;
+  return lockIdFromParts(tenantId, numero);
+}
+
+async function findPolicyByLockId(db, lockId) {
+  const id = String(lockId || "").trim();
+  if (!id) return null;
+  return db.collection("wa_wweb_policies").findOne({ _id: id });
+}
+
+async function saveHistory(db, { lockId, tenantId, numero, event, detail }) {
+  try {
+    await db.collection("wa_wweb_history").insertOne({
+      lockId,
+      tenantId,
+      numero,
+      event,
+      host: "webcontrol",
+      by: "webcontrol",
+      detail: detail || null,
+      at: new Date(),
+    });
+  } catch {}
+}
+
+async function enqueueWwebAction(db, { lockId, tenantId, numero, action, reason }) {
+  await db.collection("wa_wweb_actions").insertOne({
+    lockId,
+    tenantId,
+    numero,
+    action,
+    reason: reason || "phone_web",
+    requestedBy: "webcontrol",
+    requestedAt: new Date(),
+  });
+}
+
+async function applyAdminAction(db, { action, lock, tenantId, numero }) {
+  const normalizedAction = String(action || "").trim().toLowerCase();
+  if (!normalizedAction) return "";
+
+  const lockId = getLockId(lock, tenantId, numero);
+  const parsedTenant = String(lock?.tenantId || lock?.tenantid || tenantId || "").trim();
+  const parsedNumero = String(lock?.numero || lock?.number || lock?.phone || numero || "").trim();
+
+  if (!lockId || !parsedTenant || !parsedNumero) {
+    return "No se pudo resolver la sesión para ejecutar la acción.";
+  }
+
+  const policies = db.collection("wa_wweb_policies");
+
+  if (normalizedAction === "restart" || normalizedAction === "reiniciar") {
+    await enqueueWwebAction(db, {
+      lockId,
+      tenantId: parsedTenant,
+      numero: parsedNumero,
+      action: "restart",
+      reason: "phone_web_restart",
+    });
+    await saveHistory(db, { lockId, tenantId: parsedTenant, numero: parsedNumero, event: "phone_web_restart", detail: null });
+    return "Reinicio solicitado.";
+  }
+
+  if (normalizedAction === "block" || normalizedAction === "bloquear") {
+    await policies.updateOne(
+      { _id: lockId },
+      {
+        $setOnInsert: { _id: lockId, tenantId: parsedTenant, numero: parsedNumero },
+        $set: { disabled: true, updatedAt: new Date(), updatedBy: "webcontrol" },
+      },
+      { upsert: true }
+    );
+    await enqueueWwebAction(db, {
+      lockId,
+      tenantId: parsedTenant,
+      numero: parsedNumero,
+      action: "release",
+      reason: "phone_web_block",
+    });
+    await saveHistory(db, { lockId, tenantId: parsedTenant, numero: parsedNumero, event: "phone_web_block", detail: { disabled: true } });
+    return "Sesión bloqueada.";
+  }
+
+  if (normalizedAction === "enable" || normalizedAction === "habilitar") {
+    await policies.updateOne(
+      { _id: lockId },
+      {
+        $setOnInsert: { _id: lockId, tenantId: parsedTenant, numero: parsedNumero },
+        $set: { disabled: false, updatedAt: new Date(), updatedBy: "webcontrol" },
+      },
+      { upsert: true }
+    );
+    await saveHistory(db, { lockId, tenantId: parsedTenant, numero: parsedNumero, event: "phone_web_enable", detail: { disabled: false } });
+    return "Sesión habilitada.";
+  }
+
+  return "Acción no reconocida.";
+}
+
 async function findLockByPhone(db, { numero, tenantId }) {
   const locks = db.collection("wa_locks");
   const n = onlyDigits(numero);
@@ -149,8 +260,9 @@ async function findLockByPhone(db, { numero, tenantId }) {
   );
 }
 
-function htmlPage({ lock, numero, tenantId, admin, refreshSeconds }) {
-  const state = normalizeState(lock?.state);
+function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route, apiKey, actionMessage }) {
+  const isDisabled = !!policy?.disabled;
+  const state = isDisabled ? "disabled" : normalizeState(lock?.state);
   const hasQr = !!String(lock?.lastQrDataUrl || "").trim();
   const showQr = state === "qr" && hasQr;
   const pc = lock?.host || lock?.hostname || lock?.pcName || "";
@@ -162,12 +274,20 @@ function htmlPage({ lock, numero, tenantId, admin, refreshSeconds }) {
   const realNumero = String(lock?.numero || lock?.number || lock?.phone || numero || "");
   const isAdmin = String(admin || "0") === "1";
   const refresh = Math.max(0, Math.min(60, Number.parseInt(refreshSeconds, 10) || 5));
+  const baseParams = {
+    tenantId: realTenantId,
+    numero: realNumero,
+    admin: isAdmin ? "1" : "0",
+    refresh,
+    apiKey,
+  };
 
   const rows = [];
   rows.push(["Estado", state.toUpperCase()]);
   rows.push(["Teléfono", realNumero]);
   if (realTenantId) rows.push(["Dominio", realTenantId]);
   if (pc) rows.push(["PC", pc]);
+  if (isDisabled) rows.push(["Bloqueado", "SI"]);
   if (startedAt) rows.push(["Inicio script", formatDate(startedAt)]);
   if (lastSeenAt) rows.push(["Última señal", formatDate(lastSeenAt)]);
   if (lastQrAt && state === "qr") rows.push(["Fecha QR", formatDate(lastQrAt)]);
@@ -176,6 +296,16 @@ function htmlPage({ lock, numero, tenantId, admin, refreshSeconds }) {
     if (lock?.runtimeVersion || lock?.currentVersion) rows.push(["Versión", String(lock.runtimeVersion || lock.currentVersion)]);
     if (lock?.desiredTag || lock?.targetTag) rows.push(["Target", String(lock.desiredTag || lock.targetTag)]);
   }
+
+  const adminButtons = isAdmin ? `
+    <div class="actions">
+      <a class="btn" href="${escapeHtml(buildUrl(route, { ...baseParams, action: "restart" }))}">Reiniciar</a>
+      ${isDisabled
+        ? `<a class="btn ok" href="${escapeHtml(buildUrl(route, { ...baseParams, action: "enable" }))}">Habilitar</a>`
+        : `<a class="btn danger" href="${escapeHtml(buildUrl(route, { ...baseParams, action: "block" }))}">Bloquear</a>`}
+    </div>` : "";
+
+  const actionBox = actionMessage ? `<div class="action-msg">${escapeHtml(actionMessage)}</div>` : "";
 
   return `<!doctype html>
 <html lang="es">
@@ -195,7 +325,7 @@ function htmlPage({ lock, numero, tenantId, admin, refreshSeconds }) {
     .state { display:inline-block; padding:7px 12px; border-radius:999px; font-size:14px; font-weight:700; background:#eee; }
     .state.qr { background:#fff3cd; color:#7a5200; }
     .state.online { background:#d1e7dd; color:#0f5132; }
-    .state.offline, .state.error { background:#f8d7da; color:#842029; }
+    .state.offline, .state.error, .state.disabled { background:#f8d7da; color:#842029; }
     .qr { text-align:center; margin:0; }
     .qr img { width:300px; max-width:42vw; height:auto; image-rendering:auto; }
     table { width:100%; border-collapse:collapse; margin-top:12px; font-size:15px; }
@@ -203,6 +333,11 @@ function htmlPage({ lock, numero, tenantId, admin, refreshSeconds }) {
     td:first-child { width:34%; color:#555; font-weight:700; }
     .msg { margin-top:14px; padding:12px; background:#f6f6f6; border-radius:6px; font-size:15px; line-height:1.35; }
     .info-mode { display:block; }
+    .actions { margin-top:14px; display:flex; gap:10px; flex-wrap:wrap; }
+    .btn { display:inline-block; border:1px solid #999; border-radius:7px; padding:10px 14px; text-decoration:none; font-weight:700; color:#111; background:#f4f4f4; font-size:15px; }
+    .btn.danger { background:#f8d7da; color:#842029; border-color:#f1aeb5; }
+    .btn.ok { background:#d1e7dd; color:#0f5132; border-color:#a3cfbb; }
+    .action-msg { margin-top:12px; padding:10px 12px; background:#e7f1ff; border:1px solid #b6d4fe; color:#084298; border-radius:6px; font-size:14px; }
     @media (max-width: 640px) {
       html, body { overflow:auto; }
       .box.qr-mode { display:block; min-height:auto; }
@@ -223,12 +358,16 @@ function htmlPage({ lock, numero, tenantId, admin, refreshSeconds }) {
         <div class="title">Sesión WhatsApp</div>
         <div class="state ${escapeHtml(state)}">${escapeHtml(state.toUpperCase())}</div>
         <div class="msg">Escaneá el QR desde WhatsApp para iniciar sesión.</div>
+        ${actionBox}
+        ${adminButtons}
       </div>
     </div>` : `
     <div class="box info-mode">
       <div class="title">Sesión WhatsApp</div>
       <div class="state ${escapeHtml(state)}">${escapeHtml(state.toUpperCase())}</div>
       ${state === "online" ? `<div class="msg">La sesión ya está iniciada.</div>` : `<div class="msg">QR no disponible en este momento. Estado actual: ${escapeHtml(state)}.</div>`}
+      ${actionBox}
+      ${adminButtons}
       <table>
         ${rows.map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`).join("\n        ")}
       </table>
@@ -278,6 +417,8 @@ function mountWwebPhoneAccess(app, options = {}) {
       const tenantId = String(req.query?.tenantId || req.query?.tenant || req.query?.dominio || "").trim();
       const admin = String(req.query?.admin || "0").trim();
       const refresh = String(req.query?.refresh || "5").trim();
+      const action = String(req.query?.action || req.query?.accion || "").trim();
+      const apiKey = readApiKey(req);
 
       if (!numero) {
         const e = errorPage("Falta parámetro numero", 400);
@@ -292,7 +433,30 @@ function mountWwebPhoneAccess(app, options = {}) {
         return res.status(e.status).type("html").send(e.html);
       }
 
-      return res.status(200).type("html").send(htmlPage({ lock, numero, tenantId, admin, refreshSeconds: refresh }));
+      let policy = await findPolicyByLockId(db, getLockId(lock, tenantId, numero));
+      let actionMessage = "";
+
+      if (action) {
+        if (String(admin) !== "1") {
+          const e = errorPage("Acción no permitida", 403);
+          return res.status(e.status).type("html").send(e.html);
+        }
+
+        actionMessage = await applyAdminAction(db, { action, lock, tenantId, numero });
+        policy = await findPolicyByLockId(db, getLockId(lock, tenantId, numero));
+      }
+
+      return res.status(200).type("html").send(htmlPage({
+        lock,
+        policy,
+        numero,
+        tenantId,
+        admin,
+        refreshSeconds: refresh,
+        route: req.path,
+        apiKey,
+        actionMessage,
+      }));
     } catch (err) {
       console.error("GET wweb phone access error:", err);
       const e = errorPage("Error interno consultando sesión", 500);
