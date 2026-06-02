@@ -56,8 +56,14 @@ function normalizeState(v) {
   const s = String(v || "").trim().toLowerCase();
   if (!s) return "sin_estado";
   if (s === "ready") return "online";
-  if (s === "authenticated") return "online";
-  if (s === "auth") return "online";
+  if (s === "authenticated") return "iniciando";
+  if (s === "auth") return "iniciando";
+  if (s === "authenticating") return "iniciando";
+  if (s === "starting") return "iniciando";
+  if (s === "initializing") return "iniciando";
+  if (s === "loading") return "iniciando";
+  if (s === "connecting") return "iniciando";
+
   return s;
 }
 
@@ -347,6 +353,7 @@ function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route
     .state { display:inline-block; padding:7px 12px; border-radius:999px; font-size:14px; font-weight:700; background:#eee; }
     .state.qr { background:#fff3cd; color:#7a5200; }
     .state.online { background:#d1e7dd; color:#0f5132; }
+    .state.iniciando { background:#cff4fc; color:#055160; }
     .state.offline, .state.error, .state.disabled { background:#f8d7da; color:#842029; }
     .state.blocked { background:#ffe5d0; color:#7a3b00; }
     .qr { text-align:center; margin:0; }
@@ -388,7 +395,11 @@ function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route
     <div class="box info-mode">
       <div class="title">Sesión WhatsApp</div>
       <div class="state ${escapeHtml(state)}">${escapeHtml(state.toUpperCase())}</div>
-      ${state === "online" ? `<div class="msg">La sesión ya está iniciada.</div>` : `<div class="msg">QR no disponible en este momento. Estado actual: ${escapeHtml(state)}.</div>`}
+      ${state === "online"
+        ? `<div class="msg">La sesión ya está iniciada.</div>`
+        : isStarting
+          ? `<div class="msg">QR escaneado. La sesión está iniciando, aguardá unos segundos hasta que quede ONLINE.</div>`
+          : `<div class="msg">QR no disponible en este momento. Estado actual: ${escapeHtml(state)}.</div>`}
       ${actionBox}
       ${adminButtons}
       <table>
