@@ -4392,7 +4392,10 @@ app.get("/admin", async (req, res) => {
     const r = await fetch('/api/logs/messages?convId=' + encodeURIComponent(currentConvId));
     if (!r.ok) return;
 
-    const data = await r.json().catch(()=>[]);
+      const data = await r.json().catch(()=>null);
+      if (!r.ok) {
+        throw new Error((data && (data.error || data.message)) || ('HTTP ' + r.status));
+      }
     if (!Array.isArray(data)) return;
 
     const last = data[data.length - 1];
@@ -4993,7 +4996,7 @@ app.get("/admin", async (req, res) => {
     });
   }
 
-  function updateAdminSummary(list, allCount){
+  function updateAdminSummary(list, allCount, filtersRelaxed = false){
     const rows = Array.isArray(list) ? list : [];
     const total = rows.length;
     const deliveredFilter = getDeliveryFilterValue();
@@ -5001,6 +5004,11 @@ app.get("/admin", async (req, res) => {
     const range = getDateRangeValue();
     const hint = document.getElementById('tableHint');
     if (hint) {
+      if (filtersRelaxed) {
+        hint.textContent = total + ' conversaciones visibles de ' + allCount + ' · se mostraron todas porque los filtros guardados no coincidían con ninguna conversación.';
+        return;
+      }
+
       const deliveryLabel = formatMultiFilterLabel(deliveredFilter, DELIVERY_FILTER_LABELS, DELIVERY_FILTER_ALLOWED, 'Todas las entregas').toLowerCase();
       const statusLabel = formatMultiFilterLabel(statusFilter, STATUS_FILTER_LABELS, STATUS_FILTER_ALLOWED, 'Todos los estados').toLowerCase();
       const dateLabel = (range.from || range.to)
@@ -5309,14 +5317,21 @@ app.get("/admin", async (req, res) => {
       const r = await fetch(url, { cache: 'no-store' });
       const data = await r.json().catch(()=>[]);
       if (!tb) return;
-      const filtered = (Array.isArray(data) ? data : []).filter(c =>
+
+      const allRows = Array.isArray(data) ? data : [];
+      const filtered = allRows.filter(c =>
         convMatchesDelivered(c, deliveredFilter) &&
         convMatchesText(c, textFilter) &&
         convMatchesStatus(c, statusFilter) &&
         convMatchesDateRange(c, range.from, range.to)
       );
-      const rows = sortAdminConversations(filtered, statusFilter);
-      const fingerprint = buildAdminTableFingerprint(Array.isArray(data) ? data : [], rows);
+
+      // Evita que el panel quede vacío por filtros guardados en localStorage
+      // (por ejemplo, un estado excluido) cuando el backend sí devolvió conversaciones.
+      const filtersRelaxed = !filtered.length && allRows.length && !textFilter && !range.from && !range.to;
+      const rowsSource = filtersRelaxed ? allRows : filtered;
+      const rows = sortAdminConversations(rowsSource, filtersRelaxed ? [] : statusFilter);
+      const fingerprint = buildAdminTableFingerprint(allRows, rows);
 
       if (soft && fingerprint === lastAdminTableFingerprint) {
         return;
@@ -5325,8 +5340,8 @@ app.get("/admin", async (req, res) => {
 
 
       tb.innerHTML = '';
-      updateAdminSummary(rows, Array.isArray(data) ? data.length : 0);
-      renderAdminStats(rows, Array.isArray(data) ? data : []);
+      updateAdminSummary(rows, allRows.length, filtersRelaxed);
+      renderAdminStats(rows, allRows);
 
       for(const c of rows){
         const tr = document.createElement('tr');
