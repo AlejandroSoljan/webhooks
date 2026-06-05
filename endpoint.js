@@ -4459,9 +4459,9 @@ app.get("/admin", async (req, res) => {
 
       await refreshModalMessages(true);
 
-      // imprimir desde el modal
+      // imprimir directo desde el modal, sin abrir preview
       if (modalPrintBtn) {
-        modalPrintBtn.onclick = () => openTicketModal(convId);
+        modalPrintBtn.onclick = () => printTicketDirect(convId);
       }
 
       // ✅ empezar auto-actualización
@@ -4582,10 +4582,89 @@ app.get("/admin", async (req, res) => {
     }
   }
 
+  function getDirectPrintUrlTemplate(){
+    try {
+      return String(
+        window.ASISTO_DIRECT_PRINT_URL_TEMPLATE ||
+        localStorage.getItem('asisto_direct_print_url_template') ||
+        ''
+      ).trim();
+    } catch {
+      return '';
+    }
+  }
+
+  function applyDirectPrintTemplate(template, payload){
+    const enc = encodeURIComponent;
+    return String(template || '')
+      .replace(/\{\{convId\}\}/g, enc(String(payload.convId || '')))
+      .replace(/\{\{text\}\}/g, enc(String(payload.text || '')))
+      .replace(/\{\{escposBase64\}\}/g, enc(String(payload.escposBase64 || '')))
+      .replace(/\{\{base64\}\}/g, enc(String(payload.escposBase64 || '')));
+  }
+
+  function sendToAndroidDirectPrinter(payload){
+    const text = String(payload.text || '');
+    const b64 = String(payload.escposBase64 || '');
+
+    // Compatibilidad con WebView nativo: la app Android puede inyectar alguno
+    // de estos bridges para imprimir por USB/ESC-POS sin preview.
+    if (window.Android && typeof window.Android.printEscPos === 'function') {
+      window.Android.printEscPos(b64);
+      return true;
+    }
+    if (window.Android && typeof window.Android.printRawTicket === 'function') {
+      window.Android.printRawTicket(text);
+      return true;
+    }
+    if (window.Android && typeof window.Android.printTicket === 'function') {
+      window.Android.printTicket(text);
+      return true;
+    }
+    if (window.POSPrinter && typeof window.POSPrinter.printRaw === 'function') {
+      window.POSPrinter.printRaw(text);
+      return true;
+    }
+    if (window.PosPrinter && typeof window.PosPrinter.printRaw === 'function') {
+      window.PosPrinter.printRaw(text);
+      return true;
+    }
+
+    const template = getDirectPrintUrlTemplate();
+    if (template) {
+      window.location.href = applyDirectPrintTemplate(template, payload);
+      return true;
+    }
+
+    return false;
+  }
+
+  async function printTicketDirect(conversationId) {
+    try {
+      const r = await fetch('/admin/ticket-raw/' + encodeURIComponent(conversationId), {
+        headers: { 'Accept': 'application/json' }
+      });
+      const data = await r.json().catch(() => null);
+      if (!r.ok || !data || !data.ok) {
+        throw new Error((data && data.error) || ('HTTP ' + r.status));
+      }
+
+      const sent = sendToAndroidDirectPrinter(data);
+      if (!sent) {
+        alert('No hay impresión directa configurada en este navegador. Para imprimir por USB sin preview necesitás abrir el panel desde una app Android/WebView con bridge de impresión, o configurar un esquema de impresión directa del driver POS.');
+      }
+    } catch (e) {
+      console.error('printTicketDirect error:', e);
+      alert('No se pudo imprimir directo: ' + (e && e.message ? e.message : e));
+    }
+  }
+
+
   // Exponer para botones inline del HTML
   window.openTicketModal = openTicketModal;
   window.closeTicketModal = closeTicketModal;
   window.printTicket = printTicket;
+  window.printTicketDirect = printTicketDirect;
 
   function formatActivity(raw){
     try {
@@ -5301,7 +5380,7 @@ app.get("/admin", async (req, res) => {
         b.addEventListener('click',()=>openPedidoModal(b.getAttribute('data-pedido')));
       });
       tb.querySelectorAll('button[data-print]').forEach(b=>{
-        b.addEventListener('click',()=>openTicketModal(b.getAttribute('data-print')));
+        b.addEventListener('click',()=>printTicketDirect(b.getAttribute('data-print')));
       });
       tb.querySelectorAll('input.kitchenChk').forEach(chk=>{
         chk.addEventListener('change', async()=>{
@@ -5779,6 +5858,149 @@ app.get("/admin/messages/:convId", async (req, res) => {
 });
 
 
+// ---------- Ticket imprimible directo/raw para Android POS USB ----------
+app.get("/admin/ticket-raw/:convId", async (req, res) => {
+  try {
+    const convId = String(req.params.convId || "").trim();
+    if (!convId) return res.status(400).json({ ok:false, error:"convId requerido" });
+
+    const db = await getDb();
+    const tenant = resolveTenantId(req);
+    const convObjectId = new ObjectId(convId);
+
+    let pedido = null;
+    let nombre = "";
+    let waId = "";
+
+    try {
+      const conv = await db
+        .collection("conversations")
+        .findOne(withTenant({ _id: convObjectId }, tenant));
+      waId = conv?.waId || "";
+      nombre = conv?.contactName || "";
+    } catch (e) {
+      console.error("GET /admin/ticket-raw conv error:", e?.message || e);
+    }
+
+    try {
+      const order = await db
+        .collection("orders")
+        .findOne(
+          withTenant({ conversationId: convObjectId }),
+          { sort: { createdAt: -1 } }
+        );
+      if (order && order.pedido) pedido = order.pedido;
+    } catch (e) {
+      console.error("GET /admin/ticket-raw orders error:", e?.message || e);
+    }
+
+    if (!pedido) {
+      const msgs = await getConversationMessagesByConvId(convId, 1000, tenant);
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const m = msgs[i];
+        if (m.role !== "assistant") continue;
+        const body = String(m.content || "").trim();
+        try {
+          const j = JSON.parse(body);
+          if (j && j.Pedido && Array.isArray(j.Pedido.items)) {
+            pedido = j.Pedido;
+            break;
+          }
+        } catch {}
+      }
+    }
+
+    const items = (pedido?.items || []).map((it) => ({
+      desc: String(it.descripcion || "").trim(),
+      qty: Number(it.cantidad || 0),
+    }));
+    const total = Number(pedido?.total_pedido || 0);
+    const fecha = new Date().toLocaleString("es-AR");
+
+    const entregaRaw = String(pedido?.Entrega || "").trim();
+    let modalidadText = "-";
+    let direccionText = "-";
+
+    if (entregaRaw) {
+      if (/domicilio|env[ií]o|delivery/i.test(entregaRaw)) modalidadText = "Envío";
+      else if (/retiro|retir/i.test(entregaRaw)) modalidadText = "Retiro";
+      else modalidadText = entregaRaw;
+    }
+
+    if (pedido?.Domicilio) {
+      const dom = pedido.Domicilio;
+      if (typeof dom === "string") direccionText = dom;
+      else if (typeof dom === "object") {
+        direccionText = String(dom.direccion || dom.calle || "").trim();
+        if (!direccionText) direccionText = JSON.stringify(dom);
+      }
+    } else if (entregaRaw) {
+      const m = entregaRaw.match(/\((.+)\)/);
+      if (m) direccionText = m[1].trim();
+    }
+
+    const width = 42;
+    const cut = (v, n = width) => String(v ?? "").replace(/[\r\n]+/g, " ").slice(0, n);
+    const sep = "-".repeat(width);
+    const money = (n) => Number(n || 0).toLocaleString("es-AR");
+    const center = (v) => {
+      const t = cut(v);
+      const left = Math.max(0, Math.floor((width - t.length) / 2));
+      return " ".repeat(left) + t;
+    };
+    const line = (l, r) => {
+      const left = cut(l, 25);
+      const right = cut(r, 15);
+      const spaces = Math.max(1, width - left.length - right.length);
+      return left + " ".repeat(spaces) + right;
+    };
+
+    const lines = [];
+    lines.push(center("Comanda Cliente"));
+    lines.push(sep);
+    lines.push(line("Fecha", fecha));
+    lines.push(line("Telefono", waId || "-"));
+    lines.push(line("Nombre", nombre || "-"));
+    lines.push(line("Entrega", modalidadText));
+    lines.push("Direccion:");
+    lines.push(cut(direccionText));
+    lines.push(sep);
+
+    if (items.length) {
+      for (const it of items) {
+        lines.push(cut((it.qty || 0) + " x " + it.desc));
+      }
+    } else {
+      lines.push("Sin items detectados");
+    }
+
+    lines.push(sep);
+    lines.push(line("TOTAL", "$ " + money(total)));
+    if (items.some(x => /milanesa/i.test(x.desc))) {
+      lines.push(sep);
+      lines.push(cut("* Las milanesas se pesan al entregar."));
+    }
+    lines.push(sep);
+    lines.push(center("Gracias por tu compra!"));
+
+    const text = lines.join("\n") + "\n\n\n";
+    const escpos = Buffer.concat([
+      Buffer.from([0x1b, 0x40]), // inicializar
+      Buffer.from(text, "utf8"),
+      Buffer.from([0x1d, 0x56, 0x00]) // corte, si la impresora lo soporta
+    ]);
+
+    res.json({
+      ok: true,
+      convId,
+      text,
+      escposBase64: escpos.toString("base64"),
+    });
+  } catch (e) {
+    console.error("GET /admin/ticket-raw error:", e);
+    res.status(500).json({ ok:false, error:"Error interno" });
+  }
+});
 
 
 
