@@ -168,8 +168,8 @@ async function applyAdminAction(db, { action, lock, tenantId, numero }) {
     return "Reinicio solicitado.";
   }
 
-  if (normalizedAction === "block" || normalizedAction === "bloquear") {
-    // Bloqueo lógico: NO cierra WhatsApp ni libera el lock.
+  if (["pause", "pausar", "block", "bloquear"].includes(normalizedAction)) {
+    // Pausa lógica: NO cierra WhatsApp ni libera el lock.
     // Solo deja marcada la sesión para que app_asisto_ws no responda mensajes
     // y no ejecute ConsultaApiMensajes mientras esté bloqueada.
     await policies.updateOne(
@@ -179,6 +179,7 @@ async function applyAdminAction(db, { action, lock, tenantId, numero }) {
         $set: {
           blocked: true,
           messagesBlocked: true,
+          paused: true,
           disabled: false,
           blockMode: "messages",
           updatedAt: new Date(),
@@ -191,22 +192,24 @@ async function applyAdminAction(db, { action, lock, tenantId, numero }) {
       lockId,
       tenantId: parsedTenant,
       numero: parsedNumero,
-      event: "phone_web_block_messages",
-      detail: { blocked: true, disabled: false, blockMode: "messages" },
+      event: "phone_web_pause_messages",
+      detail: { paused: true, blocked: true, disabled: false, blockMode: "messages" },
     });
-    return "Mensajes bloqueados.";
+    return "Bot pausado. No se enviarán mensajes.";
   }
 
-  if (normalizedAction === "enable" || normalizedAction === "habilitar") {
+  if (["enable", "habilitar", "resume", "reanudar"].includes(normalizedAction)) {
     await policies.updateOne(
       { _id: lockId },
       {
         $setOnInsert: { _id: lockId, tenantId: parsedTenant, numero: parsedNumero },
         $set: {
           blocked: false,
-           messagesBlocked: false,
+          messagesBlocked: false,
           mensajes_bloqueados: false,
           bloqueado: false,
+          paused: false,
+          pausado: false,
           disabled: false,
           updatedAt: new Date(),
           updatedBy: "webcontrol",
@@ -221,10 +224,30 @@ async function applyAdminAction(db, { action, lock, tenantId, numero }) {
       lockId,
       tenantId: parsedTenant,
       numero: parsedNumero,
-      event: "phone_web_enable_messages",
-      detail: { blocked: false, messagesBlocked: false, disabled: false },
+      event: "phone_web_resume_messages",
+      detail: { paused: false, blocked: false, messagesBlocked: false, disabled: false },
     });
-    return "Mensajes habilitados.";
+    return "Bot reanudado. Se vuelven a enviar mensajes.";
+  }
+
+  if (["clear_auth", "delete_auth", "borrar_auth", "borrar_autenticacion", "reset_auth", "nuevo_qr"].includes(normalizedAction)) {
+    // La limpieza real de autenticación la ejecuta app_asisto_ws al consumir
+    // wa_wweb_actions. Esta vista solo encola la orden y deja trazabilidad.
+    await enqueueWwebAction(db, {
+      lockId,
+      tenantId: parsedTenant,
+      numero: parsedNumero,
+      action: "clear_auth",
+      reason: "phone_web_clear_auth",
+    });
+    await saveHistory(db, {
+      lockId,
+      tenantId: parsedTenant,
+      numero: parsedNumero,
+      event: "phone_web_clear_auth",
+      detail: { requested: true, action: "clear_auth" },
+    });
+    return "Borrado de autenticación solicitado. El script pedirá QR nuevamente.";
   }
 
   return "Acción no reconocida.";
@@ -294,9 +317,9 @@ async function findLockByPhone(db, { numero, tenantId }) {
 
 function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route, apiKey, actionMessage, clearMsgParam }) {
   const isDisabled = !!policy?.disabled;
-  const isBlocked = !!policy?.blocked;
+  const isBlocked = !!(policy?.paused || policy?.pausado || policy?.blocked || policy?.messagesBlocked);
   const rawState = normalizeState(lock?.state);
-  const state = isDisabled ? "disabled" : (isBlocked ? "blocked" : rawState);
+  const state = isDisabled ? "disabled" : (isBlocked ? "paused" : rawState);
   const isStarting = state === "iniciando";
   const hasQr = !!String(lock?.lastQrDataUrl || "").trim();
   const showQr = rawState === "qr" && hasQr;
@@ -323,7 +346,7 @@ function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route
   if (realTenantId) rows.push(["Dominio", realTenantId]);
   if (pc) rows.push(["PC", pc]);
   if (isDisabled) rows.push(["Sesión cerrada", "SI"]);
-  if (isBlocked) rows.push(["Mensajes bloqueados", "SI"]);
+  if (isBlocked) rows.push(["Bot pausado", "SI"]);
   if (startedAt) rows.push(["Inicio script", formatDate(startedAt)]);
   if (lastSeenAt) rows.push(["Última señal", formatDate(lastSeenAt)]);
   if (lastQrAt && state === "qr") rows.push(["Fecha QR", formatDate(lastQrAt)]);
@@ -333,12 +356,15 @@ function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route
     if (lock?.desiredTag || lock?.targetTag) rows.push(["Target", String(lock.desiredTag || lock.targetTag)]);
   }
 
+  const clearAuthUrl = buildUrl(route, { ...baseParams, action: "clear_auth" });
   const adminButtons = isAdmin ? `
     <div class="actions">
       <a class="btn" href="${escapeHtml(buildUrl(route, { ...baseParams, action: "restart" }))}">Reiniciar</a>
-      ${(isDisabled || isBlocked)
-        ? `<a class="btn ok" href="${escapeHtml(buildUrl(route, { ...baseParams, action: "enable" }))}">Habilitar</a>`
-        : `<a class="btn danger" href="${escapeHtml(buildUrl(route, { ...baseParams, action: "block" }))}">Bloquear</a>`}
+      ${isBlocked
+        ? `<a class="btn ok" href="${escapeHtml(buildUrl(route, { ...baseParams, action: "resume" }))}">Reanudar</a>`
+        : `<a class="btn danger" href="${escapeHtml(buildUrl(route, { ...baseParams, action: "pause" }))}">Pausar</a>`}
+      <a class="btn danger" href="${escapeHtml(clearAuthUrl)}" onclick="return confirm('Se borrará la autenticación de WhatsApp y se pedirá QR nuevamente. ¿Continuar?')">Borrar autenticación</a>
+
     </div>` : "";
 
   const actionBox = actionMessage ? `<div class="action-msg">${escapeHtml(actionMessage)}</div>` : "";
@@ -363,7 +389,7 @@ function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route
     .state.online { background:#d1e7dd; color:#0f5132; }
     .state.iniciando { background:#cff4fc; color:#055160; }
     .state.offline, .state.error, .state.disabled { background:#f8d7da; color:#842029; }
-    .state.blocked { background:#ffe5d0; color:#7a3b00; }
+    .state.blocked, .state.paused { background:#ffe5d0; color:#7a3b00; }
     .qr { text-align:center; margin:0; }
     .qr img { width:300px; max-width:42vw; height:auto; image-rendering:auto; }
     table { width:100%; border-collapse:collapse; margin-top:12px; font-size:15px; }
