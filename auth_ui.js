@@ -1855,8 +1855,8 @@ function wwebSessionsAdminPage({ user }) {
         <div>
           <h2 style="margin:0 0 6px">Sesiones WhatsApp Web</h2>
           <div class="small">Muestra las sesiones activas de <code>whatsapp-web.js</code> por dominio/número (colección <code>wa_locks</code>).</div>
-          <div class="small">Acciones: <strong>Reiniciar</strong> reinicia la sesión de WhatsApp en la PC dueña. <strong>Bloquear/Habilitar</strong> pausa o permite el inicio de WhatsApp. <strong>Reset Auth</strong> fuerza pedir QR nuevamente (y si sos superadmin también limpia el backup remoto).</div>
-        <div class="toolbarActions">
+          <div class="small">Acciones: <strong>Reiniciar</strong> reinicia el script de la PC dueña. <strong>Pausar/Reanudar</strong> pausa o permite el envío de mensajes sin cerrar WhatsApp. <strong>Borrar autenticación</strong> fuerza pedir QR nuevamente.</div>
+          <div class="toolbarActions">
           <button class="btn2" type="button" onclick="window.__wwebReload && window.__wwebReload()">Actualizar</button>
           <span id="wwebStatus" class="small" style="opacity:.85"></span>
           <a class="btn2" href="/app" style="text-decoration:none">Volver</a>
@@ -2244,18 +2244,22 @@ function wwebSessionsAdminPage({ user }) {
         var mode = String(pol.mode || "any");
         var pinnedHost = String(pol.pinnedHost || "");
         var blockedHosts = Array.isArray(pol.blockedHosts) ? pol.blockedHosts.map(function(x){ return String(x); }) : [];
-        var isBlocked = host && blockedHosts.indexOf(host) >= 0;
+        var isHostBlocked = host && blockedHosts.indexOf(host) >= 0;
         var isDisabled = !!pol.disabled;
+        var isPaused = !!(pol.paused || pol.pausado || pol.blocked || pol.messagesBlocked || pol.mensajes_bloqueados || pol.bloqueado);
+        var isPausedForUi = isPaused || isDisabled;
 
         var policyHtml = '';
         policyHtml += isDisabled
           ? '<div><span class="badge badgeWarn">Bloqueada</span></div>'
-          : '<div><span class="badge badgeOk">Habilitada</span></div>';
+          : (isPaused
+            ? '<div><span class="badge badgeWarn">Pausada</span></div>'
+            : '<div><span class="badge badgeOk">Habilitada</span></div>');
         policyHtml += (mode === "pinned")
           ? ('<div class="small"><b>Solo:</b> ' + escapeHtml(pinnedHost || '-') + '</div>')
           : '<div class="small">Cualquiera</div>';
         if (blockedHosts.length) policyHtml += '<div class="small">Hosts bloqueados: ' + blockedHosts.length + '</div>';
-
+        if (isPaused) policyHtml += '<div class="small">Mensajes pausados</div>';
 
 
         var actions = '';
@@ -2268,9 +2272,9 @@ function wwebSessionsAdminPage({ user }) {
           +   '<button class="btn2 btnMenu" type="button" data-action="menu" data-menu="' + escapeHtml(menuId) + '" aria-haspopup="true" aria-expanded="false" title="Acciones">Acciones <span class="caret">▾</span></button>'
           +   '<div class="menu wa-actions-menu" id="' + escapeHtml(menuId) + '" role="menu" aria-hidden="true">'
           +     '<button class="menuItem" type="button" role="menuitem" data-action="restart" data-id="' + escapeHtml(lock._id) + '">Reiniciar</button>'
-          +     '<button class="menuItem" type="button" role="menuitem" data-action="toggle" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-disabled="' + (isDisabled ? '1' : '0') + '">' + (isDisabled ? 'Habilitar' : 'Bloquear') + '</button>'
+          +     '<button class="menuItem" type="button" role="menuitem" data-action="pause_toggle" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-paused="' + (isPausedForUi ? '1' : '0') + '">' + (isPausedForUi ? 'Reanudar' : 'Pausar') + '</button>'
           +     '<div class="menuSep"></div>'
-          +     '<button class="menuItem" type="button" role="menuitem" data-action="resetauth" data-id="' + escapeHtml(lock._id) + '">Reset Auth</button>'
+          +     '<button class="menuItem" type="button" role="menuitem" data-action="clear_auth" data-id="' + escapeHtml(lock._id) + '">Borrar autenticación</button>'
           +     '<button class="menuItem" type="button" role="menuitem" data-action="stats" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Estadísticas</button>'
           +     (IS_SUPER ? ('<div class="menuSep"></div><button class="menuItem menuItemDanger" type="button" role="menuitem" data-action="delete_session" data-id="' + escapeHtml(lock._id) + '">Borrar sesión</button>') : '')
           +   '</div>'
@@ -2329,7 +2333,7 @@ function wwebSessionsAdminPage({ user }) {
         var st = String((lock && lock.state) || '').trim().toLowerCase();
         var last = lock && lock.lastSeenAt ? new Date(lock.lastSeenAt).getTime() : 0;
         var active = !!(last && (nowMs - last) <= 30000);
-        if (st === 'disabled' || (lock && lock.policy && lock.policy.disabled)) return 'disabled';
+        if (lock && lock.policy && (lock.policy.paused || lock.policy.pausado || lock.policy.blocked || lock.policy.messagesBlocked || lock.policy.mensajes_bloqueados || lock.policy.bloqueado)) return 'paused';
         if (sfMap[st]) return sfMap[st];
         if (st) return st;
         return active ? 'active' : 'inactive';
@@ -2456,35 +2460,27 @@ function wwebSessionsAdminPage({ user }) {
       function doRestart(lockId){
         closeAllMenus();
         if(!confirm('¿Reiniciar la sesión de WhatsApp en la PC dueña?')) return;
-        doAction(lockId, 'restart', 'admin_restart')
+        doAction(lockId, 'restart', 'phone_web_restart')
           .then(function(){ msg.textContent = 'Reinicio solicitado.'; return load(); })
           .catch(function(e){ alert('Error: ' + (e.message || e)); });
       }
 
-      function doToggle(tenantId, numero, currentlyDisabled){
+      function doPauseToggle(tenantId, numero, currentlyPaused){
         closeAllMenus();
-        var nextDisabled = !currentlyDisabled;
-        var label = nextDisabled ? 'bloquear' : 'habilitar';
-        if(!confirm('¿' + label.toUpperCase() + ' esta sesión?' + tenantId + ' · ' + numero)) return;
-        api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenantId, numero: numero, disabled: nextDisabled }) })
-          .then(function(){ msg.textContent = nextDisabled ? 'Sesión bloqueada.' : 'Sesión habilitada.'; return load(); })
+        var nextPaused = !currentlyPaused;
+        var label = nextPaused ? 'pausar' : 'reanudar';
+        if(!confirm('¿' + label.toUpperCase() + ' esta sesión? ' + tenantId + ' · ' + numero)) return;
+        api('/api/wweb/policy', { method:'POST', body: JSON.stringify({ tenantId: tenantId, numero: numero, paused: nextPaused }) })
+          .then(function(){ msg.textContent = nextPaused ? 'Sesión pausada. No se enviarán mensajes.' : 'Sesión reanudada. Se vuelven a enviar mensajes.'; return load(); })
           .catch(function(e){ alert('Error: ' + (e.message || e)); });
       }
 
-      function doResetAuth(lockId){
+      function doClearAuth(lockId){
         closeAllMenus();
-        var txt = IS_SUPER
-          ? '¿Reset Auth? Esto borrará el backup remoto (si existe) y pedirá QR nuevamente.'
-          : '¿Reset Auth? Pedirá QR nuevamente en la PC dueña.';
-        if(!confirm(txt)) return;
-
-        // Si es superadmin usamos el endpoint existente que además limpia GridFS.
-        var p = IS_SUPER
-          ? api('/api/wweb/release', { method:'POST', body: JSON.stringify({ lockId: lockId, resetAuth: true, reason: 'admin_panel' }) })
-          : doAction(lockId, 'resetauth', 'admin_resetauth');
-
-        p.then(function(){
-            msg.textContent = 'Reset Auth solicitado. Esperando nuevo QR.';
+        if(!confirm('¿Borrar autenticación? Se cerrará la sesión actual y se pedirá QR nuevamente.')) return;
+        doAction(lockId, 'clear_auth', 'phone_web_clear_auth')
+          .then(function(){
+            msg.textContent = 'Borrado de autenticación solicitado. Esperando nuevo QR.';
             return load();
           })
           .catch(function(e){ alert('Error: ' + (e.message || e)); });
@@ -2512,8 +2508,8 @@ function wwebSessionsAdminPage({ user }) {
         var tenant = btn.getAttribute('data-tenant') || "";
         var numero = btn.getAttribute('data-numero') || "";
         var host = btn.getAttribute('data-host') || "";
-        var disabledFlag = btn.getAttribute('data-disabled');
-        var currentlyDisabled = (disabledFlag === '1' || disabledFlag === 'true');
+        var pausedFlag = btn.getAttribute('data-paused');
+        var currentlyPaused = (pausedFlag === '1' || pausedFlag === 'true');
 
         // Dropdown open/close
         if(act === 'menu'){
@@ -2526,8 +2522,8 @@ function wwebSessionsAdminPage({ user }) {
 
 
         if(act === 'restart') return doRestart(id);
-        if(act === 'toggle') return doToggle(tenant, numero, currentlyDisabled);
-        if(act === 'resetauth') return doResetAuth(id);
+        if(act === 'pause_toggle') return doPauseToggle(tenant, numero, currentlyPaused);
+        if(act === 'clear_auth') return doClearAuth(id);
         if(act === 'stats') return openStats(tenant, numero);
         if(act === 'delete_session') return doDeleteSession(id);
         if(act === 'qr') return openQr(id, tenant, numero);
@@ -4554,6 +4550,13 @@ function mountAuthRoutes(app) {
           pinnedHost: p.pinnedHost || "",
           blockedHosts: Array.isArray(p.blockedHosts) ? p.blockedHosts : [],
           disabled: !!p.disabled,
+          paused: !!p.paused,
+          pausado: !!p.pausado,
+          blocked: !!p.blocked,
+          bloqueado: !!p.bloqueado,
+          messagesBlocked: !!p.messagesBlocked,
+          mensajes_bloqueados: !!p.mensajes_bloqueados,
+          blockMode: p.blockMode || '',
           updatedAt: p.updatedAt || p.createdAt || null,
           updatedBy: p.updatedBy || null,
         });
@@ -4564,7 +4567,7 @@ function mountAuthRoutes(app) {
         const tid = String(l.tenantId || "");
         const num = String(l.numero || l.number || l.phone || "");
         const key = tid + "::" + num;
-        const policy = polMap.get(key) || { mode: "any", pinnedHost: "", blockedHosts: [], disabled: false };
+        const policy = polMap.get(key) || { mode: "any", pinnedHost: "", blockedHosts: [], disabled: false, paused: false, blocked: false, messagesBlocked: false, blockMode: "" };
         const stats = statsMap.get(key) || { incoming: 0, outgoing: 0, contacts: 0, lastMessageAt: null };
         const inactivityMs = stats.lastMessageAt ? Math.max(0, now.getTime() - new Date(stats.lastMessageAt).getTime()) : null;
         return {
@@ -4791,6 +4794,7 @@ function mountAuthRoutes(app) {
       const numero = String(req.body?.numero || "").trim();
       if (!tenantId || !numero) return res.status(400).json({ error: "tenantId y numero requeridos" });
       if (!isSuper && tenantId !== tenantFilter.tenantId) return res.status(403).json({ error: "forbidden" });
+      const lockId = `${tenantId}:${numero}`;
 
       const mode = String(req.body?.mode || "").trim(); // 'any' | 'pinned'
       const pinnedHost = String(req.body?.pinnedHost || "").trim();
@@ -4803,8 +4807,16 @@ function mountAuthRoutes(app) {
           ? (String(disabledRaw).trim().toLowerCase() === "true" || String(disabledRaw).trim() === "1")
           : null);
 
+      const pausedRaw = req.body?.paused ?? req.body?.pause;
+      const paused = (pausedRaw === true || pausedRaw === false)
+        ? !!pausedRaw
+        : (String(pausedRaw || "").trim()
+          ? (String(pausedRaw).trim().toLowerCase() === "true" || String(pausedRaw).trim() === "1")
+          : null);
+
       const now = new Date();
-      const update = { $setOnInsert: { createdAt: now }, $set: { updatedAt: now, updatedBy: String(req.user?.email || req.user?.user || req.user?.username || "") } };
+      const by = String(req.user?.email || req.user?.user || req.user?.username || "");
+      const update = { $setOnInsert: { _id: lockId, tenantId, numero, createdAt: now }, $set: { tenantId, numero, updatedAt: now, updatedBy: by } };
 
       if (mode === "any") {
         update.$set.mode = "any";
@@ -4817,19 +4829,47 @@ function mountAuthRoutes(app) {
       if (blockHost) update.$addToSet = { blockedHosts: blockHost };
       if (unblockHost) update.$pull = { blockedHosts: unblockHost };
       if (disabled !== null) update.$set.disabled = !!disabled;
+      if (paused !== null) {
+        if (paused) {
+          update.$set.blocked = true;
+          update.$set.messagesBlocked = true;
+          update.$set.paused = true;
+          update.$set.disabled = false;
+          update.$set.blockMode = "messages";
+        } else {
+          update.$set.blocked = false;
+          update.$set.messagesBlocked = false;
+          update.$set.mensajes_bloqueados = false;
+          update.$set.bloqueado = false;
+          update.$set.paused = false;
+          update.$set.pausado = false;
+          update.$set.disabled = false;
+          update.$unset = { ...(update.$unset || {}), blockMode: "" };
+        }
+      }
 
-      await db.collection("wa_wweb_policies").updateOne({ tenantId, numero }, update, { upsert: true });
+      await db.collection("wa_wweb_policies").updateOne({ $or: [{ _id: lockId }, { tenantId, numero }] }, update, { upsert: true });
 
-      // Historial
+     // Historial
+    const historyEvent = paused !== null
+        ? (paused ? "phone_web_pause_messages" : "phone_web_resume_messages")
+        : "policy_update";
       await db.collection("wa_wweb_history").insertOne({
+        lockId,
         tenantId, numero,
-        event: "policy_update",
+        event: historyEvent,
         mode: mode || null,
         pinnedHost: (mode === "pinned") ? (pinnedHost || null) : null,
         blockHost: blockHost || null,
         unblockHost: unblockHost || null,
         disabled: (disabled !== null) ? !!disabled : null,
-        by: String(req.user?.email || req.user?.user || req.user?.username || ""),
+        paused: (paused !== null) ? !!paused : null,
+        by,
+        detail: paused !== null
+          ? (paused
+            ? { paused: true, blocked: true, disabled: false, blockMode: "messages" }
+            : { paused: false, blocked: false, messagesBlocked: false, disabled: false })
+          : null,
         at: now,
       });
 
@@ -4963,10 +5003,16 @@ function mountAuthRoutes(app) {
   app.post("/api/wweb/action", requireAuth, requireAdmin, async (req, res) => {
     try {
       const lockId = String(req.body?.lockId || "").trim();
-      const action = String(req.body?.action || "").trim().toLowerCase(); // 'restart' | 'resetauth' | 'release'
-      const reason = String(req.body?.reason || "").trim();
+      const rawAction = String(req.body?.action || "").trim().toLowerCase();
+      let action = rawAction; // 'restart' | 'clear_auth' | 'release'
+      let reason = String(req.body?.reason || "").trim();
       if (!lockId) return res.status(400).json({ error: "lockId requerido." });
       if (!action) return res.status(400).json({ error: "action requerida." });
+
+      if (action === "reiniciar") action = "restart";
+      if (["resetauth", "reset_auth", "delete_auth", "borrar_auth", "borrar_autenticacion", "nuevo_qr"].includes(action)) action = "clear_auth";
+      if (action === "restart" && !reason) reason = "phone_web_restart";
+      if (action === "clear_auth" && !reason) reason = "phone_web_clear_auth";
 
       const db = await getDb();
       const role = String(req.user?.role || "").toLowerCase();
@@ -4977,26 +5023,36 @@ function mountAuthRoutes(app) {
       if (!lock) return res.status(404).json({ error: "Lock no encontrado (o no autorizado)." });
 
       const now = new Date();
+      const by = String(req.user?.email || req.user?.user || req.user?.username || "");
+      const tenantId = String(lock.tenantId || "").trim();
+      const numero = String(lock.numero || lock.number || lock.phone || "").trim();
       await db.collection("wa_wweb_actions").insertOne({
         lockId: String(lockId),
+        tenantId,
+        numero,
         action,
         reason,
-        requestedBy: String(req.user?.email || req.user?.user || req.user?.username || ""),
+        requestedBy: by,
         requestedAt: now,
       });
 
+      const historyEvent = action === "restart"
+        ? "phone_web_restart"
+        : (action === "clear_auth" ? "phone_web_clear_auth" : ("action_" + action));
       await db.collection("wa_wweb_history").insertOne({
-        tenantId: lock.tenantId,
-        numero: lock.numero || lock.number || lock.phone,
-        event: "action_" + action,
+        lockId: String(lockId),
+        tenantId,
+        numero,
+        event: historyEvent,
         host: lock.host || lock.hostname || "",
-        by: String(req.user?.email || req.user?.user || req.user?.username || ""),
+        by,
+        detail: action === "clear_auth" ? { requested: true, action: "clear_auth" } : null,
         at: now,
       });
 
       return res.status(200).json({ ok: true });
     } catch (e) {
-      console.error("api/wweb/action error:", e);
+      return res.status(200).json({ ok: true, action, reason });
       return res.status(500).json({ ok: false, error: "Error creando acción." });
     }
   });
