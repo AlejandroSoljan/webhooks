@@ -664,6 +664,34 @@ function rememberJson(ctx, chatId, json) {
   }
 }
 
+function getBatchLimit(ctx, total = 0) {
+  const raw = Number(ctx?.config?.cant_lim || 0) || 0;
+  const limit = Math.floor(raw);
+  // cant_lim <= 0 significa sin paginar: envía todo el lote y no pide S/N.
+  if (limit <= 0) return Math.max(0, Number(total) || 0);
+ return Math.max(1, limit);
+}
+
+function getContinuationAnswer(text) {
+  const value = String(text || '')
+    .trim()
+   .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase();
+  if (['S', 'SI', 'Y', 'YES'].includes(value)) return 'S';
+  if (['N', 'NO'].includes(value)) return 'N';
+  return '';
+}
+
+function clearPendingBatch(ctx, indice) {
+  if (!ctx || !Array.isArray(ctx.jsonGlobal) || indice < 0 || !ctx.jsonGlobal[indice]) return;
+  ctx.jsonGlobal[indice][2] = '';
+  ctx.jsonGlobal[indice][1] = 0;
+  ctx.jsonGlobal[indice][3] = '';
+  ctx.jsonGlobal[indice][4] = false;
+}
+
+
 function getPendingBatchState(ctx, chatId) {
   const indice = indexOf2d(ctx, chatId);
   if (indice === -1) return { indice: -1, valor_i: 0, total: 0, pending: false };
@@ -671,12 +699,13 @@ function getPendingBatchState(ctx, chatId) {
   const item = ctx.jsonGlobal[indice] || [];
   const valor_i = Number(item[1] || 0);
   const lote = Array.isArray(item[2]) ? item[2] : [];
- const total = lote.length;
-  // El lote está pendiente cuando hay un índice intermedio guardado.
-  // No dependemos solo de item[4], porque si esa bandera queda inconsistente,
-  // S/N se puede interpretar como consulta nueva o cancelar mal el lote.
-  const pending = total > 0 && valor_i > 0 && valor_i < total;
-  return { indice, valor_i, total, pending };
+  const total = lote.length;
+  const marcadaPendiente = item[4] === true;
+  // El lote está pendiente cuando hay mensajes guardados y el índice apunta
+  // al próximo mensaje a enviar. Si cant_lim quedó en 0 o la bandera quedó
+  // inconsistente, igual respetamos item[4] para que S/N no se pierda.
+  const pending = total > 0 && valor_i >= 0 && valor_i < total && (marcadaPendiente || valor_i > 0);
+  return { indice, valor_i, total, pending, marcadaPendiente };
 }
 
 
@@ -776,7 +805,7 @@ async function procesarMensajeLotes(ctx, json, message) {
   const l_json = Array.isArray(ctx.jsonGlobal[indice][2]) ? ctx.jsonGlobal[indice][2] : [];
   const tam_json = l_json.length;
   const inicio = Math.max(0, Number(ctx.jsonGlobal[indice][1] || 0));
-   ctx.jsonGlobal[indice][3] = now;
+  const cantLim = getBatchLimit(ctx, tam_json);
   ctx.jsonGlobal[indice][3] = now;
   ctx.jsonGlobal[indice][4] = false;
 
@@ -792,7 +821,7 @@ async function procesarMensajeLotes(ctx, json, message) {
     if (mensaje === '' || mensaje === null || mensaje === undefined) continue;
     mensaje = String(mensaje).replaceAll('|', '\n');
 
-    if (i <= Number(ctx.config.cant_lim || 0) + inicio - 1) {
+    if (i <= cantLim + inicio - 1) {
       await safeSendTelegram(ctx, chatId, mensaje);
       await sleep(segundos);
       if (tam_json - 1 === i) {
@@ -803,8 +832,8 @@ async function procesarMensajeLotes(ctx, json, message) {
       }
     } else {
       let msg_loc = String(ctx.config.msg_lim || '').replaceAll('|', '\n');
-      if (tam_json <= i + Number(ctx.config.cant_lim || 0)) msg_loc = msg_loc.replace('<recuento>', String(tam_json - i));
-      else msg_loc = msg_loc.replace('<recuento>', String(Number(ctx.config.cant_lim || 0) + 1));
+      if (tam_json <= i + cantLim) msg_loc = msg_loc.replace('<recuento>', String(tam_json - i));
+      else msg_loc = msg_loc.replace('<recuento>', String(cantLim + 1));
       msg_loc = msg_loc.replace('<recuento_lote>', String(Math.max(tam_json - 2, 0)));
       msg_loc = msg_loc.replace('<recuento_pendiente>', String(Math.max(tam_json - i, 0)));
       if (msg_loc) await safeSendTelegram(ctx, chatId, msg_loc);
@@ -847,24 +876,28 @@ async function handleIncomingTelegramMessage(ctx, msg) {
 
     const trimmedBody = String(body || '').trim();
     const bodyUpper = trimmedBody.toUpperCase();
+    const continuationAnswer = getContinuationAnswer(trimmedBody);
     const pendingState = getPendingBatchState(ctx, chatId);
     logLine(`[${ctx.tenantId}] ${chatId} ${ctx.telegramSelfId} message ${body} | lote_pendiente=${pendingState.pending ? 'S' : 'N'} idx=${pendingState.valor_i} total=${pendingState.total}`, 'event');
 
     if (pendingState.pending) {
-      if (bodyUpper === 'N') {
-        
-        ctx.jsonGlobal[pendingState.indice][2] = '';
-        ctx.jsonGlobal[pendingState.indice][1] = 0;
-        ctx.jsonGlobal[pendingState.indice][3] = '';
-        ctx.jsonGlobal[pendingState.indice][4] = false;
+      if (continuationAnswer === 'N') {
+        clearPendingBatch(ctx, pendingState.indice);
         logLine(`[${ctx.tenantId}] lote cancelado por usuario chat=${chatId}`, 'event');
         return;
       }
 
-      if (bodyUpper === 'S') {
+      if (continuationAnswer === 'S') {
+        const lotePendiente = ctx.jsonGlobal[pendingState.indice][2];
+        if (!Array.isArray(lotePendiente) || lotePendiente.length === 0) {
+          clearPendingBatch(ctx, pendingState.indice);
+          logLine(`[${ctx.tenantId}] respuesta S ignorada: lote pendiente sin datos chat=${chatId}`, 'event');
+          return;
+        }
         ctx.jsonGlobal[pendingState.indice][4] = false;
         ctx.jsonGlobal[pendingState.indice][3] = new Date();
-        await procesarMensajeLotes(ctx, ctx.jsonGlobal[pendingState.indice][2], { from: chatId, body });
+        logLine(`[${ctx.tenantId}] lote continua por usuario chat=${chatId} desde_idx=${pendingState.valor_i} total=${pendingState.total}`, 'event');
+        await procesarMensajeLotes(ctx, lotePendiente, { from: chatId, body });
         return;
       }
 
@@ -873,8 +906,8 @@ async function handleIncomingTelegramMessage(ctx, msg) {
       return;
     }
 
-    if ((bodyUpper === 'S' || bodyUpper === 'N') && pendingState.indice !== -1 && pendingState.total === 0) {
-      logLine(`[${ctx.tenantId}] respuesta ${bodyUpper} ignorada: lote sin datos chat=${chatId}`, 'event');
+    if (continuationAnswer && pendingState.indice !== -1 && pendingState.total === 0) {
+      logLine(`[${ctx.tenantId}] respuesta ${continuationAnswer} ignorada: lote sin datos chat=${chatId}`, 'event');
       return;
     }
 
