@@ -201,8 +201,8 @@ async function applyAdminAction(db, { action, lock, tenantId, numero }) {
       lockId,
       tenantId: parsedTenant,
       numero: parsedNumero,
-      action: "resume",
-      reason: "phone_web_resume_messages",
+      action: "pause",
+      reason: "phone_web_pause_messages",
     });
 
     await saveHistory(db, {
