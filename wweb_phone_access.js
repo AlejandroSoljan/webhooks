@@ -196,6 +196,15 @@ async function applyAdminAction(db, { action, lock, tenantId, numero }) {
       },
       { upsert: true }
     );
+
+    await enqueueWwebAction(db, {
+      lockId,
+      tenantId: parsedTenant,
+      numero: parsedNumero,
+      action: "pause",
+      reason: "phone_web_pause_messages",
+    });
+
     await saveHistory(db, {
       lockId,
       tenantId: parsedTenant,
@@ -228,6 +237,14 @@ async function applyAdminAction(db, { action, lock, tenantId, numero }) {
       },
       { upsert: true }
     );
+
+    await enqueueWwebAction(db, {
+      lockId,
+      tenantId: parsedTenant,
+      numero: parsedNumero,
+      action: "pause",
+      reason: "phone_web_pause_messages",
+    });
     await saveHistory(db, {
       lockId,
       tenantId: parsedTenant,

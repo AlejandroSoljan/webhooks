@@ -3549,11 +3549,7 @@ function mountAuthRoutes(app) {
       </style>
 
       <div class="tc-toolbar">
-        <div>
-          <h1 style="margin:0 0 4px">Dominio Config</h1>
-          <div class="small">Editá la colección <code>tenant_config</code>. Cada documento usa <code>_id</code> como dominio. Al hacer clic en <b>Editar</b> se abre un modal con la configuración.</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
           <button class="btn2" type="button" id="tc_btnReload">Actualizar</button>
           ${isSuper ? `<button class="btn" type="button" id="tc_btnNew">Nuevo dominio</button>` : ``}
           <div class="small">${isSuper ? "Superadmin" : "Admin"} · dominio: <b>${htmlEscape(tenantId)}</b></div>
@@ -4849,6 +4845,21 @@ function mountAuthRoutes(app) {
       }
 
       await db.collection("wa_wweb_policies").updateOne({ $or: [{ _id: lockId }, { tenantId, numero }] }, update, { upsert: true });
+
+      if (paused !== null) {
+        try {
+          await db.collection("wa_wweb_actions").insertOne({
+            lockId,
+            tenantId,
+            numero,
+            action: paused ? "pause" : "resume",
+            reason: paused ? "phone_web_pause_messages" : "phone_web_resume_messages",
+            requestedBy: by,
+            requestedAt: now,
+          });
+        } catch {}
+      }
+
 
      // Historial
     const historyEvent = paused !== null
