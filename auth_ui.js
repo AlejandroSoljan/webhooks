@@ -4439,7 +4439,7 @@ function mountAuthRoutes(app) {
   // =============================
   // Admin: Sesiones WhatsApp Web (whatsapp-web.js)
   // =============================
-  app.get("/admin/wweb", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/admin/wweb", requireAuth, requireWwebAccess, async (req, res) => {
     try {
       return res.status(200).send(wwebSessionsAdminPage({ user: req.user }));
     } catch (e) {
@@ -5131,6 +5131,7 @@ module.exports = {
   attachUser,
   requireAuth,
   requireAdmin,
+  requireWwebAccess,
   mountAuthRoutes,
   protectRoutes,
   resolveTenantId,
