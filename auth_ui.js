@@ -1867,8 +1867,7 @@ function wwebSessionsAdminPage({ user }) {
       <div class="toolbar">
         <div>
           <h2 style="margin:0 0 6px">Sesiones WhatsApp Web</h2>
-          <div class="small">Muestra las sesiones activas de <code>whatsapp-web.js</code> por dominio/número (colección <code>wa_locks</code>).</div>
-          <div class="small">Acciones: <strong>Reiniciar</strong> reinicia el script de la PC dueña. <strong>Pausar/Reanudar</strong> pausa o permite el envío de mensajes sin cerrar WhatsApp. <strong>Borrar autenticación</strong> fuerza pedir QR nuevamente.</div>
+              <div class="small">Acciones: <strong>Reiniciar</strong> reinicia el script de la PC dueña. <strong>Pausar/Reanudar</strong> pausa o permite el envío de mensajes sin cerrar WhatsApp. <strong>Borrar autenticación</strong> fuerza pedir QR nuevamente.</div>
           <div class="toolbarActions">
           <button class="btn2" type="button" onclick="window.__wwebReload && window.__wwebReload()">Actualizar</button>
           <span id="wwebStatus" class="small" style="opacity:.85"></span>
