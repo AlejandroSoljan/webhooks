@@ -1855,7 +1855,9 @@ function usersAdminPage({ user, users, msg, err }) {
 
 
 function wwebSessionsAdminPage({ user }) {
-  const isSuper = String(user?.role || "") === "superadmin";
+  const role = String(user?.role || "").toLowerCase();
+  const isSuper = role === "superadmin";
+  const canViewStats = role === "admin" || role === "superadmin";
   return appShell({
     title: "Sesiones WhatsApp Web · Asisto",
     user,
@@ -1986,6 +1988,7 @@ function wwebSessionsAdminPage({ user }) {
     <script>
     (function(){
       var IS_SUPER = ${isSuper ? "true" : "false"};
+      var CAN_VIEW_STATS = ${canViewStats ? "true" : "false"};
       var body = document.getElementById('wwebBody');
       var msg = document.getElementById('wwebMsg');
       var statusEl = document.getElementById('wwebStatus');
@@ -2286,7 +2289,7 @@ function wwebSessionsAdminPage({ user }) {
           +     '<button class="menuItem" type="button" role="menuitem" data-action="pause_toggle" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '" data-paused="' + (isPausedForUi ? '1' : '0') + '">' + (isPausedForUi ? 'Reanudar' : 'Pausar') + '</button>'
           +     '<div class="menuSep"></div>'
           +     '<button class="menuItem" type="button" role="menuitem" data-action="clear_auth" data-id="' + escapeHtml(lock._id) + '">Borrar autenticación</button>'
-          +     '<button class="menuItem" type="button" role="menuitem" data-action="stats" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Estadísticas</button>'
+          +     (CAN_VIEW_STATS ? ('<button class="menuItem" type="button" role="menuitem" data-action="stats" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '">Estadísticas</button>') : '')
           +     (IS_SUPER ? ('<div class="menuSep"></div><button class="menuItem menuItemDanger" type="button" role="menuitem" data-action="delete_session" data-id="' + escapeHtml(lock._id) + '">Borrar sesión</button>') : '')
           +   '</div>'
           + '</div>'
