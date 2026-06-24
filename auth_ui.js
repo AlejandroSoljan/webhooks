@@ -295,6 +295,17 @@ function requireAdmin(req, res, next) {
   return res.status(403).send("403 - No autorizado");
 }
 
+
+// Permite abrir la ventana de Sesiones WhatsApp Web también a usuarios con rol "user"
+// cuando tengan acceso a la pantalla wweb. No exige rol admin.
+function requireWwebAccess(req, res, next) {
+  if (hasAccess(req.user, "wweb")) return next();
+  if (String(req.path || "").startsWith("/api/")) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  return res.status(403).send("403 - No autorizado");
+}
+
 // ===== Tenant resolver =====
 function resolveTenantId(req, { defaultTenantId = "default", envTenantId = "" } = {}) {
   // Si el usuario NO es superadmin -> el tenant del usuario manda.
@@ -1084,7 +1095,7 @@ function getNavItemsForUser(user) {
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
 
   if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
-  if (isAdmin && hasAccess(user, "wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
+  if (hasAccess(user, "wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
   if (isAdmin && hasAccess(user, "telegram")) items.push({ key: "telegram", title: "Sesiones Telegram", href: "/ui/telegram" });
   if (isAdmin && hasAccess(user, "users")) items.push({ key: "users", title: "Usuarios", href: "/admin/users" });
   if (isAdmin && hasAccess(user, "tenant_config")) items.push({ key: "tenant_config", title: "Dominio Config", href: "/ui/tenant_config" });
@@ -4512,7 +4523,7 @@ function mountAuthRoutes(app) {
   }
 
   // Listado de locks activos/inactivos (colección: wa_locks)
-  app.get("/api/wweb/locks", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/wweb/locks", requireAuth, requireWwebAccess, async (req, res) => {
     try {
       const db = await getDb();
       const role = String(req.user?.role || "").toLowerCase();
@@ -4610,7 +4621,7 @@ function mountAuthRoutes(app) {
 
   // Devuelve el QR (dataUrl) más reciente para una sesión/lock
   // Se usa desde /admin/wweb para ver el QR actualizado sin bajar el listado completo.
-  app.get("/api/wweb/qr", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/wweb/qr", requireAuth, requireWwebAccess, async (req, res) => {
     try {
       const lockId = String(req.query?.lockId || "").trim();
       if (!lockId) return res.status(400).json({ ok: false, error: "lockId requerido" });
@@ -4655,7 +4666,7 @@ function mountAuthRoutes(app) {
   // Libera un lock (enviando una acción al owner).
   // Si resetAuth=true, además borra el backup remoto de LocalAuth (GridFS bucket: wa_localauth) para forzar QR.
   // IMPORTANTE: el worker usa _id string: "<tenantId>:<numero>" (no ObjectId).
-  app.post("/api/wweb/release", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/wweb/release", requireAuth, requireWwebAccess, async (req, res) => {
     try {
       const lockId = String(req.body?.lockId || "").trim();
       const resetAuth = !!req.body?.resetAuth;
@@ -4779,7 +4790,7 @@ function mountAuthRoutes(app) {
 
 
   // Configuración de política de sesión (permitir cualquiera / fijar host / bloquear hosts)
-  app.post("/api/wweb/policy", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/wweb/policy", requireAuth, requireWwebAccess, async (req, res) => {
     try {
       const db = await getDb();
       const role = String(req.user?.role || "").toLowerCase();
@@ -4978,7 +4989,7 @@ function mountAuthRoutes(app) {
   });
 
   // Historial de eventos (admin actions)
-  app.get("/api/wweb/history", requireAuth, requireAdmin, async (req, res) => {
+  app.get("/api/wweb/history", requireAuth, requireWwebAccess, async (req, res) => {
     try {
       const db = await getDb();
        const role = String(req.user?.role || "").toLowerCase();
@@ -5011,7 +5022,7 @@ function mountAuthRoutes(app) {
   });
 
   // Encola una acción para que el script de whatsapp-web.js la tome (si lo tenés polling)
-  app.post("/api/wweb/action", requireAuth, requireAdmin, async (req, res) => {
+  app.post("/api/wweb/action", requireAuth, requireWwebAccess, async (req, res) => {
     try {
       const lockId = String(req.body?.lockId || "").trim();
       const rawAction = String(req.body?.action || "").trim().toLowerCase();
