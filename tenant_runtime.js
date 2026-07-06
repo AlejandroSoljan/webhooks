@@ -151,8 +151,7 @@ const whatsappTransport = normalizeWhatsappTransport(p.whatsappTransport ?? p.wh
   const update = {
     $setOnInsert: {
       tenantId,
-      channelType,
-      ...(channelType === "instagram"
+            ...(channelType === "instagram"
         ? { instagramAccountId, createdAt: new Date() }
         : { phoneNumberId, createdAt: new Date() })
     },
