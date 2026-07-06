@@ -19,6 +19,7 @@ const {
   getRuntimeByInstagramAccountId,
   getRuntimeByTenantId,
   getRuntimeByWwebPhone,
+  getRuntimeByWwebPhoneAny,
   findAnyByVerifyToken,
   upsertTenantChannel,
   normalizeWhatsappTransport,
@@ -7569,7 +7570,7 @@ function createApiChatCabCaptureRes() {
 
 async function handleApiChatCabProcesarMensajePost(req, res) {
   const body = req.body || {};
-  const tenantId = apiChatCabReadTenantId(req);
+  let tenantId = apiChatCabReadTenantId(req);
  const text = String(body?.Mensaje ?? body?.mensaje ?? body?.text ?? body?.body ?? "").trim();
   const from = apiChatCabCleanDigits(body?.Tel_Origen || body?.tel_origen || body?.from || body?.telefono || "");
 
@@ -7580,9 +7581,12 @@ async function handleApiChatCabProcesarMensajePost(req, res) {
 
   let runtime = null;
   try {
-    runtime = (to ? await getRuntimeByWwebPhone(tenantId, to) : null) || await getRuntimeByTenantId(tenantId);
+    runtime = (tenantId && to ? await getRuntimeByWwebPhone(tenantId, to) : null);
+    if (!runtime && to) runtime = await getRuntimeByWwebPhoneAny(to);
+    if (!runtime && tenantId) runtime = await getRuntimeByTenantId(tenantId);
+    if (runtime?.tenantId) tenantId = String(runtime.tenantId).trim();
   } catch (e) {
-    console.warn("[Api_Chat_Cab] no se pudo leer tenant runtime:", e?.message || e);
+    console.warn("[WWEB_CHATGPT] no se pudo leer tenant runtime:", e?.message || e);
   }
 
   const transport = normalizeWhatsappTransport(runtime?.whatsappTransport || "api");
@@ -7614,6 +7618,7 @@ async function handleApiChatCabProcesarMensajePost(req, res) {
   return res.json(replies);
 }
 
+app.post("/api/ext/wweb/chatgpt/process", handleApiChatCabProcesarMensajePost);
 app.post("/v200/api/Api_Chat_Cab/ProcesarMensajePost", handleApiChatCabProcesarMensajePost);
 app.post("/api-chat-cab/procesar-mensaje", handleApiChatCabProcesarMensajePost);
 

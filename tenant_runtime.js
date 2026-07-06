@@ -132,6 +132,31 @@ async function getRuntimeByWwebPhone(tenantId, phoneNumber) {
   return val;
 }
 
+async function getRuntimeByWwebPhoneAny(phoneNumber) {
+  const phone = onlyDigits(phoneNumber);
+  if (!phone) return null;
+
+  const ck = `wwebphone:any:${phone}`;
+  const cached = _cacheGet(ck);
+  if (cached) return cached;
+
+  const db = await getDb();
+  const rows = await db.collection("tenant_channels")
+    .find({ channelType: "whatsapp" })
+    .sort({ isDefault: -1, updatedAt: -1, createdAt: -1 })
+    .limit(500)
+    .toArray();
+
+  const match = (rows || []).find((doc) => {
+    if (normalizeWhatsappTransport(doc.whatsappTransport ?? doc.whatsapp_transport ?? doc.transport ?? "api") !== "wweb") return false;
+    return phoneLooksSame(doc.displayPhoneNumber, phone) || phoneLooksSame(doc.phoneNumberId, phone);
+  });
+
+  const val = _normalizeRuntime(match);
+  if (val) _cacheSet(ck, val);
+  return val;
+}
+
 
 async function getRuntimeByTenantId(tenantId) {
   const tid = String(tenantId || "").trim();
@@ -252,6 +277,7 @@ module.exports = {
  getRuntimeByInstagramAccountId,
   getRuntimeByTenantId,
   getRuntimeByWwebPhone,
+  getRuntimeByWwebPhoneAny,
   findAnyByVerifyToken,
   upsertTenantChannel,
   normalizeWhatsappTransport,
