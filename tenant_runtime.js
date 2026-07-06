@@ -7,6 +7,13 @@ const { getDb } = require("./db");
 const clampInt = (v, min, max) => Math.max(min, Math.min(max, Number.parseInt(v, 10) || 0));
 const DEFAULT_CACHE_TTL_MS = Number(process.env.TENANT_RUNTIME_CACHE_TTL_MS || 30_000);
 
+function normalizeWhatsappTransport(value) {
+  const v = String(value || "api").trim().toLowerCase();
+  if (["wweb", "whatsapp_web", "whatsappweb", "web"].includes(v)) return "wweb";
+  return "api";
+}
+
+
 // cache simple: key -> { value, expiresAt }
 const cache = new Map();
 
@@ -36,6 +43,7 @@ function _normalizeRuntime(doc) {
     instagramAccountId: String(doc.instagramAccountId || "").trim() || null,
     instagramPageId: String(doc.instagramPageId || "").trim() || null,
     isDefault: !!doc.isDefault,
+    whatsappTransport: normalizeWhatsappTransport(doc.whatsappTransport ?? doc.whatsapp_transport ?? doc.transport ?? doc.provider ?? "api"),
     // NUEVO: debounce por canal (ms). 0 = sin espera (retrocompatible)
     messageDebounceMs: clampInt(doc.messageDebounceMs ?? doc.debounceMs ?? 0, 0, 30000),
     whatsappToken: String(doc.whatsappToken || "").trim() || null,
@@ -134,6 +142,7 @@ async function upsertTenantChannel(payload, { allowSecrets = true } = {}) {
     if (!phoneNumberId) throw new Error("phoneNumberId_required");
   }
   const messageDebounceMs = clampInt(p.messageDebounceMs ?? p.debounceMs ?? 0, 0, 30000);
+const whatsappTransport = normalizeWhatsappTransport(p.whatsappTransport ?? p.whatsapp_transport ?? p.transport ?? "api");
 
   const selector = channelType === "instagram"
     ? { tenantId, channelType, instagramAccountId }
@@ -152,6 +161,9 @@ async function upsertTenantChannel(payload, { allowSecrets = true } = {}) {
 
  if (p.isDefault !== undefined) update.$set.isDefault = !!p.isDefault;
   if (p.displayPhoneNumber !== undefined) update.$set.displayPhoneNumber = String(p.displayPhoneNumber || "").trim();
+  if (channelType === "whatsapp" && (p.whatsappTransport !== undefined || p.whatsapp_transport !== undefined || p.transport !== undefined)) {
+    update.$set.whatsappTransport = whatsappTransport;
+  }
   if (p.instagramPageId !== undefined) update.$set.instagramPageId = instagramPageId;
   // NUEVO: persistir debounce ms (0..30000)
   if (p.messageDebounceMs !== undefined || p.debounceMs !== undefined) {
@@ -183,8 +195,9 @@ async function upsertTenantChannel(payload, { allowSecrets = true } = {}) {
 
 module.exports = {
   getRuntimeByPhoneNumberId,
- 
+ getRuntimeByInstagramAccountId,
   getRuntimeByTenantId,
   findAnyByVerifyToken,
   upsertTenantChannel,
+  normalizeWhatsappTransport,
 };

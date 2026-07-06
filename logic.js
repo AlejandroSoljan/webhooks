@@ -734,11 +734,21 @@ async function sendInstagramMessage(to, text, opts = {}) {
 }
 
 async function sendChannelMessage(to, text, opts = {}) {
+  const body = String(text ?? "").trim();
+
+  // Modo WhatsApp Web: el endpoint procesa la lógica y devuelve la respuesta
+  // al script app_asisto_ws.js. El envío real lo hace WhatsApp Web en la PC
+ // que tiene la sesión/QR, no la Cloud API.
+  if (Array.isArray(opts.returnReplies)) {
+    if (body) opts.returnReplies.push({ to: String(to || "").trim(), text: body });
+   return;
+  }
+
   const channelType = String(opts.channelType || "whatsapp").trim().toLowerCase();
   if (channelType === "instagram") {
-    return sendInstagramMessage(to, text, opts);
+    return sendInstagramMessage(to, body, opts);
   }
-  return sendWhatsAppMessage(to, text, opts);
+  return sendWhatsAppMessage(to, body, opts);
 }
 
 // ================== Media (audio) ==================

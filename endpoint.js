@@ -14,7 +14,14 @@ const WWEB_API_KEY = String(process.env.WWEB_API_KEY || "").trim();
 // ⬇️ Para catálogo en Mongo
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
-const { getRuntimeByPhoneNumberId, getRuntimeByInstagramAccountId, findAnyByVerifyToken, upsertTenantChannel } = require("./tenant_runtime");
+const {
+  getRuntimeByPhoneNumberId,
+  getRuntimeByInstagramAccountId,
+  getRuntimeByTenantId,
+  findAnyByVerifyToken,
+  upsertTenantChannel,
+  normalizeWhatsappTransport,
+} = require("./tenant_runtime");
 const TENANT_ID = (process.env.TENANT_ID || "").trim();
 // ================== Debounce de textos (por tenant+canal+waId+convId) ==================
 const pendingTextBatches = new Map();
@@ -152,7 +159,7 @@ app.get("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
       displayPhoneNumber: r.displayPhoneNumber || null,
       instagramAccountId: r.instagramAccountId || null,
       instagramPageId: r.instagramPageId || null,
-      isDefault: !!r.isDefault,
+      whatsappTransport: normalizeWhatsappTransport(r.whatsappTransport ?? r.whatsapp_transport ?? r.transport ?? "api"),
       messageDebounceMs: r.messageDebounceMs ?? 0,
       updatedAt: r.updatedAt || null,
       createdAt: r.createdAt || null,
@@ -189,7 +196,7 @@ app.post("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
         body.isDefault === true
           ? true
           : undefined,
-      whatsappToken: body.whatsappToken,
+      whatsappTransport: body.whatsappTransport ?? body.whatsapp_transport ?? body.transport,
       verifyToken: body.verifyToken,
       openaiApiKey: body.openaiApiKey,
       messageDebounceMs: clampInt(req.body?.messageDebounceMs ?? 0, 0, 5000),
@@ -7063,6 +7070,13 @@ app.get("/canales", async (req, res) => {
           <label>Display phone (opcional)</label>
           <input name="displayPhoneNumber" placeholder="+54 9 ..."/>
 
+          <label>Transporte</label>
+          <select name="whatsappTransport" style="width:100%;padding:10px 12px;border:1px solid #ccc;border-radius:8px">
+            <option value="api">API Meta</option>
+            <option value="wweb">WhatsApp Web</option>
+          </select>
+
+
           <label>WhatsApp Token</label>
           <input name="whatsappToken" placeholder="EAAG..." />
 
@@ -7111,13 +7125,14 @@ app.get("/canales", async (req, res) => {
               <th>Tipo</th>
               <th>Canal ID</th>
               <th>Display</th>
+              <th>Transporte</th>
               <th>Default</th>
               <th>Updated</th>
               <th></th>
             </tr>
           </thead>
           <tbody id="tbody">
-            <tr><td colspan="7" class="muted">Cargando...</td></tr>
+            <tr><td colspan="8" class="muted">Cargando...</td></tr>
           </tbody>
         </table>
       </div>
@@ -7143,7 +7158,7 @@ app.get("/canales", async (req, res) => {
 
   async function load(){
     setMsg('', '');
-    tbody.innerHTML = '<tr><td colspan="7" class="muted">Cargando...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando...</td></tr>';
 
     let items = [];
     try {
@@ -7158,7 +7173,7 @@ app.get("/canales", async (req, res) => {
       if(!r.ok){
         const jErr = await r.json().catch(()=>null);
         const msg = (jErr && (jErr.error || jErr.message)) ? (jErr.error || jErr.message) : ('HTTP ' + r.status);
-        tbody.innerHTML = '<tr><td colspan="7">No se pudo cargar: '+esc(msg)+'</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8">No se pudo cargar: '+esc(msg)+'</td></tr>';
         return;
       }
 
@@ -7171,7 +7186,7 @@ app.get("/canales", async (req, res) => {
       const j = await r.json();
       items = Array.isArray(j.items) ? j.items : [];
       if(!items.length){
-        tbody.innerHTML = '<tr><td colspan="7" class="muted">No hay canales cargados.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="muted">No hay canales cargados.</td></tr>';
         return;
       }
 
@@ -7188,6 +7203,7 @@ app.get("/canales", async (req, res) => {
           '<td>'+esc(it.channelType||'whatsapp')+'</td>'+
           '<td>'+esc(channelId)+'</td>'+
           '<td>'+esc(it.displayPhoneNumber || it.instagramPageId || '')+'</td>'+
+          '<td>'+esc((it.channelType === 'whatsapp' ? (it.whatsappTransport || 'api') : ''))+'</td>'+
           '<td>'+def+'</td>'+
           '<td class="muted">'+esc(it.updatedAt||it.createdAt||'')+'</td>'+
           '<td class="actions">'+
@@ -7208,6 +7224,7 @@ app.get("/canales", async (req, res) => {
           if (form.channelType) form.channelType.value = it.channelType || 'whatsapp';
           form.phoneNumberId.value = it.phoneNumberId || '';
           form.displayPhoneNumber.value = it.displayPhoneNumber || '';
+          if (form.whatsappTransport) form.whatsappTransport.value = it.whatsappTransport || 'api';
           form.instagramAccountId.value = it.instagramAccountId || '';
           form.instagramPageId.value = it.instagramPageId || '';
 
@@ -7261,7 +7278,7 @@ app.get("/canales", async (req, res) => {
 
     } catch (e) {
       console.error('[canales] load error:', e);
-      tbody.innerHTML = '<tr><td colspan="7">Error cargando canales: '+esc(e?.message || String(e))+'</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8">Error cargando canales: '+esc(e?.message || String(e))+'</td></tr>';
     }
   }
 
@@ -7447,6 +7464,142 @@ app.post("/api/hours", async (req, res) => {
 
 
 // Webhook Verify (GET)
+
+function apiChatCabCleanDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function apiChatCabReadTenantId(req) {
+  return String(
+    req.body?.TenantId ||
+    req.body?.tenantId ||
+    req.body?.tenantid ||
+    req.headers?.["x-tenant-id"] ||
+    req.query?.tenantId ||
+    req.query?.tenant ||
+    resolveTenantId(req) ||
+    DEFAULT_TENANT_ID ||
+    TENANT_ID ||
+    "default"
+  ).trim();
+}
+
+function apiChatCabBuildMessageId(body, tenantId) {
+  const explicit = String(
+    body?.MessageId ||
+    body?.messageId ||
+    body?.Id_Ws ||
+    body?.id_ws ||
+    body?.id ||
+    ""
+  ).trim();
+  if (explicit) return explicit;
+
+  const base = [
+    tenantId,
+    body?.Tel_Origen,
+    body?.Tel_Destino,
+    body?.Mensaje,
+    Date.now(),
+    Math.random().toString(16).slice(2)
+  ].join("|");
+  return "wweb_" + crypto.createHash("sha1").update(base).digest("hex");
+}
+
+function apiChatCabFakeWebhookBody({ body, runtime, tenantId }) {
+  const from = apiChatCabCleanDigits(body?.Tel_Origen || body?.tel_origen || body?.from || body?.telefono || "");
+  const to = apiChatCabCleanDigits(body?.Tel_Destino || body?.tel_destino || body?.to || body?.numero || runtime?.displayPhoneNumber || "");
+  const text = String(body?.Mensaje ?? body?.mensaje ?? body?.text ?? body?.body ?? "").trim();
+  const phoneNumberId = String(runtime?.phoneNumberId || body?.phoneNumberId || body?.PhoneNumberId || `wweb:${tenantId}:${to || "default"}`).trim();
+
+  return {
+    object: "whatsapp_business_account",
+    entry: [{
+      id: String(tenantId || ""),
+      changes: [{
+        field: "messages",
+        value: {
+          messaging_product: "whatsapp",
+          metadata: {
+            display_phone_number: to || null,
+            phone_number_id: phoneNumberId,
+          },
+          contacts: [{ wa_id: from }],
+          messages: [{
+            from,
+            id: apiChatCabBuildMessageId(body || {}, tenantId),
+            timestamp: String(Math.floor(Date.now() / 1000)),
+            type: "text",
+            text: { body: text },
+          }]
+        }
+      }]
+    }]
+  };
+}
+
+function createApiChatCabCaptureRes() {
+  return {
+    statusCode: 200,
+   body: null,
+    headers: {},
+    setHeader(name, value) { this.headers[String(name).toLowerCase()] = value; return this; },
+    set(name, value) { this.headers[String(name).toLowerCase()] = value; return this; },
+    status(code) { this.statusCode = Number(code) || this.statusCode || 200; return this; },
+    sendStatus(code) { this.statusCode = Number(code) || this.statusCode || 200; this.body = this.body ?? ""; return this; },
+    json(value) { this.body = value; return this; },
+    send(value) { this.body = value; return this; },
+    end(value) { if (value !== undefined) this.body = value; return this; },
+  };
+}
+
+async function handleApiChatCabProcesarMensajePost(req, res) {
+  const body = req.body || {};
+  const tenantId = apiChatCabReadTenantId(req);
+ const text = String(body?.Mensaje ?? body?.mensaje ?? body?.text ?? body?.body ?? "").trim();
+  const from = apiChatCabCleanDigits(body?.Tel_Origen || body?.tel_origen || body?.from || body?.telefono || "");
+
+  if (!text || !from) {
+    return res.status(400).json([{ cod_error: "bad_request", msj_error: "Tel_Origen y Mensaje son obligatorios" }]);
+  }
+
+  let runtime = null;
+  try { runtime = await getRuntimeByTenantId(tenantId); } catch (e) {
+    console.warn("[Api_Chat_Cab] no se pudo leer tenant runtime:", e?.message || e);
+  }
+
+  const transport = normalizeWhatsappTransport(runtime?.whatsappTransport || "api");
+  if (transport !== "wweb") {
+    return res.status(409).json([{ cod_error: "transport_api", msj_error: "El tenant no está configurado para WhatsApp Web" }]);
+  }
+
+  const fakeReq = Object.create(req);
+  fakeReq.body = apiChatCabFakeWebhookBody({ body, runtime, tenantId });
+  fakeReq.rawBody = Buffer.from(JSON.stringify(fakeReq.body));
+  fakeReq.asistoWwebApiRequest = true;
+  fakeReq.asistoWhatsappTransport = "wweb";
+  fakeReq.asistoTenantId = tenantId;
+  fakeReq.asistoRuntime = runtime || { tenantId, channelType: "whatsapp", whatsappTransport: "wweb" };
+  fakeReq.asistoReturnReplies = [];
+
+  const fakeRes = createApiChatCabCaptureRes();
+  await handleWebhookPost(fakeReq, fakeRes);
+
+  if (Number(fakeRes.statusCode || 200) >= 400) {
+    return res.status(500).json([{ cod_error: String(fakeRes.statusCode), msj_error: "Error procesando mensaje" }]);
+  }
+
+  const replies = fakeReq.asistoReturnReplies
+    .map((r) => String(r?.text || "").trim())
+    .filter(Boolean)
+    .map((txt) => ({ Respuesta: txt.replace(/\r?\n/g, "|") }));
+
+  return res.json(replies);
+}
+
+app.post("/v200/api/Api_Chat_Cab/ProcesarMensajePost", handleApiChatCabProcesarMensajePost);
+app.post("/api-chat-cab/procesar-mensaje", handleApiChatCabProcesarMensajePost);
+
 // Retrocompatible: acepta VERIFY_TOKEN de .env como siempre,
 // y además acepta cualquier verifyToken guardado en tenant_channels.
 app.get("/webhook", async (req, res) => {
@@ -7473,9 +7626,9 @@ app.get("/webhook", async (req, res) => {
 });
 
 // Webhook Entrante (POST)
-app.post("/webhook", async (req, res) => {
+async function handleWebhookPost(req, res) {
   try {
-    if (process.env.WHATSAPP_APP_SECRET && !isValidSignature(req)) {
+    if (!req.asistoWwebApiRequest && process.env.WHATSAPP_APP_SECRET && !isValidSignature(req)) {
       if (process.env.NODE_ENV === "production") return res.sendStatus(403);
       console.warn("⚠️ Webhook: firma inválida (ignorada en dev).");
     }
@@ -7526,14 +7679,26 @@ if (!msg && messagingEvt?.message) {
 }
 
 try {
-  if (channelType === "instagram") runtime = await getRuntimeByInstagramAccountId(instagramAccountIdInbound);
-  else runtime = await getRuntimeByPhoneNumberId(phoneNumberIdInbound);
+  runtime = req.asistoRuntime || null;
+  if (!runtime) {
+    if (channelType === "instagram") runtime = await getRuntimeByInstagramAccountId(instagramAccountIdInbound);
+    else runtime = await getRuntimeByPhoneNumberId(phoneNumberIdInbound);
+  }
 } catch {}
-const tenant = String(runtime?.tenantId || DEFAULT_TENANT_ID || TENANT_ID || "default").trim();
+const tenant = String(runtime?.tenantId || req.asistoTenantId || DEFAULT_TENANT_ID || TENANT_ID || "default").trim();
+const whatsappTransport = normalizeWhatsappTransport(req.asistoWhatsappTransport || runtime?.whatsappTransport || "api");
+
+if (channelType === "whatsapp" && whatsappTransport === "wweb" && !req.asistoWwebApiRequest) {
+  console.log(`[webhook] tenant=${tenant} configurado con WhatsApp Web; se ignora webhook Meta.`);
+  return res.sendStatus(200);
+}
+
 const orderConfig = await loadOrderConfig(tenant);
 
 const channelOpts = {
   channelType,
+  whatsappTransport,
+  returnReplies: Array.isArray(req.asistoReturnReplies) ? req.asistoReturnReplies : null,
   whatsappToken: runtime?.whatsappToken || null,
   phoneNumberId: runtime?.phoneNumberId || phoneNumberIdInbound || null,
   instagramAccountId: runtime?.instagramAccountId || instagramAccountIdInbound || null,
@@ -8896,7 +9061,9 @@ if (willComplete && pedido && convId) {
     console.error("POST /webhook error:", e?.message || e);
     res.sendStatus(500);
   }
-});
+}
+
+app.post("/webhook", handleWebhookPost);
 
 /*const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
