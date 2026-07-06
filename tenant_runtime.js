@@ -13,6 +13,25 @@ function normalizeWhatsappTransport(value) {
   return "api";
 }
 
+function normalizeWwebBotLogicMode(value) {
+  const v = String(value || "api").trim().toLowerCase();
+  if (["chatgpt", "gpt", "pedido", "pedidos", "asisto", "ia", "openai"].includes(v)) return "chatgpt";
+  return "api";
+}
+
+function onlyDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function phoneLooksSame(a, b) {
+  const da = onlyDigits(a);
+  const db = onlyDigits(b);
+  if (!da || !db) return false;
+  if (da === db) return true;
+  if (da.startsWith("549") && db.startsWith("54") && !db.startsWith("549")) return da === ("549" + db.slice(2));
+  if (db.startsWith("549") && da.startsWith("54") && !da.startsWith("549")) return db === ("549" + da.slice(2));
+  return false;
+}
 
 // cache simple: key -> { value, expiresAt }
 const cache = new Map();
@@ -44,6 +63,7 @@ function _normalizeRuntime(doc) {
     instagramPageId: String(doc.instagramPageId || "").trim() || null,
     isDefault: !!doc.isDefault,
     whatsappTransport: normalizeWhatsappTransport(doc.whatsappTransport ?? doc.whatsapp_transport ?? doc.transport ?? doc.provider ?? "api"),
+    wwebBotLogicMode: normalizeWwebBotLogicMode(doc.wwebBotLogicMode ?? doc.wweb_bot_logic_mode ?? doc.botLogicMode ?? doc.bot_logic_mode ?? "api"),
     // NUEVO: debounce por canal (ms). 0 = sin espera (retrocompatible)
     messageDebounceMs: clampInt(doc.messageDebounceMs ?? doc.debounceMs ?? 0, 0, 30000),
     whatsappToken: String(doc.whatsappToken || "").trim() || null,
@@ -85,6 +105,33 @@ async function getRuntimeByInstagramAccountId(instagramAccountId) {
   if (val) _cacheSet(ck, val);
   return val;
 }
+
+async function getRuntimeByWwebPhone(tenantId, phoneNumber) {
+  const tid = String(tenantId || "").trim();
+  const phone = onlyDigits(phoneNumber);
+  if (!tid || !phone) return null;
+
+  const ck = `wwebphone:${tid}:${phone}`;
+  const cached = _cacheGet(ck);
+  if (cached) return cached;
+
+  const db = await getDb();
+  const rows = await db.collection("tenant_channels")
+    .find({ tenantId: tid, channelType: "whatsapp" })
+    .sort({ isDefault: -1, updatedAt: -1, createdAt: -1 })
+    .limit(200)
+    .toArray();
+
+  const match = (rows || []).find((doc) => {
+    if (normalizeWhatsappTransport(doc.whatsappTransport ?? doc.whatsapp_transport ?? doc.transport ?? "api") !== "wweb") return false;
+    return phoneLooksSame(doc.displayPhoneNumber, phone) || phoneLooksSame(doc.phoneNumberId, phone);
+  });
+
+  const val = _normalizeRuntime(match);
+  if (val) _cacheSet(ck, val);
+  return val;
+}
+
 
 async function getRuntimeByTenantId(tenantId) {
   const tid = String(tenantId || "").trim();
@@ -143,6 +190,7 @@ async function upsertTenantChannel(payload, { allowSecrets = true } = {}) {
   }
   const messageDebounceMs = clampInt(p.messageDebounceMs ?? p.debounceMs ?? 0, 0, 30000);
 const whatsappTransport = normalizeWhatsappTransport(p.whatsappTransport ?? p.whatsapp_transport ?? p.transport ?? "api");
+const wwebBotLogicMode = normalizeWwebBotLogicMode(p.wwebBotLogicMode ?? p.wweb_bot_logic_mode ?? p.botLogicMode ?? p.bot_logic_mode ?? "api");
 
   const selector = channelType === "instagram"
     ? { tenantId, channelType, instagramAccountId }
@@ -162,6 +210,10 @@ const whatsappTransport = normalizeWhatsappTransport(p.whatsappTransport ?? p.wh
   if (p.displayPhoneNumber !== undefined) update.$set.displayPhoneNumber = String(p.displayPhoneNumber || "").trim();
   if (channelType === "whatsapp" && (p.whatsappTransport !== undefined || p.whatsapp_transport !== undefined || p.transport !== undefined)) {
     update.$set.whatsappTransport = whatsappTransport;
+  }
+
+  if (channelType === "whatsapp" && (p.wwebBotLogicMode !== undefined || p.wweb_bot_logic_mode !== undefined || p.botLogicMode !== undefined || p.bot_logic_mode !== undefined)) {
+    update.$set.wwebBotLogicMode = wwebBotLogicMode;
   }
   if (p.instagramPageId !== undefined) update.$set.instagramPageId = instagramPageId;
   // NUEVO: persistir debounce ms (0..30000)
@@ -186,6 +238,9 @@ const whatsappTransport = normalizeWhatsappTransport(p.whatsappTransport ?? p.wh
   // invalidar cache relacionado
   cache.delete(`tenant:${tenantId}`);
   if (phoneNumberId) cache.delete(`phone:${phoneNumberId}`);
+  for (const key of cache.keys()) {
+    if (String(key).startsWith(`wwebphone:${tenantId}:`)) cache.delete(key);
+  }
   if (instagramAccountId) cache.delete(`instagram:${instagramAccountId}`);
   if (instagramPageId) cache.delete(`instagram:${instagramPageId}`);
 
@@ -196,7 +251,9 @@ module.exports = {
   getRuntimeByPhoneNumberId,
  getRuntimeByInstagramAccountId,
   getRuntimeByTenantId,
+  getRuntimeByWwebPhone,
   findAnyByVerifyToken,
   upsertTenantChannel,
   normalizeWhatsappTransport,
+  normalizeWwebBotLogicMode,
 };

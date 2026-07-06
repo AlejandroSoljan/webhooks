@@ -46,7 +46,6 @@ const ACCESS_PAGES = [
   { key: "leads", title: "Leads" },
   { key: "wweb", title: "Sesiones WhatsApp Web" },
   { key: "canales", title: "Canales" },
-  { key: "canales", title: "Canales" },
   { key: "telegram", title: "Sesiones Telegram" },
   { key: "users", title: "Usuarios" },
   { key: "tenant_config", title: "Dominio Config" },

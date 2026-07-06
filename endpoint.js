@@ -18,9 +18,11 @@ const {
   getRuntimeByPhoneNumberId,
   getRuntimeByInstagramAccountId,
   getRuntimeByTenantId,
+  getRuntimeByWwebPhone,
   findAnyByVerifyToken,
   upsertTenantChannel,
   normalizeWhatsappTransport,
+  normalizeWwebBotLogicMode,
 } = require("./tenant_runtime");
 const TENANT_ID = (process.env.TENANT_ID || "").trim();
 // ================== Debounce de textos (por tenant+canal+waId+convId) ==================
@@ -160,6 +162,7 @@ app.get("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
       instagramAccountId: r.instagramAccountId || null,
       instagramPageId: r.instagramPageId || null,
       whatsappTransport: normalizeWhatsappTransport(r.whatsappTransport ?? r.whatsapp_transport ?? r.transport ?? "api"),
+      wwebBotLogicMode: normalizeWwebBotLogicMode(r.wwebBotLogicMode ?? r.wweb_bot_logic_mode ?? r.botLogicMode ?? r.bot_logic_mode ?? "api"),
       messageDebounceMs: r.messageDebounceMs ?? 0,
       updatedAt: r.updatedAt || null,
       createdAt: r.createdAt || null,
@@ -197,6 +200,7 @@ app.post("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
           ? true
           : undefined,
       whatsappTransport: body.whatsappTransport ?? body.whatsapp_transport ?? body.transport,
+      wwebBotLogicMode: body.wwebBotLogicMode ?? body.wweb_bot_logic_mode ?? body.botLogicMode ?? body.bot_logic_mode,
       verifyToken: body.verifyToken,
       openaiApiKey: body.openaiApiKey,
       messageDebounceMs: clampInt(req.body?.messageDebounceMs ?? 0, 0, 5000),
@@ -7076,6 +7080,12 @@ app.get("/canales", async (req, res) => {
             <option value="wweb">WhatsApp Web</option>
           </select>
 
+          <label>Lógica WhatsApp Web</label>
+          <select name="wwebBotLogicMode" style="width:100%;padding:10px 12px;border:1px solid #ccc;border-radius:8px">
+            <option value="api">API configurada / mensajes</option>
+            <option value="chatgpt">Asisto ChatGPT / pedidos</option>
+          </select>
+          <div class="muted">Solo se usa cuando el transporte del canal es WhatsApp Web.</div>
 
           <label>WhatsApp Token</label>
           <input name="whatsappToken" placeholder="EAAG..." />
@@ -7126,13 +7136,14 @@ app.get("/canales", async (req, res) => {
               <th>Canal ID</th>
               <th>Display</th>
               <th>Transporte</th>
+              <th>Lógica WWeb</th>
               <th>Default</th>
               <th>Updated</th>
               <th></th>
             </tr>
           </thead>
           <tbody id="tbody">
-            <tr><td colspan="8" class="muted">Cargando...</td></tr>
+            <tr><td colspan="9" class="muted">Cargando...</td></tr>
           </tbody>
         </table>
       </div>
@@ -7158,7 +7169,7 @@ app.get("/canales", async (req, res) => {
 
   async function load(){
     setMsg('', '');
-    tbody.innerHTML = '<tr><td colspan="8" class="muted">Cargando...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="muted">Cargando...</td></tr>';
 
     let items = [];
     try {
@@ -7173,20 +7184,20 @@ app.get("/canales", async (req, res) => {
       if(!r.ok){
         const jErr = await r.json().catch(()=>null);
         const msg = (jErr && (jErr.error || jErr.message)) ? (jErr.error || jErr.message) : ('HTTP ' + r.status);
-        tbody.innerHTML = '<tr><td colspan="8">No se pudo cargar: '+esc(msg)+'</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9">No se pudo cargar: '+esc(msg)+'</td></tr>';
         return;
       }
 
       const ct = String(r.headers.get('content-type') || '').toLowerCase();
       if(!ct.includes('application/json')){
-        tbody.innerHTML = '<tr><td colspan="7">No se pudo cargar (respuesta no JSON). Probable sesión vencida/redirección a login. Refrescá o volvé a iniciar sesión.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9">No se pudo cargar (respuesta no JSON). Probable sesión vencida/redirección a login. Refrescá o volvé a iniciar sesión.</td></tr>';
         return;
       }
 
       const j = await r.json();
       items = Array.isArray(j.items) ? j.items : [];
       if(!items.length){
-        tbody.innerHTML = '<tr><td colspan="8" class="muted">No hay canales cargados.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="muted">No hay canales cargados.</td></tr>';
         return;
       }
 
@@ -7204,6 +7215,7 @@ app.get("/canales", async (req, res) => {
           '<td>'+esc(channelId)+'</td>'+
           '<td>'+esc(it.displayPhoneNumber || it.instagramPageId || '')+'</td>'+
           '<td>'+esc((it.channelType === 'whatsapp' ? (it.whatsappTransport || 'api') : ''))+'</td>'+
+          '<td>'+esc((it.channelType === 'whatsapp' && (it.whatsappTransport || 'api') === 'wweb' ? (it.wwebBotLogicMode || 'api') : ''))+'</td>'+
           '<td>'+def+'</td>'+
           '<td class="muted">'+esc(it.updatedAt||it.createdAt||'')+'</td>'+
           '<td class="actions">'+
@@ -7225,6 +7237,7 @@ app.get("/canales", async (req, res) => {
           form.phoneNumberId.value = it.phoneNumberId || '';
           form.displayPhoneNumber.value = it.displayPhoneNumber || '';
           if (form.whatsappTransport) form.whatsappTransport.value = it.whatsappTransport || 'api';
+          if (form.wwebBotLogicMode) form.wwebBotLogicMode.value = it.wwebBotLogicMode || 'api';
           form.instagramAccountId.value = it.instagramAccountId || '';
           form.instagramPageId.value = it.instagramPageId || '';
 
@@ -7278,7 +7291,7 @@ app.get("/canales", async (req, res) => {
 
     } catch (e) {
       console.error('[canales] load error:', e);
-      tbody.innerHTML = '<tr><td colspan="8">Error cargando canales: '+esc(e?.message || String(e))+'</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9">Error cargando canales: '+esc(e?.message || String(e))+'</td></tr>';
     }
   }
 
@@ -7322,6 +7335,7 @@ app.get("/canales", async (req, res) => {
     form.reset();
     form.tenantId.value = keepTenant;
     if (form.channelType) form.channelType.value = 'whatsapp';
+    if (form.wwebBotLogicMode) form.wwebBotLogicMode.value = 'api';
     toggleChannelFields();
     setMsg('', '');
   });
@@ -7562,9 +7576,12 @@ async function handleApiChatCabProcesarMensajePost(req, res) {
   if (!text || !from) {
     return res.status(400).json([{ cod_error: "bad_request", msj_error: "Tel_Origen y Mensaje son obligatorios" }]);
   }
+  const to = apiChatCabCleanDigits(body?.Tel_Destino || body?.tel_destino || body?.to || body?.numero || "");
 
   let runtime = null;
-  try { runtime = await getRuntimeByTenantId(tenantId); } catch (e) {
+  try {
+    runtime = (to ? await getRuntimeByWwebPhone(tenantId, to) : null) || await getRuntimeByTenantId(tenantId);
+  } catch (e) {
     console.warn("[Api_Chat_Cab] no se pudo leer tenant runtime:", e?.message || e);
   }
 
