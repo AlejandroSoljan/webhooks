@@ -7216,13 +7216,22 @@ app.get("/canales", async (req, res) => {
         return;
       }
 
+      const defaultCountByTenant = items.reduce((acc, it) => {
+        const key = String((it && it.tenantId) || '');
+        if (it && it.isDefault) acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {});
+
+
       tbody.innerHTML = items.map(it => {
-        const def = (it && it.isDefault) ? '✅' : '';
+        const tenantKey = String((it && it.tenantId) || '');
+        const hasDuplicateDefault = !!(it && it.isDefault && defaultCountByTenant[tenantKey] > 1);
+        const def = (it && it.isDefault) ? (hasDuplicateDefault ? '✅ ⚠️' : '✅') : '';
         const channelId = (it.channelType === 'instagram')
           ? (it.instagramAccountId || '')
           : (it.phoneNumberId || '');
-        const btnDefault = it.isDefault ? '' :
-          '<button type="button" class="secondary" data-make-default="1" data-id="'+esc(it._id||'')+'" data-tenant="'+esc(it.tenantId||'')+'" data-type="'+esc(it.channelType||'whatsapp')+'" data-phone="'+esc(it.phoneNumberId||'')+'" data-ig="'+esc(it.instagramAccountId||'')+'">Hacer default</button>';
+        const btnDefault = (!it.isDefault || hasDuplicateDefault) ?
+          '<button type="button" class="secondary" data-make-default="1" data-id="'+esc(it._id||'')+'" data-tenant="'+esc(it.tenantId||'')+'" data-type="'+esc(it.channelType||'whatsapp')+'" data-phone="'+esc(it.phoneNumberId||'')+'" data-ig="'+esc(it.instagramAccountId||'')+'">Hacer default</button>' : '';
 
         return '<tr>'+
           '<td><span class="pill">'+esc(it.tenantId||'')+'</span></td>'+

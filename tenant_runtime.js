@@ -233,15 +233,12 @@ const wwebBotLogicMode = normalizeWwebBotLogicMode(p.wwebBotLogicMode ?? p.wweb_
 
   const update = {
     $setOnInsert: {
-      tenantId,
-            ...(channelType === "instagram"
-        ? { instagramAccountId, createdAt: new Date() }
-        : { phoneNumberId, createdAt: new Date() })
+      createdAt: new Date()
     },
     $set: {
       updatedAt: new Date(),
-      channelType,
       tenantId,
+      channelType,
       ...(channelType === "instagram" ? { instagramAccountId } : { phoneNumberId })
     },
   };
