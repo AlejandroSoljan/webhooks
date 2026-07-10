@@ -162,6 +162,7 @@ app.get("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
       displayPhoneNumber: r.displayPhoneNumber || null,
       instagramAccountId: r.instagramAccountId || null,
       instagramPageId: r.instagramPageId || null,
+      isDefault: !!r.isDefault,
       whatsappTransport: normalizeWhatsappTransport(r.whatsappTransport ?? r.whatsapp_transport ?? r.transport ?? "api"),
       wwebBotLogicMode: normalizeWwebBotLogicMode(r.wwebBotLogicMode ?? r.wweb_bot_logic_mode ?? r.botLogicMode ?? r.bot_logic_mode ?? "api"),
       messageDebounceMs: r.messageDebounceMs ?? 0,
@@ -188,9 +189,15 @@ app.post("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
     const tenantForced = resolveTenantId(req);
 
     const payload = {
+      _id: body._id || body.id || body.channelId,
       tenantId: isSuper ? (body.tenantId || tenantForced) : tenantForced,
+      channelType: body.channelType || "whatsapp",
       phoneNumberId: body.phoneNumberId,
       displayPhoneNumber: body.displayPhoneNumber,
+      instagramAccountId: body.instagramAccountId,
+      instagramPageId: body.instagramPageId,
+      whatsappTransport: body.whatsappTransport ?? body.whatsapp_transport ?? body.transport,
+      wwebBotLogicMode: body.wwebBotLogicMode ?? body.wweb_bot_logic_mode ?? body.botLogicMode ?? body.bot_logic_mode,
       // isDefault puede venir como "1" / "true" / "on"
       isDefault:
         body.isDefault === "1" ||
@@ -200,8 +207,8 @@ app.post("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
         body.isDefault === true
           ? true
           : undefined,
-      whatsappTransport: body.whatsappTransport ?? body.whatsapp_transport ?? body.transport,
-      wwebBotLogicMode: body.wwebBotLogicMode ?? body.wweb_bot_logic_mode ?? body.botLogicMode ?? body.bot_logic_mode,
+      whatsappToken: body.whatsappToken,
+      instagramAccessToken: body.instagramAccessToken,
       verifyToken: body.verifyToken,
       openaiApiKey: body.openaiApiKey,
       messageDebounceMs: clampInt(req.body?.messageDebounceMs ?? 0, 0, 5000),
@@ -209,11 +216,17 @@ app.post("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
 
     const r = await upsertTenantChannel(payload, { allowSecrets: true });
 
-    // Si se marcó default, desmarcar cualquier otro canal default del mismo tenant
+    // Si se marcó default, dejar UN solo default por dominio.
+    // Importante: se usa el _id real del canal actualizado/creado, no el teléfono,
+    // porque un mismo dominio puede tener API Meta y WhatsApp Web con números/IDs repetidos.
     if (payload.isDefault === true) {
       const db = await getDb();
+      const currentId = String(r?._id || r?.id || payload._id || "").trim();
+      const notCurrent = ObjectId.isValid(currentId)
+        ? { _id: { $ne: new ObjectId(currentId) } }
+        : {};
       await db.collection("tenant_channels").updateMany(
-        { tenantId: String(payload.tenantId), phoneNumberId: { $ne: String(payload.phoneNumberId) } },
+        { tenantId: String(payload.tenantId), ...notCurrent },
         { $set: { isDefault: false, updatedAt: new Date() } }
       );
     }
@@ -7059,6 +7072,7 @@ app.get("/canales", async (req, res) => {
     <div class="card">
       <h3 style="margin:0 0 8px">Crear / actualizar</h3>
       <form id="f">
+      <input type="hidden" name="_id" value=""/>
         <label>Dominio</label>
         <input name="tenantId" value="${String(tenant||'').replace(/"/g,'&quot;')}" placeholder="default"/>
 
@@ -7208,7 +7222,7 @@ app.get("/canales", async (req, res) => {
           ? (it.instagramAccountId || '')
           : (it.phoneNumberId || '');
         const btnDefault = it.isDefault ? '' :
-          '<button type="button" class="secondary" data-make-default="1" data-tenant="'+esc(it.tenantId||'')+'" data-type="'+esc(it.channelType||'whatsapp')+'" data-phone="'+esc(it.phoneNumberId||'')+'" data-ig="'+esc(it.instagramAccountId||'')+'">Hacer default</button>';
+          '<button type="button" class="secondary" data-make-default="1" data-id="'+esc(it._id||'')+'" data-tenant="'+esc(it.tenantId||'')+'" data-type="'+esc(it.channelType||'whatsapp')+'" data-phone="'+esc(it.phoneNumberId||'')+'" data-ig="'+esc(it.instagramAccountId||'')+'">Hacer default</button>';
 
         return '<tr>'+
           '<td><span class="pill">'+esc(it.tenantId||'')+'</span></td>'+
@@ -7233,6 +7247,7 @@ app.get("/canales", async (req, res) => {
           const it = items.find(x => String(x._id)===String(id));
           if(!it) return;
 
+          if (form._id) form._id.value = it._id || '';
           form.tenantId.value = it.tenantId || '';
           if (form.channelType) form.channelType.value = it.channelType || 'whatsapp';
           form.phoneNumberId.value = it.phoneNumberId || '';
@@ -7259,14 +7274,16 @@ app.get("/canales", async (req, res) => {
       // Hacer default
       tbody.querySelectorAll('button[data-make-default]').forEach(btn=>{
         btn.addEventListener('click', async ()=>{
+          const id = btn.getAttribute('data-id') || '';
           const t = btn.getAttribute('data-tenant') || '';
           const type = btn.getAttribute('data-type') || 'whatsapp';
           const p = btn.getAttribute('data-phone') || '';
           const ig = btn.getAttribute('data-ig') || '';
-          if(!t || (type === 'instagram' ? !ig : !p)) return;
+          if(!id || !t || (type === 'instagram' ? !ig : !p)) return;
 
           setMsg('', '');
           const data = new URLSearchParams();
+          data.set('_id', id);
           data.set('tenantId', t);
           data.set('channelType', type);
           if (type === 'instagram') data.set('instagramAccountId', ig);
@@ -7334,6 +7351,7 @@ app.get("/canales", async (req, res) => {
   btnClear.addEventListener('click', ()=>{
     const keepTenant = form.tenantId.value;
     form.reset();
+    if (form._id) form._id.value = '';
     form.tenantId.value = keepTenant;
     if (form.channelType) form.channelType.value = 'whatsapp';
     if (form.wwebBotLogicMode) form.wwebBotLogicMode.value = 'api';

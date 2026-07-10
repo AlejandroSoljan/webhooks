@@ -3,6 +3,7 @@
 // 100% retrocompatible: si no hay config en DB, se usa .env.
 
 const { getDb } = require("./db");
+const { ObjectId } = require("mongodb");
 
 const clampInt = (v, min, max) => Math.max(min, Math.min(max, Number.parseInt(v, 10) || 0));
 const DEFAULT_CACHE_TTL_MS = Number(process.env.TENANT_RUNTIME_CACHE_TTL_MS || 30_000);
@@ -202,12 +203,16 @@ async function findAnyByVerifyToken(verifyToken) {
 
 async function upsertTenantChannel(payload, { allowSecrets = true } = {}) {
   const p = payload || {};
+  const rawId = String(p._id || p.id || p.channelId || "").trim();
   const tenantId = String(p.tenantId || "").trim();
   const channelType = String(p.channelType || "whatsapp").trim().toLowerCase() || "whatsapp";
   const phoneNumberId = String(p.phoneNumberId || "").trim();
   const instagramAccountId = String(p.instagramAccountId || "").trim();
   const instagramPageId = String(p.instagramPageId || "").trim();
   if (!tenantId) throw new Error("tenantId_required");
+  if (rawId && !ObjectId.isValid(rawId)) throw new Error("channel_id_invalid");
+  const editObjectId = rawId ? new ObjectId(rawId) : null;
+
   if (channelType === "instagram") {
     if (!instagramAccountId) throw new Error("instagramAccountId_required");
   } else {
@@ -217,9 +222,14 @@ async function upsertTenantChannel(payload, { allowSecrets = true } = {}) {
 const whatsappTransport = normalizeWhatsappTransport(p.whatsappTransport ?? p.whatsapp_transport ?? p.transport ?? "api");
 const wwebBotLogicMode = normalizeWwebBotLogicMode(p.wwebBotLogicMode ?? p.wweb_bot_logic_mode ?? p.botLogicMode ?? p.bot_logic_mode ?? "api");
 
-  const selector = channelType === "instagram"
-    ? { tenantId, channelType, instagramAccountId }
-    : { tenantId, channelType, phoneNumberId };
+  // Si viene _id desde el botón Editar, actualizamos ese documento exacto.
+  // Sin _id, mantenemos el comportamiento de alta/upsert por clave natural.
+  // Esto evita tocar otro canal del mismo dominio cuando comparten teléfono/display.
+  const selector = editObjectId
+    ? { _id: editObjectId, tenantId }
+    : (channelType === "instagram"
+      ? { tenantId, channelType, instagramAccountId }
+      : { tenantId, channelType, phoneNumberId });
 
   const update = {
     $setOnInsert: {
@@ -228,7 +238,12 @@ const wwebBotLogicMode = normalizeWwebBotLogicMode(p.wwebBotLogicMode ?? p.wweb_
         ? { instagramAccountId, createdAt: new Date() }
         : { phoneNumberId, createdAt: new Date() })
     },
-    $set: { updatedAt: new Date(), channelType },
+    $set: {
+      updatedAt: new Date(),
+      channelType,
+      tenantId,
+      ...(channelType === "instagram" ? { instagramAccountId } : { phoneNumberId })
+    },
   };
 
  if (p.isDefault !== undefined) update.$set.isDefault = !!p.isDefault;
@@ -257,8 +272,10 @@ const wwebBotLogicMode = normalizeWwebBotLogicMode(p.wwebBotLogicMode ?? p.wweb_
   const r = await db.collection("tenant_channels").updateOne(
     selector,
     update,
-    { upsert: true }
+    { upsert: !editObjectId }
   );
+
+  if (editObjectId && !r.matchedCount) throw new Error("channel_not_found");
 
   // invalidar cache relacionado
   cache.delete(`tenant:${tenantId}`);
@@ -269,7 +286,22 @@ const wwebBotLogicMode = normalizeWwebBotLogicMode(p.wwebBotLogicMode ?? p.wweb_
   if (instagramAccountId) cache.delete(`instagram:${instagramAccountId}`);
   if (instagramPageId) cache.delete(`instagram:${instagramPageId}`);
 
-  return { ok: true, upserted: !!r.upsertedId, modified: r.modifiedCount };
+  let savedId = editObjectId ? editObjectId : (r.upsertedId || null);
+  if (!savedId) {
+    try {
+      const saved = await db.collection("tenant_channels").findOne(selector, { projection: { _id: 1 } });
+      if (saved?._id) savedId = saved._id;
+    } catch {}
+  }
+
+  return {
+    ok: true,
+    _id: savedId ? String(savedId) : rawId,
+    id: savedId ? String(savedId) : rawId,
+    upserted: !!r.upsertedId,
+    matched: r.matchedCount,
+    modified: r.modifiedCount
+  };
 }
 
 module.exports = {
