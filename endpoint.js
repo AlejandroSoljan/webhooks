@@ -364,6 +364,35 @@ function wwebLockId(tenantId, numero) {
   return `${String(tenantId || "").trim()}:${String(numero || "").trim()}`;
 }
 
+function digitsOnlyForWweb(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function getWwebNumeroForConversation(conv, runtime) {
+  const candidates = [
+    runtime?.displayPhoneNumber,
+    conv?.displayPhoneNumber,
+    runtime?.phoneNumberId,
+    conv?.phoneNumberId,
+  ];
+  for (const c of candidates) {
+    const s = String(c || "").trim();
+    if (!s) continue;
+    const m = /^wweb:[^:]+:(.+)$/i.exec(s);
+    const d = digitsOnlyForWweb(m ? m[1] : s);
+    if (d) return d;
+  }
+  return "";
+}
+
+function isWwebConversation(conv, runtime) {
+  if (String(conv?.channelType || "whatsapp").trim().toLowerCase() !== "whatsapp") return false;
+  const transport = normalizeWhatsappTransport(runtime?.whatsappTransport || conv?.whatsappTransport || "api");
+  if (transport === "wweb") return true;
+  return /^wweb:/i.test(String(conv?.phoneNumberId || ""));
+}
+
+
 function wwebHostFromReq(req) {
   // quien hace el request (admin panel)
   return String(req.headers["x-hostname"] || req.headers["x-pc-name"] || req.ip || "").trim();
@@ -2160,6 +2189,25 @@ function _appendTenantParam(url, tenantId) {
   }
 }
 
+function sanitizeRawMessageForStorage(rawMsg) {
+  try {
+    const copy = cloneJsonSafe(rawMsg) || {};
+    if (copy.__wwebMedia && typeof copy.__wwebMedia === "object") {
+      const bytes = copy.__wwebMedia.bytes || copy.__wwebMedia.MediaBytes || 0;
+      copy.__wwebMedia = { ...copy.__wwebMedia };
+      if (copy.__wwebMedia.data) copy.__wwebMedia.data = `[base64 almacenado en meta.media.data ${bytes || ""} bytes]`;
+      if (copy.__wwebMedia.base64) copy.__wwebMedia.base64 = `[base64 almacenado en meta.media.data ${bytes || ""} bytes]`;
+    }
+   if (copy.__media && typeof copy.__media === "object" && copy.__media.data) {
+      copy.__media = { ...copy.__media, data: `[base64 almacenado en meta.media.data ${copy.__media.bytes || ""} bytes]` };
+    }
+    return copy;
+  } catch {
+    return rawMsg || null;
+  }
+}
+
+
 function buildMediaDescriptorForAdmin(m, tenantId) {
   try {
     const raw = (m && m.meta && m.meta.raw) ? m.meta.raw : null;
@@ -2195,17 +2243,20 @@ function buildMediaDescriptorForAdmin(m, tenantId) {
       filename = "sticker";
     }
 
-    // fallback: cache de webhook (por si existiera)
+   // fallback: media guardada por WhatsApp Web o cache del webhook.
+    const inlineBase64 = m?.meta?.media?.data || m?.meta?.media?.base64 || m?.meta?.media?.MediaBase64 || null;
     const cachedPublicUrl = m?.meta?.media?.publicUrl || null;
     const cachedCacheId = m?.meta?.media?.cacheId || null;
     const cachedUrl = cachedPublicUrl || (cachedCacheId ? (`/cache/media/${cachedCacheId}`) : null);
 
-    let url = mediaId ? (`/api/media/${String(m._id)}`) : cachedUrl;
+    // Si es WWeb y quedó base64 persistido, siempre servimos por /api/media/:id.
+    // Si es Meta API y hay mediaId, también usamos /api/media/:id para descargar con token.
+    let url = (mediaId || inlineBase64) ? (`/api/media/${String(m._id)}`) : cachedUrl;
     if (!url) return null;
 
     url = _appendTenantParam(url, tenantId);
 
-    const mimeFinal = (mime || (m?.meta?.media?.mime) || "").toLowerCase();
+    const mimeFinal = (mime || (m?.meta?.media?.mime) || (m?.meta?.media?.mimetype) || "").toLowerCase();
     const filenameFinal = filename || (m?.meta?.media?.filename) || null;
 
     // infer kind por mime si ayuda (ej: image/pdf enviado como "document")
@@ -2271,15 +2322,42 @@ app.get("/api/media/:msgId", async (req, res) => {
       filename = "sticker";
     }
 
-    // fallback: si el webhook guardó cacheId/publicUrl (ej imagen analizada), usamos eso
+    // fallback: si el webhook guardó base64/cacheId/publicUrl (WhatsApp Web), lo servimos sin Graph API.
     if (!mediaId) {
-      const cached = msgDoc?.meta?.media?.cacheId || null;
+      const metaMedia = (msgDoc?.meta?.media && typeof msgDoc.meta.media === "object") ? msgDoc.meta.media : {};
+      const inlineBase64 = String(metaMedia.data || metaMedia.base64 || metaMedia.MediaBase64 || "").trim();
+      if (inlineBase64) {
+        let buf = null;
+        try { buf = Buffer.from(inlineBase64, "base64"); } catch {}
+        if (buf && buf.length) {
+          const mimeInline = String(metaMedia.mime || metaMedia.mimetype || mimeHint || "application/octet-stream");
+          let finalNameInline = _safeFileName(filename || metaMedia.filename || "archivo");
+          const extInline = _extFromMime(mimeInline);
+          if (extInline && !finalNameInline.toLowerCase().endsWith("." + extInline)) {
+            finalNameInline += "." + extInline;
+          }
+          const forceDlInline = String(req.query?.download || "") === "1";
+          const inlinePreferredInline =
+            !forceDlInline && (
+              mimeInline.startsWith("image/") ||
+              mimeInline.startsWith("audio/") ||
+              mimeInline.startsWith("video/") ||
+              mimeInline.includes("pdf")
+            );
+          res.setHeader("Content-Type", mimeInline);
+          res.setHeader("Cache-Control", "no-store");
+          res.setHeader("Content-Disposition", `${inlinePreferredInline ? "inline" : "attachment"}; filename="${finalNameInline}"`);
+          return res.send(buf);
+        }
+      }
+
+      const cached = metaMedia.cacheId || null;
       if (cached) {
         const item = getFromCache(cached);
         if (item) {
           res.setHeader("Content-Type", item.mime || "application/octet-stream");
           res.setHeader("Cache-Control", "no-store");
-          res.setHeader("Content-Disposition", `inline; filename="${_safeFileName(filename || ("archivo." + (_extFromMime(item.mime) || "bin")))}"`);
+          res.setHeader("Content-Disposition", `inline; filename="${_safeFileName(filename || metaMedia.filename || ("archivo." + (_extFromMime(item.mime) || "bin")))}"`);
           return res.send(item.buffer);
         }
       }
@@ -3391,6 +3469,9 @@ app.post("/api/admin/send-message", async (req, res) => {
         if (convPhoneNumberId) {
           rt = await getRuntimeByPhoneNumberId(convPhoneNumberId);
         }
+        if (!rt && conv.displayPhoneNumber) {
+          rt = await getRuntimeByWwebPhone(tenant, conv.displayPhoneNumber);
+        }
       }
     } catch {}
 
@@ -3403,9 +3484,32 @@ app.post("/api/admin/send-message", async (req, res) => {
       instagramAccessToken: rt?.instagramAccessToken || null,
     };
 
-    await require("./logic").sendChannelMessage(to, body, channelOpts);
+
 
     const now = new Date();
+
+    if (isWwebConversation(conv, rt)) {
+      const numeroWweb = getWwebNumeroForConversation(conv, rt);
+      if (!numeroWweb) {
+        return res.status(400).json({ error: "wweb_numero_missing" });
+      }
+      await db.collection("wa_wweb_actions").insertOne({
+        lockId: wwebLockId(tenant, numeroWweb),
+        tenantId: tenant,
+        numero: numeroWweb,
+        action: "send_message",
+        to,
+        text: body,
+        payload: { convId: String(conv._id), to, text: body },
+        requestedBy: req.user?.username || req.user?.uid || "admin",
+        requestedAt: now,
+        at: now,
+      });
+    } else {
+      await require("./logic").sendChannelMessage(to, body, channelOpts);
+    }
+
+
 
     // Guardar en colección messages como "assistant" pero marcado como humano
     await saveMessageDoc({
@@ -7511,6 +7615,58 @@ function apiChatCabCleanDigits(value) {
   return String(value || "").replace(/\D/g, "");
 }
 
+function apiChatCabBoolLike(value) {
+  if (value === true || value === 1) return true;
+  const v = String(value ?? "").trim().toLowerCase();
+  return ["1", "true", "yes", "si", "sí", "on"].includes(v);
+}
+
+function apiChatCabNormalizeMediaType(value, mimeValue) {
+  const t = String(value || "").trim().toLowerCase();
+  const mime = String(mimeValue || "").trim().toLowerCase();
+  if (["ptt", "voice", "audio"].includes(t) || mime.startsWith("audio/")) return "audio";
+  if (t === "image" || mime.startsWith("image/")) return "image";
+  if (t === "document" || t === "file" || mime.includes("pdf")) return "document";
+  if (t === "video" || mime.startsWith("video/")) return "video";
+  if (t === "sticker") return "sticker";
+  return "text";
+}
+
+function apiChatCabReadMediaFromBody(body = {}) {
+  const mediaObj = (body.media && typeof body.media === "object") ? body.media : {};
+  const mimeType = String(
+    body.MediaMimeType || body.mediaMimeType || body.mimetype || body.mimeType || mediaObj.mimetype || mediaObj.mime || ""
+  ).trim();
+  const typeRaw = body.TipoMensaje || body.tipoMensaje || body.type || body.messageType || body.MediaType || body.mediaType || "";
+  const mediaType = apiChatCabNormalizeMediaType(typeRaw, mimeType);
+ const base64 = String(
+    body.MediaBase64 || body.MediaData || body.mediaBase64 || body.mediaData || mediaObj.data || mediaObj.base64 || ""
+  ).trim();
+  const hasMedia = apiChatCabBoolLike(body.HasMedia ?? body.hasMedia ?? body.mediaAttached) || !!base64 || mediaType !== "text";
+  if (!hasMedia || mediaType === "text") return null;
+
+  const filename = String(
+    body.MediaFilename || body.mediaFilename || body.filename || body.fileName || mediaObj.filename || ""
+ ).trim();
+  const bytes = Number(body.MediaBytes || body.mediaBytes || mediaObj.bytes || 0) || (base64 ? Buffer.byteLength(base64, "base64") : 0);
+  const caption = String(body.MediaCaption || body.mediaCaption || body.caption || body.Mensaje || body.mensaje || "").trim();
+
+  return {
+    source: "wweb",
+    kind: mediaType,
+    mimetype: mimeType,
+    mime: mimeType,
+    filename,
+    caption,
+    data: base64,
+    bytes,
+    omittedBySize: apiChatCabBoolLike(body.MediaOmittedBySize ?? body.mediaOmittedBySize ?? mediaObj.omittedBySize),
+    error: String(body.MediaError || body.mediaError || mediaObj.error || "").trim()
+  };
+}
+
+
+
 function apiChatCabReadTenantId(req) {
   return String(
     req.body?.TenantId ||
@@ -7553,6 +7709,37 @@ function apiChatCabFakeWebhookBody({ body, runtime, tenantId }) {
   const to = apiChatCabCleanDigits(body?.Tel_Destino || body?.tel_destino || body?.to || body?.numero || runtime?.displayPhoneNumber || "");
   const text = String(body?.Mensaje ?? body?.mensaje ?? body?.text ?? body?.body ?? "").trim();
   const phoneNumberId = String(runtime?.phoneNumberId || body?.phoneNumberId || body?.PhoneNumberId || `wweb:${tenantId}:${to || "default"}`).trim();
+  const messageId = apiChatCabBuildMessageId(body || {}, tenantId);
+  const media = apiChatCabReadMediaFromBody(body || {});
+
+  const msg = {
+    from,
+    id: messageId,
+   timestamp: String(Math.floor(Date.now() / 1000)),
+    type: "text",
+    text: { body: text },
+  };
+
+  if (media) {
+    msg.type = media.kind;
+    msg.__wwebMedia = media;
+    if (media.kind === "audio") {
+      msg.audio = { id: `wweb:${messageId}`, mime_type: media.mimetype || "audio/ogg" };
+      delete msg.text;
+    } else if (media.kind === "image") {
+      msg.image = { id: `wweb:${messageId}`, mime_type: media.mimetype || "image/jpeg", caption: text || media.caption || "" };
+      if (!text) delete msg.text;
+    } else if (media.kind === "document") {
+      msg.document = { id: `wweb:${messageId}`, mime_type: media.mimetype || "application/octet-stream", filename: media.filename || "archivo", caption: text || media.caption || "" };
+     if (!text) delete msg.text;
+    } else if (media.kind === "video") {
+      msg.video = { id: `wweb:${messageId}`, mime_type: media.mimetype || "video/mp4", caption: text || media.caption || "" };
+      if (!text) delete msg.text;
+    } else if (media.kind === "sticker") {
+      msg.sticker = { id: `wweb:${messageId}`, mime_type: media.mimetype || "image/webp" };
+      delete msg.text;
+    }
+  }
 
   return {
     object: "whatsapp_business_account",
@@ -7567,13 +7754,7 @@ function apiChatCabFakeWebhookBody({ body, runtime, tenantId }) {
             phone_number_id: phoneNumberId,
           },
           contacts: [{ wa_id: from }],
-          messages: [{
-            from,
-            id: apiChatCabBuildMessageId(body || {}, tenantId),
-            timestamp: String(Math.floor(Date.now() / 1000)),
-            type: "text",
-            text: { body: text },
-          }]
+         messages: [msg]
         }
       }]
     }]
@@ -7600,10 +7781,11 @@ async function handleApiChatCabProcesarMensajePost(req, res) {
   let tenantId = apiChatCabReadTenantId(req);
  const text = String(body?.Mensaje ?? body?.mensaje ?? body?.text ?? body?.body ?? "").trim();
   const from = apiChatCabCleanDigits(body?.Tel_Origen || body?.tel_origen || body?.from || body?.telefono || "");
+  const incomingMedia = apiChatCabReadMediaFromBody(body);
 
-  if (!text || !from) {
-    return res.status(400).json([{ cod_error: "bad_request", msj_error: "Tel_Origen y Mensaje son obligatorios" }]);
-  }
+  if ((!text && !incomingMedia) || !from) {
+    return res.status(400).json([{ cod_error: "bad_request", msj_error: "Tel_Origen y Mensaje/Media son obligatorios" }]);
+   }
   const to = apiChatCabCleanDigits(body?.Tel_Destino || body?.tel_destino || body?.to || body?.numero || "");
 
   let runtime = null;
@@ -7771,8 +7953,77 @@ const aiOpts = {
     let inboundLocation = null;
 
     // Normalización del texto según tipo de mensaje
+    const wwebInlineMedia = (msg && msg.__wwebMedia && typeof msg.__wwebMedia === "object") ? msg.__wwebMedia : null;
     if (msg.type === "text" && msg.text?.body) {
       text = msg.text.body;
+    } else if (wwebInlineMedia && ["audio", "ptt", "voice", "image", "document", "video", "sticker"].includes(String(msg.type || "").toLowerCase())) {
+      const kind = apiChatCabNormalizeMediaType(msg.type, wwebInlineMedia.mimetype || wwebInlineMedia.mime);
+      const mime = String(wwebInlineMedia.mimetype || wwebInlineMedia.mime || "application/octet-stream").trim() || "application/octet-stream";
+      const filename = String(wwebInlineMedia.filename || "archivo").trim() || "archivo";
+      const caption = String(wwebInlineMedia.caption || msg.text?.body || msg.image?.caption || msg.document?.caption || msg.video?.caption || "").trim();
+      const b64 = String(wwebInlineMedia.data || wwebInlineMedia.base64 || "").trim();
+      let buf = null;
+      if (b64) {
+        try { buf = Buffer.from(b64, "base64"); } catch {}
+      }
+
+      let cacheId = null;
+      let publicUrl = null;
+      if (buf && buf.length) {
+        cacheId = putInCache(buf, mime);
+        publicUrl = `${req.protocol}://${req.get("host")}/cache/media/${cacheId}`;
+      }
+
+      msg.__media = {
+        kind,
+        cacheId,
+        publicUrl,
+        mime,
+        filename,
+        bytes: buf?.length || Number(wwebInlineMedia.bytes || 0) || 0,
+        source: "wweb",
+        data: b64 || "",
+        error: String(wwebInlineMedia.error || "").trim() || null,
+      };
+
+      if (kind === "audio") {
+        if (buf && buf.length) {
+          try {
+            const tr = await transcribeAudioExternal({ publicAudioUrl: publicUrl, buffer: buf, mime, ...aiOpts });
+            text = String(tr?.text || "").trim() || "(audio sin texto)";
+            msg.__media.transcription = text;
+          } catch (e) {
+            console.error("Audio/transcripción WWeb:", e?.message || e);
+            text = "(no se pudo transcribir el audio)";
+          }
+        } else {
+          text = caption || "(audio recibido sin archivo descargable)";
+        }
+      } else if (kind === "image") {
+        let img = null;
+        if (publicUrl && orderFeatureEnabled(orderConfig, "transferReceiptAnalysis")) {
+          try {
+            img = await analyzeImageExternal({
+              publicImageUrl: publicUrl,
+              mime,
+              purpose: "payment-proof",
+              ...aiOpts
+            });
+          } catch (e) {
+            console.error("Imagen/análisis WWeb:", e?.message || e);
+          }
+        }
+        text = img?.userText || caption || "[imagen recibida]";
+        if (img?.json) msg.__media.analysis = img.json;
+      } else if (kind === "document") {
+        text = caption ? `${caption}\n[archivo: ${filename}]` : `[archivo: ${filename}]`;
+      } else if (kind === "video") {
+        text = caption || "[video]";
+      } else if (kind === "sticker") {
+        text = "[sticker]";
+      } else {
+        text = caption || `[archivo: ${filename}]`;
+      }
     } else if (msg.type === "audio" && msg.audio?.id) {
       try {
         const info = await getMediaInfo(msg.audio.id, channelOpts);
@@ -7928,7 +8179,7 @@ console.log("[convId] "+ convId);
           role: "user",
           content: text,
           type: msg.type || "text",
-           meta: { raw: msg, media: msg.__media || null, location: msg.__location || null, channelType }
+           meta: { raw: sanitizeRawMessageForStorage(msg), media: msg.__media || null, location: msg.__location || null, channelType }
         });
       } catch (e) { console.error("saveMessage(user):", e?.message); }
     }
