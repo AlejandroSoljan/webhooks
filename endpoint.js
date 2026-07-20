@@ -7661,7 +7661,10 @@ function apiChatCabReadMediaFromBody(body = {}) {
     data: base64,
     bytes,
     omittedBySize: apiChatCabBoolLike(body.MediaOmittedBySize ?? body.mediaOmittedBySize ?? mediaObj.omittedBySize),
-    error: String(body.MediaError || body.mediaError || mediaObj.error || "").trim()
+    error: String(body.MediaError || body.mediaError || mediaObj.error || "").trim(),
+    transcription: String(
+      body.MediaTranscription || body.mediaTranscription || body.Transcripcion || body.transcripcion || mediaObj.transcription || ""
+    ).trim()
   };
 }
 
@@ -7802,6 +7805,34 @@ async function handleApiChatCabProcesarMensajePost(req, res) {
   if (transport !== "wweb") {
     return res.status(409).json([{ cod_error: "transport_api", msj_error: "El tenant no está configurado para WhatsApp Web" }]);
   }
+
+  // WhatsApp Web ya envía el audio descargado en MediaBase64. Lo transcribimos
+  // antes de construir el webhook interno para garantizar que la lógica de pedidos
+  // reciba el texto real, igual que cuando el audio entra por la API oficial.
+  if (incomingMedia?.kind === "audio" && incomingMedia.data && !incomingMedia.transcription) {
+    try {
+      const audioBuffer = Buffer.from(String(incomingMedia.data), "base64");
+      if (audioBuffer.length) {
+        const tr = await transcribeAudioExternal({
+          buffer: audioBuffer,
+          mime: incomingMedia.mimetype || incomingMedia.mime || "audio/ogg",
+          tenantId,
+          openaiApiKey: runtime?.openaiApiKey || null,
+        });
+        const transcription = String(tr?.text || "").trim();
+       if (transcription) {
+          body.MediaTranscription = transcription;
+          body.Mensaje = transcription;
+          console.log(`[WWEB_CHATGPT] audio transcripto: ${transcription.slice(0, 160)}`);
+        } else {
+          console.warn("[WWEB_CHATGPT] audio sin transcripción");
+        }
+      }
+    } catch (e) {
+      console.error("[WWEB_CHATGPT] error transcribiendo audio:", e?.message || e);
+    }
+  }
+
 
   const fakeReq = Object.create(req);
   fakeReq.body = apiChatCabFakeWebhookBody({ body, runtime, tenantId });
@@ -7987,7 +8018,11 @@ const aiOpts = {
       };
 
       if (kind === "audio") {
-        if (buf && buf.length) {
+        const preTranscribed = String(wwebInlineMedia.transcription || "").trim();
+        if (preTranscribed) {
+          text = preTranscribed;
+          msg.__media.transcription = preTranscribed;
+        } else if (buf && buf.length) {
           try {
             const tr = await transcribeAudioExternal({ publicAudioUrl: publicUrl, buffer: buf, mime, ...aiOpts });
             text = String(tr?.text || "").trim() || "(audio sin texto)";
