@@ -7806,6 +7806,19 @@ async function handleApiChatCabProcesarMensajePost(req, res) {
     return res.status(409).json([{ cod_error: "transport_api", msj_error: "El tenant no está configurado para WhatsApp Web" }]);
   }
 
+  if (incomingMedia) {
+    console.log('[WWEB_CHATGPT] media recibido', {
+      kind: incomingMedia.kind,
+      mime: incomingMedia.mimetype || incomingMedia.mime || '',
+      filename: incomingMedia.filename || '',
+      hasBase64: !!incomingMedia.data,
+      bytes: incomingMedia.bytes || 0,
+      omittedBySize: !!incomingMedia.omittedBySize,
+      mediaError: incomingMedia.error || ''
+    });
+  }
+
+
   // WhatsApp Web ya envía el audio descargado en MediaBase64. Lo transcribimos
   // antes de construir el webhook interno para garantizar que la lógica de pedidos
   // reciba el texto real, igual que cuando el audio entra por la API oficial.
@@ -7831,6 +7844,12 @@ async function handleApiChatCabProcesarMensajePost(req, res) {
     } catch (e) {
       console.error("[WWEB_CHATGPT] error transcribiendo audio:", e?.message || e);
     }
+  } else if (incomingMedia?.kind === "audio" && !incomingMedia.data && !incomingMedia.transcription) {
+    console.warn('[WWEB_CHATGPT] audio recibido sin MediaBase64', {
+      bytes: incomingMedia.bytes || 0,
+      omittedBySize: !!incomingMedia.omittedBySize,
+      mediaError: incomingMedia.error || ''
+    });
   }
 
 
