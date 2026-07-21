@@ -8007,7 +8007,7 @@ const aiOpts = {
       console.warn("[webhook] evento sin messages; se ignora");
       return res.sendStatus(200);
     }
-    const from = msg.from;
+  
 
     const from = String(msg.from || "").trim();
 
