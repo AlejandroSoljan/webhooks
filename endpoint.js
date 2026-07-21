@@ -104,6 +104,7 @@ const { mountTokenControlRoutes } = require("./token_control_stats");
 const { mountFleterosViajesPanel } = require("./fleteros_viajes_panel");
 const { mountOrderConfigPanel } = require("./order_config_panel");
 const { mountWwebPhoneAccess } = require("./wweb_phone_access");
+const { mountClientPhoneAccess, isClientPhoneAllowed } = require("./client_phone_access");
 const {
   loadOrderConfig,
   orderFeatureEnabled,
@@ -133,6 +134,7 @@ mountTokenControlRoutes(app, auth);
 mountFleterosViajesPanel(app, { auth });
 mountOrderConfigPanel(app, { auth }); 
 mountWwebPhoneAccess(app);
+mountClientPhoneAccess(app, { auth });
 
 
 // ===================== Tenant Channels (WhatsApp/OpenAI por tenant/canal) =====================
@@ -7865,6 +7867,15 @@ async function handleApiChatCabProcesarMensajePost(req, res) {
   const fakeRes = createApiChatCabCaptureRes();
   await handleWebhookPost(fakeReq, fakeRes);
 
+  if (fakeReq.asistoClientAccessBlocked === true) {
+    return res.json({
+      ok: true,
+      ignored: true,
+      reason: "client_not_allowed"
+    });
+  }
+
+
   if (Number(fakeRes.statusCode || 200) >= 400) {
     return res.status(500).json([{ cod_error: String(fakeRes.statusCode), msj_error: "Error procesando mensaje" }]);
   }
@@ -7997,6 +8008,24 @@ const aiOpts = {
       return res.sendStatus(200);
     }
     const from = msg.from;
+
+    const from = String(msg.from || "").trim();
+
+    // Filtro global por cliente. Se aplica antes de descargar medios, crear
+    // conversaciones o ejecutar cualquier lógica. Si el filtro está activo y
+    // el número/ID no figura, se confirma el webhook pero no se responde nada.
+    const clientAccess = await isClientPhoneAllowed(tenant, from);
+    if (!clientAccess.allowed) {
+      req.asistoClientAccessBlocked = true;
+      req.asistoClientAccessDecision = clientAccess;
+      console.log(
+        `[CLIENT_ACCESS] ignorado tenant=${tenant} channel=${channelType} transport=${whatsappTransport} ` +
+        `from=${from || "(vacio)"} normalized=${clientAccess.normalized || "(vacio)"} reason=${clientAccess.reason}`
+      );
+      return res.sendStatus(200);
+    }
+
+
     const sessionFrom = channelType === "instagram" ? `instagram:${from}` : from;
     let text   = (msg.text?.body || "").trim();
     const msgType = msg.type;

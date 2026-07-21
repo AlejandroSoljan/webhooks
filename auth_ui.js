@@ -46,6 +46,7 @@ const ACCESS_PAGES = [
   { key: "leads", title: "Leads" },
   { key: "wweb", title: "Sesiones WhatsApp Web" },
   { key: "canales", title: "Canales" },
+  { key: "client_access", title: "Clientes habilitados" },
   { key: "telegram", title: "Sesiones Telegram" },
   { key: "users", title: "Usuarios" },
   { key: "tenant_config", title: "Dominio Config" },
@@ -97,6 +98,8 @@ function requiredAccessForPath(p) {
   if (path.startsWith("/admin/wweb") || path.startsWith("/api/wweb")) return ["wweb"];
   // Canales WhatsApp/API
   if (path === "/canales" || path.startsWith("/api/tenant-channels")) return ["canales"];
+  // Filtro global de clientes habilitados
+  if (path.startsWith("/admin/client-phone-access") || path.startsWith("/api/client-phone-access")) return ["client_access"];
   // Sesiones Telegram
   if (path.startsWith("/admin/telegram") || path.startsWith("/api/tg")) return ["telegram"];
   // Ingresos web
@@ -108,7 +111,7 @@ function requiredAccessForPath(p) {
   // UI wrapper
   if (path.startsWith("/ui/")) {
     const seg = path.split("/")[2] || "";
-    if (["admin", "inbox", "productos", "horarios", "comportamiento", "tenant_config", "order_config", "canales", "telegram", "web_access", "token_control"].includes(seg)) return [seg];
+    if (["admin", "inbox", "productos", "horarios", "comportamiento", "tenant_config", "order_config", "canales", "client_access", "telegram", "web_access", "token_control"].includes(seg)) return [seg];
   }
 
   // Pantallas directas
@@ -1100,6 +1103,7 @@ function getNavItemsForUser(user) {
   if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
   if (hasAccess(user, "wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
    if (isAdmin && hasAccess(user, "canales")) items.push({ key: "canales", title: "Canales", href: "/ui/canales" });
+  if (isAdmin && hasAccess(user, "client_access")) items.push({ key: "client_access", title: "Clientes habilitados", href: "/ui/client_access" });
   if (isAdmin && hasAccess(user, "telegram")) items.push({ key: "telegram", title: "Sesiones Telegram", href: "/ui/telegram" });
   if (isAdmin && hasAccess(user, "users")) items.push({ key: "users", title: "Usuarios", href: "/admin/users" });
   if (isAdmin && hasAccess(user, "tenant_config")) items.push({ key: "tenant_config", title: "Dominio Config", href: "/ui/tenant_config" });
@@ -1668,6 +1672,7 @@ function usersAdminPage({ user, users, msg, err }) {
         { key: "comportamiento", title: "Comportamiento" },
         { key: "leads", title: "Leads" },
         { key: "wweb", title: "Sesiones WhatsApp Web" },
+        { key: "client_access", title: "Clientes habilitados" },
         { key: "telegram", title: "Sesiones Telegram" },
         { key: "users", title: "Sesiones de usuarios" },
         { key: "tenant_config", title: "Dominio Config" },
@@ -1746,6 +1751,7 @@ function usersAdminPage({ user, users, msg, err }) {
         if (allowedKeys.includes("leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
         if (allowedKeys.includes("wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
         if (allowedKeys.includes("canales")) items.push({ key: "canales", title: "Canales", href: "/ui/canales" });
+        if (allowedKeys.includes("client_access")) items.push({ key: "client_access", title: "Clientes habilitados", href: "/ui/client_access" });
         if (allowedKeys.includes("telegram")) items.push({ key: "telegram", title: "Sesiones Telegram", href: "/ui/telegram" });
         if (allowedKeys.includes("users")) items.push({ key: "users", title: "Sesiones de usuarios", href: "/admin/users" });
         if (allowedKeys.includes("tenant_config")) items.push({ key: "tenant_config", title: "Dominio Config", href: "/ui/tenant_config" });
@@ -3025,6 +3031,7 @@ function mountAuthRoutes(app) {
         { title: "Leads", href: "/admin/leads", badge: "Admin", desc: "Mensajes del formulario de contacto" },
         { title: "Sesiones WhatsApp Web", href: "/admin/wweb", badge: "Admin", desc: "Control de sesiones (wwebjs)" },
         { title: "Canales", href: "/ui/canales", badge: "Admin", desc: "Transporte API Meta / WhatsApp Web y credenciales por dominio" },
+        { title: "Clientes habilitados", href: "/ui/client_access", badge: "Admin", desc: "Filtro global por número o identificador para todos los canales" },
         { title: "Usuarios", href: "/admin/users", badge: "Admin", desc: "Alta/baja y reseteo de contraseñas" },
         { title: "Dominio Config", href: "/ui/tenant_config", badge: "Admin", desc: "Configuración por dominio" },
         { title: "Reglas de Pedidos", href: "/ui/order_config", badge: "Admin", desc: "Habilitar/deshabilitar validaciones por dominio" },
@@ -3067,6 +3074,7 @@ function mountAuthRoutes(app) {
       horarios: { title: "Horarios", desc: "Configuración de disponibilidad", badge: "UI", src: "/horarios", active: "horarios" },
       comportamiento: { title: "Comportamiento", desc: "Prompt, reglas y configuración del asistente", badge: "UI", src: "/comportamiento", active: "comportamiento" },
       canales: { title: "Canales", desc: "Transporte API Meta / WhatsApp Web y credenciales por dominio", badge: "Admin", src: "/canales?embed=1", active: "canales" },
+      client_access: { title: "Clientes habilitados", desc: "Filtro global por número o identificador para todos los canales y lógicas", badge: "Admin", src: "/admin/client-phone-access?embed=1", active: "client_access" },
       tenant_config: { title: "Dominio Config", desc: "Configuración general por dominio", badge: "Admin", src: "/admin/tenant-config?embed=1", active: "tenant_config" },
       order_config: { title: "Reglas de Pedidos", desc: "Habilitar/deshabilitar validaciones por dominio", badge: "Admin", src: "/admin/order-config?embed=1", active: "order_config" },
       telegram: { title: "Sesiones Telegram", desc: "Estado de bots, chats y acciones por tenant", badge: "Admin", src: "/admin/telegram?embed=1", active: "telegram" },

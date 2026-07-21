@@ -4,6 +4,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const { getDb } = require('./db');
 const auth = require('./auth_ui');
+const { isClientPhoneAllowed } = require('./client_phone_access');
 const os = require('os');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -873,6 +874,18 @@ async function handleIncomingTelegramMessage(ctx, msg) {
     const chatId = String(msg?.chat?.id || '');
     const body = typeof msg?.text === 'string' ? msg.text : '';
     if (!chatId) return;
+
+    // Mismo filtro global que WhatsApp Meta y WhatsApp Web.
+    // En Telegram se utiliza el chatId como identificador cargable en el panel.
+    const clientAccess = await isClientPhoneAllowed(ctx.tenantId, chatId);
+    if (!clientAccess.allowed) {
+      logLine(
+        `[${ctx.tenantId}] [CLIENT_ACCESS] ignorado channel=telegram chatId=${chatId} ` +
+        `normalized=${clientAccess.normalized || ''} reason=${clientAccess.reason || 'not_listed'}`,
+        'event'
+      );
+      return;
+    }
 
     const trimmedBody = String(body || '').trim();
     const bodyUpper = trimmedBody.toUpperCase();
