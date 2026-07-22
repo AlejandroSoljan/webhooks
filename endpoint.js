@@ -1744,7 +1744,7 @@ function nextRequiredQuestionFromPedido(pedido, orderConfig = null) {
   return orderMessage(orderConfig, "fallbackReady");
 }
 
-function pedidoHasRequiredFieldsForClose(pedido) {
+function pedidoHasRequiredFieldsForClose(pedido, orderConfig = null) {
   const p = normalizePedidoDateTimeFields(cloneJsonSafe(pedido) || {});
   if (orderRequiredEnabled(orderConfig, "items") && !pedidoHasAnyItems(p)) return false;
   if (orderRequiredEnabled(orderConfig, "entrega") && !pedidoEntregaValue(p)) return false;
@@ -8498,19 +8498,34 @@ if (debounceMs > 0 && msg.type === "text") {
         }
       }
 
-          // ⚡ Fast-path: si el usuario confirma explícitamente, cerramos sin llamar al modelo
-      // ⚡ Fast-path: aceptar también “sí/si” como confirmación explícita,
-      // además de las variantes de “confirmar”.
-       const userConfirms = isExplicitUserConfirmation(text, {
+      // ⚡ Fast-path real: cuando el usuario confirma el resumen anterior,
+      // usamos el último snapshot persistido y no volvemos a llamar a OpenAI.
+      const userConfirms = isExplicitUserConfirmation(text, {
         lastAssistantText: lastAssistantTextBeforeUser
       });
-      if (userConfirms) {
-        // Tomamos último snapshot si existe
-        let snapshot = null;
-        try { snapshot = JSON.parse(require("./logic").__proto__ ? "{}" : "{}"); } catch {}
-        // En minimal guardamos snapshot siempre; si no lo tenés a mano, seguimos y dejamos que el modelo lo complete
+
+      let gptReply = "";
+      if (
+        userConfirms &&
+        convId &&
+        looksLikeSummaryOrConfirmation(lastAssistantTextBeforeUser)
+      ) {
+        const snapshot = await loadLastPedidoSnapshot(tenant, convId);
+        if (snapshot && pedidoHasRequiredFieldsForClose(snapshot, orderConfig)) {
+          gptReply = JSON.stringify({
+            response: "Perfecto, tu pedido quedó confirmado ✅",
+           estado: "COMPLETED",
+            Pedido: snapshot
+          });
+          console.log(`[confirm-fastpath] snapshot reutilizado convId=${String(convId)}`);
+        }
       }
-      const gptReply = await getGPTReply(tenant, sessionFrom, text, aiOpts);
+
+      // Solo consulta al modelo cuando no hay un snapshot válido para confirmar.
+      if (!gptReply) {
+        gptReply = await getGPTReply(tenant, sessionFrom, text, aiOpts);
+      }
+      
       if (isStale()) {
         console.log(`[webhook][stale-run] drop GPT reply key=${runKey} seq=${runSeq}`);
         return;
