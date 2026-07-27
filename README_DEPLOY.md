@@ -24,3 +24,28 @@ La colección `tenant_channels` permite configurar por tenant+phone_number_id:
 - whatsappToken, verifyToken, openaiApiKey, etc.
 El webhook resuelve automáticamente por `value.metadata.phone_number_id`.
 
+
+## Límites de conexiones MongoDB
+
+Para evitar agotar el límite de conexiones de Atlas M0, el proyecto usa un único cliente/pool por proceso y valores acotados.
+
+### Render
+Variables opcionales recomendadas:
+
+```text
+MONGODB_MAX_POOL_SIZE=10
+MONGODB_MAX_CONNECTING=2
+MONGODB_MAX_IDLE_TIME_MS=60000
+```
+
+### PC con WhatsApp Web
+Variables opcionales recomendadas:
+
+```text
+MONGO_MAX_POOL_SIZE=3
+MONGO_MAX_CONNECTING=1
+MONGO_MAX_IDLE_TIME_MS=60000
+```
+
+No es necesario agregarlas para usar los valores indicados: ya son los defaults del código corregido.
+

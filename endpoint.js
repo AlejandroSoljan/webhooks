@@ -13,7 +13,7 @@ const WWEB_API_KEY = String(process.env.WWEB_API_KEY || "").trim();
 
 // ⬇️ Para catálogo en Mongo
 const { ObjectId } = require("mongodb");
-const { getDb } = require("./db");
+const { getDb, closeDb } = require("./db");
 const {
   getRuntimeByPhoneNumberId,
   getRuntimeByInstagramAccountId,
@@ -9478,11 +9478,30 @@ if (require.main === module) {
     console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
   });
 
-  // Cierre prolijo en deployment (Render/Heroku envían SIGTERM)
-  process.on('SIGTERM', () => {
-    console.log('SIGTERM recibido. Cerrando server...');
-    server.close(() => process.exit(0));
-  });
+  let closing = false;
+  async function shutdown(signal) {
+    if (closing) return;
+    closing = true;
+    console.log(`${signal} recibido. Cerrando server + MongoDB...`);
+
+    const forceExitTimer = setTimeout(() => process.exit(0), 10000);
+    if (typeof forceExitTimer.unref === 'function') forceExitTimer.unref();
+
+    try {
+      await new Promise((resolve) => server.close(resolve));
+    } catch {}
+
+    try {
+      await closeDb();
+    } catch (e) {
+      console.error('Error cerrando MongoDB:', e?.message || e);
+    }
+
+    process.exit(0);
+  }
+
+  process.on('SIGTERM', () => { shutdown('SIGTERM'); });
+  process.on('SIGINT', () => { shutdown('SIGINT'); });;
 }
 
 // Exportar la app para que otros módulos (tests/otros entrypoints) puedan importarla sin abrir un puerto.

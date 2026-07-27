@@ -1,7 +1,7 @@
 require('dotenv').config();
 
 const app = require('./endpoint');
-
+const { closeDb } = require('./db');
 const PORT = Number(process.env.PORT || 3000);
 const ENABLE_TELEGRAM = /^(1|true|yes|si|sí)$/i.test(String(process.env.ENABLE_TELEGRAM || 'true'));
 
@@ -74,12 +74,20 @@ async function shutdown(signal) {
     console.error('Error cerrando Telegram:', e?.message || e);
   }
 
+  const forceExitTimer = setTimeout(() => process.exit(0), 10000);
+  if (typeof forceExitTimer.unref === 'function') forceExitTimer.unref();
+
   try {
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 10000);
-  } catch {
-    process.exit(0);
+    await new Promise((resolve) => server.close(resolve));
+  } catch {}
+
+
+  try {
+    await closeDb();
+  } catch (e) {
+    console.error('Error cerrando MongoDB:', e?.message || e);
   }
+    process.exit(0);
 }
 
 process.on('SIGTERM', () => { shutdown('SIGTERM'); });
