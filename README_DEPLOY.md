@@ -36,6 +36,7 @@ Variables opcionales recomendadas:
 MONGODB_MAX_POOL_SIZE=5
 MONGODB_MAX_CONNECTING=2
 MONGODB_MAX_IDLE_TIME_MS=60000
+MONGO_FULL_IDLE_DISCONNECT_MS=300000
 ```
 
 ### PC con WhatsApp Web
@@ -45,9 +46,13 @@ Variables opcionales recomendadas:
 MONGO_MAX_POOL_SIZE=1
 MONGO_MAX_CONNECTING=1
 MONGO_MAX_IDLE_TIME_MS=60000
+MONGODB_FULL_IDLE_DISCONNECT_MS=300000
 ```
 
 Los valores anteriores ya son los predeterminados del código corregido.
+
+`MAX_IDLE_TIME_MS` cierra sockets ociosos dentro del pool. `FULL_IDLE_DISCONNECT_MS` cierra el cliente Mongo completo cuando el proceso no solicita la base durante ese período. Usá `0` para desactivar el cierre completo. Los bots activos mantienen heartbeats y consultas periódicas, por lo que no se consideran inactivos y conservan su conexión.
+
  
 Además:
 

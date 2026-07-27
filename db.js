@@ -5,12 +5,64 @@ const { MongoClient, ServerApiVersion } = require("mongodb");
 let _client = null;
 let _db = null;
 let _connectPromise = null;
+let _idleCloseTimer = null;
+let _lastDbUseAt = 0;
+let _idleClosePromise = null;
 
 function readIntEnv(name, fallback, min, max) {
   const raw = Number(process.env[name]);
   const value = Number.isFinite(raw) ? Math.trunc(raw) : fallback;
   return Math.max(min, Math.min(max, value));
 }
+
+function readIdleDisconnectMs() {
+  const raw = Number(process.env.MONGODB_FULL_IDLE_DISCONNECT_MS);
+  if (Number.isFinite(raw) && raw <= 0) return 0;
+  const value = Number.isFinite(raw) ? Math.trunc(raw) : 300000;
+  return Math.max(60000, Math.min(86400000, value));
+}
+
+function clearIdleCloseTimer() {
+  if (!_idleCloseTimer) return;
+  try { clearTimeout(_idleCloseTimer); } catch {}
+  _idleCloseTimer = null;
+}
+
+function touchDbActivity() {
+  _lastDbUseAt = Date.now();
+  armIdleCloseTimer();
+}
+
+function armIdleCloseTimer() {
+  clearIdleCloseTimer();
+
+  const idleMs = readIdleDisconnectMs();
+  if (!idleMs || !_client || !_db) return;
+
+  const elapsed = Math.max(0, Date.now() - (_lastDbUseAt || Date.now()));
+  const waitMs = Math.max(1000, idleMs - elapsed);
+
+  _idleCloseTimer = setTimeout(async () => {
+    _idleCloseTimer = null;
+    if (_idleClosePromise || _connectPromise || !_client || !_db) return;
+
+    const inactiveFor = Date.now() - (_lastDbUseAt || 0);
+    if (inactiveFor < idleMs) {
+      armIdleCloseTimer();
+      return;
+    }
+
+    _idleClosePromise = closeDb(`idle_timeout_${inactiveFor}ms`)
+      .catch(() => {})
+      .finally(() => { _idleClosePromise = null; });
+    await _idleClosePromise;
+  }, waitMs);
+
+  if (_idleCloseTimer && typeof _idleCloseTimer.unref === "function") {
+    _idleCloseTimer.unref();
+  }
+}
+
 
 function buildMongoAppName() {
   const service = String(
@@ -70,6 +122,10 @@ function createMongoClient(uri) {
 
 
 async function getDb() {
+  touchDbActivity();
+  if (_idleClosePromise) {
+    try { await _idleClosePromise; } catch {}
+  }
   if (_db) return _db;
   if (_connectPromise) return _connectPromise;
 
@@ -92,9 +148,10 @@ async function getDb() {
       }
 
      _db = db;
+     touchDbActivity();
       console.log(
-        `✅ Conectado a MongoDB | db="${dbName}" | appName="${buildMongoAppName()}" | maxPoolSize=${readIntEnv("MONGODB_MAX_POOL_SIZE", 5, 1, 20)}`
-      );
+           `✅ Conectado a MongoDB | db="${dbName}" | appName="${buildMongoAppName()}" | maxPoolSize=${readIntEnv("MONGODB_MAX_POOL_SIZE", 5, 1, 20)} | fullIdleDisconnectMs=${readIdleDisconnectMs()}`
+     );
       return _db;
     } catch (e) {
       if (_client === client) {
@@ -111,7 +168,8 @@ async function getDb() {
   return _connectPromise;
 }
 
-async function closeDb() {
+async function closeDb(reason = "manual") {
+  clearIdleCloseTimer();
   const pending = _connectPromise;
   if (pending) {
     try {
@@ -129,7 +187,7 @@ async function closeDb() {
   try {
     if (client) {
       await client.close();
-      console.log("🔌 Conexión MongoDB cerrada.");
+      console.log(`🔌 Conexión MongoDB cerrada. reason=${String(reason || "manual")}`);
     }
   } catch (e) {
     console.warn("⚠️ Error cerrando MongoDB:", e?.message);
