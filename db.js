@@ -49,8 +49,7 @@ function resolveDbNameFromUriOrEnv() {
 }
 
 function createMongoClient(uri) {
-  const maxPoolSize = readIntEnv("MONGODB_MAX_POOL_SIZE", 10, 1, 50);
-
+  const maxPoolSize = readIntEnv("MONGODB_MAX_POOL_SIZE", 5, 1, 20);
   return new MongoClient(uri, {
    serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true },
     appName: buildMongoAppName(),
@@ -94,7 +93,7 @@ async function getDb() {
 
      _db = db;
       console.log(
-        `✅ Conectado a MongoDB | db="${dbName}" | appName="${buildMongoAppName()}" | maxPoolSize=${readIntEnv("MONGODB_MAX_POOL_SIZE", 10, 1, 50)}`
+        `✅ Conectado a MongoDB | db="${dbName}" | appName="${buildMongoAppName()}" | maxPoolSize=${readIntEnv("MONGODB_MAX_POOL_SIZE", 5, 1, 20)}`
       );
       return _db;
     } catch (e) {

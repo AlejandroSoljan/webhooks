@@ -33,7 +33,7 @@ Para evitar agotar el límite de conexiones de Atlas M0, el proyecto usa un úni
 Variables opcionales recomendadas:
 
 ```text
-MONGODB_MAX_POOL_SIZE=10
+MONGODB_MAX_POOL_SIZE=5
 MONGODB_MAX_CONNECTING=2
 MONGODB_MAX_IDLE_TIME_MS=60000
 ```
@@ -42,10 +42,19 @@ MONGODB_MAX_IDLE_TIME_MS=60000
 Variables opcionales recomendadas:
 
 ```text
-MONGO_MAX_POOL_SIZE=3
+MONGO_MAX_POOL_SIZE=1
 MONGO_MAX_CONNECTING=1
 MONGO_MAX_IDLE_TIME_MS=60000
 ```
 
-No es necesario agregarlas para usar los valores indicados: ya son los defaults del código corregido.
+Los valores anteriores ya son los predeterminados del código corregido.
+ 
+Además:
+
+- `app_asisto_ws.js` y `app_chatbot_super.js` crean un archivo PID dentro de `logs/` para impedir dos procesos simultáneos en la misma instalación.
+- Ambos scripts cierran Mongoose antes de reiniciar o finalizar.
+- `telegram_runtime.js` reintenta cargar las sesiones cuando MongoDB vuelve a estar disponible.
+
+Estas correcciones reducen el consumo, pero las instalaciones de WhatsApp Web continúan conectándose directamente a MongoDB. Si existen muchas decenas de instalaciones, la solución definitiva es usar un clúster con mayor capacidad o hacer que las PC accedan a los datos mediante una API central.
+
 

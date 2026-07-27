@@ -40,9 +40,11 @@ const logFilePathError = path.join(__dirname, 'telegram_runtime_error.log');
 
 const manager = {
   started: false,
+  startingPromise: null,
   routesMounted: false,
   refreshTimer: null,
   refreshing: false,
+  lastRefreshError: '',
   contexts: new Map(), // tenantId -> ctx
   byUsername: new Map(),
 };
@@ -2259,12 +2261,29 @@ function mountTelegramRoutes(app) {
 
   app.get('/api/tg/status', auth.requireAuth, auth.requireAdmin, async (req, res) => {
     try {
+      // Si el proceso arrancó mientras Mongo estaba inaccesible, los contextos
+      // pueden estar vacíos. Reintentamos al consultar el panel para recuperar
+      // las sesiones sin tener que reiniciar Render manualmente.
+      if (!manager.contexts.size && !manager.refreshing) {
+        try {
+          await refreshManagerFromDb();
+          manager.lastRefreshError = '';
+        } catch (e) {
+          manager.lastRefreshError = String(e?.message || e);
+          return res.status(503).json({
+            ok: false,
+            error: `Telegram no pudo leer tenant_config desde MongoDB: ${manager.lastRefreshError}`
+          });
+        }
+      }
+
       const items = await getTelegramSessionRows(req);
       return res.json({
         ok: true,
         now: nowArgentinaISO(),
         total: items.length,
         started: items.filter((x) => x && x.botStarted).length,
+        runtimeError: manager.lastRefreshError || '',
         items
       });
     } catch (e) {
@@ -2399,21 +2418,58 @@ function mountTelegramRoutes(app) {
     }
   });
 }
+function ensureTelegramRefreshTimer() {
+  if (manager.refreshTimer) return;
+
+  manager.refreshTimer = setInterval(async () => {
+    try {
+      await refreshManagerFromDb();
+      manager.lastRefreshError = '';
+    } catch (e) {
+      manager.lastRefreshError = String(e?.message || e);
+      logLine(`[telegram_runtime] refresco de configuración falló: ${manager.lastRefreshError}`, 'error');
+    }
+  }, REFRESH_CONFIG_MS);
+}
 
 
 async function startTelegramRuntime() {
-  if (manager.started) return getTelegramStatus();
-  manager.started = true;
-  await refreshManagerFromDb();
-  try { if (manager.refreshTimer) clearInterval(manager.refreshTimer); } catch {}
-  manager.refreshTimer = setInterval(() => { refreshManagerFromDb().catch(() => {}); }, REFRESH_CONFIG_MS);
-  return getTelegramStatus();
+  if (manager.startingPromise) return manager.startingPromise;
+  if (manager.started && manager.refreshTimer) return getTelegramStatus();
+
+  manager.startingPromise = (async () => {
+    // El timer se arma ANTES del primer acceso a Mongo. Si Mongo está caído o
+    // temporalmente bloqueado al arrancar Render, Telegram seguirá reintentando.
+    manager.started = true;
+    ensureTelegramRefreshTimer();
+
+    try {
+      await refreshManagerFromDb();
+      manager.lastRefreshError = '';
+    } catch (e) {
+      manager.lastRefreshError = String(e?.message || e);
+      logLine(`[telegram_runtime] inicio pendiente por error de Mongo/config: ${manager.lastRefreshError}`, 'error');
+    }
+
+    return {
+      ...getTelegramStatus(),
+      runtimeError: manager.lastRefreshError || ''
+    };
+  })();
+
+  try {
+    return await manager.startingPromise;
+  } finally {
+    manager.startingPromise = null;
+  }
 }
 
 async function stopTelegramRuntime(signal = 'STOP') {
   try { if (manager.refreshTimer) clearInterval(manager.refreshTimer); } catch {}
   manager.refreshTimer = null;
   manager.started = false;
+  manager.startingPromise = null;
+  manager.lastRefreshError = '';
   for (const ctx of Array.from(manager.contexts.values())) {
     await stopContext(ctx, signal);
   }
