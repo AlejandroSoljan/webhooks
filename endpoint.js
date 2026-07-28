@@ -274,6 +274,291 @@ function requireWwebExternalAccess(req, res, next) {
   }
 }
 
+
+
+
+// ===================== WWeb Agent Control API =====================
+// Las PC con LocalAuth usan esta API HTTPS en lugar de abrir un MongoClient
+// propio. De esta forma Web, Telegram y todos los agentes comparten el único
+// pool de db.js dentro de Render.
+const WWEB_AGENT_ALLOWED_COLLECTIONS = new Set([
+  'tenant_config',
+  'tenant_channels',
+  'settings',
+  'wa_lid_phone_map',
+  'wa_locks',
+  'wa_wweb_policies',
+  'wa_wweb_history',
+  'wa_wweb_actions',
+  'wa_wweb_message_log',
+  'wa_api_mensajes_confirmaciones',
+]);
+const WWEB_AGENT_ALLOWED_OPERATIONS = new Set([
+  'findOne', 'find', 'insertOne', 'updateOne', 'updateMany',
+  'deleteMany', 'findOneAndUpdate'
+]);
+const WWEB_AGENT_TYPE_KEY = '__asistoType';
+const wwebAgentJson = express.json({ limit: process.env.WWEB_AGENT_JSON_LIMIT || '20mb' });
+
+function wwebAgentDecode(value, keyName = '') {
+  if (Array.isArray(value)) return value.map((item) => wwebAgentDecode(item));
+  if (value && typeof value === 'object') {
+    if (value[WWEB_AGENT_TYPE_KEY] === 'date') return new Date(value.value);
+    if (value[WWEB_AGENT_TYPE_KEY] === 'regexp') return new RegExp(value.source || '', value.flags || '');
+    if (value[WWEB_AGENT_TYPE_KEY] === 'buffer') return Buffer.from(String(value.value || ''), 'base64');
+    if (value[WWEB_AGENT_TYPE_KEY] === 'objectId') {
+      const raw = String(value.value || '');
+      return ObjectId.isValid(raw) ? new ObjectId(raw) : raw;
+    }
+    const out = {};
+    for (const [key, item] of Object.entries(value)) {
+      let decoded = wwebAgentDecode(item, key);
+      // Los _id generados por Mongo llegan a la PC como string y vuelven en
+      // updateOne. Convertimos solamente el campo _id para no tocar teléfonos.
+      if (key === '_id' && typeof decoded === 'string' && ObjectId.isValid(decoded)) {
+        decoded = new ObjectId(decoded);
+      }
+      out[key] = decoded;
+    }
+    return out;
+  }
+  return value;
+}
+
+function wwebAgentEncode(value) {
+  if (value instanceof Date) return { [WWEB_AGENT_TYPE_KEY]: 'date', value: value.toISOString() };
+  if (value instanceof RegExp) return { [WWEB_AGENT_TYPE_KEY]: 'regexp', source: value.source, flags: value.flags };
+  if (Buffer.isBuffer(value)) return { [WWEB_AGENT_TYPE_KEY]: 'buffer', value: value.toString('base64') };
+  if (value && value._bsontype === 'ObjectId' && typeof value.toHexString === 'function') {
+    return { [WWEB_AGENT_TYPE_KEY]: 'objectId', value: value.toHexString() };
+  }
+  if (Array.isArray(value)) return value.map(wwebAgentEncode);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [key, item] of Object.entries(value)) out[key] = wwebAgentEncode(item);
+    return out;
+  }
+  return value;
+}
+
+function wwebAgentAnd(query, scope) {
+  const q = query && typeof query === 'object' ? query : {};
+  return { $and: [q, scope] };
+}
+
+function wwebAgentScopeQuery(collection, query, tenantId, numero) {
+  const tenant = String(tenantId || '').trim().toUpperCase();
+  const phone = String(numero || '').replace(/\D/g, '');
+  const lockId = `${tenant}:${phone}`;
+  const q = query && typeof query === 'object' ? query : {};
+
+  if (collection === 'tenant_config') {
+    return { $or: [{ _id: tenant }, { tenantId: tenant }, { tenantid: tenant }] };
+  }
+  if (collection === 'tenant_channels') {
+    return wwebAgentAnd(q, { tenantId: tenant });
+  }
+  if (collection === 'settings') {
+    return wwebAgentAnd(q, {
+      _id: { $in: [`client_phone_access:${tenant}`, `store_hours:${tenant}`] }
+    });
+  }
+  if (collection === 'wa_locks' || collection === 'wa_wweb_policies') {
+    return wwebAgentAnd(q, {
+      $or: [
+        { _id: lockId },
+        { tenantId: tenant, numero: phone },
+        { tenantid: tenant, numero: phone }
+      ]
+    });
+  }
+  if (collection === 'wa_wweb_actions') {
+    return wwebAgentAnd(q, { lockId });
+  }
+  if (collection === 'wa_wweb_history') {
+    return wwebAgentAnd(q, { lockId });
+  }
+  if (collection === 'wa_wweb_message_log') {
+    return wwebAgentAnd(q, { tenantId: tenant, numero: phone });
+  }
+  if (collection === 'wa_lid_phone_map') {
+    return wwebAgentAnd(q, {
+      $or: [
+        { tenantId: tenant },
+        { tenantid: tenant },
+        { tenantId: { $exists: false }, tenantid: { $exists: false } }
+      ]
+    });
+  }
+  if (collection === 'wa_api_mensajes_confirmaciones') {
+    return wwebAgentAnd(q, { tenantId: tenant, numeroFrom: phone });
+  }
+  return q;
+}
+
+function wwebAgentScopeDocument(collection, document, tenantId, numero) {
+  const tenant = String(tenantId || '').trim().toUpperCase();
+  const phone = String(numero || '').replace(/\D/g, '');
+  const lockId = `${tenant}:${phone}`;
+  const doc = { ...(document || {}) };
+
+  if (collection === 'tenant_channels' || collection === 'wa_lid_phone_map' ||
+      collection === 'wa_wweb_message_log' || collection === 'wa_api_mensajes_confirmaciones') {
+    doc.tenantId = tenant;
+  }
+  if (collection === 'wa_wweb_message_log') doc.numero = phone;
+  if (collection === 'wa_api_mensajes_confirmaciones') doc.numeroFrom = phone;
+  if (collection === 'wa_wweb_history') {
+    doc.lockId = lockId;
+    doc.tenantId = tenant;
+    doc.numero = phone;
+  }
+  if (collection === 'wa_wweb_actions') doc.lockId = lockId;
+  if (collection === 'wa_locks' || collection === 'wa_wweb_policies') {
+    doc._id = lockId;
+    doc.tenantId = tenant;
+    doc.tenantid = tenant;
+    doc.numero = phone;
+  }
+  return doc;
+}
+
+function wwebAgentScopeUpdate(collection, update, tenantId, numero) {
+  const tenant = String(tenantId || '').trim().toUpperCase();
+  const phone = String(numero || '').replace(/\D/g, '');
+  const lockId = `${tenant}:${phone}`;
+  const out = { ...(update || {}) };
+  const ensureSet = () => { out.$set = { ...(out.$set || {}) }; return out.$set; };
+  const ensureInsert = () => { out.$setOnInsert = { ...(out.$setOnInsert || {}) }; return out.$setOnInsert; };
+
+  if (collection === 'wa_locks' || collection === 'wa_wweb_policies') {
+    Object.assign(ensureSet(), { tenantId: tenant, tenantid: tenant, numero: phone });
+    Object.assign(ensureInsert(), { _id: lockId, tenantId: tenant, tenantid: tenant, numero: phone });
+  }
+  if (collection === 'wa_wweb_message_log') Object.assign(ensureSet(), { tenantId: tenant, numero: phone });
+  if (collection === 'wa_api_mensajes_confirmaciones') Object.assign(ensureSet(), { tenantId: tenant, numeroFrom: phone });
+  return out;
+}
+
+async function requireWwebAgentAccess(req, res, next) {
+  try {
+    const provided = wwebReadApiKeyFromReq(req);
+    if (!provided) return res.status(401).json({ ok: false, error: 'unauthorized' });
+    if (WWEB_API_KEY && provided === WWEB_API_KEY) return next();
+
+    const tenantId = String(req.body?.tenantId || req.headers['x-asisto-tenant'] || '').trim().toUpperCase();
+    if (!tenantId) return res.status(401).json({ ok: false, error: 'unauthorized' });
+
+    const db = await getDb();
+    const doc = await db.collection('tenant_config').findOne({
+      $or: [{ _id: tenantId }, { tenantId }, { tenantid: tenantId }]
+    });
+    const nested = doc && doc.configuracion && typeof doc.configuracion === 'object' ? doc.configuracion : {};
+    const expected = String(
+      nested.control_api_token || nested.controlApiToken || nested.status_token || nested.statusToken ||
+      doc?.control_api_token || doc?.controlApiToken || doc?.status_token || doc?.statusToken || ''
+    ).trim();
+
+    if (!expected) return res.status(401).json({ ok: false, error: 'unauthorized' });
+    const a = Buffer.from(provided);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return res.status(401).json({ ok: false, error: 'unauthorized' });
+    }
+    return next();
+  } catch (e) {
+    return res.status(401).json({ ok: false, error: 'unauthorized' });
+  }
+}
+
+function wwebAgentSafeOptions(operation, raw) {
+  const options = raw && typeof raw === 'object' ? raw : {};
+  const out = {};
+  if (options.projection && typeof options.projection === 'object') out.projection = options.projection;
+  if (options.sort && typeof options.sort === 'object') out.sort = options.sort;
+  if (operation === 'updateOne' || operation === 'updateMany' || operation === 'findOneAndUpdate') {
+    out.upsert = options.upsert === true;
+  }
+  if (operation === 'findOneAndUpdate') {
+    out.returnDocument = options.returnDocument === 'before' ? 'before' : 'after';
+  }
+  return out;
+}
+
+app.post('/api/ext/wweb/agent/ping', wwebAgentJson, requireWwebAgentAccess, async (req, res) => {
+  try {
+    const tenantId = String(req.body?.tenantId || req.headers['x-asisto-tenant'] || '').trim().toUpperCase();
+    if (!tenantId) return res.status(400).json({ ok: false, error: 'tenant_required' });
+    await getDb();
+    return res.json({ ok: true, tenantId, now: new Date() });
+  } catch (e) {
+    return res.status(503).json({ ok: false, error: 'db_unavailable', detail: String(e?.message || e) });
+  }
+});
+
+app.post('/api/ext/wweb/agent/db', wwebAgentJson, requireWwebAgentAccess, async (req, res) => {
+  try {
+    const tenantId = String(req.body?.tenantId || req.headers['x-asisto-tenant'] || '').trim().toUpperCase();
+    const numero = String(req.body?.numero || req.headers['x-asisto-numero'] || '').replace(/\D/g, '');
+    const collectionName = String(req.body?.collection || '').trim();
+    const operation = String(req.body?.operation || '').trim();
+    const args = wwebAgentDecode(req.body?.args || {});
+
+    if (!tenantId || (!numero && collectionName !== 'tenant_config')) {
+      return res.status(400).json({ ok: false, error: 'tenant_numero_required' });
+    }
+    if (!WWEB_AGENT_ALLOWED_COLLECTIONS.has(collectionName)) {
+      return res.status(403).json({ ok: false, error: 'collection_not_allowed' });
+    }
+    if (!WWEB_AGENT_ALLOWED_OPERATIONS.has(operation)) {
+      return res.status(403).json({ ok: false, error: 'operation_not_allowed' });
+    }
+
+    // Las PC ya no deben borrar ni administrar RemoteAuth. Todos los agentes
+    // migrados usan LocalAuth.
+    if (operation === 'deleteMany' && collectionName !== 'wa_api_mensajes_confirmaciones') {
+      return res.status(403).json({ ok: false, error: 'delete_not_allowed' });
+    }
+
+    const db = await getDb();
+    const collection = db.collection(collectionName);
+    const query = wwebAgentScopeQuery(collectionName, args.query || {}, tenantId, numero);
+    const options = wwebAgentSafeOptions(operation, args.options || {});
+    let result;
+
+    if (operation === 'findOne') {
+      result = await collection.findOne(query, options);
+    } else if (operation === 'find') {
+      let cursor = collection.find(query, options);
+      if (args.sort && typeof args.sort === 'object') cursor = cursor.sort(args.sort);
+      const limit = Math.max(0, Math.min(500, Number(args.limit) || 0));
+      if (limit) cursor = cursor.limit(limit);
+      result = await cursor.toArray();
+    } else if (operation === 'insertOne') {
+      const document = wwebAgentScopeDocument(collectionName, args.document || {}, tenantId, numero);
+      const write = await collection.insertOne(document, options);
+      result = { acknowledged: write.acknowledged, insertedId: write.insertedId, document: { ...document, _id: write.insertedId || document._id } };
+    } else if (operation === 'updateOne') {
+      const update = wwebAgentScopeUpdate(collectionName, args.update || {}, tenantId, numero);
+      result = await collection.updateOne(query, update, options);
+    } else if (operation === 'updateMany') {
+      const update = wwebAgentScopeUpdate(collectionName, args.update || {}, tenantId, numero);
+      result = await collection.updateMany(query, update, options);
+    } else if (operation === 'deleteMany') {
+      result = await collection.deleteMany(query, options);
+    } else if (operation === 'findOneAndUpdate') {
+      const update = wwebAgentScopeUpdate(collectionName, args.update || {}, tenantId, numero);
+      result = await collection.findOneAndUpdate(query, update, options);
+    }
+
+    return res.json(wwebAgentEncode({ ok: true, result }));
+  } catch (e) {
+    console.error('POST /api/ext/wweb/agent/db error:', e?.message || e);
+    return res.status(500).json({ ok: false, error: 'agent_db_error', detail: String(e?.message || e) });
+  }
+});
+
+
 function wwebResolveLockIdFromReq(req) {
   const explicit = String(req.query?.lockId || req.params?.lockId || "").trim();
   if (explicit) return explicit;

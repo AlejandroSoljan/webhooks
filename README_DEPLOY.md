@@ -63,3 +63,83 @@ Además:
 Estas correcciones reducen el consumo, pero las instalaciones de WhatsApp Web continúan conectándose directamente a MongoDB. Si existen muchas decenas de instalaciones, la solución definitiva es usar un clúster con mayor capacidad o hacer que las PC accedan a los datos mediante una API central.
 
 
+
+
+## Migración de agentes WhatsApp Web a API HTTPS (v4.01.18)
+
+Esta versión elimina la conexión MongoDB directa de las PC cuando el agente tiene configurada la API de control.
+Las sesiones WhatsApp continúan en `LocalAuth`; no se mueve ni borra la carpeta local.
+
+### Flujo de transición automático
+
+1. La PC inicia con su `mongo_uri` actual.
+2. Lee una última vez `tenant_config`.
+3. Obtiene la URL y el token de control.
+4. Los guarda en `configuracion.json`.
+5. Ejecuta `mongoose.disconnect()`.
+6. A partir de ese momento usa solamente HTTPS contra Render.
+
+En el log debe aparecer:
+
+```text
+[CONTROL_API] migración completada; MongoDB directo deshabilitado
+[CONTROL_API] conectado mode=https
+```
+
+El endpoint predeterminado es:
+
+```text
+https://www.asistobot.com.ar/api/ext/wweb/agent
+```
+
+Puede sobrescribirse con `control_api_url` en `tenant_config` o con
+`WWEB_CONTROL_API_URL` en la PC.
+
+
+El agente usa, en este orden:
+
+1. `control_api_token` de `tenant_config`.
+2. `status_token` del tenant.
+3. `WWEB_CONTROL_API_TOKEN` de la PC.
+
+Render acepta el `WWEB_API_KEY` global o el `control_api_token/status_token`
+del tenant. No se debe registrar el token en los logs.
+
+Ejemplo de campos opcionales en `tenant_config`:
+
+```json
+{
+  "control_api_enabled": true,
+  "control_api_url": "https://www.asistobot.com.ar/api/ext/wweb/agent",
+  "control_api_token": "1234"
+}
+```
+
+Si el tenant ya tiene `status_token`, no es obligatorio crear
+`control_api_token`: la migración lo utiliza automáticamente.
+
+### Verificación
+
+En la PC:
+
+```text
+http://localhost:PUERTO/status
+```
+
+Debe mostrar:
+
+```json
+{
+  "dataBackend": "https_control_api"
+}
+```
+
+Cuando todas las PC informen `https_control_api`, se puede cambiar la clave del
+usuario MongoDB antiguo y quitar las IP de las PC de Atlas. Render, Telegram y
+la web seguirán compartiendo el único pool definido en `db.js`.
+
+### Archivos agregados/modificados
+
+- `wweb_control_client.js`: cliente HTTPS y fachada compatible con las operaciones usadas por el agente.
+- `app_asisto_ws.js`: transición automática, persistencia local y reemplazo del acceso directo a MongoDB.
+- `endpoint.js`: API autenticada y limitada a las colecciones necesarias del agente.
