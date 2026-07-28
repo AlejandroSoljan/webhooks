@@ -432,8 +432,17 @@ function wwebAgentScopeUpdate(collection, update, tenantId, numero) {
   const ensureInsert = () => { out.$setOnInsert = { ...(out.$setOnInsert || {}) }; return out.$setOnInsert; };
 
   if (collection === 'wa_locks' || collection === 'wa_wweb_policies') {
+    // $set también se aplica cuando updateOne hace upsert, por lo que tenantId,
+    // tenantid y numero no deben repetirse en $setOnInsert. MongoDB rechaza una
+    // actualización cuando la misma ruta aparece en ambos operadores.
     Object.assign(ensureSet(), { tenantId: tenant, tenantid: tenant, numero: phone });
-    Object.assign(ensureInsert(), { _id: lockId, tenantId: tenant, tenantid: tenant, numero: phone });
+    Object.assign(ensureInsert(), { _id: lockId });
+
+    // Limpieza defensiva por si el agente envía alguno de estos campos dentro de
+    // $setOnInsert. Evita el error "Updating the path ... would create a conflict".
+    delete out.$setOnInsert.tenantId;
+    delete out.$setOnInsert.tenantid;
+    delete out.$setOnInsert.numero;
   }
   if (collection === 'wa_wweb_message_log') Object.assign(ensureSet(), { tenantId: tenant, numero: phone });
   if (collection === 'wa_api_mensajes_confirmaciones') Object.assign(ensureSet(), { tenantId: tenant, numeroFrom: phone });
