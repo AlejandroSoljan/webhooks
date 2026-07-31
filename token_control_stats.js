@@ -543,6 +543,7 @@ function renderTokenControlPage(user) {
       <div class="row">
         ${isSuper ? `<label>Dominio<input id="fTenant" placeholder="Todos los dominios"/></label>` : `<label>Dominio<input id="fTenant" value="${esc(tenant)}" readonly/></label>`}
         <label>Desde<input id="fFrom" type="date"/></label>
+        <label>Hasta<input id="fTo" type="date"/></label>
         
         <label>Detalle
           <select id="fView">
