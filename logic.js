@@ -391,6 +391,11 @@ async function recordTokenUsage(entry = {}) {
     const safeOutput = Number.isFinite(outputTokens) ? Math.max(0, outputTokens) : 0;
     if (!Number.isFinite(totalTokens)) totalTokens = safeInput + safeOutput;
     totalTokens = Math.max(0, totalTokens);
+    const meta = (entry.meta && typeof entry.meta === "object") ? entry.meta : null;
+    const conversationId = String(entry.conversationId || meta?.conversationId || "").trim();
+    const waId = String(entry.waId || entry.contact || entry.from || meta?.waId || "").trim();
+    const channelType = String(entry.channelType || meta?.channelType || "").trim().toLowerCase();
+    const usageTraceId = String(entry.usageTraceId || meta?.usageTraceId || "").trim();
 
     const db = await getDb();
     await db.collection("ai_token_usage_log").insertOne({
@@ -401,7 +406,11 @@ async function recordTokenUsage(entry = {}) {
       inputTokens: safeInput,
       outputTokens: safeOutput,
       totalTokens,
-      meta: (entry.meta && typeof entry.meta === "object") ? entry.meta : null,
+      ...(conversationId ? { conversationId } : {}),
+      ...(waId ? { waId } : {}),
+      ...(channelType ? { channelType } : {}),
+      ...(usageTraceId ? { usageTraceId } : {}),
+      meta,
       createdAt: new Date()
     });
     return true;
@@ -769,7 +778,7 @@ async function downloadMediaBuffer(mediaUrl, opts = {}) {
 }
 
 // ================== STT (externo -> fallback OpenAI) ==================
-async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApiKey, tenantId, transcribeModel } = {}) {
+async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApiKey, tenantId, transcribeModel, conversationId, waId, channelType, usageTraceId } = {}) {
   const prefer = TRANSCRIBE_API_URL;
   if (prefer && publicAudioUrl) {
     try {
@@ -786,6 +795,10 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
             inputTokens: usageInfo.inputTokens,
             outputTokens: usageInfo.outputTokens,
             totalTokens: usageInfo.totalTokens,
+            conversationId,
+            waId,
+            channelType,
+            usageTraceId,
             meta: { engine: "external" }
          });
           return { text: j.text, usage: j.tokens || j.usage || null, engine: "external" };
@@ -835,6 +848,10 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
       inputTokens: usageInfo.inputTokens,
       outputTokens: usageInfo.outputTokens,
       totalTokens: usageInfo.totalTokens,
+      conversationId,
+      waId,
+      channelType,
+      usageTraceId,
       meta: { engine: "openai" }
     });
     return { text, usage: r.usage || null, engine: "openai" };
@@ -1442,6 +1459,10 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
         inputTokens: usageInfo.inputTokens,
         outputTokens: usageInfo.outputTokens,
         totalTokens: usageInfo.totalTokens,
+        conversationId: String(opts.conversationId || currentConversationIds[id] || "").trim(),
+        waId: String(opts.waId || from || "").trim(),
+        channelType: String(opts.channelType || "whatsapp").trim().toLowerCase(),
+        usageTraceId: String(opts.usageTraceId || "").trim(),
         meta: { temperature, maxTokens: maxTokens || null }
       });
       //console.log("[openai] response.data =>\n" + JSON.stringify(response.data, null, 2));

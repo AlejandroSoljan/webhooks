@@ -8081,6 +8081,10 @@ async function handleApiChatCabProcesarMensajePost(req, res) {
  const text = String(body?.Mensaje ?? body?.mensaje ?? body?.text ?? body?.body ?? "").trim();
   const from = apiChatCabCleanDigits(body?.Tel_Origen || body?.tel_origen || body?.from || body?.telefono || "");
   const incomingMedia = apiChatCabReadMediaFromBody(body);
+  const tokenUsageMessageId = apiChatCabBuildMessageId(body, tenantId);
+  if (!String(body?.MessageId || body?.messageId || body?.Id_Ws || body?.id_ws || body?.id || "").trim()) {
+    body.MessageId = tokenUsageMessageId;
+  }
 
   if ((!text && !incomingMedia) || !from) {
     return res.status(400).json([{ cod_error: "bad_request", msj_error: "Tel_Origen y Mensaje/Media son obligatorios" }]);
@@ -8127,6 +8131,9 @@ async function handleApiChatCabProcesarMensajePost(req, res) {
           mime: incomingMedia.mimetype || incomingMedia.mime || "audio/ogg",
           tenantId,
           openaiApiKey: runtime?.openaiApiKey || null,
+          waId: from,
+          channelType: "whatsapp",
+          usageTraceId: ["token", tenantId, "whatsapp", tokenUsageMessageId].join(":"),
         });
         const transcription = String(tr?.text || "").trim();
        if (transcription) {
@@ -8321,6 +8328,16 @@ const aiOpts = {
 
 
     const sessionFrom = channelType === "instagram" ? `instagram:${from}` : from;
+    const tokenUsageTraceId = [
+      "token",
+      tenant,
+      channelType,
+      String(msg.id || "").trim() || crypto.randomBytes(12).toString("hex")
+    ].join(":");
+    aiOpts.waId = sessionFrom;
+    aiOpts.channelType = channelType;
+    aiOpts.usageTraceId = tokenUsageTraceId;
+
     let text   = (msg.text?.body || "").trim();
     const msgType = msg.type;
     let inboundLocation = null;
@@ -8518,7 +8535,39 @@ const aiOpts = {
     const convId = conv?._id;
     const transferFlowStatusBeforeMessage = normalizeTransferFlowStatus(conv?.transferFlowStatus || "");
 
-   
+    if (convId) {
+      aiOpts.conversationId = String(convId);
+
+     // Los audios se transcriben antes de crear/recuperar la conversación.
+      // Los asociamos después mediante usageTraceId para que el panel pueda
+      // sumar también esos tokens dentro de la conversación/pedido correcto.
+      if (msg.__media && aiOpts.usageTraceId) {
+        try {
+          const db = await getDb();
+          await db.collection("ai_token_usage_log").updateMany(
+            {
+             tenantId: tenant,
+              usageTraceId: aiOpts.usageTraceId,
+              $or: [
+                { conversationId: { $exists: false } },
+                { conversationId: null },
+                { conversationId: "" }
+              ]
+            },
+            {
+              $set: {
+                conversationId: String(convId),
+                waId: sessionFrom,
+                channelType
+              }
+            }
+          );
+        } catch (e) {
+          console.warn("[tokens] no se pudo asociar media a conversación:", e?.message || e);
+        }
+      }
+    }
+
 console.log("[convId] "+ convId);
 
     // ✅ Si se creó una conversación nueva, reseteamos historial del LLM
