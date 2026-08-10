@@ -9,6 +9,11 @@ const app = express();
 const crypto = require("crypto");
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOKEN;
 const WWEB_API_KEY = String(process.env.WWEB_API_KEY || "").trim();
+const DOMAIN_STATUS_API_KEY = String(
+  process.env.DOMAIN_STATUS_API_KEY ||
+  process.env.ASISTO_DOMAIN_STATUS_API_KEY ||
+  ""
+).trim();
 
 
 // ⬇️ Para catálogo en Mongo
@@ -274,6 +279,144 @@ function requireWwebExternalAccess(req, res, next) {
   }
 }
 
+// ===================== API externa simple de sesiones por dominio =====================
+function requireDomainStatusAccess(req, res, next) {
+  try {
+    const expected = DOMAIN_STATUS_API_KEY || WWEB_API_KEY;
+    const provided = wwebReadApiKeyFromReq(req);
+    if (!expected || !provided) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+
+    const a = Buffer.from(provided);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return res.status(401).json({ ok: false, error: "unauthorized" });
+    }
+    return next();
+  } catch {
+    return res.status(401).json({ ok: false, error: "unauthorized" });
+  }
+}
+
+function domainStatusBool(value, fallback = false) {
+  if (value === undefined || value === null || value === "") return !!fallback;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  const v = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "si", "sí", "on"].includes(v)) return true;
+  if (["0", "false", "no", "off"].includes(v)) return false;
+  return !!fallback;
+}
+
+function domainStatusConfig(doc) {
+  if (!doc || typeof doc !== "object") return {};
+  const nested = doc.configuracion && typeof doc.configuracion === "object"
+    ? doc.configuracion
+    : {};
+  return { ...doc, ...nested };
+}
+
+function domainStatusVersion(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const m = raw.match(/\d+(?:\.\d+){1,3}/);
+  return m ? m[0] : raw;
+}
+
+function domainStatusServices(conf, channel) {
+  const out = [];
+
+  const habilitarBot = domainStatusBool(
+    conf.habilitar_bot ??
+    conf.habilitarBot ??
+    conf.bot_habilitado ??
+    conf.botHabilitado ??
+    conf.enable_bot ??
+    conf.enableBot,
+    true
+  );
+
+  const habilitarApiMensajes = domainStatusBool(
+    conf.habilitar_consulta_mensajes ??
+    conf.habilitarConsultaMensajes ??
+    conf.consulta_api_mensajes_habilitado ??
+    conf.consultaApiMensajesHabilitado ??
+    conf.consulta_api_mensajes_enabled ??
+    conf.consultaApiMensajesEnabled ??
+    conf.envio_mensajes_habilitado ??
+    conf.envioMensajesHabilitado,
+    false
+  );
+
+  const logicMode = normalizeWwebBotLogicMode(
+    channel?.wwebBotLogicMode ??
+    channel?.wweb_bot_logic_mode ??
+    channel?.botLogicMode ??
+    channel?.bot_logic_mode ??
+    conf.wweb_bot_logic_mode ??
+    conf.wwebBotLogicMode ??
+    conf.bot_logic_mode ??
+    conf.botLogicMode ??
+    "api"
+  );
+
+  if (habilitarApiMensajes || (habilitarBot && logicMode === "api")) {
+    out.push("Api mensajes");
+  }
+  if (habilitarBot && logicMode === "chatgpt") {
+    out.push("Pedidos ChatGPT");
+  }
+
+  // Servicios futuros opcionales configurados directamente en tenant_config.
+  const extra = conf.services ?? conf.servicios ?? conf.servicios_habilitados ?? conf.serviciosHabilitados;
+  if (Array.isArray(extra)) {
+    for (const item of extra) {
+      const nombre = typeof item === "string"
+        ? item
+        : String(item?.name ?? item?.nombre ?? item?.code ?? item?.codigo ?? "").trim();
+      const enabled = typeof item === "object" && item !== null
+        ? domainStatusBool(item.enabled ?? item.habilitado, true)
+        : true;
+      if (nombre && enabled && !out.includes(nombre)) out.push(nombre);
+    }
+  }
+
+  return out;
+}
+
+function domainStatusDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function domainStatusFindChannel(channels, numero) {
+  const phone = domainStatusDigits(numero);
+  return (channels || []).find((row) => {
+    if (String(row?.channelType || "whatsapp").toLowerCase() !== "whatsapp") return false;
+    const a = domainStatusDigits(row?.displayPhoneNumber);
+    const b = domainStatusDigits(row?.phoneNumberId);
+    return (a && a === phone) || (b && b === phone);
+  }) || null;
+}
+
+function domainStatusEstado(lock, policy) {
+  const last = lock?.lastSeenAt || lock?.updatedAt;
+  const lastMs = last ? new Date(last).getTime() : 0;
+  const active = !!(lastMs && (Date.now() - lastMs) <= 30000);
+
+  if (!active) return "inactive";
+  if (policy?.disabled === true) return "disabled";
+  if (
+    policy?.paused ||
+    policy?.pausado ||
+    policy?.blocked ||
+    policy?.bloqueado ||
+    policy?.messagesBlocked ||
+    policy?.mensajes_bloqueados
+  ) return "paused";
+
+  return String(lock?.state || "active").trim().toLowerCase();
+}
 
 
 
@@ -820,6 +963,89 @@ app.get("/api/ext/wweb/status", requireWwebExternalAccess, async (req, res) => {
     return res.status(500).json({ ok: false, error: "internal" });
   }
 });
+
+
+// GET /api/ext/domain-status/:tenantId
+app.get("/api/ext/domain-status/:tenantId", requireDomainStatusAccess, async (req, res) => {
+  try {
+    const tenantId = String(req.params?.tenantId || "").trim().toUpperCase();
+    if (!tenantId) {
+      return res.status(400).json({ ok: false, error: "tenant_required" });
+    }
+
+    const db = await getDb();
+    const tenantRegex = new RegExp(
+      "^" + tenantId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ":",
+      "i"
+    );
+
+    const [tenantDoc, locks, policies, channels] = await Promise.all([
+      db.collection("tenant_config").findOne({
+        $or: [{ _id: tenantId }, { tenantId }, { tenantid: tenantId }]
+      }),
+      db.collection("wa_locks").find({
+        $or: [
+          { tenantId },
+          { tenantid: tenantId },
+          { _id: tenantRegex }
+        ]
+      }).sort({ lastSeenAt: -1 }).limit(500).toArray(),
+      db.collection("wa_wweb_policies").find({
+        $or: [
+          { tenantId },
+          { tenantid: tenantId },
+          { _id: tenantRegex }
+        ]
+      }).limit(1000).toArray(),
+      db.collection("tenant_channels").find({ tenantId }).limit(500).toArray()
+    ]);
+
+    if (!tenantDoc && !locks.length) {
+      return res.status(404).json({
+        ok: false,
+        error: "tenant_not_found"
+      });
+    }
+
+    const conf = domainStatusConfig(tenantDoc);
+    const policyById = new Map(
+      policies.map((p) => [String(p._id || ""), p])
+    );
+    const sessions = locks.map((lock) => {
+      const lockId = String(lock._id || "");
+      const numero = domainStatusDigits(
+        lock.numero ||
+        lock.number ||
+        lock.phone ||
+        (lockId.includes(":") ? lockId.split(":").slice(1).join(":") : "")
+      );
+
+      const channel = domainStatusFindChannel(channels, numero);
+      const policy = policyById.get(lockId) || null;
+
+      return {
+        numero,
+        estado: domainStatusEstado(lock, policy),
+        version: domainStatusVersion(lock.runtimeVersion || lock.currentVersion),
+        servicios: domainStatusServices(conf, channel),
+        pc: String(lock.host || lock.hostname || "").trim() || null
+      };
+    }).sort((a, b) =>
+      String(a.numero).localeCompare(String(b.numero), "es", { numeric: true })
+    );
+
+    res.set("Cache-Control", "no-store");
+    return res.json({
+      ok: true,
+      tenantId,
+      sessions
+    });
+ } catch (e) {
+    console.error("GET /api/ext/domain-status error:", e?.message || e);
+    return res.status(500).json({ ok: false, error: "internal" });
+  }
+});
+
 
 // GET /api/ext/wweb/qr
 app.get("/api/ext/wweb/qr", requireWwebExternalAccess, async (req, res) => {
