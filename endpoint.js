@@ -965,12 +965,12 @@ app.get("/api/ext/wweb/status", requireWwebExternalAccess, async (req, res) => {
 });
 
 
-// GET /api/ext/domain-status/:tenantId
-app.get("/api/ext/domain-status/:tenantId", requireDomainStatusAccess, async (req, res) => {
+// GET /api/ext/domain-status?dominio=SDG
+app.get("/api/ext/domain-status", requireDomainStatusAccess, async (req, res) => {
   try {
-    const tenantId = String(req.params?.tenantId || "").trim().toUpperCase();
+    const tenantId = String(req.query?.dominio || "").trim().toUpperCase();
     if (!tenantId) {
-      return res.status(400).json({ ok: false, error: "tenant_required" });
+      return res.status(400).json({ ok: false, error: "dominio_required" });
     }
 
     const db = await getDb();
