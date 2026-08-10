@@ -1878,8 +1878,8 @@ function wwebSessionsAdminPage({ user }) {
       <div class="toolbar">
         <div>
           <h2 style="margin:0 0 6px">Sesiones WhatsApp Web</h2>
-              <div class="small">Acciones: <strong>Reiniciar</strong> reinicia el script de la PC dueña. <strong>Pausar/Reanudar</strong> pausa o permite el envío de mensajes sin cerrar WhatsApp. <strong>Borrar autenticación</strong> fuerza pedir QR nuevamente.</div>
-          <div class="toolbarActions">
+                  <div class="small">Acciones: <strong>Reiniciar</strong> reinicia app_asisto_ws completo en la PC dueña y todas sus sesiones WhatsApp. <strong>Pausar/Reanudar</strong> afecta sólo esa sesión y no cierra WhatsApp. <strong>Borrar autenticación</strong> fuerza pedir QR nuevamente.</div>
+       <div class="toolbarActions">
           <button class="btn2" type="button" onclick="window.__wwebReload && window.__wwebReload()">Actualizar</button>
           <span id="wwebStatus" class="small" style="opacity:.85"></span>
           <a class="btn2" href="/app" style="text-decoration:none">Volver</a>
@@ -2485,7 +2485,7 @@ function wwebSessionsAdminPage({ user }) {
         closeAllMenus();
         if(!confirm('¿Reiniciar la sesión de WhatsApp en la PC dueña?')) return;
         doAction(lockId, 'restart', 'phone_web_restart')
-          .then(function(){ msg.textContent = 'Reinicio solicitado.'; return load(); })
+          .then(function(){ msg.textContent = 'Reinicio completo solicitado. Se reiniciarán todas las sesiones de esa PC.'; return load(); })
           .catch(function(e){ alert('Error: ' + (e.message || e)); });
       }
 
@@ -5115,7 +5115,8 @@ function protectRoutes(app) {
       p.startsWith("/static/") ||
       p.startsWith("/webhook") ||
       p.startsWith("/cache/") ||
-      p.startsWith("/api/ext/wweb/")
+      p.startsWith("/api/ext/wweb/") ||
+      p.startsWith("/api/ext/domain-status")
     ) return next();
 
 // =============================
