@@ -1405,32 +1405,7 @@ app.get("/novedades", (_req, res) => {
       padding:38px 52px;
     }
 
-    .top{
-      display:flex;
-      justify-content:flex-end;
-      align-items:center;
-    }
-
-    .login{
-      display:inline-flex;
-      align-items:center;
-      justify-content:center;
-      padding:10px 18px;
-      border-radius:999px;
-      text-decoration:none;
-      color:#fff;
-      font-size:14px;
-      font-weight:600;
-      border:1px solid rgba(255,255,255,.18);
-      background:rgba(255,255,255,.07);
-      backdrop-filter:blur(10px);
-      transition:.18s ease;
-   }
-
-    .login:hover{
-      background:rgba(255,255,255,.13);
-      transform:translateY(-1px);
-    }
+    
 
     .content{
       flex:1;
@@ -1475,12 +1450,7 @@ app.get("/novedades", (_req, res) => {
       box-shadow:0 0 12px rgba(39,214,178,.8);
     }
 
-    h1{
-      margin:0;
-      font-size:clamp(38px, 5vw, 64px);
-      line-height:.98;
-      letter-spacing:-.045em;
-    }
+
 
     .lead{
       margin:20px 0 0;
@@ -1547,25 +1517,14 @@ app.get("/novedades", (_req, res) => {
 <body>
   <div class="page">
 
-    <header class="top">
-      <a class="login" href="/login">Ingresar a Asisto</a>
-    </header>
+
 
     <main class="content">
       <section class="panel">
 
         <div class="tag">Novedades</div>
 
-        <h1>
-          Todo lo nuevo<br>
-          de Asisto.
-        </h1>
-
-        <p class="lead">
-          Este espacio reúne las nuevas funciones, mejoras y herramientas
-          que vamos incorporando a Asisto.
-        </p>
-
+      
         <div class="soon">
           <strong>Muy pronto</strong>
           <span>
