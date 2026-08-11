@@ -156,6 +156,35 @@ function buildStrictPedidoResponseFormat() {
   };
 }
 
+const ASSISTANT_CONVERSATIONAL_RESPONSE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["response"],
+  properties: {
+    response: { type: "string" }
+  }
+};
+
+function buildStrictConversationalResponseFormat() {
+  return {
+    type: "json_schema",
+    json_schema: {
+      name: "conversational_response",
+      strict: true,
+      schema: ASSISTANT_CONVERSATIONAL_RESPONSE_SCHEMA
+    }
+  };
+}
+
+function normalizeBotMode(value) {
+  const v = String(value || "pedidos").trim().toLowerCase();
+  if (["conversacional", "conversation", "conversational", "chat", "general", "libre", "test", "pruebas"].includes(v)) {
+    return "conversacional";
+  }
+  return "pedidos";
+}
+
+
 function extractChatCompletionContent(responseData) {
   const msg = responseData?.choices?.[0]?.message || {};
   const refusal = String(msg?.refusal || "").trim();
@@ -252,7 +281,9 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   const fallbackEnv = process.env.COMPORTAMIENTO || "";
   const text = String(doc.text || fallbackEnv).trim();
   const history_mode = (doc.history_mode || process.env.HISTORY_MODE || "standard").trim();
-  const cfg = { text, history_mode, at: Date.now() };
+  // Retrocompatibilidad total: si el campo no existe, sigue funcionando como bot de pedidos.
+  const bot_mode = normalizeBotMode(doc.bot_mode || doc.botMode || process.env.BOT_MODE || "pedidos");
+  const cfg = { text, history_mode, bot_mode, at: Date.now() };
   _behaviorCache.set(key, cfg);
   return cfg;
 }
@@ -1337,13 +1368,23 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
   const id = k(tenantId, from);
   const cfg = await loadBehaviorConfigFromMongo(tenantId);
   const baseText = cfg.text;
-  const historyMode = (cfg.history_mode || "standard").toLowerCase();
+  const botMode = normalizeBotMode(cfg.bot_mode);
+  const configuredHistoryMode = (cfg.history_mode || "standard").toLowerCase();
+  // El modo minimal histórico depende del snapshot Pedido. Para un bot conversacional
+  // usamos historial standard y no inyectamos ninguna estructura de pedidos.
+  const historyMode = botMode === "conversacional" ? "standard" : configuredHistoryMode;
 
-  // Bloque system inicial
-  const catalogText = await loadCatalogTextFromMongo(tenantId);
-  const storeHoursBlock = await loadStoreHoursBlockFromMongo(tenantId);
+  // Bloque system inicial. En modo conversacional NO se inyectan catálogo ni horarios
+  // de pedidos: la respuesta queda gobernada por el Comportamiento cargado para el dominio.
+  const catalogText = botMode === "pedidos" ? await loadCatalogTextFromMongo(tenantId) : "";
+  const storeHoursBlock = botMode === "pedidos" ? await loadStoreHoursBlockFromMongo(tenantId) : "";
+  const modeBlock = botMode === "conversacional"
+    ? "[MODO BOT]\nConversacional. Respondé según [COMPORTAMIENTO] y el historial. No generes Pedido, estado de pedido, totales ni confirmaciones salvo que el propio comportamiento te lo pida explícitamente."
+    : "[MODO BOT]\nPedidos. Conservá el flujo estructurado de pedidos configurado para este dominio.";
+
   const fullSystem = [
     buildNowBlock(),
+    modeBlock,
     storeHoursBlock,
     "[COMPORTAMIENTO]\n" + baseText + catalogText
   ]
@@ -1421,7 +1462,9 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       model,
       messages: sanitizeMessages(messages),
       temperature,
-      response_format: buildStrictPedidoResponseFormat()
+      response_format: botMode === "conversacional"
+        ? buildStrictConversationalResponseFormat()
+        : buildStrictPedidoResponseFormat()
     };
     applyModelTokenLimit(payload, model, maxTokens);
     console.log("[openai] request.meta =>", {
@@ -1431,7 +1474,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
         ? (modelUsesMaxCompletionTokens(model) ? "max_completion_tokens" : "max_tokens")
         : null,
       token_limit_value: maxTokens || null,
-      response_format: "json_schema_strict"
+      response_format: botMode === "conversacional" ? "json_schema_conversational" : "json_schema_pedido"
     });
     console.log("[openai] message =>\n" + JSON.stringify(sanitizeMessages(messages), null, 2));
 
@@ -1507,6 +1550,9 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       console.error("Error OpenAI:", JSON.stringify(error.response.data, null, 2));
     } else {
       console.error("Error OpenAI:", error?.message || error);
+    }
+    if (botMode === "conversacional") {
+      return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente."}';
     }
     return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","estado":"IN_PROGRESS","Pedido":{"items":[],"total_pedido":0}}';
   }
@@ -1842,6 +1888,7 @@ module.exports = {
   loadBehaviorTextFromMongo,
   loadBehaviorConfigFromMongo,
   invalidateBehaviorCache,
+  normalizeBotMode,
   invalidateTenantAiConfigCache,
   // catálogo
   loadCatalogTextFromMongo,

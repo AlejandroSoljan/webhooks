@@ -1280,6 +1280,7 @@ const {
   loadBehaviorTextFromMongo,
   loadBehaviorConfigFromMongo,
   invalidateBehaviorCache,
+  normalizeBotMode,
   getGPTReply, hasActiveEndedFlag, markSessionEnded, isPoliteClosingMessage,
   syncSessionConversation,
   START_FALLBACK, buildBackendSummary, coalesceResponse, recalcAndDetectMismatch,
@@ -7614,12 +7615,22 @@ app.get("/comportamiento", async (req, res) => {
         <button id="btnSave">Guardar</button>
       </div>
       <div class="row" style="margin-top:8px">
+        <label>Tipo de bot:&nbsp;
+          <select id="botMode">
+            <option value="pedidos">Pedidos (modo actual)</option>
+            <option value="conversacional">Conversacional / pruebas</option>
+          </select>
+        </label>
+        <span class="hint">Conversacional usa solo Comportamiento + historial y no ejecuta reglas de pedidos.</span>
+      </div>
+      <div class="row" style="margin-top:8px">
         <label>Modo de historial:&nbsp;
           <select id="historyMode">
             <option value="standard">standard (completo)</option>
             <option value="minimal">minimal (solo user + assistant Pedido)</option>
           </select>
         </label>
+        <span class="hint">En modo Conversacional se usa standard automáticamente.</span>
       </div>
      <p></p><textarea id="txt" placeholder="Escribí aquí el comportamiento para este dominio..."></textarea>
       <script>
@@ -7628,22 +7639,25 @@ app.get("/comportamiento", async (req, res) => {
           const r=await fetch('/api/behavior?tenant='+encodeURIComponent(t));
           const j=await r.json();
           document.getElementById('txt').value=j.text||'';
+          document.getElementById('botMode').value = (j.bot_mode || 'pedidos');
           document.getElementById('historyMode').value = (j.history_mode || 'standard');
         }
         async function save(){
           const t=document.getElementById('tenant').value||'';
           const v=document.getElementById('txt').value||'';
           const m=document.getElementById('historyMode').value||'standard';
+          const b=document.getElementById('botMode').value||'pedidos';
           const r=await fetch('/api/behavior?tenant='+encodeURIComponent(t),{
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({text:v,tenantId:t,history_mode:m})
+            body:JSON.stringify({text:v,tenantId:t,history_mode:m,bot_mode:b})
           });
           alert(r.ok?'Guardado ✅':'Error al guardar');
         }
         document.getElementById('btnSave').addEventListener('click',save);
         document.getElementById('btnReload').addEventListener('click',load);
         document.addEventListener('DOMContentLoaded', () => {
+          document.getElementById('botMode').value='${normalizeBotMode(cfg.bot_mode).replace(/"/g,'&quot;')}';
           document.getElementById('historyMode').value='${(cfg.history_mode || 'standard').replace(/"/g,'&quot;')}';
         });
         load();
@@ -8012,7 +8026,7 @@ app.get("/api/behavior", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
     const cfg = await loadBehaviorConfigFromMongo(tenant);
-    res.json({ source: "mongo", tenant, text: cfg.text, history_mode: cfg.history_mode });
+    res.json({ source: "mongo", tenant, text: cfg.text, history_mode: cfg.history_mode, bot_mode: normalizeBotMode(cfg.bot_mode) });
   } catch {
     res.status(500).json({ error: "internal" });
   }
@@ -8023,15 +8037,16 @@ app.post("/api/behavior", async (req, res) => {
     const tenant = (req.body?.tenantId || resolveTenantId(req)).toString().trim();
     const text = String(req.body?.text || "").trim();
     const history_mode = String(req.body?.history_mode || "").trim() || "standard";
+    const bot_mode = normalizeBotMode(req.body?.bot_mode || req.body?.botMode || "pedidos");
     const db = await require("./db").getDb();
     const _id = `behavior:${tenant}`;
     await db.collection("settings").updateOne(
       { _id },
-      { $set: { text, history_mode, tenantId: tenant, updatedAt: new Date() } },
+      { $set: { text, history_mode, bot_mode, tenantId: tenant, updatedAt: new Date() } },
       { upsert: true }
     );
     invalidateBehaviorCache(tenant);
-    res.json({ ok: true, tenant, history_mode });
+    res.json({ ok: true, tenant, history_mode, bot_mode });
   } catch (e) {
     console.error("POST /api/behavior error:", e);
     res.status(500).json({ error: "internal" });
@@ -8513,6 +8528,9 @@ if (channelType === "whatsapp" && whatsappTransport === "wweb" && !req.asistoWwe
 }
 
 const orderConfig = await loadOrderConfig(tenant);
+const behaviorConfig = await loadBehaviorConfigFromMongo(tenant);
+const botMode = normalizeBotMode(behaviorConfig?.bot_mode);
+const isOrderBot = botMode === "pedidos";
 
 const channelOpts = {
   channelType,
@@ -8621,7 +8639,7 @@ const aiOpts = {
         }
       } else if (kind === "image") {
         let img = null;
-        if (publicUrl && orderFeatureEnabled(orderConfig, "transferReceiptAnalysis")) {
+        if (isOrderBot && publicUrl && orderFeatureEnabled(orderConfig, "transferReceiptAnalysis")) {
           try {
             img = await analyzeImageExternal({
               publicImageUrl: publicUrl,
@@ -8666,7 +8684,7 @@ const aiOpts = {
         const publicImageUrl = `${req.protocol}://${req.get("host")}/cache/media/${id}`;
 
         let img = null;
-        if (orderFeatureEnabled(orderConfig, "transferReceiptAnalysis")) {
+        if (isOrderBot && orderFeatureEnabled(orderConfig, "transferReceiptAnalysis")) {
           img = await analyzeImageExternal({
             publicImageUrl,
             mime: info.mime_type,
@@ -8752,8 +8770,9 @@ const aiOpts = {
          displayPhoneNumber: runtime?.displayPhoneNumber || null,
          instagramAccountId: channelOpts?.instagramAccountId || null,
          instagramPageId: channelOpts?.instagramPageId || null,
+         botMode,
        }, tenant, {
-         reuseCompletedWithinMinutes: orderPostCompletionReuseMinutes(orderConfig),
+         reuseCompletedWithinMinutes: isOrderBot ? orderPostCompletionReuseMinutes(orderConfig) : 0,
        });
      } catch (e) { console.error("upsertConversation:", e?.message); }
      // Guardamos phoneNumberId para poder responder/operar por el mismo canal luego (admin, etc.)
@@ -8848,7 +8867,7 @@ console.log("[convId] "+ convId);
     // el flag en memoria, porque se basa en closedAt/status persistidos.
     try {
       const reuseMinutes = orderPostCompletionReuseMinutes(orderConfig);
-      if (convId && conversationIsRecentlyCompleted(conv, reuseMinutes) && isPoliteClosingMessage(text)) {
+      if (isOrderBot && convId && conversationIsRecentlyCompleted(conv, reuseMinutes) && isPoliteClosingMessage(text)) {
         const politeReply = orderPoliteFollowupReply(orderConfig);
         await require("./logic").sendChannelMessage(from, politeReply, channelOpts);
         try {
@@ -8880,7 +8899,7 @@ console.log("[convId] "+ convId);
       const flowStatus = normalizeTransferFlowStatus(conv?.transferFlowStatus || "");
       const inboundReceipt = isInboundTransferReceiptMedia(msg);
 
-      if (orderFeatureEnabled(orderConfig, "paymentTransferFlow") && orderFeatureEnabled(orderConfig, "transferReceiptAnalysis") && convId && inboundReceipt && flowStatus === "PENDIENTE_COMPROBANTE_TRANSFERENCIA") {
+    if (isOrderBot && orderFeatureEnabled(orderConfig, "paymentTransferFlow") && orderFeatureEnabled(orderConfig, "transferReceiptAnalysis") && convId && inboundReceipt && flowStatus === "PENDIENTE_COMPROBANTE_TRANSFERENCIA") {
         const pedidoPrev = await loadLastPedidoSnapshot(tenant, convId);
         const pagoPrev = String(pedidoPrev?.Pago || "").trim();
 
@@ -9048,12 +9067,13 @@ if (debounceMs > 0 && msg.type === "text") {
         return;
       }
 
-      // Si el mensaje NO es solo un cierre de cortesía, limpiamos el flag de sesión terminada
-      if (!isPoliteClosingMessage(text)) {
-        clearEndedFlag(tenant, sessionFrom);
-      }
-      if (hasActiveEndedFlag(tenant, sessionFrom)) {
-        if (isPoliteClosingMessage(text)) {
+      // Los flags de sesión terminada pertenecen exclusivamente al flujo de pedidos.
+      // Un bot conversacional nunca debe responder con textos heredados de cierre de pedido.
+      if (isOrderBot) {
+        if (!isPoliteClosingMessage(text)) {
+          clearEndedFlag(tenant, sessionFrom);
+        }
+        if (hasActiveEndedFlag(tenant, sessionFrom) && isPoliteClosingMessage(text)) {
           if (isStale()) {
             console.log(`[webhook][stale-run] polite close dropped key=${runKey} seq=${runSeq}`);
             return;
@@ -9075,6 +9095,7 @@ if (debounceMs > 0 && msg.type === "text") {
 
       let gptReply = "";
       if (
+        isOrderBot &&
         userConfirms &&
         convId &&
         looksLikeSummaryOrConfirmation(lastAssistantTextBeforeUser)
@@ -9099,7 +9120,60 @@ if (debounceMs > 0 && msg.type === "text") {
         console.log(`[webhook][stale-run] drop GPT reply key=${runKey} seq=${runSeq}`);
         return;
       }
-   
+
+      // ============================================================
+      // MODO CONVERSACIONAL
+      // - No ejecuta guardas, horarios, productos, pagos ni confirmaciones.
+      // - No crea ni actualiza orders ni snapshots de Pedido.
+      // - Mantiene conversación, historial, canales y control de tokens existentes.
+      // ============================================================
+      if (!isOrderBot) {
+        let conversationalText = "";
+        try {
+          const parsed = JSON.parse(String(gptReply || ""));
+          conversationalText = String(parsed?.response || "").trim();
+        } catch {
+          conversationalText = String(gptReply || "").trim();
+        }
+        if (!conversationalText) {
+          conversationalText = "Lo siento, ocurrió un error. Intenta nuevamente.";
+        }
+
+        if (isStale()) {
+          console.log(`[webhook][stale-run] conversational reply dropped key=${runKey} seq=${runSeq}`);
+          return;
+        }
+
+        await require("./logic").sendChannelMessage(from, conversationalText, channelOpts);
+
+        if (convId) {
+          try {
+            await saveMessageDoc({
+              tenantId: tenant,
+              conversationId: convId,
+              waId: from,
+              role: "assistant",
+              content: conversationalText,
+              type: "text",
+              meta: { model: "gpt", kind: "conversational", botMode }
+            });
+          } catch (e) {
+            console.error("saveMessage(assistant conversational):", e?.message);
+          }
+
+          try {
+            const db = await getDb();
+            await db.collection("conversations").updateOne(
+              { _id: new ObjectId(String(convId)) },
+              { $set: { updatedAt: new Date(), botMode } }
+            );
+          } catch (e) {
+            console.warn("[conv] no se pudo persistir botMode conversacional:", e?.message || e);
+          }
+        }
+
+        return;
+      }
   
     // También dispara si el usuario pide "total" o está en fase de confirmar
    const wantsDetail = /\b(detalle|detall|resumen|desglose|total|confirm(a|o|ar))\b/i
