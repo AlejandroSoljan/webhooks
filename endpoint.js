@@ -1416,9 +1416,9 @@ app.get("/novedades", (_req, res) => {
     }
 
     .panel{
-      width:min(560px, 100%);
-      padding:36px 38px;
-      border-radius:26px;
+      width:min(430px, 100%);
+      padding:24px 26px;
+      border-radius:22px;
       background:rgba(4,22,42,.46);
       border:1px solid rgba(255,255,255,.12);
       box-shadow:0 24px 70px rgba(0,0,0,.25);
@@ -1428,9 +1428,9 @@ app.get("/novedades", (_req, res) => {
     .tag{
       display:inline-flex;
       align-items:center;
-      gap:8px;
-      padding:7px 12px;
-      margin-bottom:18px;
+      gap:7px;
+      padding:6px 10px;
+      margin-bottom:12px;
       border-radius:999px;
       background:rgba(0,214,170,.12);
       border:1px solid rgba(0,214,170,.22);
@@ -1461,23 +1461,23 @@ app.get("/novedades", (_req, res) => {
     }
 
     .soon{
-      margin-top:28px;
-      padding:18px 20px;
-      border-radius:18px;
+      margin-top:16px;
+      padding:14px 16px;
+      border-radius:15px;
       background:rgba(255,255,255,.06);
       border:1px solid rgba(255,255,255,.08);
     }
 
     .soon strong{
       display:block;
-      margin-bottom:5px;
-      font-size:15px;
+      margin-bottom:4px;
+      font-size:14px;
     }
 
     .soon span{
       color:rgba(255,255,255,.65);
-      font-size:14px;
-      line-height:1.5;
+      font-size:13px;
+      line-height:1.45;
     }
 
     .footer{
