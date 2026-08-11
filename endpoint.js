@@ -7889,7 +7889,7 @@ app.get("/comportamiento", async (req, res) => {
           </label>
          <label>Parámetro/campo de búsqueda
             <input id="externalApiQueryParam" type="text" value="buscar" placeholder="buscar" />
-            <span class="hint">GET: ?buscar=... · POST: {"buscar":"..."}. Dejalo vacío si la API siempre devuelve la lista completa.</span>
+            <span class="hint">GET: ?buscar=... · POST simple: {"buscar":"..."}. Si completás Body JSON, ese body tiene prioridad para POST.</span>
           </label>
           <label>Timeout (ms)
             <input id="externalApiTimeoutMs" type="number" min="1000" max="30000" value="10000" />
@@ -7907,6 +7907,11 @@ app.get("/comportamiento", async (req, res) => {
           <label style="justify-content:flex-end">
             <span><input id="externalApiAuthClear" type="checkbox" /> Borrar credencial guardada al guardar</span>
           </label>
+          <label style="grid-column:1/-1">Body JSON para POST (opcional)
+            <textarea id="externalApiBodyTemplate" class="smallArea" placeholder='{"Tel_Origen":"{{telefono_cliente}}","Tel_Destino":"{{telefono_qr}}","Mensaje":"{{consulta}}"}'></textarea>
+            <span class="hint">Variables disponibles: {{telefono_cliente}}, {{telefono_qr}} y {{consulta}}. Si queda vacío, POST mantiene el modo simple usando el campo de búsqueda.</span>
+          </label>
+
           <label style="grid-column:1/-1">Cómo interpretar el JSON (opcional)
             <textarea id="externalApiResultInstructions" class="smallArea" placeholder="Ej.: items contiene los productos; descripcion es el nombre; precio es el precio final."></textarea>
           </label>
@@ -7929,6 +7934,7 @@ app.get("/comportamiento", async (req, res) => {
           document.getElementById('externalApiUrl').value = j.external_api_url || '';
           document.getElementById('externalApiMethod').value = j.external_api_method || 'GET';
           document.getElementById('externalApiQueryParam').value = j.external_api_query_param ?? 'buscar';
+          document.getElementById('externalApiBodyTemplate').value = j.external_api_body_template || '';
           document.getElementById('externalApiAuthHeader').value = j.external_api_auth_header || '';
           document.getElementById('externalApiAuthValue').value = '';
           document.getElementById('externalApiAuthClear').checked = false;
@@ -7950,6 +7956,7 @@ app.get("/comportamiento", async (req, res) => {
           const externalApiUrl=document.getElementById('externalApiUrl').value||'';
           const externalApiMethod=document.getElementById('externalApiMethod').value||'GET';
           const externalApiQueryParam=document.getElementById('externalApiQueryParam').value||'';
+          const externalApiBodyTemplate=document.getElementById('externalApiBodyTemplate').value||'';
           const externalApiAuthHeader=document.getElementById('externalApiAuthHeader').value||'';
           const externalApiAuthValue=document.getElementById('externalApiAuthValue').value||'';
           const externalApiAuthClear=document.getElementById('externalApiAuthClear').checked === true;
@@ -7967,6 +7974,7 @@ app.get("/comportamiento", async (req, res) => {
               external_api_url:externalApiUrl,
               external_api_method:externalApiMethod,
               external_api_query_param:externalApiQueryParam,
+              external_api_body_template:externalApiBodyTemplate,
               external_api_auth_header:externalApiAuthHeader,
               external_api_auth_value:externalApiAuthValue,
               external_api_auth_clear:externalApiAuthClear,
@@ -8363,6 +8371,7 @@ app.get("/api/behavior", async (req, res) => {
       external_api_url: cfg.external_api_url || "",
       external_api_method: cfg.external_api_method || "GET",
       external_api_query_param: cfg.external_api_query_param ?? "buscar",
+      external_api_body_template: cfg.external_api_body_template || "",
       external_api_auth_header: cfg.external_api_auth_header || "",
       external_api_auth_value_set: !!cfg.external_api_auth_value,
       external_api_timeout_ms: cfg.external_api_timeout_ms || 10000,
@@ -8393,6 +8402,7 @@ app.post("/api/behavior", async (req, res) => {
     const external_api_url = String(req.body?.external_api_url || req.body?.externalApiUrl || "").trim().slice(0, 3000);
     const external_api_method = String(req.body?.external_api_method || req.body?.externalApiMethod || "GET").trim().toUpperCase() === "POST" ? "POST" : "GET";
     const external_api_query_param = String(req.body?.external_api_query_param ?? req.body?.externalApiQueryParam ?? "buscar").trim().slice(0, 100);
+    const external_api_body_template = String(req.body?.external_api_body_template ?? req.body?.externalApiBodyTemplate ?? "").trim().slice(0, 20000);
     const external_api_auth_header = String(req.body?.external_api_auth_header || req.body?.externalApiAuthHeader || "").trim().replace(/[\r\n]/g, "").slice(0, 200);
     const externalApiAuthValue = String(req.body?.external_api_auth_value || req.body?.externalApiAuthValue || "").trim().replace(/[\r\n]/g, "").slice(0, 4000);
     const externalApiAuthClearRaw = req.body?.external_api_auth_clear ?? req.body?.externalApiAuthClear ?? false;
@@ -8404,6 +8414,16 @@ app.post("/api/behavior", async (req, res) => {
 
     if (external_api_enabled && !/^https?:\/\//i.test(external_api_url)) {
       return res.status(400).json({ error: "external_api_url_invalid" });
+    }
+    if (external_api_body_template) {
+      try {
+        const parsedTemplate = JSON.parse(external_api_body_template);
+        if (!parsedTemplate || typeof parsedTemplate !== "object" || Array.isArray(parsedTemplate)) {
+          return res.status(400).json({ error: "external_api_body_template_must_be_object" });
+        }
+      } catch {
+        return res.status(400).json({ error: "external_api_body_template_invalid_json" });
+      }
     }
 
 
@@ -8422,6 +8442,7 @@ app.post("/api/behavior", async (req, res) => {
       external_api_url,
       external_api_method,
       external_api_query_param,
+      external_api_body_template,
       external_api_auth_header,
       external_api_timeout_ms,
       external_api_max_chars,
@@ -9034,6 +9055,12 @@ const phoneNumberIdInbound =
   value?.metadata?.phone_number ||
   null;
 
+  const displayPhoneNumberInbound =
+  value?.metadata?.display_phone_number ||
+  value?.metadata?.displayPhoneNumber ||
+  null;
+
+
 const instagramAccountIdInbound =
   value?.metadata?.instagram_account_id ||
   value?.metadata?.instagram_accountId ||
@@ -9137,6 +9164,10 @@ const aiOpts = {
     aiOpts.waId = sessionFrom;
     aiOpts.channelType = channelType;
     aiOpts.usageTraceId = tokenUsageTraceId;
+    aiOpts.externalApiContext = {
+      telefono_cliente: digitsOnlyForWweb(from),
+      telefono_qr: digitsOnlyForWweb(runtime?.displayPhoneNumber || displayPhoneNumberInbound || "")
+    };
 
     let text   = (msg.text?.body || "").trim();
     const msgType = msg.type;

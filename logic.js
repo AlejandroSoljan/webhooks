@@ -347,6 +347,7 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
  const external_api_url = String(doc.external_api_url || doc.externalApiUrl || "").trim();
   const external_api_method = String(doc.external_api_method || doc.externalApiMethod || "GET").trim().toUpperCase() === "POST" ? "POST" : "GET";
   const external_api_query_param = String(doc.external_api_query_param || doc.externalApiQueryParam || "buscar").trim();
+  const external_api_body_template = String(doc.external_api_body_template || doc.externalApiBodyTemplate || process.env.EXTERNAL_API_BODY_TEMPLATE || "").trim();
   const external_api_auth_header = String(doc.external_api_auth_header || doc.externalApiAuthHeader || "").trim();
   const external_api_auth_value = String(doc.external_api_auth_value || doc.externalApiAuthValue || "").trim();
   const external_api_result_instructions = String(doc.external_api_result_instructions || doc.externalApiResultInstructions || "").trim();
@@ -364,6 +365,7 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
    external_api_url,
     external_api_method,
     external_api_query_param,
+    external_api_body_template,
     external_api_auth_header,
     external_api_auth_value,
     external_api_result_instructions,
@@ -1440,7 +1442,24 @@ function conversationalExternalApiIsUsable(cfg) {
   return !!normalizeConversationalExternalActionName(cfg?.external_api_action_name || "consulta_externa");
 }
 
-async function executeConversationalExternalApi(cfg, action = {}) {
+function externalApiTemplateValue(value, variables) {
+  if (Array.isArray(value)) return value.map((item) => externalApiTemplateValue(item, variables));
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const [key, item] of Object.entries(value)) {
+      out[key] = externalApiTemplateValue(item, variables);
+    }
+    return out;
+  }
+  if (typeof value !== "string") return value;
+
+  return value
+    .replace(/\{\{\s*telefono_cliente\s*\}\}/gi, String(variables.telefono_cliente || ""))
+    .replace(/\{\{\s*telefono_qr\s*\}\}/gi, String(variables.telefono_qr || ""))
+    .replace(/\{\{\s*consulta\s*\}\}/gi, String(variables.consulta || ""));
+}
+
+async function executeConversationalExternalApi(cfg, action = {}, context = {}) {
   const configuredName = normalizeConversationalExternalActionName(cfg?.external_api_action_name || "consulta_externa");
   const requestedName = normalizeConversationalExternalActionName(action?.name || "");
   const query = String(action?.query || "").trim().slice(0, 1000);
@@ -1455,6 +1474,12 @@ async function executeConversationalExternalApi(cfg, action = {}) {
   const url = String(cfg.external_api_url || "").trim();
   const method = String(cfg.external_api_method || "GET").toUpperCase() === "POST" ? "POST" : "GET";
   const queryParam = String(cfg.external_api_query_param || "").trim();
+  const bodyTemplate = String(cfg.external_api_body_template || "").trim();
+  const templateVariables = {
+    telefono_cliente: String(context?.telefono_cliente || "").replace(/\D/g, ""),
+    telefono_qr: String(context?.telefono_qr || "").replace(/\D/g, ""),
+    consulta: query
+  };
   const timeout = Math.max(1000, Math.min(30000, Number(cfg.external_api_timeout_ms || 10000) || 10000));
   const maxChars = Math.max(2000, Math.min(100000, Number(cfg.external_api_max_chars || 30000) || 30000));
   const headers = { Accept: "application/json, text/plain;q=0.9, */*;q=0.8" };
@@ -1478,7 +1503,20 @@ async function executeConversationalExternalApi(cfg, action = {}) {
     validateStatus: () => true,
   };
 
-  if (queryParam && query) {
+  if (method === "POST" && bodyTemplate) {
+    request.headers["Content-Type"] = "application/json";
+    try {
+      const parsedTemplate = JSON.parse(bodyTemplate);
+      const renderedBody = externalApiTemplateValue(parsedTemplate, templateVariables);
+      request.data = JSON.stringify(renderedBody);
+    } catch (e) {
+      return {
+        ok: false,
+        error: "external_api_body_template_invalid_json",
+        detail: String(e?.message || e).slice(0, 300),
+      };
+    }
+  } else if (queryParam && query) {
     if (method === "POST") {
       request.headers["Content-Type"] = "application/json";
       request.data = JSON.stringify({ [queryParam]: query });
@@ -1798,7 +1836,10 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       try { firstPayload = JSON.parse(reply); } catch {}
       if (firstPayload?.action?.call === true) {
         const action = firstPayload.action || {};
-       const externalResult = await executeConversationalExternalApi(cfg, action);
+       const externalResult = await executeConversationalExternalApi(cfg, action, {
+          telefono_cliente: opts?.externalApiContext?.telefono_cliente || from,
+          telefono_qr: opts?.externalApiContext?.telefono_qr || ""
+        });
         const secondMessages = sanitizeMessages(messages).concat([
           { role: "assistant", content: reply },
           { role: "system", content: buildConversationalExternalResultBlock(cfg, action, externalResult) }
