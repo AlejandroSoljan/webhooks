@@ -8697,8 +8697,8 @@ if (channelType === "whatsapp" && whatsappTransport === "wweb" && !req.asistoWwe
 
 const orderConfig = await loadOrderConfig(tenant);
 const behaviorConfig = await loadBehaviorConfigFromMongo(tenant);
-const botMode = normalizeBotMode(behaviorConfig?.bot_mode);
-const isOrderBot = botMode === "pedidos";
+const effectiveBotMode = normalizeBotMode(behaviorConfig?.bot_mode || "pedidos");
+const isOrderBot = effectiveBotMode === "pedidos";
 
 const channelOpts = {
   channelType,
@@ -8938,7 +8938,7 @@ const aiOpts = {
          displayPhoneNumber: runtime?.displayPhoneNumber || null,
          instagramAccountId: channelOpts?.instagramAccountId || null,
          instagramPageId: channelOpts?.instagramPageId || null,
-         botMode,
+         botMode: effectiveBotMode,
        }, tenant, {
          reuseCompletedWithinMinutes: isOrderBot ? orderPostCompletionReuseMinutes(orderConfig) : 0,
        });
@@ -9341,7 +9341,7 @@ if (debounceMs > 0 && msg.type === "text") {
               meta: {
                 model: "gpt",
                 kind: "conversational",
-                botMode,
+                botMode: effectiveBotMode,
                leadCapture: behaviorConfig?.lead_capture_enabled === true,
                 leadId: capturedLead?._id ? String(capturedLead._id) : null
               }
@@ -9354,7 +9354,7 @@ if (debounceMs > 0 && msg.type === "text") {
             const db = await getDb();
             await db.collection("conversations").updateOne(
               { _id: new ObjectId(String(convId)) },
-              { $set: { updatedAt: new Date(), botMode } }
+              { $set: { updatedAt: new Date(), botMode: effectiveBotMode } }
             );
           } catch (e) {
             console.warn("[conv] no se pudo persistir botMode conversacional:", e?.message || e);

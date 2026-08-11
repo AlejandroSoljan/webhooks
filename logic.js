@@ -1409,6 +1409,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
   const id = k(tenantId, from);
   const cfg = await loadBehaviorConfigFromMongo(tenantId);
   const baseText = cfg.text;
+  const botMode = normalizeBotMode(cfg.bot_mode || "pedidos");
   const leadCaptureEnabled = botMode === "conversacional" && cfg.lead_capture_enabled === true;
   const configuredHistoryMode = (cfg.history_mode || "standard").toLowerCase();
   // El modo minimal histórico depende del snapshot Pedido. Para un bot conversacional
