@@ -1391,7 +1391,7 @@ app.get("/novedades", (_req, res) => {
         ),
         url("/static/novedades-bg.png");
 
-      background-size:cover;
+      background-size:100% 100%;
       background-position:center center;
       background-repeat:no-repeat;
       background-attachment:fixed;
