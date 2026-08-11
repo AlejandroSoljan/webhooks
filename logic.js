@@ -159,7 +159,7 @@ function buildStrictPedidoResponseFormat() {
 const ASSISTANT_CONVERSATIONAL_RESPONSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["response", "lead"],
+  required: ["response", "lead", "action"],
   properties: {
     response: { type: "string" },
     lead: {
@@ -194,6 +194,16 @@ const ASSISTANT_CONVERSATIONAL_RESPONSE_SCHEMA = {
         weight: { type: "string" },
         dimensions: { type: "string" },
         notes: { type: "string" }
+      }
+    },
+    action: {
+      type: "object",
+      additionalProperties: false,
+      required: ["call", "name", "query"],
+      properties: {
+        call: { type: "boolean" },
+        name: { type: "string" },
+        query: { type: "string" }
       }
     }
   }
@@ -324,7 +334,43 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
     false;
  const lead_capture_enabled = leadCaptureRaw === true ||
     ["1", "true", "yes", "si", "sí", "on"].includes(String(leadCaptureRaw || "").trim().toLowerCase());
-  const cfg = { text, history_mode, bot_mode, lead_capture_enabled, at: Date.now() };
+
+  const externalApiEnabledRaw =
+    doc.external_api_enabled ??
+    doc.externalApiEnabled ??
+    process.env.EXTERNAL_API_ENABLED ??
+    false;
+  const external_api_enabled = externalApiEnabledRaw === true ||
+    ["1", "true", "yes", "si", "sí", "on"].includes(String(externalApiEnabledRaw || "").trim().toLowerCase());
+  const external_api_action_name = String(doc.external_api_action_name || doc.externalApiActionName || "consulta_externa").trim() || "consulta_externa";
+  const external_api_description = String(doc.external_api_description || doc.externalApiDescription || "Consultar información actualizada en una API externa.").trim();
+ const external_api_url = String(doc.external_api_url || doc.externalApiUrl || "").trim();
+  const external_api_method = String(doc.external_api_method || doc.externalApiMethod || "GET").trim().toUpperCase() === "POST" ? "POST" : "GET";
+  const external_api_query_param = String(doc.external_api_query_param || doc.externalApiQueryParam || "buscar").trim();
+  const external_api_auth_header = String(doc.external_api_auth_header || doc.externalApiAuthHeader || "").trim();
+  const external_api_auth_value = String(doc.external_api_auth_value || doc.externalApiAuthValue || "").trim();
+  const external_api_result_instructions = String(doc.external_api_result_instructions || doc.externalApiResultInstructions || "").trim();
+  const external_api_timeout_ms = Math.max(1000, Math.min(30000, Number(doc.external_api_timeout_ms || doc.externalApiTimeoutMs || 10000) || 10000));
+  const external_api_max_chars = Math.max(2000, Math.min(100000, Number(doc.external_api_max_chars || doc.externalApiMaxChars || 30000) || 30000));
+
+  const cfg = {
+    text,
+    history_mode,
+    bot_mode,
+    lead_capture_enabled,
+    external_api_enabled,
+    external_api_action_name,
+    external_api_description,
+   external_api_url,
+    external_api_method,
+    external_api_query_param,
+    external_api_auth_header,
+    external_api_auth_value,
+    external_api_result_instructions,
+    external_api_timeout_ms,
+    external_api_max_chars,
+    at: Date.now()
+  };
   _behaviorCache.set(key, cfg);
   return cfg;
 }
@@ -1378,6 +1424,143 @@ async function hydratePricesFromCatalog(pedido, tenantId) {
   }
 }
 
+function normalizeConversationalExternalActionName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
+}
+
+function conversationalExternalApiIsUsable(cfg) {
+  if (!cfg?.external_api_enabled) return false;
+  const url = String(cfg?.external_api_url || "").trim();
+  if (!/^https?:\/\//i.test(url)) return false;
+  return !!normalizeConversationalExternalActionName(cfg?.external_api_action_name || "consulta_externa");
+}
+
+async function executeConversationalExternalApi(cfg, action = {}) {
+  const configuredName = normalizeConversationalExternalActionName(cfg?.external_api_action_name || "consulta_externa");
+  const requestedName = normalizeConversationalExternalActionName(action?.name || "");
+  const query = String(action?.query || "").trim().slice(0, 1000);
+
+  if (!conversationalExternalApiIsUsable(cfg)) {
+    return { ok: false, error: "external_api_not_configured" };
+  }
+  if (!requestedName || requestedName !== configuredName) {
+    return { ok: false, error: "external_action_not_allowed", action: requestedName || null };
+  }
+
+  const url = String(cfg.external_api_url || "").trim();
+  const method = String(cfg.external_api_method || "GET").toUpperCase() === "POST" ? "POST" : "GET";
+  const queryParam = String(cfg.external_api_query_param || "").trim();
+  const timeout = Math.max(1000, Math.min(30000, Number(cfg.external_api_timeout_ms || 10000) || 10000));
+  const maxChars = Math.max(2000, Math.min(100000, Number(cfg.external_api_max_chars || 30000) || 30000));
+  const headers = { Accept: "application/json, text/plain;q=0.9, */*;q=0.8" };
+
+  const authHeader = String(cfg.external_api_auth_header || "").trim();
+  const authValue = String(cfg.external_api_auth_value || "").trim();
+  if (authHeader && authValue && !/[\r\n]/.test(authHeader + authValue)) {
+    headers[authHeader] = authValue;
+  }
+
+  const request = {
+    method,
+    url,
+    headers,
+    timeout,
+    maxRedirects: 3,
+    maxContentLength: 1024 * 1024,
+    maxBodyLength: 1024 * 1024,
+    responseType: "text",
+    transformResponse: [(data) => data],
+    validateStatus: () => true,
+  };
+
+  if (queryParam && query) {
+    if (method === "POST") {
+      request.headers["Content-Type"] = "application/json";
+      request.data = JSON.stringify({ [queryParam]: query });
+    } else {
+      request.params = { [queryParam]: query };
+    }
+  } else if (method === "POST") {
+    request.headers["Content-Type"] = "application/json";
+    request.data = "{}";
+  }
+
+  const startedAt = Date.now();
+  try {
+    const resp = await axios.request(request);
+    const status = Number(resp?.status || 0);
+    const raw = typeof resp?.data === "string" ? resp.data : safeStringify(resp?.data);
+    const clipped = String(raw || "").slice(0, maxChars);
+    const contentType = String(resp?.headers?.["content-type"] || "").trim();
+
+    console.log("[external-api] response.meta =>", {
+      action: configuredName,
+      method,
+      status,
+      durationMs: Date.now() - startedAt,
+      chars: clipped.length,
+      truncated: String(raw || "").length > clipped.length,
+      contentType: contentType || null,
+    });
+
+    if (status < 200 || status >= 300) {
+      return {
+        ok: false,
+        error: `external_api_http_${status || "error"}`,
+        status,
+        body: clipped,
+      };
+    }
+
+    return {
+      ok: true,
+      status,
+      body: clipped,
+      contentType,
+      truncated: String(raw || "").length > clipped.length,
+      query,
+    };
+  } catch (e) {
+    console.warn("[external-api] request error:", e?.message || e);
+    return {
+      ok: false,
+      error: e?.code === "ECONNABORTED" ? "external_api_timeout" : "external_api_request_failed",
+      detail: String(e?.message || e).slice(0, 500),
+    };
+  }
+}
+
+function buildConversationalExternalResultBlock(cfg, action, result) {
+  const actionName = normalizeConversationalExternalActionName(cfg?.external_api_action_name || "consulta_externa");
+  const instructions = String(cfg?.external_api_result_instructions || "").trim();
+  const lines = [
+    "[RESULTADO DE API EXTERNA]",
+    `Acción ejecutada: ${actionName}`,
+    `Consulta solicitada: ${String(action?.query || "").trim() || "(sin filtro)"}`,
+  ];
+
+  if (result?.ok) {
+    lines.push("Estado: OK");
+    if (result.truncated) lines.push("Aviso: la respuesta fue truncada por límite de tamaño.");
+    if (instructions) lines.push(`Cómo interpretar el JSON: ${instructions}`);
+    lines.push("Datos devueltos por la API:");
+    lines.push(String(result.body || "").trim() || "(respuesta vacía)");
+    lines.push("Usá estos datos como fuente de verdad para esta respuesta. No inventes valores que no aparezcan en el resultado.");
+  } else {
+    lines.push(`Estado: ERROR (${String(result?.error || "external_api_error")})`);
+    if (result?.status) lines.push(`HTTP: ${result.status}`);
+    lines.push("Informale al usuario, de manera breve, que no pudiste consultar la información actualizada en este momento. No inventes datos.");
+  }
+
+  lines.push("Esta acción ya fue ejecutada. En tu respuesta final devolvé action.call=false, action.name=\"\" y action.query=\"\".");
+  lines.push("Conservá o actualizá el objeto lead según la conversación.");
+  return lines.join("\n");
+}
 
 
 
@@ -1411,6 +1594,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
   const baseText = cfg.text;
   const botMode = normalizeBotMode(cfg.bot_mode || "pedidos");
   const leadCaptureEnabled = botMode === "conversacional" && cfg.lead_capture_enabled === true;
+  const externalApiEnabled = botMode === "conversacional" && conversationalExternalApiIsUsable(cfg);
   const configuredHistoryMode = (cfg.history_mode || "standard").toLowerCase();
   // El modo minimal histórico depende del snapshot Pedido. Para un bot conversacional
   // usamos historial standard y no inyectamos ninguna estructura de pedidos.
@@ -1446,10 +1630,31 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       )
     : "";
 
+    const externalApiBlock = botMode === "conversacional"
+    ? (
+        externalApiEnabled
+          ? [
+              "[ACCION EXTERNA DISPONIBLE]",
+              `Nombre exacto: ${normalizeConversationalExternalActionName(cfg.external_api_action_name)}`,
+              `Descripción: ${String(cfg.external_api_description || "Consultar información actualizada en una API externa.").trim()}`,
+              "Cuando necesites esa información para contestar correctamente, devolvé action.call=true, action.name con el nombre exacto y action.query con una búsqueda breve basada en lo que pidió el usuario.",
+              "Si la API configurada devuelve una lista completa y no necesita filtro, action.query puede ser vacío.",
+              "No inventes resultados de la API. En el primer paso podés dejar response vacío o indicar brevemente que vas a consultar; el backend ejecutará la acción antes de enviar la respuesta al cliente.",
+              'Cuando no necesites la API, devolvé action.call=false, action.name="" y action.query="".'
+            ].join("\n")
+          : [
+              "[ACCION EXTERNA]",
+              "No hay una API externa habilitada para este dominio.",
+              'Devolvé siempre action.call=false, action.name="" y action.query="".'
+            ].join("\n")
+      )
+    : "";
+
   const fullSystem = [
     buildNowBlock(),
     modeBlock,
     leadBlock,
+    externalApiBlock,
     storeHoursBlock,
     "[COMPORTAMIENTO]\n" + baseText + catalogText
   ]
@@ -1580,10 +1785,64 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
 
     //const reply = response.data.choices[0].message.content;
     //console.log("[openai] assistant.content =>\n" + reply);
-    const reply = extractChatCompletionContent(response.data);
+    let reply = extractChatCompletionContent(response.data);
     if (!reply) {
       throw new Error("openai_empty_structured_reply");
     }
+
+    // En modo conversacional, el modelo puede pedir UNA acción externa.
+    // El backend la ejecuta y hace una segunda pasada por OpenAI con el resultado.
+    // El flujo de pedidos nunca entra en este bloque.
+    if (botMode === "conversacional" && externalApiEnabled) {
+      let firstPayload = null;
+      try { firstPayload = JSON.parse(reply); } catch {}
+      if (firstPayload?.action?.call === true) {
+        const action = firstPayload.action || {};
+       const externalResult = await executeConversationalExternalApi(cfg, action);
+        const secondMessages = sanitizeMessages(messages).concat([
+          { role: "assistant", content: reply },
+          { role: "system", content: buildConversationalExternalResultBlock(cfg, action, externalResult) }
+        ]);
+        const secondPayload = {
+          model,
+          messages: secondMessages,
+          temperature,
+          response_format: buildStrictConversationalResponseFormat()
+        };
+        applyModelTokenLimit(secondPayload, model, maxTokens);
+
+        const secondResponse = await axios.post(
+          "https://api.openai.com/v1/chat/completions",
+          secondPayload,
+          { headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" } }
+        );
+
+        try {
+         const usageInfo2 = parseTokenUsagePair(secondResponse?.data?.usage, "message");
+          await recordTokenUsage({
+            tenantId,
+            kind: "message",
+            provider: "openai",
+            model: secondResponse?.data?.model || model,
+            inputTokens: usageInfo2.inputTokens,
+            outputTokens: usageInfo2.outputTokens,
+            totalTokens: usageInfo2.totalTokens,
+            conversationId: String(opts.conversationId || currentConversationIds[id] || "").trim(),
+            waId: String(opts.waId || from || "").trim(),
+            channelType: String(opts.channelType || "whatsapp").trim().toLowerCase(),
+            usageTraceId: String(opts.usageTraceId || "").trim(),
+            meta: { temperature, maxTokens: maxTokens || null, externalAction: normalizeConversationalExternalActionName(action?.name) }
+          });
+        } catch (e) {
+          console.warn("[tokens] external follow-up usage error:", e?.message || e);
+        }
+
+        const secondReply = extractChatCompletionContent(secondResponse?.data);
+        if (secondReply) reply = secondReply;
+      }
+    }
+
+
     // Si el modelo devuelve {"error":"..."} lo logueamos como warn (regla de negocio, no falla técnica)
     {
       let _log = console.log;
@@ -1617,7 +1876,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       console.error("Error OpenAI:", error?.message || error);
     }
     if (botMode === "conversacional") {
-      return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","lead":{"capture":false,"type":"","complete":false,"name":"","company":"","email":"","origin":"","destination":"","cargo":"","packages":"","weight":"","dimensions":"","notes":""}}';
+     return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","lead":{"capture":false,"type":"","complete":false,"name":"","company":"","email":"","origin":"","destination":"","cargo":"","packages":"","weight":"","dimensions":"","notes":""},"action":{"call":false,"name":"","query":""}}';
      }
     return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","estado":"IN_PROGRESS","Pedido":{"items":[],"total_pedido":0}}';
   }

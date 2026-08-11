@@ -7825,8 +7825,15 @@ app.get("/comportamiento", async (req, res) => {
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:960px}
       textarea{width:100%;min-height:360px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
-      .row{display:flex;gap:8px;align-items:center}.hint{color:#666;font-size:12px}.tag{padding:2px 6px;border:1px solid #ccc;border-radius:4px;font-size:12px}
-      input[type=text]{padding:6px 8px}</style></head><body>
+      .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.hint{color:#666;font-size:12px}.tag{padding:2px 6px;border:1px solid #ccc;border-radius:4px;font-size:12px}
+      input[type=text],input[type=password],input[type=number],select{padding:6px 8px}
+      .externalCard{margin-top:14px;padding:14px;border:1px solid #ddd;border-radius:10px;background:#fafafa}
+      .externalGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-top:10px}
+      .externalGrid label{display:flex;flex-direction:column;gap:4px;font-size:13px}
+      .externalGrid input,.externalGrid select{width:100%;box-sizing:border-box}
+      textarea.smallArea{min-height:90px}
+      @media(max-width:760px){.externalGrid{grid-template-columns:1fr}}
+      </style></head><body>
       <h1>Comportamiento del Bot</h1>
       <div class="row">
         <label>Dominio:&nbsp;<input id="tenant" type="text" value="${tenant}" /></label>
@@ -7858,6 +7865,54 @@ app.get("/comportamiento", async (req, res) => {
         </label>
         <span class="hint">Solo se aplica al modo Conversacional. Los pedidos no usan esta opción.</span>
       </div>
+
+      <div class="externalCard">
+        <div class="row">
+          <label>
+            <input id="externalApiEnabled" type="checkbox" />
+            Habilitar acción con API externa
+          </label>
+          <span class="hint">Solo se usa en modo Conversacional. El flujo de pedidos no ejecuta esta API.</span>
+        </div>
+        <div class="externalGrid">
+          <label>Nombre de la acción
+            <input id="externalApiActionName" type="text" value="consulta_lista_precios" placeholder="consulta_lista_precios" />
+          </label>
+          <label>Método
+            <select id="externalApiMethod"><option value="GET">GET</option><option value="POST">POST</option></select>
+          </label>
+         <label style="grid-column:1/-1">Descripción para la IA
+            <input id="externalApiDescription" type="text" placeholder="Consultar lista de precios y productos actualizada." />
+          </label>
+          <label style="grid-column:1/-1">URL de la API
+            <input id="externalApiUrl" type="text" placeholder="https://servidor/api/lista-precios" />
+          </label>
+         <label>Parámetro/campo de búsqueda
+            <input id="externalApiQueryParam" type="text" value="buscar" placeholder="buscar" />
+            <span class="hint">GET: ?buscar=... · POST: {"buscar":"..."}. Dejalo vacío si la API siempre devuelve la lista completa.</span>
+          </label>
+          <label>Timeout (ms)
+            <input id="externalApiTimeoutMs" type="number" min="1000" max="30000" value="10000" />
+          </label>
+         <label>Header de autenticación (opcional)
+            <input id="externalApiAuthHeader" type="text" placeholder="Authorization o X-API-Key" />
+          </label>
+          <label>Valor del header (secreto)
+            <input id="externalApiAuthValue" type="password" autocomplete="new-password" placeholder="Bearer ... / key" />
+            <span id="externalApiAuthHint" class="hint"></span>
+          </label>
+          <label>Límite enviado a la IA (caracteres)
+            <input id="externalApiMaxChars" type="number" min="2000" max="100000" value="30000" />
+          </label>
+          <label style="justify-content:flex-end">
+            <span><input id="externalApiAuthClear" type="checkbox" /> Borrar credencial guardada al guardar</span>
+          </label>
+          <label style="grid-column:1/-1">Cómo interpretar el JSON (opcional)
+            <textarea id="externalApiResultInstructions" class="smallArea" placeholder="Ej.: items contiene los productos; descripcion es el nombre; precio es el precio final."></textarea>
+          </label>
+        </div>
+      </div>
+
      <p></p><textarea id="txt" placeholder="Escribí aquí el comportamiento para este dominio..."></textarea>
       <script>
         async function load(){
@@ -7868,6 +7923,20 @@ app.get("/comportamiento", async (req, res) => {
           document.getElementById('botMode').value = (j.bot_mode || 'pedidos');
           document.getElementById('historyMode').value = (j.history_mode || 'standard');
           document.getElementById('leadCaptureEnabled').checked = j.lead_capture_enabled === true;
+          document.getElementById('externalApiEnabled').checked = j.external_api_enabled === true;
+          document.getElementById('externalApiActionName').value = j.external_api_action_name || 'consulta_lista_precios';
+          document.getElementById('externalApiDescription').value = j.external_api_description || '';
+          document.getElementById('externalApiUrl').value = j.external_api_url || '';
+          document.getElementById('externalApiMethod').value = j.external_api_method || 'GET';
+          document.getElementById('externalApiQueryParam').value = j.external_api_query_param ?? 'buscar';
+          document.getElementById('externalApiAuthHeader').value = j.external_api_auth_header || '';
+          document.getElementById('externalApiAuthValue').value = '';
+          document.getElementById('externalApiAuthClear').checked = false;
+          document.getElementById('externalApiAuthHint').textContent = j.external_api_auth_value_set ? 'Hay una credencial guardada. Dejá vacío para conservarla.' : 'Sin credencial guardada.';
+          document.getElementById('externalApiTimeoutMs').value = String(j.external_api_timeout_ms || 10000);
+          document.getElementById('externalApiMaxChars').value = String(j.external_api_max_chars || 30000);
+          document.getElementById('externalApiResultInstructions').value = j.external_api_result_instructions || '';
+
         }
         async function save(){
           const t=document.getElementById('tenant').value||'';
@@ -7875,11 +7944,37 @@ app.get("/comportamiento", async (req, res) => {
           const m=document.getElementById('historyMode').value||'standard';
           const b=document.getElementById('botMode').value||'pedidos';
           const leadCaptureEnabled=document.getElementById('leadCaptureEnabled').checked === true;
+          const externalApiEnabled=document.getElementById('externalApiEnabled').checked === true;
+          const externalApiActionName=document.getElementById('externalApiActionName').value||'consulta_lista_precios';
+          const externalApiDescription=document.getElementById('externalApiDescription').value||'';
+          const externalApiUrl=document.getElementById('externalApiUrl').value||'';
+          const externalApiMethod=document.getElementById('externalApiMethod').value||'GET';
+          const externalApiQueryParam=document.getElementById('externalApiQueryParam').value||'';
+          const externalApiAuthHeader=document.getElementById('externalApiAuthHeader').value||'';
+          const externalApiAuthValue=document.getElementById('externalApiAuthValue').value||'';
+          const externalApiAuthClear=document.getElementById('externalApiAuthClear').checked === true;
+          const externalApiTimeoutMs=Number(document.getElementById('externalApiTimeoutMs').value||10000);
+          const externalApiMaxChars=Number(document.getElementById('externalApiMaxChars').value||30000);
+          const externalApiResultInstructions=document.getElementById('externalApiResultInstructions').value||'';
           const r=await fetch('/api/behavior?tenant='+encodeURIComponent(t),{
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({text:v,tenantId:t,history_mode:m,bot_mode:b,lead_capture_enabled:leadCaptureEnabled})
-                      });
+            body:JSON.stringify({
+              text:v,tenantId:t,history_mode:m,bot_mode:b,lead_capture_enabled:leadCaptureEnabled,
+              external_api_enabled:externalApiEnabled,
+              external_api_action_name:externalApiActionName,
+              external_api_description:externalApiDescription,
+              external_api_url:externalApiUrl,
+              external_api_method:externalApiMethod,
+              external_api_query_param:externalApiQueryParam,
+              external_api_auth_header:externalApiAuthHeader,
+              external_api_auth_value:externalApiAuthValue,
+              external_api_auth_clear:externalApiAuthClear,
+              external_api_timeout_ms:externalApiTimeoutMs,
+              external_api_max_chars:externalApiMaxChars,
+              external_api_result_instructions:externalApiResultInstructions
+            })
+          });
           alert(r.ok?'Guardado ✅':'Error al guardar');
         }
         document.getElementById('btnSave').addEventListener('click',save);
@@ -7887,6 +7982,7 @@ app.get("/comportamiento", async (req, res) => {
         document.addEventListener('DOMContentLoaded', () => {
           document.getElementById('botMode').value='${normalizeBotMode(cfg.bot_mode).replace(/"/g,'&quot;')}';
           document.getElementById('leadCaptureEnabled').checked=${cfg.lead_capture_enabled === true ? 'true' : 'false'};
+          document.getElementById('externalApiEnabled').checked=${cfg.external_api_enabled === true ? 'true' : 'false'};
         });
         load();
       </script></body></html>`);
@@ -8260,7 +8356,18 @@ app.get("/api/behavior", async (req, res) => {
       text: cfg.text,
       history_mode: cfg.history_mode,
       bot_mode: normalizeBotMode(cfg.bot_mode),
-      lead_capture_enabled: cfg.lead_capture_enabled === true
+      lead_capture_enabled: cfg.lead_capture_enabled === true,
+      external_api_enabled: cfg.external_api_enabled === true,
+      external_api_action_name: cfg.external_api_action_name || "consulta_externa",
+      external_api_description: cfg.external_api_description || "",
+      external_api_url: cfg.external_api_url || "",
+      external_api_method: cfg.external_api_method || "GET",
+      external_api_query_param: cfg.external_api_query_param ?? "buscar",
+      external_api_auth_header: cfg.external_api_auth_header || "",
+      external_api_auth_value_set: !!cfg.external_api_auth_value,
+      external_api_timeout_ms: cfg.external_api_timeout_ms || 10000,
+      external_api_max_chars: cfg.external_api_max_chars || 30000,
+      external_api_result_instructions: cfg.external_api_result_instructions || ""
     });
   } catch {
     res.status(500).json({ error: "internal" });
@@ -8276,15 +8383,77 @@ app.post("/api/behavior", async (req, res) => {
     const leadCaptureRaw = req.body?.lead_capture_enabled ?? req.body?.leadCaptureEnabled ?? false;
     const lead_capture_enabled = leadCaptureRaw === true ||
       ["1", "true", "yes", "si", "sí", "on"].includes(String(leadCaptureRaw || "").trim().toLowerCase());
+
+    const externalApiEnabledRaw = req.body?.external_api_enabled ?? req.body?.externalApiEnabled ?? false;
+    const external_api_enabled = externalApiEnabledRaw === true ||
+      ["1", "true", "yes", "si", "sí", "on"].includes(String(externalApiEnabledRaw || "").trim().toLowerCase());
+    const external_api_action_name = String(req.body?.external_api_action_name || req.body?.externalApiActionName || "consulta_externa")
+      .trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80) || "consulta_externa";
+    const external_api_description = String(req.body?.external_api_description || req.body?.externalApiDescription || "").trim().slice(0, 1000);
+    const external_api_url = String(req.body?.external_api_url || req.body?.externalApiUrl || "").trim().slice(0, 3000);
+    const external_api_method = String(req.body?.external_api_method || req.body?.externalApiMethod || "GET").trim().toUpperCase() === "POST" ? "POST" : "GET";
+    const external_api_query_param = String(req.body?.external_api_query_param ?? req.body?.externalApiQueryParam ?? "buscar").trim().slice(0, 100);
+    const external_api_auth_header = String(req.body?.external_api_auth_header || req.body?.externalApiAuthHeader || "").trim().replace(/[\r\n]/g, "").slice(0, 200);
+    const externalApiAuthValue = String(req.body?.external_api_auth_value || req.body?.externalApiAuthValue || "").trim().replace(/[\r\n]/g, "").slice(0, 4000);
+    const externalApiAuthClearRaw = req.body?.external_api_auth_clear ?? req.body?.externalApiAuthClear ?? false;
+    const externalApiAuthClear = externalApiAuthClearRaw === true ||
+      ["1", "true", "yes", "si", "sí", "on"].includes(String(externalApiAuthClearRaw || "").trim().toLowerCase());
+    const external_api_timeout_ms = Math.max(1000, Math.min(30000, Number(req.body?.external_api_timeout_ms || req.body?.externalApiTimeoutMs || 10000) || 10000));
+    const external_api_max_chars = Math.max(2000, Math.min(100000, Number(req.body?.external_api_max_chars || req.body?.externalApiMaxChars || 30000) || 30000));
+    const external_api_result_instructions = String(req.body?.external_api_result_instructions || req.body?.externalApiResultInstructions || "").trim().slice(0, 5000);
+
+    if (external_api_enabled && !/^https?:\/\//i.test(external_api_url)) {
+      return res.status(400).json({ error: "external_api_url_invalid" });
+    }
+
+
     const db = await require("./db").getDb();
     const _id = `behavior:${tenant}`;
-    await db.collection("settings").updateOne(
-      { _id },
-      { $set: { text, history_mode, bot_mode, lead_capture_enabled, tenantId: tenant, updatedAt: new Date() } },
-      { upsert: true }
-    );
+    const existing = await db.collection("settings").findOne({ _id }, { projection: { external_api_auth_value: 1 } }) || {};
+
+    const setDoc = {
+      text,
+      history_mode,
+      bot_mode,
+      lead_capture_enabled,
+      external_api_enabled,
+      external_api_action_name,
+      external_api_description,
+      external_api_url,
+      external_api_method,
+      external_api_query_param,
+      external_api_auth_header,
+      external_api_timeout_ms,
+      external_api_max_chars,
+      external_api_result_instructions,
+      tenantId: tenant,
+      updatedAt: new Date()
+    };
+
+    if (externalApiAuthValue) {
+      setDoc.external_api_auth_value = externalApiAuthValue;
+    } else if (!externalApiAuthClear && existing.external_api_auth_value) {
+      setDoc.external_api_auth_value = existing.external_api_auth_value;
+    }
+
+    const update = { $set: setDoc };
+    if (externalApiAuthClear && !externalApiAuthValue) {
+      update.$unset = { external_api_auth_value: "" };
+    }
+
+    await db.collection("settings").updateOne({ _id }, update, { upsert: true });
     invalidateBehaviorCache(tenant);
-    res.json({ ok: true, tenant, history_mode, bot_mode, lead_capture_enabled });
+    res.json({
+      ok: true,
+      tenant,
+      history_mode,
+      bot_mode,
+      lead_capture_enabled,
+      external_api_enabled,
+      external_api_action_name,
+      external_api_method,
+      external_api_auth_value_set: !!(externalApiAuthValue || (!externalApiAuthClear && existing.external_api_auth_value))
+    });
   } catch (e) {
     console.error("POST /api/behavior error:", e);
     res.status(500).json({ error: "internal" });
