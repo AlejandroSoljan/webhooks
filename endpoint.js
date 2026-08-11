@@ -1328,6 +1328,265 @@ app.get("/", (req, res) => {
   return res.redirect(302, "/login" + qs);
 });
 
+// ===================== Novedades públicas =====================
+app.get("/novedades", (_req, res) => {
+  const canonical = absUrl("/novedades");
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+
+  return res.status(200).send(`<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>Novedades · Asisto</title>
+
+  <meta
+    name="description"
+    content="Novedades, actualizaciones y nuevas funciones de Asisto."
+  >
+
+  <meta name="robots" content="index,follow">
+  <link rel="canonical" href="${canonical}">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Novedades · Asisto">
+  <meta
+    property="og:description"
+    content="Conocé las novedades, actualizaciones y nuevas funciones de Asisto."
+  >
+  <meta property="og:url" content="${canonical}">
+  <meta property="og:image" content="${absUrl("/static/novedades-bg.png")}">
+
+  <style>
+    *{box-sizing:border-box}
+
+    html,
+    body{
+      width:100%;
+      min-height:100%;
+      margin:0;
+    }
+
+    body{
+      font-family:
+        ui-sans-serif,
+        system-ui,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        Roboto,
+        Arial,
+        sans-serif;
+
+      color:#fff;
+      background-color:#071d35;
+      background-image:
+        linear-gradient(
+          90deg,
+          rgba(5,24,45,.04) 0%,
+          rgba(5,24,45,.08) 45%,
+          rgba(5,24,45,.26) 100%
+        ),
+        url("/static/novedades-bg.png");
+
+      background-size:cover;
+      background-position:center center;
+      background-repeat:no-repeat;
+      background-attachment:fixed;
+    }
+
+    .page{
+      position:relative;
+      min-height:100vh;
+      display:flex;
+      flex-direction:column;
+      padding:38px 52px;
+    }
+
+    .top{
+      display:flex;
+      justify-content:flex-end;
+      align-items:center;
+    }
+
+    .login{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      padding:10px 18px;
+      border-radius:999px;
+      text-decoration:none;
+      color:#fff;
+      font-size:14px;
+      font-weight:600;
+      border:1px solid rgba(255,255,255,.18);
+      background:rgba(255,255,255,.07);
+      backdrop-filter:blur(10px);
+      transition:.18s ease;
+   }
+
+    .login:hover{
+      background:rgba(255,255,255,.13);
+      transform:translateY(-1px);
+    }
+
+    .content{
+      flex:1;
+      display:flex;
+      align-items:center;
+      justify-content:flex-end;
+      padding:60px 3vw;
+    }
+
+    .panel{
+      width:min(560px, 100%);
+      padding:36px 38px;
+      border-radius:26px;
+      background:rgba(4,22,42,.46);
+      border:1px solid rgba(255,255,255,.12);
+      box-shadow:0 24px 70px rgba(0,0,0,.25);
+      backdrop-filter:blur(16px);
+    }
+
+    .tag{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:7px 12px;
+      margin-bottom:18px;
+      border-radius:999px;
+      background:rgba(0,214,170,.12);
+      border:1px solid rgba(0,214,170,.22);
+      color:#37e0bd;
+      font-size:12px;
+      font-weight:700;
+      letter-spacing:.04em;
+      text-transform:uppercase;
+    }
+
+    .tag::before{
+      content:"";
+      width:7px;
+      height:7px;
+      border-radius:50%;
+      background:#27d6b2;
+      box-shadow:0 0 12px rgba(39,214,178,.8);
+    }
+
+    h1{
+      margin:0;
+      font-size:clamp(38px, 5vw, 64px);
+      line-height:.98;
+      letter-spacing:-.045em;
+    }
+
+    .lead{
+      margin:20px 0 0;
+      max-width:470px;
+      color:rgba(255,255,255,.76);
+      font-size:17px;
+      line-height:1.65;
+    }
+
+    .soon{
+      margin-top:28px;
+      padding:18px 20px;
+      border-radius:18px;
+      background:rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.08);
+    }
+
+    .soon strong{
+      display:block;
+      margin-bottom:5px;
+      font-size:15px;
+    }
+
+    .soon span{
+      color:rgba(255,255,255,.65);
+      font-size:14px;
+      line-height:1.5;
+    }
+
+    .footer{
+      display:flex;
+      justify-content:flex-end;
+      color:rgba(255,255,255,.45);
+      font-size:12px;
+    }
+
+    @media(max-width:800px){
+      body{
+        background-position:left center;
+        background-attachment:scroll;
+      }
+
+      .page{
+        padding:22px 20px;
+      }
+
+      .content{
+        align-items:flex-end;
+        padding:260px 0 28px;
+      }
+
+      .panel{
+        padding:26px 24px;
+        background:rgba(4,22,42,.72);
+      }
+
+      .footer{
+        justify-content:center;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="page">
+
+    <header class="top">
+      <a class="login" href="/login">Ingresar a Asisto</a>
+    </header>
+
+    <main class="content">
+      <section class="panel">
+
+        <div class="tag">Novedades</div>
+
+        <h1>
+          Todo lo nuevo<br>
+          de Asisto.
+        </h1>
+
+        <p class="lead">
+          Este espacio reúne las nuevas funciones, mejoras y herramientas
+          que vamos incorporando a Asisto.
+        </p>
+
+        <div class="soon">
+          <strong>Muy pronto</strong>
+          <span>
+            Vas a encontrar acá todas las novedades y actualizaciones
+            de la plataforma.
+          </span>
+        </div>
+
+      </section>
+    </main>
+
+    <footer class="footer">
+      © ${new Date().getFullYear()} Asisto · lo hace por vos...
+    </footer>
+
+  </div>
+</body>
+</html>`);
+});
+
+
 // robots + sitemap para ayudar a indexación/snippet
 app.get("/robots.txt", (_req, res) => {
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
@@ -1343,6 +1602,7 @@ app.get("/sitemap.xml", (_req, res) => {
   res.setHeader("Content-Type", "application/xml; charset=utf-8");
   const urls = [
     { loc: absUrl("/"), priority: "1.0" },
+    { loc: absUrl("/novedades"), priority: "0.8" },
     { loc: absUrl("/login"), priority: "0.3" }
   ];
   const body =

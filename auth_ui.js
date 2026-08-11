@@ -2981,6 +2981,7 @@ function mountAuthRoutes(app) {
     return res.status(200).send(
       [
         "User-agent: *",
+        "Allow: /novedades",
         "Allow: /login",
         "Allow: /static/",
         "Disallow: /app",
@@ -2998,10 +2999,12 @@ function mountAuthRoutes(app) {
       PUBLIC_BASE_URL ||
       `${req.protocol}://${req.get("host")}`;
     const loginUrl = absUrl(baseUrl, "/login");
+    const novedadesUrl = absUrl(baseUrl, "/novedades");
     res.set("Content-Type", "application/xml; charset=utf-8");
     return res.status(200).send(
       `<?xml version="1.0" encoding="UTF-8"?>\n` +
       `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+      `  <url><loc>${novedadesUrl}</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>\n` +
       `  <url><loc>${loginUrl}</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>\n` +
       `</urlset>\n`
     );
@@ -5145,6 +5148,7 @@ function protectRoutes(app) {
     // públicas
     if (
       p === "/" ||
+      p === "/novedades" ||
       p === "/healthz" ||
       p === "/robots.txt" ||
       p === "/sitemap.xml" ||
