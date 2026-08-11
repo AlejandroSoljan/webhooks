@@ -7632,6 +7632,13 @@ app.get("/comportamiento", async (req, res) => {
         </label>
         <span class="hint">En modo Conversacional se usa standard automáticamente.</span>
       </div>
+      <div class="row" style="margin-top:8px">
+        <label>
+          <input id="leadCaptureEnabled" type="checkbox" />
+          Capturar leads / solicitudes de cotización automáticamente
+        </label>
+        <span class="hint">Solo se aplica al modo Conversacional. Los pedidos no usan esta opción.</span>
+      </div>
      <p></p><textarea id="txt" placeholder="Escribí aquí el comportamiento para este dominio..."></textarea>
       <script>
         async function load(){
@@ -7641,24 +7648,26 @@ app.get("/comportamiento", async (req, res) => {
           document.getElementById('txt').value=j.text||'';
           document.getElementById('botMode').value = (j.bot_mode || 'pedidos');
           document.getElementById('historyMode').value = (j.history_mode || 'standard');
+          document.getElementById('leadCaptureEnabled').checked = j.lead_capture_enabled === true;
         }
         async function save(){
           const t=document.getElementById('tenant').value||'';
           const v=document.getElementById('txt').value||'';
           const m=document.getElementById('historyMode').value||'standard';
           const b=document.getElementById('botMode').value||'pedidos';
+          const leadCaptureEnabled=document.getElementById('leadCaptureEnabled').checked === true;
           const r=await fetch('/api/behavior?tenant='+encodeURIComponent(t),{
             method:'POST',
             headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({text:v,tenantId:t,history_mode:m,bot_mode:b})
-          });
+            body:JSON.stringify({text:v,tenantId:t,history_mode:m,bot_mode:b,lead_capture_enabled:leadCaptureEnabled})
+                      });
           alert(r.ok?'Guardado ✅':'Error al guardar');
         }
         document.getElementById('btnSave').addEventListener('click',save);
         document.getElementById('btnReload').addEventListener('click',load);
         document.addEventListener('DOMContentLoaded', () => {
           document.getElementById('botMode').value='${normalizeBotMode(cfg.bot_mode).replace(/"/g,'&quot;')}';
-          document.getElementById('historyMode').value='${(cfg.history_mode || 'standard').replace(/"/g,'&quot;')}';
+          document.getElementById('leadCaptureEnabled').checked=${cfg.lead_capture_enabled === true ? 'true' : 'false'};
         });
         load();
       </script></body></html>`);
@@ -8026,7 +8035,14 @@ app.get("/api/behavior", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
     const cfg = await loadBehaviorConfigFromMongo(tenant);
-    res.json({ source: "mongo", tenant, text: cfg.text, history_mode: cfg.history_mode, bot_mode: normalizeBotMode(cfg.bot_mode) });
+    res.json({
+      source: "mongo",
+      tenant,
+      text: cfg.text,
+      history_mode: cfg.history_mode,
+      bot_mode: normalizeBotMode(cfg.bot_mode),
+      lead_capture_enabled: cfg.lead_capture_enabled === true
+    });
   } catch {
     res.status(500).json({ error: "internal" });
   }
@@ -8038,15 +8054,18 @@ app.post("/api/behavior", async (req, res) => {
     const text = String(req.body?.text || "").trim();
     const history_mode = String(req.body?.history_mode || "").trim() || "standard";
     const bot_mode = normalizeBotMode(req.body?.bot_mode || req.body?.botMode || "pedidos");
+    const leadCaptureRaw = req.body?.lead_capture_enabled ?? req.body?.leadCaptureEnabled ?? false;
+    const lead_capture_enabled = leadCaptureRaw === true ||
+      ["1", "true", "yes", "si", "sí", "on"].includes(String(leadCaptureRaw || "").trim().toLowerCase());
     const db = await require("./db").getDb();
     const _id = `behavior:${tenant}`;
     await db.collection("settings").updateOne(
       { _id },
-      { $set: { text, history_mode, bot_mode, tenantId: tenant, updatedAt: new Date() } },
+      { $set: { text, history_mode, bot_mode, lead_capture_enabled, tenantId: tenant, updatedAt: new Date() } },
       { upsert: true }
     );
     invalidateBehaviorCache(tenant);
-    res.json({ ok: true, tenant, history_mode, bot_mode });
+    res.json({ ok: true, tenant, history_mode, bot_mode, lead_capture_enabled });
   } catch (e) {
     console.error("POST /api/behavior error:", e);
     res.status(500).json({ error: "internal" });
@@ -8060,6 +8079,155 @@ app.post("/api/behavior/refresh-cache", async (req, res) => {
     res.json({ ok: true, tenant, cache: "invalidated" });
   } catch (e) { console.error("refresh-cache error:", e); res.status(500).json({ error: "internal" }); }
 });
+
+
+function cleanConversationalLeadValue(value, maxLen = 500) {
+  const s = String(value ?? "").replace(/\s+/g, " ").trim();
+  return s.slice(0, Math.max(1, Number(maxLen) || 500));
+}
+
+function conversationalLeadPhone(channelType, from, sessionFrom) {
+  if (String(channelType || "").trim().toLowerCase() !== "whatsapp") return "";
+  const raw = String(sessionFrom || from || "");
+  const digits = raw.replace(/\D/g, "");
+  return digits.length >= 8 ? digits.slice(0, 20) : "";
+}
+
+async function upsertConversationalLead({
+  tenant,
+  convId,
+  from,
+  sessionFrom,
+  channelType,
+  lead,
+  userText
+} = {}) {
+ try {
+    if (!lead || lead.capture !== true) return null;
+
+    const tenantId = String(tenant || DEFAULT_TENANT_ID || "default").trim();
+    const conversationId = ObjectId.isValid(String(convId || ""))
+      ? new ObjectId(String(convId))
+      : String(convId || "").trim();
+
+    if (!tenantId || !conversationId) return null;
+
+    const now = new Date();
+    const typeRaw = cleanConversationalLeadValue(lead.type, 40).toLowerCase();
+    const leadType = typeRaw === "contacto" ? "contacto" : "cotizacion";
+    const phone = conversationalLeadPhone(channelType, from, sessionFrom);
+    const waId = cleanConversationalLeadValue(sessionFrom || from, 120);
+    const lastMessage = cleanConversationalLeadValue(userText, 2000);
+
+    const set = {
+      tenantId,
+      source: "bot_conversacional",
+      leadType,
+      status: "open",
+      channelType: cleanConversationalLeadValue(channelType || "whatsapp", 40).toLowerCase(),
+      waId,
+      phone,
+      updatedAt: now,
+      lastMessage
+    };
+
+    const topLevel = {
+      name: cleanConversationalLeadValue(lead.name, 200),
+      company: cleanConversationalLeadValue(lead.company, 200),
+      email: cleanConversationalLeadValue(lead.email, 300)
+    };
+    for (const [key, value] of Object.entries(topLevel)) {
+      if (value) set[key] = value;
+    }
+
+    const quoteFields = {
+      origin: cleanConversationalLeadValue(lead.origin, 300),
+      destination: cleanConversationalLeadValue(lead.destination, 300),
+      cargo: cleanConversationalLeadValue(lead.cargo, 800),
+      packages: cleanConversationalLeadValue(lead.packages, 300),
+      weight: cleanConversationalLeadValue(lead.weight, 300),
+      dimensions: cleanConversationalLeadValue(lead.dimensions, 500),
+      notes: cleanConversationalLeadValue(lead.notes, 1000)
+    };
+    for (const [key, value] of Object.entries(quoteFields)) {
+      if (value) set[`quote.${key}`] = value;
+    }
+
+    const db = await getDb();
+    const filter = {
+      tenantId,
+      source: "bot_conversacional",
+      conversationId
+    };
+
+    const update = {
+      $set: set,
+      $setOnInsert: {
+        createdAt: now,
+        conversationId,
+        message: lastMessage,
+        quoteReady: false,
+        page: `bot/${cleanConversationalLeadValue(channelType || "whatsapp", 40).toLowerCase()}`
+      }
+    };
+
+    const result = await db.collection("leads").findOneAndUpdate(
+      filter,
+      update,
+      { upsert: true, returnDocument: "after" }
+    );
+    let doc = result?.value || result || null;
+    if (!doc?._id) {
+      try { doc = await db.collection("leads").findOne(filter); } catch {}
+    }
+    const leadId = doc?._id || null;
+    const quoteReady = !!(
+      cleanConversationalLeadValue(doc?.quote?.origin, 300) &&
+      cleanConversationalLeadValue(doc?.quote?.destination, 300) &&
+      cleanConversationalLeadValue(doc?.quote?.cargo, 800)
+    );
+
+    if (leadId && doc?.quoteReady !== quoteReady) {
+      try {
+        await db.collection("leads").updateOne(
+          { _id: leadId },
+          { $set: { quoteReady, updatedAt: now } }
+        );
+        doc.quoteReady = quoteReady;
+      } catch (e) {
+        console.warn("[LEAD] no se pudo actualizar quoteReady:", e?.message || e);
+      }
+    }
+
+    if (leadId && ObjectId.isValid(String(convId || ""))) {
+      try {
+        await db.collection("conversations").updateOne(
+          { _id: new ObjectId(String(convId)), tenantId },
+          {
+            $set: {
+              leadId,
+              hasLead: true,
+              leadType,
+              leadUpdatedAt: now
+            }
+          }
+        );
+      } catch (e) {
+        console.warn("[LEAD] no se pudo vincular conversación:", e?.message || e);
+      }
+    }
+
+    console.log(
+      `[LEAD] upsert tenant=${tenantId} convId=${String(convId || "")} ` +
+      `type=${leadType} ready=${quoteReady}`
+    );
+    return doc;
+  } catch (e) {
+    console.error("[LEAD] error guardando lead conversacional:", e?.message || e);
+    return null;
+  }
+}
+
 
 // ===================================================================
 // ===============      Horarios de atención (L-V)     ================
@@ -9129,9 +9297,10 @@ if (debounceMs > 0 && msg.type === "text") {
       // ============================================================
       if (!isOrderBot) {
         let conversationalText = "";
+        let conversationalPayload = null;
         try {
-          const parsed = JSON.parse(String(gptReply || ""));
-          conversationalText = String(parsed?.response || "").trim();
+          conversationalPayload = JSON.parse(String(gptReply || ""));
+          conversationalText = String(conversationalPayload?.response || "").trim();
         } catch {
           conversationalText = String(gptReply || "").trim();
         }
@@ -9146,6 +9315,20 @@ if (debounceMs > 0 && msg.type === "text") {
 
         await require("./logic").sendChannelMessage(from, conversationalText, channelOpts);
 
+        let capturedLead = null;
+        if (behaviorConfig?.lead_capture_enabled === true && conversationalPayload?.lead?.capture === true) {
+          capturedLead = await upsertConversationalLead({
+            tenant,
+            convId,
+            from,
+            sessionFrom,
+            channelType,
+            lead: conversationalPayload.lead,
+            userText: text
+          });
+        }
+
+
         if (convId) {
           try {
             await saveMessageDoc({
@@ -9155,7 +9338,13 @@ if (debounceMs > 0 && msg.type === "text") {
               role: "assistant",
               content: conversationalText,
               type: "text",
-              meta: { model: "gpt", kind: "conversational", botMode }
+              meta: {
+                model: "gpt",
+                kind: "conversational",
+                botMode,
+               leadCapture: behaviorConfig?.lead_capture_enabled === true,
+                leadId: capturedLead?._id ? String(capturedLead._id) : null
+              }
             });
           } catch (e) {
             console.error("saveMessage(assistant conversational):", e?.message);

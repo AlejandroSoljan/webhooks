@@ -159,9 +159,43 @@ function buildStrictPedidoResponseFormat() {
 const ASSISTANT_CONVERSATIONAL_RESPONSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["response"],
+  required: ["response", "lead"],
   properties: {
-    response: { type: "string" }
+    response: { type: "string" },
+    lead: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "capture",
+        "type",
+        "complete",
+        "name",
+        "company",
+        "email",
+        "origin",
+        "destination",
+        "cargo",
+        "packages",
+        "weight",
+        "dimensions",
+        "notes"
+      ],
+      properties: {
+        capture: { type: "boolean" },
+        type: { type: "string", enum: ["", "cotizacion", "contacto"] },
+        complete: { type: "boolean" },
+        name: { type: "string" },
+        company: { type: "string" },
+        email: { type: "string" },
+        origin: { type: "string" },
+        destination: { type: "string" },
+        cargo: { type: "string" },
+        packages: { type: "string" },
+        weight: { type: "string" },
+        dimensions: { type: "string" },
+        notes: { type: "string" }
+      }
+    }
   }
 };
 
@@ -283,7 +317,14 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   const history_mode = (doc.history_mode || process.env.HISTORY_MODE || "standard").trim();
   // Retrocompatibilidad total: si el campo no existe, sigue funcionando como bot de pedidos.
   const bot_mode = normalizeBotMode(doc.bot_mode || doc.botMode || process.env.BOT_MODE || "pedidos");
-  const cfg = { text, history_mode, bot_mode, at: Date.now() };
+  const leadCaptureRaw =
+    doc.lead_capture_enabled ??
+    doc.leadCaptureEnabled ??
+    process.env.LEAD_CAPTURE_ENABLED ??
+    false;
+ const lead_capture_enabled = leadCaptureRaw === true ||
+    ["1", "true", "yes", "si", "sí", "on"].includes(String(leadCaptureRaw || "").trim().toLowerCase());
+  const cfg = { text, history_mode, bot_mode, lead_capture_enabled, at: Date.now() };
   _behaviorCache.set(key, cfg);
   return cfg;
 }
@@ -1368,7 +1409,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
   const id = k(tenantId, from);
   const cfg = await loadBehaviorConfigFromMongo(tenantId);
   const baseText = cfg.text;
-  const botMode = normalizeBotMode(cfg.bot_mode);
+  const leadCaptureEnabled = botMode === "conversacional" && cfg.lead_capture_enabled === true;
   const configuredHistoryMode = (cfg.history_mode || "standard").toLowerCase();
   // El modo minimal histórico depende del snapshot Pedido. Para un bot conversacional
   // usamos historial standard y no inyectamos ninguna estructura de pedidos.
@@ -1381,10 +1422,33 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
   const modeBlock = botMode === "conversacional"
     ? "[MODO BOT]\nConversacional. Respondé según [COMPORTAMIENTO] y el historial. No generes Pedido, estado de pedido, totales ni confirmaciones salvo que el propio comportamiento te lo pida explícitamente."
     : "[MODO BOT]\nPedidos. Conservá el flujo estructurado de pedidos configurado para este dominio.";
+  const leadBlock = botMode === "conversacional"
+    ? (
+        leadCaptureEnabled
+          ? [
+              "[CAPTURA DE LEADS]",
+              "La captura automática está ACTIVADA.",
+              "En cada respuesta completá el objeto lead del JSON.",
+              "Usá lead.capture=true cuando el usuario pida cotización, presupuesto, precio para un servicio, quiera enviar/transportar algo, solicite contacto comercial o siga aportando datos de una consulta comercial iniciada previamente.",
+              "Para una cotización usá lead.type=\"cotizacion\".",
+              "Extraé solo datos que el usuario haya dado explícitamente en esta conversación. No inventes.",
+              "Campos disponibles: name, company, email, origin, destination, cargo, packages, weight, dimensions y notes.",
+              "Si faltan datos relevantes, pedilos naturalmente en response y mantené lead.capture=true con los datos conocidos.",
+              "Usá lead.complete=true solamente cuando ya haya información suficiente para que una persona continúe la gestión comercial; para transporte, como mínimo origen, destino y qué se transporta.",
+              "Cuando no sea una consulta comercial, devolvé lead.capture=false, lead.type=\"\", lead.complete=false y los demás campos como string vacío."
+            ].join("\n")
+          : [
+              "[CAPTURA DE LEADS]",
+              "La captura automática está DESACTIVADA.",
+              "Devolvé siempre lead.capture=false, lead.type=\"\", lead.complete=false y todos los campos de lead como string vacío."
+            ].join("\n")
+      )
+    : "";
 
   const fullSystem = [
     buildNowBlock(),
     modeBlock,
+    leadBlock,
     storeHoursBlock,
     "[COMPORTAMIENTO]\n" + baseText + catalogText
   ]
@@ -1552,8 +1616,8 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       console.error("Error OpenAI:", error?.message || error);
     }
     if (botMode === "conversacional") {
-      return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente."}';
-    }
+      return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","lead":{"capture":false,"type":"","complete":false,"name":"","company":"","email":"","origin":"","destination":"","cargo":"","packages":"","weight":"","dimensions":"","notes":""}}';
+     }
     return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","estado":"IN_PROGRESS","Pedido":{"items":[],"total_pedido":0}}';
   }
 }

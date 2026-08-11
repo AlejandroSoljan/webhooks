@@ -4284,11 +4284,34 @@ function mountAuthRoutes(app) {
     const company = htmlEscape(String(lead?.company || ""));
     const phone = htmlEscape(String(lead?.phone || ""));
     const message = htmlEscape(String(lead?.message || ""));
+    const lastMessage = htmlEscape(String(lead?.lastMessage || ""));
     const ua = htmlEscape(String(lead?.ua || ""));
     const ip = htmlEscape(String(lead?.ip || ""));
     const page = htmlEscape(String(lead?.page || ""));
+    const tenantId = htmlEscape(String(lead?.tenantId || ""));
+    const source = htmlEscape(String(lead?.source || (lead?.page ? "formulario" : "")));
+    const leadType = htmlEscape(String(lead?.leadType || ""));
+    const channelType = htmlEscape(String(lead?.channelType || ""));
+    const quoteReady = lead?.quoteReady === true;
+
+    const qOrigin = htmlEscape(String(lead?.quote?.origin || ""));
+    const qDestination = htmlEscape(String(lead?.quote?.destination || ""));
+    const qCargo = htmlEscape(String(lead?.quote?.cargo || ""));
+    const qPackages = htmlEscape(String(lead?.quote?.packages || ""));
+    const qWeight = htmlEscape(String(lead?.quote?.weight || ""));
+    const qDimensions = htmlEscape(String(lead?.quote?.dimensions || ""));
+    const qNotes = htmlEscape(String(lead?.quote?.notes || ""));
 
     const meta = [company, phone].filter(Boolean).join(" · ");
+    const quoteRows = [
+      qOrigin ? `<div><b>Origen:</b> ${qOrigin}</div>` : "",
+      qDestination ? `<div><b>Destino:</b> ${qDestination}</div>` : "",
+      qCargo ? `<div><b>Carga:</b> ${qCargo}</div>` : "",
+      qPackages ? `<div><b>Bultos:</b> ${qPackages}</div>` : "",
+      qWeight ? `<div><b>Peso:</b> ${qWeight}</div>` : "",
+      qDimensions ? `<div><b>Medidas:</b> ${qDimensions}</div>` : "",
+      qNotes ? `<div><b>Notas:</b> ${qNotes}</div>` : ""
+    ].filter(Boolean).join("");
 
     return `
       <tr>
@@ -4297,9 +4320,18 @@ function mountAuthRoutes(app) {
           <div class="small">${email || "-"}</div>
           ${meta ? `<div class="small">${meta}</div>` : ``}
         </td>
+        <td>
+          <div style="font-weight:600">${tenantId || "-"}</div>
+          <div class="small">${leadType || "contacto"}${channelType ? ` · ${channelType}` : ""}</div>
+          <div class="small">${source || "-"}</div>
+          ${leadType === "cotizacion" ? `<div class="small" style="margin-top:4px;font-weight:700">${quoteReady ? "Datos suficientes" : "Recolectando datos"}</div>` : ``}
+        </td>
         <td style="white-space:nowrap">${createdLabel}</td>
-        <td style="max-width:520px">
-          <div style="white-space:pre-wrap">${message || "-"}</div>
+        <td style="max-width:560px">
+          <div style="white-space:pre-wrap">${message || lastMessage || "-"}</div>
+          ${quoteRows ? `<div class="small" style="margin-top:8px;line-height:1.55">${quoteRows}</div>` : ``}
+          ${lastMessage && lastMessage !== message ? `<div class="small" style="margin-top:8px"><b>Último mensaje:</b> ${lastMessage}</div>` : ``}
+
           <div class="small" style="margin-top:8px">page: ${page || "-"} · ip: ${ip || "-"} · ua: ${ua || "-"}</div>
         </td>
         <td class="actions" style="white-space:nowrap">
@@ -4328,6 +4360,12 @@ function mountAuthRoutes(app) {
               { company: { $regex: q, $options: "i" } },
               { phone: { $regex: q, $options: "i" } },
               { message: { $regex: q, $options: "i" } },
+              { lastMessage: { $regex: q, $options: "i" } },
+              { tenantId: { $regex: q, $options: "i" } },
+              { leadType: { $regex: q, $options: "i" } },
+              { "quote.origin": { $regex: q, $options: "i" } },
+              { "quote.destination": { $regex: q, $options: "i" } },
+              { "quote.cargo": { $regex: q, $options: "i" } },
             ],
           }
         : {};
@@ -4335,7 +4373,7 @@ function mountAuthRoutes(app) {
       const leads = await db.collection("leads").find(filter).sort({ createdAt: -1 }).limit(limit).toArray();
 
       const rows = (leads || []).map(leadRowHtml).join("");
-      const empty = `<tr><td colspan="4" class="small">No hay leads todavía.</td></tr>`;
+      const empty = `<tr><td colspan="5" class="small">No hay leads todavía.</td></tr>`;
 
       const msg = String(req.query?.msg || "").trim();
       const err = String(req.query?.err || "").trim();
@@ -4352,7 +4390,7 @@ function mountAuthRoutes(app) {
               <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap">
                 <div>
                   <h2 style="margin:0 0 6px">Leads</h2>
-                  <div class="small">Mensajes recibidos desde el formulario de contacto en <code>/login</code> (colección <code>leads</code>).</div>
+                  <div class="small">Contactos del formulario y leads capturados por bots conversacionales (colección <code>leads</code>).</div>
                 </div>
                 <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
                   <form method="GET" action="/admin/leads" style="display:flex; gap:8px; align-items:center; margin:0">
@@ -4374,8 +4412,9 @@ function mountAuthRoutes(app) {
                   <thead>
                     <tr>
                       <th>Contacto</th>
+                      <th>Dominio / Tipo</th>
                       <th>Fecha</th>
-                      <th>Mensaje</th>
+                      <th>Consulta / Datos</th>
                       <th>Acciones</th>
                     </tr>
                   </thead>
