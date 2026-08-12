@@ -709,6 +709,172 @@ app.post('/api/ext/wweb/agent/db', wwebAgentJson, requireWwebAgentAccess, async 
     return res.status(500).json({ ok: false, error: 'agent_db_error', detail: String(e?.message || e) });
   }
 });
+ 
+function wwebOperatorPhoneVariants(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (!digits) return [];
+  const out = new Set([digits]);
+  if (digits.startsWith("549")) out.add("54" + digits.slice(3));
+  else if (digits.startsWith("54")) out.add("549" + digits.slice(2));
+  return Array.from(out).filter(Boolean);
+}
+
+// Mensajes enviados manualmente desde el mismo WhatsApp/telefono vinculado.
+// Se usa solamente para sincronizar la conversación del bot ChatGPT/Pedidos.
+// Un mensaje ya generado desde Asisto/panel se ignora por dedupe; un mensaje
+// realmente escrito desde el teléfono se guarda como assistant humano y puede
+// avanzar PENDIENTE IMPORTE -> PENDIENTE COMPROBANTE igual que el panel.
+app.post('/api/ext/wweb/agent/operator-message', wwebAgentJson, requireWwebAgentAccess, async (req, res) => {
+  try {
+    const tenantId = String(req.body?.tenantId || req.headers['x-asisto-tenant'] || '').trim().toUpperCase();
+    const ownPhone = String(
+      req.body?.Tel_Destino || req.body?.tel_destino || req.body?.numero || req.headers['x-asisto-numero'] || ''
+    ).replace(/\D/g, '');
+    const customerPhone = String(
+      req.body?.Tel_Origen || req.body?.tel_origen || req.body?.to || req.body?.waId || ''
+    ).replace(/\D/g, '');
+    const text = String(req.body?.Mensaje ?? req.body?.mensaje ?? req.body?.text ?? '').trim();
+    const messageId = String(req.body?.MessageId || req.body?.messageId || req.body?.id || '').trim();
+    const source = String(req.body?.source || 'wweb_phone_operator').trim() || 'wweb_phone_operator';
+
+    if (!tenantId || !ownPhone || !customerPhone || !text) {
+      return res.status(400).json({ ok: false, error: 'tenant_numero_customer_text_required' });
+    }
+
+    // Sólo corresponde a números configurados como WhatsApp Web + ChatGPT.
+    // El flujo API tradicional y otros transportes no se tocan.
+    let runtime = null;
+    try { runtime = await getRuntimeByWwebPhone(tenantId, ownPhone); } catch {}
+    if (!runtime || normalizeWhatsappTransport(runtime.whatsappTransport || 'api') !== 'wweb') {
+      return res.status(409).json({ ok: false, error: 'wweb_channel_not_found' });
+    }
+    if (normalizeWwebBotLogicMode(runtime.wwebBotLogicMode || 'api') !== 'chatgpt') {
+      return res.json({ ok: true, ignored: true, reason: 'logic_mode_not_chatgpt' });
+    }
+
+    const db = await getDb();
+    const waVariants = wwebOperatorPhoneVariants(customerPhone);
+    let conv = await db.collection('conversations').findOne(
+      {
+        tenantId,
+        waId: { $in: waVariants },
+        finalized: { $ne: true },
+        status: { $nin: ['COMPLETED', 'CANCELLED'] }
+      },
+      { sort: { updatedAt: -1, openedAt: -1, createdAt: -1 } }
+    );
+
+    // Compatibilidad con conversaciones viejas donde finalized/status pueden no
+    // estar completos, priorizando siempre una pendiente de transferencia.
+    if (!conv) {
+      conv = await db.collection('conversations').findOne(
+        {
+          tenantId,
+          waId: { $in: waVariants },
+          transferFlowStatus: { $in: ['PENDIENTE_IMPORTE_TRANSFERENCIA', 'PENDIENTE_COMPROBANTE_TRANSFERENCIA'] }
+        },
+        { sort: { updatedAt: -1, openedAt: -1, createdAt: -1 } }
+      );
+    }
+
+    if (!conv) {
+      return res.json({ ok: true, ignored: true, reason: 'conversation_not_found' });
+    }
+
+    const convId = conv._id;
+    const now = new Date();
+
+    // Si el mensaje salió desde el panel o desde el bot, el servidor ya lo guardó
+    // antes de que WhatsApp dispare message_create. Evitamos duplicarlo. El filtro
+    // excluye mensajes ya identificados como escritos desde el teléfono.
+    const recentCutoff = new Date(Date.now() - 90 * 1000);
+    const alreadyRecorded = await db.collection('messages').findOne({
+      tenantId,
+      conversationId: convId,
+      role: 'assistant',
+      content: text,
+      'meta.from': { $ne: 'wweb_phone_operator' },
+     $or: [
+        { ts: { $gte: recentCutoff } },
+        { createdAt: { $gte: recentCutoff } }
+      ]
+    }, { projection: { _id: 1, meta: 1 } });
+
+    if (alreadyRecorded) {
+      return res.json({
+        ok: true,
+        ignored: true,
+        reason: 'already_recorded_by_asisto',
+        convId: String(convId),
+        transferAdvanced: false
+      });
+    }
+
+    await saveMessageDoc({
+      tenantId,
+      conversationId: convId,
+      waId: String(conv.waId || customerPhone),
+      role: 'assistant',
+      content: text,
+      type: 'text',
+      meta: {
+        from: 'wweb_phone_operator',
+        source,
+        qrPhone: ownPhone,
+        raw: messageId ? { id: messageId } : {}
+      }
+    });
+
+    const convUpdate = {
+      $set: {
+        lastAssistantTs: now,
+        updatedAt: now,
+        lastOperatorMessageAt: now,
+        lastOperatorMessageSource: 'wweb_phone_operator'
+      }
+    };
+
+    let transferAdvanced = false;
+    if (
+      normalizeTransferFlowStatus(conv?.transferFlowStatus || '') === 'PENDIENTE_IMPORTE_TRANSFERENCIA' &&
+      manualTextLooksLikeAmountNotice(text)
+    ) {
+      convUpdate.$set.transferFlowStatus = 'PENDIENTE_COMPROBANTE_TRANSFERENCIA';
+      convUpdate.$set.status = 'PENDIENTE';
+      convUpdate.$set.pedidoEstado = 'PENDIENTE';
+      transferAdvanced = true;
+    }
+
+    await db.collection('conversations').updateOne(
+      { _id: convId, tenantId },
+      convUpdate
+    );
+
+    console.log('[WWEB_OPERATOR] mensaje manual sincronizado', {
+      tenantId,
+      ownPhone,
+      customerPhone,
+      convId: String(convId),
+      transferAdvanced,
+      transferFlowStatusBefore: conv?.transferFlowStatus || null,
+      transferFlowStatusAfter: transferAdvanced ? 'PENDIENTE_COMPROBANTE_TRANSFERENCIA' : (conv?.transferFlowStatus || null)
+    });
+
+    return res.json({
+      ok: true,
+      recorded: true,
+      convId: String(convId),
+      transferAdvanced,
+      transferFlowStatus: transferAdvanced
+        ? 'PENDIENTE_COMPROBANTE_TRANSFERENCIA'
+        : (conv?.transferFlowStatus || null)
+    });
+  } catch (e) {
+    console.error('POST /api/ext/wweb/agent/operator-message error:', e?.message || e);
+    return res.status(500).json({ ok: false, error: 'operator_message_error', detail: String(e?.message || e) });
+  }
+});
+
 
 
 function wwebResolveLockIdFromReq(req) {
