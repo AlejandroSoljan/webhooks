@@ -8099,78 +8099,15 @@ function sanitizeBehaviorExternalActions(rawActions, existingActions = []) {
 
 
 
-// Behavior UI
-app.get("/comportamiento", async (req, res) => {
-  try {
-    const tenant = resolveTenantId(req);
-    const cfg = await loadBehaviorConfigFromMongo(tenant);
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.end(`<!doctype html><html><head><meta charset="utf-8" />
-      <title>Comportamiento del Bot (${tenant})</title>
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1100px}
-      textarea{width:100%;min-height:360px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
-      .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.hint{color:#666;font-size:12px}.tag{padding:2px 6px;border:1px solid #ccc;border-radius:4px;font-size:12px}
-      input[type=text],input[type=password],input[type=number],select{padding:6px 8px}
-      .externalCard{margin-top:14px;padding:14px;border:1px solid #ddd;border-radius:10px;background:#fafafa}
-      .externalGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-top:10px}
-      .externalGrid label{display:flex;flex-direction:column;gap:4px;font-size:13px}
-      .externalGrid input,.externalGrid select{width:100%;box-sizing:border-box}
-      textarea.smallArea{min-height:90px}
-      .actionsToolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
-      .actionCard{margin-top:12px;padding:14px;border:1px solid #cfd6dd;border-radius:10px;background:#fff}
-      .actionHeader{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
-      .actionHeaderLeft{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-      .actionType{font-size:12px;font-weight:700;padding:3px 8px;border-radius:999px;background:#eef2ff;color:#3730a3}
-      .danger{background:#b91c1c;color:#fff;border:0;border-radius:7px;padding:7px 10px;cursor:pointer}
-      .addBtn{background:#0f766e;color:#fff;border:0;border-radius:7px;padding:8px 11px;cursor:pointer;font-weight:600}
-      .emptyActions{padding:16px;border:1px dashed #bbb;border-radius:8px;color:#666;margin-top:12px}
-      @media(max-width:760px){.externalGrid{grid-template-columns:1fr}}
-      </style></head><body>
-      <h1>Comportamiento del Bot</h1>
-      <div class="row">
-        <label>Dominio:&nbsp;<input id="tenant" type="text" value="${tenant}" /></label>
-        <button id="btnReload">Recargar</button>
-        <button id="btnSave">Guardar</button>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <label>Tipo de bot:&nbsp;
-          <select id="botMode">
-            <option value="pedidos">Pedidos (modo actual)</option>
-            <option value="conversacional">Conversacional / pruebas</option>
-          </select>
-        </label>
-        <span class="hint">Conversacional usa solo Comportamiento + historial y no ejecuta reglas de pedidos.</span>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <label>Modo de historial:&nbsp;
-          <select id="historyMode">
-            <option value="standard">standard (completo)</option>
-            <option value="minimal">minimal (solo user + assistant Pedido)</option>
-          </select>
-        </label>
-        <span class="hint">En modo Conversacional se usa standard automáticamente.</span>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <label>
-          <input id="leadCaptureEnabled" type="checkbox" />
-          Capturar leads / solicitudes de cotización automáticamente
-        </label>
-        <span class="hint">Solo se aplica al modo Conversacional. Los pedidos no usan esta opción.</span>
-      </div>
+// JavaScript del panel de Comportamiento servido como archivo externo.
+// Evita que el panel quede inerte si el navegador/proxy bloquea scripts inline
+// dentro del iframe de /ui/comportamiento.
+app.get("/comportamiento-ui.js", (_req, res) => {
+  res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  return res.status(200).send(String.raw`
 
-      <div class="externalCard">
-        <div class="row"><strong>Acciones externas</strong></div>
-        <div class="hint" style="margin-top:4px">Podés configurar varias APIs y búsquedas web. El bot conversacional elige la acción por su nombre/descripción y puede encadenar hasta 4 acciones en un mismo turno.</div>
-        <div class="actionsToolbar">
-          <button id="btnAddApi" class="addBtn" type="button">+ Agregar API</button>
-          <button id="btnAddWeb" class="addBtn" type="button">+ Agregar búsqueda web</button>
-        </div>
-        <div id="actionsContainer"></div>
-      </div>
 
-     <p></p><textarea id="txt" placeholder="Escribí aquí el comportamiento para este dominio..."></textarea>
-      <script>
         var externalActions=[];
 
         function esc(v){
@@ -8266,16 +8203,24 @@ app.get("/comportamiento", async (req, res) => {
         document.getElementById('btnAddApi').addEventListener('click',function(){ externalActions.push(defaultAction('api')); renderActions(); });
         document.getElementById('btnAddWeb').addEventListener('click',function(){ externalActions.push(defaultAction('web')); renderActions(); });
 
-        async function load(){
-          const t = document.getElementById('tenant').value || '';
-          const r=await fetch('/api/behavior?tenant='+encodeURIComponent(t));
-          const j=await r.json();
-          document.getElementById('txt').value=j.text||'';
-          document.getElementById('botMode').value = (j.bot_mode || 'pedidos');
-          document.getElementById('historyMode').value = (j.history_mode || 'standard');
-          document.getElementById('leadCaptureEnabled').checked = j.lead_capture_enabled === true;
-          externalActions=(Array.isArray(j.external_actions)?j.external_actions:[]).map(normalizeClientAction);
-          renderActions();
+          try{
+            setBehaviorStatus('Cargando...',false);
+            const t = document.getElementById('tenant').value || '';
+            const r=await fetch('/api/behavior?tenant='+encodeURIComponent(t),{credentials:'same-origin',cache:'no-store'});
+            let j={};
+            try{j=await r.json();}catch{}
+            if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
+            document.getElementById('txt').value=j.text||'';
+            document.getElementById('botMode').value = (j.bot_mode || 'pedidos');
+            document.getElementById('historyMode').value = (j.history_mode || 'standard');
+            document.getElementById('leadCaptureEnabled').checked = j.lead_capture_enabled === true;
+            externalActions=(Array.isArray(j.external_actions)?j.external_actions:[]).map(normalizeClientAction);
+            renderActions();
+            setBehaviorStatus('Configuración cargada.',false);
+          }catch(e){
+            console.error('[behavior-ui] load error',e);
+            setBehaviorStatus('Error al recuperar: '+String(e&&e.message||e),true);
+          }
 
         }
         async function save(){
@@ -8284,30 +8229,110 @@ app.get("/comportamiento", async (req, res) => {
           const m=document.getElementById('historyMode').value||'standard';
           const b=document.getElementById('botMode').value||'pedidos';
           const leadCaptureEnabled=document.getElementById('leadCaptureEnabled').checked === true;
+
+          setBehaviorStatus('Guardando...',false);
           
           const r=await fetch('/api/behavior?tenant='+encodeURIComponent(t),{
             method:'POST',
+            credentials:'same-origin',
+            cache:'no-store',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
               text:v,tenantId:t,history_mode:m,bot_mode:b,lead_capture_enabled:leadCaptureEnabled,
               external_actions:externalActions
             })
           });
-          alert(r.ok?'Guardado ✅':'Error al guardar');
+          
           let j={}; try{j=await r.json();}catch{}
-          if(!r.ok){ alert('Error al guardar: '+(j.error||'internal')); return; }
-          alert('Guardado ✅');
+          if(!r.ok){
+            setBehaviorStatus('Error al guardar: '+(j.error||('HTTP '+r.status)),true);
+            alert('Error al guardar: '+(j.error||'internal'));
+            return;
+          }
+          setBehaviorStatus('Guardado ✅',false);
           await load();
         }
         document.getElementById('btnSave').addEventListener('click',save);
         document.getElementById('btnReload').addEventListener('click',load);
-        document.addEventListener('DOMContentLoaded', () => {
-          document.getElementById('botMode').value='${normalizeBotMode(cfg.bot_mode).replace(/"/g,'&quot;')}';
-          document.getElementById('leadCaptureEnabled').checked=${cfg.lead_capture_enabled === true ? 'true' : 'false'};
-          
-        });
+      
         load();
-      </script></body></html>`);
+      
+`);
+});
+
+// Behavior UI
+app.get("/comportamiento", async (req, res) => {
+  try {
+    const tenant = resolveTenantId(req);
+    const cfg = await loadBehaviorConfigFromMongo(tenant);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.end(`<!doctype html><html><head><meta charset="utf-8" />
+      <title>Comportamiento del Bot (${tenant})</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1100px}
+      textarea{width:100%;min-height:360px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+      .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.hint{color:#666;font-size:12px}.tag{padding:2px 6px;border:1px solid #ccc;border-radius:4px;font-size:12px}
+      input[type=text],input[type=password],input[type=number],select{padding:6px 8px}
+      .externalCard{margin-top:14px;padding:14px;border:1px solid #ddd;border-radius:10px;background:#fafafa}
+      .externalGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-top:10px}
+      .externalGrid label{display:flex;flex-direction:column;gap:4px;font-size:13px}
+      .externalGrid input,.externalGrid select{width:100%;box-sizing:border-box}
+      textarea.smallArea{min-height:90px}
+      .actionsToolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+      .actionCard{margin-top:12px;padding:14px;border:1px solid #cfd6dd;border-radius:10px;background:#fff}
+      .actionHeader{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+      .actionHeaderLeft{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+      .actionType{font-size:12px;font-weight:700;padding:3px 8px;border-radius:999px;background:#eef2ff;color:#3730a3}
+      .danger{background:#b91c1c;color:#fff;border:0;border-radius:7px;padding:7px 10px;cursor:pointer}
+      .addBtn{background:#0f766e;color:#fff;border:0;border-radius:7px;padding:8px 11px;cursor:pointer;font-weight:600}
+      .emptyActions{padding:16px;border:1px dashed #bbb;border-radius:8px;color:#666;margin-top:12px}
+      @media(max-width:760px){.externalGrid{grid-template-columns:1fr}}
+      </style></head><body>
+      <h1>Comportamiento del Bot</h1>
+      <div class="row">
+        <label>Dominio:&nbsp;<input id="tenant" type="text" value="${tenant}" /></label>
+        <button id="btnReload">Recargar</button>
+        <button id="btnSave">Guardar</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label>Tipo de bot:&nbsp;
+          <select id="botMode">
+            <option value="pedidos">Pedidos (modo actual)</option>
+            <option value="conversacional">Conversacional / pruebas</option>
+          </select>
+        </label>
+        <span class="hint">Conversacional usa solo Comportamiento + historial y no ejecuta reglas de pedidos.</span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label>Modo de historial:&nbsp;
+          <select id="historyMode">
+            <option value="standard">standard (completo)</option>
+            <option value="minimal">minimal (solo user + assistant Pedido)</option>
+          </select>
+        </label>
+        <span class="hint">En modo Conversacional se usa standard automáticamente.</span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label>
+          <input id="leadCaptureEnabled" type="checkbox" />
+          Capturar leads / solicitudes de cotización automáticamente
+        </label>
+        <span class="hint">Solo se aplica al modo Conversacional. Los pedidos no usan esta opción.</span>
+      </div>
+
+      <div class="externalCard">
+        <div class="row"><strong>Acciones externas</strong></div>
+        <div class="hint" style="margin-top:4px">Podés configurar varias APIs y búsquedas web. El bot conversacional elige la acción por su nombre/descripción y puede encadenar hasta 4 acciones en un mismo turno.</div>
+        <div class="actionsToolbar">
+          <button id="btnAddApi" class="addBtn" type="button">+ Agregar API</button>
+          <button id="btnAddWeb" class="addBtn" type="button">+ Agregar búsqueda web</button>
+        </div>
+        <div id="actionsContainer"></div>
+        <div id="behaviorStatus" class="hint" style="margin-top:10px"></div>
+      </div>
+
+     <p></p><textarea id="txt" placeholder="Escribí aquí el comportamiento para este dominio..."></textarea>
+      <script src="/comportamiento-ui.js"></script></body></html>`);
   } catch (e) { console.error("/comportamiento error:", e); res.status(500).send("internal"); }
 });
 
