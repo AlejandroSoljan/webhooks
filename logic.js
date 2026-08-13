@@ -354,6 +354,26 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   const external_api_timeout_ms = Math.max(1000, Math.min(30000, Number(doc.external_api_timeout_ms || doc.externalApiTimeoutMs || 10000) || 10000));
   const external_api_max_chars = Math.max(2000, Math.min(100000, Number(doc.external_api_max_chars || doc.externalApiMaxChars || 30000) || 30000));
 
+  // Nuevo formato: varias acciones externas por comportamiento. Si todavía no existe
+  // external_actions, se transforma virtualmente la API única histórica para mantener
+  // compatibilidad con configuraciones ya guardadas.
+  const external_actions = normalizeConversationalExternalActionsConfig({
+    ...doc,
+    external_api_enabled,
+    external_api_action_name,
+    external_api_description,
+    external_api_url,
+    external_api_method,
+    external_api_query_param,
+    external_api_body_template,
+    external_api_auth_header,
+    external_api_auth_value,
+    external_api_result_instructions,
+    external_api_timeout_ms,
+    external_api_max_chars
+  });
+
+
   const cfg = {
     text,
     history_mode,
@@ -371,6 +391,7 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
     external_api_result_instructions,
     external_api_timeout_ms,
     external_api_max_chars,
+    external_actions,
     at: Date.now()
   };
   _behaviorCache.set(key, cfg);
@@ -1435,11 +1456,107 @@ function normalizeConversationalExternalActionName(value) {
     .slice(0, 80);
 }
 
+function normalizeConversationalExternalActionType(value) {
+  const v = String(value || "api").trim().toLowerCase();
+  return ["web", "web_search", "internet", "buscar_web"].includes(v) ? "web" : "api";
+}
+
+function normalizeConversationalExternalActionEntry(raw = {}, index = 0) {
+  if (!raw || typeof raw !== "object") return null;
+  const type = normalizeConversationalExternalActionType(raw.type ?? raw.action_type ?? raw.actionType ?? "api");
+  const name = normalizeConversationalExternalActionName(
+    raw.name ?? raw.action_name ?? raw.actionName ?? raw.external_api_action_name ?? `accion_${index + 1}`
+  );
+  if (!name) return null;
+
+  const enabledRaw = raw.enabled ?? raw.habilitada ?? raw.active ?? raw.external_api_enabled ?? true;
+  const enabled = enabledRaw === true || ["1", "true", "yes", "si", "sí", "on"].includes(String(enabledRaw || "").trim().toLowerCase());
+  const timeoutMs = Math.max(1000, Math.min(60000, Number(raw.timeout_ms ?? raw.timeoutMs ?? raw.external_api_timeout_ms ?? 10000) || 10000));
+  const maxChars = Math.max(2000, Math.min(100000, Number(raw.max_chars ?? raw.maxChars ?? raw.external_api_max_chars ?? 30000) || 30000));
+  const webContextRaw = String(raw.web_search_context_size ?? raw.webSearchContextSize ?? raw.search_context_size ?? "medium").trim().toLowerCase();
+  const webSearchContextSize = ["low", "medium", "high"].includes(webContextRaw) ? webContextRaw : "medium";
+
+  return {
+    id: String(raw.id || raw.action_id || raw.actionId || name || `accion_${index + 1}`).trim().slice(0, 120),
+    type,
+    enabled,
+    name,
+    description: String(raw.description ?? raw.descripcion ?? raw.external_api_description ?? "").trim().slice(0, 1500),
+    result_instructions: String(raw.result_instructions ?? raw.resultInstructions ?? raw.external_api_result_instructions ?? "").trim().slice(0, 6000),
+    timeout_ms: timeoutMs,
+    max_chars: maxChars,
+
+    // API HTTP
+    url: String(raw.url ?? raw.external_api_url ?? "").trim().slice(0, 3000),
+    method: String(raw.method ?? raw.external_api_method ?? "GET").trim().toUpperCase() === "POST" ? "POST" : "GET",
+    query_param: String(raw.query_param ?? raw.queryParam ?? raw.external_api_query_param ?? "buscar").trim().slice(0, 100),
+    body_template: String(raw.body_template ?? raw.bodyTemplate ?? raw.external_api_body_template ?? "").trim().slice(0, 20000),
+    auth_header: String(raw.auth_header ?? raw.authHeader ?? raw.external_api_auth_header ?? "").trim().replace(/[\r\n]/g, "").slice(0, 200),
+    auth_value: String(raw.auth_value ?? raw.authValue ?? raw.external_api_auth_value ?? "").trim().replace(/[\r\n]/g, "").slice(0, 4000),
+
+    // Búsqueda web mediante OpenAI Responses API.
+    web_model: String(raw.web_model ?? raw.webModel ?? "").trim().slice(0, 120),
+    web_search_context_size: webSearchContextSize
+  };
+}
+
+function normalizeConversationalExternalActionsConfig(cfg = {}) {
+  const rawList = Array.isArray(cfg?.external_actions)
+    ? cfg.external_actions
+    : (Array.isArray(cfg?.externalActions) ? cfg.externalActions : null);
+
+  let source = rawList;
+  if (!source || !source.length) {
+    const legacyHasData = !!(
+      cfg?.external_api_enabled || cfg?.externalApiEnabled ||
+      String(cfg?.external_api_url || cfg?.externalApiUrl || "").trim()
+    );
+    source = legacyHasData ? [{
+      id: "legacy_external_api",
+      type: "api",
+      enabled: cfg?.external_api_enabled ?? cfg?.externalApiEnabled ?? false,
+      name: cfg?.external_api_action_name ?? cfg?.externalApiActionName ?? "consulta_externa",
+      description: cfg?.external_api_description ?? cfg?.externalApiDescription ?? "Consultar información actualizada en una API externa.",
+      url: cfg?.external_api_url ?? cfg?.externalApiUrl ?? "",
+      method: cfg?.external_api_method ?? cfg?.externalApiMethod ?? "GET",
+      query_param: cfg?.external_api_query_param ?? cfg?.externalApiQueryParam ?? "buscar",
+      body_template: cfg?.external_api_body_template ?? cfg?.externalApiBodyTemplate ?? "",
+      auth_header: cfg?.external_api_auth_header ?? cfg?.externalApiAuthHeader ?? "",
+      auth_value: cfg?.external_api_auth_value ?? cfg?.externalApiAuthValue ?? "",
+      timeout_ms: cfg?.external_api_timeout_ms ?? cfg?.externalApiTimeoutMs ?? 10000,
+      max_chars: cfg?.external_api_max_chars ?? cfg?.externalApiMaxChars ?? 30000,
+      result_instructions: cfg?.external_api_result_instructions ?? cfg?.externalApiResultInstructions ?? ""
+    }] : [];
+  }
+  const out = [];
+  const names = new Set();
+  for (let i = 0; i < source.length && out.length < 20; i++) {
+    const item = normalizeConversationalExternalActionEntry(source[i], i);
+    if (!item || names.has(item.name)) continue;
+    names.add(item.name);
+    out.push(item);
+  }
+  return out;
+}
+
+function getUsableConversationalExternalActions(cfg) {
+  return normalizeConversationalExternalActionsConfig(cfg).filter((item) => {
+    if (!item.enabled || !item.name) return false;
+    if (item.type === "web") return true;
+    return /^https?:\/\//i.test(String(item.url || "").trim());
+  });
+}
+
+// Se conserva el nombre histórico porque otras partes del archivo ya lo usan,
+// pero ahora significa "hay al menos una acción externa utilizable".
 function conversationalExternalApiIsUsable(cfg) {
-  if (!cfg?.external_api_enabled) return false;
-  const url = String(cfg?.external_api_url || "").trim();
-  if (!/^https?:\/\//i.test(url)) return false;
-  return !!normalizeConversationalExternalActionName(cfg?.external_api_action_name || "consulta_externa");
+  return getUsableConversationalExternalActions(cfg).length > 0;
+}
+
+function findConversationalExternalAction(cfg, requestedName) {
+  const wanted = normalizeConversationalExternalActionName(requestedName || "");
+  if (!wanted) return null;
+  return getUsableConversationalExternalActions(cfg).find((item) => item.name === wanted) || null;
 }
 
 function externalApiTemplateValue(value, variables) {
@@ -1459,33 +1576,24 @@ function externalApiTemplateValue(value, variables) {
     .replace(/\{\{\s*consulta\s*\}\}/gi, String(variables.consulta || ""));
 }
 
-async function executeConversationalExternalApi(cfg, action = {}, context = {}) {
-  const configuredName = normalizeConversationalExternalActionName(cfg?.external_api_action_name || "consulta_externa");
-  const requestedName = normalizeConversationalExternalActionName(action?.name || "");
+async function executeConversationalHttpApi(actionCfg, action = {}, context = {}) {
   const query = String(action?.query || "").trim().slice(0, 1000);
 
-  if (!conversationalExternalApiIsUsable(cfg)) {
-    return { ok: false, error: "external_api_not_configured" };
-  }
-  if (!requestedName || requestedName !== configuredName) {
-    return { ok: false, error: "external_action_not_allowed", action: requestedName || null };
-  }
-
-  const url = String(cfg.external_api_url || "").trim();
-  const method = String(cfg.external_api_method || "GET").toUpperCase() === "POST" ? "POST" : "GET";
-  const queryParam = String(cfg.external_api_query_param || "").trim();
-  const bodyTemplate = String(cfg.external_api_body_template || "").trim();
+  const url = String(actionCfg.url || "").trim();
+  const method = String(actionCfg.method || "GET").toUpperCase() === "POST" ? "POST" : "GET";
+  const queryParam = String(actionCfg.query_param || "").trim();
+  const bodyTemplate = String(actionCfg.body_template || "").trim();
   const templateVariables = {
     telefono_cliente: String(context?.telefono_cliente || "").replace(/\D/g, ""),
     telefono_qr: String(context?.telefono_qr || "").replace(/\D/g, ""),
     consulta: query
   };
-  const timeout = Math.max(1000, Math.min(30000, Number(cfg.external_api_timeout_ms || 10000) || 10000));
-  const maxChars = Math.max(2000, Math.min(100000, Number(cfg.external_api_max_chars || 30000) || 30000));
+  const timeout = Math.max(1000, Math.min(60000, Number(actionCfg.timeout_ms || 10000) || 10000));
+  const maxChars = Math.max(2000, Math.min(100000, Number(actionCfg.max_chars || 30000) || 30000));
   const headers = { Accept: "application/json, text/plain;q=0.9, */*;q=0.8" };
 
-  const authHeader = String(cfg.external_api_auth_header || "").trim();
-  const authValue = String(cfg.external_api_auth_value || "").trim();
+  const authHeader = String(actionCfg.auth_header || "").trim();
+  const authValue = String(actionCfg.auth_value || "").trim();
   if (authHeader && authValue && !/[\r\n]/.test(authHeader + authValue)) {
     headers[authHeader] = authValue;
   }
@@ -1537,7 +1645,7 @@ async function executeConversationalExternalApi(cfg, action = {}, context = {}) 
     const contentType = String(resp?.headers?.["content-type"] || "").trim();
 
     console.log("[external-api] response.meta =>", {
-      action: configuredName,
+      action: actionCfg.name,
       method,
       status,
       durationMs: Date.now() - startedAt,
@@ -1573,11 +1681,160 @@ async function executeConversationalExternalApi(cfg, action = {}, context = {}) 
   }
 }
 
+function extractResponsesApiText(data) {
+  const direct = String(data?.output_text || "").trim();
+  if (direct) return direct;
+  const parts = [];
+  for (const item of (Array.isArray(data?.output) ? data.output : [])) {
+    if (item?.type !== "message" || !Array.isArray(item?.content)) continue;
+    for (const content of item.content) {
+      const text = String(content?.text || content?.output_text || "").trim();
+      if (text) parts.push(text);
+    }
+  }
+  return parts.join("\n").trim();
+}
+
+function extractResponsesWebSources(data) {
+  const out = [];
+  const seen = new Set();
+  const add = (url, title = "") => {
+    const u = String(url || "").trim();
+    if (!/^https?:\/\//i.test(u) || seen.has(u)) return;
+    seen.add(u);
+    out.push({ url: u, title: String(title || "").trim().slice(0, 300) });
+  };
+
+  for (const item of (Array.isArray(data?.output) ? data.output : [])) {
+    if (item?.type === "web_search_call") {
+      for (const src of (Array.isArray(item?.action?.sources) ? item.action.sources : [])) {
+        add(src?.url, src?.title || src?.name || "");
+      }
+    }
+    if (item?.type === "message" && Array.isArray(item?.content)) {
+      for (const content of item.content) {
+        for (const ann of (Array.isArray(content?.annotations) ? content.annotations : [])) {
+          add(ann?.url || ann?.url_citation?.url, ann?.title || ann?.url_citation?.title || "");
+        }
+      }
+    }
+  }
+  return out.slice(0, 30);
+}
+
+async function executeConversationalWebSearch(actionCfg, action = {}, context = {}) {
+  const query = String(action?.query || "").trim().slice(0, 1500);
+  if (!query) return { ok: false, error: "web_search_query_required" };
+
+  const apiKey = String(context?.openaiApiKey || "").trim();
+  if (!apiKey) return { ok: false, error: "web_search_openai_key_missing" };
+
+  const model = String(actionCfg.web_model || context?.chatModel || "gpt-5.6").trim() || "gpt-5.6";
+  const searchContextSize = ["low", "medium", "high"].includes(String(actionCfg.web_search_context_size || "medium"))
+    ? String(actionCfg.web_search_context_size || "medium")
+    : "medium";
+  const timeout = Math.max(3000, Math.min(60000, Number(actionCfg.timeout_ms || 30000) || 30000));
+  const maxChars = Math.max(2000, Math.min(100000, Number(actionCfg.max_chars || 30000) || 30000));
+
+  const startedAt = Date.now();
+  try {
+    const resp = await axios.post(
+      "https://api.openai.com/v1/responses",
+      {
+        model,
+        tools: [{ type: "web_search", search_context_size: searchContextSize }],
+        // Esta función se ejecuta únicamente cuando el modelo ya solicitó explícitamente
+        // la acción web, por eso forzamos que Responses realmente haga la búsqueda.
+        tool_choice: "required",
+        include: ["web_search_call.action.sources"],
+        input: [
+          "Realizá una búsqueda web para responder la siguiente consulta con información útil, actual y verificable:",
+          query,
+          "Priorizá fuentes primarias, fabricantes, documentación técnica y organismos reconocidos. Resumí los hallazgos y no inventes datos."
+        ].join("\n")
+      },
+      {
+        timeout,
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        validateStatus: () => true
+      }
+    );
+
+    const status = Number(resp?.status || 0);
+    if (status < 200 || status >= 300) {
+      return {
+        ok: false,
+        error: `web_search_http_${status || "error"}`,
+        status,
+        detail: String(resp?.data?.error?.message || resp?.statusText || "").slice(0, 1000)
+      };
+    }
+
+    const text = extractResponsesApiText(resp?.data);
+    const clipped = String(text || "").slice(0, maxChars);
+    const sources = extractResponsesWebSources(resp?.data);
+    console.log("[web-search] response.meta =>", {
+      action: actionCfg.name,
+      model: resp?.data?.model || model,
+      status,
+      durationMs: Date.now() - startedAt,
+      chars: clipped.length,
+      sources: sources.length,
+      truncated: String(text || "").length > clipped.length
+    });
+
+    return {
+      ok: true,
+      provider: "openai_web_search",
+      status,
+      body: clipped,
+      sources,
+      truncated: String(text || "").length > clipped.length,
+      query,
+      model: resp?.data?.model || model,
+      usage: resp?.data?.usage || null
+    };
+  } catch (e) {
+    console.warn("[web-search] request error:", e?.message || e);
+    return {
+      ok: false,
+      error: e?.code === "ECONNABORTED" ? "web_search_timeout" : "web_search_request_failed",
+      detail: String(e?.message || e).slice(0, 500)
+    };
+  }
+}
+
+async function executeConversationalExternalApi(cfg, action = {}, context = {}) {
+  const requestedName = normalizeConversationalExternalActionName(action?.name || "");
+  const actionCfg = findConversationalExternalAction(cfg, requestedName);
+  if (!actionCfg) {
+    return { ok: false, error: "external_action_not_allowed", action: requestedName || null, actionConfig: null };
+  }
+
+  const result = actionCfg.type === "web"
+    ? await executeConversationalWebSearch(actionCfg, action, context)
+    : await executeConversationalHttpApi(actionCfg, action, context);
+
+  return {
+    ...result,
+    actionConfig: {
+      id: actionCfg.id,
+      type: actionCfg.type,
+      name: actionCfg.name,
+      description: actionCfg.description,
+      result_instructions: actionCfg.result_instructions
+    }
+  };
+}
+
+
 function buildConversationalExternalResultBlock(cfg, action, result) {
-  const actionName = normalizeConversationalExternalActionName(cfg?.external_api_action_name || "consulta_externa");
-  const instructions = String(cfg?.external_api_result_instructions || "").trim();
+  const actionCfg = result?.actionConfig || findConversationalExternalAction(cfg, action?.name) || {};
+  const actionName = normalizeConversationalExternalActionName(actionCfg?.name || action?.name || "consulta_externa");
+  const actionType = normalizeConversationalExternalActionType(actionCfg?.type || "api");
+  const instructions = String(actionCfg?.result_instructions || "").trim();
   const lines = [
-    "[RESULTADO DE API EXTERNA]",
+    actionType === "web" ? "[RESULTADO DE BUSQUEDA WEB]" : "[RESULTADO DE API EXTERNA]",
     `Acción ejecutada: ${actionName}`,
     `Consulta solicitada: ${String(action?.query || "").trim() || "(sin filtro)"}`,
   ];
@@ -1585,17 +1842,32 @@ function buildConversationalExternalResultBlock(cfg, action, result) {
   if (result?.ok) {
     lines.push("Estado: OK");
     if (result.truncated) lines.push("Aviso: la respuesta fue truncada por límite de tamaño.");
-    if (instructions) lines.push(`Cómo interpretar el JSON: ${instructions}`);
-    lines.push("Datos devueltos por la API:");
-    lines.push(String(result.body || "").trim() || "(respuesta vacía)");
-    lines.push("Usá estos datos como fuente de verdad para esta respuesta. No inventes valores que no aparezcan en el resultado.");
+    if (instructions) lines.push(`Instrucciones de interpretación: ${instructions}`);
+    if (actionType === "web") {
+      lines.push("Hallazgos obtenidos mediante búsqueda web:");
+      lines.push(String(result.body || "").trim() || "(respuesta vacía)");
+      if (Array.isArray(result.sources) && result.sources.length) {
+        lines.push("Fuentes recuperadas:");
+        for (const src of result.sources.slice(0, 12)) {
+          lines.push(`- ${String(src?.title || "Fuente").trim()}: ${String(src?.url || "").trim()}`);
+        }
+      }
+      lines.push("Usá estos hallazgos para asesoramiento general/técnico. No los uses para afirmar precios, stock, promociones ni disponibilidad comercial del negocio salvo que otra acción comercial lo confirme.");
+    } else {
+      lines.push("Datos devueltos por la API:");
+      lines.push(String(result.body || "").trim() || "(respuesta vacía)");
+      lines.push("Usá estos datos como fuente de verdad para esta respuesta dentro del alcance de esta acción. No inventes valores que no aparezcan en el resultado.");
+    }
   } else {
-    lines.push(`Estado: ERROR (${String(result?.error || "external_api_error")})`);
+    lines.push(`Estado: ERROR (${String(result?.error || "external_action_error")})`);
     if (result?.status) lines.push(`HTTP: ${result.status}`);
-    lines.push("Informale al usuario, de manera breve, que no pudiste consultar la información actualizada en este momento. No inventes datos.");
+    if (result?.detail) lines.push(`Detalle técnico resumido: ${String(result.detail).slice(0, 500)}`);
+    lines.push("No inventes el dato que esta acción debía obtener. Respondé con lo que sí esté confirmado o indicá brevemente que esa información no pudo consultarse.");
+
   }
 
-  lines.push("Esta acción ya fue ejecutada. En tu respuesta final devolvé action.call=false, action.name=\"\" y action.query=\"\".");
+  lines.push("No vuelvas a pedir exactamente la misma acción con la misma consulta en este turno.");
+  lines.push("Si todavía necesitás OTRA acción disponible para completar la respuesta, podés solicitarla ahora. Si ya tenés información suficiente, devolvé action.call=false, action.name=\"\" y action.query=\"\".");
   lines.push("Conservá o actualizá el objeto lead según la conversación.");
   return lines.join("\n");
 }
@@ -1632,7 +1904,8 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
   const baseText = cfg.text;
   const botMode = normalizeBotMode(cfg.bot_mode || "pedidos");
   const leadCaptureEnabled = botMode === "conversacional" && cfg.lead_capture_enabled === true;
-  const externalApiEnabled = botMode === "conversacional" && conversationalExternalApiIsUsable(cfg);
+  const externalActions = botMode === "conversacional" ? getUsableConversationalExternalActions(cfg) : [];
+  const externalApiEnabled = externalActions.length > 0;
   const configuredHistoryMode = (cfg.history_mode || "standard").toLowerCase();
   // El modo minimal histórico depende del snapshot Pedido. Para un bot conversacional
   // usamos historial standard y no inyectamos ninguna estructura de pedidos.
@@ -1672,17 +1945,22 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
     ? (
         externalApiEnabled
           ? [
-              "[ACCION EXTERNA DISPONIBLE]",
-              `Nombre exacto: ${normalizeConversationalExternalActionName(cfg.external_api_action_name)}`,
-              `Descripción: ${String(cfg.external_api_description || "Consultar información actualizada en una API externa.").trim()}`,
-              "Cuando necesites esa información para contestar correctamente, devolvé action.call=true, action.name con el nombre exacto y action.query con una búsqueda breve basada en lo que pidió el usuario.",
-              "Si la API configurada devuelve una lista completa y no necesita filtro, action.query puede ser vacío.",
-              "No inventes resultados de la API. En el primer paso podés dejar response vacío o indicar brevemente que vas a consultar; el backend ejecutará la acción antes de enviar la respuesta al cliente.",
-              'Cuando no necesites la API, devolvé action.call=false, action.name="" y action.query="".'
+              "[ACCIONES EXTERNAS DISPONIBLES]",
+              "Podés solicitar UNA acción por respuesta usando action.call=true, action.name con el nombre exacto y action.query con una consulta breve.",
+              "El backend puede ejecutar varias acciones en secuencia (hasta 4 pasos) dentro del mismo turno. Después de recibir un resultado, si necesitás otra acción, pedila en la respuesta siguiente.",
+              ...externalActions.map((item) => {
+                const typeLabel = item.type === "web" ? "BUSQUEDA WEB" : "API";
+                return `- ${item.name} [${typeLabel}]: ${String(item.description || (item.type === "web" ? "Buscar información pública y actualizada en Internet." : "Consultar información actualizada en una API externa.")).trim()}`;
+              }),
+              "Para una acción API, action.query puede ser vacío si esa API no necesita filtro.",
+              "Para una acción de búsqueda web, action.query debe describir concretamente qué información investigar.",
+              "No inventes resultados de ninguna acción. El backend ejecutará la acción antes de enviar la respuesta final al cliente.",
+              "La búsqueda web sirve para conocimiento y asesoramiento; nunca confirma por sí sola precios, stock, promociones ni disponibilidad comercial del negocio.",
+              'Cuando no necesites ninguna acción, devolvé action.call=false, action.name="" y action.query="".'
             ].join("\n")
           : [
-              "[ACCION EXTERNA]",
-              "No hay una API externa habilitada para este dominio.",
+              "[ACCIONES EXTERNAS]",
+              "No hay acciones externas habilitadas para este dominio.",
               'Devolvé siempre action.call=false, action.name="" y action.query="".'
             ].join("\n")
       )
@@ -1828,43 +2106,92 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       throw new Error("openai_empty_structured_reply");
     }
 
-    // En modo conversacional, el modelo puede pedir UNA acción externa.
-    // El backend la ejecuta y hace una segunda pasada por OpenAI con el resultado.
+    // En modo conversacional el modelo puede pedir acciones externas configuradas.
+    // Se permite encadenar hasta 4 acciones dentro del mismo turno (por ejemplo:
+    // primero consultar productos/precios y luego buscar información técnica en web).
     // El flujo de pedidos nunca entra en este bloque.
     if (botMode === "conversacional" && externalApiEnabled) {
-      let firstPayload = null;
-      try { firstPayload = JSON.parse(reply); } catch {}
-      if (firstPayload?.action?.call === true) {
-        const action = firstPayload.action || {};
-       const externalResult = await executeConversationalExternalApi(cfg, action, {
-          telefono_cliente: opts?.externalApiContext?.telefono_cliente || from,
-          telefono_qr: opts?.externalApiContext?.telefono_qr || ""
-        });
-        const secondMessages = sanitizeMessages(messages).concat([
+      let actionMessages = sanitizeMessages(messages);
+      const executedActionSignatures = new Set();
+      const MAX_EXTERNAL_ACTION_STEPS = 4;
+
+      for (let actionStep = 0; actionStep < MAX_EXTERNAL_ACTION_STEPS; actionStep++) {
+        let parsedPayload = null;
+        try { parsedPayload = JSON.parse(reply); } catch {}
+        if (parsedPayload?.action?.call !== true) break;
+
+        const action = parsedPayload.action || {};
+        const actionName = normalizeConversationalExternalActionName(action?.name || "");
+        const actionQuery = String(action?.query || "").trim();
+        const signature = `${actionName}|${actionQuery.toLowerCase()}`;
+
+        let externalResult;
+        if (executedActionSignatures.has(signature)) {
+          externalResult = {
+            ok: false,
+            error: "external_action_duplicate_call",
+            actionConfig: findConversationalExternalAction(cfg, actionName)
+          };
+        } else {
+          executedActionSignatures.add(signature);
+          externalResult = await executeConversationalExternalApi(cfg, action, {
+            telefono_cliente: opts?.externalApiContext?.telefono_cliente || from,
+            telefono_qr: opts?.externalApiContext?.telefono_qr || "",
+            openaiApiKey: apiKey,
+            chatModel: model
+          });
+
+          // La búsqueda web es otra llamada OpenAI (Responses API); registrar también
+          // sus tokens cuando el endpoint devuelve usage.
+          if (externalResult?.provider === "openai_web_search" && externalResult?.usage) {
+            try {
+              const webUsage = parseTokenUsagePair(externalResult.usage, "message");
+              await recordTokenUsage({
+                tenantId,
+                kind: "web_search",
+                provider: "openai",
+                model: externalResult?.model || model,
+                inputTokens: webUsage.inputTokens,
+                outputTokens: webUsage.outputTokens,
+                totalTokens: webUsage.totalTokens,
+                conversationId: String(opts.conversationId || currentConversationIds[id] || "").trim(),
+                waId: String(opts.waId || from || "").trim(),
+                channelType: String(opts.channelType || "whatsapp").trim().toLowerCase(),
+                usageTraceId: String(opts.usageTraceId || "").trim(),
+                meta: { externalAction: actionName, actionStep: actionStep + 1 }
+              });
+            } catch (e) {
+              console.warn("[tokens] web_search usage error:", e?.message || e);
+            }
+          }
+        }
+
+        actionMessages = actionMessages.concat([
           { role: "assistant", content: reply },
           { role: "system", content: buildConversationalExternalResultBlock(cfg, action, externalResult) }
         ]);
-        const secondPayload = {
+
+        const followupPayload = {
           model,
-          messages: secondMessages,
+          messages: actionMessages,
           temperature,
           response_format: buildStrictConversationalResponseFormat()
         };
-        applyModelTokenLimit(secondPayload, model, maxTokens);
+        applyModelTokenLimit(followupPayload, model, maxTokens);
 
-        const secondResponse = await axios.post(
+        const followupResponse = await axios.post(
           "https://api.openai.com/v1/chat/completions",
-          secondPayload,
+          followupPayload,
           { headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" } }
         );
 
         try {
-         const usageInfo2 = parseTokenUsagePair(secondResponse?.data?.usage, "message");
+         const usageInfo2 = parseTokenUsagePair(followupResponse?.data?.usage, "message");
           await recordTokenUsage({
             tenantId,
             kind: "message",
             provider: "openai",
-            model: secondResponse?.data?.model || model,
+            model: followupResponse?.data?.model || model,
             inputTokens: usageInfo2.inputTokens,
             outputTokens: usageInfo2.outputTokens,
             totalTokens: usageInfo2.totalTokens,
@@ -1872,14 +2199,63 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
             waId: String(opts.waId || from || "").trim(),
             channelType: String(opts.channelType || "whatsapp").trim().toLowerCase(),
             usageTraceId: String(opts.usageTraceId || "").trim(),
-            meta: { temperature, maxTokens: maxTokens || null, externalAction: normalizeConversationalExternalActionName(action?.name) }
+            meta: { temperature, maxTokens: maxTokens || null, externalAction: actionName, actionStep: actionStep + 1 }
           });
         } catch (e) {
           console.warn("[tokens] external follow-up usage error:", e?.message || e);
         }
 
-        const secondReply = extractChatCompletionContent(secondResponse?.data);
-        if (secondReply) reply = secondReply;
+        const nextReply = extractChatCompletionContent(followupResponse?.data);
+        if (!nextReply) break;
+        reply = nextReply;
+      }
+
+      // Si el modelo todavía intenta pedir una quinta acción, forzamos una última
+      // respuesta usando todo lo ya obtenido. Así nunca se envía al cliente un JSON
+      // intermedio con action.call=true o response vacío por alcanzar el límite.
+      let afterLimitPayload = null;
+      try { afterLimitPayload = JSON.parse(reply); } catch {}
+      if (afterLimitPayload?.action?.call === true) {
+        const finalMessages = actionMessages.concat([
+          { role: "assistant", content: reply },
+          {
+            role: "system",
+            content: [
+              "[LIMITE DE ACCIONES DEL TURNO]",
+              "Ya se alcanzó el máximo de acciones externas para este turno.",
+              "No solicites más acciones ahora. Respondé al usuario con la mejor información confirmada disponible.",
+              'Devolvé action.call=false, action.name="" y action.query="".'
+            ].join("\n")
+          }
+        ]);
+        const finalPayload = {
+          model,
+          messages: finalMessages,
+          temperature,
+          response_format: buildStrictConversationalResponseFormat()
+        };
+        applyModelTokenLimit(finalPayload, model, maxTokens);
+        const finalResponse = await axios.post(
+          "https://api.openai.com/v1/chat/completions",
+          finalPayload,
+          { headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" } }
+        );
+        try {
+          const finalUsage = parseTokenUsagePair(finalResponse?.data?.usage, "message");
+          await recordTokenUsage({
+            tenantId, kind: "message", provider: "openai", model: finalResponse?.data?.model || model,
+            inputTokens: finalUsage.inputTokens, outputTokens: finalUsage.outputTokens, totalTokens: finalUsage.totalTokens,
+            conversationId: String(opts.conversationId || currentConversationIds[id] || "").trim(),
+            waId: String(opts.waId || from || "").trim(),
+            channelType: String(opts.channelType || "whatsapp").trim().toLowerCase(),
+            usageTraceId: String(opts.usageTraceId || "").trim(),
+            meta: { temperature, maxTokens: maxTokens || null, externalAction: "limit_final" }
+          });
+        } catch (e) {
+          console.warn("[tokens] external limit final usage error:", e?.message || e);
+        }
+        const finalReply = extractChatCompletionContent(finalResponse?.data);
+        if (finalReply) reply = finalReply;
       }
     }
 

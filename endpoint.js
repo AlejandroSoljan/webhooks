@@ -7978,6 +7978,125 @@ app.get("/horarios", async (req, res) => {
   }
 });
 
+function normalizeBehaviorExternalActionName(value) {
+  return String(value || "")
+    .trim().toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
+}
+
+function behaviorBool(value, fallback = false) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  return ["1", "true", "yes", "si", "sí", "on"].includes(String(value).trim().toLowerCase());
+}
+
+function normalizeBehaviorExternalActionType(value) {
+  const v = String(value || "api").trim().toLowerCase();
+  return ["web", "web_search", "internet", "buscar_web"].includes(v) ? "web" : "api";
+}
+
+function publicBehaviorExternalActions(actions) {
+  return (Array.isArray(actions) ? actions : []).map((raw) => {
+    const item = raw && typeof raw === "object" ? raw : {};
+    const { auth_value, authValue, ...safe } = item;
+    return {
+      ...safe,
+      auth_value_set: !!(auth_value || authValue)
+    };
+  });
+}
+
+function legacyBehaviorActionFromBody(body = {}) {
+  const enabledRaw = body?.external_api_enabled ?? body?.externalApiEnabled ?? false;
+  const hasLegacyFields = body?.external_api_enabled !== undefined || body?.externalApiEnabled !== undefined ||
+    body?.external_api_url !== undefined || body?.externalApiUrl !== undefined ||
+    body?.external_api_action_name !== undefined || body?.externalApiActionName !== undefined;
+  if (!hasLegacyFields) return null;
+  return {
+    id: "legacy_external_api",
+    type: "api",
+    enabled: behaviorBool(enabledRaw, false),
+    name: body?.external_api_action_name ?? body?.externalApiActionName ?? "consulta_externa",
+    description: body?.external_api_description ?? body?.externalApiDescription ?? "",
+    url: body?.external_api_url ?? body?.externalApiUrl ?? "",
+    method: body?.external_api_method ?? body?.externalApiMethod ?? "GET",
+    query_param: body?.external_api_query_param ?? body?.externalApiQueryParam ?? "buscar",
+    body_template: body?.external_api_body_template ?? body?.externalApiBodyTemplate ?? "",
+    auth_header: body?.external_api_auth_header ?? body?.externalApiAuthHeader ?? "",
+    auth_value: body?.external_api_auth_value ?? body?.externalApiAuthValue ?? "",
+    auth_clear: body?.external_api_auth_clear ?? body?.externalApiAuthClear ?? false,
+    timeout_ms: body?.external_api_timeout_ms ?? body?.externalApiTimeoutMs ?? 10000,
+    max_chars: body?.external_api_max_chars ?? body?.externalApiMaxChars ?? 30000,
+    result_instructions: body?.external_api_result_instructions ?? body?.externalApiResultInstructions ?? ""
+  };
+}
+
+function sanitizeBehaviorExternalActions(rawActions, existingActions = []) {
+  const input = Array.isArray(rawActions) ? rawActions.slice(0, 20) : [];
+  const existing = Array.isArray(existingActions) ? existingActions : [];
+  const out = [];
+  const usedNames = new Set();
+  const usedIds = new Set();
+
+  for (let i = 0; i < input.length; i++) {
+    const raw = input[i] && typeof input[i] === "object" ? input[i] : {};
+    const type = normalizeBehaviorExternalActionType(raw.type ?? raw.action_type ?? raw.actionType ?? "api");
+    const name = normalizeBehaviorExternalActionName(raw.name ?? raw.action_name ?? raw.actionName ?? `accion_${i + 1}`);
+    if (!name) throw new Error(`external_action_name_required:${i}`);
+    if (usedNames.has(name)) throw new Error(`external_action_name_duplicate:${name}`);
+    usedNames.add(name);
+
+    let id = String(raw.id || raw.action_id || raw.actionId || name).trim().replace(/[^a-zA-Z0-9_.-]+/g, "_").slice(0, 120) || name;
+    if (usedIds.has(id)) id = `${id}_${i + 1}`.slice(0, 120);
+    usedIds.add(id);
+
+    const previous = existing.find((item) => String(item?.id || "") === id) ||
+      existing.find((item) => normalizeBehaviorExternalActionName(item?.name) === name) || null;
+
+    const enabled = behaviorBool(raw.enabled ?? raw.habilitada ?? raw.active, true);
+    const timeout_ms = Math.max(1000, Math.min(60000, Number(raw.timeout_ms ?? raw.timeoutMs ?? 10000) || 10000));
+    const max_chars = Math.max(2000, Math.min(100000, Number(raw.max_chars ?? raw.maxChars ?? 30000) || 30000));
+    const result_instructions = String(raw.result_instructions ?? raw.resultInstructions ?? "").trim().slice(0, 6000);
+    const description = String(raw.description ?? raw.descripcion ?? "").trim().slice(0, 1500);
+
+    const item = { id, type, enabled, name, description, result_instructions, timeout_ms, max_chars };
+
+    if (type === "web") {
+      const ctx = String(raw.web_search_context_size ?? raw.webSearchContextSize ?? raw.search_context_size ?? "medium").trim().toLowerCase();
+      item.web_search_context_size = ["low", "medium", "high"].includes(ctx) ? ctx : "medium";
+      item.web_model = String(raw.web_model ?? raw.webModel ?? "").trim().slice(0, 120);
+    } else {
+      item.url = String(raw.url ?? "").trim().slice(0, 3000);
+      item.method = String(raw.method ?? "GET").trim().toUpperCase() === "POST" ? "POST" : "GET";
+      item.query_param = String(raw.query_param ?? raw.queryParam ?? "buscar").trim().slice(0, 100);
+      item.body_template = String(raw.body_template ?? raw.bodyTemplate ?? "").trim().slice(0, 20000);
+      item.auth_header = String(raw.auth_header ?? raw.authHeader ?? "").trim().replace(/[\r\n]/g, "").slice(0, 200);
+
+      if (enabled && !/^https?:\/\//i.test(item.url)) {
+        throw new Error(`external_action_url_invalid:${name}`);
+      }
+      if (item.body_template) {
+        let parsed;
+        try { parsed = JSON.parse(item.body_template); }
+        catch { throw new Error(`external_action_body_template_invalid_json:${name}`); }
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error(`external_action_body_template_must_be_object:${name}`);
+        }
+      }
+
+      const incomingSecret = String(raw.auth_value ?? raw.authValue ?? "").trim().replace(/[\r\n]/g, "").slice(0, 4000);
+      const clearSecret = behaviorBool(raw.auth_clear ?? raw.authClear, false);
+      if (incomingSecret) item.auth_value = incomingSecret;
+      else if (!clearSecret && previous?.auth_value) item.auth_value = String(previous.auth_value);
+    }
+
+    out.push(item);
+  }
+  return out;
+}
+
 
 
 // Behavior UI
@@ -7989,7 +8108,7 @@ app.get("/comportamiento", async (req, res) => {
     res.end(`<!doctype html><html><head><meta charset="utf-8" />
       <title>Comportamiento del Bot (${tenant})</title>
       <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:960px}
+      <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;max-width:1100px}
       textarea{width:100%;min-height:360px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
       .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.hint{color:#666;font-size:12px}.tag{padding:2px 6px;border:1px solid #ccc;border-radius:4px;font-size:12px}
       input[type=text],input[type=password],input[type=number],select{padding:6px 8px}
@@ -7998,6 +8117,14 @@ app.get("/comportamiento", async (req, res) => {
       .externalGrid label{display:flex;flex-direction:column;gap:4px;font-size:13px}
       .externalGrid input,.externalGrid select{width:100%;box-sizing:border-box}
       textarea.smallArea{min-height:90px}
+      .actionsToolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+      .actionCard{margin-top:12px;padding:14px;border:1px solid #cfd6dd;border-radius:10px;background:#fff}
+      .actionHeader{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+      .actionHeaderLeft{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+      .actionType{font-size:12px;font-weight:700;padding:3px 8px;border-radius:999px;background:#eef2ff;color:#3730a3}
+      .danger{background:#b91c1c;color:#fff;border:0;border-radius:7px;padding:7px 10px;cursor:pointer}
+      .addBtn{background:#0f766e;color:#fff;border:0;border-radius:7px;padding:8px 11px;cursor:pointer;font-weight:600}
+      .emptyActions{padding:16px;border:1px dashed #bbb;border-radius:8px;color:#666;margin-top:12px}
       @media(max-width:760px){.externalGrid{grid-template-columns:1fr}}
       </style></head><body>
       <h1>Comportamiento del Bot</h1>
@@ -8033,59 +8160,112 @@ app.get("/comportamiento", async (req, res) => {
       </div>
 
       <div class="externalCard">
-        <div class="row">
-          <label>
-            <input id="externalApiEnabled" type="checkbox" />
-            Habilitar acción con API externa
-          </label>
-          <span class="hint">Solo se usa en modo Conversacional. El flujo de pedidos no ejecuta esta API.</span>
+        <div class="row"><strong>Acciones externas</strong></div>
+        <div class="hint" style="margin-top:4px">Podés configurar varias APIs y búsquedas web. El bot conversacional elige la acción por su nombre/descripción y puede encadenar hasta 4 acciones en un mismo turno.</div>
+        <div class="actionsToolbar">
+          <button id="btnAddApi" class="addBtn" type="button">+ Agregar API</button>
+          <button id="btnAddWeb" class="addBtn" type="button">+ Agregar búsqueda web</button>
         </div>
-        <div class="externalGrid">
-          <label>Nombre de la acción
-            <input id="externalApiActionName" type="text" value="consulta_lista_precios" placeholder="consulta_lista_precios" />
-          </label>
-          <label>Método
-            <select id="externalApiMethod"><option value="GET">GET</option><option value="POST">POST</option></select>
-          </label>
-         <label style="grid-column:1/-1">Descripción para la IA
-            <input id="externalApiDescription" type="text" placeholder="Consultar lista de precios y productos actualizada." />
-          </label>
-          <label style="grid-column:1/-1">URL de la API
-            <input id="externalApiUrl" type="text" placeholder="https://servidor/api/lista-precios" />
-          </label>
-         <label>Parámetro/campo de búsqueda
-            <input id="externalApiQueryParam" type="text" value="buscar" placeholder="buscar" />
-            <span class="hint">GET: ?buscar=... · POST simple: {"buscar":"..."}. Si completás Body JSON, ese body tiene prioridad para POST.</span>
-          </label>
-          <label>Timeout (ms)
-            <input id="externalApiTimeoutMs" type="number" min="1000" max="30000" value="10000" />
-          </label>
-         <label>Header de autenticación (opcional)
-            <input id="externalApiAuthHeader" type="text" placeholder="Authorization o X-API-Key" />
-          </label>
-          <label>Valor del header (secreto)
-            <input id="externalApiAuthValue" type="password" autocomplete="new-password" placeholder="Bearer ... / key" />
-            <span id="externalApiAuthHint" class="hint"></span>
-          </label>
-          <label>Límite enviado a la IA (caracteres)
-            <input id="externalApiMaxChars" type="number" min="2000" max="100000" value="30000" />
-          </label>
-          <label style="justify-content:flex-end">
-            <span><input id="externalApiAuthClear" type="checkbox" /> Borrar credencial guardada al guardar</span>
-          </label>
-          <label style="grid-column:1/-1">Body JSON para POST (opcional)
-            <textarea id="externalApiBodyTemplate" class="smallArea" placeholder='{"Tel_Origen":"{{telefono_cliente}}","Tel_Destino":"{{telefono_qr}}","Mensaje":"{{consulta}}"}'></textarea>
-            <span class="hint">Variables disponibles: {{telefono_cliente}}, {{telefono_qr}} y {{consulta}}. Si queda vacío, POST mantiene el modo simple usando el campo de búsqueda.</span>
-          </label>
-
-          <label style="grid-column:1/-1">Cómo interpretar el JSON (opcional)
-            <textarea id="externalApiResultInstructions" class="smallArea" placeholder="Ej.: items contiene los productos; descripcion es el nombre; precio es el precio final."></textarea>
-          </label>
-        </div>
+        <div id="actionsContainer"></div>
       </div>
 
      <p></p><textarea id="txt" placeholder="Escribí aquí el comportamiento para este dominio..."></textarea>
       <script>
+        var externalActions=[];
+
+        function esc(v){
+          return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+        }
+        function makeId(prefix){
+          return String(prefix||'accion')+'_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,7);
+        }
+        function defaultAction(type){
+          if(type==='web') return {
+            id:makeId('web'),type:'web',enabled:true,name:'buscar_web',description:'Buscar información pública y actualizada en Internet para complementar el asesoramiento.',
+            web_model:'',web_search_context_size:'medium',timeout_ms:30000,max_chars:30000,result_instructions:''
+          };
+          return {
+           id:makeId('api'),type:'api',enabled:true,name:'consulta_externa',description:'Consultar información actualizada en una API externa.',
+            url:'',method:'GET',query_param:'buscar',body_template:'',auth_header:'',auth_value:'',auth_value_set:false,auth_clear:false,
+            timeout_ms:10000,max_chars:30000,result_instructions:''
+          };
+        }
+        function normalizeClientAction(a){
+          a=a&&typeof a==='object'?Object.assign({},a):{};
+          a.id=a.id||makeId(a.type==='web'?'web':'api');
+          a.type=a.type==='web'?'web':'api';
+          a.enabled=a.enabled!==false;
+          a.name=a.name||(a.type==='web'?'buscar_web':'consulta_externa');
+          a.description=a.description||'';
+          a.timeout_ms=Number(a.timeout_ms|| (a.type==='web'?30000:10000));
+          a.max_chars=Number(a.max_chars||30000);
+          a.result_instructions=a.result_instructions||'';
+          if(a.type==='api'){
+            a.url=a.url||''; a.method=a.method==='POST'?'POST':'GET'; a.query_param=a.query_param==null?'buscar':a.query_param;
+            a.body_template=a.body_template||''; a.auth_header=a.auth_header||''; a.auth_value=''; a.auth_clear=false;
+          } else {
+            a.web_model=a.web_model||'';
+            a.web_search_context_size=['low','medium','high'].indexOf(a.web_search_context_size)>=0?a.web_search_context_size:'medium';
+         }
+          return a;
+        }
+        function commonFields(a,i){
+          return '<div class="externalGrid">'+
+            '<label>Nombre exacto de la acción<input data-i="'+i+'" data-field="name" type="text" value="'+esc(a.name)+'" placeholder="consulta_lista_precios" /></label>'+
+            '<label>Tipo<select data-i="'+i+'" data-field="type" class="typeSelect"><option value="api"'+(a.type==='api'?' selected':'')+'>API HTTP</option><option value="web"'+(a.type==='web'?' selected':'')+'>Búsqueda web</option></select></label>'+
+            '<label style="grid-column:1/-1">Descripción para la IA<input data-i="'+i+'" data-field="description" type="text" value="'+esc(a.description)+'" placeholder="Cuándo y para qué debe usar esta acción" /></label>';
+        }
+        function apiFields(a,i){
+         return '<label style="grid-column:1/-1">URL de la API<input data-i="'+i+'" data-field="url" type="text" value="'+esc(a.url||'')+'" placeholder="https://servidor/api/..." /></label>'+
+            '<label>Método<select data-i="'+i+'" data-field="method"><option value="GET"'+(a.method==='GET'?' selected':'')+'>GET</option><option value="POST"'+(a.method==='POST'?' selected':'')+'>POST</option></select></label>'+
+            '<label>Parámetro/campo de búsqueda<input data-i="'+i+'" data-field="query_param" type="text" value="'+esc(a.query_param==null?'buscar':a.query_param)+'" placeholder="buscar" /><span class="hint">GET: ?campo=... · POST simple: {campo:...}. El Body JSON tiene prioridad.</span></label>'+
+            '<label>Timeout (ms)<input data-i="'+i+'" data-field="timeout_ms" type="number" min="1000" max="60000" value="'+esc(a.timeout_ms||10000)+'" /></label>'+
+            '<label>Límite enviado a la IA (caracteres)<input data-i="'+i+'" data-field="max_chars" type="number" min="2000" max="100000" value="'+esc(a.max_chars||30000)+'" /></label>'+
+            '<label>Header de autenticación (opcional)<input data-i="'+i+'" data-field="auth_header" type="text" value="'+esc(a.auth_header||'')+'" placeholder="Authorization o X-API-Key" /></label>'+
+            '<label>Valor del header (secreto)<input data-i="'+i+'" data-field="auth_value" type="password" autocomplete="new-password" value="" placeholder="Bearer ... / key" /><span class="hint">'+(a.auth_value_set?'Hay una credencial guardada. Dejá vacío para conservarla.':'Sin credencial guardada.')+'</span><span><input data-i="'+i+'" data-field="auth_clear" type="checkbox" '+(a.auth_clear?'checked':'')+' /> Borrar credencial guardada</span></label>'+
+            '<label style="grid-column:1/-1">Body JSON para POST (opcional)<textarea data-i="'+i+'" data-field="body_template" class="smallArea" placeholder=\'{"Tel_Origen":"{{telefono_cliente}}","Tel_Destino":"{{telefono_qr}}","Mensaje":"{{consulta}}"}\'>'+esc(a.body_template||'')+'</textarea><span class="hint">Variables: {{telefono_cliente}}, {{telefono_qr}} y {{consulta}}.</span></label>';
+        }
+       function webFields(a,i){
+          return '<label>Modelo para búsqueda web (opcional)<input data-i="'+i+'" data-field="web_model" type="text" value="'+esc(a.web_model||'')+'" placeholder="Vacío = mismo modelo del chat" /></label>'+
+            '<label>Contexto de búsqueda<select data-i="'+i+'" data-field="web_search_context_size"><option value="low"'+(a.web_search_context_size==='low'?' selected':'')+'>low</option><option value="medium"'+(a.web_search_context_size==='medium'?' selected':'')+'>medium</option><option value="high"'+(a.web_search_context_size==='high'?' selected':'')+'>high</option></select></label>'+
+            '<label>Timeout (ms)<input data-i="'+i+'" data-field="timeout_ms" type="number" min="3000" max="60000" value="'+esc(a.timeout_ms||30000)+'" /></label>'+
+            '<label>Límite enviado a la IA (caracteres)<input data-i="'+i+'" data-field="max_chars" type="number" min="2000" max="100000" value="'+esc(a.max_chars||30000)+'" /></label>'+
+            '<div class="hint" style="grid-column:1/-1">Usa la misma API key de OpenAI configurada para el canal y la herramienta web_search de Responses API. No necesita URL ni credencial adicional.</div>';
+        }
+        function renderActions(){
+          var c=document.getElementById('actionsContainer');
+          if(!externalActions.length){ c.innerHTML='<div class="emptyActions">No hay acciones configuradas.</div>'; return; }
+         c.innerHTML=externalActions.map(function(a,i){
+            var typeLabel=a.type==='web'?'WEB':'API';
+            return '<div class="actionCard" data-card="'+i+'">'+
+              '<div class="actionHeader"><div class="actionHeaderLeft"><label><input data-i="'+i+'" data-field="enabled" type="checkbox" '+(a.enabled?'checked':'')+' /> Habilitada</label><span class="actionType">'+typeLabel+'</span><strong>'+esc(a.name||('Acción '+(i+1)))+'</strong></div><button class="danger removeAction" data-i="'+i+'" type="button">Eliminar</button></div>'+
+              commonFields(a,i)+(a.type==='web'?webFields(a,i):apiFields(a,i))+
+              '<label style="display:flex;flex-direction:column;gap:4px;font-size:13px;margin-top:10px">Cómo interpretar el resultado (opcional)<textarea data-i="'+i+'" data-field="result_instructions" class="smallArea" placeholder="Indicaciones específicas para interpretar la respuesta">'+esc(a.result_instructions||'')+'</textarea></label>'+
+              '</div>';
+          }).join('');
+        }
+        function updateActionFromElement(el){
+          var i=Number(el.getAttribute('data-i')); var field=el.getAttribute('data-field');
+          if(!Number.isInteger(i)||!externalActions[i]||!field) return;
+          var value=el.type==='checkbox'?el.checked:el.value;
+          if(field==='timeout_ms'||field==='max_chars') value=Number(value||0);
+          externalActions[i][field]=value;
+          if(field==='type'){
+            var old=externalActions[i]; var base=defaultAction(value);
+            externalActions[i]=Object.assign(base,old,{type:value,id:old.id,name:old.name,description:old.description,result_instructions:old.result_instructions});
+            renderActions();
+          }
+        }
+        document.getElementById('actionsContainer').addEventListener('input',function(e){ if(e.target&&e.target.getAttribute('data-field')) updateActionFromElement(e.target); });
+        document.getElementById('actionsContainer').addEventListener('change',function(e){ if(e.target&&e.target.getAttribute('data-field')) updateActionFromElement(e.target); });
+        document.getElementById('actionsContainer').addEventListener('click',function(e){
+          var btn=e.target.closest('.removeAction'); if(!btn) return;
+          var i=Number(btn.getAttribute('data-i')); if(!Number.isInteger(i)) return;
+          externalActions.splice(i,1); renderActions();
+        });
+        document.getElementById('btnAddApi').addEventListener('click',function(){ externalActions.push(defaultAction('api')); renderActions(); });
+        document.getElementById('btnAddWeb').addEventListener('click',function(){ externalActions.push(defaultAction('web')); renderActions(); });
+
         async function load(){
           const t = document.getElementById('tenant').value || '';
           const r=await fetch('/api/behavior?tenant='+encodeURIComponent(t));
@@ -8094,20 +8274,8 @@ app.get("/comportamiento", async (req, res) => {
           document.getElementById('botMode').value = (j.bot_mode || 'pedidos');
           document.getElementById('historyMode').value = (j.history_mode || 'standard');
           document.getElementById('leadCaptureEnabled').checked = j.lead_capture_enabled === true;
-          document.getElementById('externalApiEnabled').checked = j.external_api_enabled === true;
-          document.getElementById('externalApiActionName').value = j.external_api_action_name || 'consulta_lista_precios';
-          document.getElementById('externalApiDescription').value = j.external_api_description || '';
-          document.getElementById('externalApiUrl').value = j.external_api_url || '';
-          document.getElementById('externalApiMethod').value = j.external_api_method || 'GET';
-          document.getElementById('externalApiQueryParam').value = j.external_api_query_param ?? 'buscar';
-          document.getElementById('externalApiBodyTemplate').value = j.external_api_body_template || '';
-          document.getElementById('externalApiAuthHeader').value = j.external_api_auth_header || '';
-          document.getElementById('externalApiAuthValue').value = '';
-          document.getElementById('externalApiAuthClear').checked = false;
-          document.getElementById('externalApiAuthHint').textContent = j.external_api_auth_value_set ? 'Hay una credencial guardada. Dejá vacío para conservarla.' : 'Sin credencial guardada.';
-          document.getElementById('externalApiTimeoutMs').value = String(j.external_api_timeout_ms || 10000);
-          document.getElementById('externalApiMaxChars').value = String(j.external_api_max_chars || 30000);
-          document.getElementById('externalApiResultInstructions').value = j.external_api_result_instructions || '';
+          externalActions=(Array.isArray(j.external_actions)?j.external_actions:[]).map(normalizeClientAction);
+          renderActions();
 
         }
         async function save(){
@@ -8116,47 +8284,27 @@ app.get("/comportamiento", async (req, res) => {
           const m=document.getElementById('historyMode').value||'standard';
           const b=document.getElementById('botMode').value||'pedidos';
           const leadCaptureEnabled=document.getElementById('leadCaptureEnabled').checked === true;
-          const externalApiEnabled=document.getElementById('externalApiEnabled').checked === true;
-          const externalApiActionName=document.getElementById('externalApiActionName').value||'consulta_lista_precios';
-          const externalApiDescription=document.getElementById('externalApiDescription').value||'';
-          const externalApiUrl=document.getElementById('externalApiUrl').value||'';
-          const externalApiMethod=document.getElementById('externalApiMethod').value||'GET';
-          const externalApiQueryParam=document.getElementById('externalApiQueryParam').value||'';
-          const externalApiBodyTemplate=document.getElementById('externalApiBodyTemplate').value||'';
-          const externalApiAuthHeader=document.getElementById('externalApiAuthHeader').value||'';
-          const externalApiAuthValue=document.getElementById('externalApiAuthValue').value||'';
-          const externalApiAuthClear=document.getElementById('externalApiAuthClear').checked === true;
-          const externalApiTimeoutMs=Number(document.getElementById('externalApiTimeoutMs').value||10000);
-          const externalApiMaxChars=Number(document.getElementById('externalApiMaxChars').value||30000);
-          const externalApiResultInstructions=document.getElementById('externalApiResultInstructions').value||'';
+          
           const r=await fetch('/api/behavior?tenant='+encodeURIComponent(t),{
             method:'POST',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
               text:v,tenantId:t,history_mode:m,bot_mode:b,lead_capture_enabled:leadCaptureEnabled,
-              external_api_enabled:externalApiEnabled,
-              external_api_action_name:externalApiActionName,
-              external_api_description:externalApiDescription,
-              external_api_url:externalApiUrl,
-              external_api_method:externalApiMethod,
-              external_api_query_param:externalApiQueryParam,
-              external_api_body_template:externalApiBodyTemplate,
-              external_api_auth_header:externalApiAuthHeader,
-              external_api_auth_value:externalApiAuthValue,
-              external_api_auth_clear:externalApiAuthClear,
-              external_api_timeout_ms:externalApiTimeoutMs,
-              external_api_max_chars:externalApiMaxChars,
-              external_api_result_instructions:externalApiResultInstructions
+              external_actions:externalActions
             })
           });
           alert(r.ok?'Guardado ✅':'Error al guardar');
+          let j={}; try{j=await r.json();}catch{}
+          if(!r.ok){ alert('Error al guardar: '+(j.error||'internal')); return; }
+          alert('Guardado ✅');
+          await load();
         }
         document.getElementById('btnSave').addEventListener('click',save);
         document.getElementById('btnReload').addEventListener('click',load);
         document.addEventListener('DOMContentLoaded', () => {
           document.getElementById('botMode').value='${normalizeBotMode(cfg.bot_mode).replace(/"/g,'&quot;')}';
           document.getElementById('leadCaptureEnabled').checked=${cfg.lead_capture_enabled === true ? 'true' : 'false'};
-          document.getElementById('externalApiEnabled').checked=${cfg.external_api_enabled === true ? 'true' : 'false'};
+          
         });
         load();
       </script></body></html>`);
@@ -8531,6 +8679,9 @@ app.get("/api/behavior", async (req, res) => {
       history_mode: cfg.history_mode,
       bot_mode: normalizeBotMode(cfg.bot_mode),
       lead_capture_enabled: cfg.lead_capture_enabled === true,
+      external_actions: publicBehaviorExternalActions(cfg.external_actions || []),
+
+      // Campos históricos: se conservan para clientes/versiones anteriores.
       external_api_enabled: cfg.external_api_enabled === true,
       external_api_action_name: cfg.external_api_action_name || "consulta_externa",
       external_api_description: cfg.external_api_description || "",
@@ -8544,7 +8695,8 @@ app.get("/api/behavior", async (req, res) => {
       external_api_max_chars: cfg.external_api_max_chars || 30000,
       external_api_result_instructions: cfg.external_api_result_instructions || ""
     });
-  } catch {
+  } catch (e) {
+    console.error("GET /api/behavior error:", e?.message || e);
     res.status(500).json({ error: "internal" });
   }
 });
@@ -8556,77 +8708,64 @@ app.post("/api/behavior", async (req, res) => {
     const history_mode = String(req.body?.history_mode || "").trim() || "standard";
     const bot_mode = normalizeBotMode(req.body?.bot_mode || req.body?.botMode || "pedidos");
     const leadCaptureRaw = req.body?.lead_capture_enabled ?? req.body?.leadCaptureEnabled ?? false;
-    const lead_capture_enabled = leadCaptureRaw === true ||
-      ["1", "true", "yes", "si", "sí", "on"].includes(String(leadCaptureRaw || "").trim().toLowerCase());
-
-    const externalApiEnabledRaw = req.body?.external_api_enabled ?? req.body?.externalApiEnabled ?? false;
-    const external_api_enabled = externalApiEnabledRaw === true ||
-      ["1", "true", "yes", "si", "sí", "on"].includes(String(externalApiEnabledRaw || "").trim().toLowerCase());
-    const external_api_action_name = String(req.body?.external_api_action_name || req.body?.externalApiActionName || "consulta_externa")
-      .trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80) || "consulta_externa";
-    const external_api_description = String(req.body?.external_api_description || req.body?.externalApiDescription || "").trim().slice(0, 1000);
-    const external_api_url = String(req.body?.external_api_url || req.body?.externalApiUrl || "").trim().slice(0, 3000);
-    const external_api_method = String(req.body?.external_api_method || req.body?.externalApiMethod || "GET").trim().toUpperCase() === "POST" ? "POST" : "GET";
-    const external_api_query_param = String(req.body?.external_api_query_param ?? req.body?.externalApiQueryParam ?? "buscar").trim().slice(0, 100);
-    const external_api_body_template = String(req.body?.external_api_body_template ?? req.body?.externalApiBodyTemplate ?? "").trim().slice(0, 20000);
-    const external_api_auth_header = String(req.body?.external_api_auth_header || req.body?.externalApiAuthHeader || "").trim().replace(/[\r\n]/g, "").slice(0, 200);
-    const externalApiAuthValue = String(req.body?.external_api_auth_value || req.body?.externalApiAuthValue || "").trim().replace(/[\r\n]/g, "").slice(0, 4000);
-    const externalApiAuthClearRaw = req.body?.external_api_auth_clear ?? req.body?.externalApiAuthClear ?? false;
-    const externalApiAuthClear = externalApiAuthClearRaw === true ||
-      ["1", "true", "yes", "si", "sí", "on"].includes(String(externalApiAuthClearRaw || "").trim().toLowerCase());
-    const external_api_timeout_ms = Math.max(1000, Math.min(30000, Number(req.body?.external_api_timeout_ms || req.body?.externalApiTimeoutMs || 10000) || 10000));
-    const external_api_max_chars = Math.max(2000, Math.min(100000, Number(req.body?.external_api_max_chars || req.body?.externalApiMaxChars || 30000) || 30000));
-    const external_api_result_instructions = String(req.body?.external_api_result_instructions || req.body?.externalApiResultInstructions || "").trim().slice(0, 5000);
-
-    if (external_api_enabled && !/^https?:\/\//i.test(external_api_url)) {
-      return res.status(400).json({ error: "external_api_url_invalid" });
-    }
-    if (external_api_body_template) {
-      try {
-        const parsedTemplate = JSON.parse(external_api_body_template);
-        if (!parsedTemplate || typeof parsedTemplate !== "object" || Array.isArray(parsedTemplate)) {
-          return res.status(400).json({ error: "external_api_body_template_must_be_object" });
-        }
-      } catch {
-        return res.status(400).json({ error: "external_api_body_template_invalid_json" });
-      }
-    }
-
-
+    const lead_capture_enabled = behaviorBool(leadCaptureRaw, false);
     const db = await require("./db").getDb();
     const _id = `behavior:${tenant}`;
-    const existing = await db.collection("settings").findOne({ _id }, { projection: { external_api_auth_value: 1 } }) || {};
+    const existing = await db.collection("settings").findOne({ _id }) || {};
+
+    let rawActions = req.body?.external_actions ?? req.body?.externalActions;
+    if (!Array.isArray(rawActions)) {
+      const legacy = legacyBehaviorActionFromBody(req.body || {});
+      rawActions = legacy ? [legacy] : (Array.isArray(existing.external_actions) ? existing.external_actions : []);
+    }
+
+    const existingActionsForSecrets = Array.isArray(existing.external_actions)
+      ? existing.external_actions
+      : (String(existing.external_api_url || "").trim() || existing.external_api_auth_value
+          ? [{
+              id: "legacy_external_api",
+              type: "api",
+              name: existing.external_api_action_name || "consulta_externa",
+              auth_value: existing.external_api_auth_value || ""
+            }]
+          : []);
+
+    let external_actions;
+    try {
+      external_actions = sanitizeBehaviorExternalActions(rawActions, existingActionsForSecrets);
+    } catch (validationError) {
+      return res.status(400).json({ error: String(validationError?.message || validationError || "external_actions_invalid") });
+    }
+ 
+    // Espejar la primera acción API a los campos históricos para que una versión
+    // vieja del runtime siga funcionando durante despliegues escalonados.
+    const firstApi = external_actions.find((item) => item.type === "api" && item.enabled) ||
+      external_actions.find((item) => item.type === "api") || null;
 
     const setDoc = {
       text,
       history_mode,
       bot_mode,
-      lead_capture_enabled,
-      external_api_enabled,
-      external_api_action_name,
-      external_api_description,
-      external_api_url,
-      external_api_method,
-      external_api_query_param,
-      external_api_body_template,
-      external_api_auth_header,
-      external_api_timeout_ms,
-      external_api_max_chars,
-      external_api_result_instructions,
+      external_actions,
       tenantId: tenant,
-      updatedAt: new Date()
+      updatedAt: new Date(),
+      external_api_enabled: !!firstApi?.enabled,
+      external_api_action_name: firstApi?.name || "consulta_externa",
+      external_api_description: firstApi?.description || "",
+      external_api_url: firstApi?.url || "",
+      external_api_method: firstApi?.method || "GET",
+      external_api_query_param: firstApi?.query_param ?? "buscar",
+      external_api_body_template: firstApi?.body_template || "",
+      external_api_auth_header: firstApi?.auth_header || "",
+      external_api_timeout_ms: firstApi?.timeout_ms || 10000,
+      external_api_max_chars: firstApi?.max_chars || 30000,
+      external_api_result_instructions: firstApi?.result_instructions || ""
     };
 
-    if (externalApiAuthValue) {
-      setDoc.external_api_auth_value = externalApiAuthValue;
-    } else if (!externalApiAuthClear && existing.external_api_auth_value) {
-      setDoc.external_api_auth_value = existing.external_api_auth_value;
-    }
+    if (firstApi?.auth_value) setDoc.external_api_auth_value = firstApi.auth_value;
 
     const update = { $set: setDoc };
-    if (externalApiAuthClear && !externalApiAuthValue) {
-      update.$unset = { external_api_auth_value: "" };
-    }
+    if (!firstApi?.auth_value) update.$unset = { external_api_auth_value: "" };
 
     await db.collection("settings").updateOne({ _id }, update, { upsert: true });
     invalidateBehaviorCache(tenant);
@@ -8636,10 +8775,7 @@ app.post("/api/behavior", async (req, res) => {
       history_mode,
       bot_mode,
       lead_capture_enabled,
-      external_api_enabled,
-      external_api_action_name,
-      external_api_method,
-      external_api_auth_value_set: !!(externalApiAuthValue || (!externalApiAuthClear && existing.external_api_auth_value))
+      external_actions: publicBehaviorExternalActions(external_actions)
     });
   } catch (e) {
     console.error("POST /api/behavior error:", e);
