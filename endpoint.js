@@ -8203,6 +8203,16 @@ app.get("/comportamiento-ui.js", (_req, res) => {
         document.getElementById('btnAddApi').addEventListener('click',function(){ externalActions.push(defaultAction('api')); renderActions(); });
         document.getElementById('btnAddWeb').addEventListener('click',function(){ externalActions.push(defaultAction('web')); renderActions(); });
 
+        function setBehaviorStatus(message,isError){
+          var el=document.getElementById('behaviorStatus');
+          if(!el) return;
+          el.textContent=String(message||'');
+          el.style.color=isError?'#b91c1c':'#666';
+          el.style.fontWeight=isError?'600':'400';
+        }
+
+        async function load(){
+
           try{
             setBehaviorStatus('Cargando...',false);
             const t = document.getElementById('tenant').value || '';
