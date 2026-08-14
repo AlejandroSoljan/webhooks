@@ -111,6 +111,7 @@ const { mountOrderConfigPanel } = require("./order_config_panel");
 const { mountWwebPhoneAccess } = require("./wweb_phone_access");
 const { mountClientPhoneAccess, isClientPhoneAllowed } = require("./client_phone_access");
 const { mountConversationFollowupPanel } = require("./conversation_followup_panel");
+const { mountBotTestPanel } = require("./bot_test_panel");
 const {
   loadOrderConfig,
   orderFeatureEnabled,
@@ -142,6 +143,7 @@ mountOrderConfigPanel(app, { auth });
 mountWwebPhoneAccess(app);
 mountClientPhoneAccess(app, { auth });
 mountConversationFollowupPanel(app, { auth });
+mountBotTestPanel(app, { auth });
 
 
 // ===================== Tenant Channels (WhatsApp/OpenAI por tenant/canal) =====================
