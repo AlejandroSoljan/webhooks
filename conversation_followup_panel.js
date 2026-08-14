@@ -329,7 +329,38 @@ async function ensureIndexes() {
   }
 }
 
-function panelHtml({ tenant, user, canInbox, canEditConfig }) {
+async function loadAvailableTenants(db, currentTenant) {
+  const tenants = new Set();
+  const add = (value) => {
+    const v = String(value || '').trim();
+    if (v && !v.startsWith('__')) tenants.add(v);
+  };
+
+  add(currentTenant);
+
+  const results = await Promise.allSettled([
+    db.collection('tenant_config').find({}, { projection: { _id: 1, tenantId: 1, tenantid: 1 } }).limit(2000).toArray(),
+    db.collection('users').distinct('tenantId'),
+    db.collection('tenant_channels').distinct('tenantId'),
+    db.collection('conversations').distinct('tenantId', { botMode: 'conversacional' }),
+  ]);
+
+  if (results[0].status === 'fulfilled') {
+    for (const doc of results[0].value || []) {
+      add(doc?.tenantId);
+      add(doc?.tenantid);
+      add(doc?._id);
+    }
+  }
+  for (let i = 1; i < results.length; i++) {
+    if (results[i].status !== 'fulfilled') continue;
+   for (const value of results[i].value || []) add(value);
+  }
+
+  return Array.from(tenants).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base', numeric: true }));
+}
+
+function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, canSelectTenant = false }) {
   const role = String(user?.role || 'user');
   return `<!doctype html>
 <html lang="es">
@@ -340,7 +371,7 @@ function panelHtml({ tenant, user, canInbox, canEditConfig }) {
 <style>
 :root{--bg:#eef3f6;--card:#fff;--line:#dfe7ec;--text:#132238;--muted:#667085;--primary:#0e6b66;--primary2:#0b5955;--danger:#b42318;--warn:#b54708;--ok:#067647;--blue:#175cd3;--soft:#f8fafc;--shadow:0 8px 24px rgba(16,24,40,.08)}
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}button,input,select,textarea{font:inherit}button{cursor:pointer}
-.wrap{padding:14px;min-height:100vh}.top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px}.title h1{font-size:22px;margin:0 0 4px}.title p{margin:0;color:var(--muted);font-size:13px}.topActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.wrap{padding:14px;min-height:100vh}.top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px}.title h1{font-size:22px;margin:0 0 4px}.title p{margin:0;color:var(--muted);font-size:13px}.topActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.tenantPicker{display:flex;align-items:center;gap:7px;padding:5px 8px;border:1px solid var(--line);border-radius:10px;background:#fff}.tenantPicker label{font-size:11px;font-weight:800;color:#475467}.tenantPicker select{min-width:150px;border:0;background:transparent;color:var(--text);font-weight:800;outline:none;padding:3px 20px 3px 2px}
 .btn{border:1px solid var(--line);border-radius:10px;padding:9px 12px;background:#fff;color:var(--text);font-weight:700}.btn:hover{background:#f8fafc}.btnPrimary{background:var(--primary);border-color:var(--primary);color:white}.btnPrimary:hover{background:var(--primary2)}.btnDanger{color:var(--danger)}.btnSm{padding:7px 9px;font-size:12px}
 .kpis{display:grid;grid-template-columns:repeat(5,minmax(130px,1fr));gap:10px;margin-bottom:12px}.kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;box-shadow:var(--shadow)}.kpi b{display:block;font-size:24px}.kpi span{font-size:12px;color:var(--muted)}
 .filters{display:flex;gap:8px;flex-wrap:wrap;background:#fff;border:1px solid var(--line);padding:10px;border-radius:14px;margin-bottom:12px}.filters input,.filters select{border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:white;min-height:38px}.filters .search{min-width:240px;flex:1}
@@ -356,8 +387,9 @@ function panelHtml({ tenant, user, canInbox, canEditConfig }) {
 <body>
 <div class="wrap">
   <div class="top">
-    <div class="title"><h1>Seguimiento de conversaciones</h1><p>Tenant: ${htmlEscape(tenant)} · ${htmlEscape(role)} · sólo modo conversacional</p></div>
+    <div class="title"><h1>Seguimiento de conversaciones</h1><p>Dominio: <strong id="tenantLabel">${htmlEscape(tenant)}</strong> · ${htmlEscape(role)} · sólo modo conversacional</p></div>
     <div class="topActions">
+          ${canSelectTenant ? `<div class="tenantPicker"><label for="tenantSelect">Dominio</label><select id="tenantSelect">${tenantOptions.map(t => `<option value="${htmlEscape(t)}" ${String(t) === String(tenant) ? 'selected' : ''}>${htmlEscape(t)}</option>`).join('')}</select></div>` : ''}
       <span class="muted" id="cfgLabel">Cierre automático: cargando…</span>
       ${canEditConfig ? '<button class="btn" id="cfgBtn">⚙ Configurar cierre</button>' : ''}
       <button class="btn" id="refreshBtn">↻ Actualizar</button>
@@ -388,9 +420,10 @@ function panelHtml({ tenant, user, canInbox, canEditConfig }) {
 ${canEditConfig ? `<div class="configPop" id="cfgPop"><div class="configCard"><h3>Cierre automático por inactividad</h3><div class="check"><input type="checkbox" id="cfgEnabled"/><span>Finalizar automáticamente conversaciones conversacionales inactivas</span></div><div class="field"><label>Minutos de inactividad</label><input type="number" id="cfgMinutes" min="1" max="10080" step="1"/><small class="muted">Al vencer este tiempo, la conversación se cierra y pasa a “Pendiente de clasificar”. Si el cliente vuelve a escribir, se crea una conversación nueva.</small></div><div class="actions"><button class="btn btnPrimary" id="cfgSave">Guardar</button><button class="btn" id="cfgCancel">Cancelar</button></div></div></div>` : ''}
 <div class="toast" id="toast"></div>
 <script>
-const TENANT=${JSON.stringify(tenant)};
+let TENANT=${JSON.stringify(tenant)};
 const CAN_INBOX=${canInbox ? 'true' : 'false'};
 const CAN_EDIT_CONFIG=${canEditConfig ? 'true' : 'false'};
+const CAN_SELECT_TENANT=${canSelectTenant ? 'true' : 'false'};
 let rows=[];let activeId='';let activeItem=null;let config={autoCloseEnabled:true,inactivityMinutes:30};let debounce=null;
 const el=id=>document.getElementById(id);
 function api(path){const u=new URL(path,location.origin);if(TENANT)u.searchParams.set('tenant',TENANT);return u.toString()}
@@ -415,7 +448,8 @@ function renderForm(x,history){const qr=x.quoteRequested===true?'true':(x.quoteR
 async function saveClassification(){if(!activeId)return;const pending=el('fPending').checked;const body={workflowStatus:el('fWorkflow').value,category:el('fCategory').value,satisfaction:el('fSatisfaction').value,quoteRequested:el('fQuote').value,priority:el('fPriority').value,assignedTo:el('fAssigned').value,pendingContact:pending,nextContactAt:pending?el('fNext').value:null,summary:el('fSummary').value,notes:el('fNotes').value,tags:el('fTags').value};el('saveState').textContent='Guardando…';try{await requestJson('/api/conversation-followup/'+encodeURIComponent(activeId),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast('Clasificación guardada');await loadRows(true);await selectRow(activeId)}catch(e){toast(e.message,true)}finally{el('saveState').textContent=''}}
 async function closeNow(){if(!activeId||!confirm('¿Finalizar esta conversación ahora?'))return;try{await requestJson('/api/conversation-followup/'+encodeURIComponent(activeId)+'/close',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast('Conversación finalizada');await loadRows(true);await selectRow(activeId)}catch(e){toast(e.message,true)}}
 async function refresh(){el('refreshBtn').disabled=true;try{await loadConfig();await loadRows(true)}catch(e){toast(e.message,true)}finally{el('refreshBtn').disabled=false}}
-el('refreshBtn').addEventListener('click',refresh);['q','state','category'].forEach(id=>el(id).addEventListener(id==='q'?'input':'change',()=>{clearTimeout(debounce);debounce=setTimeout(()=>loadRows(false).catch(e=>toast(e.message,true)),id==='q'?280:0)}));
+async function changeTenant(value){const next=String(value||'').trim();if(!CAN_SELECT_TENANT||!next||next===TENANT)return;TENANT=next;activeId='';activeItem=null;rows=[];if(el('tenantLabel'))el('tenantLabel').textContent=TENANT;el('list').innerHTML='<div class="empty">Cargando dominio…</div>';el('chatMeta').innerHTML='<strong>Seleccioná una conversación</strong><span class="muted">Acá vas a ver el intercambio completo.</span>';el('chat').innerHTML='<div class="empty">Sin conversación seleccionada.</div>';el('formArea').innerHTML='<div class="empty">Seleccioná una conversación.</div>';try{const u=new URL(location.href);u.searchParams.set('tenant',TENANT);history.replaceState(null,'',u.toString())}catch{}try{await loadConfig();await loadRows(false)}catch(e){toast(e.message,true)}}
+el('refreshBtn').addEventListener('click',refresh);if(CAN_SELECT_TENANT&&el('tenantSelect'))el('tenantSelect').addEventListener('change',e=>changeTenant(e.target.value));['q','state','category'].forEach(id=>el(id).addEventListener(id==='q'?'input':'change',()=>{clearTimeout(debounce);debounce=setTimeout(()=>loadRows(false).catch(e=>toast(e.message,true)),id==='q'?280:0)}));
 if(CAN_EDIT_CONFIG){el('cfgBtn').addEventListener('click',()=>{el('cfgEnabled').checked=config.autoCloseEnabled;el('cfgMinutes').value=config.inactivityMinutes;el('cfgPop').classList.add('open')});el('cfgCancel').addEventListener('click',()=>el('cfgPop').classList.remove('open'));el('cfgPop').addEventListener('click',e=>{if(e.target===el('cfgPop'))el('cfgPop').classList.remove('open')});el('cfgSave').addEventListener('click',async()=>{try{const j=await requestJson('/api/conversation-followup/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({autoCloseEnabled:el('cfgEnabled').checked,inactivityMinutes:el('cfgMinutes').value})});config=j.config;cfgText();el('cfgPop').classList.remove('open');toast('Configuración guardada');await loadRows(true)}catch(e){toast(e.message,true)}})}
 Promise.all([loadConfig(),loadRows(false)]).catch(e=>toast(e.message,true));setInterval(()=>loadRows(true).catch(()=>{}),30000);
 </script>
@@ -434,12 +468,16 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
 
   app.get('/admin/followup', async (req, res) => {
     try {
-      const tenant = resolveTenant(req, auth);
+      const canSelectTenant = isSuperAdmin(req);
+      const db = canSelectTenant ? await getDb() : null;
+      const tenantOptions = canSelectTenant ? await loadAvailableTenants(db, tenant) : [tenant];
       return res.status(200).send(panelHtml({
         tenant,
+        tenantOptions,
         user: req.user,
         canInbox: hasPageAccess(auth, req, 'inbox'),
         canEditConfig: isAdmin(req),
+         canSelectTenant,
       }));
     } catch (e) {
       console.error('[followup] page:', e);
