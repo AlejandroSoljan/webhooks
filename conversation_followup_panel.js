@@ -19,6 +19,7 @@ const AI_RETRY_MINUTES = 10;
 const AI_BACKFILL_PER_SWEEP = 4;
 const aiClassificationInFlight = new Set();
 const openaiClients = new Map();
+const FOLLOWUP_BUILD = '2026-08-14-v3-no-temperature';
 
 function htmlEscape(value) {
   return String(value ?? '')
@@ -246,6 +247,7 @@ function publicConversation(conv, followup, lead, config) {
     aiNeedsFollowUp: followup?.aiNeedsFollowUp === true,
     aiFollowUpReason: followup?.aiFollowUpReason || '',
     aiClassificationError: followup?.aiClassificationError || '',
+    aiClassifierBuild: followup?.aiClassifierBuild || '',
   };
 }
 
@@ -447,7 +449,7 @@ async function classifyConversationWithAi(db, tenant, conversationId, { force = 
 
     await db.collection(FOLLOWUP_COLLECTION).updateOne(
       { tenantId: tenant, conversationId: oid },
-      { $set: { aiClassificationStatus: 'running', aiClassificationError: '', aiClassificationStartedAt: new Date() }, $setOnInsert: { tenantId: tenant, conversationId: oid, waId: String(conv.waId || ''), createdAt: new Date() } },
+      { $set: { aiClassificationStatus: 'running', aiClassificationError: '', aiClassifierBuild: FOLLOWUP_BUILD, aiClassificationStartedAt: new Date() }, $setOnInsert: { tenantId: tenant, conversationId: oid, waId: String(conv.waId || ''), createdAt: new Date() } },
       { upsert: true }
     );
 
@@ -491,6 +493,7 @@ async function classifyConversationWithAi(db, tenant, conversationId, { force = 
       aiFollowUpReason: cleanString(parsed.follow_up_reason, 1000),
       aiConfidence: ['alta', 'media', 'baja'].includes(String(parsed.confidence || '').toLowerCase()) ? String(parsed.confidence).toLowerCase() : 'media',
       aiClassificationStatus: 'done',
+      aiClassifierBuild: FOLLOWUP_BUILD,
       aiClassifiedAt: now,
       aiModel: runtime.model,
       aiClassificationError: '',
@@ -518,7 +521,7 @@ async function classifyConversationWithAi(db, tenant, conversationId, { force = 
     try {
       await db.collection(FOLLOWUP_COLLECTION).updateOne(
         { tenantId: tenant, conversationId: oid },
-        { $set: { aiClassificationStatus: 'error', aiClassificationError: cleanString(e?.message || e, 500), aiClassificationNextRetryAt: new Date(Date.now() + AI_RETRY_MINUTES * 60000), updatedAt: new Date() }, $setOnInsert: { tenantId: tenant, conversationId: oid, createdAt: new Date() } },
+        { $set: { aiClassificationStatus: 'error', aiClassifierBuild: FOLLOWUP_BUILD, aiClassificationError: cleanString(e?.message || e, 500), aiClassificationNextRetryAt: new Date(Date.now() + AI_RETRY_MINUTES * 60000), updatedAt: new Date() }, $setOnInsert: { tenantId: tenant, conversationId: oid, createdAt: new Date() } },
         { upsert: true }
       );
     } catch {}
@@ -648,7 +651,7 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
 <body>
 <div class="wrap">
   <div class="top">
-    <div class="title"><h1>Seguimiento de conversaciones</h1><p>Dominio: <strong id="tenantLabel">${htmlEscape(tenant)}</strong> · ${htmlEscape(role)} · conversaciones en modo conversacional</p></div>
+    <div class="title"><h1>Seguimiento de conversaciones</h1><p>Dominio: <strong id="tenantLabel">${htmlEscape(tenant)}</strong> · ${htmlEscape(role)} · conversaciones en modo conversacional · IA ${htmlEscape(FOLLOWUP_BUILD)}</p></div>
     <div class="topActions">
       ${canSelectTenant ? `<div class="tenantPicker"><label for="tenantSelect">Dominio</label><select id="tenantSelect">${tenantOptions.map(t => `<option value="${htmlEscape(t)}" ${String(t) === String(tenant) ? 'selected' : ''}>${htmlEscape(t)}</option>`).join('')}</select></div>` : ''}
       <span class="muted" id="cfgLabel">Cierre automático: cargando…</span>
@@ -717,7 +720,7 @@ function renderRows(){el('listCount').textContent=rows.length+' registros';if(!r
 async function loadRows(){const p=new URLSearchParams();p.set('limit','500');const q=el('q').value.trim();if(q)p.set('q',q);p.set('conversationState',el('conversationState').value);p.set('workflow',el('workflow').value);p.set('category',el('category').value);const j=await requestJson('/api/conversation-followup/conversations?'+p.toString());rows=j.items||[];renderKpis(j.summary||{});renderRows()}
 function renderMedia(m){if(!m.media||!m.media.url)return '';const u=api(m.media.url);const k=String(m.media.kind||'');if(k==='image')return '<div class="media"><a href="'+esc(u)+'" target="_blank"><img src="'+esc(u)+'"/></a></div>';if(k==='audio')return '<div class="media"><audio controls src="'+esc(u)+'"></audio></div>';if(k==='video')return '<div class="media"><video controls src="'+esc(u)+'"></video></div>';return '<div class="media"><a href="'+esc(u)+'" target="_blank">📎 '+esc(m.media.filename||'Archivo')+'</a></div>'}
 async function openChat(id){activeId=id;openModal('chatModal');el('chatBody').innerHTML='<div class="empty">Cargando conversación…</div>';el('chatFoot').innerHTML='';try{const [d,m]=await Promise.all([requestJson('/api/conversation-followup/'+encodeURIComponent(id)),requestJson('/api/conversation-followup/'+encodeURIComponent(id)+'/messages')]);const x=d.item;activeItem=x;const nm=x.contactName||x.lead?.name||x.waId||'Sin nombre';el('chatTitle').textContent=nm;el('chatSubtitle').textContent=(x.waId||'')+' · '+(x.finalized?'Finalizada':'Abierta')+' · última actividad '+fmt(x.lastAt);const msgs=m.items||[];el('chatBody').innerHTML=msgs.length?msgs.map(v=>'<div class="msgRow '+(v.role==='user'?'user':'assistant')+'"><div class="bubble">'+esc(v.content||'')+renderMedia(v)+'<span class="msgAt">'+esc(fmt(v.createdAt))+'</span></div></div>').join(''):'<div class="empty">No hay mensajes guardados.</div>';el('chatBody').scrollTop=el('chatBody').scrollHeight;let foot='';if(CAN_INBOX)foot+='<button class="btn" id="openInboxBtn">Abrir en WhatsApp</button>';if(!x.finalized)foot+='<button class="btn btnDanger" id="closeNowBtn">Finalizar conversación</button>';foot+='<button class="btn btnPrimary" id="chatFollowBtn">Seguimiento</button>';el('chatFoot').innerHTML=foot;if(el('openInboxBtn'))el('openInboxBtn').onclick=()=>window.open('/admin/inbox?convId='+encodeURIComponent(x._id)+(TENANT?'&tenant='+encodeURIComponent(TENANT):''),'_blank');if(el('closeNowBtn'))el('closeNowBtn').onclick=()=>closeNow(x._id);if(el('chatFollowBtn'))el('chatFollowBtn').onclick=()=>{closeModal('chatModal');openFollow(x._id)}}catch(e){el('chatBody').innerHTML='<div class="empty">Error cargando el chat.</div>';toast(e.message,true)}}
-function aiInfoHtml(x){let status='Pendiente';if(x.manualClassificationEditedAt)status='Clasificación editada manualmente';else if(x.aiClassificationStatus==='done'&&String(x.classifiedBy||'').toLowerCase()==='asisto-ai')status='Clasificada automáticamente por Asisto';else if(x.aiClassificationStatus==='error')status='No se pudo clasificar automáticamente';else if(!x.finalized)status='Se clasificará al finalizar la conversación';return '<div class="aiBox"><div class="aiBoxHead"><div><h4>Clasificación automática</h4><span class="muted">'+esc(status)+(x.aiModel?' · '+esc(x.aiModel):'')+'</span></div>'+(x.finalized?'<button class="btn btnSm" id="reclassifyBtn">↻ Reclasificar con IA</button>':'')+'</div><div class="aiGrid"><div class="aiMini"><label>Tipo</label><b>'+esc(categoryLabel(x.category))+'</b></div><div class="aiMini"><label>Cotización</label><b>'+(x.quoteRequested===true?'Sí':(x.quoteRequested===false?'No':'Pendiente'))+'</b></div><div class="aiMini"><label>Satisfacción</label><b>'+(x.satisfaction?('★'.repeat(x.satisfaction)+'☆'.repeat(5-x.satisfaction)):'Pendiente')+'</b></div><div class="aiMini"><label>¿Requiere contacto?</label><b>'+(x.aiNeedsFollowUp?'Sí':'No')+'</b></div></div>'+(x.aiFollowUpReason?'<div class="muted" style="margin-top:8px"><b>Motivo sugerido:</b> '+esc(x.aiFollowUpReason)+'</div>':'')+(x.aiClassificationError?'<div class="muted" style="margin-top:8px;color:#b42318">'+esc(x.aiClassificationError)+'</div>':'')+'</div>'}
+function aiInfoHtml(x){let status='Pendiente';if(x.manualClassificationEditedAt)status='Clasificación editada manualmente';else if(x.aiClassificationStatus==='done'&&String(x.classifiedBy||'').toLowerCase()==='asisto-ai')status='Clasificada automáticamente por Asisto';else if(x.aiClassificationStatus==='error')status='No se pudo clasificar automáticamente';else if(!x.finalized)status='Se clasificará al finalizar la conversación';return '<div class="aiBox"><div class="aiBoxHead"><div><h4>Clasificación automática</h4><span class="muted">'+esc(status)+(x.aiModel?' · '+esc(x.aiModel):'')+(x.aiClassifierBuild?' · '+esc(x.aiClassifierBuild):'')+'</span></div>'+(x.finalized?'<button class="btn btnSm" id="reclassifyBtn">↻ Reclasificar con IA</button>':'')+'</div><div class="aiGrid"><div class="aiMini"><label>Tipo</label><b>'+esc(categoryLabel(x.category))+'</b></div><div class="aiMini"><label>Cotización</label><b>'+(x.quoteRequested===true?'Sí':(x.quoteRequested===false?'No':'Pendiente'))+'</b></div><div class="aiMini"><label>Satisfacción</label><b>'+(x.satisfaction?('★'.repeat(x.satisfaction)+'☆'.repeat(5-x.satisfaction)):'Pendiente')+'</b></div><div class="aiMini"><label>¿Requiere contacto?</label><b>'+(x.aiNeedsFollowUp?'Sí':'No')+'</b></div></div>'+(x.aiFollowUpReason?'<div class="muted" style="margin-top:8px"><b>Motivo sugerido:</b> '+esc(x.aiFollowUpReason)+'</div>':'')+(x.aiClassificationError?'<div class="muted" style="margin-top:8px;color:#b42318">'+esc(x.aiClassificationError)+'</div>':'')+'</div>'}
 async function openFollow(id){activeId=id;openModal('followModal');el('followBody').innerHTML='<div class="empty">Cargando seguimiento…</div>';el('followFoot').innerHTML='';try{const [d,h]=await Promise.all([requestJson('/api/conversation-followup/'+encodeURIComponent(id)),requestJson('/api/conversation-followup/'+encodeURIComponent(id)+'/history')]);const x=d.item;activeItem=x;const nm=x.contactName||x.lead?.name||x.waId||'Sin nombre';el('followTitle').textContent='Seguimiento · '+nm;el('followSubtitle').textContent=(x.waId||'')+' · '+(x.finalized?'Finalizada':'Abierta');const qr=x.quoteRequested===true?'true':(x.quoteRequested===false?'false':'');const hist=(h.items||[]).length?(h.items||[]).map(v=>'<div class="histItem"><b>'+esc(fmt(v.lastAt))+'</b> · '+esc(v.finalized?'Finalizada':'Abierta')+' · '+esc(categoryLabel(v.category))+(v.satisfaction?' · '+'★'.repeat(v.satisfaction):'')+(v.summary?'<div style="margin-top:4px">'+esc(v.summary)+'</div>':'')+'</div>').join(''):'<div class="muted">Sin conversaciones anteriores.</div>';const lead=x.lead?'<div class="leadBox"><b>Datos detectados por el bot</b><div>Tipo lead: '+esc(x.leadType||'-')+' · Cotización completa: '+(x.quoteReady?'Sí':'No')+'</div>'+(x.lead.company?'<div>Empresa: '+esc(x.lead.company)+'</div>':'')+(x.lead.email?'<div>Email: '+esc(x.lead.email)+'</div>':'')+'</div>':'';el('followBody').innerHTML=aiInfoHtml(x)+lead+'<div class="grid2"><div class="field"><label>Estado de gestión</label><select id="fWorkflow"><option value="pending_review">Pendiente</option><option value="follow_up">En seguimiento</option><option value="resolved">Resuelta</option><option value="discarded">Descartada</option></select></div><div class="field"><label>Tipo de consulta</label><select id="fCategory"><option value="">Automático / pendiente</option><option value="consulta">Consulta</option><option value="cotizacion">Cotización</option><option value="soporte">Soporte</option><option value="reclamo">Reclamo</option><option value="comercial">Comercial</option><option value="otro">Otro</option></select></div><div class="field"><label>Satisfacción del cliente</label><select id="fSatisfaction"><option value="">Sin definir</option><option value="5">★★★★★ Muy satisfecho</option><option value="4">★★★★☆ Satisfecho</option><option value="3">★★★☆☆ Neutral</option><option value="2">★★☆☆☆ Insatisfecho</option><option value="1">★☆☆☆☆ Muy insatisfecho</option></select></div><div class="field"><label>¿Pidió cotización?</label><select id="fQuote"><option value="">Sin definir</option><option value="true">Sí</option><option value="false">No</option></select></div><div class="field"><label>Prioridad</label><select id="fPriority"><option value="baja">Baja</option><option value="normal">Normal</option><option value="alta">Alta</option><option value="urgente">Urgente</option></select></div><div class="field"><label>Responsable</label><input id="fAssigned" placeholder="Operario / vendedor" value="'+esc(x.assignedTo||'')+'"/></div></div><div class="check"><input type="checkbox" id="fPending" '+(x.pendingContact?'checked':'')+'/><span><b>Hay que volver a contactar al cliente</b></span></div><div class="field"><label>Próximo contacto</label><input type="datetime-local" id="fNext" value="'+esc(fmtInput(x.nextContactAt))+'"/></div><div class="field"><label>Resumen</label><textarea id="fSummary" placeholder="Resumen de la consulta…">'+esc(x.summary||'')+'</textarea></div><div class="field"><label>Notas internas</label><textarea id="fNotes" placeholder="Dudas pendientes, compromiso asumido, información a verificar…">'+esc(x.notes||'')+'</textarea></div><div class="field"><label>Etiquetas</label><input id="fTags" value="'+esc((x.tags||[]).join(', '))+'" placeholder="precio, soporte, urgente…"/></div><div class="history"><b style="font-size:12px">Historial de este cliente</b>'+hist+'</div>';el('fWorkflow').value=x.workflowStatus==='active'?'pending_review':x.workflowStatus;el('fCategory').value=x.category||'';el('fSatisfaction').value=x.satisfaction||'';el('fQuote').value=qr;el('fPriority').value=x.priority||'normal';classificationTouched=false;['fCategory','fSatisfaction','fQuote'].forEach(fid=>el(fid).addEventListener('change',()=>{classificationTouched=true}));el('followFoot').innerHTML=(!x.finalized?'<button class="btn btnDanger" id="followCloseBtn">Finalizar conversación</button>':'')+'<button class="btn btnPrimary" id="saveFollowBtn">Guardar cambios</button>';el('saveFollowBtn').onclick=saveFollow;if(el('followCloseBtn'))el('followCloseBtn').onclick=()=>closeNow(x._id);if(el('reclassifyBtn'))el('reclassifyBtn').onclick=()=>reclassify(x._id)}catch(e){el('followBody').innerHTML='<div class="empty">Error cargando seguimiento.</div>';toast(e.message,true)}}
 async function saveFollow(){if(!activeId)return;const pending=el('fPending').checked;const body={workflowStatus:el('fWorkflow').value,category:el('fCategory').value,satisfaction:el('fSatisfaction').value,quoteRequested:el('fQuote').value,classificationTouched,priority:el('fPriority').value,assignedTo:el('fAssigned').value,pendingContact:pending,nextContactAt:pending?el('fNext').value:null,summary:el('fSummary').value,notes:el('fNotes').value,tags:el('fTags').value};try{await requestJson('/api/conversation-followup/'+encodeURIComponent(activeId),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast('Seguimiento guardado');await loadRows();await openFollow(activeId)}catch(e){toast(e.message,true)}}
 async function reclassify(id){if(!confirm('¿Volver a analizar esta conversación con IA? La clasificación automática reemplazará tipo, cotización, satisfacción y resumen.'))return;try{toast('Clasificando con IA…');await requestJson('/api/conversation-followup/'+encodeURIComponent(id)+'/classify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({force:true})});toast('Clasificación actualizada');await loadRows();await openFollow(id)}catch(e){toast(e.message,true)}}
@@ -761,6 +764,10 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
       console.error('[followup] page:', e);
       return res.status(500).send('Error cargando seguimiento de conversaciones.');
     }
+  });
+
+  app.get('/api/conversation-followup/version', (req, res) => {
+    return res.json({ ok: true, build: FOLLOWUP_BUILD, temperatureSent: false });
   });
 
   app.get('/api/conversation-followup/config', async (req, res) => {
@@ -893,9 +900,19 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
       const db = await getDb();
-      const bundle = await loadConversationBundle(db, tenant, id);
+      let bundle = await loadConversationBundle(db, tenant, id);
       if (!bundle) return res.status(404).json({ ok: false, error: 'not_found' });
-      return res.json({ ok: true, item: bundle.item, config: bundle.config });
+
+      // Migración automática de errores generados por la versión vieja que enviaba
+      // temperature: 0. La versión actual NO envía ese parámetro. Al abrir el
+      // seguimiento reintentamos inmediatamente y devolvemos ya el resultado nuevo.
+      if (bundle.conv?.finalized === true && shouldBypassAiRetry(bundle.followup)) {
+        console.log(`[followup][ai] reparando error temperature viejo build=${FOLLOWUP_BUILD} tenant=${tenant} conv=${id}`);
+        await classifyConversationWithAi(db, tenant, bundle.conv._id, { force: true });
+        bundle = await loadConversationBundle(db, tenant, id);
+      }
+
+      return res.json({ ok: true, item: bundle.item, config: bundle.config, build: FOLLOWUP_BUILD });
     } catch (e) {
       console.error('[followup] get:', e);
       return res.status(500).json({ ok: false, error: 'internal' });
