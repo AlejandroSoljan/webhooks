@@ -402,41 +402,86 @@ function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route
   ${refresh > 0 ? `<meta http-equiv="refresh" content="${refresh}">` : ""}
   <title>WhatsApp</title>
   <style>
-    html, body { margin:0; padding:0; background:#fff; color:#111; font-family:Arial, Helvetica, sans-serif; overflow:hidden; }
-    .wrap { box-sizing:border-box; width:100vw; min-height:100vh; padding:10px; display:flex; align-items:center; justify-content:center; }
-    .box { box-sizing:border-box; width:min(980px, 100%); min-height:260px; border:1px solid #ddd; border-radius:8px; padding:14px; }
-    .box.qr-mode { width:min(760px, 100%); min-height:300px; display:flex; align-items:center; justify-content:center; gap:22px; }
+    html, body {
+      margin:0;
+      padding:0;
+      min-height:100%;
+      color:#fff;
+      font-family:Arial, Helvetica, sans-serif;
+      overflow:hidden;
+      background-color:#071d35;
+      background-image:
+        linear-gradient(90deg, rgba(5,24,45,.04) 0%, rgba(5,24,45,.08) 45%, rgba(5,24,45,.26) 100%),
+        url("/static/novedades-bg.png");
+      background-size:cover;
+      background-position:left center;
+      background-repeat:no-repeat;
+      background-attachment:fixed;
+    }
+    .wrap {
+      box-sizing:border-box;
+      width:100vw;
+      min-height:100vh;
+      padding:24px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:linear-gradient(180deg, rgba(6,22,40,.10), rgba(6,22,40,.22));
+    }
+   .box {
+      box-sizing:border-box;
+      width:min(980px, 100%);
+      min-height:260px;
+      border:1px solid rgba(255,255,255,.14);
+      border-radius:22px;
+      padding:22px;
+      color:#fff;
+      background:rgba(4,22,42,.62);
+      box-shadow:0 24px 70px rgba(0,0,0,.28);
+      backdrop-filter:blur(14px);
+      -webkit-backdrop-filter:blur(14px);
+    }
+    .box.qr-mode { width:min(760px, 100%); min-height:300px; display:flex; align-items:center; justify-content:center; gap:24px; }
     .qr-left { flex:0 0 330px; text-align:center; }
     .qr-right { flex:1; min-width:260px; }
-    .title { font-size:22px; font-weight:700; margin:0; }
-    .asisto-title-row { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin:0 0 10px 0; }
-    .asisto-logo { width:64px; height:auto; object-fit:contain; display:block; margin-left:auto; flex:0 0 auto; }
-    .state { display:inline-block; padding:7px 12px; border-radius:999px; font-size:14px; font-weight:700; background:#eee; }
-    .state.qr { background:#fff3cd; color:#7a5200; }
-    .state.online { background:#d1e7dd; color:#0f5132; }
-    .state.iniciando { background:#cff4fc; color:#055160; }
-    .state.offline, .state.error, .state.disabled { background:#f8d7da; color:#842029; }
-    .state.blocked, .state.paused { background:#ffe5d0; color:#7a3b00; }
-    .qr { text-align:center; margin:0; }
-    .qr img { width:300px; max-width:42vw; height:auto; image-rendering:auto; }
-    table { width:100%; border-collapse:collapse; margin-top:12px; font-size:15px; }
-    td { padding:8px 6px; border-bottom:1px solid #eee; vertical-align:top; }
-    td:first-child { width:34%; color:#555; font-weight:700; }
-    .msg { margin-top:14px; padding:12px; background:#f6f6f6; border-radius:6px; font-size:15px; line-height:1.35; }
+    .title { font-size:22px; font-weight:700; margin:0; color:#fff; }
+    .asisto-title-row { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin:0 0 14px 0; }
+    .asisto-logo { width:64px; height:auto; object-fit:contain; display:block; margin-left:auto; flex:0 0 auto; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.22); }
+    .state { display:inline-block; padding:7px 12px; border-radius:999px; font-size:14px; font-weight:700; border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.10); color:#fff; }
+    .state.qr { background:#fff3cd; color:#7a5200; border-color:#ffe69c; }
+    .state.online { background:rgba(49,196,141,.18); color:#79f0c4; border-color:rgba(49,196,141,.32); }
+    .state.iniciando { background:rgba(45,190,230,.18); color:#9ae8ff; border-color:rgba(45,190,230,.32); }
+    .state.offline, .state.error, .state.disabled { background:rgba(220,53,69,.20); color:#ffb3bc; border-color:rgba(220,53,69,.34); }
+    .state.blocked, .state.paused { background:rgba(255,176,64,.18); color:#ffd089; border-color:rgba(255,176,64,.30); }
+
+    /* QR en blanco para mantener contraste y lectura */
+    .qr { text-align:center; margin:0; padding:14px; border-radius:16px; background:#fff; border:1px solid rgba(255,255,255,.35); box-shadow:0 16px 40px rgba(0,0,0,.28); }
+    .qr img { display:block; width:300px; max-width:42vw; height:auto; margin:0 auto; background:#fff; image-rendering:auto; }
+
+    table { width:100%; border-collapse:collapse; margin-top:14px; font-size:15px; }
+    td { padding:9px 6px; border-bottom:1px solid rgba(255,255,255,.10); vertical-align:top; color:rgba(255,255,255,.92); }
+    td:first-child { width:34%; color:rgba(255,255,255,.70); font-weight:700; }
+    .msg { margin-top:14px; padding:12px 14px; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.09); border-radius:12px; color:rgba(255,255,255,.86); font-size:15px; line-height:1.35; }
+
     .info-mode { display:block; }
     .actions { margin-top:14px; display:flex; gap:10px; flex-wrap:wrap; }
-    .btn { display:inline-block; border:1px solid #999; border-radius:7px; padding:10px 14px; text-decoration:none; font-weight:700; color:#111; background:#f4f4f4; font-size:15px; }
-    .btn.danger { background:#f4f4f4; color:#111; border-color:#999; }
-    .btn.ok { background:#d1e7dd; color:#0f5132; border-color:#a3cfbb; }
-    .action-msg { margin-top:12px; padding:10px 12px; background:#e7f1ff; border:1px solid #b6d4fe; color:#084298; border-radius:6px; font-size:14px; }
-    @media (max-width: 640px) {
-      html, body { overflow:auto; }
+    .btn { display:inline-block; border:1px solid rgba(255,255,255,.16); border-radius:10px; padding:10px 14px; text-decoration:none; font-weight:700; color:#f4fbff; background:rgba(255,255,255,.08); font-size:15px; }
+    .btn:hover { background:rgba(255,255,255,.14); }
+    .btn.danger { background:rgba(255,255,255,.08); color:#f4fbff; border-color:rgba(255,255,255,.16); }
+    .btn.ok { background:rgba(49,196,141,.18); color:#79f0c4; border-color:rgba(49,196,141,.32); }
+    .action-msg { margin-top:12px; padding:10px 12px; background:rgba(33,140,255,.16); border:1px solid rgba(33,140,255,.30); color:#d7ecff; border-radius:10px; font-size:14px; }
+   @media (max-width: 640px) {
+      html, body { overflow:auto; background-attachment:scroll; background-position:20% center; }
+      .wrap { padding:12px; align-items:flex-start; }
+      .box { padding:16px; border-radius:18px; }
+
       .box.qr-mode { display:block; min-height:auto; }
       .qr-left { flex:auto; }
-      .qr-right { min-width:0; margin-top:10px; }
-      .qr img { width:min(280px, 88vw); max-width:88vw; }
+      .qr-right { min-width:0; margin-top:14px; }
+      .qr img { width:min(280px, 82vw); max-width:82vw; }
       .asisto-title-row { gap:10px; }
       .asisto-logo { width:52px; }
+      .actions .btn { flex:1 1 auto; text-align:center; }
     }
   
       .asisto-wa-brand{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
@@ -507,14 +552,27 @@ function errorPage(message, status = 400) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>WhatsApp</title>
   <style>
-    html, body { margin:0; padding:0; background:#fff; color:#111; font-family:Arial, Helvetica, sans-serif; }
-    .wrap { box-sizing:border-box; width:100%; min-height:100vh; padding:16px; }
-    .box { box-sizing:border-box; width:min(760px, 100%); margin:0 auto; border:1px solid #ddd; border-radius:8px; padding:16px; }
-    .title { font-size:20px; font-weight:700; margin:0; }
+    html, body {
+      margin:0;
+      padding:0;
+      min-height:100%;
+      color:#fff;
+      font-family:Arial, Helvetica, sans-serif;
+      background-color:#071d35;
+      background-image:
+        linear-gradient(90deg, rgba(5,24,45,.04), rgba(5,24,45,.26)),
+        url("/static/novedades-bg.png");
+      background-size:cover;
+      background-position:left center;
+      background-repeat:no-repeat;
+    }
+    .wrap { box-sizing:border-box; width:100%; min-height:100vh; padding:24px; display:flex; align-items:center; justify-content:center; }
+    .box { box-sizing:border-box; width:min(760px, 100%); margin:0 auto; border:1px solid rgba(255,255,255,.14); border-radius:20px; padding:20px; color:#fff; background:rgba(4,22,42,.72); box-shadow:0 24px 70px rgba(0,0,0,.28); backdrop-filter:blur(14px); }
+    .title { font-size:20px; font-weight:700; margin:0; color:#fff; }
     .asisto-title-row { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin:0 0 12px 0; }
-    .asisto-logo { width:60px; height:auto; object-fit:contain; display:block; margin-left:auto; flex:0 0 auto; }
-   .msg { padding:12px; background:#f8d7da; color:#842029; border-radius:6px; font-size:14px; }
-  </style>
+     .asisto-logo { width:60px; height:auto; object-fit:contain; display:block; margin-left:auto; flex:0 0 auto; border-radius:12px; }
+    .msg { padding:12px; background:rgba(220,53,69,.18); color:#ffd5da; border:1px solid rgba(220,53,69,.30); border-radius:10px; font-size:14px; }
+</style>
 </head>
 <body><div class="wrap"><div class="box">${renderAsistoTitle()}<div class="msg">${escapeHtml(message)}</div></div></div></body>
 </html>`

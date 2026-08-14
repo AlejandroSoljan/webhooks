@@ -1874,8 +1874,7 @@ function wwebSessionsAdminPage({ user }) {
     user,
     active: "wweb",
     main: `
-    <div class="wwebStage">
-    <div class="app appWide wwebPage">
+    <div class="app appWide">
       <div class="toolbar">
         <div>
           <h2 style="margin:0 0 6px">Sesiones WhatsApp Web</h2>
@@ -1993,7 +1992,7 @@ function wwebSessionsAdminPage({ user }) {
       </div>
 
     </div>
-</div>
+
 
 
     <script>
@@ -2640,42 +2639,7 @@ document.addEventListener('click', function(e){
 
     <style>
       /* Ajustes específicos de /admin/wweb */
-      .wwebStage{
-        position:relative;
-        min-height:calc(100vh - 44px);
-        border-radius:28px;
-        overflow:hidden;
-        background-color:#071d35;
-        background-image:
-          linear-gradient(
-            90deg,
-            rgba(5,24,45,.04) 0%,
-            rgba(5,24,45,.08) 45%,
-            rgba(5,24,45,.26) 100%
-          ),
-          url("/static/novedades-bg.png");
-        background-size:cover;
-        background-position:left center;
-        background-repeat:no-repeat;
-        box-shadow:0 24px 80px rgba(0,0,0,.24);
-      }
-      .wwebStage::before{
-        content:"";
-       position:absolute;
-        inset:0;
-        background:linear-gradient(180deg, rgba(6,22,40,.16), rgba(6,22,40,.32));
-        pointer-events:none;
-      }
       .appWide{width:100%; max-width:1240px; margin:0 auto;}
-      .wwebPage{
-        position:relative;
-        z-index:1;
-        min-height:calc(100vh - 44px);
-        padding-top:18px;
-        padding-bottom:22px;
-      }
-      .wwebPage h2{color:#fff}
-      .wwebPage .small{color:rgba(255,255,255,.76)}
       .toolbar{display:flex; align-items:flex-end; justify-content:space-between; gap:12px; flex-wrap:wrap}
       .toolbarActions{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
       .wwebFilters{
@@ -2686,34 +2650,9 @@ document.addEventListener('click', function(e){
         margin-top:12px;
       }
       .wwebFilterItem{min-width:0}
-      .wwebFilterItem label{display:block; margin-bottom:6px; color:rgba(255,255,255,.82)}
+      .wwebFilterItem label{display:block; margin-bottom:6px}
 
-      .wwebPage .inp,
-      .wwebPage select,
-      .wwebPage input[type="search"]{
-        background:rgba(4,22,42,.52);
-       color:#fff;
-        border:1px solid rgba(255,255,255,.14);
-      }
-      .wwebPage .inp::placeholder,
-      .wwebPage input[type="search"]::placeholder{color:rgba(255,255,255,.48)}
-      .wwebPage .btn2,
-      .wwebPage a.btn2{
-        background:rgba(4,22,42,.48);
-        color:#eef8ff;
-       border:1px solid rgba(255,255,255,.16);
-        backdrop-filter:blur(8px);
-      }
-      .wwebPage .btn2:hover,
-      .wwebPage a.btn2:hover{background:rgba(8,31,58,.72)}
-      .wwebPage .card{
-        overflow:visible;
-        background:rgba(4,22,42,.46);
-        border:1px solid rgba(255,255,255,.12);
-        box-shadow:0 24px 70px rgba(0,0,0,.25);
-        backdrop-filter:blur(16px);
-        color:#fff;
-      }
+      .card{overflow:visible}
       .tableWrap{
         overflow:auto;
         max-width:100%;
@@ -2723,21 +2662,12 @@ document.addEventListener('click', function(e){
       .tableWrap[data-loading="1"]{opacity:.75}
 
       .wwebTable{width:100%; table-layout:fixed; border-collapse:separate; border-spacing:0}
-      .wwebTable thead th{
-        position:sticky;
-        top:0;
-        background:rgba(6,25,47,.92);
-        color:rgba(255,255,255,.82);
-        z-index:2;
-        border-bottom:1px solid rgba(255,255,255,.10);
-      }
+      .wwebTable thead th{position:sticky; top:0; background:#fff; z-index:2}
       .wwebTable tbody tr{position:relative; z-index:1}
-      .wwebTable tbody tr:nth-child(even){background: rgba(255,255,255,.03)}
+      .wwebTable tbody tr:nth-child(even){background: rgba(16,24,40,.02)}
       .wwebTable tbody tr.rowMenuOpen{z-index:120}
 
-      .wwebTable td,
-      .wwebTable th{white-space:normal; word-break:break-word; vertical-align:top; border-bottom-color:rgba(255,255,255,.08)}
-      .wwebTable td{color:rgba(255,255,255,.92)}
+      .wwebTable td, .wwebTable th{white-space:normal; word-break:break-word; vertical-align:top}
       .wwebTable th:nth-child(1){width:160px}
       .wwebTable th:nth-child(2){width:190px}
       .wwebTable th:nth-child(3){width:240px}
@@ -2745,8 +2675,8 @@ document.addEventListener('click', function(e){
       .wwebTable th:nth-child(5){width:170px}
       .wwebTable th:nth-child(6){width:240px}
 
-      .cellMain{font-weight:700; color:#fff}
-      .cellSub{font-size:12px; opacity:.85; margin-top:2px; color:rgba(255,255,255,.68)}
+      .cellMain{font-weight:700}
+      .cellSub{font-size:12px; opacity:.85; margin-top:2px}
       .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;}
 
       .wa-actions-cell{position:relative; z-index:1}
@@ -2767,9 +2697,9 @@ document.addEventListener('click', function(e){
         right:0;
         top: calc(100% + 8px);
         min-width: 200px;
-        background:#0c2139;
-        border:1px solid rgba(255,255,255,.10);
-        box-shadow: 0 12px 28px rgba(2,8,23,.45);
+        background:#fff;
+        border:1px solid rgba(15,23,42,.12);
+        box-shadow: 0 12px 28px rgba(2,8,23,.18);
         border-radius:14px;
         padding:8px;
         display:none;
@@ -2785,29 +2715,19 @@ document.addEventListener('click', function(e){
         padding:10px 12px;
         border:0;
         background:transparent;
-        color:#eef8ff;
         border-radius:10px;
         cursor:pointer;
         font-size:14px;
       }
-      .menuItem:hover{background: rgba(255,255,255,.08)}
-      .menuSep{height:1px; background: rgba(255,255,255,.10); margin:8px 6px}
+      .menuItem:hover{background: rgba(15,23,42,.06)}
+      .menuSep{height:1px; background: rgba(15,23,42,.10); margin:8px 6px}
 
       @media (max-width: 960px){
         .wwebFilters{grid-template-columns:1fr}
       }
 
       @media (max-width: 820px){
-        .wwebStage{
-          min-height:auto;
-          border-radius:22px;
-          background-position:20% center;
-        }
         .appWide{max-width:100%}
-        .wwebPage{
-          min-height:auto;
-          padding-top:8px;
-        }
         .toolbar{align-items:stretch}
         .toolbarActions{width:100%}
         .toolbarActions .btn2,
@@ -2832,11 +2752,11 @@ document.addEventListener('click', function(e){
         .wwebTable thead{display:none}
         .wwebTable tbody{display:grid; gap:12px}
         .wwebTable tbody tr{
-          border:1px solid rgba(255,255,255,.10);
+          border:1px solid rgba(148,163,184,.22);
           border-radius:14px;
           padding:10px 12px;
-          background:rgba(4,22,42,.62) !important;
-          box-shadow:0 8px 18px rgba(0,0,0,.18);
+          background:#fff !important;
+          box-shadow:0 8px 18px rgba(15,23,42,.06);
           z-index:1;
         }
         .wwebTable td{
@@ -2844,7 +2764,7 @@ document.addEventListener('click', function(e){
           padding:8px 0;
         }
         .wwebTable td + td{
-          border-top:1px solid rgba(255,255,255,.08);
+          border-top:1px solid rgba(148,163,184,.14);
         }
         .actionBar{justify-content:flex-start}
         .menu{
@@ -2855,47 +2775,27 @@ document.addEventListener('click', function(e){
       }
 
       .badge{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700}
-      .badgeOk{background:rgba(49,196,141,.14); color:#6ef2c2; border:1px solid rgba(49,196,141,.26)}
-      .badgeWarn{background:rgba(255,176,64,.14); color:#ffd089; border:1px solid rgba(255,176,64,.26)}
+      .badgeOk{background:#1f7a3a1a; color:#1f7a3a; border:1px solid #1f7a3a55}
+      .badgeWarn{background:#b453091a; color:#b45309; border:1px solid #b4530955}
 
       /* Modal QR */
       body.modalOpen{overflow:hidden}
       .modal{position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; padding:16px}
       .modal[hidden]{display:none !important}
-      .modalBackdrop{position:absolute; inset:0; background:rgba(0,0,0,.62)}
-      .modalCard{
-        position:relative;
-        width:min(560px, 95vw);
-        background:rgba(4,22,42,.96);
-        color:#fff;
-        border:1px solid rgba(255,255,255,.12);
-        border-radius:16px;
-        padding:14px 14px 16px;
-        box-shadow:0 20px 60px rgba(0,0,0,.45)
-      }
+      .modalBackdrop{position:absolute; inset:0; background:rgba(0,0,0,.55)}
+      .modalCard{position:relative; width:min(560px, 95vw); background:#fff; border-radius:16px; padding:14px 14px 16px; box-shadow:0 20px 60px rgba(0,0,0,.35)}
       .modalHeader{display:flex; justify-content:space-between; align-items:flex-start; gap:10px}
-      .qrWrap{
-        background:#fff;
-        border:1px solid rgba(255,255,255,.16);
-        border-radius:12px;
-        overflow:hidden;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        min-height:340px;
-        padding:16px;
-      }
-      #qrImg{max-width:100%; height:auto; display:none; background:#fff; border-radius:10px}
-      #qrEmpty{color:#0f172a}
-      .statsModalCard{width:min(980px,96vw); color:#fff}
+      .qrWrap{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; min-height:340px}
+      #qrImg{max-width:100%; height:auto; display:none}
+      .statsModalCard{width:min(980px,96vw); color:#0f172a}
       .statsModalCard .small,
       .statsModalCard label,
       .statsModalCard #statsMeta,
-      .statsModalCard #statsSub{color:rgba(255,255,255,.72)}
+      .statsModalCard #statsSub{color:#475467}
       .statsCards{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:8px}
-      .statsMiniCard{background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); border-radius:12px; padding:10px 12px; color:#fff}
-      .statsMiniCard .cellMain{color:#fff !important; font-weight:800}
-      .statsMiniCard .small{color:rgba(255,255,255,.68) !important}
+      .statsMiniCard{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:12px; padding:10px 12px; color:#0f172a}
+      .statsMiniCard .cellMain{color:#0f172a !important; font-weight:800}
+      .statsMiniCard .small{color:#475467 !important}
       .statsTableWrap{max-height:48vh; overflow:auto; padding-bottom:0}
       .statsTable{width:100%; table-layout:fixed}
       .statsTable th:nth-child(1){width:190px}
