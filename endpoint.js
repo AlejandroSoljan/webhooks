@@ -110,6 +110,7 @@ const { mountFleterosViajesPanel } = require("./fleteros_viajes_panel");
 const { mountOrderConfigPanel } = require("./order_config_panel");
 const { mountWwebPhoneAccess } = require("./wweb_phone_access");
 const { mountClientPhoneAccess, isClientPhoneAllowed } = require("./client_phone_access");
+const { mountConversationFollowupPanel } = require("./conversation_followup_panel");
 const {
   loadOrderConfig,
   orderFeatureEnabled,

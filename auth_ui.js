@@ -38,6 +38,7 @@ function ensureBodyParsers(app) {
 // ===== Accesos por usuario (pantallas/endpoints) =====
 const ACCESS_PAGES = [
   { key: "admin", title: "Conversaciones" },
+  { key: "followup", title: "Seguimiento" },
   { key: "inbox", title: "WhatsApp" },
   { key: "fleteros", title: "Viajes Fleteros" },
   { key: "productos", title: "Productos" },
@@ -88,6 +89,8 @@ function requiredAccessForPath(p) {
   if (path.startsWith("/admin/users")) return ["users"];
   // Tenant Config
   if (path.startsWith("/admin/tenant-config") || path.startsWith("/api/tenant-config")) return ["tenant_config"];
+  // Seguimiento de conversaciones conversacionales
+  if (path.startsWith("/admin/followup") || path.startsWith("/api/conversation-followup")) return ["followup"];
   // Leads (contacto)
   if (path.startsWith("/admin/leads")) return ["leads"];
   // Reglas/validaciones de pedidos por dominio
@@ -111,7 +114,7 @@ function requiredAccessForPath(p) {
   // UI wrapper
   if (path.startsWith("/ui/")) {
     const seg = path.split("/")[2] || "";
-    if (["admin", "inbox", "productos", "horarios", "comportamiento", "tenant_config", "order_config", "canales", "client_access", "telegram", "web_access", "token_control"].includes(seg)) return [seg];
+     if (["admin", "followup", "inbox", "productos", "horarios", "comportamiento", "tenant_config", "order_config", "canales", "client_access", "telegram", "web_access", "token_control"].includes(seg)) return [seg];
   }
 
   // Pantallas directas
@@ -125,7 +128,7 @@ function requiredAccessForPath(p) {
   // Logs
   if (path.startsWith("/api/logs/conversations") || path.startsWith("/api/logs/pedido")) return ["admin"];
   if (path.startsWith("/api/logs/messages")) return ["inbox"];
-  if (path.startsWith("/api/media")) return ["inbox"];
+  if (path.startsWith("/api/media")) return ["inbox", "followup"];
 
 
   // Leads / contacto desde /login
@@ -1094,6 +1097,7 @@ function getNavItemsForUser(user) {
   const items = [{ key: "home", title: "Inicio", href: "/app" }];
 
   if (hasAccess(user, "admin")) items.push({ key: "admin", title: "Conversaciones", href: "/ui/admin" });
+  if (hasAccess(user, "followup")) items.push({ key: "followup", title: "Seguimiento", href: "/ui/followup" });
   if (hasAccess(user, "inbox")) items.push({ key: "inbox", title: "WhatsApp", href: "/admin/inbox" });
   if (hasAccess(user, "fleteros")) items.push({ key: "fleteros", title: "Viajes Fleteros", href: "/admin/fleteros/viajes" });
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
@@ -1665,6 +1669,7 @@ function usersAdminPage({ user, users, msg, err }) {
     (function(){
       const ACCESS_PAGES = [
         { key: "admin", title: "Conversaciones" },
+         { key: "followup", title: "Seguimiento" },
         { key: "inbox", title: "WhatsApp" },
          { key: "fleteros", title: "Viajes Fleteros" },
         { key: "productos", title: "Productos" },
@@ -1744,6 +1749,7 @@ function usersAdminPage({ user, users, msg, err }) {
       function buildDefaultPageOptions(allowedKeys, selectedHref){
         const items = [{ key: "home", title: "Inicio", href: "/app" }];
         if (allowedKeys.includes("admin")) items.push({ key: "admin", title: "Conversaciones", href: "/ui/admin" });
+        if (allowedKeys.includes("followup")) items.push({ key: "followup", title: "Seguimiento", href: "/ui/followup" });
         if (allowedKeys.includes("fleteros")) items.push({ key: "fleteros", title: "Viajes Fleteros", href: "/admin/fleteros/viajes" });
         if (allowedKeys.includes("productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
         if (allowedKeys.includes("horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
@@ -3024,6 +3030,7 @@ function mountAuthRoutes(app) {
     const routes = [
       { title: "Inicio", href: "/app", badge: "", desc: "Panel principal" },
       { title: "Conversaciones", href: "/ui/admin", badge: "Admin UI", desc: "Panel de conversaciones" },
+      { title: "Seguimiento", href: "/ui/followup", badge: "Operaciones", desc: "Clasificación y seguimiento de conversaciones conversacionales" },
       { title: "WhatsApp", href: "/admin/inbox", badge: "Admin UI", desc: "Bandeja WhatsApp " },
       { title: "Viajes Fleteros", href: "/admin/fleteros/viajes", badge: "Panel", desc: "Carga móvil de viajes de fleteros" },
       { title: "Productos", href: "/ui/productos", badge: "UI", desc: "Catálogo del dominio" },
@@ -3072,6 +3079,7 @@ function mountAuthRoutes(app) {
 
     const map = {
       admin: { title: "Conversaciones", desc: "Panel de conversaciones y seguimiento", badge: "Admin UI", src: "/admin", active: "admin" },
+      followup: { title: "Seguimiento", desc: "Clasificación, satisfacción, cotizaciones y contactos pendientes", badge: "Operaciones", src: "/admin/followup?embed=1", active: "followup" },
       inbox: { title: "WhatsApp", desc: "Bandeja WhatsApp para responder clientes y pausar el bot por conversación", badge: "Admin UI", src: "/admin/inbox", active: "inbox" },
       productos: { title: "Productos", desc: "Catálogo y mantenimiento del dominio", badge: "UI", src: "/productos", active: "productos" },
       horarios: { title: "Horarios", desc: "Configuración de disponibilidad", badge: "UI", src: "/horarios", active: "horarios" },
