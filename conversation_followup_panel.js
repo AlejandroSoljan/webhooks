@@ -60,6 +60,11 @@ function isAdmin(req) {
   return role === 'admin' || role === 'superadmin';
 }
 
+function isSuperAdmin(req) {
+  return String(req?.user?.role || '').toLowerCase() === 'superadmin';
+}
+
+
 function hasPageAccess(auth, req, key) {
   if (auth && typeof auth.hasAccess === 'function') return auth.hasAccess(req?.user, key);
   const role = String(req?.user?.role || '').toLowerCase();
@@ -365,7 +370,7 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
   return `<!doctype html>
 <html lang="es">
 <head>
-+<meta charset="utf-8"/>
+<meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Seguimiento de conversaciones</title>
 <style>
@@ -468,6 +473,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
 
   app.get('/admin/followup', async (req, res) => {
     try {
+        const tenant = resolveTenant(req, auth);
       const canSelectTenant = isSuperAdmin(req);
       const db = canSelectTenant ? await getDb() : null;
       const tenantOptions = canSelectTenant ? await loadAvailableTenants(db, tenant) : [tenant];
