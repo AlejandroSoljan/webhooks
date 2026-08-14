@@ -141,6 +141,7 @@ mountFleterosViajesPanel(app, { auth });
 mountOrderConfigPanel(app, { auth }); 
 mountWwebPhoneAccess(app);
 mountClientPhoneAccess(app, { auth });
+mountConversationFollowupPanel(app, { auth });
 
 
 // ===================== Tenant Channels (WhatsApp/OpenAI por tenant/canal) =====================
