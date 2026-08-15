@@ -29,6 +29,7 @@ const {
   upsertTenantChannel,
   normalizeWhatsappTransport,
   normalizeWwebBotLogicMode,
+  clearTenantRuntimeCache,
 } = require("./tenant_runtime");
 const TENANT_ID = (process.env.TENANT_ID || "").trim();
 // ================== Debounce de textos (por tenant+canal+waId+convId) ==================
@@ -245,6 +246,31 @@ app.post("/api/tenant-channels", auth.requireAdmin, async (req, res) => {
   } catch (e) {
     console.error("POST /api/tenant-channels error:", e?.message || e);
     res.status(400).json({ error: e?.message || "bad_request" });
+  }
+});
+
+app.delete("/api/tenant-channels/:id", auth.requireAdmin, async (req, res) => {
+  try {
+    const id = String(req.params?.id || "").trim();
+    if (!ObjectId.isValid(id)) return res.status(400).json({ error: "channel_id_invalid" });
+
+    const db = await getDb();
+    const _id = new ObjectId(id);
+    const doc = await db.collection("tenant_channels").findOne({ _id });
+    if (!doc) return res.status(404).json({ error: "channel_not_found" });
+
+    const isSuper = String(req.user?.role || "").toLowerCase() === "superadmin";
+    const tenantForced = String(resolveTenantId(req) || "").trim();
+    if (!isSuper && String(doc.tenantId || "").trim() !== tenantForced) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+
+   await db.collection("tenant_channels").deleteOne({ _id });
+    clearTenantRuntimeCache();
+    return res.json({ ok: true, deletedId: id });
+  } catch (e) {
+    console.error("DELETE /api/tenant-channels/:id error:", e?.message || e);
+    return res.status(500).json({ error: "internal" });
   }
 });
 
@@ -8569,6 +8595,7 @@ app.get("/canales", async (req, res) => {
           '<td class="muted">'+esc(it.updatedAt||it.createdAt||'')+'</td>'+
           '<td class="actions">'+
             '<button type="button" class="secondary" data-edit="'+esc(it._id)+'">Editar</button>'+
+            '<button type="button" class="secondary" data-delete="'+esc(it._id)+'" data-delete-name="'+esc(it.displayPhoneNumber || it.phoneNumberId || it.instagramAccountId || '')+'">Eliminar</button>'+
             btnDefault +
           '</td>'+
         '</tr>';
@@ -8604,6 +8631,34 @@ app.get("/canales", async (req, res) => {
           window.scrollTo({ top: 0, behavior: 'smooth' });
         });
       });
+
+      // Eliminar canal
+      tbody.querySelectorAll('button[data-delete]').forEach(btn=>{
+        btn.addEventListener('click', async ()=>{
+          const id = btn.getAttribute('data-delete') || '';
+          const name = btn.getAttribute('data-delete-name') || '';
+          if(!id) return;
+          if(!window.confirm('¿Eliminar el canal '+name+'?')) return;
+
+          setMsg('', '');
+          const rr = await fetch('/api/tenant-channels/'+encodeURIComponent(id), {
+            method: 'DELETE',
+            headers: { 'Accept':'application/json' },
+            credentials: 'same-origin'
+          });
+          const jj = await rr.json().catch(()=>null);
+          if(!rr.ok){
+           setMsg('err', (jj && jj.error) ? jj.error : 'Error eliminando canal.');
+            return;
+          }
+          if (form._id && String(form._id.value||'') === String(id)) {
+            form._id.value = '';
+          }
+          setMsg('ok', 'Canal eliminado ✅');
+          await load();
+        });
+      });
+
 
       // Hacer default
       tbody.querySelectorAll('button[data-make-default]').forEach(btn=>{
@@ -9445,6 +9500,14 @@ try {
 } catch {}
 const tenant = String(runtime?.tenantId || req.asistoTenantId || DEFAULT_TENANT_ID || TENANT_ID || "default").trim();
 const whatsappTransport = normalizeWhatsappTransport(req.asistoWhatsappTransport || runtime?.whatsappTransport || "api");
+ 
+if (channelType === "whatsapp" && phoneNumberIdInbound) {
+  console.log(
+    `[webhook] phone_number_id=${phoneNumberIdInbound} -> tenant=${tenant} transport=${whatsappTransport}` +
+    `${runtime?.displayPhoneNumber ? ` display=${runtime.displayPhoneNumber}` : ""}`
+  );
+}
+
 
 if (channelType === "whatsapp" && whatsappTransport === "wweb" && !req.asistoWwebApiRequest) {
   console.log(`[webhook] tenant=${tenant} configurado con WhatsApp Web; se ignora webhook Meta.`);

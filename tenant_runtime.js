@@ -82,7 +82,27 @@ async function getRuntimeByPhoneNumberId(phoneNumberId) {
   if (cached) return cached;
 
   const db = await getDb();
-  const doc = await db.collection("tenant_channels").findOne({ phoneNumberId: pid });
+
+  // phoneNumberId representa el Phone Number ID de Meta.
+  // Puede haber documentos históricos/duplicados de WhatsApp Web con el mismo valor;
+  // para un webhook oficial de Meta SIEMPRE priorizamos el canal API más reciente.
+  const rows = await db.collection("tenant_channels")
+    .find({
+      phoneNumberId: pid,
+      $or: [
+        { channelType: "whatsapp" },
+        { channelType: { $exists: false } },
+        { channelType: null },
+      ],
+    })
+    .sort({ updatedAt: -1, createdAt: -1 })
+    .limit(50)
+    .toArray();
+
+  const doc = (rows || []).find((row) =>
+    normalizeWhatsappTransport(row?.whatsappTransport ?? row?.whatsapp_transport ?? row?.transport ?? "api") === "api"
+  ) || (rows || [])[0] || null;
+
   const val = _normalizeRuntime(doc);
   if (val) _cacheSet(ck, val);
   return val;
@@ -274,14 +294,10 @@ const wwebBotLogicMode = normalizeWwebBotLogicMode(p.wwebBotLogicMode ?? p.wweb_
 
   if (editObjectId && !r.matchedCount) throw new Error("channel_not_found");
 
-  // invalidar cache relacionado
-  cache.delete(`tenant:${tenantId}`);
-  if (phoneNumberId) cache.delete(`phone:${phoneNumberId}`);
-  for (const key of cache.keys()) {
-    if (String(key).startsWith(`wwebphone:${tenantId}:`)) cache.delete(key);
-  }
-  if (instagramAccountId) cache.delete(`instagram:${instagramAccountId}`);
-  if (instagramPageId) cache.delete(`instagram:${instagramPageId}`);
+  // Una edición puede cambiar phoneNumberId, tenant o transporte.
+  // Limpiamos todo el cache runtime para no conservar la asociación anterior
+  // (por ejemplo, el mismo Phone Number ID apuntando todavía a CARICO durante el TTL).
+  cache.clear();
 
   let savedId = editObjectId ? editObjectId : (r.upsertedId || null);
   if (!savedId) {
@@ -301,6 +317,11 @@ const wwebBotLogicMode = normalizeWwebBotLogicMode(p.wwebBotLogicMode ?? p.wweb_
   };
 }
 
+function clearTenantRuntimeCache() {
+  cache.clear();
+}
+
+
 module.exports = {
   getRuntimeByPhoneNumberId,
  getRuntimeByInstagramAccountId,
@@ -311,4 +332,5 @@ module.exports = {
   upsertTenantChannel,
   normalizeWhatsappTransport,
   normalizeWwebBotLogicMode,
+  clearTenantRuntimeCache,
 };
