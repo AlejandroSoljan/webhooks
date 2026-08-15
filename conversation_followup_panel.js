@@ -3,7 +3,7 @@
 // - Vista principal simple en tabla.
 // - Chat y edición de seguimiento en modales.
 // - Cierre automático por inactividad configurable por tenant.
-// - Clasificación automática con IA al finalizar: tipo, cotización, satisfacción y resumen.
+// - Clasificación automática con IA durante la conversación y clasificación final al cerrar.
 // - Superadmin puede seleccionar dominio; admin/user quedan restringidos a su tenant.
 
 const { ObjectId } = require('mongodb');
@@ -17,9 +17,12 @@ const DEFAULT_INACTIVITY_MINUTES = 30;
 const AUTO_CLOSE_INTERVAL_MS = 60 * 1000;
 const AI_RETRY_MINUTES = 10;
 const AI_BACKFILL_PER_SWEEP = 4;
+const LIVE_AI_PER_SWEEP = 4;
+const LIVE_AI_QUIET_MS = 15 * 1000;
+const LIVE_AI_MIN_INTERVAL_MS = 60 * 1000;
 const aiClassificationInFlight = new Set();
 const openaiClients = new Map();
-const FOLLOWUP_BUILD = '2026-08-14-v3-no-temperature';
+const FOLLOWUP_BUILD = '2026-08-14-v4-live-classification';
 
 function htmlEscape(value) {
   return String(value ?? '')
@@ -244,6 +247,8 @@ function publicConversation(conv, followup, lead, config) {
     manualEditedAt: followup?.manualEditedAt || null,
     manualClassificationEditedAt: followup?.manualClassificationEditedAt || null,
     aiClassificationStatus: aiStatus,
+    aiClassificationStage: followup?.aiClassificationStage || '',
+    aiProvisional: followup?.aiClassificationStage === 'live',
     aiClassifiedAt: followup?.aiClassifiedAt || null,
     aiModel: followup?.aiModel || '',
     aiConfidence: followup?.aiConfidence || '',
@@ -406,7 +411,7 @@ async function recordClassificationUsage(db, tenant, conv, model, usage) {
   }
 }
 
-async function classifyConversationWithAi(db, tenant, conversationId, { force = false } = {}) {
+async function classifyConversationWithAi(db, tenant, conversationId, { force = false, live = false } = {}) {
   const oid = conversationId instanceof ObjectId ? conversationId : new ObjectId(String(conversationId));
   const lockKey = `${tenant}:${String(oid)}`;
   if (aiClassificationInFlight.has(lockKey)) return { ok: true, skipped: 'in_flight' };
@@ -417,9 +422,31 @@ async function classifyConversationWithAi(db, tenant, conversationId, { force = 
       db.collection(FOLLOWUP_COLLECTION).findOne({ tenantId: tenant, conversationId: oid }),
     ]);
     if (!conv) return { ok: false, error: 'conversation_not_found' };
-    if (conv.finalized !== true && !force) return { ok: true, skipped: 'conversation_open' };
+
+    const isFinal = conv.finalized === true;
+    if (!isFinal && !live && !force) return { ok: true, skipped: 'conversation_open' };
     if (!force && hasManualClassification(existing)) return { ok: true, skipped: 'manual_classification' };
-    if (!force && existing?.aiClassifiedAt && existing?.aiClassificationStatus === 'done') return { ok: true, skipped: 'already_classified' };
+
+    if (!force) {
+      if (isFinal) {
+        if (existing?.aiClassificationStatus === 'done' && existing?.aiClassificationStage === 'final') {
+          return { ok: true, skipped: 'already_classified_final' };
+        }
+      } else {
+        const convLastAt = safeDate(lastActivity(conv));
+        const aiAt = safeDate(existing?.aiClassifiedAt);
+        if (convLastAt && (Date.now() - convLastAt.getTime()) < LIVE_AI_QUIET_MS) {
+          return { ok: true, skipped: 'live_waiting_for_quiet' };
+        }
+        if (aiAt && (Date.now() - aiAt.getTime()) < LIVE_AI_MIN_INTERVAL_MS) {
+          return { ok: true, skipped: 'live_throttled' };
+        }
+        if (aiAt && convLastAt && convLastAt.getTime() <= aiAt.getTime()) {
+          return { ok: true, skipped: 'live_unchanged' };
+        }
+      }
+    }
+
     const retryAt = safeDate(existing?.aiClassificationNextRetryAt);
     if (!force && !shouldBypassAiRetry(existing) && retryAt && retryAt.getTime() > Date.now()) {
       return { ok: true, skipped: 'retry_later' };
@@ -458,6 +485,9 @@ async function classifyConversationWithAi(db, tenant, conversationId, { force = 
 
     const system = [
       'Sos el clasificador interno de seguimiento comercial de Asisto.',
+      isFinal
+        ? 'La conversación está FINALIZADA. Generá la clasificación definitiva.'
+        : 'La conversación sigue ABIERTA. Generá una clasificación PROVISORIA usando sólo la evidencia disponible hasta ahora; puede cambiar más adelante.',
       'Analizá TODA la conversación entre el cliente y Asisto. No respondas al cliente.',
       'Clasificá el tipo principal de consulta:',
       '- consulta: información general que no encaja mejor en otra categoría.',
@@ -467,7 +497,9 @@ async function classifyConversationWithAi(db, tenant, conversationId, { force = 
       '- comercial: interés comercial, recomendación de producto/servicio o intención de compra sin pedido concreto de cotización.',
       '- otro: sólo cuando ninguna categoría anterior corresponde.',
       'quote_requested debe ser true si en cualquier momento pidió precio, presupuesto o cotización.',
-      'satisfaction mide la satisfacción/tone FINAL del cliente respecto de la atención: 5 muy satisfecho, 4 satisfecho, 3 neutral o sin evidencia clara, 2 insatisfecho, 1 muy insatisfecho.',
+      isFinal
+        ? 'satisfaction mide la satisfacción/tone FINAL del cliente respecto de la atención: 5 muy satisfecho, 4 satisfecho, 3 neutral o sin evidencia clara, 2 insatisfecho, 1 muy insatisfecho.'
+        : 'satisfaction es PROVISORIA mientras la conversación siga abierta: 5 muy satisfecho, 4 satisfecho, 3 neutral o sin evidencia clara, 2 insatisfecho, 1 muy insatisfecho.',
       'needs_follow_up=true cuando quedó una duda, promesa, dato a verificar o acción humana pendiente.',
       'summary debe ser breve y operativo, máximo 300 caracteres.',
       'No inventes información que no esté en la conversación.'
@@ -487,15 +519,17 @@ async function classifyConversationWithAi(db, tenant, conversationId, { force = 
     const parsed = JSON.parse(raw);
     const now = new Date();
     const quoteDetected = String(conv?.leadType || '').toLowerCase() === 'cotizacion';
+    const preserveManualSummary = !!existing?.manualEditedAt && !!cleanString(existing?.summary, 1000);
     const set = {
       category: normalizeCategory(parsed.category),
       satisfaction: normalizeSatisfaction(parsed.satisfaction) || 3,
       quoteRequested: quoteDetected ? true : !!parsed.quote_requested,
-      summary: cleanString(existing?.summary || parsed.summary, 1000),
+      summary: cleanString(preserveManualSummary ? existing.summary : parsed.summary, 1000),
       aiNeedsFollowUp: parsed.needs_follow_up === true,
       aiFollowUpReason: cleanString(parsed.follow_up_reason, 1000),
       aiConfidence: ['alta', 'media', 'baja'].includes(String(parsed.confidence || '').toLowerCase()) ? String(parsed.confidence).toLowerCase() : 'media',
       aiClassificationStatus: 'done',
+      aiClassificationStage: isFinal ? 'final' : 'live',
       aiClassifierBuild: FOLLOWUP_BUILD,
       aiClassifiedAt: now,
       aiModel: runtime.model,
@@ -505,7 +539,7 @@ async function classifyConversationWithAi(db, tenant, conversationId, { force = 
       classifiedBy: 'asisto-ai',
       workflowStatus: existing?.workflowStatus || 'pending_review',
       updatedAt: now,
-      updatedBy: force ? 'asisto-ai-reclassify' : 'asisto-ai',
+      updatedBy: force ? 'asisto-ai-reclassify' : (isFinal ? 'asisto-ai' : 'asisto-ai-live'),
     };
     await db.collection(FOLLOWUP_COLLECTION).updateOne(
       { tenantId: tenant, conversationId: oid },
@@ -514,10 +548,15 @@ async function classifyConversationWithAi(db, tenant, conversationId, { force = 
     );
     await db.collection('conversations').updateOne(
       { _id: oid, tenantId: tenant },
-      { $set: { followupReviewPending: true, followupWorkflowStatus: existing?.workflowStatus || 'pending_review', followupAiClassifiedAt: now } }
+      { $set: {
+        followupReviewPending: isFinal ? true : !!conv.followupReviewPending,
+        followupWorkflowStatus: existing?.workflowStatus || (isFinal ? 'pending_review' : (conv.followupWorkflowStatus || '')),
+        followupAiClassifiedAt: now,
+        followupAiClassificationStage: isFinal ? 'final' : 'live',
+      } }
     );
     await recordClassificationUsage(db, tenant, conv, response?.model || runtime.model, response?.usage || {});
-    console.log(`[followup][ai] clasificada tenant=${tenant} conv=${String(oid)} tipo=${set.category} satisfaccion=${set.satisfaction} cotizacion=${set.quoteRequested}`);
+    console.log(`[followup][ai] ${isFinal ? 'final' : 'provisoria'} tenant=${tenant} conv=${String(oid)} tipo=${set.category} satisfaccion=${set.satisfaction} cotizacion=${set.quoteRequested}`);
     return { ok: true, classification: set };
   } catch (e) {
     console.warn(`[followup][ai] clasificación tenant=${tenant} conv=${String(oid)}:`, e?.message || e);
@@ -534,6 +573,47 @@ async function classifyConversationWithAi(db, tenant, conversationId, { force = 
   }
 }
 
+async function classifyActiveConversations(db, tenant, limit = LIVE_AI_PER_SWEEP) {
+  const convs = await db.collection('conversations')
+    .find({ tenantId: tenant, botMode: 'conversacional', finalized: { $ne: true } })
+    .sort({ updatedAt: -1, openedAt: -1 })
+    .limit(60)
+    .toArray();
+  if (!convs.length) return 0;
+
+  const ids = convs.map(c => c._id);
+  const followups = await db.collection(FOLLOWUP_COLLECTION)
+    .find({ tenantId: tenant, conversationId: { $in: ids } })
+    .toArray();
+  const fm = new Map(followups.map(f => [String(f.conversationId), f]));
+
+  const nowMs = Date.now();
+  const pending = convs.filter(c => {
+    const f = fm.get(String(c._id));
+    if (hasManualClassification(f)) return false;
+
+    const convLastAt = safeDate(lastActivity(c));
+    if (!convLastAt) return false;
+    if ((nowMs - convLastAt.getTime()) < LIVE_AI_QUIET_MS) return false;
+
+    const aiAt = safeDate(f?.aiClassifiedAt);
+    if (aiAt && (nowMs - aiAt.getTime()) < LIVE_AI_MIN_INTERVAL_MS) return false;
+    if (aiAt && convLastAt.getTime() <= aiAt.getTime()) return false;
+
+    const retryAt = safeDate(f?.aiClassificationNextRetryAt);
+    if (!shouldBypassAiRetry(f) && retryAt && retryAt.getTime() > nowMs) return false;
+
+    return true;
+  }).slice(0, Math.max(1, limit));
+
+  let done = 0;
+  for (const conv of pending) {
+    const r = await classifyConversationWithAi(db, tenant, conv._id, { force: false, live: true });
+    if (r?.ok && !r?.skipped) done++;
+  }
+  return done;
+}
+
 async function classifyMissingFinalized(db, tenant, limit = AI_BACKFILL_PER_SWEEP) {
   const convs = await db.collection('conversations')
     .find({ tenantId: tenant, botMode: 'conversacional', finalized: true })
@@ -547,7 +627,7 @@ async function classifyMissingFinalized(db, tenant, limit = AI_BACKFILL_PER_SWEE
   const pending = convs.filter(c => {
     const f = fm.get(String(c._id));
     if (hasManualClassification(f)) return false;
-    if (f?.aiClassifiedAt && f?.aiClassificationStatus === 'done') return false;
+    if (f?.aiClassifiedAt && f?.aiClassificationStatus === 'done' && f?.aiClassificationStage === 'final') return false;
     const retryAt = safeDate(f?.aiClassificationNextRetryAt);
     if (!shouldBypassAiRetry(f) && retryAt && retryAt.getTime() > Date.now()) return false;
     return true;
@@ -586,6 +666,7 @@ async function runAutoCloseSweep() {
       const config = await loadConfig(db, tenant);
       await autoCloseTenant(db, tenant, config);
       await classifyMissingFinalized(db, tenant, AI_BACKFILL_PER_SWEEP);
+      await classifyActiveConversations(db, tenant, LIVE_AI_PER_SWEEP);
     } catch (e) {
       console.warn(`[followup] sweep tenant=${tenant}:`, e?.message || e);
     }
@@ -692,7 +773,7 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
 
 <div class="modal" id="chatModal"><div class="modalCard wide"><div class="modalHead"><div><h3 id="chatTitle">Conversación</h3><div class="muted" id="chatSubtitle"></div></div><button class="btn btnSm" data-close="chatModal">Cerrar</button></div><div class="chat" id="chatBody"><div class="empty">Cargando…</div></div><div class="modalFoot" id="chatFoot"></div></div></div>
 <div class="modal" id="followModal"><div class="modalCard wide"><div class="modalHead"><div><h3 id="followTitle">Seguimiento</h3><div class="muted" id="followSubtitle"></div></div><button class="btn btnSm" data-close="followModal">Cerrar</button></div><div class="modalBody" id="followBody"><div class="empty">Cargando…</div></div><div class="modalFoot" id="followFoot"></div></div></div>
-${canEditConfig ? `<div class="modal" id="cfgModal"><div class="modalCard" style="max-width:480px"><div class="modalHead"><h3>Cierre automático</h3><button class="btn btnSm" data-close="cfgModal">Cerrar</button></div><div class="modalBody"><div class="check"><input type="checkbox" id="cfgEnabled"/><span>Finalizar automáticamente conversaciones inactivas</span></div><div class="field"><label>Minutos de inactividad</label><input type="number" id="cfgMinutes" min="1" max="10080" step="1"/><span class="muted">Al finalizar, Asisto clasifica automáticamente la conversación con IA.</span></div></div><div class="modalFoot"><button class="btn btnPrimary" id="cfgSave">Guardar</button></div></div></div>` : ''}
+${canEditConfig ? `<div class="modal" id="cfgModal"><div class="modalCard" style="max-width:480px"><div class="modalHead"><h3>Cierre automático</h3><button class="btn btnSm" data-close="cfgModal">Cerrar</button></div><div class="modalBody"><div class="check"><input type="checkbox" id="cfgEnabled"/><span>Finalizar automáticamente conversaciones inactivas</span></div><div class="field"><label>Minutos de inactividad</label><input type="number" id="cfgMinutes" min="1" max="10080" step="1"/><span class="muted">Asisto clasifica durante la conversación y vuelve a clasificar de forma definitiva al finalizar.</span></div></div><div class="modalFoot"><button class="btn btnPrimary" id="cfgSave">Guardar</button></div></div></div>` : ''}
 <div class="toast" id="toast"></div>
 <script>
 let TENANT=${JSON.stringify(tenant)};
@@ -724,11 +805,11 @@ function renderRows(){el('listCount').textContent=rows.length+' registros';if(!r
 async function loadRows(){const p=new URLSearchParams();p.set('limit','500');const q=el('q').value.trim();if(q)p.set('q',q);p.set('conversationState',el('conversationState').value);p.set('workflow',el('workflow').value);p.set('category',el('category').value);const j=await requestJson('/api/conversation-followup/conversations?'+p.toString());rows=j.items||[];renderKpis(j.summary||{});renderRows()}
 function renderMedia(m){if(!m.media||!m.media.url)return '';const u=api(m.media.url);const k=String(m.media.kind||'');if(k==='image')return '<div class="media"><a href="'+esc(u)+'" target="_blank"><img src="'+esc(u)+'"/></a></div>';if(k==='audio')return '<div class="media"><audio controls src="'+esc(u)+'"></audio></div>';if(k==='video')return '<div class="media"><video controls src="'+esc(u)+'"></video></div>';return '<div class="media"><a href="'+esc(u)+'" target="_blank">📎 '+esc(m.media.filename||'Archivo')+'</a></div>'}
 async function openChat(id){activeId=id;openModal('chatModal');el('chatBody').innerHTML='<div class="empty">Cargando conversación…</div>';el('chatFoot').innerHTML='';try{const [d,m]=await Promise.all([requestJson('/api/conversation-followup/'+encodeURIComponent(id)),requestJson('/api/conversation-followup/'+encodeURIComponent(id)+'/messages')]);const x=d.item;activeItem=x;const nm=x.contactName||x.lead?.name||x.waId||'Sin nombre';el('chatTitle').textContent=nm;el('chatSubtitle').textContent=(x.waId||'')+' · '+(x.finalized?'Finalizada':(x.manualOpen?'Atención manual':'Bot activo'))+' · última actividad '+fmt(x.lastAt);const msgs=m.items||[];el('chatBody').innerHTML=msgs.length?msgs.map(v=>'<div class="msgRow '+(v.role==='user'?'user':'assistant')+'"><div class="bubble">'+esc(v.content||'')+renderMedia(v)+'<span class="msgAt">'+esc(fmt(v.createdAt))+'</span></div></div>').join(''):'<div class="empty">No hay mensajes guardados.</div>';el('chatBody').scrollTop=el('chatBody').scrollHeight;let foot='';if(CAN_INBOX)foot+='<button class="btn" id="openInboxBtn">Abrir en WhatsApp</button>';if(!x.finalized)foot+='<button class="btn btnDanger" id="closeNowBtn">Finalizar conversación</button>';foot+='<button class="btn btnPrimary" id="chatFollowBtn">Seguimiento</button>';el('chatFoot').innerHTML=foot;if(el('openInboxBtn'))el('openInboxBtn').onclick=()=>window.open('/admin/inbox?convId='+encodeURIComponent(x._id)+(TENANT?'&tenant='+encodeURIComponent(TENANT):''),'_blank');if(el('closeNowBtn'))el('closeNowBtn').onclick=()=>closeNow(x._id);if(el('chatFollowBtn'))el('chatFollowBtn').onclick=()=>{closeModal('chatModal');openFollow(x._id)}}catch(e){el('chatBody').innerHTML='<div class="empty">Error cargando el chat.</div>';toast(e.message,true)}}
-function aiInfoHtml(x){let status='Pendiente';if(x.manualClassificationEditedAt)status='Clasificación editada manualmente';else if(x.aiClassificationStatus==='done'&&String(x.classifiedBy||'').toLowerCase()==='asisto-ai')status='Clasificada automáticamente por Asisto';else if(x.aiClassificationStatus==='error')status='No se pudo clasificar automáticamente';else if(!x.finalized)status='Se clasificará al finalizar la conversación';return '<div class="aiBox"><div class="aiBoxHead"><div><h4>Clasificación automática</h4><span class="muted">'+esc(status)+(x.aiModel?' · '+esc(x.aiModel):'')+(x.aiClassifierBuild?' · '+esc(x.aiClassifierBuild):'')+'</span></div>'+(x.finalized?'<button class="btn btnSm" id="reclassifyBtn">↻ Reclasificar con IA</button>':'')+'</div><div class="aiGrid"><div class="aiMini"><label>Tipo</label><b>'+esc(categoryLabel(x.category))+'</b></div><div class="aiMini"><label>Cotización</label><b>'+(x.quoteRequested===true?'Sí':(x.quoteRequested===false?'No':'Pendiente'))+'</b></div><div class="aiMini"><label>Satisfacción</label><b>'+(x.satisfaction?('★'.repeat(x.satisfaction)+'☆'.repeat(5-x.satisfaction)):'Pendiente')+'</b></div><div class="aiMini"><label>¿Requiere contacto?</label><b>'+(x.aiNeedsFollowUp?'Sí':'No')+'</b></div></div>'+(x.aiFollowUpReason?'<div class="muted" style="margin-top:8px"><b>Motivo sugerido:</b> '+esc(x.aiFollowUpReason)+'</div>':'')+(x.aiClassificationError?'<div class="muted" style="margin-top:8px;color:#b42318">'+esc(x.aiClassificationError)+'</div>':'')+'</div>'}
+function aiInfoHtml(x){let status='Pendiente';if(x.manualClassificationEditedAt)status='Clasificación editada manualmente';else if(x.aiClassificationStatus==='done'&&x.aiClassificationStage==='live')status='Clasificación provisoria · se actualiza mientras avanza la conversación';else if(x.aiClassificationStatus==='done'&&String(x.classifiedBy||'').toLowerCase()==='asisto-ai')status='Clasificación final automática';else if(x.aiClassificationStatus==='error')status='No se pudo clasificar automáticamente';else if(!x.finalized)status='Analizando conversación…';return '<div class="aiBox"><div class="aiBoxHead"><div><h4>Clasificación automática</h4><span class="muted">'+esc(status)+(x.aiModel?' · '+esc(x.aiModel):'')+(x.aiClassifierBuild?' · '+esc(x.aiClassifierBuild):'')+'</span></div>'+('<button class="btn btnSm" id="reclassifyBtn">↻ Analizar ahora</button>')+'</div><div class="aiGrid"><div class="aiMini"><label>Tipo</label><b>'+esc(categoryLabel(x.category))+'</b></div><div class="aiMini"><label>Cotización</label><b>'+(x.quoteRequested===true?'Sí':(x.quoteRequested===false?'No':'Pendiente'))+'</b></div><div class="aiMini"><label>Satisfacción</label><b>'+(x.satisfaction?('★'.repeat(x.satisfaction)+'☆'.repeat(5-x.satisfaction)):'Pendiente')+'</b></div><div class="aiMini"><label>¿Requiere contacto?</label><b>'+(x.aiNeedsFollowUp?'Sí':'No')+'</b></div></div>'+(x.aiFollowUpReason?'<div class="muted" style="margin-top:8px"><b>Motivo sugerido:</b> '+esc(x.aiFollowUpReason)+'</div>':'')+(x.aiClassificationError?'<div class="muted" style="margin-top:8px;color:#b42318">'+esc(x.aiClassificationError)+'</div>':'')+'</div>'}
 async function openFollow(id){activeId=id;openModal('followModal');el('followBody').innerHTML='<div class="empty">Cargando seguimiento…</div>';el('followFoot').innerHTML='';try{const [d,h]=await Promise.all([requestJson('/api/conversation-followup/'+encodeURIComponent(id)),requestJson('/api/conversation-followup/'+encodeURIComponent(id)+'/history')]);const x=d.item;activeItem=x;const nm=x.contactName||x.lead?.name||x.waId||'Sin nombre';el('followTitle').textContent='Seguimiento · '+nm;el('followSubtitle').textContent=(x.waId||'')+' · '+(x.finalized?'Finalizada':(x.manualOpen?'Atención manual':'Bot activo'));const qr=x.quoteRequested===true?'true':(x.quoteRequested===false?'false':'');const hist=(h.items||[]).length?(h.items||[]).map(v=>'<div class="histItem"><b>'+esc(fmt(v.lastAt))+'</b> · '+esc(v.finalized?'Finalizada':'Abierta')+' · '+esc(categoryLabel(v.category))+(v.satisfaction?' · '+'★'.repeat(v.satisfaction):'')+(v.summary?'<div style="margin-top:4px">'+esc(v.summary)+'</div>':'')+'</div>').join(''):'<div class="muted">Sin conversaciones anteriores.</div>';const lead=x.lead?'<div class="leadBox"><b>Datos detectados por el bot</b><div>Tipo lead: '+esc(x.leadType||'-')+' · Cotización completa: '+(x.quoteReady?'Sí':'No')+'</div>'+(x.lead.company?'<div>Empresa: '+esc(x.lead.company)+'</div>':'')+(x.lead.email?'<div>Email: '+esc(x.lead.email)+'</div>':'')+'</div>':'';el('followBody').innerHTML=aiInfoHtml(x)+lead+'<div class="grid2"><div class="field"><label>Estado de gestión</label><select id="fWorkflow"><option value="pending_review">Pendiente</option><option value="follow_up">En seguimiento</option><option value="resolved">Resuelta</option><option value="discarded">Descartada</option></select></div><div class="field"><label>Tipo de consulta</label><select id="fCategory"><option value="">Automático / pendiente</option><option value="consulta">Consulta</option><option value="cotizacion">Cotización</option><option value="soporte">Soporte</option><option value="reclamo">Reclamo</option><option value="comercial">Comercial</option><option value="otro">Otro</option></select></div><div class="field"><label>Satisfacción del cliente</label><select id="fSatisfaction"><option value="">Sin definir</option><option value="5">★★★★★ Muy satisfecho</option><option value="4">★★★★☆ Satisfecho</option><option value="3">★★★☆☆ Neutral</option><option value="2">★★☆☆☆ Insatisfecho</option><option value="1">★☆☆☆☆ Muy insatisfecho</option></select></div><div class="field"><label>¿Pidió cotización?</label><select id="fQuote"><option value="">Sin definir</option><option value="true">Sí</option><option value="false">No</option></select></div><div class="field"><label>Prioridad</label><select id="fPriority"><option value="baja">Baja</option><option value="normal">Normal</option><option value="alta">Alta</option><option value="urgente">Urgente</option></select></div><div class="field"><label>Responsable</label><input id="fAssigned" placeholder="Operario / vendedor" value="'+esc(x.assignedTo||'')+'"/></div></div><div class="check"><input type="checkbox" id="fPending" '+(x.pendingContact?'checked':'')+'/><span><b>Hay que volver a contactar al cliente</b></span></div><div class="field"><label>Próximo contacto</label><input type="datetime-local" id="fNext" value="'+esc(fmtInput(x.nextContactAt))+'"/></div><div class="field"><label>Resumen</label><textarea id="fSummary" placeholder="Resumen de la consulta…">'+esc(x.summary||'')+'</textarea></div><div class="field"><label>Notas internas</label><textarea id="fNotes" placeholder="Dudas pendientes, compromiso asumido, información a verificar…">'+esc(x.notes||'')+'</textarea></div><div class="field"><label>Etiquetas</label><input id="fTags" value="'+esc((x.tags||[]).join(', '))+'" placeholder="precio, soporte, urgente…"/></div><div class="history"><b style="font-size:12px">Historial de este cliente</b>'+hist+'</div>';el('fWorkflow').value=(x.workflowStatus==='active'||x.workflowStatus==='manual')?'pending_review':x.workflowStatus;el('fCategory').value=x.category||'';el('fSatisfaction').value=x.satisfaction||'';el('fQuote').value=qr;el('fPriority').value=x.priority||'normal';classificationTouched=false;['fCategory','fSatisfaction','fQuote'].forEach(fid=>el(fid).addEventListener('change',()=>{classificationTouched=true}));el('followFoot').innerHTML=(!x.finalized?'<button class="btn btnDanger" id="followCloseBtn">Finalizar conversación</button>':'')+'<button class="btn btnPrimary" id="saveFollowBtn">Guardar cambios</button>';el('saveFollowBtn').onclick=saveFollow;if(el('followCloseBtn'))el('followCloseBtn').onclick=()=>closeNow(x._id);if(el('reclassifyBtn'))el('reclassifyBtn').onclick=()=>reclassify(x._id)}catch(e){el('followBody').innerHTML='<div class="empty">Error cargando seguimiento.</div>';toast(e.message,true)}}
 async function saveFollow(){if(!activeId)return;const pending=el('fPending').checked;const body={workflowStatus:el('fWorkflow').value,category:el('fCategory').value,satisfaction:el('fSatisfaction').value,quoteRequested:el('fQuote').value,classificationTouched,priority:el('fPriority').value,assignedTo:el('fAssigned').value,pendingContact:pending,nextContactAt:pending?el('fNext').value:null,summary:el('fSummary').value,notes:el('fNotes').value,tags:el('fTags').value};try{await requestJson('/api/conversation-followup/'+encodeURIComponent(activeId),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});toast('Seguimiento guardado');await loadRows();await openFollow(activeId)}catch(e){toast(e.message,true)}}
 async function reclassify(id){if(!confirm('¿Volver a analizar esta conversación con IA? La clasificación automática reemplazará tipo, cotización, satisfacción y resumen.'))return;try{toast('Clasificando con IA…');await requestJson('/api/conversation-followup/'+encodeURIComponent(id)+'/classify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({force:true})});toast('Clasificación actualizada');await loadRows();await openFollow(id)}catch(e){toast(e.message,true)}}
-async function closeNow(id){if(!confirm('¿Finalizar esta conversación ahora? Al finalizar se clasificará automáticamente con IA.'))return;try{toast('Finalizando y clasificando…');await requestJson('/api/conversation-followup/'+encodeURIComponent(id)+'/close',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast('Conversación finalizada');closeModal('chatModal');await loadRows();if(el('followModal').classList.contains('open'))await openFollow(id)}catch(e){toast(e.message,true)}}
+async function closeNow(id){if(!confirm('¿Finalizar esta conversación ahora? Se hará una clasificación final con IA.'))return;try{toast('Finalizando y clasificando…');await requestJson('/api/conversation-followup/'+encodeURIComponent(id)+'/close',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast('Conversación finalizada');closeModal('chatModal');await loadRows();if(el('followModal').classList.contains('open'))await openFollow(id)}catch(e){toast(e.message,true)}}
 async function refresh(){el('refreshBtn').disabled=true;try{await loadConfig();await loadRows()}catch(e){toast(e.message,true)}finally{el('refreshBtn').disabled=false}}
 async function changeTenant(value){const next=String(value||'').trim();if(!CAN_SELECT_TENANT||!next||next===TENANT)return;TENANT=next;activeId='';activeItem=null;if(el('tenantLabel'))el('tenantLabel').textContent=TENANT;try{const u=new URL(location.href);u.searchParams.set('tenant',TENANT);history.replaceState(null,'',u.toString())}catch{}await refresh()}
 el('refreshBtn').addEventListener('click',refresh);if(CAN_SELECT_TENANT&&el('tenantSelect'))el('tenantSelect').addEventListener('change',e=>changeTenant(e.target.value));['q','conversationState','workflow','category'].forEach(id=>el(id).addEventListener(id==='q'?'input':'change',()=>{clearTimeout(debounce);debounce=setTimeout(()=>loadRows().catch(e=>toast(e.message,true)),id==='q'?250:0)}));
@@ -807,6 +888,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
       const config = await loadConfig(db, tenant);
       const closedNow = config.autoCloseEnabled ? await autoCloseTenant(db, tenant, config) : 0;
       if (closedNow) setImmediate(() => classifyMissingFinalized(db, tenant, AI_BACKFILL_PER_SWEEP).catch(() => {}));
+      setImmediate(() => classifyActiveConversations(db, tenant, LIVE_AI_PER_SWEEP).catch(e => console.warn('[followup][ai] live list:', e?.message || e)));
 
       const limit = intValue(req.query?.limit, 500, 1, 1000);
       const qText = cleanString(req.query?.q, 150);
@@ -910,12 +992,14 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
       if (!bundle) return res.status(404).json({ ok: false, error: 'not_found' });
 
       // Migración automática de errores generados por la versión vieja que enviaba
-      // temperature: 0. La versión actual NO envía ese parámetro. Al abrir el
-      // seguimiento reintentamos inmediatamente y devolvemos ya el resultado nuevo.
+      // temperature: 0. La versión actual NO envía ese parámetro.
       if (bundle.conv?.finalized === true && shouldBypassAiRetry(bundle.followup)) {
         console.log(`[followup][ai] reparando error temperature viejo build=${FOLLOWUP_BUILD} tenant=${tenant} conv=${id}`);
-        await classifyConversationWithAi(db, tenant, bundle.conv._id, { force: true });
+        await classifyConversationWithAi(db, tenant, bundle.conv._id, { force: true, live: false });
         bundle = await loadConversationBundle(db, tenant, id);
+      } else if (bundle.conv?.finalized !== true) {
+        const liveResult = await classifyConversationWithAi(db, tenant, bundle.conv._id, { force: false, live: true });
+        if (liveResult?.ok && !liveResult?.skipped) bundle = await loadConversationBundle(db, tenant, id);
       }
 
       return res.json({ ok: true, item: bundle.item, config: bundle.config, build: FOLLOWUP_BUILD });
@@ -933,8 +1017,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
       const db = await getDb();
       const conv = await db.collection('conversations').findOne({ _id: new ObjectId(id), tenantId: tenant, botMode: 'conversacional' });
       if (!conv) return res.status(404).json({ ok: false, error: 'not_found' });
-      if (conv.finalized !== true) return res.status(409).json({ ok: false, error: 'conversation_must_be_finalized' });
-      const result = await classifyConversationWithAi(db, tenant, conv._id, { force: boolValue(req.body?.force, true) });
+      const result = await classifyConversationWithAi(db, tenant, conv._id, { force: boolValue(req.body?.force, true), live: conv.finalized !== true });
       if (!result.ok) return res.status(500).json({ ok: false, error: result.error || 'classification_failed' });
       const bundle = await loadConversationBundle(db, tenant, id);
       return res.json({ ok: true, item: bundle?.item || null });
