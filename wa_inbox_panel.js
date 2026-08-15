@@ -75,6 +75,36 @@ function lastConversationDate(conv) {
   return conv?.lastUserTs || conv?.lastAssistantTs || conv?.updatedAt || conv?.closedAt || conv?.openedAt || conv?.createdAt || null;
 }
 
+function isInboxConversationOpen(conv = {}) {
+  const status = String(conv?.status || "").trim().toUpperCase();
+  return conv?.finalized !== true && !["COMPLETED", "CANCELLED", "CANCELED", "CLOSED_MANUAL", "CLOSED_INACTIVITY"].includes(status);
+}
+
+function pickActiveConversationFromRows(rows = []) {
+  return (Array.isArray(rows) ? rows : [])
+    .filter(isInboxConversationOpen)
+    .sort((a, b) => dateMs(lastConversationDate(b)) - dateMs(lastConversationDate(a)))[0] || null;
+}
+
+async function takeConversationManual(db, tenantId, conv, operator = "operator") {
+  if (!conv?._id || !isInboxConversationOpen(conv)) return null;
+  const now = new Date();
+  const operatorName = String(operator || "operator").trim().slice(0, 120) || "operator";
+  const set = {
+    manualOpen: true,
+    status: "MANUAL",
+    manualOperator: operatorName,
+    manualLastOperatorAt: now,
+    updatedAt: now,
+  };
+  if (!conv.manualStartedAt) set.manualStartedAt = now;
+  await db.collection("conversations").updateOne(
+    withTenant({ _id: conv._id, finalized: { $ne: true } }, tenantId),
+    { $set: set }
+  );
+  return { ...conv, ...set };
+}
+
 function normalizePhoneKey(waId) {
   const raw = String(waId || "").trim();
   if (!raw) return "";
@@ -160,6 +190,7 @@ function buildInboxContactGroups(rows = []) {
     const convId = String(conv?._id || "");
     const lastAt = lastConversationDate(conv);
     const lastAtMs = dateMs(lastAt);
+    const isOpen = isInboxConversationOpen(conv);
 
     if (!groups.has(key)) {
       groups.set(key, {
@@ -168,7 +199,9 @@ function buildInboxContactGroups(rows = []) {
         waId,
         contactName: conv?.contactName || "-",
         status: adminStatusLabel(conv),
-        manualOpen: !!conv?.manualOpen,
+        manualOpen: false,
+        manualOperator: "",
+        activeConversationId: "",
         conversationIds: [],
         conversationCount: 0,
         allStatuses: [],
@@ -178,23 +211,34 @@ function buildInboxContactGroups(rows = []) {
         displayPhoneNumber: conv?.displayPhoneNumber || null,
         instagramAccountId: conv?.instagramAccountId || null,
         instagramPageId: conv?.instagramPageId || null,
+        _activeLastMs: 0,
       });
     }
 
     const g = groups.get(key);
     if (convId && !g.conversationIds.includes(convId)) g.conversationIds.push(convId);
     g.conversationCount = g.conversationIds.length;
-    g.manualOpen = !!g.manualOpen || !!conv?.manualOpen;
 
     const status = adminStatusLabel(conv);
     if (status && !g.allStatuses.includes(status)) g.allStatuses.push(status);
 
+    // La pausa manual pertenece solamente a la conversación ABIERTA actual.
+    // No arrastramos manualOpen de conversaciones históricas ya finalizadas.
+    if (isOpen && lastAtMs >= Number(g._activeLastMs || 0)) {
+      g._activeLastMs = lastAtMs;
+      g.activeConversationId = convId;
+      g.manualOpen = !!conv?.manualOpen;
+      g.manualOperator = String(conv?.manualOperator || "");
+      g.status = conv?.manualOpen ? "MANUAL" : (status || "OPEN");
+    }
+
     const currentMs = dateMs(g.lastAt);
     if (lastAtMs >= currentMs) {
-      g._id = convId || g._id;
+      // Si hay una conversación abierta, esa es la que debe quedar seleccionada
+      // para responder/finalizar. Si no la hay, usamos la última histórica.
+      if (!g.activeConversationId) g._id = convId || g._id;
       g.waId = waId || g.waId;
       g.contactName = conv?.contactName || g.contactName || "-";
-      g.status = status || g.status || "OPEN";
       g.lastAt = lastAt || g.lastAt;
       g.channelType = conv?.channelType || g.channelType || "whatsapp";
       g.phoneNumberId = conv?.phoneNumberId || g.phoneNumberId || null;
@@ -202,6 +246,11 @@ function buildInboxContactGroups(rows = []) {
       g.instagramAccountId = conv?.instagramAccountId || g.instagramAccountId || null;
       g.instagramPageId = conv?.instagramPageId || g.instagramPageId || null;
     }
+  }
+
+  for (const g of groups.values()) {
+    if (g.activeConversationId) g._id = g.activeConversationId;
+    delete g._activeLastMs;
   }
 
   return Array.from(groups.values()).sort((a, b) => dateMs(b.lastAt) - dateMs(a.lastAt));
@@ -265,7 +314,7 @@ async function pickConversationForReply({ tenantId, convId, waId, convIds }) {
 
   if (convId && ObjectId.isValid(String(convId))) {
     const conv = await db.collection("conversations").findOne(withTenant({ _id: new ObjectId(String(convId)) }, tenantId));
-    if (conv) return conv;
+    if (conv && isInboxConversationOpen(conv)) return conv;
   }
 
   const ids = parseConvIdList(convIds);
@@ -760,7 +809,7 @@ function inboxHtml(initialConvs, tenant) {
     <main class="chat">
       <div class="chat-header">
         <div class="chat-title"><a href="/app" class="menu-link" title="Volver al menú principal" aria-label="Volver al menú principal">☰</a><button id="backBtn" class="back-btn" type="button" aria-label="Volver a contactos"><span class="back-icon">‹</span><span>Contactos</span></button><div class="avatar" id="chatAvatar">?</div><div><div class="name" id="chatName">Seleccioná un chat</div><div class="sub" id="chatSub"></div></div></div>
-         <div class="chat-actions"><span id="chatStatus" class="pill"></span><label class="toggle"><input type="checkbox" id="manualToggle"/><span>Pausar bot</span></label></div>
+         <div class="chat-actions"><span id="chatStatus" class="pill"></span><label class="toggle"><input type="checkbox" id="manualToggle"/><span id="manualLabel">Tomar conversación</span></label><button id="finalizeBtn" class="btn" type="button" disabled>Finalizar</button></div>
       </div>
       <div id="chatBody" class="chat-body"><div class="empty">No hay conversación seleccionada.</div></div>
       <div class="chat-footer">
@@ -787,6 +836,8 @@ let activeConvIds = [];
 let activeWaId = "";
 let activeContactKey = "";
 let activeStatusLabel = "";
+let activeFinalized = false;
+let activeManual = false;
 let refreshTimer = null;
 let lastConversationsSig = "";
 let lastMessagesSig = "";
@@ -802,6 +853,8 @@ const chatName = document.getElementById("chatName");
 const chatSub = document.getElementById("chatSub");
 const chatStatus = document.getElementById("chatStatus");
 const manualToggle = document.getElementById("manualToggle");
+const manualLabel = document.getElementById("manualLabel");
+const finalizeBtn = document.getElementById("finalizeBtn");
 const pauseHint = document.getElementById("pauseHint");
 const chatBody = document.getElementById("chatBody");
 const sendForm = document.getElementById("sendForm");
@@ -828,7 +881,7 @@ function sigForConversations(rows){try{return JSON.stringify((rows||[]).map(c=>[
 function sigForMessages(rows){try{return JSON.stringify((rows||[]).map(m=>[m._id,m.role,m.content,m.type,m.createdAt,m.media&&m.media.url,m.media&&m.media.filename]));}catch{return String(Date.now());}}
 function visibleMessageText(m){const txt=String((m&&m.content)||"").trim(); if(!txt)return""; if(!m.media)return txt; const n=txt.toLowerCase().normalize("NFD").replace(/[\\u0300-\\u036f]/g,"").replace(/\\s+/g," ").trim(); if(n.startsWith("el usuario envio una imagen")||n.startsWith("el usuario envio un audio")||n.startsWith("el usuario envio un video")||n.startsWith("el usuario envio un documento")||n.startsWith("el usuario envio un archivo")||/^\\[archivo enviado:/i.test(txt))return""; return txt;}
  
-function syncManualUi(isManual){const paused=!!isManual; manualToggle.checked=paused; pauseHint.textContent=paused?"Bot pausado":"Bot activo"; chatStatus.textContent=paused?"BOT PAUSADO":(activeStatusLabel||""); chatStatus.classList.toggle("error-pill", paused);}
+function syncManualUi(isManual){const paused=!!isManual; activeManual=paused; manualToggle.checked=paused; manualToggle.disabled=paused||activeFinalized; if(manualLabel)manualLabel.textContent=paused?"Atención manual":"Tomar conversación"; pauseHint.textContent=activeFinalized?"Conversación finalizada":(paused?"Atención manual · bot pausado":"Bot activo"); chatStatus.textContent=activeFinalized?"FINALIZADA":(paused?"ATENCIÓN MANUAL":(activeStatusLabel||"OPEN")); chatStatus.classList.toggle("error-pill", paused&&!activeFinalized); if(finalizeBtn)finalizeBtn.disabled=activeFinalized||!(activeWaId||activeConvId||activeConvIds.length); msgInput.disabled=activeFinalized; fileInput.disabled=activeFinalized; sendBtn.disabled=activeFinalized||!(activeWaId||activeConvId||activeConvIds.length);}
 function selectedPayload(){return activeConvIds.length ? { convIds: activeConvIds, waId: activeWaId, convId: activeConvId } : (activeWaId ? { waId: activeWaId, convId: activeConvId } : { convId: activeConvId });}
 
 function renderList(){
@@ -842,7 +895,7 @@ function renderList(){
     const name=(c.contactName && c.contactName!=="-")?c.contactName:(waId||"Sin nombre");
     const count=Number(c.conversationCount || convIds.length || 1);
     const status=count>1 ? (count+" conversaciones") : (c.status||"OPEN");
-    const manual=c.manualOpen?"BOT PAUSADO":"BOT ACTIVO";
+    const manual=c.manualOpen?"ATENCIÓN MANUAL":"BOT ACTIVO";
     const cls=key===activeContactKey?"conv-item active":"conv-item";
     return '<div class="'+cls+'" data-id="'+esc(id)+'" data-convs="'+esc(convIds.join(','))+'" data-wa="'+esc(waId)+'" data-key="'+esc(key)+'"><div class="avatar">'+esc(initials(name))+'</div><div class="conv-meta"><div class="conv-row"><div class="conv-name">'+esc(name)+'</div><span class="pill">'+esc(status)+'</span></div><div class="conv-row"><div class="conv-wa">'+esc(waId)+'</div><span class="pill">'+esc(manual)+'</span></div><div class="conv-last">'+esc(fmtTime(c.lastAt))+'</div></div></div>';
   }).join("");
@@ -891,14 +944,15 @@ function renderMessages(msgs,{stickToBottom=true}={}){
   chatBody.appendChild(frag); if(stickToBottom||wasNearBottom)chatBody.scrollTop=chatBody.scrollHeight;
 }
 async function selectContact({convId="",convIds=[],waId="",contactKey="",pushHistory=true}={}){
-  activeConvId=String(convId||""); activeConvIds=Array.isArray(convIds)?convIds.map(String).filter(Boolean):[]; activeWaId=String(waId||""); activeContactKey=String(contactKey||normalizeContactKey(activeWaId)); setUrlContact(pushHistory); showChat(); renderList(); sendBtn.disabled=!(activeWaId||activeConvId||activeConvIds.length); chatBody.innerHTML='<div class="empty">Cargando...</div>'; lastMessagesSig="";
-  try{const meta=await loadMeta(); activeConvId=String(meta.convId||activeConvId||""); activeConvIds=Array.isArray(meta.conversationIds)?meta.conversationIds.map(String).filter(Boolean):activeConvIds; activeWaId=String(meta.waId||activeWaId||""); activeContactKey=meta.contactKey||activeContactKey||normalizeContactKey(activeWaId); const name=meta.contactName||meta.waId||"Chat"; chatAvatar.textContent=initials(name); chatName.textContent=name; const ch=meta.displayPhoneNumber||meta.phoneNumberId||""; chatSub.textContent=meta.waId?(meta.waId+(ch?" · "+ch:"")+(meta.conversationCount>1?" · "+meta.conversationCount+" conversaciones":"")):""; activeStatusLabel=meta.status||""; syncManualUi(!!meta.manualOpen); const msgs=await loadMessages(); lastMessagesSig=sigForMessages(msgs); renderMessages(msgs,{stickToBottom:true});}catch(e){chatBody.innerHTML='<div class="empty">No se pudo cargar la conversación.<br><small>'+esc(e&&e.message?e.message:e)+'</small></div>'; console.error("wa-inbox selectContact", e);}
+  activeConvId=String(convId||""); activeConvIds=Array.isArray(convIds)?convIds.map(String).filter(Boolean):[]; activeWaId=String(waId||""); activeContactKey=String(contactKey||normalizeContactKey(activeWaId)); activeFinalized=false; activeManual=false; setUrlContact(pushHistory); showChat(); renderList(); sendBtn.disabled=true; chatBody.innerHTML='<div class="empty">Cargando...</div>'; lastMessagesSig="";
+  try{const meta=await loadMeta(); activeConvId=String(meta.convId||activeConvId||""); activeConvIds=Array.isArray(meta.conversationIds)?meta.conversationIds.map(String).filter(Boolean):activeConvIds; activeWaId=String(meta.waId||activeWaId||""); activeContactKey=meta.contactKey||activeContactKey||normalizeContactKey(activeWaId); const name=meta.contactName||meta.waId||"Chat"; chatAvatar.textContent=initials(name); chatName.textContent=name; const ch=meta.displayPhoneNumber||meta.phoneNumberId||""; chatSub.textContent=meta.waId?(meta.waId+(ch?" · "+ch:"")+(meta.conversationCount>1?" · "+meta.conversationCount+" conversaciones":"")):""; activeStatusLabel=meta.status||""; activeFinalized=!!meta.finalized; syncManualUi(!!meta.manualOpen); const msgs=await loadMessages(); lastMessagesSig=sigForMessages(msgs); renderMessages(msgs,{stickToBottom:true});}catch(e){chatBody.innerHTML='<div class="empty">No se pudo cargar la conversación.<br><small>'+esc(e&&e.message?e.message:e)+'</small></div>'; console.error("wa-inbox selectContact", e);}
 }
 async function refreshActiveMessages(){if(!activeContactKey)return; try{const msgs=await loadMessages(); renderMessages(msgs); await refreshConversations(true);}catch{}}
-manualToggle.addEventListener("change",async()=>{if(!activeWaId&&!activeConvId&&!activeConvIds.length)return; try{const r=await fetch(api("/api/admin/wa-inbox/manual"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...selectedPayload(),manualOpen:manualToggle.checked})}); const j=await r.json().catch(()=>null); if(!r.ok)throw new Error(j&&j.error?j.error:"manual_error"); syncManualUi(!!j.manualOpen); await refreshConversations(true);}catch(e){alert("No se pudo cambiar la pausa del bot: "+(e.message||e)); syncManualUi(!manualToggle.checked);}});
+manualToggle.addEventListener("change",async()=>{if(!activeWaId&&!activeConvId&&!activeConvIds.length)return; if(activeFinalized){syncManualUi(false);return;} if(!manualToggle.checked){syncManualUi(true); alert("Una conversación tomada por un operador permanece manual hasta que se finalice."); return;} try{if(!confirm("¿Tomar esta conversación? Desde ahora el bot no responderá hasta que la finalices.")){syncManualUi(false);return;} const r=await fetch(api("/api/admin/wa-inbox/manual"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...selectedPayload(),manualOpen:true})}); const j=await r.json().catch(()=>null); if(!r.ok)throw new Error(j&&j.error?j.error:"manual_error"); activeStatusLabel="MANUAL"; syncManualUi(true); await refreshConversations(true);}catch(e){alert("No se pudo tomar la conversación: "+(e.message||e)); syncManualUi(false);}});
+if(finalizeBtn)finalizeBtn.addEventListener("click",async()=>{if(activeFinalized||(!activeWaId&&!activeConvId&&!activeConvIds.length))return; if(!confirm("¿Finalizar esta conversación? El próximo mensaje del cliente iniciará una conversación nueva con el bot activo."))return; finalizeBtn.disabled=true; try{const r=await fetch(api("/api/admin/wa-inbox/finalize"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(selectedPayload())}); const j=await r.json().catch(()=>null); if(!r.ok)throw new Error((j&&j.detail)||(j&&j.error)||"finalize_error"); activeFinalized=true; activeManual=false; activeStatusLabel="CLOSED_MANUAL"; syncManualUi(false); await refreshConversations(true,{force:true}); alert("Conversación finalizada. El próximo mensaje del cliente será una conversación nueva y volverá a responder el bot.");}catch(e){alert("No se pudo finalizar la conversación: "+(e.message||e)); finalizeBtn.disabled=false;}});
 function updateFileHint(){const f=fileInput.files&&fileInput.files[0]; if(!f){fileHint.style.display="none"; fileHint.textContent=""; return;} fileHint.style.display="flex"; fileHint.textContent="📎 "+f.name;}
 fileInput.addEventListener("change",updateFileHint); fileHint.addEventListener("click",()=>{fileInput.value=""; updateFileHint();});
-sendForm.addEventListener("submit",async(e)=>{e.preventDefault(); if(!activeWaId&&!activeConvId&&!activeConvIds.length)return; const text=String(msgInput.value||"").trim(); const file=fileInput.files&&fileInput.files[0]; if(!text&&!file)return; sendBtn.disabled=true; try{if(file){const fd=new FormData(); Object.entries(selectedPayload()).forEach(([k,v])=>{if(Array.isArray(v))fd.append(k,v.join(",")); else if(v)fd.append(k,v);}); if(text)fd.append("text",text); fd.append("file",file); const r=await fetch(api("/api/admin/wa-inbox/send-file"),{method:"POST",body:fd}); const j=await r.json().catch(()=>null); if(!r.ok)throw new Error((j&&j.detail)|| (j&&j.error) || "send_file_error"); fileInput.value=""; updateFileHint();}else{const r=await fetch(api("/api/admin/wa-inbox/send-message"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...selectedPayload(),text})}); const j=await r.json().catch(()=>null); if(!r.ok)throw new Error((j&&j.detail)|| (j&&j.error) || "send_message_error");} msgInput.value=""; await refreshActiveMessages();}catch(err){alert("No se pudo enviar: "+(err.message||err));}finally{sendBtn.disabled=false; msgInput.focus();}});
+sendForm.addEventListener("submit",async(e)=>{e.preventDefault(); if(activeFinalized||(!activeWaId&&!activeConvId&&!activeConvIds.length))return; const text=String(msgInput.value||"").trim(); const file=fileInput.files&&fileInput.files[0]; if(!text&&!file)return; sendBtn.disabled=true; try{let j=null;if(file){const fd=new FormData(); Object.entries(selectedPayload()).forEach(([k,v])=>{if(Array.isArray(v))fd.append(k,v.join(",")); else if(v)fd.append(k,v);}); if(text)fd.append("text",text); fd.append("file",file); const r=await fetch(api("/api/admin/wa-inbox/send-file"),{method:"POST",body:fd}); j=await r.json().catch(()=>null); if(!r.ok)throw new Error((j&&j.detail)|| (j&&j.error) || "send_file_error"); fileInput.value=""; updateFileHint();}else{const r=await fetch(api("/api/admin/wa-inbox/send-message"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...selectedPayload(),text})}); j=await r.json().catch(()=>null); if(!r.ok)throw new Error((j&&j.detail)|| (j&&j.error) || "send_message_error");} activeStatusLabel="MANUAL"; syncManualUi(true); msgInput.value=""; await refreshActiveMessages();}catch(err){alert("No se pudo enviar: "+(err.message||err));}finally{sendBtn.disabled=activeFinalized; if(!activeFinalized)msgInput.focus();}});
 searchInput.addEventListener("input",renderList);
 if(backBtn)backBtn.addEventListener("click",()=>showContacts(true));
 window.addEventListener("popstate",()=>{if(isMobile())showContacts(false);});
@@ -949,14 +1003,19 @@ function mountWhatsAppInboxPanel(app, { auth } = {}) {
       if (!convs.length) return errorJson(res, 404, "conv_not_found");
       const groups = buildInboxContactGroups(convs);
       const group = groups[0];
+      const active = pickActiveConversationFromRows(convs);
+      const selected = active || convs.slice().sort((a,b)=>dateMs(lastConversationDate(b))-dateMs(lastConversationDate(a)))[0] || null;
       return res.json({
         ok: true,
-        convId: group._id,
+        convId: String(selected?._id || group._id || ""),
         contactKey: group.contactKey,
         waId: group.waId,
         contactName: group.contactName || "",
-        status: group.status || "OPEN",
-        manualOpen: convs.some((c) => !!c.manualOpen),
+        status: selected ? (selected.manualOpen && isInboxConversationOpen(selected) ? "MANUAL" : adminStatusLabel(selected)) : (group.status || "OPEN"),
+        finalized: selected ? !isInboxConversationOpen(selected) : true,
+        manualOpen: !!(active?.manualOpen),
+        manualOperator: String(active?.manualOperator || ""),
+        manualStartedAt: active?.manualStartedAt || null,
         conversationIds: convs.map((c) => String(c._id)),
         conversationCount: convs.length,
         channelType: group.channelType || "whatsapp",
@@ -1004,18 +1063,64 @@ function mountWhatsAppInboxPanel(app, { auth } = {}) {
         waId: req.body?.waId,
         contactKey: req.body?.contactKey,
       });
-      const ids = convs.map((c) => c._id).filter(Boolean);
-      if (!ids.length) return errorJson(res, 404, "conv_not_found");
+      const active = pickActiveConversationFromRows(convs);
+      if (!active) return errorJson(res, 409, "no_open_conversation");
+
       const flag = !!req.body?.manualOpen;
+      // Una vez tomada por un operador no se devuelve al bot dentro de la misma
+      // conversación. Se libera únicamente finalizándola.
+      if (!flag && active.manualOpen) return errorJson(res, 409, "manual_until_finalize");
+      if (!flag) return res.json({ ok: true, manualOpen: false, conversationId: String(active._id) });
+
       const db = await getDb();
-      await db.collection("conversations").updateMany(
-        withTenant({ _id: { $in: ids } }, tenant),
-        { $set: { manualOpen: flag, updatedAt: new Date() } }
-      );
-      res.json({ ok: true, manualOpen: flag, conversationIds: ids.map(String) });
+      const operator = req?.user?.username || req?.user?.email || req?.user?.uid || "operator";
+      const updated = await takeConversationManual(db, tenant, active, operator);
+      res.json({ ok: true, manualOpen: true, conversationId: String(updated?._id || active._id), status: "MANUAL" });
     } catch (e) {
       console.error("POST /api/admin/wa-inbox/manual error:", e?.message || e);
       errorJson(res, 500, "internal");
+    }
+  });
+
+
+  app.post("/api/admin/wa-inbox/finalize", async (req, res) => {
+    try {
+      const tenant = resolveTenantIdFromAuth(auth, req);
+      const convs = await findConversationsForInbox({
+        tenantId: tenant,
+        convId: req.body?.convId,
+        convIds: req.body?.convIds,
+        waId: req.body?.waId,
+        contactKey: req.body?.contactKey,
+      });
+      const active = pickActiveConversationFromRows(convs);
+      if (!active) return errorJson(res, 409, "no_open_conversation");
+
+      const db = await getDb();
+      const now = new Date();
+      const operator = String(req?.user?.username || req?.user?.email || req?.user?.uid || "operator").trim().slice(0, 120);
+      const set = {
+        finalized: true,
+        status: "CLOSED_MANUAL",
+        manualOpen: false,
+        closedAt: now,
+        updatedAt: now,
+        closeReason: "operator",
+        manualEndedAt: now,
+        manualEndedBy: operator || "operator",
+      };
+      if (String(active?.botMode || "").toLowerCase() === "conversacional") set.followupReviewPending = true;
+
+      await db.collection("conversations").updateOne(
+        withTenant({ _id: active._id, finalized: { $ne: true } }, tenant),
+        { $set: set }
+      );
+
+      console.log(`[wa-inbox] conversación finalizada por operador tenant=${tenant} conv=${String(active._id)} waId=${String(active.waId || "")}`);
+      return res.json({ ok: true, finalized: true, conversationId: String(active._id), status: "CLOSED_MANUAL" });
+    } catch (e) {
+      console.error("POST /api/admin/wa-inbox/finalize error:", e?.message || e);
+      errorJson(res, 500, "finalize_failed", e?.message || e);
     }
   });
 
@@ -1024,14 +1129,20 @@ function mountWhatsAppInboxPanel(app, { auth } = {}) {
       const tenant = resolveTenantIdFromAuth(auth, req);
       const text = String(req.body?.text || "").trim();
       if (!text) return errorJson(res, 400, "text_required");
-      const conv = await pickConversationForReply({ tenantId: tenant, convId: req.body?.convId, waId: req.body?.waId, convIds: req.body?.convIds });
-      if (!conv) return errorJson(res, 404, "conv_not_found");
+      let conv = await pickConversationForReply({ tenantId: tenant, convId: req.body?.convId, waId: req.body?.waId, convIds: req.body?.convIds });
+      if (!conv) return errorJson(res, 409, "no_open_conversation");
       if (String(conv.channelType || "whatsapp").toLowerCase() !== "whatsapp") return errorJson(res, 400, "only_whatsapp_supported");
+
+      // Enviar desde el panel implica toma humana. Persistimos la pausa ANTES de
+      // enviar para que una respuesta inmediata del cliente no dispare al bot.
+      const db = await getDb();
+      const operator = req?.user?.username || req?.user?.email || req?.user?.uid || "operator";
+      conv = await takeConversationManual(db, tenant, conv, operator) || conv;
 
       const waOpts = await getRuntimeForConversation(conv, tenant);
       const sent = await sendWhatsAppTextStrict(conv.waId, text, waOpts);
       await saveOutboundMessage({ tenantId: tenant, conv, content: text, type: "text", meta: { waInbox: { outbound: true, providerResponse: sent || null } } });
-      res.json({ ok: true });
+      res.json({ ok: true, manualOpen: true, status: "MANUAL", conversationId: String(conv._id) });
     } catch (e) {
       console.error("POST /api/admin/wa-inbox/send-message error:", e?.message || e);
       errorJson(res, 500, "send_message_failed", e?.message || e);
@@ -1044,9 +1155,13 @@ function mountWhatsAppInboxPanel(app, { auth } = {}) {
       const parsed = await parseMultipartForm(req, MAX_UPLOAD_BYTES);
       const file = parsed.files.file || parsed.files.attachment || parsed.files.media;
       if (!file || !file.data || !file.data.length) return errorJson(res, 400, "file_required");
-      const conv = await pickConversationForReply({ tenantId: tenant, convId: parsed.fields.convId, waId: parsed.fields.waId, convIds: parsed.fields.convIds });
-      if (!conv) return errorJson(res, 404, "conv_not_found");
+      let conv = await pickConversationForReply({ tenantId: tenant, convId: parsed.fields.convId, waId: parsed.fields.waId, convIds: parsed.fields.convIds });
+      if (!conv) return errorJson(res, 409, "no_open_conversation");
       if (String(conv.channelType || "whatsapp").toLowerCase() !== "whatsapp") return errorJson(res, 400, "only_whatsapp_supported");
+
+      const db = await getDb();
+      const operator = req?.user?.username || req?.user?.email || req?.user?.uid || "operator";
+      conv = await takeConversationManual(db, tenant, conv, operator) || conv;
 
       const filename = safeFileName(file.name || "archivo");
       const mime = String(file.mimetype || "application/octet-stream").trim() || "application/octet-stream";
@@ -1069,7 +1184,7 @@ function mountWhatsAppInboxPanel(app, { auth } = {}) {
         },
       });
 
-      res.json({ ok: true, mediaId: sent?.mediaId || null, kind, filename });
+      res.json({ ok: true, mediaId: sent?.mediaId || null, kind, filename, manualOpen: true, status: "MANUAL", conversationId: String(conv._id) });
     } catch (e) {
       console.error("POST /api/admin/wa-inbox/send-file error:", e?.message || e);
       errorJson(res, 500, "send_file_failed", e?.message || e);
