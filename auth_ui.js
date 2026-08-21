@@ -1117,7 +1117,7 @@ function getNavItemsForUser(user) {
   if (isAdmin && hasAccess(user, "tenant_config")) items.push({ key: "tenant_config", title: "Dominio Config", href: "/ui/tenant_config" });
   if (isAdmin && hasAccess(user, "order_config")) items.push({ key: "order_config", title: "Reglas de Pedidos", href: "/ui/order_config" });
   if (isAdmin && hasAccess(user, "web_access")) items.push({ key: "web_access", title: "Ingresos Web", href: "/ui/web_access" });
-  if (isAdmin && hasAccess(user, "token_control")) items.push({ key: "token_control", title: "Control de Tokens", href: "/ui/token_control" });
+  if (hasAccess(user, "token_control")) items.push({ key: "token_control", title: "Control de Tokens", href: "/ui/token_control" });
 
   return items;
 }
@@ -3043,6 +3043,7 @@ function mountAuthRoutes(app) {
       { title: "Productos", href: "/ui/productos", badge: "UI", desc: "Catálogo del dominio" },
       { title: "Horarios", href: "/ui/horarios", badge: "UI", desc: "Configuración de horarios" },
       { title: "Comportamiento", href: "/ui/comportamiento", badge: "UI", desc: "Behavior prompt/config" },
+      { title: "Control de Tokens", href: "/ui/token_control", badge: "Consumo", desc: "Consumo de IA e importe a cobrar por dominio" },
       // APIs solo para admin/superadmin:
       ...(isAdmin ? [
         { title: "Leads", href: "/admin/leads", badge: "Admin", desc: "Mensajes del formulario de contacto" },
@@ -3053,7 +3054,7 @@ function mountAuthRoutes(app) {
         { title: "Dominio Config", href: "/ui/tenant_config", badge: "Admin", desc: "Configuración por dominio" },
         { title: "Reglas de Pedidos", href: "/ui/order_config", badge: "Admin", desc: "Habilitar/deshabilitar validaciones por dominio" },
         { title: "Ingresos Web", href: "/ui/web_access", badge: "Admin", desc: "Estadísticas de ingresos al panel" },
-        { title: "Control de Tokens", href: "/ui/token_control", badge: "Admin", desc: "Consumo y costos estimados de tokens por dominio" },
+        
         { title: "Logs Conversaciones", href: "/api/logs/conversations", badge: "API", desc: "Listado de conversaciones" },
         { title: "Logs Mensajes", href: "/api/logs/messages", badge: "API", desc: "Mensajes por conversación" },
         { title: "Behavior API", href: "/api/behavior", badge: "API", desc: "Get/Set behavior" },
@@ -3098,7 +3099,8 @@ function mountAuthRoutes(app) {
       order_config: { title: "Reglas de Pedidos", desc: "Habilitar/deshabilitar validaciones por dominio", badge: "Admin", src: "/admin/order-config?embed=1", active: "order_config" },
       telegram: { title: "Sesiones Telegram", desc: "Estado de bots, chats y acciones por tenant", badge: "Admin", src: "/admin/telegram?embed=1", active: "telegram" },
       web_access: { title: "Ingresos Web", desc: "Estadísticas de accesos al panel web", badge: "Admin", src: "/admin/web-access?embed=1", active: "web_access" },
-      token_control: { title: "Control de Tokens", desc: "Consumo y costos estimados de tokens por dominio", badge: "Admin", src: "/admin/token-control?embed=1", active: "token_control" },
+      token_control: { title: "Control de Tokens", desc: "Consumo de IA e importe a cobrar por dominio", badge: "Consumo", src: "/admin/token-control?embed=1", active: "token_control" },
+
     };
 
     const conf = map[page];
@@ -3390,8 +3392,16 @@ function mountAuthRoutes(app) {
     addOne(value);
   }
 
+  const BUILTIN_SUPERADMIN_ONLY_TENANT_FIELDS = [
+    "token_cost_chat_input_per_1k",
+    "token_cost_chat_output_per_1k",
+    "token_cost_audio_input_per_1k",
+    "token_cost_audio_output_per_1k"
+  ];
+
+
   async function loadTenantConfigSuperadminOnlyFields(db) {
-    const fields = new Set();
+    const fields = new Set(BUILTIN_SUPERADMIN_ONLY_TENANT_FIELDS);
 
     const readFieldsFromDoc = (doc) => {
       if (!doc || typeof doc !== "object") return;
@@ -3671,7 +3681,7 @@ function mountAuthRoutes(app) {
                 <button class="btn" type="submit" id="tc_btnSave">Guardar</button>
                 <button class="btn2" type="button" id="tc_btnAdd">Agregar campo</button>
                 <button class="btn2" type="button" id="tc_btnAddTag">Agregar TAG versión</button>
-                <button class="btn2" type="button" id="tc_btnAddTokenCosts">Agregar costos tokens</button>
+                <button class="btn2" type="button" id="tc_btnAddTokenCosts">Agregar tarifas tokens</button>
                 <button class="btn2" type="button" id="tc_btnClear">Limpiar</button>
                 ${isSuper ? `<button class="btn2 btnDanger" type="button" id="tc_btnDelete">Eliminar</button>` : ``}
               </div>
@@ -3838,10 +3848,16 @@ function mountAuthRoutes(app) {
 
         function addTokenCostFields(){
           const defs = [
-            ['token_cost_chat_input_per_1k', '0'],
-            ['token_cost_chat_output_per_1k', '0'],
-            ['token_cost_audio_input_per_1k', '0'],
-            ['token_cost_audio_output_per_1k', '0']
+            ...(isSuper ? [
+              ['token_cost_chat_input_per_1k', '0'],
+              ['token_cost_chat_output_per_1k', '0'],
+              ['token_cost_audio_input_per_1k', '0'],
+              ['token_cost_audio_output_per_1k', '0']
+            ] : []),
+            ['token_charge_chat_input_per_1k', '0'],
+            ['token_charge_chat_output_per_1k', '0'],
+            ['token_charge_audio_input_per_1k', '0'],
+            ['token_charge_audio_output_per_1k', '0']
           ];
           defs.forEach(([field, value]) => ensureFieldRow(field, value));
         }
@@ -4196,7 +4212,12 @@ function mountAuthRoutes(app) {
       if (tenantId) {
         const doc = await col.findOne({ _id: tenantId });
            if (!doc) return res.json({ ok:true, item: null, superadminOnlyFields });
-           return res.json({ ok:true, item: { _id: doc._id, createdAt: doc.createdAt || null, updatedAt: doc.updatedAt || null, data: stripTenantConfigDoc(doc) }, superadminOnlyFields });
+           const rawData = stripTenantConfigDoc(doc);
+           const visibleData = isSuper
+             ? rawData
+             : removeSuperadminOnlyFieldsFromData(rawData, superadminOnlyFields);
+           return res.json({ ok:true, item: { _id: doc._id, createdAt: doc.createdAt || null, updatedAt: doc.updatedAt || null, data: visibleData }, superadminOnlyFields });
+
     }
 
       // listado (superadmin)
