@@ -835,6 +835,26 @@ async function hydrateSessionStateFromDb(tenantId, from, historyMode, fullSystem
 
 
 // ================== WhatsApp ==================
+function splitWhatsAppText(text, maxChars = 3900) {
+  let remaining = String(text ?? "").trim();
+  const chunks = [];
+  const max = Math.max(500, Math.min(4096, Number(maxChars) || 3900));
+
+  while (remaining.length > max) {
+    let cut = remaining.lastIndexOf("\n\n", max);
+    if (cut < Math.floor(max * 0.55)) cut = remaining.lastIndexOf("\n", max);
+    if (cut < Math.floor(max * 0.55)) cut = remaining.lastIndexOf(" ", max);
+    if (cut <= 0) cut = max;
+
+    const part = remaining.slice(0, cut).trim();
+    if (part) chunks.push(part);
+    remaining = remaining.slice(cut).trimStart();
+  }
+
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
 async function sendWhatsAppMessage(to, text, opts = {}) {
   try {
     const body = String(text ?? "").trim();
@@ -847,11 +867,18 @@ async function sendWhatsAppMessage(to, text, opts = {}) {
     if (!pid) throw new Error("missing_phone_number_id");
     if (!token) throw new Error("missing_whatsapp_token");
 
-    await axios.post(
-      `https://graph.facebook.com/${GRAPH_API_VERSION}/${pid}/messages`,
-      { messaging_product: "whatsapp", to, text: { body } },
-      { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
-    );
+    const chunks = splitWhatsAppText(body, 3900);
+    if (chunks.length > 1) {
+      console.log(`[whatsapp] respuesta larga: ${body.length} caracteres -> ${chunks.length} mensajes`);
+    }
+
+    for (let i = 0; i < chunks.length; i++) {
+      await axios.post(
+        `https://graph.facebook.com/${GRAPH_API_VERSION}/${pid}/messages`,
+        { messaging_product: "whatsapp", to, text: { body: chunks[i] } },
+        { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
+      );
+    }
   } catch (error) {
     console.error("Error enviando WhatsApp:", error.response?.data || error.message);
   }
