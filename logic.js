@@ -380,6 +380,10 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   const qr_enabled = doc.qr_enabled === true || ["1","true","yes","si","sí","on"].includes(String(doc.qr_enabled || "").trim().toLowerCase());
   const qr_page_title = String(doc.qr_page_title || "Información del producto").trim();
   const qr_page_subtitle = String(doc.qr_page_subtitle || "Consultá precio, disponibilidad y más información.").trim();
+  const qr_company_name = String(doc.qr_company_name || "").trim();
+  const qr_company_logo_url = String(doc.qr_company_logo_url || "").trim();
+  const qr_button_color = String(doc.qr_button_color || "#0f766e").trim() || "#0f766e";
+  const qr_button_text_color = String(doc.qr_button_text_color || "#ffffff").trim() || "#ffffff";
   const qr_currency = String(doc.qr_currency || "ARS").trim().toUpperCase() || "ARS";
   const qr_api_url = String(doc.qr_api_url || "").trim();
   const qr_api_method = String(doc.qr_api_method || "GET").trim().toUpperCase() === "POST" ? "POST" : "GET";
@@ -445,6 +449,10 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
     qr_enabled,
     qr_page_title,
     qr_page_subtitle,
+    qr_company_name,
+    qr_company_logo_url,
+    qr_button_color,
+    qr_button_text_color,
     qr_currency,
     qr_api_url,
     qr_api_method,
@@ -1866,77 +1874,115 @@ async function executeConversationalWebSearch(actionCfg, action = {}, context = 
   const apiKey = String(context?.openaiApiKey || "").trim();
   if (!apiKey) return { ok: false, error: "web_search_openai_key_missing" };
 
-  const model = String(actionCfg.web_model || context?.chatModel || "gpt-5.6").trim() || "gpt-5.6";
+  const model = String(actionCfg.web_model || context?.chatModel || "gpt-5.6-luna").trim() || "gpt-5.6-luna";
   const searchContextSize = ["low", "medium", "high"].includes(String(actionCfg.web_search_context_size || "medium"))
     ? String(actionCfg.web_search_context_size || "medium")
     : "medium";
   const timeout = Math.max(3000, Math.min(60000, Number(actionCfg.timeout_ms || 30000) || 30000));
   const maxChars = Math.max(2000, Math.min(100000, Number(actionCfg.max_chars || 30000) || 30000));
-
+  const input = [
+    "Buscá en Internet información técnica y pública verificable para responder esta consulta:",
+    query,
+    "Priorizá el sitio oficial del fabricante, manuales, fichas técnicas y documentación primaria. Si el nombre comercial parece contener una variante o error ortográfico, buscá también la variante más probable. No inventes datos.",
+  ].join("\n");
   const startedAt = Date.now();
-  try {
-    const resp = await axios.post(
-      "https://api.openai.com/v1/responses",
-      {
-        model,
-        tools: [{ type: "web_search", search_context_size: searchContextSize }],
-        // Esta función se ejecuta únicamente cuando el modelo ya solicitó explícitamente
-        // la acción web, por eso forzamos que Responses realmente haga la búsqueda.
-        tool_choice: "required",
-        include: ["web_search_call.action.sources"],
-        input: [
-          "Realizá una búsqueda web para responder la siguiente consulta con información útil, actual y verificable:",
-          query,
-          "Priorizá fuentes primarias, fabricantes, documentación técnica y organismos reconocidos. Resumí los hallazgos y no inventes datos."
-        ].join("\n")
-      },
-      {
-        timeout,
-        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        validateStatus: () => true
-      }
-    );
+  const attempts = [
+    { toolType: "web_search", includeSources: true },
+    // Compatibilidad con cuentas/endpoints que todavía exponen el nombre preview.
+    { toolType: "web_search_preview", includeSources: false },
+  ];
+  let lastFailure = null;
 
-    const status = Number(resp?.status || 0);
-    if (status < 200 || status >= 300) {
-      return {
-        ok: false,
-        error: `web_search_http_${status || "error"}`,
+  try {
+    for (const attempt of attempts) {
+      const payload = {
+   
+        model,
+        tools: [{ type: attempt.toolType, search_context_size: searchContextSize }],
+        tool_choice: { type: attempt.toolType },
+        input,
+      };
+      if (attempt.includeSources) payload.include = ["web_search_call.action.sources"];
+
+      const resp = await axios.post(
+        "https://api.openai.com/v1/responses",
+        payload,
+        {
+          timeout,
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          validateStatus: () => true,
+        }
+      );
+
+      const status = Number(resp?.status || 0);
+      if (status < 200 || status >= 300) {
+        const detail = String(resp?.data?.error?.message || resp?.data?.error?.code || resp?.statusText || "").slice(0, 1200);
+        lastFailure = { status, detail, toolType: attempt.toolType };
+        console.warn("[web-search] HTTP error", {
+          action: actionCfg.name,
+          model,
+          toolType: attempt.toolType,
+          status,
+          detail,
+        });
+        // Reintentar solamente con la variante preview cuando el tipo de herramienta
+        // actual no es aceptado por el endpoint. Para auth/rate-limit no duplicamos gasto.
+        if (![400, 404, 422].includes(status)) break;
+        continue;
+      }
+      const text = extractResponsesApiText(resp?.data);
+      const clipped = String(text || "").slice(0, maxChars);
+      const sources = extractResponsesWebSources(resp?.data);
+      if (!clipped) {
+        lastFailure = { status, detail: "responses_empty_web_search", toolType: attempt.toolType };
+        console.warn("[web-search] respuesta vacía", {
+          action: actionCfg.name,
+          model,
+          toolType: attempt.toolType,
+          status,
+          outputItems: Array.isArray(resp?.data?.output) ? resp.data.output.length : 0,
+        });
+        continue;
+      }
+
+      console.log("[web-search] response.meta =>", {
+        action: actionCfg.name,
+        model: resp?.data?.model || model,
+        toolType: attempt.toolType,
         status,
-        detail: String(resp?.data?.error?.message || resp?.statusText || "").slice(0, 1000)
+        durationMs: Date.now() - startedAt,
+        chars: clipped.length,
+        sources: sources.length,
+        truncated: String(text || "").length > clipped.length,
+      });
+
+      return {
+        ok: true,
+        provider: "openai_web_search",
+        status,
+        body: clipped,
+        sources,
+        truncated: String(text || "").length > clipped.length,
+        query,
+        model: resp?.data?.model || model,
+        usage: resp?.data?.usage || null,
+        toolType: attempt.toolType,
       };
     }
 
-    const text = extractResponsesApiText(resp?.data);
-    const clipped = String(text || "").slice(0, maxChars);
-    const sources = extractResponsesWebSources(resp?.data);
-    console.log("[web-search] response.meta =>", {
-      action: actionCfg.name,
-      model: resp?.data?.model || model,
-      status,
-      durationMs: Date.now() - startedAt,
-      chars: clipped.length,
-      sources: sources.length,
-      truncated: String(text || "").length > clipped.length
-    });
 
     return {
-      ok: true,
-      provider: "openai_web_search",
-      status,
-      body: clipped,
-      sources,
-      truncated: String(text || "").length > clipped.length,
-      query,
-      model: resp?.data?.model || model,
-      usage: resp?.data?.usage || null
+      ok: false,
+      error: lastFailure?.status ? `web_search_http_${lastFailure.status}` : "web_search_empty_response",
+      status: lastFailure?.status || 0,
+      detail: String(lastFailure?.detail || "La búsqueda web no devolvió contenido.").slice(0, 1000),
     };
   } catch (e) {
     console.warn("[web-search] request error:", e?.message || e);
     return {
       ok: false,
       error: e?.code === "ECONNABORTED" ? "web_search_timeout" : "web_search_request_failed",
-      detail: String(e?.message || e).slice(0, 500)
+      detail: String(e?.message || e).slice(0, 500),
     };
   }
 }

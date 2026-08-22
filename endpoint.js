@@ -8283,6 +8283,10 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             document.getElementById('qrEnabled').checked = j.qr_enabled === true;
             document.getElementById('qrPageTitle').value = j.qr_page_title || 'Información del producto';
             document.getElementById('qrPageSubtitle').value = j.qr_page_subtitle || '';
+            document.getElementById('qrCompanyName').value = j.qr_company_name || '';
+            document.getElementById('qrCompanyLogoUrl').value = j.qr_company_logo_url || '';
+            document.getElementById('qrButtonColor').value = j.qr_button_color || '#0f766e';
+            document.getElementById('qrButtonTextColor').value = j.qr_button_text_color || '#ffffff';
             document.getElementById('qrCurrency').value = j.qr_currency || 'ARS';
             document.getElementById('qrApiUrl').value = j.qr_api_url || '';
             document.getElementById('qrApiMethod').value = j.qr_api_method || 'GET';
@@ -8327,6 +8331,10 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             qr_enabled:document.getElementById('qrEnabled').checked===true,
             qr_page_title:document.getElementById('qrPageTitle').value||'',
             qr_page_subtitle:document.getElementById('qrPageSubtitle').value||'',
+            qr_company_name:document.getElementById('qrCompanyName').value||'',
+            qr_company_logo_url:document.getElementById('qrCompanyLogoUrl').value||'',
+            qr_button_color:document.getElementById('qrButtonColor').value||'#0f766e',
+            qr_button_text_color:document.getElementById('qrButtonTextColor').value||'#ffffff',
             qr_currency:document.getElementById('qrCurrency').value||'ARS',
             qr_api_url:document.getElementById('qrApiUrl').value||'',
             qr_api_method:document.getElementById('qrApiMethod').value||'GET',
@@ -8447,9 +8455,13 @@ app.get("/comportamiento", async (req, res) => {
         <div class="hint" style="margin-top:4px">El escaneo consulta únicamente esta API y muestra la ficha sin consumir tokens. La IA se activa recién cuando el visitante toca “Mostrar más info” o abre el chat.</div>
         <div class="row" style="margin-top:10px"><label><input id="qrEnabled" type="checkbox" /> Habilitar ficha QR para este dominio</label></div>
         <div id="qrConfigFields" class="externalGrid" style="margin-top:12px">
-          <label>Título de la página<input id="qrPageTitle" type="text" value="Información del producto" /></label>
+          <label>Nombre de la empresa<input id="qrCompanyName" type="text" placeholder="FERROMAQ Industrial" /></label>
           <label>Moneda<input id="qrCurrency" type="text" value="ARS" maxlength="10" /></label>
+          <label style="grid-column:1/-1">URL del logo de la empresa<input id="qrCompanyLogoUrl" type="text" placeholder="https://empresa.com/logo.png" /><span class="hint">Debe ser una imagen pública accesible desde el celular. Si queda vacío se muestra la inicial de la empresa.</span></label>
+          <label>Título de la página<input id="qrPageTitle" type="text" value="Información del producto" /></label>
+          <label>Color de botones<input id="qrButtonColor" type="color" value="#0f766e" /></label>
           <label style="grid-column:1/-1">Subtítulo<input id="qrPageSubtitle" type="text" value="Consultá precio, disponibilidad y más información." /></label>
+          <label>Color de texto de botones<input id="qrButtonTextColor" type="color" value="#ffffff" /></label>
           <label style="grid-column:1/-1">URL API de producto<input id="qrApiUrl" type="text" placeholder="https://servidor/api/articulos/consulta?key=..." /><span class="hint">Podés usar {{codigo}} dentro de la URL o indicar el parámetro en el campo siguiente.</span></label>
           <label>Método<select id="qrApiMethod"><option value="GET">GET</option><option value="POST">POST</option></select></label>
           <label>Parámetro de código<input id="qrApiCodeParam" type="text" value="codigo" placeholder="codigo" /></label>
@@ -8909,6 +8921,10 @@ app.get("/api/behavior", async (req, res) => {
       qr_enabled: cfg.qr_enabled === true,
       qr_page_title: cfg.qr_page_title || "Información del producto",
       qr_page_subtitle: cfg.qr_page_subtitle || "",
+      qr_company_name: cfg.qr_company_name || "",
+      qr_company_logo_url: cfg.qr_company_logo_url || "",
+      qr_button_color: cfg.qr_button_color || "#0f766e",
+      qr_button_text_color: cfg.qr_button_text_color || "#ffffff",
       qr_currency: cfg.qr_currency || "ARS",
       qr_api_url: cfg.qr_api_url || "",
       qr_api_method: cfg.qr_api_method || "GET",
@@ -8983,6 +8999,12 @@ app.post("/api/behavior", async (req, res) => {
     const qr_enabled = behaviorBool(req.body?.qr_enabled, false);
     const qr_page_title = String(req.body?.qr_page_title || "Información del producto").trim().slice(0, 120);
     const qr_page_subtitle = String(req.body?.qr_page_subtitle || "").trim().slice(0, 220);
+    const qr_company_name = String(req.body?.qr_company_name || "").trim().slice(0, 140);
+    const qr_company_logo_url = String(req.body?.qr_company_logo_url || "").trim().replace(/[\r\n]/g, "").slice(0, 3000);
+    const qrButtonColorRaw = String(req.body?.qr_button_color || "#0f766e").trim();
+    const qr_button_color = /^#[0-9a-f]{6}$/i.test(qrButtonColorRaw) ? qrButtonColorRaw : "#0f766e";
+    const qrButtonTextColorRaw = String(req.body?.qr_button_text_color || "#ffffff").trim();
+    const qr_button_text_color = /^#[0-9a-f]{6}$/i.test(qrButtonTextColorRaw) ? qrButtonTextColorRaw : "#ffffff";
     const qr_currency = String(req.body?.qr_currency || "ARS").trim().toUpperCase().slice(0, 10) || "ARS";
     const qr_api_url = String(req.body?.qr_api_url || "").trim().slice(0, 3000);
     const qr_api_method = String(req.body?.qr_api_method || "GET").trim().toUpperCase() === "POST" ? "POST" : "GET";
@@ -9045,6 +9067,10 @@ app.post("/api/behavior", async (req, res) => {
       qr_enabled,
       qr_page_title,
       qr_page_subtitle,
+      qr_company_name,
+      qr_company_logo_url,
+      qr_button_color,
+      qr_button_text_color,
       qr_currency,
       qr_api_url,
       qr_api_method,
