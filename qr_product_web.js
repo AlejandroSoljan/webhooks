@@ -15,9 +15,60 @@ const {
   clearEndedFlag,
 } = require('./logic');
 
-const QR_BUILD = '2026-08-22-v3';
+const QR_BUILD = '2026-08-22-v4';
 const qrJson = express.json({ limit: '512kb' });
 const rateState = new Map();
+
+
+const QR_PRODUCT_CACHE_TTL_MS = Math.max(
+  0,
+  Math.min(300000, Number(process.env.QR_PRODUCT_CACHE_TTL_MS || 30000) || 30000)
+);
+const QR_PRODUCT_CACHE_MAX = Math.max(
+  20,
+  Math.min(2000, Number(process.env.QR_PRODUCT_CACHE_MAX || 500) || 500)
+);
+const qrProductCache = new Map();
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
+}
+
+function qrProductCacheKey(tenant, code) {
+  return `${String(tenant || '').trim().toUpperCase()}|${String(code || '').trim()}`;
+}
+
+function getCachedQrProduct(tenant, code) {
+  if (!QR_PRODUCT_CACHE_TTL_MS) return null;
+  const key = qrProductCacheKey(tenant, code);
+  const item = qrProductCache.get(key);
+  if (!item) return null;
+  if ((Date.now() - Number(item.at || 0)) > QR_PRODUCT_CACHE_TTL_MS) {
+    qrProductCache.delete(key);
+    return null;
+  }
+  return item.product || null;
+}
+
+function setCachedQrProduct(tenant, code, product) {
+  if (!QR_PRODUCT_CACHE_TTL_MS || !product) return;
+  const key = qrProductCacheKey(tenant, code);
+  qrProductCache.set(key, { at: Date.now(), product });
+
+  if (qrProductCache.size > QR_PRODUCT_CACHE_MAX) {
+    const now = Date.now();
+    for (const [k, item] of qrProductCache) {
+      if ((now - Number(item?.at || 0)) > QR_PRODUCT_CACHE_TTL_MS) {
+        qrProductCache.delete(k);
+      }
+    }
+    while (qrProductCache.size > QR_PRODUCT_CACHE_MAX) {
+      const oldestKey = qrProductCache.keys().next().value;
+      if (!oldestKey) break;
+      qrProductCache.delete(oldestKey);
+    }
+  }
+}
 
 function clean(value, max = 500) {
   return String(value ?? '').trim().slice(0, Math.max(1, Number(max) || 500));
@@ -191,7 +242,7 @@ async function loadQrConfig(db, tenant) {
     apiBodyTemplate: clean(doc.qr_api_body_template, 20000),
     apiAuthHeader: clean(doc.qr_api_auth_header, 200),
     apiAuthValue: clean(doc.qr_api_auth_value, 4000),
-    apiTimeoutMs: intValue(doc.qr_api_timeout_ms, 12000, 1000, 30000),
+    apiTimeoutMs: intValue(doc.qr_api_timeout_ms, 45000, 5000, 120000),
     fieldCode: clean(doc.qr_field_code || 'Codigo', 120),
     fieldDescription: clean(doc.qr_field_description || 'Descripcion', 120),
     fieldPrice: clean(doc.qr_field_price || 'Precio_Lp1', 120),
@@ -220,42 +271,151 @@ async function fetchQrProduct(cfg, tenant, code) {
   const codigo = digitsOrText(code, 180);
   if (!codigo) throw Object.assign(new Error('codigo_required'), { statusCode: 400 });
 
+  const cached = getCachedQrProduct(tenant, codigo);
+  if (cached) {
+    console.log(`[qr] product cache hit tenant=${tenant} sku=${codigo}`);
+    return cached;
+  }
+
   const variables = { codigo, tenant };
   let url = replaceTemplateString(cfg.apiUrl, variables);
   const headers = { Accept: 'application/json' };
   if (cfg.apiAuthHeader && cfg.apiAuthValue) headers[cfg.apiAuthHeader] = cfg.apiAuthValue;
-  const request = { method: cfg.apiMethod, url, headers, timeout: cfg.apiTimeoutMs, validateStatus: () => true };
+
+  const baseRequest = {
+    method: cfg.apiMethod,
+    url,
+    headers,
+    timeout: cfg.apiTimeoutMs,
+    validateStatus: () => true,
+ };
 
   if (cfg.apiMethod === 'GET') {
     if (!/\{\{\s*codigo\s*\}\}/i.test(cfg.apiUrl) && cfg.apiCodeParam) {
-      request.params = { [cfg.apiCodeParam]: codigo };
+      baseRequest.params = { [cfg.apiCodeParam]: codigo };
     }
   } else {
     let body = null;
     if (cfg.apiBodyTemplate) {
-      try { body = replaceTemplateValue(JSON.parse(cfg.apiBodyTemplate), variables); }
-      catch { throw Object.assign(new Error('qr_api_body_template_invalid'), { statusCode: 500 }); }
+      try {
+        body = replaceTemplateValue(JSON.parse(cfg.apiBodyTemplate), variables);
+      } catch {
+        throw Object.assign(new Error('qr_api_body_template_invalid'), { statusCode: 500 });
+      }
     }
     if (!body) body = { [cfg.apiCodeParam || 'codigo']: codigo };
     request.data = body;
-    request.headers['Content-Type'] = 'application/json';
+    baseRequest.data = body;
+    baseRequest.headers = { ...headers, 'Content-Type': 'application/json' };
   }
 
-  const resp = await axios(request);
-  if (resp.status < 200 || resp.status >= 300) {
-    throw Object.assign(new Error(`qr_api_http_${resp.status}`), { statusCode: 502 });
+  // GET es idempotente: ante timeout/error de red/502-504 hacemos un único
+  // reintento. POST no se reintenta automáticamente para evitar duplicar efectos
+  // en APIs que no sean estrictamente de consulta.
+  const maxAttempts = cfg.apiMethod === 'GET' ? 2 : 1;
+  let resp = null;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const startedAt = Date.now();
+    try {
+      console.log(
+        `[qr] product api attempt=${attempt}/${maxAttempts} tenant=${tenant} sku=${codigo} ` +
+        `timeoutMs=${cfg.apiTimeoutMs}`
+      );
+
+      resp = await axios({ ...baseRequest });
+
+      const durationMs = Date.now() - startedAt;
+      console.log(
+        `[qr] product api response attempt=${attempt}/${maxAttempts} tenant=${tenant} sku=${codigo} ` +
+        `status=${resp.status} durationMs=${durationMs}`
+      );
+
+      if (resp.status >= 200 && resp.status < 300) break;
+
+      const retryableStatus = [502, 503, 504].includes(Number(resp.status));
+      if (retryableStatus && attempt < maxAttempts) {
+        await sleep(500);
+        continue;
+      }
+
+      throw Object.assign(new Error(`qr_api_http_${resp.status}`), { statusCode: 502 });
+    } catch (e) {
+      lastError = e;
+      const durationMs = Date.now() - startedAt;
+     const codeValue = String(e?.code || '').toUpperCase();
+      const message = String(e?.message || e);
+      const timeout =
+        codeValue === 'ECONNABORTED' ||
+        codeValue === 'ETIMEDOUT' ||
+        /\btimeout\b/i.test(message);
+
+      const network =
+        timeout ||
+        ['ECONNRESET', 'EAI_AGAIN', 'ENOTFOUND', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH'].includes(codeValue);
+
+      console.warn(
+        `[qr] product api error attempt=${attempt}/${maxAttempts} tenant=${tenant} sku=${codigo} ` +
+        `code=${codeValue || '-'} durationMs=${durationMs} message=${message}`
+      );
+
+      if (network && attempt < maxAttempts) {
+        await sleep(500);
+        continue;
+      }
+
+      if (timeout) {
+        throw Object.assign(new Error('product_api_timeout'), {
+          statusCode: 504,
+          publicDetail: 'El servidor de productos demoró demasiado. Reintentá en unos segundos.',
+        });
+      }
+
+      if (e?.statusCode) throw e;
+
+      throw Object.assign(new Error('product_api_unavailable'), {
+        statusCode: 502,
+        publicDetail: 'No pudimos comunicarnos con el servidor de productos. Reintentá en unos segundos.',
+      });
+    }
   }
+
+  if (!resp) {
+    const codeValue = String(lastError?.code || '').toUpperCase();
+    const timeout =
+      codeValue === 'ECONNABORTED' ||
+      codeValue === 'ETIMEDOUT' ||
+      /\btimeout\b/i.test(String(lastError?.message || ''));
+    throw Object.assign(new Error(timeout ? 'product_api_timeout' : 'product_api_unavailable'), {
+      statusCode: timeout ? 504 : 502,
+      publicDetail: timeout
+        ? 'El servidor de productos demoró demasiado. Reintentá en unos segundos.'
+        : 'No pudimos comunicarnos con el servidor de productos. Reintentá en unos segundos.',
+    });
+  }
+
   const raw = firstProductPayload(resp.data);
-  if (!raw || typeof raw !== 'object') throw Object.assign(new Error('product_not_found'), { statusCode: 404 });
+  if (!raw || typeof raw !== 'object') {
+    throw Object.assign(new Error('product_not_found'), { statusCode: 404 });
+  }
 
-  const productCode = firstDefined(raw, [cfg.fieldCode, 'Codigo', 'codigo', 'code', 'sku', 'SKU']) ?? codigo;
-  const description = firstDefined(raw, [cfg.fieldDescription, 'Descripcion', 'descripcion', 'description', 'nombre', 'name']);
-  if (!description) throw Object.assign(new Error('product_not_found'), { statusCode: 404 });
+  const productCode =
+    firstDefined(raw, [cfg.fieldCode, 'Codigo', 'codigo', 'code', 'sku', 'SKU']) ?? codigo;
+  const description =
+    firstDefined(raw, [cfg.fieldDescription, 'Descripcion', 'descripcion', 'description', 'nombre', 'name']);
+
+  if (!description) {
+    throw Object.assign(new Error('product_not_found'), { statusCode: 404 });
+  }
   const priceRaw = firstDefined(raw, [cfg.fieldPrice, 'Precio', 'precio', 'Precio_Lp1', 'price']);
   const stockRaw = firstDefined(raw, [cfg.fieldStock, 'Stock', 'stock', 'disponible', 'availability']);
   const image = cfg.fieldImage
     ? firstDefined(raw, [cfg.fieldImage, 'Imagen', 'imagen', 'image', 'imageUrl', 'url_imagen'])
-    : firstDefined(raw, ['Imagen', 'imagen', 'image', 'imageUrl', 'url_imagen']); const brand = cfg.fieldBrand ? firstDefined(raw, [cfg.fieldBrand, 'Marca', 'marca', 'brand']) : firstDefined(raw, ['Marca', 'marca', 'brand']);
+    : firstDefined(raw, ['Imagen', 'imagen', 'image', 'imageUrl', 'url_imagen']);
+  const brand = cfg.fieldBrand
+    ? firstDefined(raw, [cfg.fieldBrand, 'Marca', 'marca', 'brand'])
+    : firstDefined(raw, ['Marca', 'marca', 'brand']);
   const category = firstDefined(raw, [cfg.fieldCategory, 'Desc_Rubro', 'rubro', 'category']);
   const subcategory = firstDefined(raw, [cfg.fieldSubcategory, 'Desc_Subrubro', 'subrubro', 'subcategory']);
   const primaryPrice = parseNumber(priceRaw);
@@ -279,7 +439,7 @@ async function fetchQrProduct(cfg, tenant, code) {
     });
   }
 
-  return {
+  const product = {
     code: clean(productCode, 180),
     description: clean(description, 600),
     price: primaryPrice,
@@ -290,6 +450,9 @@ async function fetchQrProduct(cfg, tenant, code) {
     category: clean(category, 180),
     subcategory: clean(subcategory, 180),
   };
+
+  setCachedQrProduct(tenant, codigo, product);
+  return product;
 }
 
 async function resolveOpenAiKey(db, tenant) {
@@ -562,8 +725,8 @@ function renderProduct(j){
   el('chatProduct').textContent=p.description+' · SKU '+p.code;
   if(AI_ENABLED&&el('moreBtn'))el('moreBtn').addEventListener('click',startAi);
 }
-async function loadProduct(){try{const u=new URL('/api/ext/qr/product',location.origin);u.searchParams.set('tenant',TENANT);u.searchParams.set('codigo',CODE);renderProduct(await jsonFetch(u.toString()))}catch(e){el('productCard').innerHTML='<div class="error"><b>No pudimos cargar este producto.</b><br/><span>'+esc(e.message)+'</span></div>'}}
-async function callAi(message,initial=false){if(sending)return;sending=true;const btn=el('sendBtn');if(btn)btn.disabled=true;if(message&&!initial)addMsg('user',message);addMsg('bot','',true);try{const j=await jsonFetch('/api/ext/qr/chat',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({tenant:TENANT,codigo:CODE,sessionId:sessionId(),message:message||'',initial})});removeTyping();addMsg('bot',j.reply||'Sin respuesta');started=true}catch(e){removeTyping();addMsg('bot','No pude obtener información adicional en este momento. '+e.message)}finally{sending=false;if(btn)btn.disabled=false}}
+async function loadProduct(){try{el('productCard').innerHTML='<div class="loading">Consultando producto...</div>';const u=new URL('/api/ext/qr/product',location.origin);u.searchParams.set('tenant',TENANT);u.searchParams.set('codigo',CODE);renderProduct(await jsonFetch(u.toString()))}catch(e){el('productCard').innerHTML='<div class="error"><b>No pudimos cargar este producto.</b><br/><span>'+esc(e.message)+'</span><div style="margin-top:12px"><button class="btn btnPrimary" id="retryProductBtn" type="button">Reintentar</button></div></div>';const rb=el('retryProductBtn');if(rb)rb.addEventListener('click',loadProduct)}}
+ async function callAi(message,initial=false){if(sending)return;sending=true;const btn=el('sendBtn');if(btn)btn.disabled=true;if(message&&!initial)addMsg('user',message);addMsg('bot','',true);try{const j=await jsonFetch('/api/ext/qr/chat',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({tenant:TENANT,codigo:CODE,sessionId:sessionId(),message:message||'',initial})});removeTyping();addMsg('bot',j.reply||'Sin respuesta');started=true}catch(e){removeTyping();addMsg('bot','No pude obtener información adicional en este momento. '+e.message)}finally{sending=false;if(btn)btn.disabled=false}}
 async function startAi(){el('chat').classList.add('open');el('chat').scrollIntoView({behavior:'smooth',block:'start'});if(!started){const b=el('moreBtn');if(b)b.disabled=true;await callAi('',true);if(b)b.disabled=false}else el('message').focus()}
 async function send(){const box=el('message');const msg=String(box.value||'').trim();if(!msg||sending)return;box.value='';await callAi(msg,false);box.focus()}
 el('sendBtn').addEventListener('click',send);el('message').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});el('closeChat').addEventListener('click',()=>el('chat').classList.remove('open'));loadProduct();
@@ -637,7 +800,11 @@ function mountQrProductWeb(app) {
     } catch (e) {
       const status = intValue(e?.statusCode, 500, 400, 599);
       console.error('[qr] product:', e?.message || e);
-      return res.status(status).json({ ok: false, error: clean(e?.message || 'internal', 200) });
+      return res.status(status).json({
+        ok: false,
+        error: clean(e?.message || 'internal', 200),
+        detail: clean(e?.publicDetail || e?.message || 'internal', 300),
+      });
     }
   });
 

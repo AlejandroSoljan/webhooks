@@ -8296,7 +8296,7 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             document.getElementById('qrApiAuthValue').value = '';
             document.getElementById('qrApiAuthValue').placeholder = j.qr_api_auth_value_set ? 'Hay una credencial guardada. Dejá vacío para conservarla.' : 'Opcional';
             document.getElementById('qrApiAuthClear').checked = false;
-            document.getElementById('qrApiTimeout').value = j.qr_api_timeout_ms || 12000;
+            document.getElementById('qrApiTimeout').value = j.qr_api_timeout_ms || 45000;
             document.getElementById('qrFieldCode').value = j.qr_field_code || 'Codigo';
             document.getElementById('qrFieldDescription').value = j.qr_field_description || 'Descripcion';
             document.getElementById('qrFieldPrice').value = j.qr_field_price || 'Precio_Lp1';
@@ -8347,7 +8347,7 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             qr_api_auth_header:document.getElementById('qrApiAuthHeader').value||'',
             qr_api_auth_value:document.getElementById('qrApiAuthValue').value||'',
             qr_api_auth_clear:document.getElementById('qrApiAuthClear').checked===true,
-            qr_api_timeout_ms:Number(document.getElementById('qrApiTimeout').value||12000),
+            qr_api_timeout_ms:Number(document.getElementById('qrApiTimeout').value||45000),
             qr_field_code:document.getElementById('qrFieldCode').value||'Codigo',
             qr_field_description:document.getElementById('qrFieldDescription').value||'Descripcion',
             qr_field_price:document.getElementById('qrFieldPrice').value||'Precio_Lp1',
@@ -8474,7 +8474,7 @@ app.get("/comportamiento", async (req, res) => {
           <label style="grid-column:1/-1">URL API de producto<input id="qrApiUrl" type="text" placeholder="https://servidor/api/articulos/consulta?key=..." /><span class="hint">Podés usar {{codigo}} dentro de la URL o indicar el parámetro en el campo siguiente.</span></label>
           <label>Método<select id="qrApiMethod"><option value="GET">GET</option><option value="POST">POST</option></select></label>
           <label>Parámetro de código<input id="qrApiCodeParam" type="text" value="codigo" placeholder="codigo" /></label>
-          <label>Timeout (ms)<input id="qrApiTimeout" type="number" min="1000" max="30000" value="12000" /></label>
+          <label>Timeout API producto (ms)<input id="qrApiTimeout" type="number" min="5000" max="120000" value="45000" /><span class="hint">Tiempo máximo por intento. Para GET, Asisto reintenta una vez ante timeout o error transitorio.</span></label>
           <label>Header de autenticación<input id="qrApiAuthHeader" type="text" placeholder="X-API-Key / Authorization (opcional)" /></label>
           <label style="grid-column:1/-1">Valor del header / secreto<input id="qrApiAuthValue" type="password" autocomplete="new-password" placeholder="Opcional" /><span><input id="qrApiAuthClear" type="checkbox" /> Borrar credencial guardada</span></label>
           <label style="grid-column:1/-1">Body JSON para POST (opcional)<textarea id="qrApiBodyTemplate" class="smallArea" placeholder='{"codigo":"{{codigo}}"}'></textarea></label>
@@ -8947,7 +8947,7 @@ app.get("/api/behavior", async (req, res) => {
       qr_api_body_template: cfg.qr_api_body_template || "",
       qr_api_auth_header: cfg.qr_api_auth_header || "",
       qr_api_auth_value_set: !!cfg.qr_api_auth_value,
-      qr_api_timeout_ms: cfg.qr_api_timeout_ms || 12000,
+      qr_api_timeout_ms: cfg.qr_api_timeout_ms || 45000,
       qr_field_code: cfg.qr_field_code || "Codigo",
       qr_field_description: cfg.qr_field_description || "Descripcion",
       qr_field_price: cfg.qr_field_price || "Precio_Lp1",
@@ -9031,7 +9031,7 @@ app.post("/api/behavior", async (req, res) => {
     const qr_api_code_param = String(req.body?.qr_api_code_param || "codigo").trim().slice(0, 100);
     const qr_api_body_template = String(req.body?.qr_api_body_template || "").trim().slice(0, 20000);
     const qr_api_auth_header = String(req.body?.qr_api_auth_header || "").trim().replace(/[\r\n]/g, "").slice(0, 200);
-    const qr_api_timeout_ms = Math.max(1000, Math.min(30000, Number(req.body?.qr_api_timeout_ms || 12000) || 12000));
+    const qr_api_timeout_ms = Math.max(5000, Math.min(120000, Number(req.body?.qr_api_timeout_ms || 45000) || 45000));
     const qr_field_code = String(req.body?.qr_field_code || "Codigo").trim().slice(0, 120);
     const qr_field_description = String(req.body?.qr_field_description || "Descripcion").trim().slice(0, 120);
     const qr_field_price = String(req.body?.qr_field_price || "Precio_Lp1").trim().slice(0, 120);
