@@ -1746,7 +1746,7 @@ async function executeConversationalHttpApi(actionCfg, action = {}, context = {}
   };
   const timeout = Math.max(1000, Math.min(60000, Number(actionCfg.timeout_ms || 10000) || 10000));
   const maxChars = Math.max(2000, Math.min(100000, Number(actionCfg.max_chars || 30000) || 30000));
-  const maxOutputTokens = Math.max(600, Math.min(6000, Number(actionCfg.web_max_output_tokens || 2500) || 2500));
+  
 
   const headers = { Accept: "application/json, text/plain;q=0.9, */*;q=0.8" };
 
@@ -1914,6 +1914,7 @@ async function executeConversationalWebSearch(actionCfg, action = {}, context = 
     : "medium";
   const timeout = Math.max(10000, Math.min(120000, Number(actionCfg.timeout_ms || 90000) || 90000));
   const maxChars = Math.max(2000, Math.min(100000, Number(actionCfg.max_chars || 30000) || 30000));
+  const webMaxOutputTokens = Math.max(600, Math.min(6000, Number(actionCfg.web_max_output_tokens || 2500) || 2500));
   const input = [
     "Buscá en Internet información técnica y pública verificable para responder esta consulta:",
     query,
@@ -1939,7 +1940,7 @@ async function executeConversationalWebSearch(actionCfg, action = {}, context = 
           input,
           // CRÍTICO: sin este límite Responses API puede reservar una salida muy
           // grande para TPM aunque la respuesta final sea corta.
-          max_output_tokens: maxOutputTokens,
+          max_output_tokens: webMaxOutputTokens,
           max_tool_calls: 1,
           reasoning: { effort: "low" },
         };
@@ -1965,7 +1966,7 @@ async function executeConversationalWebSearch(actionCfg, action = {}, context = 
             toolType: attempt.toolType,
             status,
            detail,
-            maxOutputTokens,
+            maxOutputTokens: webMaxOutputTokens,
             rateTry: rateTry + 1,
           });
 
@@ -1991,7 +1992,7 @@ async function executeConversationalWebSearch(actionCfg, action = {}, context = 
             toolType: attempt.toolType,
             status,
             outputItems: Array.isArray(resp?.data?.output) ? resp.data.output.length : 0,
-            maxOutputTokens,
+            maxOutputTokens: webMaxOutputTokens,
           });
           break;
         }
@@ -2005,7 +2006,7 @@ async function executeConversationalWebSearch(actionCfg, action = {}, context = 
           chars: clipped.length,
           sources: sources.length,
           truncated: String(text || "").length > clipped.length,
-          maxOutputTokens,
+          maxOutputTokens: webMaxOutputTokens,
           usage: resp?.data?.usage || null,
         });
 
@@ -2040,7 +2041,7 @@ async function executeConversationalWebSearch(actionCfg, action = {}, context = 
       code: e?.code || "",
       timeoutMs: timeout,
       durationMs: Date.now() - startedAt,
-      maxOutputTokens,
+      maxOutputTokens: webMaxOutputTokens,
       model,
       action: actionCfg.name || ""
     });
