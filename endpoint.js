@@ -8300,8 +8300,12 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             document.getElementById('qrFieldCode').value = j.qr_field_code || 'Codigo';
             document.getElementById('qrFieldDescription').value = j.qr_field_description || 'Descripcion';
             document.getElementById('qrFieldPrice').value = j.qr_field_price || 'Precio_Lp1';
+            document.getElementById('qrPriceLabel').value = j.qr_price_label || 'Precio';
+            document.getElementById('qrPriceNote').value = j.qr_price_note || '';
+            document.getElementById('qrAdditionalPrices').value = j.qr_additional_prices || '';
             document.getElementById('qrFieldStock').value = j.qr_field_stock || 'Stock';
             document.getElementById('qrFieldImage').value = j.qr_field_image || '';
+            document.getElementById('qrImageMimeType').value = j.qr_image_mime_type || 'image/jpeg';
             document.getElementById('qrFieldBrand').value = j.qr_field_brand || '';
             document.getElementById('qrFieldCategory').value = j.qr_field_category || 'Desc_Rubro';
             document.getElementById('qrFieldSubcategory').value = j.qr_field_subcategory || 'Desc_Subrubro';
@@ -8347,8 +8351,12 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             qr_field_code:document.getElementById('qrFieldCode').value||'Codigo',
             qr_field_description:document.getElementById('qrFieldDescription').value||'Descripcion',
             qr_field_price:document.getElementById('qrFieldPrice').value||'Precio_Lp1',
+            qr_price_label:document.getElementById('qrPriceLabel').value||'Precio',
+            qr_price_note:document.getElementById('qrPriceNote').value||'',
+            qr_additional_prices:document.getElementById('qrAdditionalPrices').value||'',
             qr_field_stock:document.getElementById('qrFieldStock').value||'Stock',
             qr_field_image:document.getElementById('qrFieldImage').value||'',
+            qr_image_mime_type:document.getElementById('qrImageMimeType').value||'image/jpeg',
             qr_field_brand:document.getElementById('qrFieldBrand').value||'',
             qr_field_category:document.getElementById('qrFieldCategory').value||'Desc_Rubro',
             qr_field_subcategory:document.getElementById('qrFieldSubcategory').value||'Desc_Subrubro',
@@ -8472,9 +8480,14 @@ app.get("/comportamiento", async (req, res) => {
           <label style="grid-column:1/-1">Body JSON para POST (opcional)<textarea id="qrApiBodyTemplate" class="smallArea" placeholder='{"codigo":"{{codigo}}"}'></textarea></label>
           <label>Campo código / SKU<input id="qrFieldCode" type="text" value="Codigo" /></label>
           <label>Campo descripción<input id="qrFieldDescription" type="text" value="Descripcion" /></label>
-          <label>Campo precio<input id="qrFieldPrice" type="text" value="Precio_Lp1" /></label>
+          <label>Campo precio principal<input id="qrFieldPrice" type="text" value="Precio_Lp1" /></label>
+          <label>Rótulo precio principal<input id="qrPriceLabel" type="text" value="Precio" placeholder="Precio" /></label>
+          <label style="grid-column:1/-1">Texto debajo del precio principal (opcional)<input id="qrPriceNote" type="text" placeholder="Ej.: Precio de lista" /></label>
+          <label style="grid-column:1/-1">Precios adicionales<textarea id="qrAdditionalPrices" class="smallArea" placeholder="Precio_Lp2|con Transferencia o depósito&#10;Precio_Lp3|en 3 cuotas"></textarea><span class="hint">Una línea por lista. Formato simple: CAMPO|texto. También admite CAMPO|rótulo|texto. Solo se muestran los campos que el API devuelva con un valor.</span></label>
+
           <label>Campo stock/disponibilidad<input id="qrFieldStock" type="text" value="Stock" /></label>
-          <label>Campo imagen (opcional)<input id="qrFieldImage" type="text" placeholder="Imagen" /></label>
+          <label>Campo imagen (opcional)<input id="qrFieldImage" type="text" placeholder="Imagen" /><span class="hint">Puede devolver URL, data:image/...;base64 o Base64 puro.</span></label>
+          <label>MIME imagen Base64<input id="qrImageMimeType" type="text" value="image/jpeg" placeholder="image/jpeg" /><span class="hint">Se usa solamente cuando el API devuelve Base64 puro.</span></label>
           <label>Campo marca (opcional)<input id="qrFieldBrand" type="text" placeholder="Marca" /></label>
           <label>Campo rubro<input id="qrFieldCategory" type="text" value="Desc_Rubro" /></label>
           <label>Campo subrubro<input id="qrFieldSubcategory" type="text" value="Desc_Subrubro" /></label>
@@ -8938,8 +8951,12 @@ app.get("/api/behavior", async (req, res) => {
       qr_field_code: cfg.qr_field_code || "Codigo",
       qr_field_description: cfg.qr_field_description || "Descripcion",
       qr_field_price: cfg.qr_field_price || "Precio_Lp1",
+      qr_price_label: cfg.qr_price_label || "Precio",
+      qr_price_note: cfg.qr_price_note || "",
+      qr_additional_prices: cfg.qr_additional_prices || "",
       qr_field_stock: cfg.qr_field_stock || "Stock",
       qr_field_image: cfg.qr_field_image || "",
+      qr_image_mime_type: cfg.qr_image_mime_type || "image/jpeg",
       qr_field_brand: cfg.qr_field_brand || "",
       qr_field_category: cfg.qr_field_category || "Desc_Rubro",
       qr_field_subcategory: cfg.qr_field_subcategory || "Desc_Subrubro",
@@ -9018,8 +9035,13 @@ app.post("/api/behavior", async (req, res) => {
     const qr_field_code = String(req.body?.qr_field_code || "Codigo").trim().slice(0, 120);
     const qr_field_description = String(req.body?.qr_field_description || "Descripcion").trim().slice(0, 120);
     const qr_field_price = String(req.body?.qr_field_price || "Precio_Lp1").trim().slice(0, 120);
+    const qr_price_label = String(req.body?.qr_price_label || "Precio").trim().slice(0, 80) || "Precio";
+    const qr_price_note = String(req.body?.qr_price_note || "").trim().slice(0, 180);
+    const qr_additional_prices = String(req.body?.qr_additional_prices || "").trim().slice(0, 8000);
     const qr_field_stock = String(req.body?.qr_field_stock || "Stock").trim().slice(0, 120);
     const qr_field_image = String(req.body?.qr_field_image || "").trim().slice(0, 120);
+    const qrImageMimeRaw = String(req.body?.qr_image_mime_type || "image/jpeg").trim().toLowerCase();
+    const qr_image_mime_type = /^image\/[a-z0-9.+-]+$/i.test(qrImageMimeRaw) ? qrImageMimeRaw : "image/jpeg";
     const qr_field_brand = String(req.body?.qr_field_brand || "").trim().slice(0, 120);
     const qr_field_category = String(req.body?.qr_field_category || "Desc_Rubro").trim().slice(0, 120);
     const qr_field_subcategory = String(req.body?.qr_field_subcategory || "Desc_Subrubro").trim().slice(0, 120);
@@ -9085,8 +9107,12 @@ app.post("/api/behavior", async (req, res) => {
       qr_field_code,
       qr_field_description,
       qr_field_price,
+      qr_price_label,
+      qr_price_note,
+      qr_additional_prices,
       qr_field_stock,
       qr_field_image,
+      qr_image_mime_type,
       qr_field_brand,
       qr_field_category,
       qr_field_subcategory,

@@ -14,7 +14,7 @@ const {
   clearEndedFlag,
 } = require('./logic');
 
-const QR_BUILD = '2026-08-21-v2';
+const QR_BUILD = '2026-08-22-v3';
 const qrJson = express.json({ limit: '512kb' });
 const rateState = new Map();
 
@@ -103,6 +103,59 @@ function parseNumber(value) {
   const n = Number(normalized);
   return Number.isFinite(n) ? n : null;
 }
+
+function parseAdditionalPricesConfig(value) {
+  return String(value || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .slice(0, 10)
+    .map(line => {
+      const parts = line.split('|').map(v => String(v || '').trim());
+      const field = clean(parts[0], 120);
+      if (!field) return null;
+      if (parts.length >= 3) {
+        return {
+          field,
+          label: clean(parts[1] || '', 80),
+          note: clean(parts.slice(2).join('|') || '', 180),
+        };
+      }
+      return {
+        field,
+        label: '',
+        note: clean(parts[1] || '', 180),
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeProductImage(value, mimeType, apiUrl) {
+  let raw = String(value ?? '').trim();
+  if (!raw) return '';
+  if (raw.length > 8 * 1024 * 1024) return '';
+
+  if (/^https?:\/\//i.test(raw)) return raw;
+
+  if (/^data:image\/[a-zA-Z0-9.+-]+;base64,/i.test(raw)) {
+    return raw.replace(/\s+/g, '');
+  }
+
+  if (/^\//.test(raw)) {
+    try { return new URL(raw, apiUrl).toString(); } catch {}
+  }
+
+  const compact = raw.replace(/\s+/g, '');
+  if (compact.length >= 64 && /^[A-Za-z0-9+/]+={0,2}$/.test(compact)) {
+    const mime = /^image\/[a-zA-Z0-9.+-]+$/i.test(String(mimeType || '').trim())
+      ? String(mimeType).trim().toLowerCase()
+      : 'image/jpeg';
+    return `data:${mime};base64,${compact}`;
+  }
+
+  return '';
+
+}
 function replaceTemplateString(value, variables) {
   return String(value ?? '')
     .replace(/\{\{\s*codigo\s*\}\}/gi, String(variables.codigo || ''))
@@ -141,8 +194,13 @@ async function loadQrConfig(db, tenant) {
     fieldCode: clean(doc.qr_field_code || 'Codigo', 120),
     fieldDescription: clean(doc.qr_field_description || 'Descripcion', 120),
     fieldPrice: clean(doc.qr_field_price || 'Precio_Lp1', 120),
+    priceLabel: clean(doc.qr_price_label || 'Precio', 80),
+    priceNote: clean(doc.qr_price_note || '', 180),
+    additionalPricesRaw: clean(doc.qr_additional_prices || '', 8000),
+    additionalPrices: parseAdditionalPricesConfig(doc.qr_additional_prices || ''),
     fieldStock: clean(doc.qr_field_stock || 'Stock', 120),
     fieldImage: clean(doc.qr_field_image || '', 120),
+    imageMimeType: clean(doc.qr_image_mime_type || 'image/jpeg', 80),
     fieldBrand: clean(doc.qr_field_brand || '', 120),
     fieldCategory: clean(doc.qr_field_category || 'Desc_Rubro', 120),
     fieldSubcategory: clean(doc.qr_field_subcategory || 'Desc_Subrubro', 120),
@@ -194,17 +252,39 @@ async function fetchQrProduct(cfg, tenant, code) {
   if (!description) throw Object.assign(new Error('product_not_found'), { statusCode: 404 });
   const priceRaw = firstDefined(raw, [cfg.fieldPrice, 'Precio', 'precio', 'Precio_Lp1', 'price']);
   const stockRaw = firstDefined(raw, [cfg.fieldStock, 'Stock', 'stock', 'disponible', 'availability']);
-  const image = cfg.fieldImage ? firstDefined(raw, [cfg.fieldImage, 'Imagen', 'imagen', 'image', 'imageUrl', 'url_imagen']) : firstDefined(raw, ['Imagen', 'imagen', 'image', 'imageUrl', 'url_imagen']);
-  const brand = cfg.fieldBrand ? firstDefined(raw, [cfg.fieldBrand, 'Marca', 'marca', 'brand']) : firstDefined(raw, ['Marca', 'marca', 'brand']);
+  const image = cfg.fieldImage
+    ? firstDefined(raw, [cfg.fieldImage, 'Imagen', 'imagen', 'image', 'imageUrl', 'url_imagen'])
+    : firstDefined(raw, ['Imagen', 'imagen', 'image', 'imageUrl', 'url_imagen']); const brand = cfg.fieldBrand ? firstDefined(raw, [cfg.fieldBrand, 'Marca', 'marca', 'brand']) : firstDefined(raw, ['Marca', 'marca', 'brand']);
   const category = firstDefined(raw, [cfg.fieldCategory, 'Desc_Rubro', 'rubro', 'category']);
   const subcategory = firstDefined(raw, [cfg.fieldSubcategory, 'Desc_Subrubro', 'subrubro', 'subcategory']);
+  const primaryPrice = parseNumber(priceRaw);
+  const prices = [{
+    field: cfg.fieldPrice,
+    label: cfg.priceLabel || 'Precio',
+    note: cfg.priceNote || '',
+    value: primaryPrice,
+    primary: true,
+  }];
+
+  for (const item of cfg.additionalPrices || []) {
+    const value = parseNumber(firstDefined(raw, [item.field]));
+    if (value == null) continue;
+    prices.push({
+      field: item.field,
+      label: item.label || '',
+      note: item.note || '',
+      value,
+      primary: false,
+    });
+  }
 
   return {
     code: clean(productCode, 180),
     description: clean(description, 600),
-    price: parseNumber(priceRaw),
+    price: primaryPrice,
+    prices,
     available: parseStock(stockRaw),
-    image: /^https?:\/\//i.test(String(image || '').trim()) ? clean(image, 3000) : '',
+    image: normalizeProductImage(image, cfg.imageMimeType, cfg.apiUrl),
     brand: clean(brand, 180),
     category: clean(category, 180),
     subcategory: clean(subcategory, 180),
@@ -353,8 +433,8 @@ function pageHtml({ tenant, code }) {
 <title>Producto</title>
 <style>
 :root{--bg:#f1f5f7;--card:#fff;--text:#10243e;--muted:#667085;--line:#d8e2e8;--primary:#0e6b66;--primary2:#095853;--soft:#e8f5f3;--danger:#b42318;--shadow:0 10px 28px rgba(16,24,40,.10)}
-*{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}button,textarea{font:inherit}.page{max-width:760px;margin:0 auto;padding:14px 12px 28px}.brand{display:flex;align-items:center;gap:9px;padding:4px 3px 12px}.brandMark{width:38px;height:38px;border-radius:10px;background:var(--primary);color:var(--buttonText);display:grid;place-items:center;font-weight:900;flex:0 0 auto}.brandLogo{width:46px;height:46px;object-fit:contain;border-radius:8px;background:#fff;flex:0 0 auto}.brandText{min-width:0}.brandText b{display:block;font-size:16px;line-height:1.15}.brandText span{display:block;font-size:11px;color:var(--muted);margin-top:2px}.brandText small{display:block;font-size:10px;color:var(--muted);margin-top:2px}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}.hero{display:none;aspect-ratio:16/9;background:#fff;border-bottom:1px solid var(--line);align-items:center;justify-content:center}.hero img{width:100%;height:100%;object-fit:contain;padding:12px}.content{padding:18px}.eyebrow{font-size:11px;color:var(--primary);font-weight:850;text-transform:uppercase;letter-spacing:.06em}.title{font-size:24px;line-height:1.15;margin:6px 0 8px}.sku{font-size:12px;color:var(--muted);margin-bottom:16px}.facts{display:grid;grid-template-columns:1fr 1fr;gap:10px}.fact{background:#f8fafb;border:1px solid #e7edf0;border-radius:12px;padding:11px}.fact label{display:block;color:var(--muted);font-size:10px;font-weight:750;text-transform:uppercase}.fact b{display:block;margin-top:3px;font-size:15px}.available{color:#067647}.unavailable{color:#b42318}.actions{display:grid;grid-template-columns:1fr;gap:9px;margin-top:16px}.btn{border:1px solid var(--line);background:#fff;border-radius:12px;padding:12px 14px;font-weight:800;cursor:pointer;color:var(--text)}.btnPrimary{background:var(--primary);border-color:var(--primary);color:var(--buttonText)}.btnPrimary:active{filter:brightness(.9)}.btnWithLogo{display:flex;align-items:center;justify-content:center;gap:10px}.btnWithLogo img{width:22px;height:22px;object-fit:contain;background:#fff;border-radius:6px;padding:2px}.btn:disabled{opacity:.55;cursor:default}.error{padding:24px;text-align:center;color:var(--danger)}.loading{padding:26px;text-align:center;color:var(--muted)}.chat{display:none;margin-top:14px;background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}.chat.open{display:flex;flex-direction:column}.chatHead{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px}.chatHead b{font-size:14px}.chatHead span{font-size:10px;color:var(--muted)}.chatBody{min-height:250px;max-height:52vh;overflow:auto;padding:13px;background:#f7f9fa}.msg{display:flex;margin:8px 0}.msg.user{justify-content:flex-end}.bubble{max-width:88%;padding:10px 11px;border-radius:13px;font-size:13px;line-height:1.45;overflow-wrap:anywhere}.msg.user .bubble{background:#dff6e9;border:1px solid #c5ead5;border-bottom-right-radius:4px}.msg.bot .bubble{background:#fff;border:1px solid var(--line);border-bottom-left-radius:4px}.meta{display:block;font-size:9px;color:#98a2b3;margin-top:5px}.composer{padding:10px;border-top:1px solid var(--line);background:#fff}.composeRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}.composer textarea{width:100%;min-height:54px;max-height:130px;resize:vertical;border:1px solid var(--line);border-radius:11px;padding:10px;outline:none}.send{height:54px;min-width:86px}.typing{display:inline-flex;gap:4px}.typing i{width:5px;height:5px;background:#98a2b3;border-radius:50%;animation:pulse 1.1s infinite}.typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}@keyframes pulse{0%,80%,100%{opacity:.3}40%{opacity:1}}.footer{text-align:center;color:#98a2b3;font-size:10px;padding:18px 4px 8px}.powered{margin-top:9px;display:flex;align-items:center;justify-content:center;gap:5px;font-size:11px;color:#667085}.powered img{width:18px;height:18px;object-fit:contain}.powered a{color:var(--primary);text-decoration:none;font-weight:700}.hidden{display:none!important}
-@media(max-width:520px){.page{padding:8px 8px 20px}.content{padding:15px}.title{font-size:21px}.facts{grid-template-columns:1fr}.chatBody{max-height:48vh}.composeRow{grid-template-columns:1fr}.send{height:42px}.bubble{max-width:94%}}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}button,textarea{font:inherit}.page{max-width:760px;margin:0 auto;padding:14px 12px 28px}.brand{display:flex;align-items:center;gap:9px;padding:4px 3px 12px}.brandMark{width:38px;height:38px;border-radius:10px;background:var(--primary);color:var(--buttonText);display:grid;place-items:center;font-weight:900;flex:0 0 auto}.brandLogo{width:46px;height:46px;object-fit:contain;border-radius:8px;background:#fff;flex:0 0 auto}.brandText{min-width:0}.brandText b{display:block;font-size:16px;line-height:1.15}.brandText span{display:block;font-size:11px;color:var(--muted);margin-top:2px}.brandText small{display:block;font-size:10px;color:var(--muted);margin-top:2px}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}.hero{display:none;max-height:330px;background:#fff;border-bottom:1px solid var(--line);align-items:center;justify-content:center}.hero img{display:block;width:100%;max-height:330px;object-fit:contain;padding:14px}.content{padding:18px}.eyebrow{font-size:11px;color:var(--primary);font-weight:850;text-transform:uppercase;letter-spacing:.06em}.title{font-size:24px;line-height:1.15;margin:6px 0 8px}.productMeta{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:16px}.sku{font-size:12px;color:var(--muted)}.availabilityBadge{display:inline-flex;align-items:center;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:800;line-height:1.2}.availabilityBadge.available{color:#067647;background:#ecfdf3;border:1px solid #abefc6}.availabilityBadge.unavailable{color:#b42318;background:#fef3f2;border:1px solid #fecdca}.availabilityBadge.unknown{color:#475467;background:#f2f4f7;border:1px solid #eaecf0}.facts{display:grid;grid-template-columns:1fr 1fr;gap:10px}.fact{background:#f8fafb;border:1px solid #e7edf0;border-radius:12px;padding:11px}.fact label{display:block;color:var(--muted);font-size:10px;font-weight:750;text-transform:uppercase}.fact b{display:block;margin-top:3px;font-size:15px}.priceFact{grid-column:1/-1}.priceMain{font-size:19px;font-weight:850;margin-top:4px}.priceMainNote{font-size:12px;color:#475467;margin-top:2px}.priceExtra{display:flex;align-items:baseline;flex-wrap:wrap;gap:5px;margin-top:5px;font-size:13px;color:#344054}.priceExtra strong{font-size:14px;color:var(--text)}.priceExtraLabel{font-weight:700;color:#667085}.actions{display:grid;grid-template-columns:1fr;gap:9px;margin-top:16px}.btn{border:1px solid var(--line);background:#fff;border-radius:12px;padding:12px 14px;font-weight:800;cursor:pointer;color:var(--text)}.btnPrimary{background:var(--primary);border-color:var(--primary);color:var(--buttonText)}.btnPrimary:active{filter:brightness(.9)}.btnWithLogo{display:flex;align-items:center;justify-content:center;gap:10px}.btnWithLogo img{width:22px;height:22px;object-fit:contain;background:#fff;border-radius:6px;padding:2px}.btn:disabled{opacity:.55;cursor:default}.error{padding:24px;text-align:center;color:var(--danger)}.loading{padding:26px;text-align:center;color:var(--muted)}.chat{display:none;margin-top:14px;background:#fff;border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}.chat.open{display:flex;flex-direction:column}.chatHead{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:8px}.chatHead b{font-size:14px}.chatHead span{font-size:10px;color:var(--muted)}.chatBody{min-height:250px;max-height:52vh;overflow:auto;padding:13px;background:#f7f9fa}.msg{display:flex;margin:8px 0}.msg.user{justify-content:flex-end}.bubble{max-width:88%;padding:10px 11px;border-radius:13px;font-size:13px;line-height:1.45;overflow-wrap:anywhere}.msg.user .bubble{background:#dff6e9;border:1px solid #c5ead5;border-bottom-right-radius:4px}.msg.bot .bubble{background:#fff;border:1px solid var(--line);border-bottom-left-radius:4px}.meta{display:block;font-size:9px;color:#98a2b3;margin-top:5px}.composer{padding:10px;border-top:1px solid var(--line);background:#fff}.composeRow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}.composer textarea{width:100%;min-height:54px;max-height:130px;resize:vertical;border:1px solid var(--line);border-radius:11px;padding:10px;outline:none}.send{height:54px;min-width:86px}.typing{display:inline-flex;gap:4px}.typing i{width:5px;height:5px;background:#98a2b3;border-radius:50%;animation:pulse 1.1s infinite}.typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}@keyframes pulse{0%,80%,100%{opacity:.3}40%{opacity:1}}.footer{text-align:center;color:#98a2b3;font-size:10px;padding:18px 4px 8px}.powered{margin-top:9px;display:flex;align-items:center;justify-content:center;gap:5px;font-size:11px;color:#667085}.powered img{width:18px;height:18px;object-fit:contain}.powered a{color:var(--primary);text-decoration:none;font-weight:700}.hidden{display:none!important}
+ @media(max-width:520px){.page{padding:8px 8px 20px}.content{padding:15px}.title{font-size:21px}.facts{grid-template-columns:1fr}.chatBody{max-height:48vh}.composeRow{grid-template-columns:1fr}.send{height:42px}.bubble{max-width:94%}}
 </style>
 </head>
 <body>
@@ -382,8 +462,71 @@ function addMsg(role,text,typing=false){const row=document.createElement('div');
 function removeTyping(){const n=el('typing');if(n)n.remove()}
 async function jsonFetch(url,opts={}){const r=await fetch(url,{cache:'no-store',...opts});const text=await r.text();let j={};try{j=text?JSON.parse(text):{}}catch{}if(!r.ok)throw new Error(j.detail||j.error||('HTTP '+r.status));return j}
 function safeColor(v,fallback){const x=String(v||'').trim();return /^#[0-9a-f]{6}$/i.test(x)?x:fallback}
-function renderProduct(j){PRODUCT=j.product;AI_ENABLED=j.aiEnabled===true;document.title=PRODUCT.description||'Producto';const company=String(j.companyName||'').trim()||j.pageTitle||'Información del producto';el('companyName').textContent=company;el('pageTitle').textContent=j.pageTitle||'Información del producto';el('pageSubtitle').textContent=j.pageSubtitle||'';document.documentElement.style.setProperty('--primary',safeColor(j.buttonColor,'#0f766e'));document.documentElement.style.setProperty('--buttonText',safeColor(j.buttonTextColor,'#ffffff'));const logo=el('companyLogo'),mark=el('brandMark');if(j.companyLogoUrl){logo.src=j.companyLogoUrl;logo.classList.remove('hidden');mark.classList.add('hidden');logo.onerror=()=>{logo.classList.add('hidden');mark.classList.remove('hidden')}}else{logo.classList.add('hidden');mark.classList.remove('hidden')}mark.textContent=(company.trim().charAt(0)||'A').toUpperCase();const p=PRODUCT;const avail=p.available===true?'<b class="available">Disponible</b>':(p.available===false?'<b class="unavailable">Sin disponibilidad</b>':'<b>Consultar</b>');el('productCard').innerHTML=(p.image?'<div class="hero" style="display:flex"><img src="'+esc(p.image)+'" alt="'+esc(p.description)+'"/></div>':'')+'<div class="content"><div class="eyebrow">Ficha del producto</div><h1 class="title">'+esc(p.description)+'</h1><div class="sku">(SKU: '+esc(p.code)+')</div><div class="facts"><div class="fact"><label>Precio</label><b>'+esc(money(p.price,j.currency))+'</b></div><div class="fact"><label>Disponibilidad</label>'+avail+'</div>'+(p.brand?'<div class="fact"><label>Marca</label><b>'+esc(p.brand)+'</b></div>':'')+(p.subcategory?'<div class="fact"><label>Categoría</label><b>'+esc(p.subcategory)+'</b></div>':'')+'</div>'+(AI_ENABLED?'<div class="actions"><button class="btn btnPrimary btnWithLogo" id="moreBtn" type="button"><span>Mostrar más info</span></button></div>':'')+'</div>';el('chatProduct').textContent=p.description+' · SKU '+p.code;if(AI_ENABLED&&el('moreBtn'))el('moreBtn').addEventListener('click',startAi)}
+function renderPrices(p,currency){
+  const prices=Array.isArray(p.prices)&&p.prices.length?p.prices:[{label:'Precio',note:'',value:p.price,primary:true}];
+  const valid=prices.filter(x=>x&&x.value!==null&&x.value!==undefined&&x.value!=='');
+  if(!valid.length)return '<div class="priceMain">Consultar</div>';
+  const first=valid[0];
+  let html='<div class="priceMain">'+esc(money(first.value,currency))+'</div>';
+  if(first.note)html+='<div class="priceMainNote">'+esc(first.note)+'</div>';
+  for(let i=1;i<valid.length;i++){
+    const item=valid[i];
+    html+='<div class="priceExtra">'+(item.label?'<span class="priceExtraLabel">'+esc(item.label)+':</span>':'')+'<strong>'+esc(money(item.value,currency))+'</strong>'+(item.note?'<span>'+esc(item.note)+'</span>':'')+'</div>';
+  }
+  return html;
+}
+function renderProduct(j){
+  PRODUCT=j.product;
+  AI_ENABLED=j.aiEnabled===true;
+  document.title=PRODUCT.description||'Producto';
 
+  const company=String(j.companyName||'').trim()||j.pageTitle||'Información del producto';
+  el('companyName').textContent=company;
+  el('pageTitle').textContent=j.pageTitle||'Información del producto';
+  el('pageSubtitle').textContent=j.pageSubtitle||'';
+
+  document.documentElement.style.setProperty('--primary',safeColor(j.buttonColor,'#0f766e'));
+  document.documentElement.style.setProperty('--buttonText',safeColor(j.buttonTextColor,'#ffffff'));
+
+  const logo=el('companyLogo'),mark=el('brandMark');
+  if(j.companyLogoUrl){
+    logo.src=j.companyLogoUrl;
+    logo.classList.remove('hidden');
+    mark.classList.add('hidden');
+    logo.onerror=()=>{logo.classList.add('hidden');mark.classList.remove('hidden')};
+  }else{
+    logo.classList.add('hidden');
+    mark.classList.remove('hidden');
+  }
+  mark.textContent=(company.trim().charAt(0)||'A').toUpperCase();
+
+  const p=PRODUCT;
+  const availability=p.available===true
+    ? '<span class="availabilityBadge available">Disponible</span>'
+    : (p.available===false
+      ? '<span class="availabilityBadge unavailable">Sin disponibilidad</span>'
+      : '<span class="availabilityBadge unknown">Consultar disponibilidad</span>');
+
+  const imageHtml=p.image
+    ? '<div class="hero" style="display:flex"><img src="'+esc(p.image)+'" alt="'+esc(p.description)+'"/></div>'
+    : '';
+
+  el('productCard').innerHTML=imageHtml+
+    '<div class="content">'+
+      '<div class="eyebrow">Ficha del producto</div>'+
+      '<h1 class="title">'+esc(p.description)+'</h1>'+
+      '<div class="productMeta"><span class="sku">(SKU: '+esc(p.code)+')</span>'+availability+'</div>'+
+      '<div class="facts">'+
+        '<div class="fact priceFact"><label>Precio</label>'+renderPrices(p,j.currency)+'</div>'+
+        (p.brand?'<div class="fact"><label>Marca</label><b>'+esc(p.brand)+'</b></div>':'')+
+        (p.subcategory?'<div class="fact"><label>Categoría</label><b>'+esc(p.subcategory)+'</b></div>':'')+
+      '</div>'+
+      (AI_ENABLED?'<div class="actions"><button class="btn btnPrimary btnWithLogo" id="moreBtn" type="button"><span>Mostrar más info</span><img src="/static/logo.png" alt="Asisto"/></button></div>':'')+
+    '</div>';
+
+  el('chatProduct').textContent=p.description+' · SKU '+p.code;
+  if(AI_ENABLED&&el('moreBtn'))el('moreBtn').addEventListener('click',startAi);
+}
 async function loadProduct(){try{const u=new URL('/api/ext/qr/product',location.origin);u.searchParams.set('tenant',TENANT);u.searchParams.set('codigo',CODE);renderProduct(await jsonFetch(u.toString()))}catch(e){el('productCard').innerHTML='<div class="error"><b>No pudimos cargar este producto.</b><br/><span>'+esc(e.message)+'</span></div>'}}
 async function callAi(message,initial=false){if(sending)return;sending=true;const btn=el('sendBtn');if(btn)btn.disabled=true;if(message&&!initial)addMsg('user',message);addMsg('bot','',true);try{const j=await jsonFetch('/api/ext/qr/chat',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({tenant:TENANT,codigo:CODE,sessionId:sessionId(),message:message||'',initial})});removeTyping();addMsg('bot',j.reply||'Sin respuesta');started=true}catch(e){removeTyping();addMsg('bot','No pude obtener información adicional en este momento. '+e.message)}finally{sending=false;if(btn)btn.disabled=false}}
 async function startAi(){el('chat').classList.add('open');el('chat').scrollIntoView({behavior:'smooth',block:'start'});if(!started){const b=el('moreBtn');if(b)b.disabled=true;await callAi('',true);if(b)b.disabled=false}else el('message').focus()}
