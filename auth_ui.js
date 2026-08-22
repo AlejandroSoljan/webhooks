@@ -922,7 +922,7 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
         pointer-events:none;
         background:
           linear-gradient(90deg, rgba(2,18,42,.22), rgba(1,13,34,.10)),
-          url("/static/novedades-bg.png") center center / cover no-repeat,
+          url("/static/wa-session-bg.png") center center / cover no-repeat,
           radial-gradient(900px 620px at 14% 18%, rgba(0,132,221,.20), transparent 62%),
           linear-gradient(145deg, #061a37 0%, #03142e 58%, #061c3d 100%);
       }
