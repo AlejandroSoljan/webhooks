@@ -906,68 +906,274 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
 
       .msg.ok{border-color: rgba(70, 200, 140, .35); background: rgba(70, 200, 140, .10)}
 
-      /* ===== /login (clean 50/50) ===== */
-      .lpTop{max-width:1100px; margin:0 auto 18px; display:flex; align-items:center; justify-content:flex-end; gap:16px}
- 
-      .lpBrand img{width:36px; height:36px; border-radius:10px}
-      .lpNav{display:flex; gap:14px; align-items:center; flex-wrap:wrap}
-      .lpNav a{color:rgba(255,255,255,.85); text-decoration:none; font-size:14px}
-      .lpNav a:hover{color:#fff}
-      .lpCta{padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.06)}
-      .lpCta:hover{background: rgba(255,255,255,.10)}
+      /* ===== /login (landing premium Asisto) ===== */
+      .lp{
+        min-height:100vh;
+        position:relative;
+        overflow:hidden;
+        padding:42px 34px 18px;
+        isolation:isolate;
+      }
+      .lp::before{
+        content:"";
+        position:fixed;
+        inset:0;
+        z-index:-2;
+        pointer-events:none;
+        background:
+          linear-gradient(90deg, rgba(2,18,42,.22), rgba(1,13,34,.10)),
+          url("/static/novedades-bg.png") center center / cover no-repeat,
+          radial-gradient(900px 620px at 14% 18%, rgba(0,132,221,.20), transparent 62%),
+          linear-gradient(145deg, #061a37 0%, #03142e 58%, #061c3d 100%);
+      }
+      .lp::after{
+        content:"";
+        position:fixed;
+        inset:0;
+        z-index:-1;
+        pointer-events:none;
+        background:linear-gradient(90deg, rgba(2,16,38,.10) 0%, rgba(2,16,38,.05) 48%, rgba(0,9,25,.18) 100%);
+      }
+      .lpTop{display:none}
 
       .lpMain{
-        max-width:1100px;
+        width:min(1420px, 100%);
         margin:0 auto;
         display:grid;
-        grid-template-columns: 1fr 1fr;
-        gap:22px;
-      align-items:stretch;
+        grid-template-columns:minmax(0, 1.08fr) minmax(480px, .92fr);
+        gap:58px;
+        align-items:start;
       }
       .lpLeft{
-        border-radius: 18px;
-        border:1px solid rgba(255,255,255,.10);
-        background: rgba(255,255,255,.05);
+        min-height:820px;
+        display:flex;
+        flex-direction:column;
+        justify-content:flex-start;
+        padding:54px 0 24px 26px;
+      }
+      .lpBrandLockup{
         display:flex;
         align-items:center;
-        justify-content:center;
-        padding: 24px;
-        overflow:hidden;
+        gap:18px;
+        margin-bottom:34px;
       }
       
       .lpLogo{
-        width: min(420px, 70%);
-        height:auto;
+        width:108px;
+        height:92px;
         object-fit:contain;
-        filter: drop-shadow(0 10px 18px rgba(0,0,0,.28));
+        filter:drop-shadow(0 12px 26px rgba(0,0,0,.28));
       }
       
+      .lpBrandName{
+        margin:0;
+        color:#fff;
+        font-size:clamp(58px, 5.1vw, 82px);
+        line-height:.92;
+        font-weight:750;
+        letter-spacing:-3px;
+        text-shadow:0 8px 24px rgba(0,0,0,.26);
+      }
+      .lpHeroTitle{
+        margin:0 0 16px;
+        color:#fff;
+        font-size:clamp(31px, 2.7vw, 45px);
+        line-height:1.08;
+        letter-spacing:-1px;
+     }
+      .lpHeroLead{
+        max-width:650px;
+        margin:0;
+        color:rgba(235,243,255,.80);
+        font-size:clamp(17px, 1.35vw, 22px);
+        line-height:1.55;
+      }
+      .lpFeatures{
+        display:grid;
+        gap:27px;
+        margin-top:46px;
+        max-width:660px;
+      }
+      .lpFeature{
+        display:grid;
+        grid-template-columns:82px 1fr;
+        gap:18px;
+        align-items:center;
+      }
+      .lpFeatureIcon{
+        width:82px;
+        height:82px;
+        border:1px solid rgba(78,184,255,.22);
+        border-radius:20px;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        background:linear-gradient(145deg, rgba(11,46,85,.86), rgba(4,31,66,.72));
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.06), 0 15px 30px rgba(0,0,0,.16);
+      }
+      .lpFeatureIcon svg{width:41px;height:41px;stroke:#0ad4ac;fill:none;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+      .lpFeatureIcon .fillAccent{fill:#0ad4ac;stroke:none}
+      .lpFeatureTitle{margin:0 0 5px;color:#fff;font-size:21px;font-weight:750}
+      .lpFeatureText{margin:0;color:rgba(229,238,250,.72);font-size:17px;line-height:1.45}
+
       .lpRight{
         display:flex;
-        align-items:stretch;
-        justify-content:center;
-        padding: 10px;
-      }
-      .lpRight .card{
-        width: min(460px, 100%);
-         height:100%;
-        display:flex;
         flex-direction:column;
-        justify-content:center;
+        gap:22px;
       }
       
 
-      .lpSection{max-width:1100px; margin:18px auto 0; padding:18px; border-radius:18px; border:1px solid rgba(255,255,255,.12); background: rgba(0,0,0,.10)}
-      .lpSection h2{margin:0 0 10px; color:#fff; font-size:22px}
-      .lpLeadSmall{margin:0 0 14px; color:rgba(255,255,255,.78)}
-      .lpContact{display:block}
-      .lpForm textarea{width:100%; resize:vertical}
-      .lpRow{display:grid; grid-template-columns: 1fr 1fr; gap:12px}
-      .lpFooter{max-width:1100px; margin:18px auto 0; padding:14px 6px; color:rgba(255,255,255,.55); font-size:12px; text-align:center}
+      .lpPanel{
+        border-radius:22px;
+        border:1px solid rgba(102,182,244,.30);
+        background:linear-gradient(155deg, rgba(9,37,76,.76), rgba(4,27,60,.72));
+        box-shadow:0 24px 54px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.05);
+        backdrop-filter:blur(13px);
+        -webkit-backdrop-filter:blur(13px);
+        padding:30px 32px;
+      }
+      .lpPanel h2{margin:0 0 22px;color:#fff;font-size:30px;line-height:1.1}
+      .lpLoginPanel{padding-top:34px;padding-bottom:27px}
+      .lpLoginPanel .field{margin:0 0 19px}
+      .lpPanel label{
+        display:block;
+        color:rgba(235,243,255,.86);
+        font-size:14px;
+        margin:0 0 9px;
+      }
+      .lpInputWrap{position:relative}
+      .lpInputIcon{
+        position:absolute;
+        left:15px;
+        top:50%;
+        transform:translateY(-50%);
+        width:21px;
+        height:21px;
+        color:rgba(222,236,251,.74);
+        pointer-events:none;
+      }
+      .lpInputIcon svg{width:100%;height:100%;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+      .lpPanel input,
+      .lpPanel textarea,
+      .lpSection input,
+      .lpSection textarea{
+       width:100%;
+        color:#fff;
+        background:rgba(12,44,82,.64);
+        border:1px solid rgba(111,172,229,.28);
+        border-radius:12px;
+        outline:none;
+        transition:border-color .15s ease, box-shadow .15s ease, background .15s ease;
+      }
+      .lpPanel input,
+      .lpSection input{height:50px;padding:0 44px 0 48px;font-size:15px}
+     .lpPanel textarea,
+      .lpSection textarea{min-height:96px;padding:14px 15px 14px 48px;font-size:14px;line-height:1.45;resize:vertical}
+      .lpPanel input::placeholder,
+      .lpPanel textarea::placeholder,
+      .lpSection input::placeholder,
+      .lpSection textarea::placeholder{color:rgba(219,231,246,.62)}
+      .lpPanel input:focus,
+     .lpPanel textarea:focus,
+      .lpSection input:focus,
+      .lpSection textarea:focus{
+        background:rgba(13,49,91,.78);
+        border-color:rgba(11,211,172,.68);
+        box-shadow:0 0 0 3px rgba(11,211,172,.10);
+      }
+      .lpPasswordToggle{
+        position:absolute;
+        right:12px;
+        top:50%;
+        transform:translateY(-50%);
+        width:34px;
+        height:34px;
+        border:0;
+        background:transparent;
+        color:rgba(222,236,251,.70);
+        padding:7px;
+        cursor:pointer;
+      }
+      .lpPasswordToggle svg{width:100%;height:100%;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+      .lp .btn{
+        min-height:48px;
+        border-radius:10px;
+        background:linear-gradient(90deg, #0fc8a5 0%, #08a98f 52%, #079f89 100%);
+        color:#fff;
+        box-shadow:0 10px 22px rgba(0,177,148,.12);
+        font-size:15px;
+        font-weight:800;
+        transition:transform .14s ease, filter .14s ease;
+      }
+      .lp .btn:hover{background:linear-gradient(90deg, #12d4ae, #09b899);filter:brightness(1.04);transform:translateY(-1px)}
+      .lpLoginHelp{margin-top:15px;text-align:center;color:rgba(226,236,249,.72);font-size:13px}
+      .lp .msg{color:#fff;border-color:rgba(255,255,255,.15);background:rgba(255,255,255,.08)}
+      .lp .msg.err{border-color:rgba(255,114,114,.35);background:rgba(176,30,50,.18)}
+      .lp .msg.ok{border-color:rgba(70,220,170,.34);background:rgba(20,137,106,.17)}
 
-      @media (max-width: 980px){
-        .lpMain{grid-template-columns:1fr; min-height:auto}
-        .lpLeft{min-height:240px}
+      .lpSection{
+        width:auto;
+        margin:0;
+        padding:29px 32px 31px;
+        border-radius:22px;
+        border:1px solid rgba(102,182,244,.30);
+        background:linear-gradient(155deg, rgba(9,37,76,.76), rgba(4,27,60,.72));
+        box-shadow:0 24px 54px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.05);
+        backdrop-filter:blur(13px);
+        -webkit-backdrop-filter:blur(13px);
+      }
+      .lpSection h2{margin:0 0 6px;color:#fff;font-size:26px}
+      .lpLeadSmall{margin:0 0 20px;color:rgba(228,238,251,.72);font-size:14px}
+      .lpContact{display:block}
+      .lpForm .field{margin:0}
+      .lpRow{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin-bottom:13px}
+      .lpMessageField{position:relative;margin:0 0 15px}
+      .lpMessageField .lpInputIcon{top:24px;transform:none}
+      .lpFooter{
+        width:min(1420px, 100%);
+        margin:13px auto 0;
+        padding:8px 0 0;
+        color:rgba(231,240,252,.55);
+        font-size:12px;
+        text-align:center;
+      }
+
+      @media (max-width: 1180px){
+        .lp{padding:28px 24px 16px}
+        .lpMain{grid-template-columns:minmax(0,1fr) minmax(430px,.95fr);gap:34px}
+        .lpLeft{padding-left:8px}
+        .lpBrandName{font-size:64px}
+        .lpLogo{width:90px;height:78px}
+        .lpFeatureText{font-size:15px}
+      }
+      @media (max-width: 900px){
+        .lp{overflow:visible;padding:24px 16px 18px}
+        .lp::before{background-position:40% center}
+        .lpMain{grid-template-columns:1fr;gap:24px}
+        .lpLeft{min-height:auto;padding:12px 4px 8px}
+        .lpBrandLockup{justify-content:center;margin-bottom:24px}
+        .lpBrandName{font-size:58px}
+        .lpHeroTitle{text-align:center;font-size:32px}
+        .lpHeroLead{text-align:center;margin:0 auto;font-size:17px}
+        .lpFeatures{max-width:690px;margin:32px auto 0;width:100%}
+        .lpFeature{grid-template-columns:68px 1fr}
+        .lpFeatureIcon{width:68px;height:68px;border-radius:17px}
+        .lpFeatureIcon svg{width:34px;height:34px}
+        .lpRight{width:min(690px,100%);margin:0 auto}
+      }
+      @media (max-width: 560px){
+        .lp{padding:18px 12px 14px}
+        .lpBrandLockup{gap:10px}
+        .lpLogo{width:70px;height:62px}
+        .lpBrandName{font-size:48px;letter-spacing:-2px}
+        .lpHeroTitle{font-size:28px}
+        .lpFeatures{gap:20px}
+        .lpFeature{grid-template-columns:58px 1fr;gap:14px}
+        .lpFeatureIcon{width:58px;height:58px;border-radius:15px}
+        .lpFeatureTitle{font-size:18px}
+        .lpFeatureText{font-size:14px}
+        .lpPanel,.lpSection{padding:24px 18px;border-radius:18px}
+        .lpPanel h2{font-size:26px}
         .lpRow{grid-template-columns:1fr}
         
       }
@@ -1240,25 +1446,56 @@ function loginPage({ error, msg, to, baseUrl }) {
     head: loginSeoHead({ baseUrl }),
     body: `
     <div class="lp">
-      <header class="lpTop">
-        
-      
-        <nav class="lpNav">
-          
-        
-        </nav>
-      </header>
+ 
 
       <main class="lpMain">
-        <section class="lpLeft" aria-label="Marca Asisto">
-          <div class="lpLogoBox">
+        <section class="lpLeft" aria-label="Asisto">
+          <div class="lpBrandLockup">
             <img class="lpLogo" src="/static/logo.png" alt="Asisto"/>
-            
+            <div class="lpBrandName">Asisto</div>
           </div>
+
+          <h1 class="lpHeroTitle">Automatizá. Conectá. Crecé.</h1>
+          <p class="lpHeroLead">
+            Asisto es la plataforma que centraliza tus comunicaciones con clientes,
+            automatiza procesos y potencia tu negocio.
+          </p>
+
+          <div class="lpFeatures" aria-label="Funciones principales">
+            <div class="lpFeature">
+              <div class="lpFeatureIcon" aria-hidden="true">
+                <svg viewBox="0 0 48 48"><path d="M9 10h30a4 4 0 0 1 4 4v18a4 4 0 0 1-4 4H23l-9 7v-7H9a4 4 0 0 1-4-4V14a4 4 0 0 1 4-4Z"/><path d="M14 19h20M14 27h13"/></svg>
+              </div>
+              <div>
+                <h3 class="lpFeatureTitle">Comunicación inteligente</h3>
+                <p class="lpFeatureText">Gestioná WhatsApp y otros canales desde un solo lugar.</p>
+              </div>
+            </div>
+
+            <div class="lpFeature">
+              <div class="lpFeatureIcon" aria-hidden="true">
+                <svg viewBox="0 0 48 48"><rect x="10" y="15" width="28" height="22" rx="7"/><path d="M24 9v6M18 27h.01M30 27h.01M18 33h12"/><circle class="fillAccent" cx="18" cy="27" r="2.1"/><circle class="fillAccent" cx="30" cy="27" r="2.1"/></svg>
+              </div>
+              <div>
+                <h3 class="lpFeatureTitle">Automatización avanzada</h3>
+                <p class="lpFeatureText">Reducí tiempos, errores y optimizá tus procesos.</p>
+              </div>
+            </div>
+
+            <div class="lpFeature">
+              <div class="lpFeatureIcon" aria-hidden="true">
+                <svg viewBox="0 0 48 48"><path d="M9 39V26h7v13M21 39V18h7v21M33 39V10h7v29"/></svg>
+              </div>
+              <div>
+                <h3 class="lpFeatureTitle">Control y estadísticas</h3>
+                <p class="lpFeatureText">Tomá mejores decisiones con datos en tiempo real.</p>
+              </div>
+            </div>
+         </div>
         </section>
 
-        <aside class="lpRight" aria-label="Ingreso">
-          <div class="card">
+        <div class="lpRight">
+          <aside class="lpPanel lpLoginPanel" aria-label="Ingreso">
             <h2>Iniciar sesión</h2>
             ${ok}
             ${err}
@@ -1266,62 +1503,80 @@ function loginPage({ error, msg, to, baseUrl }) {
               <input type="hidden" name="to" value="${htmlEscape(to || "/app")}"/>
               <div class="field">
                 <label>Usuario</label>
-                <input name="username" autocomplete="username" placeholder="usuario" required/>
+                <div class="lpInputWrap">
+                  <span class="lpInputIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></svg></span>
+                  <input name="username" autocomplete="username" placeholder="usuario" required/>
+                </div>
               </div>
               <div class="field">
                 <label>Contraseña</label>
-               <input name="password" type="password" autocomplete="current-password" placeholder="••••••••" required/>
+                <div class="lpInputWrap">
+                  <span class="lpInputIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></span>
+                  <input id="lpPassword" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required/>
+                  <button class="lpPasswordToggle" type="button" aria-label="Mostrar u ocultar contraseña" onclick="var p=document.getElementById('lpPassword');p.type=p.type==='password'?'text':'password';">
+                    <svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6S2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.5"/><path d="M4 4l16 16"/></svg>
+                  </button>
+                </div>
               </div>
               <button class="btn" type="submit">Iniciar sesión</button>
             </form>
-            <div style="margin-top:12px">
-              <span class="link small">Si no tenés usuario, pedile acceso al administrador.</span>
-            </div>
-          </div>
-        </aside>
-      </main>
+            <div class="lpLoginHelp">Si no tenés usuario, pedile acceso al administrador.</div>
+          </aside>
 
        
 
-      <section class="lpSection" id="contacto">
-        <h2>Contacto</h2>
-        <p class="lpLeadSmall">Contanos tu negocio y te contactaremos.</p>
-        <div class="lpContact">
-          <form class="lpForm" method="POST" action="/contact">
-            <div class="lpRow">
-              <div class="field">
-                <label>Nombre</label>
-                <input name="name" placeholder="Tu nombre" required/>
-              </div>
-              <div class="field">
-                <label>Email</label>
-                <input name="email" type="email" placeholder="tu@email.com" required/>
-              </div>
-            </div>
-            <div class="lpRow">
-              <div class="field">
-                <label>Empresa (opcional)</label>
-                <input name="company" placeholder="Tu empresa"/>
-              </div>
-              <div class="field">
-                <label>Teléfono (opcional)</label>
-                <input name="phone" placeholder="+54 ..."/>
-              </div>
-            </div>
-            <div class="field">
-              <label>Mensaje</label>
-              <textarea name="message" rows="4" placeholder="Quiero automatizar pedidos por WhatsApp, tengo X sucursales, etc." required></textarea>
-            </div>
-            <button class="btn" type="submit">Enviar</button>
-          </form>
-        </div>
-      </section>
+          <section class="lpSection" id="contacto">
+            <h2>Contacto</h2>
+            <p class="lpLeadSmall">Contanos tu negocio y te contactaremos.</p>
+            <div class="lpContact">
+              <form class="lpForm" method="POST" action="/contact">
+                <div class="lpRow">
+                  <div class="field">
+                    <div class="lpInputWrap">
+                      <span class="lpInputIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></svg></span>
+                      <input name="name" placeholder="Tu nombre" aria-label="Nombre" required/>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <div class="lpInputWrap">
+                      <span class="lpInputIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg></span>
+                      <input name="email" type="email" placeholder="tu@email.com" aria-label="Email" required/>
+                    </div>
+                  </div>
+                </div>
 
-      <footer class="lpFooter">
-        <div>© ${new Date().getFullYear()} Asisto — lo hace por vos...</div>
-      </footer>
-    </div>
-    `,
+                <div class="lpRow">
+                  <div class="field">
+                    <div class="lpInputWrap">
+                      <span class="lpInputIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 21h16V7H4v14Z"/><path d="M8 7V4h8v3M8 12h8"/></svg></span>
+                      <input name="company" placeholder="Tu empresa (opcional)" aria-label="Empresa"/>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <div class="lpInputWrap">
+                      <span class="lpInputIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 3h4l2 5-3 2a15 15 0 0 0 4 4l2-3 5 2v4c0 2-2 4-4 4C9 21 3 15 3 7c0-2 2-4 4-4Z"/></svg></span>
+                      <input name="phone" placeholder="+54 ... (opcional)" aria-label="Teléfono"/>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="lpMessageField">
+                  <span class="lpInputIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h16v13H9l-5 4V4Z"/><path d="M8 9h8M8 13h5"/></svg></span>
+                  <textarea name="message" rows="4" placeholder="Quiero automatizar pedidos por WhatsApp, tengo X sucursales, etc." aria-label="Mensaje" required></textarea>
+                </div>
+                <button class="btn" type="submit">✈&nbsp;&nbsp; Enviar</button>
+              </form>
+             </div>
+  </section>
+         </div>
+     </main>
+ 
+       <footer class="lpFooter">
+        <div>© ${new Date().getFullYear()} Asisto — Lo hace por vos...</div>
+       </footer>
+     </div>
+     `,
+   
   });
 }
 
