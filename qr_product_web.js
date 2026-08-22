@@ -10,6 +10,7 @@ const { ObjectId } = require('mongodb');
 const { getDb } = require('./db');
 const {
   getGPTReply,
+  runQrDirectWebSearch,
   syncSessionConversation,
   clearEndedFlag,
 } = require('./logic');
@@ -387,6 +388,40 @@ function productContext(product, cfg) {
   ].filter(Boolean).join('\n');
 }
 
+function qrDirectWebSearchQuery(product) {
+  const parts = [];
+  const description = clean(product?.description, 600);
+  const brand = clean(product?.brand, 180);
+  if (description) parts.push(description);
+  if (brand && !description.toLowerCase().includes(brand.toLowerCase())) parts.push(brand);
+  return parts.join(' ').trim().slice(0, 1200);
+}
+
+function qrWebResultContext(result) {
+  if (result?.ok && result?.body) {
+    const sourceLines = (Array.isArray(result.sources) ? result.sources : [])
+      .slice(0, 5)
+      .map((src, i) => `${i + 1}. ${clean(src?.title || 'Fuente', 180)} - ${clean(src?.url || '', 600)}`)
+      .filter(Boolean);
+    return [
+      '[INFORMACIÓN WEB YA CONSULTADA]',
+      clean(result.body, 8000),
+      ...(sourceLines.length ? ['', '[FUENTES]', ...sourceLines] : []),
+      '',
+      'La búsqueda web ya fue realizada para esta respuesta. No solicites buscar_web_qr nuevamente en este turno.',
+      'Usá Internet solo para datos técnicos/públicos. Precio y disponibilidad válidos son exclusivamente los del contexto QR.'
+    ].join('\n');
+  }
+
+  return [
+    '[BÚSQUEDA WEB NO DISPONIBLE EN ESTE TURNO]',
+    'No intentes ejecutar otra búsqueda web en esta respuesta inicial.',
+    'Respondé con una evaluación útil basada en los datos confirmados del QR y conocimiento general seguro.',
+    'No inventes especificaciones exactas. No presentes el fallo técnico como si significara que el producto no tiene información en Internet.'
+  ].join('\n');
+}
+
+
 function defaultQrBehavior() {
   return [
     'Sos un asesor de producto para una ficha pública abierta desde un código QR.',
@@ -521,7 +556,7 @@ function renderProduct(j){
         (p.brand?'<div class="fact"><label>Marca</label><b>'+esc(p.brand)+'</b></div>':'')+
         (p.subcategory?'<div class="fact"><label>Categoría</label><b>'+esc(p.subcategory)+'</b></div>':'')+
       '</div>'+
-      (AI_ENABLED?'<div class="actions"><button class="btn btnPrimary btnWithLogo" id="moreBtn" type="button"><span>Mostrar más info</span><img src="/static/logo.png" alt="Asisto"/></button></div>':'')+
+      (AI_ENABLED?'<div class="actions"><button class="btn btnPrimary btnWithLogo" id="moreBtn" type="button"><span>Mostrar más info</span></button></div>':'')+
     '</div>';
 
   el('chatProduct').textContent=p.description+' · SKU '+p.code;
@@ -640,27 +675,66 @@ function mountQrProductWeb(app) {
       await saveQrMessage(db, { tenant, conversationId: convId, waId, role: 'user', content: visibleUserText, product, meta: { initial } });
 
       const ctx = productContext(product, cfg);
+      const behaviorOverride = cfg.aiUseSameBehavior
+        ? undefined
+        : (cfg.aiBehavior || defaultQrBehavior());
+
+      // En el primer clic no usamos ChatGPT para decidir si debe buscar: si la
+      // búsqueda web está habilitada la ejecutamos directamente. Esto elimina una
+      // llamada completa a Chat Completions y reduce tokens + latencia.
+      let initialWebResult = null;
+      if (initial && cfg.aiWebSearchEnabled) {
+        const directQuery = qrDirectWebSearchQuery(product);
+        console.log(`[qr] direct web-search tenant=${tenant} sku=${product.code} timeoutMs=${cfg.aiWebSearchTimeoutMs} context=${cfg.aiWebSearchContextSize} query=${directQuery.slice(0, 180)}`);
+        initialWebResult = await runQrDirectWebSearch({
+          tenantId: tenant,
+          openaiApiKey: apiKey,
+          query: directQuery,
+          searchContextSize: cfg.aiWebSearchContextSize,
+          timeoutMs: cfg.aiWebSearchTimeoutMs,
+          maxOutputTokens: 2500,
+          maxChars: 8000,
+          conversationId: String(convId),
+          waId,
+          channelType: 'qr_web',
+          usageTraceId: `qr-web:${tenant}:${String(convId)}:${Date.now()}`,
+        });
+        console.log('[qr] direct web-search result', {
+          tenant,
+          sku: product.code,
+          ok: initialWebResult?.ok === true,
+          error: initialWebResult?.error || '',
+          status: initialWebResult?.status || 0,
+          chars: String(initialWebResult?.body || '').length,
+          sources: Array.isArray(initialWebResult?.sources) ? initialWebResult.sources.length : 0,
+        });
+      }
+
       const hiddenInstruction = initial
         ? [
             ctx,
             '',
             '[SOLICITUD DEL VISITANTE]',
-            'El visitante tocó "Mostrar más info con IA".',
+            'El visitante tocó "Mostrar más info".',
             cfg.aiWebSearchEnabled
-     ? 'Antes de responder, intentá usar la acción buscar_web_qr para investigar este producto en Internet. Buscá principalmente por la descripción, marca y modelo; el SKU puede ser un código interno y no debe ser el único criterio. Si el nombre parece tener una variante ortográfica, probá también la variante más probable. Priorizá fabricante, manuales, fichas técnicas y fuentes confiables. Si la búsqueda falla o vence el tiempo de espera, respondé igualmente con una evaluación útil basada en los datos confirmados del QR, sin inventar especificaciones exactas y sin presentar el fallo de búsqueda como si significara que no existe información del producto.'
-     : 'Explicá características, usos y recomendaciones únicamente con la información confirmada disponible. No inventes datos externos.',
-          ].join('\n')
+              ? qrWebResultContext(initialWebResult)
+              : 'Explicá características, usos y recomendaciones únicamente con la información confirmada disponible. No inventes datos externos.',
+            '',
+            'Redactá directamente la respuesta final. No pidas una acción web en este turno.'          ].join('\n')
         : [
             ctx,
             '',
             '[PREGUNTA DEL VISITANTE]',
             message,
             cfg.aiWebSearchEnabled
-              ? 'Si la respuesta requiere información técnica o pública que no esté confirmada en el contexto, podés usar buscar_web_qr. No uses Internet para reemplazar precio o disponibilidad del negocio.'
+               ? 'Si la respuesta requiere información técnica o pública que no esté confirmada en el contexto ni en el historial, podés usar buscar_web_qr. No uses Internet para reemplazar precio o disponibilidad del negocio.'
               : 'Respondé con la información confirmada disponible. No inventes datos externos.',
           ].join('\n');
 
-      const extraActions = cfg.aiWebSearchEnabled ? [{
+      // Después del primer clic el chat conserva la acción web dinámica para
+      // preguntas nuevas que realmente necesiten verificación. En el primer turno
+      // no la exponemos porque la búsqueda ya se ejecutó directamente arriba.
+      const extraActions = (!initial && cfg.aiWebSearchEnabled) ? [{
         id: 'qr_web_search',
         type: 'web',
         enabled: true,
@@ -668,16 +742,13 @@ function mountQrProductWeb(app) {
        description: 'Buscar en Internet información técnica y pública del producto escaneado por QR: fabricante, ficha técnica, manual, usos, compatibilidades y recomendaciones. Buscar principalmente por descripción, marca y modelo; el SKU puede ser interno. Probar variantes razonables del nombre si hace falta. No usar para precio ni stock del negocio.',
         web_search_context_size: cfg.aiWebSearchContextSize,
         timeout_ms: cfg.aiWebSearchTimeoutMs,
-        max_chars: 24000,
+        web_max_output_tokens: 2500,
+        max_chars: 8000,
         result_instructions: 'Priorizá fuentes del fabricante, manuales y documentación técnica. Diferenciá claramente los datos obtenidos en Internet de los datos comerciales del negocio. Si la búsqueda falla o vence el tiempo de espera, no lo interpretes como que no existe información del producto: respondé igual con una evaluación general basada únicamente en los datos confirmados del QR y aclarando solo las especificaciones exactas que no pudieron verificarse.',
       }] : [];
 
-      const behaviorOverride = cfg.aiUseSameBehavior
-        ? undefined
-        : (cfg.aiBehavior || defaultQrBehavior());
-
-      if (cfg.aiWebSearchEnabled) {
-        console.log(`[qr] web-search config tenant=${tenant} sku=${product.code} timeoutMs=${cfg.aiWebSearchTimeoutMs} context=${cfg.aiWebSearchContextSize}`);
+      if (!initial && cfg.aiWebSearchEnabled) {
+        console.log(`[qr] web-search action enabled tenant=${tenant} sku=${product.code} timeoutMs=${cfg.aiWebSearchTimeoutMs} context=${cfg.aiWebSearchContextSize}`);
       }
 
 
@@ -689,8 +760,10 @@ function mountQrProductWeb(app) {
         channelType: 'qr_web',
         usageTraceId: `qr:${tenant}:${String(convId)}:${Date.now()}`,
         botModeOverride: 'conversacional',
+        historyModeOverride: 'compact',
         behaviorTextOverride: behaviorOverride,
         leadCaptureOverride: cfg.aiUseSameBehavior ? undefined : false,
+        disableExternalActions: initial === true,
         additionalExternalActions: extraActions,
         externalApiContext: {
           telefono_cliente: waId,

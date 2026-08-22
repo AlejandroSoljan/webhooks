@@ -1620,10 +1620,16 @@ function normalizeConversationalExternalActionEntry(raw = {}, index = 0) {
 
   const enabledRaw = raw.enabled ?? raw.habilitada ?? raw.active ?? raw.external_api_enabled ?? true;
   const enabled = enabledRaw === true || ["1", "true", "yes", "si", "sí", "on"].includes(String(enabledRaw || "").trim().toLowerCase());
-  const timeoutMs = Math.max(1000, Math.min(60000, Number(raw.timeout_ms ?? raw.timeoutMs ?? raw.external_api_timeout_ms ?? 10000) || 10000));
+  const timeoutMaxMs = type === "web" ? 120000 : 60000;
+  const timeoutMs = Math.max(1000, Math.min(timeoutMaxMs, Number(raw.timeout_ms ?? raw.timeoutMs ?? raw.external_api_timeout_ms ?? 10000) || 10000));
   const maxChars = Math.max(2000, Math.min(100000, Number(raw.max_chars ?? raw.maxChars ?? raw.external_api_max_chars ?? 30000) || 30000));
   const webContextRaw = String(raw.web_search_context_size ?? raw.webSearchContextSize ?? raw.search_context_size ?? "medium").trim().toLowerCase();
   const webSearchContextSize = ["low", "medium", "high"].includes(webContextRaw) ? webContextRaw : "medium";
+  // max_chars solo recorta el texto DESPUÉS de recibirlo. Para controlar TPM hay que
+  // limitar explícitamente los tokens que Responses API puede generar.
+  const webMaxOutputTokens = Math.max(600, Math.min(6000, Number(
+    raw.web_max_output_tokens ?? raw.webMaxOutputTokens ?? raw.max_output_tokens ?? raw.maxOutputTokens ?? 2500
+  ) || 2500));
 
   return {
     id: String(raw.id || raw.action_id || raw.actionId || name || `accion_${index + 1}`).trim().slice(0, 120),
@@ -1645,7 +1651,8 @@ function normalizeConversationalExternalActionEntry(raw = {}, index = 0) {
 
     // Búsqueda web mediante OpenAI Responses API.
     web_model: String(raw.web_model ?? raw.webModel ?? "").trim().slice(0, 120),
-    web_search_context_size: webSearchContextSize
+    web_search_context_size: webSearchContextSize,
+    web_max_output_tokens: webMaxOutputTokens
   };
 }
 
@@ -1739,6 +1746,7 @@ async function executeConversationalHttpApi(actionCfg, action = {}, context = {}
   };
   const timeout = Math.max(1000, Math.min(60000, Number(actionCfg.timeout_ms || 10000) || 10000));
   const maxChars = Math.max(2000, Math.min(100000, Number(actionCfg.max_chars || 30000) || 30000));
+  const maxOutputTokens = Math.max(600, Math.min(6000, Number(actionCfg.web_max_output_tokens || 2500) || 2500));
   const headers = { Accept: "application/json, text/plain;q=0.9, */*;q=0.8" };
 
   const authHeader = String(actionCfg.auth_header || "").trim();
@@ -1871,6 +1879,27 @@ function extractResponsesWebSources(data) {
   return out.slice(0, 30);
 }
 
+function webSearchRetryDelayMs(resp, detail = "", retryIndex = 0) {
+  try {
+    const headerRaw = resp?.headers?.["retry-after"] ?? resp?.headers?.get?.("retry-after");
+    const headerSeconds = Number(headerRaw);
+    if (Number.isFinite(headerSeconds) && headerSeconds > 0) {
+      return Math.max(1000, Math.min(15000, Math.ceil(headerSeconds * 1000) + 250));
+    }
+  } catch {}
+
+  const match = String(detail || "").match(/try again in\s+([0-9.]+)s/i);
+  if (match) {
+    const seconds = Number(match[1]);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.max(1000, Math.min(15000, Math.ceil(seconds * 1000) + 250));
+    }
+  }
+
+  return Math.min(8000, 1500 * Math.pow(2, Math.max(0, retryIndex)));
+}
+
+
 async function executeConversationalWebSearch(actionCfg, action = {}, context = {}) {
   const query = String(action?.query || "").trim().slice(0, 1500);
   if (!query) return { ok: false, error: "web_search_query_required" };
@@ -1899,79 +1928,102 @@ async function executeConversationalWebSearch(actionCfg, action = {}, context = 
 
   try {
     for (const attempt of attempts) {
-      const payload = {
-   
-        model,
-        tools: [{ type: attempt.toolType, search_context_size: searchContextSize }],
-        tool_choice: { type: attempt.toolType },
-        input,
-      };
-      if (attempt.includeSources) payload.include = ["web_search_call.action.sources"];
+      // 429 no cambia el tipo de herramienta: esperamos lo indicado por OpenAI y
+      // reintentamos como máximo dos veces. Evita fallos transitorios sin bucles.
+      for (let rateTry = 0; rateTry < 3; rateTry++) {
+        const payload = {
+          model,
+          tools: [{ type: attempt.toolType, search_context_size: searchContextSize }],
+          tool_choice: { type: attempt.toolType },
+          input,
+          // CRÍTICO: sin este límite Responses API puede reservar una salida muy
+          // grande para TPM aunque la respuesta final sea corta.
+          max_output_tokens: maxOutputTokens,
+          max_tool_calls: 1,
+          reasoning: { effort: "low" },
+        };
+        if (attempt.includeSources) payload.include = ["web_search_call.action.sources"];
 
-      const resp = await axios.post(
-        "https://api.openai.com/v1/responses",
-        payload,
-        {
-          timeout,
-          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-          validateStatus: () => true,
+        const resp = await axios.post(
+         "https://api.openai.com/v1/responses",
+          payload,
+          {
+            timeout,
+            headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+            validateStatus: () => true,
+          }
+        );
+
+        const status = Number(resp?.status || 0);
+        if (status < 200 || status >= 300) {
+          const detail = String(resp?.data?.error?.message || resp?.data?.error?.code || resp?.statusText || "").slice(0, 1200);
+          lastFailure = { status, detail, toolType: attempt.toolType };
+          console.warn("[web-search] HTTP error", {
+            action: actionCfg.name,
+            model,
+            toolType: attempt.toolType,
+            status,
+           detail,
+            maxOutputTokens,
+            rateTry: rateTry + 1,
+          });
+
+          if (status === 429 && rateTry < 2) {
+            const waitMs = webSearchRetryDelayMs(resp, detail, rateTry);
+            console.warn(`[web-search] 429; reintento en ${waitMs}ms (${rateTry + 1}/2)`);
+            await sleep(waitMs);
+            continue;
+          }
+
+          // Solo probamos el alias preview si el endpoint rechaza el nombre de la
+          // herramienta. Auth/rate-limit/servidor no deben duplicar solicitudes.
+          break;
         }
-      );
+        const text = extractResponsesApiText(resp?.data);
+        const clipped = String(text || "").slice(0, maxChars);
+        const sources = extractResponsesWebSources(resp?.data);
+        if (!clipped) {
+          lastFailure = { status, detail: "responses_empty_web_search", toolType: attempt.toolType };
+          console.warn("[web-search] respuesta vacía", {
+            action: actionCfg.name,
+            model,
+            toolType: attempt.toolType,
+            status,
+            outputItems: Array.isArray(resp?.data?.output) ? resp.data.output.length : 0,
+            maxOutputTokens,
+          });
+          break;
+        }
 
-      const status = Number(resp?.status || 0);
-      if (status < 200 || status >= 300) {
-        const detail = String(resp?.data?.error?.message || resp?.data?.error?.code || resp?.statusText || "").slice(0, 1200);
-        lastFailure = { status, detail, toolType: attempt.toolType };
-        console.warn("[web-search] HTTP error", {
+        console.log("[web-search] response.meta =>", {
           action: actionCfg.name,
-          model,
+          model: resp?.data?.model || model,
           toolType: attempt.toolType,
           status,
-          detail,
+          durationMs: Date.now() - startedAt,
+          chars: clipped.length,
+          sources: sources.length,
+          truncated: String(text || "").length > clipped.length,
+          maxOutputTokens,
+          usage: resp?.data?.usage || null,
         });
-        // Reintentar solamente con la variante preview cuando el tipo de herramienta
-        // actual no es aceptado por el endpoint. Para auth/rate-limit no duplicamos gasto.
-        if (![400, 404, 422].includes(status)) break;
-        continue;
-      }
-      const text = extractResponsesApiText(resp?.data);
-      const clipped = String(text || "").slice(0, maxChars);
-      const sources = extractResponsesWebSources(resp?.data);
-      if (!clipped) {
-        lastFailure = { status, detail: "responses_empty_web_search", toolType: attempt.toolType };
-        console.warn("[web-search] respuesta vacía", {
-          action: actionCfg.name,
-          model,
-          toolType: attempt.toolType,
+
+        return {
+          ok: true,
+          provider: "openai_web_search",
           status,
-          outputItems: Array.isArray(resp?.data?.output) ? resp.data.output.length : 0,
-        });
-        continue;
+          body: clipped,
+          sources,
+          truncated: String(text || "").length > clipped.length,
+          query,
+          model: resp?.data?.model || model,
+          usage: resp?.data?.usage || null,
+          toolType: attempt.toolType,
+        };
       }
 
-      console.log("[web-search] response.meta =>", {
-        action: actionCfg.name,
-        model: resp?.data?.model || model,
-        toolType: attempt.toolType,
-        status,
-        durationMs: Date.now() - startedAt,
-        chars: clipped.length,
-        sources: sources.length,
-        truncated: String(text || "").length > clipped.length,
-      });
-
-      return {
-        ok: true,
-        provider: "openai_web_search",
-        status,
-        body: clipped,
-        sources,
-        truncated: String(text || "").length > clipped.length,
-        query,
-        model: resp?.data?.model || model,
-        usage: resp?.data?.usage || null,
-        toolType: attempt.toolType,
-      };
+      // Solo pasar a preview ante incompatibilidad del tipo de tool.
+      if (![400, 404, 422].includes(Number(lastFailure?.status || 0))) break;
     }
 
 
@@ -1987,6 +2039,7 @@ async function executeConversationalWebSearch(actionCfg, action = {}, context = 
       code: e?.code || "",
       timeoutMs: timeout,
       durationMs: Date.now() - startedAt,
+      maxOutputTokens,
       model,
       action: actionCfg.name || ""
     });
@@ -1997,6 +2050,78 @@ async function executeConversationalWebSearch(actionCfg, action = {}, context = 
     };
   }
 }
+
+// Ejecuta una búsqueda web directa para la ficha QR sin una llamada previa a
+// Chat Completions para decidir la acción. Se usa al tocar "Mostrar más info".
+// Así el primer acceso con IA necesita solo: Responses/Web Search + una llamada
+// final de Chat Completions para redactar la respuesta.
+async function runQrDirectWebSearch(options = {}) {
+  const tenantId = String(options.tenantId || DEFAULT_TENANT_ID || "default").trim() || "default";
+  const apiKey = String(options.openaiApiKey || "").trim();
+  const query = String(options.query || "").trim().slice(0, 1500);
+  if (!apiKey) return { ok: false, error: "web_search_openai_key_missing" };
+  if (!query) return { ok: false, error: "web_search_query_required" };
+
+  let model = String(options.model || "").trim();
+  if (!model) {
+    try {
+      const tenantAiCfg = await loadTenantAiConfigFromMongo(tenantId);
+      model = String(tenantAiCfg?.chatModel || "").trim();
+    } catch {}
+  }
+  if (!model) model = "gpt-5.6-luna";
+
+  const contextRaw = String(options.searchContextSize || "low").trim().toLowerCase();
+  const searchContextSize = ["low", "medium", "high"].includes(contextRaw) ? contextRaw : "low";
+  const timeoutMs = Math.max(10000, Math.min(120000, Number(options.timeoutMs || 90000) || 90000));
+  const maxChars = Math.max(2000, Math.min(12000, Number(options.maxChars || 8000) || 8000));
+  const maxOutputTokens = Math.max(600, Math.min(4000, Number(options.maxOutputTokens || 2500) || 2500));
+
+  const result = await executeConversationalWebSearch({
+    id: "qr_direct_web_search",
+    type: "web",
+    enabled: true,
+    name: "buscar_web_qr",
+    web_model: model,
+    web_search_context_size: searchContextSize,
+    web_max_output_tokens: maxOutputTokens,
+    timeout_ms: timeoutMs,
+    max_chars: maxChars,
+  }, { query }, {
+    openaiApiKey: apiKey,
+    chatModel: model,
+  });
+
+  if (result?.provider === "openai_web_search" && result?.usage) {
+    try {
+      const usageInfo = parseTokenUsagePair(result.usage, "message");
+      await recordTokenUsage({
+        tenantId,
+        kind: "web_search",
+        provider: "openai",
+        model: result?.model || model,
+        inputTokens: usageInfo.inputTokens,
+        outputTokens: usageInfo.outputTokens,
+        totalTokens: usageInfo.totalTokens,
+        conversationId: String(options.conversationId || "").trim(),
+        waId: String(options.waId || "").trim(),
+        channelType: String(options.channelType || "qr_web").trim().toLowerCase(),
+        usageTraceId: String(options.usageTraceId || "").trim(),
+        meta: {
+          directQrSearch: true,
+          searchContextSize,
+          timeoutMs,
+          maxOutputTokens,
+        }
+      });
+    } catch (e) {
+      console.warn("[tokens] direct qr web_search usage error:", e?.message || e);
+    }
+  }
+
+  return result;
+}
+
 
 async function executeConversationalExternalApi(cfg, action = {}, context = {}) {
   const requestedName = normalizeConversationalExternalActionName(action?.name || "");
@@ -2113,9 +2238,11 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       ? opts.leadCaptureOverride === true
       : cfg.lead_capture_enabled === true
   );
-  const externalActions = botMode === "conversacional" ? getUsableConversationalExternalActions(cfg) : [];
+  const externalActions = (botMode === "conversacional" && opts.disableExternalActions !== true)
+    ? getUsableConversationalExternalActions(cfg)
+    : [];
   const externalApiEnabled = externalActions.length > 0;
-  const configuredHistoryMode = (cfg.history_mode || "standard").toLowerCase();
+ const configuredHistoryMode = String(opts.historyModeOverride || cfg.history_mode || "standard").toLowerCase();
   // "minimal" sigue siendo exclusivo del flujo de pedidos porque depende del snapshot
   // Pedido. Para bots conversacionales se admite "compact" además de "standard".
   // Si una configuración vieja dejó "minimal" en un conversacional, usamos compact.
@@ -2327,6 +2454,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
     if (botMode === "conversacional" && externalApiEnabled) {
       let actionMessages = sanitizeMessages(messages);
       const executedActionSignatures = new Set();
+      const executedWebActionNames = new Set();
       const MAX_EXTERNAL_ACTION_STEPS = 4;
 
       for (let actionStep = 0; actionStep < MAX_EXTERNAL_ACTION_STEPS; actionStep++) {
@@ -2340,14 +2468,26 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
         const signature = `${actionName}|${actionQuery.toLowerCase()}`;
 
         let externalResult;
+        const requestedActionCfg = findConversationalExternalAction(cfg, actionName);
+        const isWebAction = requestedActionCfg?.type === "web";
         if (executedActionSignatures.has(signature)) {
           externalResult = {
             ok: false,
             error: "external_action_duplicate_call",
-            actionConfig: findConversationalExternalAction(cfg, actionName)
+            actionConfig: requestedActionCfg
+          };
+        } else if (isWebAction && executedWebActionNames.has(actionName)) {
+          // Una búsqueda web por acción y por turno. Cambiar apenas la consulta no
+          // debe disparar otra llamada costosa en la misma respuesta.
+          externalResult = {
+            ok: false,
+            error: "external_web_action_already_executed",
+            detail: "La búsqueda web ya se ejecutó en este turno; respondé con el resultado disponible.",
+            actionConfig: requestedActionCfg
           };
         } else {
           executedActionSignatures.add(signature);
+          if (isWebAction) executedWebActionNames.add(actionName);
           externalResult = await executeConversationalExternalApi(cfg, action, {
             telefono_cliente: opts?.externalApiContext?.telefono_cliente || from,
             telefono_qr: opts?.externalApiContext?.telefono_qr || "",
@@ -2861,6 +3001,7 @@ module.exports = {
 
   // chat
   getGPTReply,
+  runQrDirectWebSearch,
 
   // session
   hasActiveEndedFlag,
