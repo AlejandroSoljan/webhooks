@@ -8347,10 +8347,11 @@ app.get("/comportamiento", async (req, res) => {
         <label>Modo de historial:&nbsp;
           <select id="historyMode">
             <option value="standard">standard (completo)</option>
-            <option value="minimal">minimal (solo user + assistant Pedido)</option>
+            <option value="compact">compact (recomendado para Conversacional)</option>
+            <option value="minimal">minimal (solo Pedidos)</option>
           </select>
         </label>
-        <span class="hint">En modo Conversacional se usa standard automáticamente.</span>
+        <span class="hint">Compact conserva hasta 10 intercambios recientes y evita que una conversación larga reenvíe todo el historial a la IA.</span>
       </div>
       <div class="row" style="margin-top:8px">
         <label>

@@ -209,13 +209,34 @@ const ASSISTANT_CONVERSATIONAL_RESPONSE_SCHEMA = {
   }
 };
 
-function buildStrictConversationalResponseFormat() {
+const ASSISTANT_CONVERSATIONAL_NO_LEAD_RESPONSE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["response", "action"],
+  properties: {
+    response: { type: "string" },
+    action: {
+      type: "object",
+      additionalProperties: false,
+      required: ["call", "name", "query"],
+      properties: {
+        call: { type: "boolean" },
+        name: { type: "string" },
+        query: { type: "string" }
+      }
+    }
+  }
+};
+
+function buildStrictConversationalResponseFormat(leadCaptureEnabled = true) {
   return {
     type: "json_schema",
     json_schema: {
-      name: "conversational_response",
+      name: leadCaptureEnabled ? "conversational_response" : "conversational_response_no_lead",
       strict: true,
-      schema: ASSISTANT_CONVERSATIONAL_RESPONSE_SCHEMA
+      schema: leadCaptureEnabled
+        ? ASSISTANT_CONVERSATIONAL_RESPONSE_SCHEMA
+        : ASSISTANT_CONVERSATIONAL_NO_LEAD_RESPONSE_SCHEMA
     }
   };
 }
@@ -727,6 +748,32 @@ const currentConversationIds = {}; // { [tenant-from]: string(convId) }
 
 function k(tenantId, from) { return `${tenantId}::${from}`; }
 
+// Historial conversacional compacto: conserva contexto reciente sin reenviar
+// indefinidamente toda la conversación. 20 entradas = hasta 10 intercambios
+// user/assistant, suficiente para mantener referencias recientes y combos.
+const CONVERSATIONAL_COMPACT_MAX_MESSAGES = 20;
+
+function trimConversationalHistoryInPlace(id, fullSystem) {
+  const arr = Array.isArray(chatHistories[id]) ? chatHistories[id] : [];
+  const recent = arr
+    .filter((m, idx) => idx > 0 && String(m?.role || "") !== "system")
+    .slice(-CONVERSATIONAL_COMPACT_MAX_MESSAGES);
+  chatHistories[id] = [{ role: "system", content: fullSystem }, ...recent];
+  return chatHistories[id];
+}
+
+function conversationalAssistantHistoryContent(reply) {
+  const raw = String(reply || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = JSON.parse(raw);
+    const response = String(parsed?.response || "").trim();
+    if (response) return response;
+  } catch {}
+  return raw;
+}
+
+
 // ================== Helpers de sesión ==================
 // ================== Helpers de sesión ==================
 const endedSessions = {}; // { [tenant-from]: { endedAt } }
@@ -793,13 +840,23 @@ async function hydrateSessionStateFromDb(tenantId, from, historyMode, fullSystem
     const convObjectId = new ObjectId(String(convId));
     const tenant = String(tenantId || DEFAULT_TENANT_ID || "default");
 
-    const conv = await db.collection("conversations").findOne({ _id: convObjectId, tenantId: tenant });
-    const rows = await db.collection("messages")
-      .find({ conversationId: convObjectId, tenantId: tenant })
-      .sort({ ts: 1, _id: 1 })
-      .limit(100)
-      .toArray();
-    if (String(historyMode || "").toLowerCase() === "minimal") {
+    const normalizedHistoryMode = String(historyMode || "").toLowerCase();
+    let rows;
+    if (normalizedHistoryMode === "compact") {
+      rows = await db.collection("messages")
+        .find({ conversationId: convObjectId, tenantId: tenant })
+        .sort({ ts: -1, _id: -1 })
+        .limit(CONVERSATIONAL_COMPACT_MAX_MESSAGES)
+        .toArray();
+      rows.reverse();
+    } else {
+      rows = await db.collection("messages")
+        .find({ conversationId: convObjectId, tenantId: tenant })
+        .sort({ ts: 1, _id: 1 })
+        .limit(100)
+        .toArray();
+    }
+    if (normalizedHistoryMode === "minimal") {
       userOnlyHistories[id] = rows
         .filter(r => String(r?.role || "") === "user")
         .map(r => ({ role: "user", content: String(r?.content || "") }))
@@ -1934,9 +1991,12 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
   const externalActions = botMode === "conversacional" ? getUsableConversationalExternalActions(cfg) : [];
   const externalApiEnabled = externalActions.length > 0;
   const configuredHistoryMode = (cfg.history_mode || "standard").toLowerCase();
-  // El modo minimal histórico depende del snapshot Pedido. Para un bot conversacional
-  // usamos historial standard y no inyectamos ninguna estructura de pedidos.
-  const historyMode = botMode === "conversacional" ? "standard" : configuredHistoryMode;
+  // "minimal" sigue siendo exclusivo del flujo de pedidos porque depende del snapshot
+  // Pedido. Para bots conversacionales se admite "compact" además de "standard".
+  // Si una configuración vieja dejó "minimal" en un conversacional, usamos compact.
+  const historyMode = botMode === "conversacional"
+    ? (configuredHistoryMode === "compact" || configuredHistoryMode === "minimal" ? "compact" : "standard")
+    : configuredHistoryMode;
 
   // Bloque system inicial. En modo conversacional NO se inyectan catálogo ni horarios
   // de pedidos: la respuesta queda gobernada por el Comportamiento cargado para el dominio.
@@ -1960,11 +2020,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
               "Usá lead.complete=true solamente cuando ya haya información suficiente para que una persona continúe la gestión comercial; para transporte, como mínimo origen, destino y qué se transporta.",
               "Cuando no sea una consulta comercial, devolvé lead.capture=false, lead.type=\"\", lead.complete=false y los demás campos como string vacío."
             ].join("\n")
-          : [
-              "[CAPTURA DE LEADS]",
-              "La captura automática está DESACTIVADA.",
-              "Devolvé siempre lead.capture=false, lead.type=\"\", lead.complete=false y todos los campos de lead como string vacío."
-            ].join("\n")
+          : ""
       )
     : "";
 
@@ -1982,6 +2038,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
               "Para una acción API, action.query puede ser vacío si esa API no necesita filtro.",
               "Para una acción de búsqueda web, action.query debe describir concretamente qué información investigar.",
               "No inventes resultados de ninguna acción. El backend ejecutará la acción antes de enviar la respuesta final al cliente.",
+              "Si solicitás una acción, dejá response vacío; redactá la respuesta al cliente recién después de recibir el resultado.",
               "La búsqueda web sirve para conocimiento y asesoramiento; nunca confirma por sí sola precios, stock, promociones ni disponibilidad comercial del negocio.",
               'Cuando no necesites ninguna acción, devolvé action.call=false, action.name="" y action.query="".'
             ].join("\n")
@@ -1994,12 +2051,14 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
     : "";
 
   const fullSystem = [
-    buildNowBlock(),
     modeBlock,
     leadBlock,
     externalApiBlock,
     storeHoursBlock,
-    "[COMPORTAMIENTO]\n" + baseText + catalogText
+    "[COMPORTAMIENTO]\n" + baseText + catalogText,
+    // Mantener el bloque variable al final ayuda al prompt caching: el prefijo
+    // estático (comportamiento + reglas) permanece idéntico entre turnos.
+    buildNowBlock()
   ]
     .filter(Boolean)
     .join("\n\n")
@@ -2051,6 +2110,9 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
     if (!alreadySeededCurrentUser) {
       chatHistories[id].push({ role: "user", content: userMessage });
     }
+    if (historyMode === "compact") {
+      trimConversationalHistoryInPlace(id, fullSystem);
+    }
     messages = chatHistories[id];
   }
 
@@ -2076,7 +2138,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       messages: sanitizeMessages(messages),
       temperature,
       response_format: botMode === "conversacional"
-        ? buildStrictConversationalResponseFormat()
+        ? buildStrictConversationalResponseFormat(leadCaptureEnabled)
         : buildStrictPedidoResponseFormat()
     };
     applyModelTokenLimit(payload, model, maxTokens);
@@ -2202,7 +2264,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
           model,
           messages: actionMessages,
           temperature,
-          response_format: buildStrictConversationalResponseFormat()
+          response_format: buildStrictConversationalResponseFormat(leadCaptureEnabled)
         };
         applyModelTokenLimit(followupPayload, model, maxTokens);
 
@@ -2259,7 +2321,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
           model,
           messages: finalMessages,
           temperature,
-          response_format: buildStrictConversationalResponseFormat()
+          response_format: buildStrictConversationalResponseFormat(leadCaptureEnabled)
         };
         applyModelTokenLimit(finalPayload, model, maxTokens);
         const finalResponse = await axios.post(
@@ -2296,7 +2358,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       } catch {}
       _log("[openai] assistant.content =>\n" + reply);
     }
-    if (historyMode === "standard") {
+    if (historyMode === "standard" || historyMode === "compact") {
       // Si otra request cerró la sesión mientras esperábamos a OpenAI,
       // recreamos el historial mínimo para evitar "Cannot read properties of undefined (reading 'push')".
       // La sesión puede haberse limpiado mientras esperábamos a OpenAI
@@ -2310,7 +2372,15 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       if (!chatHistories[id]) {
         chatHistories[id] = [{ role: "system", content: fullSystem }];
       }
-      chatHistories[id].push({ role: "assistant", content: reply });
+      const historyAssistantContent = botMode === "conversacional"
+        ? conversationalAssistantHistoryContent(reply)
+        : reply;
+      if (historyAssistantContent) {
+        chatHistories[id].push({ role: "assistant", content: historyAssistantContent });
+      }
+      if (historyMode === "compact") {
+        trimConversationalHistoryInPlace(id, fullSystem);
+      }
     }
     return reply;
   } catch (error) {
@@ -2320,8 +2390,11 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       console.error("Error OpenAI:", error?.message || error);
     }
     if (botMode === "conversacional") {
-     return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","lead":{"capture":false,"type":"","complete":false,"name":"","company":"","email":"","origin":"","destination":"","cargo":"","packages":"","weight":"","dimensions":"","notes":""},"action":{"call":false,"name":"","query":""}}';
-     }
+      if (!leadCaptureEnabled) {
+        return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","action":{"call":false,"name":"","query":""}}';
+      }
+      return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","lead":{"capture":false,"type":"","complete":false,"name":"","company":"","email":"","origin":"","destination":"","cargo":"","packages":"","weight":"","dimensions":"","notes":""},"action":{"call":false,"name":"","query":""}}';
+   }
     return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","estado":"IN_PROGRESS","Pedido":{"items":[],"total_pedido":0}}';
   }
 }
