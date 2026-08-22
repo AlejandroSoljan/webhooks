@@ -113,6 +113,7 @@ const { mountWwebPhoneAccess } = require("./wweb_phone_access");
 const { mountClientPhoneAccess, isClientPhoneAllowed } = require("./client_phone_access");
 const { mountConversationFollowupPanel } = require("./conversation_followup_panel");
 const { mountBotTestPanel } = require("./bot_test_panel");
+const { mountQrProductWeb } = require("./qr_product_web");
 const {
   loadOrderConfig,
   orderFeatureEnabled,
@@ -145,6 +146,7 @@ mountWwebPhoneAccess(app);
 mountClientPhoneAccess(app, { auth });
 mountConversationFollowupPanel(app, { auth });
 mountBotTestPanel(app, { auth });
+mountQrProductWeb(app);
 
 
 // ===================== Tenant Channels (WhatsApp/OpenAI por tenant/canal) =====================
@@ -8241,6 +8243,29 @@ app.get("/comportamiento-ui.js", (_req, res) => {
           el.style.fontWeight=isError?'600':'400';
         }
 
+        function toggleQrUi(){
+          var enabled=document.getElementById('qrEnabled') && document.getElementById('qrEnabled').checked;
+          var cfg=document.getElementById('qrConfigFields');
+          if(cfg) cfg.style.display=enabled?'grid':'none';
+          var aiEnabled=document.getElementById('qrAiEnabled') && document.getElementById('qrAiEnabled').checked;
+          var aiRow=document.getElementById('qrAiToggleRow');
+          if(aiRow) aiRow.style.display=enabled?'flex':'none';
+          var aiBox=document.getElementById('qrAiConfig');
+          if(aiBox) aiBox.style.display=(enabled&&aiEnabled)?'grid':'none';
+          var same=document.getElementById('qrAiUseSameBehavior') && document.getElementById('qrAiUseSameBehavior').checked;
+          var own=document.getElementById('qrAiOwnBehaviorWrap');
+          if(own) own.style.display=(enabled&&aiEnabled&&!same)?'flex':'none';
+          var tenant=String(document.getElementById('tenant')?.value||'DOMINIO').trim()||'DOMINIO';
+          var example=document.getElementById('qrExampleUrl');
+          if(example) example.textContent=location.origin+'/qr/'+encodeURIComponent(tenant)+'?codigo=CODIGO_ARTICULO';
+        }
+
+        ['qrEnabled','qrAiEnabled','qrAiUseSameBehavior'].forEach(function(id){
+          var node=document.getElementById(id); if(node) node.addEventListener('change',toggleQrUi);
+        });
+        var tenantNode=document.getElementById('tenant'); if(tenantNode) tenantNode.addEventListener('input',toggleQrUi);
+
+
         async function load(){
 
           try{
@@ -8254,6 +8279,35 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             document.getElementById('botMode').value = (j.bot_mode || 'pedidos');
             document.getElementById('historyMode').value = (j.history_mode || 'standard');
             document.getElementById('leadCaptureEnabled').checked = j.lead_capture_enabled === true;
+
+            document.getElementById('qrEnabled').checked = j.qr_enabled === true;
+            document.getElementById('qrPageTitle').value = j.qr_page_title || 'Información del producto';
+            document.getElementById('qrPageSubtitle').value = j.qr_page_subtitle || '';
+            document.getElementById('qrCurrency').value = j.qr_currency || 'ARS';
+            document.getElementById('qrApiUrl').value = j.qr_api_url || '';
+            document.getElementById('qrApiMethod').value = j.qr_api_method || 'GET';
+            document.getElementById('qrApiCodeParam').value = j.qr_api_code_param || 'codigo';
+            document.getElementById('qrApiBodyTemplate').value = j.qr_api_body_template || '';
+            document.getElementById('qrApiAuthHeader').value = j.qr_api_auth_header || '';
+            document.getElementById('qrApiAuthValue').value = '';
+            document.getElementById('qrApiAuthValue').placeholder = j.qr_api_auth_value_set ? 'Hay una credencial guardada. Dejá vacío para conservarla.' : 'Opcional';
+            document.getElementById('qrApiAuthClear').checked = false;
+            document.getElementById('qrApiTimeout').value = j.qr_api_timeout_ms || 12000;
+            document.getElementById('qrFieldCode').value = j.qr_field_code || 'Codigo';
+            document.getElementById('qrFieldDescription').value = j.qr_field_description || 'Descripcion';
+            document.getElementById('qrFieldPrice').value = j.qr_field_price || 'Precio_Lp1';
+            document.getElementById('qrFieldStock').value = j.qr_field_stock || 'Stock';
+            document.getElementById('qrFieldImage').value = j.qr_field_image || '';
+            document.getElementById('qrFieldBrand').value = j.qr_field_brand || '';
+            document.getElementById('qrFieldCategory').value = j.qr_field_category || 'Desc_Rubro';
+            document.getElementById('qrFieldSubcategory').value = j.qr_field_subcategory || 'Desc_Subrubro';
+            document.getElementById('qrAiEnabled').checked = j.qr_ai_enabled !== false;
+            document.getElementById('qrAiUseSameBehavior').checked = j.qr_ai_use_same_behavior !== false;
+            document.getElementById('qrAiBehavior').value = j.qr_ai_behavior || '';
+            document.getElementById('qrAiWebSearch').checked = j.qr_ai_web_search_enabled !== false;
+            document.getElementById('qrAiWebContext').value = j.qr_ai_web_search_context_size || 'medium';
+            toggleQrUi();
+
             externalActions=(Array.isArray(j.external_actions)?j.external_actions:[]).map(normalizeClientAction);
             renderActions();
             setBehaviorStatus('Configuración cargada.',false);
@@ -8269,6 +8323,33 @@ app.get("/comportamiento-ui.js", (_req, res) => {
           const m=document.getElementById('historyMode').value||'standard';
           const b=document.getElementById('botMode').value||'pedidos';
           const leadCaptureEnabled=document.getElementById('leadCaptureEnabled').checked === true;
+          const qrPayload={
+            qr_enabled:document.getElementById('qrEnabled').checked===true,
+            qr_page_title:document.getElementById('qrPageTitle').value||'',
+            qr_page_subtitle:document.getElementById('qrPageSubtitle').value||'',
+            qr_currency:document.getElementById('qrCurrency').value||'ARS',
+            qr_api_url:document.getElementById('qrApiUrl').value||'',
+            qr_api_method:document.getElementById('qrApiMethod').value||'GET',
+            qr_api_code_param:document.getElementById('qrApiCodeParam').value||'codigo',
+            qr_api_body_template:document.getElementById('qrApiBodyTemplate').value||'',
+            qr_api_auth_header:document.getElementById('qrApiAuthHeader').value||'',
+            qr_api_auth_value:document.getElementById('qrApiAuthValue').value||'',
+            qr_api_auth_clear:document.getElementById('qrApiAuthClear').checked===true,
+            qr_api_timeout_ms:Number(document.getElementById('qrApiTimeout').value||12000),
+            qr_field_code:document.getElementById('qrFieldCode').value||'Codigo',
+            qr_field_description:document.getElementById('qrFieldDescription').value||'Descripcion',
+            qr_field_price:document.getElementById('qrFieldPrice').value||'Precio_Lp1',
+            qr_field_stock:document.getElementById('qrFieldStock').value||'Stock',
+            qr_field_image:document.getElementById('qrFieldImage').value||'',
+            qr_field_brand:document.getElementById('qrFieldBrand').value||'',
+            qr_field_category:document.getElementById('qrFieldCategory').value||'Desc_Rubro',
+            qr_field_subcategory:document.getElementById('qrFieldSubcategory').value||'Desc_Subrubro',
+            qr_ai_enabled:document.getElementById('qrAiEnabled').checked===true,
+            qr_ai_use_same_behavior:document.getElementById('qrAiUseSameBehavior').checked===true,
+            qr_ai_behavior:document.getElementById('qrAiBehavior').value||'',
+            qr_ai_web_search_enabled:document.getElementById('qrAiWebSearch').checked===true,
+            qr_ai_web_search_context_size:document.getElementById('qrAiWebContext').value||'medium'
+          };
 
           setBehaviorStatus('Guardando...',false);
           
@@ -8279,7 +8360,8 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
               text:v,tenantId:t,history_mode:m,bot_mode:b,lead_capture_enabled:leadCaptureEnabled,
-              external_actions:externalActions
+              external_actions:externalActions,
+              ...qrPayload
             })
           });
           
@@ -8359,6 +8441,39 @@ app.get("/comportamiento", async (req, res) => {
           Capturar leads / solicitudes de cotización automáticamente
         </label>
         <span class="hint">Solo se aplica al modo Conversacional. Los pedidos no usan esta opción.</span>
+      </div>
+
+        <div class="row"><strong>Ficha pública de producto por QR</strong></div>
+        <div class="hint" style="margin-top:4px">El escaneo consulta únicamente esta API y muestra la ficha sin consumir tokens. La IA se activa recién cuando el visitante toca “Mostrar más info” o abre el chat.</div>
+        <div class="row" style="margin-top:10px"><label><input id="qrEnabled" type="checkbox" /> Habilitar ficha QR para este dominio</label></div>
+        <div id="qrConfigFields" class="externalGrid" style="margin-top:12px">
+          <label>Título de la página<input id="qrPageTitle" type="text" value="Información del producto" /></label>
+          <label>Moneda<input id="qrCurrency" type="text" value="ARS" maxlength="10" /></label>
+          <label style="grid-column:1/-1">Subtítulo<input id="qrPageSubtitle" type="text" value="Consultá precio, disponibilidad y más información." /></label>
+          <label style="grid-column:1/-1">URL API de producto<input id="qrApiUrl" type="text" placeholder="https://servidor/api/articulos/consulta?key=..." /><span class="hint">Podés usar {{codigo}} dentro de la URL o indicar el parámetro en el campo siguiente.</span></label>
+          <label>Método<select id="qrApiMethod"><option value="GET">GET</option><option value="POST">POST</option></select></label>
+          <label>Parámetro de código<input id="qrApiCodeParam" type="text" value="codigo" placeholder="codigo" /></label>
+          <label>Timeout (ms)<input id="qrApiTimeout" type="number" min="1000" max="30000" value="12000" /></label>
+          <label>Header de autenticación<input id="qrApiAuthHeader" type="text" placeholder="X-API-Key / Authorization (opcional)" /></label>
+          <label style="grid-column:1/-1">Valor del header / secreto<input id="qrApiAuthValue" type="password" autocomplete="new-password" placeholder="Opcional" /><span><input id="qrApiAuthClear" type="checkbox" /> Borrar credencial guardada</span></label>
+          <label style="grid-column:1/-1">Body JSON para POST (opcional)<textarea id="qrApiBodyTemplate" class="smallArea" placeholder='{"codigo":"{{codigo}}"}'></textarea></label>
+          <label>Campo código / SKU<input id="qrFieldCode" type="text" value="Codigo" /></label>
+          <label>Campo descripción<input id="qrFieldDescription" type="text" value="Descripcion" /></label>
+          <label>Campo precio<input id="qrFieldPrice" type="text" value="Precio_Lp1" /></label>
+          <label>Campo stock/disponibilidad<input id="qrFieldStock" type="text" value="Stock" /></label>
+          <label>Campo imagen (opcional)<input id="qrFieldImage" type="text" placeholder="Imagen" /></label>
+          <label>Campo marca (opcional)<input id="qrFieldBrand" type="text" placeholder="Marca" /></label>
+          <label>Campo rubro<input id="qrFieldCategory" type="text" value="Desc_Rubro" /></label>
+          <label>Campo subrubro<input id="qrFieldSubcategory" type="text" value="Desc_Subrubro" /></label>
+          <div style="grid-column:1/-1" class="hint">URL que deberán contener los QR: <b id="qrExampleUrl"></b></div>
+        </div>
+        <div class="row" id="qrAiToggleRow" style="margin-top:14px"><label><input id="qrAiEnabled" type="checkbox" checked /> Habilitar “Mostrar más info” + chat con IA</label></div>
+        <div id="qrAiConfig" class="externalGrid" style="margin-top:10px">
+          <label style="grid-column:1/-1"><span><input id="qrAiUseSameBehavior" type="checkbox" checked /> Usar el mismo comportamiento Conversacional del dominio</span><span class="hint">Si lo desmarcás, podés escribir un comportamiento exclusivo para la ficha QR.</span></label>
+          <label id="qrAiOwnBehaviorWrap" style="grid-column:1/-1;display:none">Comportamiento exclusivo para QR<textarea id="qrAiBehavior" class="smallArea" placeholder="Cómo debe responder el asesor IA de la ficha QR..."></textarea></label>
+          <label><span><input id="qrAiWebSearch" type="checkbox" checked /> Permitir búsqueda en Internet</span><span class="hint">Se usa para ampliar información técnica. Nunca reemplaza precio ni stock de la API.</span></label>
+          <label>Contexto de búsqueda<select id="qrAiWebContext"><option value="low">low</option><option value="medium" selected>medium</option><option value="high">high</option></select></label>
+        </div>
       </div>
 
       <div class="externalCard">
@@ -8788,7 +8903,33 @@ app.get("/api/behavior", async (req, res) => {
       external_api_auth_value_set: !!cfg.external_api_auth_value,
       external_api_timeout_ms: cfg.external_api_timeout_ms || 10000,
       external_api_max_chars: cfg.external_api_max_chars || 30000,
-      external_api_result_instructions: cfg.external_api_result_instructions || ""
+      external_api_result_instructions: cfg.external_api_result_instructions || "",
+
+      // Ficha pública por QR. El secreto nunca se devuelve al navegador.
+      qr_enabled: cfg.qr_enabled === true,
+      qr_page_title: cfg.qr_page_title || "Información del producto",
+      qr_page_subtitle: cfg.qr_page_subtitle || "",
+      qr_currency: cfg.qr_currency || "ARS",
+      qr_api_url: cfg.qr_api_url || "",
+      qr_api_method: cfg.qr_api_method || "GET",
+      qr_api_code_param: cfg.qr_api_code_param || "codigo",
+      qr_api_body_template: cfg.qr_api_body_template || "",
+      qr_api_auth_header: cfg.qr_api_auth_header || "",
+      qr_api_auth_value_set: !!cfg.qr_api_auth_value,
+      qr_api_timeout_ms: cfg.qr_api_timeout_ms || 12000,
+      qr_field_code: cfg.qr_field_code || "Codigo",
+      qr_field_description: cfg.qr_field_description || "Descripcion",
+      qr_field_price: cfg.qr_field_price || "Precio_Lp1",
+      qr_field_stock: cfg.qr_field_stock || "Stock",
+      qr_field_image: cfg.qr_field_image || "",
+      qr_field_brand: cfg.qr_field_brand || "",
+      qr_field_category: cfg.qr_field_category || "Desc_Rubro",
+      qr_field_subcategory: cfg.qr_field_subcategory || "Desc_Subrubro",
+      qr_ai_enabled: cfg.qr_ai_enabled !== false,
+      qr_ai_use_same_behavior: cfg.qr_ai_use_same_behavior !== false,
+      qr_ai_behavior: cfg.qr_ai_behavior || "",
+      qr_ai_web_search_enabled: cfg.qr_ai_web_search_enabled !== false,
+      qr_ai_web_search_context_size: cfg.qr_ai_web_search_context_size || "medium"
     });
   } catch (e) {
     console.error("GET /api/behavior error:", e?.message || e);
@@ -8837,10 +8978,55 @@ app.post("/api/behavior", async (req, res) => {
     const firstApi = external_actions.find((item) => item.type === "api" && item.enabled) ||
       external_actions.find((item) => item.type === "api") || null;
 
+    // Configuración de ficha pública por QR. Esta API se consulta sin OpenAI;
+    // la IA queda separada y se activa recién desde "Mostrar más info"/chat.
+    const qr_enabled = behaviorBool(req.body?.qr_enabled, false);
+    const qr_page_title = String(req.body?.qr_page_title || "Información del producto").trim().slice(0, 120);
+    const qr_page_subtitle = String(req.body?.qr_page_subtitle || "").trim().slice(0, 220);
+    const qr_currency = String(req.body?.qr_currency || "ARS").trim().toUpperCase().slice(0, 10) || "ARS";
+    const qr_api_url = String(req.body?.qr_api_url || "").trim().slice(0, 3000);
+    const qr_api_method = String(req.body?.qr_api_method || "GET").trim().toUpperCase() === "POST" ? "POST" : "GET";
+    const qr_api_code_param = String(req.body?.qr_api_code_param || "codigo").trim().slice(0, 100);
+    const qr_api_body_template = String(req.body?.qr_api_body_template || "").trim().slice(0, 20000);
+    const qr_api_auth_header = String(req.body?.qr_api_auth_header || "").trim().replace(/[\r\n]/g, "").slice(0, 200);
+    const qr_api_timeout_ms = Math.max(1000, Math.min(30000, Number(req.body?.qr_api_timeout_ms || 12000) || 12000));
+    const qr_field_code = String(req.body?.qr_field_code || "Codigo").trim().slice(0, 120);
+    const qr_field_description = String(req.body?.qr_field_description || "Descripcion").trim().slice(0, 120);
+    const qr_field_price = String(req.body?.qr_field_price || "Precio_Lp1").trim().slice(0, 120);
+    const qr_field_stock = String(req.body?.qr_field_stock || "Stock").trim().slice(0, 120);
+    const qr_field_image = String(req.body?.qr_field_image || "").trim().slice(0, 120);
+    const qr_field_brand = String(req.body?.qr_field_brand || "").trim().slice(0, 120);
+    const qr_field_category = String(req.body?.qr_field_category || "Desc_Rubro").trim().slice(0, 120);
+    const qr_field_subcategory = String(req.body?.qr_field_subcategory || "Desc_Subrubro").trim().slice(0, 120);
+    const qr_ai_enabled = behaviorBool(req.body?.qr_ai_enabled, true);
+    const qr_ai_use_same_behavior = behaviorBool(req.body?.qr_ai_use_same_behavior, true);
+    const qr_ai_behavior = String(req.body?.qr_ai_behavior || "").trim().slice(0, 30000);
+    const qr_ai_web_search_enabled = behaviorBool(req.body?.qr_ai_web_search_enabled, true);
+    const qrWebCtxRaw = String(req.body?.qr_ai_web_search_context_size || "medium").trim().toLowerCase();
+    const qr_ai_web_search_context_size = ["low", "medium", "high"].includes(qrWebCtxRaw) ? qrWebCtxRaw : "medium";
+    const qrIncomingSecret = String(req.body?.qr_api_auth_value || "").trim().replace(/[\r\n]/g, "").slice(0, 4000);
+    const qrClearSecret = behaviorBool(req.body?.qr_api_auth_clear, false);
+
+    if (qr_enabled && !/^https?:\/\//i.test(qr_api_url)) {
+      return res.status(400).json({ error: "qr_api_url_invalid" });
+    }
+    if (qr_api_method === "POST" && qr_api_body_template) {
+      try {
+        const parsedQrBody = JSON.parse(qr_api_body_template);
+        if (!parsedQrBody || typeof parsedQrBody !== "object" || Array.isArray(parsedQrBody)) {
+          return res.status(400).json({ error: "qr_api_body_template_must_be_object" });
+        }
+      } catch {
+        return res.status(400).json({ error: "qr_api_body_template_invalid_json" });
+      }
+    }
+
+
     const setDoc = {
       text,
       history_mode,
       bot_mode,
+      lead_capture_enabled,
       external_actions,
       tenantId: tenant,
       updatedAt: new Date(),
@@ -8854,13 +9040,41 @@ app.post("/api/behavior", async (req, res) => {
       external_api_auth_header: firstApi?.auth_header || "",
       external_api_timeout_ms: firstApi?.timeout_ms || 10000,
       external_api_max_chars: firstApi?.max_chars || 30000,
-      external_api_result_instructions: firstApi?.result_instructions || ""
+      external_api_result_instructions: firstApi?.result_instructions || "",
+
+      qr_enabled,
+      qr_page_title,
+      qr_page_subtitle,
+      qr_currency,
+      qr_api_url,
+      qr_api_method,
+      qr_api_code_param,
+      qr_api_body_template,
+      qr_api_auth_header,
+      qr_api_timeout_ms,
+      qr_field_code,
+      qr_field_description,
+      qr_field_price,
+      qr_field_stock,
+      qr_field_image,
+      qr_field_brand,
+      qr_field_category,
+      qr_field_subcategory,
+      qr_ai_enabled,
+      qr_ai_use_same_behavior,
+      qr_ai_behavior,
+      qr_ai_web_search_enabled,
+      qr_ai_web_search_context_size
     };
 
     if (firstApi?.auth_value) setDoc.external_api_auth_value = firstApi.auth_value;
+    if (qrIncomingSecret) setDoc.qr_api_auth_value = qrIncomingSecret;
 
     const update = { $set: setDoc };
-    if (!firstApi?.auth_value) update.$unset = { external_api_auth_value: "" };
+    const unset = {};
+    if (!firstApi?.auth_value) unset.external_api_auth_value = "";
+    if (qrClearSecret) unset.qr_api_auth_value = "";
+    if (Object.keys(unset).length) update.$unset = unset;
 
     await db.collection("settings").updateOne({ _id }, update, { upsert: true });
     invalidateBehaviorCache(tenant);
@@ -8870,7 +9084,10 @@ app.post("/api/behavior", async (req, res) => {
       history_mode,
       bot_mode,
       lead_capture_enabled,
-      external_actions: publicBehaviorExternalActions(external_actions)
+      external_actions: publicBehaviorExternalActions(external_actions),
+      qr_enabled,
+      qr_ai_enabled,
+      qr_ai_use_same_behavior
     });
   } catch (e) {
     console.error("POST /api/behavior error:", e);

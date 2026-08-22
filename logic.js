@@ -375,6 +375,35 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   const external_api_timeout_ms = Math.max(1000, Math.min(30000, Number(doc.external_api_timeout_ms || doc.externalApiTimeoutMs || 10000) || 10000));
   const external_api_max_chars = Math.max(2000, Math.min(100000, Number(doc.external_api_max_chars || doc.externalApiMaxChars || 30000) || 30000));
 
+  // Ficha pública de producto por QR. La consulta inicial usa esta API sin IA;
+  // OpenAI interviene recién cuando el visitante abre "Mostrar más info"/chat.
+  const qr_enabled = doc.qr_enabled === true || ["1","true","yes","si","sí","on"].includes(String(doc.qr_enabled || "").trim().toLowerCase());
+  const qr_page_title = String(doc.qr_page_title || "Información del producto").trim();
+  const qr_page_subtitle = String(doc.qr_page_subtitle || "Consultá precio, disponibilidad y más información.").trim();
+  const qr_currency = String(doc.qr_currency || "ARS").trim().toUpperCase() || "ARS";
+  const qr_api_url = String(doc.qr_api_url || "").trim();
+  const qr_api_method = String(doc.qr_api_method || "GET").trim().toUpperCase() === "POST" ? "POST" : "GET";
+  const qr_api_code_param = String(doc.qr_api_code_param || "codigo").trim();
+  const qr_api_body_template = String(doc.qr_api_body_template || "").trim();
+  const qr_api_auth_header = String(doc.qr_api_auth_header || "").trim();
+  const qr_api_auth_value = String(doc.qr_api_auth_value || "").trim();
+  const qr_api_timeout_ms = Math.max(1000, Math.min(30000, Number(doc.qr_api_timeout_ms || 12000) || 12000));
+  const qr_field_code = String(doc.qr_field_code || "Codigo").trim();
+  const qr_field_description = String(doc.qr_field_description || "Descripcion").trim();
+  const qr_field_price = String(doc.qr_field_price || "Precio_Lp1").trim();
+  const qr_field_stock = String(doc.qr_field_stock || "Stock").trim();
+  const qr_field_image = String(doc.qr_field_image || "").trim();
+  const qr_field_brand = String(doc.qr_field_brand || "").trim();
+  const qr_field_category = String(doc.qr_field_category || "Desc_Rubro").trim();
+  const qr_field_subcategory = String(doc.qr_field_subcategory || "Desc_Subrubro").trim();
+  const qr_ai_enabled = doc.qr_ai_enabled === undefined ? true : (doc.qr_ai_enabled === true || ["1","true","yes","si","sí","on"].includes(String(doc.qr_ai_enabled || "").trim().toLowerCase()));
+  const qr_ai_use_same_behavior = doc.qr_ai_use_same_behavior === undefined ? true : (doc.qr_ai_use_same_behavior === true || ["1","true","yes","si","sí","on"].includes(String(doc.qr_ai_use_same_behavior || "").trim().toLowerCase()));
+  const qr_ai_behavior = String(doc.qr_ai_behavior || "").trim();
+  const qr_ai_web_search_enabled = doc.qr_ai_web_search_enabled === undefined ? true : (doc.qr_ai_web_search_enabled === true || ["1","true","yes","si","sí","on"].includes(String(doc.qr_ai_web_search_enabled || "").trim().toLowerCase()));
+  const _qrWebCtx = String(doc.qr_ai_web_search_context_size || "medium").trim().toLowerCase();
+  const qr_ai_web_search_context_size = ["low","medium","high"].includes(_qrWebCtx) ? _qrWebCtx : "medium";
+
+
   // Nuevo formato: varias acciones externas por comportamiento. Si todavía no existe
   // external_actions, se transforma virtualmente la API única histórica para mantener
   // compatibilidad con configuraciones ya guardadas.
@@ -413,6 +442,30 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
     external_api_timeout_ms,
     external_api_max_chars,
     external_actions,
+    qr_enabled,
+    qr_page_title,
+    qr_page_subtitle,
+    qr_currency,
+    qr_api_url,
+    qr_api_method,
+    qr_api_code_param,
+    qr_api_body_template,
+    qr_api_auth_header,
+    qr_api_auth_value,
+    qr_api_timeout_ms,
+    qr_field_code,
+    qr_field_description,
+    qr_field_price,
+    qr_field_stock,
+    qr_field_image,
+    qr_field_brand,
+    qr_field_category,
+    qr_field_subcategory,
+    qr_ai_enabled,
+    qr_ai_use_same_behavior,
+    qr_ai_behavior,
+    qr_ai_web_search_enabled,
+    qr_ai_web_search_context_size,
     at: Date.now()
   };
   _behaviorCache.set(key, cfg);
@@ -1984,10 +2037,25 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
   } catch {}
 
   const id = k(tenantId, from);
-  const cfg = await loadBehaviorConfigFromMongo(tenantId);
-  const baseText = cfg.text;
-  const botMode = normalizeBotMode(cfg.bot_mode || "pedidos");
-  const leadCaptureEnabled = botMode === "conversacional" && cfg.lead_capture_enabled === true;
+  const baseCfg = await loadBehaviorConfigFromMongo(tenantId);
+  // Algunos canales públicos (por ejemplo la ficha QR) necesitan reutilizar el
+  // motor conversacional con un comportamiento específico y/o acciones extra,
+  // sin modificar la configuración general del dominio.
+  const additionalExternalActions = Array.isArray(opts.additionalExternalActions)
+    ? opts.additionalExternalActions
+    : [];
+  const cfg = additionalExternalActions.length
+    ? { ...baseCfg, external_actions: [...(Array.isArray(baseCfg.external_actions) ? baseCfg.external_actions : []), ...additionalExternalActions] }
+    : baseCfg;
+  const baseText = opts.behaviorTextOverride !== undefined
+    ? String(opts.behaviorTextOverride || '').trim()
+    : cfg.text;
+  const botMode = normalizeBotMode(opts.botModeOverride || cfg.bot_mode || "pedidos");
+  const leadCaptureEnabled = botMode === "conversacional" && (
+    opts.leadCaptureOverride !== undefined
+      ? opts.leadCaptureOverride === true
+      : cfg.lead_capture_enabled === true
+  );
   const externalActions = botMode === "conversacional" ? getUsableConversationalExternalActions(cfg) : [];
   const externalApiEnabled = externalActions.length > 0;
   const configuredHistoryMode = (cfg.history_mode || "standard").toLowerCase();
