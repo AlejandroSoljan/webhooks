@@ -406,6 +406,9 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   const qr_ai_web_search_enabled = doc.qr_ai_web_search_enabled === undefined ? true : (doc.qr_ai_web_search_enabled === true || ["1","true","yes","si","sí","on"].includes(String(doc.qr_ai_web_search_enabled || "").trim().toLowerCase()));
   const _qrWebCtx = String(doc.qr_ai_web_search_context_size || "medium").trim().toLowerCase();
   const qr_ai_web_search_context_size = ["low","medium","high"].includes(_qrWebCtx) ? _qrWebCtx : "medium";
+  // La búsqueda web vía Responses puede tardar más de 30 s. Se configura aparte
+  // del timeout del API comercial del QR para no mezclar ambos recorridos.
+  const qr_ai_web_search_timeout_ms = Math.max(10000, Math.min(120000, Number(doc.qr_ai_web_search_timeout_ms || 90000) || 90000));
 
 
   // Nuevo formato: varias acciones externas por comportamiento. Si todavía no existe
@@ -474,6 +477,7 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
     qr_ai_behavior,
     qr_ai_web_search_enabled,
     qr_ai_web_search_context_size,
+    qr_ai_web_search_timeout_ms,
     at: Date.now()
   };
   _behaviorCache.set(key, cfg);
@@ -1878,7 +1882,7 @@ async function executeConversationalWebSearch(actionCfg, action = {}, context = 
   const searchContextSize = ["low", "medium", "high"].includes(String(actionCfg.web_search_context_size || "medium"))
     ? String(actionCfg.web_search_context_size || "medium")
     : "medium";
-  const timeout = Math.max(3000, Math.min(60000, Number(actionCfg.timeout_ms || 30000) || 30000));
+  const timeout = Math.max(10000, Math.min(120000, Number(actionCfg.timeout_ms || 90000) || 90000));
   const maxChars = Math.max(2000, Math.min(100000, Number(actionCfg.max_chars || 30000) || 30000));
   const input = [
     "Buscá en Internet información técnica y pública verificable para responder esta consulta:",
@@ -1978,7 +1982,14 @@ async function executeConversationalWebSearch(actionCfg, action = {}, context = 
       detail: String(lastFailure?.detail || "La búsqueda web no devolvió contenido.").slice(0, 1000),
     };
   } catch (e) {
-    console.warn("[web-search] request error:", e?.message || e);
+    console.warn("[web-search] request error:", {
+      message: e?.message || String(e),
+      code: e?.code || "",
+      timeoutMs: timeout,
+      durationMs: Date.now() - startedAt,
+      model,
+      action: actionCfg.name || ""
+    });
     return {
       ok: false,
       error: e?.code === "ECONNABORTED" ? "web_search_timeout" : "web_search_request_failed",

@@ -8309,7 +8309,7 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             document.getElementById('qrAiUseSameBehavior').checked = j.qr_ai_use_same_behavior !== false;
             document.getElementById('qrAiBehavior').value = j.qr_ai_behavior || '';
             document.getElementById('qrAiWebSearch').checked = j.qr_ai_web_search_enabled !== false;
-            document.getElementById('qrAiWebContext').value = j.qr_ai_web_search_context_size || 'medium';
+            document.getElementById('qrAiWebTimeout').value = j.qr_ai_web_search_timeout_ms || 90000;
             toggleQrUi();
 
             externalActions=(Array.isArray(j.external_actions)?j.external_actions:[]).map(normalizeClientAction);
@@ -8356,7 +8356,8 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             qr_ai_use_same_behavior:document.getElementById('qrAiUseSameBehavior').checked===true,
             qr_ai_behavior:document.getElementById('qrAiBehavior').value||'',
             qr_ai_web_search_enabled:document.getElementById('qrAiWebSearch').checked===true,
-            qr_ai_web_search_context_size:document.getElementById('qrAiWebContext').value||'medium'
+            qr_ai_web_search_context_size:document.getElementById('qrAiWebContext').value||'medium',
+            qr_ai_web_search_timeout_ms:Number(document.getElementById('qrAiWebTimeout').value||90000)
           };
 
           setBehaviorStatus('Guardando...',false);
@@ -8485,6 +8486,7 @@ app.get("/comportamiento", async (req, res) => {
           <label id="qrAiOwnBehaviorWrap" style="grid-column:1/-1;display:none">Comportamiento exclusivo para QR<textarea id="qrAiBehavior" class="smallArea" placeholder="Cómo debe responder el asesor IA de la ficha QR..."></textarea></label>
           <label><span><input id="qrAiWebSearch" type="checkbox" checked /> Permitir búsqueda en Internet</span><span class="hint">Se usa para ampliar información técnica. Nunca reemplaza precio ni stock de la API.</span></label>
           <label>Contexto de búsqueda<select id="qrAiWebContext"><option value="low">low</option><option value="medium" selected>medium</option><option value="high">high</option></select></label>
+          <label>Timeout búsqueda web (ms)<input id="qrAiWebTimeout" type="number" min="10000" max="120000" step="1000" value="90000" /><span class="hint">Tiempo máximo para la búsqueda de Internet. Recomendado: 90000.</span></label>
         </div>
       </div>
 
@@ -8945,7 +8947,8 @@ app.get("/api/behavior", async (req, res) => {
       qr_ai_use_same_behavior: cfg.qr_ai_use_same_behavior !== false,
       qr_ai_behavior: cfg.qr_ai_behavior || "",
       qr_ai_web_search_enabled: cfg.qr_ai_web_search_enabled !== false,
-      qr_ai_web_search_context_size: cfg.qr_ai_web_search_context_size || "medium"
+      qr_ai_web_search_context_size: cfg.qr_ai_web_search_context_size || "medium",
+      qr_ai_web_search_timeout_ms: cfg.qr_ai_web_search_timeout_ms || 90000
     });
   } catch (e) {
     console.error("GET /api/behavior error:", e?.message || e);
@@ -9026,6 +9029,7 @@ app.post("/api/behavior", async (req, res) => {
     const qr_ai_web_search_enabled = behaviorBool(req.body?.qr_ai_web_search_enabled, true);
     const qrWebCtxRaw = String(req.body?.qr_ai_web_search_context_size || "medium").trim().toLowerCase();
     const qr_ai_web_search_context_size = ["low", "medium", "high"].includes(qrWebCtxRaw) ? qrWebCtxRaw : "medium";
+    const qr_ai_web_search_timeout_ms = Math.max(10000, Math.min(120000, Number(req.body?.qr_ai_web_search_timeout_ms || 90000) || 90000));
     const qrIncomingSecret = String(req.body?.qr_api_auth_value || "").trim().replace(/[\r\n]/g, "").slice(0, 4000);
     const qrClearSecret = behaviorBool(req.body?.qr_api_auth_clear, false);
 
@@ -9090,7 +9094,8 @@ app.post("/api/behavior", async (req, res) => {
       qr_ai_use_same_behavior,
       qr_ai_behavior,
       qr_ai_web_search_enabled,
-      qr_ai_web_search_context_size
+     qr_ai_web_search_context_size,
+      qr_ai_web_search_timeout_ms
     };
 
     if (firstApi?.auth_value) setDoc.external_api_auth_value = firstApi.auth_value;
