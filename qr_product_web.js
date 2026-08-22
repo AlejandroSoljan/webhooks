@@ -504,8 +504,8 @@ function mountQrProductWeb(app) {
             '[SOLICITUD DEL VISITANTE]',
             'El visitante tocó "Mostrar más info con IA".',
             cfg.aiWebSearchEnabled
-              ? 'Antes de responder, usá la acción buscar_web_qr para investigar este producto en Internet. Buscá principalmente por la descripción, marca y modelo; el SKU puede ser un código interno y no debe ser el único criterio. Si el nombre parece tener una variante ortográfica, probá también la variante más probable. Priorizá fabricante, manuales, fichas técnicas y fuentes confiables. Después resumí características, usos, recomendaciones y datos útiles.'
-               : 'Explicá características, usos y recomendaciones únicamente con la información confirmada disponible. No inventes datos externos.',
+     ? 'Antes de responder, intentá usar la acción buscar_web_qr para investigar este producto en Internet. Buscá principalmente por la descripción, marca y modelo; el SKU puede ser un código interno y no debe ser el único criterio. Si el nombre parece tener una variante ortográfica, probá también la variante más probable. Priorizá fabricante, manuales, fichas técnicas y fuentes confiables. Si la búsqueda falla o vence el tiempo de espera, respondé igualmente con una evaluación útil basada en los datos confirmados del QR, sin inventar especificaciones exactas y sin presentar el fallo de búsqueda como si significara que no existe información del producto.'
+     : 'Explicá características, usos y recomendaciones únicamente con la información confirmada disponible. No inventes datos externos.',
           ].join('\n')
         : [
             ctx,
@@ -524,15 +524,19 @@ function mountQrProductWeb(app) {
         name: 'buscar_web_qr',
        description: 'Buscar en Internet información técnica y pública del producto escaneado por QR: fabricante, ficha técnica, manual, usos, compatibilidades y recomendaciones. Buscar principalmente por descripción, marca y modelo; el SKU puede ser interno. Probar variantes razonables del nombre si hace falta. No usar para precio ni stock del negocio.',
         web_search_context_size: cfg.aiWebSearchContextSize,
-        timeout_ms: 30000,
-        imeout_ms: cfg.aiWebSearchTimeoutMs,
+        timeout_ms: cfg.aiWebSearchTimeoutMs,
         max_chars: 24000,
-        result_instructions: 'Priorizá fuentes del fabricante, manuales y documentación técnica. Diferenciá claramente los datos obtenidos en Internet de los datos comerciales del negocio.',
+        result_instructions: 'Priorizá fuentes del fabricante, manuales y documentación técnica. Diferenciá claramente los datos obtenidos en Internet de los datos comerciales del negocio. Si la búsqueda falla o vence el tiempo de espera, no lo interpretes como que no existe información del producto: respondé igual con una evaluación general basada únicamente en los datos confirmados del QR y aclarando solo las especificaciones exactas que no pudieron verificarse.',
       }] : [];
 
       const behaviorOverride = cfg.aiUseSameBehavior
         ? undefined
         : (cfg.aiBehavior || defaultQrBehavior());
+
+      if (cfg.aiWebSearchEnabled) {
+        console.log(`[qr] web-search config tenant=${tenant} sku=${product.code} timeoutMs=${cfg.aiWebSearchTimeoutMs} context=${cfg.aiWebSearchContextSize}`);
+      }
+
 
       const raw = await getGPTReply(tenant, from, hiddenInstruction, {
         tenantId: tenant,
