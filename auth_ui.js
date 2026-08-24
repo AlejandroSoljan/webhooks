@@ -3937,6 +3937,7 @@ function mountAuthRoutes(app) {
                 <button class="btn2" type="button" id="tc_btnAdd">Agregar campo</button>
                 <button class="btn2" type="button" id="tc_btnAddTag">Agregar TAG versión</button>
                 <button class="btn2" type="button" id="tc_btnAddTokenCosts">Agregar tarifas tokens</button>
+                <button class="btn2" type="button" id="tc_btnAddWwebRetention" title="Agrega wweb_message_log_retention_days. 0 o campo ausente = no borrar; 30 = conservar 30 días.">Retención historial WWeb</button>
                 <button class="btn2" type="button" id="tc_btnClear">Limpiar</button>
                 ${isSuper ? `<button class="btn2 btnDanger" type="button" id="tc_btnDelete">Eliminar</button>` : ``}
               </div>
@@ -3959,6 +3960,7 @@ function mountAuthRoutes(app) {
         const btnAdd = document.getElementById('tc_btnAdd');
         const btnAddTag = document.getElementById('tc_btnAddTag');
         const btnAddTokenCosts = document.getElementById('tc_btnAddTokenCosts');
+        const btnAddWwebRetention = document.getElementById('tc_btnAddWwebRetention');
         const btnClear = document.getElementById('tc_btnClear');
         const btnReload = document.getElementById('tc_btnReload');
         const btnNew = document.getElementById('tc_btnNew');
@@ -4325,6 +4327,13 @@ function mountAuthRoutes(app) {
         btnAdd.addEventListener('click', ()=> addRow('', ''));
         if (btnAddTag) btnAddTag.addEventListener('click', ()=> ensureFieldRow('release_tag', 'v4.00.16'));
         if (btnAddTokenCosts) btnAddTokenCosts.addEventListener('click', ()=> addTokenCostFields());
+        if (btnAddWwebRetention) btnAddWwebRetention.addEventListener('click', ()=> {
+          const row = ensureFieldRow('wweb_message_log_retention_days', '30');
+          const valInput = row && row.querySelector('[data-v]');
+          if (valInput) {
+            valInput.title = 'Cantidad de días a conservar en wa_wweb_message_log. 0 o campo ausente = no borrar.';
+          }
+        });
         if (btnCopy && copyFromEl) {
           btnCopy.addEventListener('click', async ()=> {
             try {
