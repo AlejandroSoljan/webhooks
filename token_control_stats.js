@@ -37,6 +37,28 @@ function clampInt(v, min, max, fallback = min) {
   return Math.max(min, Math.min(max, n));
 }
 
+function parseCsvFilter(raw, allowed = []) {
+  const allow = new Set(allowed.map(v => String(v || "").trim().toLowerCase()).filter(Boolean));
+  const values = String(raw || "")
+    .split(",")
+    .map(v => String(v || "").trim().toLowerCase())
+    .filter(Boolean);
+  return [...new Set(values.filter(v => !allow.size || allow.has(v)))];
+}
+
+function tokenTypeMatches(item, types = []) {
+  if (!types.length) return true;
+  const botMode = String(item?.botMode || "").trim().toLowerCase();
+  return types.some(type => type === "conversacional" ? botMode === "conversacional" : botMode !== "conversacional");
+}
+
+function tokenChannelMatches(item, channels = []) {
+  if (!channels.length) return true;
+  const channel = String(item?.channelType || "whatsapp").trim().toLowerCase() || "whatsapp";
+  return channels.includes(channel);
+}
+
+
 function buildUsageMatch({ tenantId = "", from = "", to = "" } = {}) {
   const match = {};
   const safeTenant = String(tenantId || "").trim();
@@ -119,10 +141,141 @@ function tenantChargeRatesConfigured(tenantDoc = {}) {
 }
 
 
-async function buildTokenSummary({ tenantId = "", from = "", to = "", isSuper = false } = {}) {
+async function buildTokenSummary({
+  tenantId = "",
+  from = "",
+  to = "",
+  types = "",
+  channels = "",
+  isSuper = false
+  } = {}) {
   const db = await getDb();
   const { match, safeTenant } = buildUsageMatch({ tenantId, from, to });
+  const noTypes = String(types || "").trim().toLowerCase() === "none";
+  const noChannels = String(channels || "").trim().toLowerCase() === "none";
+  const safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional"]);
+  const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web"]);
 
+  if (noTypes || noChannels) {
+    return {
+      ok: true,
+      filters: { tenantId: safeTenant || null, from: from || null, to: to || null, types: [], channels: [], isSuper: !!isSuper },
+      items: [],
+      totals: {
+        message_input_tokens: 0, message_output_tokens: 0, audio_input_tokens: 0, audio_output_tokens: 0,
+        total_tokens: 0, events: 0, billed_cost: 0, real_cost: 0, gross_margin: 0, estimated_cost: 0, last_at: null
+      }
+    };
+  }
+
+  // Tipo y Canal dependen de la conversación asociada. Si hay filtros activos,
+  // el resumen se arma desde el mismo detalle relacionado para que ambos coincidan.
+  if (safeTypes.length || safeChannels.length) {
+    const detail = await buildTokenConversationSummary({
+      tenantId,
+     from,
+      to,
+      types: safeTypes.join(","),
+      channels: safeChannels.join(","),
+      limit: 5000,
+      isSuper
+    });
+
+    const grouped = new Map();
+    for (const row of (Array.isArray(detail.items) ? detail.items : [])) {
+      const key = String(row.tenantId || "").trim();
+      if (!key) continue;
+      let acc = grouped.get(key);
+      if (!acc) {
+        acc = {
+          tenantId: key,
+          company: String(row.company || "").trim(),
+          number: "",
+          message_input_tokens: 0,
+          message_output_tokens: 0,
+          audio_input_tokens: 0,
+          audio_output_tokens: 0,
+          total_tokens: 0,
+          events: 0,
+          last_at: null,
+          billed_cost: 0,
+          real_cost: 0,
+          gross_margin: 0,
+          billing_configured: row.billing_configured !== false
+        };
+        grouped.set(key, acc);
+      }
+      acc.message_input_tokens += Number(row.message_input_tokens || 0);
+      acc.message_output_tokens += Number(row.message_output_tokens || 0);
+      acc.audio_input_tokens += Number(row.audio_input_tokens || 0);
+      acc.audio_output_tokens += Number(row.audio_output_tokens || 0);
+      acc.total_tokens += Number(row.total_tokens || 0);
+      acc.events += Number(row.events || 0);
+      acc.billed_cost += Number(row.billed_cost || 0);
+      if (isSuper) {
+        acc.real_cost += Number(row.real_cost || 0);
+        acc.gross_margin += Number(row.gross_margin || 0);
+      }
+      if (!acc.last_at || Date.parse(row.last_at || 0) > Date.parse(acc.last_at || 0)) acc.last_at = row.last_at || acc.last_at;
+      if (row.billing_configured === false) acc.billing_configured = false;
+    }
+
+    const cfgByTenant = await loadTenantCosts(db, [...grouped.keys()]);
+    const items = [...grouped.values()].sort((a, b) => String(a.tenantId).localeCompare(String(b.tenantId))).map(item => {
+      const doc = cfgByTenant.get(item.tenantId) || {};
+      item.company = String(doc.nom_emp || item.company || "").trim();
+      item.number = String(doc.numero || "").trim();
+      item.billed_cost = Number(item.billed_cost.toFixed(6));
+      item.estimated_cost = isSuper ? Number(item.real_cost.toFixed(6)) : item.billed_cost;
+      if (isSuper) {
+        item.real_cost = Number(item.real_cost.toFixed(6));
+        item.gross_margin = Number(item.gross_margin.toFixed(6));
+      } else {
+        delete item.real_cost;
+        delete item.gross_margin;
+      }
+      return item;
+    });
+
+    const totals = items.reduce((acc, item) => {
+      acc.message_input_tokens += item.message_input_tokens;
+      acc.message_output_tokens += item.message_output_tokens;
+      acc.audio_input_tokens += item.audio_input_tokens;
+      acc.audio_output_tokens += item.audio_output_tokens;
+      acc.total_tokens += item.total_tokens;
+      acc.events += item.events;
+      acc.billed_cost += item.billed_cost;
+      if (!acc.last_at || Date.parse(item.last_at || 0) > Date.parse(acc.last_at || 0)) acc.last_at = item.last_at || acc.last_at;
+      if (!acc.last_at || Date.parse(item.last_at || 0) > Date.parse(acc.last_at || 0)) acc.last_at = item.last_at || acc.last_at;
+      if (isSuper) {
+        acc.real_cost += Number(item.real_cost || 0);
+        acc.gross_margin += Number(item.gross_margin || 0);
+      }
+      return acc;
+    }, {
+      message_input_tokens: 0,
+      message_output_tokens: 0,
+      audio_input_tokens: 0,
+      audio_output_tokens: 0,
+      total_tokens: 0,
+      events: 0,
+      billed_cost: 0,
+      real_cost: 0,
+      gross_margin: 0,
+      last_at: null
+    });
+    totals.billed_cost = Number(totals.billed_cost.toFixed(6));
+    totals.real_cost = Number(totals.real_cost.toFixed(6));
+    totals.gross_margin = Number(totals.gross_margin.toFixed(6));
+    totals.estimated_cost = isSuper ? totals.real_cost : totals.billed_cost;
+
+    return {
+      ok: true,
+      filters: { tenantId: safeTenant || null, from: from || null, to: to || null, types: safeTypes, channels: safeChannels, isSuper: !!isSuper },
+      items,
+      totals
+    };
+  }
 
   const rows = await db.collection("ai_token_usage_log").aggregate([
     { $match: match },
@@ -222,7 +375,8 @@ async function buildTokenSummary({ tenantId = "", from = "", to = "", isSuper = 
     events: 0,
     billed_cost: 0,
     real_cost: 0,
-    gross_margin: 0
+    gross_margin: 0,
+    last_at: null
   });
 
   totals.billed_cost = Number(totals.billed_cost.toFixed(6));
@@ -236,6 +390,8 @@ async function buildTokenSummary({ tenantId = "", from = "", to = "", isSuper = 
       tenantId: safeTenant || null,
       from: from || null,
       to: to || null,
+      types: safeTypes,
+      channels: safeChannels,
       isSuper: !!isSuper
     },
     items,
@@ -270,6 +426,8 @@ async function buildTokenConversationSummary({
   from = "",
   to = "",
   view = "all",
+  types = "",
+  channels = "",
   limit = 500,
   isSuper = false
 } = {}) {
@@ -277,7 +435,12 @@ async function buildTokenConversationSummary({
   const { match, safeTenant } = buildUsageMatch({ tenantId, from, to });
   const rawView = String(view || "all").trim().toLowerCase();
   const safeView = ["all", "completed", "conversational"].includes(rawView) ? rawView : "all";
-  const safeLimit = clampInt(limit, 1, 1000, 500);
+  const noTypes = String(types || "").trim().toLowerCase() === "none";
+  const noChannels = String(channels || "").trim().toLowerCase() === "none";
+  let safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional"]);
+  const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web"]);
+  if (!noTypes && !safeTypes.length && safeView === "conversational") safeTypes = ["conversacional"];
+  const safeLimit = clampInt(limit, 1, 5000, 500);
   const aggregateLimit = Math.min(4000, Math.max(500, safeLimit * 6));
 
   const facetRows = await db.collection("ai_token_usage_log").aggregate([
@@ -642,10 +805,17 @@ async function buildTokenConversationSummary({
     return item;
   });
 
+  if (noTypes || noChannels) {
+    items = [];
+  }
   if (safeView === "completed") {
     items = items.filter((item) => item.completed);
-  } else if (safeView === "conversational") {
-    items = items.filter((item) => item.botMode === "conversacional");
+  }
+  if (safeTypes.length) {
+    items = items.filter((item) => tokenTypeMatches(item, safeTypes));
+  }
+  if (safeChannels.length) {
+    items = items.filter((item) => tokenChannelMatches(item, safeChannels));
   }
 
   items.sort((a, b) => Date.parse(b.last_at || 0) - Date.parse(a.last_at || 0));
@@ -656,6 +826,7 @@ async function buildTokenConversationSummary({
     acc.conversations += 1;
     acc.completed_orders += item.completed ? 1 : 0;
     acc.total_tokens += item.total_tokens;
+    acc.events += item.events;
     acc.billed_cost += item.billed_cost;
     if (isSuper) {
       acc.real_cost += Number(item.real_cost || 0);
@@ -666,6 +837,7 @@ async function buildTokenConversationSummary({
     conversations: 0,
     completed_orders: 0,
     total_tokens: 0,
+    events: 0,
     billed_cost: 0,
     real_cost: 0,
     gross_margin: 0,
@@ -708,6 +880,8 @@ async function buildTokenConversationSummary({
       from: from || null,
       to: to || null,
       view: safeView,
+      types: safeTypes,
+      channels: safeChannels,
       limit: safeLimit,
       isSuper: !!isSuper
     },
@@ -751,13 +925,20 @@ function renderTokenControlPage(user) {
     .btn,.btn2{height:40px;padding:0 14px;border-radius:12px;font-weight:700;font-size:14px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:8px}
     .btn{background:var(--accent);color:#fff;border:1px solid var(--accent)}
     .btn2{background:#fff;color:var(--text);border:1px solid var(--border)}
-    .kpis{display:grid;grid-template-columns:repeat(${isSuper ? 4 : 3},minmax(0,1fr));gap:12px}
+    .multiFilter{position:relative;min-width:180px}
+    .multiFilter summary{list-style:none;height:40px;border-radius:12px;border:1px solid var(--border);padding:10px 34px 10px 12px;background:#fff;color:var(--text);font-size:13px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative}
+    .multiFilter summary::-webkit-details-marker{display:none}.multiFilter summary:after{content:'▾';position:absolute;right:12px;top:9px;color:var(--muted)}
+    .multiMenu{position:absolute;z-index:30;top:44px;left:0;right:0;min-width:210px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:8px;box-shadow:0 14px 32px rgba(15,23,42,.16)}
+    .multiMenu label{min-width:0;display:flex;flex-direction:row;align-items:center;gap:8px;padding:6px 7px;color:var(--text);cursor:pointer}.multiMenu input{width:auto;height:auto;margin:0}
+    .multiTools{display:flex;gap:6px;padding-bottom:6px;margin-bottom:3px;border-bottom:1px solid var(--border)}.multiTools button{border:0;border-radius:7px;background:#f1f5f9;color:#475569;font-size:11px;font-weight:800;padding:5px 8px;cursor:pointer}
+    .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+
     .kpis.detail{grid-template-columns:repeat(4,minmax(0,1fr))}
     .kpi{background:#fff;border:1px solid var(--border);border-radius:14px;padding:14px}
     .kpi .t{font-size:12px;color:var(--muted);margin-bottom:6px}
     .kpi .v{font-size:25px;font-weight:800;line-height:1.1}
     .tableWrap{overflow:auto;border:1px solid var(--border);border-radius:14px}
-    table{width:100%;border-collapse:collapse;background:#fff;min-width:${isSuper ? '1280px' : '1080px'}}
+    table{width:100%;border-collapse:collapse;background:#fff;min-width:${isSuper ? '1280px' : '760px'}}
     th,td{padding:12px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle;font-size:14px}
     thead th{position:sticky;top:0;background:#f8fafc;color:var(--text);font-size:12px;text-transform:uppercase;letter-spacing:.04em;z-index:1}
     tbody tr:last-child td{border-bottom:none}
@@ -784,7 +965,7 @@ function renderTokenControlPage(user) {
     <div class="toolbar">
       <div>
         <h1 style="margin:0 0 4px">Control de consumo IA</h1>
-        <div class="small">${isSuper ? 'Vista administrativa: costo real, importe a cobrar y margen.' : 'Consumo del dominio e importe a cobrar.'}</div>
+        <div class="small">${isSuper ? 'Vista administrativa: costo real, importe a cobrar y margen.' : 'Consumo del dominio e importe.'}</div>
       </div>
       <div class="small">${isSuper ? 'Superadmin' : esc(String(user?.role || 'usuario'))} · dominio: <b>${esc(tenant)}</b></div>
     </div>
@@ -795,13 +976,22 @@ function renderTokenControlPage(user) {
         <label>Desde<input id="fFrom" type="date"/></label>
         <label>Hasta<input id="fTo" type="date"/></label>
         
-        <label>Detalle
-          <select id="fView">
-            <option value="all">Todas las conversaciones</option>
-            <option value="completed">Solo pedidos completados</option>
-            <option value="conversational">Solo conversacionales</option>
-          </select>
-        </label>
+        <details class="multiFilter" id="typeFilter">
+          <summary>Tipo: Todos</summary>
+          <div class="multiMenu">
+            <div class="multiTools"><button type="button" data-select-all="tokenType">Todos</button><button type="button" data-clear-all="tokenType">Ninguno</button></div>
+            <label><input type="checkbox" name="tokenType" value="pedidos" checked/>Pedidos</label>
+            <label><input type="checkbox" name="tokenType" value="conversacional" checked/>Conversacional</label>
+          </div>
+        </details>
+        <details class="multiFilter" id="channelFilter">
+          <summary>Canal: Todos</summary>
+          <div class="multiMenu">
+            <div class="multiTools"><button type="button" data-select-all="tokenChannel">Todos</button><button type="button" data-clear-all="tokenChannel">Ninguno</button></div>
+            <label><input type="checkbox" name="tokenChannel" value="whatsapp" checked/>WhatsApp</label>
+            <label><input type="checkbox" name="tokenChannel" value="qr_web" checked/>QR Web</label>
+          </div>
+        </details>
         <button class="btn" type="button" id="btnReload">Actualizar</button>
       </div>
       <div id="msg" class="small" style="margin-top:10px"></div>
@@ -813,23 +1003,12 @@ function renderTokenControlPage(user) {
         <div class="v" id="kpiTokens">0</div>
       </div>
       ${isSuper ? `
-      <div class="kpi">
-        <div class="t">Costo real</div>
-        <div class="v money" id="kpiRealCost">US$ 0</div>
-      </div>` : ``}
-      <div class="kpi">
-        <div class="t">Importe a cobrar</div>
-        <div class="v money" id="kpiBilledCost">US$ 0</div>
-      </div>
-      ${isSuper ? `
-      <div class="kpi">
-        <div class="t">Margen bruto</div>
-        <div class="v profit" id="kpiMargin">US$ 0</div>
-      </div>` : `
-      <div class="kpi">
-        <div class="t">Conversaciones</div>
-        <div class="v" id="kpiTopConversations">0</div>
-      </div>`}
+      <div class="kpi"><div class="t">Costo real</div><div class="v money" id="kpiRealCost">US$ 0</div></div>
+      <div class="kpi"><div class="t">Importe a cobrar</div><div class="v money" id="kpiBilledCost">US$ 0</div></div>
+      <div class="kpi"><div class="t">Margen bruto</div><div class="v profit" id="kpiMargin">US$ 0</div></div>` : `
+      <div class="kpi"><div class="t">Eventos</div><div class="v" id="kpiEvents">0</div></div>
+      <div class="kpi"><div class="t">Importe</div><div class="v money" id="kpiBilledCost">US$ 0</div></div>
+      <div class="kpi"><div class="t">Último uso</div><div class="v" id="kpiLastUse" style="font-size:16px">-</div></div>`}
     </div>
 
     <div class="card">
@@ -844,28 +1023,20 @@ function renderTokenControlPage(user) {
       <div class="tableWrap">
         <table>
           <thead>
-            <tr>
-              <th>Dominio</th>
-              <th>Entrada texto</th>
-              <th>Salida texto</th>
-              <th>Audio entrada</th>
-              <th>Audio salida</th>
-              <th>Total tokens</th>
-              <th>Eventos</th>
-              ${isSuper ? '<th>Costo real</th>' : ''}
-              <th>A cobrar</th>
-              ${isSuper ? '<th>Margen</th>' : ''}
-              <th>Último uso</th>
-            </tr>
+            ${isSuper ? `<tr>
+              <th>Dominio</th><th>Entrada texto</th><th>Salida texto</th><th>Audio entrada</th><th>Audio salida</th><th>Total tokens</th><th>Eventos</th><th>Costo real</th><th>A cobrar</th><th>Margen</th><th>Último uso</th>
+            </tr>` : `<tr>
+              <th>Dominio</th><th>Total tokens</th><th>Eventos</th><th>Último uso</th><th>Importe</th>
+            </tr>`}
           </thead>
           <tbody id="rows">
-            <tr><td colspan="${isSuper ? 11 : 9}" class="small">Cargando…</td></tr>
+            <tr><td colspan="${isSuper ? 11 : 5}" class="small">Cargando…</td></tr>
           </tbody>
         </table>
       </div>
     </div>
 
-    <div class="kpis detail">
+    ${isSuper ? `<div class="kpis detail">
       <div class="kpi">
         <div class="t">Conversaciones / sesiones</div>
         <div class="v" id="kpiConversations">0</div>
@@ -882,7 +1053,7 @@ function renderTokenControlPage(user) {
         <div class="t">Promedio a cobrar por conversación</div>
         <div class="v money" id="kpiAvgBilled">US$ 0</div>
       </div>
-    </div>
+    </div>` : ``}
 
     <div class="card">
       <div class="sectionTitle">
@@ -895,23 +1066,14 @@ function renderTokenControlPage(user) {
       <div class="tableWrap">
         <table>
           <thead>
-            <tr>
-              <th>Dominio / estado</th>
-              <th>Cliente</th>
-              <th>Conversación</th>
-              <th>Período</th>
-              <th>Entrada</th>
-              <th>Salida</th>
-              <th>Audios</th>
-              <th>Total tokens</th>
-              <th>Eventos</th>
-              ${isSuper ? '<th>Costo real</th>' : ''}
-              <th>A cobrar</th>
-              ${isSuper ? '<th>Margen</th>' : ''}
-            </tr>
+            ${isSuper ? `<tr>
+              <th>Dominio / estado</th><th>Cliente</th><th>Conversación</th><th>Período</th><th>Entrada</th><th>Salida</th><th>Audios</th><th>Total tokens</th><th>Eventos</th><th>Costo real</th><th>A cobrar</th><th>Margen</th>
+            </tr>` : `<tr>
+              <th>Dominio / estado</th><th>Cliente</th><th>Período</th><th>Total tokens</th><th>Eventos</th><th>Importe</th>
+            </tr>`}
           </thead>
           <tbody id="detailRows">
-            <tr><td colspan="${isSuper ? 12 : 10}" class="small">Cargando…</td></tr>
+            <tr><td colspan="${isSuper ? 12 : 6}" class="small">Cargando…</td></tr>
            </tbody>
           </tbody>
         </table>
@@ -925,7 +1087,6 @@ function renderTokenControlPage(user) {
   const tenantEl = document.getElementById('fTenant');
   const fromEl = document.getElementById('fFrom');
   const toEl = document.getElementById('fTo');
-  const viewEl = document.getElementById('fView');
   const rowsEl = document.getElementById('rows');
   const detailRowsEl = document.getElementById('detailRows');
   const detailNoteEl = document.getElementById('detailNote');
@@ -934,7 +1095,8 @@ function renderTokenControlPage(user) {
   const kpiRealCost = document.getElementById('kpiRealCost');
   const kpiBilledCost = document.getElementById('kpiBilledCost');
   const kpiMargin = document.getElementById('kpiMargin');
-  const kpiTopConversations = document.getElementById('kpiTopConversations');
+  const kpiEvents = document.getElementById('kpiEvents');
+  const kpiLastUse = document.getElementById('kpiLastUse');
   const kpiConversations = document.getElementById('kpiConversations');
   const kpiCompleted = document.getElementById('kpiCompleted');
   const kpiAvgConversation = document.getElementById('kpiAvgConversation');
@@ -983,6 +1145,23 @@ function renderTokenControlPage(user) {
     return '';
   }
 
+  function checkedValues(name){ return Array.from(document.querySelectorAll('input[name="' + name + '"]:checked')).map(function(x){ return x.value; }); }
+  function allValues(name){ return Array.from(document.querySelectorAll('input[name="' + name + '"]')).map(function(x){ return x.value; }); }
+  function updateMultiSummary(detailsId,name,prefix){
+    const root=document.getElementById(detailsId); if(!root)return;
+    const selected=checkedValues(name), all=allValues(name);
+    root.querySelector('summary').textContent=prefix+': '+(!selected.length?'Ninguno':(selected.length===all.length?'Todos':selected.length+' seleccionados'));
+  }
+  function setupMulti(detailsId,name,prefix){
+    const root=document.getElementById(detailsId); if(!root)return;
+    const changed=function(){ updateMultiSummary(detailsId,name,prefix); load(); };
+    root.querySelectorAll('input[name="'+name+'"]').forEach(function(x){x.addEventListener('change',changed);});
+    root.querySelectorAll('[data-select-all]').forEach(function(b){b.addEventListener('click',function(e){e.preventDefault();root.querySelectorAll('input[name="'+name+'"]').forEach(function(x){x.checked=true;});changed();});});
+    root.querySelectorAll('[data-clear-all]').forEach(function(b){b.addEventListener('click',function(e){e.preventDefault();root.querySelectorAll('input[name="'+name+'"]').forEach(function(x){x.checked=false;});changed();});});
+    updateMultiSummary(detailsId,name,prefix);
+  }
+
+
   function buildQuery(includeView){
     const qs = new URLSearchParams();
     const tenant = String(tenantEl.value || '').trim();
@@ -991,10 +1170,11 @@ function renderTokenControlPage(user) {
     if (tenant) qs.set('tenantId', tenant);
     if (from) qs.set('from', from);
     if (to) qs.set('to', to);
-    if (includeView) {
-      qs.set('view', String(viewEl.value || 'all'));
-      qs.set('limit', '500');
-    }
+    const types=checkedValues('tokenType'), allTypes=allValues('tokenType');
+    const channels=checkedValues('tokenChannel'), allChannels=allValues('tokenChannel');
+    if (types.length !== allTypes.length) qs.set('types', types.length ? types.join(',') : 'none');
+    if (channels.length !== allChannels.length) qs.set('channels', channels.length ? channels.join(',') : 'none');
+    if (includeView) qs.set('limit', '500');
     return qs;
   }
 
@@ -1016,9 +1196,11 @@ function renderTokenControlPage(user) {
     kpiBilledCost.textContent = fmtMoney(totals.billed_cost || 0);
     if (isSuper && kpiRealCost) kpiRealCost.textContent = fmtMoney(totals.real_cost || 0);
     if (isSuper && kpiMargin) kpiMargin.textContent = fmtMoney(totals.gross_margin || 0);
+    if (!isSuper && kpiEvents) kpiEvents.textContent = fmtInt(totals.events || 0);
+    if (!isSuper && kpiLastUse) kpiLastUse.textContent = fmtDate(totals.last_at);
 
     if (!items.length) {
-      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '9') + '" class="small">No hay consumos para los filtros seleccionados.</td></tr>';
+      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">No hay consumos para los filtros seleccionados.</td></tr>';
       return;
     }
 
@@ -1028,22 +1210,25 @@ function renderTokenControlPage(user) {
       const billingWarning = it.billing_configured === false
         ? '<span class="small" style="color:#b45309">Tarifa comercial sin configurar</span>'
         : '';
+        +      if (!isSuper) {
+        return '<tr>' +
+         '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
+          (company ? '<span class="small">' + esc(company) + '</span>' : '') + billingWarning + '</div></td>' +
+          '<td><b>' + fmtInt(it.total_tokens) + '</b></td>' +
+          '<td>' + fmtInt(it.events) + '</td>' +
+          '<td>' + esc(fmtDate(it.last_at)) + '</td>' +
+          '<td class="money">' + fmtMoney(it.billed_cost) + '</td>' +
+        '</tr>';
+      }
       return '<tr>' +
         '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
         (company ? '<span class="small">' + esc(company) + '</span>' : '') +
-        (number ? '<span class="small">' + esc(number) + '</span>' : '') +
-        billingWarning +
-        '</div></td>' +
-        '<td>' + fmtInt(it.message_input_tokens) + '</td>' +
-        '<td>' + fmtInt(it.message_output_tokens) + '</td>' +
-        '<td>' + fmtInt(it.audio_input_tokens) + '</td>' +
-        '<td>' + fmtInt(it.audio_output_tokens) + '</td>' +
-        '<td><b>' + fmtInt(it.total_tokens) + '</b></td>' +
-        '<td>' + fmtInt(it.events) + '</td>' +
-        (isSuper ? '<td class="money">' + fmtMoney(it.real_cost) + '</td>' : '') +
-        '<td class="money">' + fmtMoney(it.billed_cost) + '</td>' +
-        (isSuper ? '<td class="profit">' + fmtMoney(it.gross_margin) + '</td>' : '') +
-        '<td>' + esc(fmtDate(it.last_at)) + '</td>' +
+        (number ? '<span class="small">' + esc(number) + '</span>' : '') + billingWarning + '</div></td>' +
+        '<td>' + fmtInt(it.message_input_tokens) + '</td><td>' + fmtInt(it.message_output_tokens) + '</td>' +
+        '<td>' + fmtInt(it.audio_input_tokens) + '</td><td>' + fmtInt(it.audio_output_tokens) + '</td>' +
+        '<td><b>' + fmtInt(it.total_tokens) + '</b></td><td>' + fmtInt(it.events) + '</td>' +
+        '<td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money">' + fmtMoney(it.billed_cost) + '</td>' +
+        '<td class="profit">' + fmtMoney(it.gross_margin) + '</td><td>' + esc(fmtDate(it.last_at)) + '</td>' +
       '</tr>';
     }).join('');
   }
@@ -1052,11 +1237,10 @@ function renderTokenControlPage(user) {
     const items = Array.isArray(j.items) ? j.items : [];
     const totals = j.totals || {};
 
-    kpiConversations.textContent = fmtInt(totals.conversations || 0);
-    if (kpiTopConversations) kpiTopConversations.textContent = fmtInt(totals.conversations || 0);
-    kpiCompleted.textContent = fmtInt(totals.completed_orders || 0);
-    kpiAvgConversation.textContent = fmtInt(totals.average_tokens_per_conversation || 0);
-    kpiAvgBilled.textContent = fmtMoney(totals.average_billed_cost_per_conversation || 0);
+    if (kpiConversations) kpiConversations.textContent = fmtInt(totals.conversations || 0);
+    if (kpiCompleted) kpiCompleted.textContent = fmtInt(totals.completed_orders || 0);
+    if (kpiAvgConversation) kpiAvgConversation.textContent = fmtInt(totals.average_tokens_per_conversation || 0);
+    if (kpiAvgBilled) kpiAvgBilled.textContent = fmtMoney(totals.average_billed_cost_per_conversation || 0);
 
     const unassigned = num(totals.unassigned_tokens);
     detailNoteEl.innerHTML = unassigned > 0
@@ -1064,7 +1248,7 @@ function renderTokenControlPage(user) {
      : 'Todos los consumos del rango seleccionado tienen conversación asociada.';
 
     if (!items.length) {
-      detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '10') + '" class="small">No hay conversaciones con tokens para los filtros seleccionados.</td></tr>';
+      detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '6') + '" class="small">No hay conversaciones con tokens para los filtros seleccionados.</td></tr>';
       return;
     }
 
@@ -1083,33 +1267,34 @@ function renderTokenControlPage(user) {
       const orderTotal = num(it.pedido_total) > 0
         ? '<span class="small">Total pedido: ' + esc(fmtOrderMoney(it.pedido_total)) + '</span>'
         : '';
-
+      if (!isSuper) {
+        return '<tr>' +
+          '<td><div class="stack"><span class="pill">' + esc(it.tenantId || '') + '</span><span class="status ' + statusClass(status) + '">' + esc(status) + '</span></div></td>' +
+          '<td><div class="stack">' + (client ? '<b>' + esc(client) + '</b>' : '<span class="small">Sin nombre</span>') +
+          (waId ? '<span class="small">' + esc(waId) + '</span>' : '') +
+          '<span class="small">' + esc(it.channelType === 'qr_web' ? 'QR Web' : 'WhatsApp') + '</span></div></td>' +
+          '<td><div class="stack"><span>' + esc(fmtDate(it.first_at)) + '</span><span class="small">hasta ' + esc(fmtDate(it.last_at)) + '</span></div></td>' +
+          '<td><b>' + fmtInt(it.total_tokens) + '</b></td><td>' + fmtInt(it.events) + '</td><td class="money">' + fmtMoney(it.billed_cost) + '</td>' +
+        '</tr>';
+      }
       return '<tr>' +
-        '<td><div class="stack"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
-        '<span class="status ' + statusClass(status) + '">' + esc(status) + '</span></div></td>' +
-        '<td><div class="stack">' +
-        (client ? '<b>' + esc(client) + '</b>' : '<span class="small">Sin nombre</span>') +
-        (waId ? '<span class="small">' + esc(waId) + '</span>' : '') +
-        '<span class="small">' + esc(it.channelType || '') + '</span></div></td>' +
-        '<td><div class="stack"><span class="mono">' + esc(shortId(it.conversationId)) + '</span>' +
-        sessionInfo + orderInfo + orderTotal + '</div></td>' +
+        '<td><div class="stack"><span class="pill">' + esc(it.tenantId || '') + '</span><span class="status ' + statusClass(status) + '">' + esc(status) + '</span></div></td>' +
+        '<td><div class="stack">' + (client ? '<b>' + esc(client) + '</b>' : '<span class="small">Sin nombre</span>') +
+        (waId ? '<span class="small">' + esc(waId) + '</span>' : '') + '<span class="small">' + esc(it.channelType || '') + '</span></div></td>' +
+        '<td><div class="stack"><span class="mono">' + esc(shortId(it.conversationId)) + '</span>' + sessionInfo + orderInfo + orderTotal + '</div></td>' +
         '<td><div class="stack"><span>' + esc(fmtDate(it.first_at)) + '</span><span class="small">hasta ' + esc(fmtDate(it.last_at)) + '</span></div></td>' +
-        '<td>' + fmtInt(it.message_input_tokens) + '</td>' +
-        '<td>' + fmtInt(it.message_output_tokens) + '</td>' +
-        '<td>' + fmtInt(audio) + '</td>' +
-        '<td><b>' + fmtInt(it.total_tokens) + '</b></td>' +
-        '<td>' + fmtInt(it.events) + '</td>' +
-        (isSuper ? '<td class="money">' + fmtMoney(it.real_cost) + '</td>' : '') +
-        '<td class="money">' + fmtMoney(it.billed_cost) + '</td>' +
-        (isSuper ? '<td class="profit">' + fmtMoney(it.gross_margin) + '</td>' : '') +
+        '<td>' + fmtInt(it.message_input_tokens) + '</td><td>' + fmtInt(it.message_output_tokens) + '</td><td>' + fmtInt(audio) + '</td>' +
+        '<td><b>' + fmtInt(it.total_tokens) + '</b></td><td>' + fmtInt(it.events) + '</td>' +
+        '<td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money">' + fmtMoney(it.billed_cost) + '</td><td class="profit">' + fmtMoney(it.gross_margin) + '</td>' +
+
       '</tr>';
     }).join('');
   }
 
   async function load(){
     msgEl.textContent = '';
-    rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '9') + '" class="small">Cargando…</td></tr>';
-    detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '10') + '" class="small">Cargando…</td></tr>';
+    rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">Cargando…</td></tr>';
+    detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '6') + '" class="small">Cargando…</td></tr>';
 
     try{
       const summaryUrl = '/api/token-control/summary?' + buildQuery(false).toString();
@@ -1122,13 +1307,13 @@ function renderTokenControlPage(user) {
       renderConversationSummary(result[1]);
     } catch(e){
       msgEl.textContent = e && e.message ? e.message : String(e);
-      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '9') + '" class="small">Error cargando datos.</td></tr>';
-      detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '10') + '" class="small">Error cargando detalle por conversación.</td></tr>';
+      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">Error cargando datos.</td></tr>';
+      detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '6') + '" class="small">Error cargando detalle por conversación.</td></tr>';
     }
   }
 
-  btnReload.addEventListener('click', load);
-  viewEl.addEventListener('change', load);
+  btnReload.addEventListener('click', load);+  setupMulti('typeFilter','tokenType','Tipo');
+  setupMulti('channelFilter','tokenChannel','Canal');
   if (isSuper && tenantEl) tenantEl.addEventListener('keydown', function(ev){ if (ev.key === 'Enter') load(); });
   load();
 })();
@@ -1185,6 +1370,8 @@ function mountTokenControlRoutes(app, auth) {
         tenantId,
         from: String(req.query?.from || "").trim(),
         to: String(req.query?.to || "").trim(),
+        types: String(req.query?.types || "").trim(),
+        channels: String(req.query?.channels || "").trim(),
         isSuper
       });
       return res.json(data);
@@ -1207,6 +1394,8 @@ function mountTokenControlRoutes(app, auth) {
         from: String(req.query?.from || "").trim(),
         to: String(req.query?.to || "").trim(),
         view: String(req.query?.view || "all").trim(),
+        types: String(req.query?.types || "").trim(),
+        channels: String(req.query?.channels || "").trim(),
         limit: req.query?.limit,
         isSuper
       });
