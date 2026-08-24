@@ -1210,7 +1210,7 @@ function renderTokenControlPage(user) {
       const billingWarning = it.billing_configured === false
         ? '<span class="small" style="color:#b45309">Tarifa comercial sin configurar</span>'
         : '';
-        +      if (!isSuper) {
+        if (!isSuper) {
         return '<tr>' +
          '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
           (company ? '<span class="small">' + esc(company) + '</span>' : '') + billingWarning + '</div></td>' +
@@ -1312,7 +1312,8 @@ function renderTokenControlPage(user) {
     }
   }
 
-  btnReload.addEventListener('click', load);+  setupMulti('typeFilter','tokenType','Tipo');
+  btnReload.addEventListener('click', load);
+  setupMulti('typeFilter','tokenType','Tipo');
   setupMulti('channelFilter','tokenChannel','Canal');
   if (isSuper && tenantEl) tenantEl.addEventListener('keydown', function(ev){ if (ev.key === 'Enter') load(); });
   load();
