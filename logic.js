@@ -393,12 +393,16 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   const qr_api_body_template = String(doc.qr_api_body_template || "").trim();
   const qr_api_auth_header = String(doc.qr_api_auth_header || "").trim();
   const qr_api_auth_value = String(doc.qr_api_auth_value || "").trim();
-  const qr_api_timeout_ms = Math.max(1000, Math.min(30000, Number(doc.qr_api_timeout_ms || 12000) || 12000));
+  const qr_api_timeout_ms = Math.max(5000, Math.min(120000, Number(doc.qr_api_timeout_ms || 45000) || 45000));
   const qr_field_code = String(doc.qr_field_code || "Codigo").trim();
   const qr_field_description = String(doc.qr_field_description || "Descripcion").trim();
   const qr_field_price = String(doc.qr_field_price || "Precio_Lp1").trim();
+  const qr_price_label = String(doc.qr_price_label || "Precio").trim() || "Precio";
+  const qr_price_note = String(doc.qr_price_note || "").trim();
+  const qr_additional_prices = String(doc.qr_additional_prices || "").trim();
   const qr_field_stock = String(doc.qr_field_stock || "Stock").trim();
   const qr_field_image = String(doc.qr_field_image || "").trim();
+  const qr_image_mime_type = String(doc.qr_image_mime_type || "image/jpeg").trim().toLowerCase() || "image/jpeg";
   const qr_field_brand = String(doc.qr_field_brand || "").trim();
   const qr_field_category = String(doc.qr_field_category || "Desc_Rubro").trim();
   const qr_field_subcategory = String(doc.qr_field_subcategory || "Desc_Subrubro").trim();
@@ -469,8 +473,12 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
     qr_field_code,
     qr_field_description,
     qr_field_price,
+    qr_price_label,
+    qr_price_note,
+    qr_additional_prices,
     qr_field_stock,
     qr_field_image,
+    qr_image_mime_type,
     qr_field_brand,
     qr_field_category,
     qr_field_subcategory,

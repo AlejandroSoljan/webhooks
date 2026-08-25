@@ -8477,6 +8477,7 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             document.getElementById('qrAiUseSameBehavior').checked = j.qr_ai_use_same_behavior !== false;
             document.getElementById('qrAiBehavior').value = j.qr_ai_behavior || '';
             document.getElementById('qrAiWebSearch').checked = j.qr_ai_web_search_enabled !== false;
+            document.getElementById('qrAiWebContext').value = j.qr_ai_web_search_context_size || 'medium';
             document.getElementById('qrAiWebTimeout').value = j.qr_ai_web_search_timeout_ms || 90000;
             toggleQrUi();
 
