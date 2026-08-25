@@ -332,7 +332,6 @@ async function buildTokenSummary({
   const noTypes = String(types || "").trim().toLowerCase() === "none";
   const noChannels = String(channels || "").trim().toLowerCase() === "none";
   const safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional"]);
-  const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web"]);
   const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages"]);
 
   if (noTypes || noChannels) {
@@ -617,7 +616,6 @@ async function buildTokenConversationSummary({
   const noTypes = String(types || "").trim().toLowerCase() === "none";
   const noChannels = String(channels || "").trim().toLowerCase() === "none";
   let safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional"]);
-  const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web"]);
   const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages"]);
   if (!noTypes && !safeTypes.length && safeView === "conversational") safeTypes = ["conversacional"];
   const safeLimit = clampInt(limit, 1, 5000, 500);
