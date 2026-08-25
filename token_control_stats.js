@@ -140,6 +140,184 @@ function tenantChargeRatesConfigured(tenantDoc = {}) {
   ].some((field) => toPositiveNumber(tenantDoc[field]) > 0);
 }
 
+function buildApiMessageWindowMatch({ tenantId = "", from = "", to = "" } = {}) {
+  const match = {};
+  const safeTenant = String(tenantId || "").trim();
+  if (safeTenant) match.tenantId = safeTenant;
+
+  const windowStartedAt = {};
+  const fromDate = parseDateStart(from);
+  const toDate = parseDateEnd(to);
+  if (fromDate) windowStartedAt.$gte = fromDate;
+  if (toDate) windowStartedAt.$lte = toDate;
+  if (Object.keys(windowStartedAt).length) match.windowStartedAt = windowStartedAt;
+
+  return { match, safeTenant };
+}
+
+function normalizeBillingCurrency(value) {
+  const c = String(value || "ARS").trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(c) ? c : "ARS";
+}
+
+function addCurrencyAmount(target = {}, currency, amount) {
+  const c = normalizeBillingCurrency(currency);
+  const n = Number(amount || 0);
+  if (!Number.isFinite(n)) return target;
+  target[c] = Number((Number(target[c] || 0) + n).toFixed(6));
+  return target;
+}
+
+async function buildApiMessageWindowBilling({
+  tenantId = "",
+  from = "",
+  to = "",
+  types = "",
+  channels = "",
+  limit = 500
+} = {}) {
+  const db = await getDb();
+  const { match, safeTenant } = buildApiMessageWindowMatch({ tenantId, from, to });
+
+  const noTypes = String(types || "").trim().toLowerCase() === "none";
+  const noChannels = String(channels || "").trim().toLowerCase() === "none";
+  const safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional"]);
+  const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages"]);
+  const safeLimit = clampInt(limit, 1, 5000, 500);
+
+  // "Tipo IA" no aplica a la mensajería saliente del API. Estas ventanas
+  // se controlan exclusivamente con el filtro de Canal.
+  const channelAllowsApiMessages = !noChannels && (!safeChannels.length || safeChannels.includes("api_messages"));
+  const enabled = channelAllowsApiMessages;
+
+  if (!enabled) {
+    return {
+      ok: true,
+      enabled: false,
+      filters: {
+        tenantId: safeTenant || null,
+        from: from || null,
+        to: to || null,
+        types: safeTypes,
+        channels: safeChannels
+      },
+      items: [],
+      byTenant: [],
+      totals: { windows: 0, messages: 0, byCurrency: {}, last_at: null }
+    };
+  }
+
+  const coll = db.collection("wa_api_message_windows");
+
+  const docs = await coll.find(match, {
+    projection: {
+      tenantId: 1,
+      numeroFrom: 1,
+      contact: 1,
+      windowMinutes: 1,
+      windowStartedAt: 1,
+     windowEndsAt: 1,
+      lastMessageAt: 1,
+      messageCount: 1,
+      unitValue: 1,
+      amount: 1,
+      currency: 1
+    }
+  }).sort({ windowStartedAt: -1 }).limit(safeLimit).toArray();
+
+  // El resumen por dominio no debe depender del límite visual del detalle.
+  const groupedRows = await coll.aggregate([
+    { $match: match },
+    {
+      $group: {
+        _id: { tenantId: "$tenantId", currency: "$currency" },
+        windows: { $sum: 1 },
+        messages: { $sum: { $ifNull: ["$messageCount", 0] } },
+        amount: { $sum: { $ifNull: ["$amount", 0] } },
+        last_at: { $max: { $ifNull: ["$lastMessageAt", "$windowStartedAt"] } }
+      }
+    }
+  ]).toArray();
+
+  const tenantIds = Array.from(new Set(
+    groupedRows.map(r => String(r?._id?.tenantId || "").trim()).filter(Boolean)
+  ));
+  const cfgByTenant = await loadTenantCosts(db, tenantIds);
+
+  const byTenantMap = new Map();
+  for (const row of groupedRows) {
+    const tenantKey = String(row?._id?.tenantId || "").trim();
+   if (!tenantKey) continue;
+    let acc = byTenantMap.get(tenantKey);
+    if (!acc) {
+      const cfg = cfgByTenant.get(tenantKey) || {};
+      acc = {
+        tenantId: tenantKey,
+        company: String(cfg.nom_emp || "").trim(),
+        number: String(cfg.numero || "").trim(),
+        windows: 0,
+        messages: 0,
+       byCurrency: {},
+        last_at: null
+     };
+      byTenantMap.set(tenantKey, acc);
+    }
+    acc.windows += Number(row.windows || 0);
+    acc.messages += Number(row.messages || 0);
+    addCurrencyAmount(acc.byCurrency, row?._id?.currency || "ARS", row.amount || 0);
+    if (!acc.last_at || Date.parse(row.last_at || 0) > Date.parse(acc.last_at || 0)) {
+      acc.last_at = row.last_at || acc.last_at;
+    }
+  }
+
+  const byTenant = [...byTenantMap.values()]
+   .sort((a, b) => String(a.tenantId).localeCompare(String(b.tenantId)));
+
+  const totals = byTenant.reduce((acc, row) => {
+    acc.windows += Number(row.windows || 0);
+    acc.messages += Number(row.messages || 0);
+    for (const [currency, amount] of Object.entries(row.byCurrency || {})) {
+      addCurrencyAmount(acc.byCurrency, currency, amount);
+    }
+    if (!acc.last_at || Date.parse(row.last_at || 0) > Date.parse(acc.last_at || 0)) {
+      acc.last_at = row.last_at || acc.last_at;
+    }
+    return acc;
+  }, { windows: 0, messages: 0, byCurrency: {}, last_at: null });
+
+  const items = docs.map(doc => ({
+    id: doc?._id ? String(doc._id) : "",
+    tenantId: String(doc?.tenantId || "").trim(),
+    numeroFrom: String(doc?.numeroFrom || "").trim(),
+    contact: String(doc?.contact || "").trim(),
+    windowMinutes: Number(doc?.windowMinutes || 0),
+    windowStartedAt: doc?.windowStartedAt || null,
+    windowEndsAt: doc?.windowEndsAt || null,
+    lastMessageAt: doc?.lastMessageAt || null,
+    messageCount: Number(doc?.messageCount || 0),
+    unitValue: Number(doc?.unitValue || 0),
+    amount: Number(doc?.amount || 0),
+    currency: normalizeBillingCurrency(doc?.currency || "ARS")
+  }));
+
+  return {
+    ok: true,
+    enabled: true,
+    filters: {
+      tenantId: safeTenant || null,
+      from: from || null,
+      to: to || null,
+      types: safeTypes,
+      channels: safeChannels,
+      limit: safeLimit
+    },
+    items,
+    byTenant,
+    totals
+  };
+}
+
+
 
 async function buildTokenSummary({
   tenantId = "",
@@ -155,6 +333,7 @@ async function buildTokenSummary({
   const noChannels = String(channels || "").trim().toLowerCase() === "none";
   const safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional"]);
   const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web"]);
+  const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages"]);
 
   if (noTypes || noChannels) {
     return {
@@ -439,6 +618,7 @@ async function buildTokenConversationSummary({
   const noChannels = String(channels || "").trim().toLowerCase() === "none";
   let safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional"]);
   const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web"]);
+  const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages"]);
   if (!noTypes && !safeTypes.length && safeView === "conversational") safeTypes = ["conversacional"];
   const safeLimit = clampInt(limit, 1, 5000, 500);
   const aggregateLimit = Math.min(4000, Math.max(500, safeLimit * 6));
@@ -951,6 +1131,8 @@ function renderTokenControlPage(user) {
     .tenantHead,.stack{display:flex;flex-direction:column;gap:4px}
     .money{color:var(--ok);font-weight:800;white-space:nowrap}
     .profit{color:var(--profit);font-weight:800;white-space:nowrap}
+    .amountStack{display:flex;flex-direction:column;gap:3px;line-height:1.15}.amountStack .main{font-weight:850}.amountStack .sub{font-size:11px;color:var(--muted);font-weight:700}
+    .apiSummary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}.apiSummary .chip{border:1px solid var(--border);background:#f8fafc;border-radius:999px;padding:5px 9px;font-size:12px;color:#475569}.apiSummary .chip b{color:var(--text)}
     .sectionTitle{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px}
     .sectionTitle h2{margin:0;font-size:19px}
     .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
@@ -965,7 +1147,7 @@ function renderTokenControlPage(user) {
     <div class="toolbar">
       <div>
         <h1 style="margin:0 0 4px">Control de consumo IA</h1>
-        <div class="small">${isSuper ? 'Vista administrativa: costo real, importe a cobrar y margen.' : 'Consumo del dominio e importe.'}</div>
+        <div class="small">${isSuper ? 'Vista administrativa: costo real IA, importe a cobrar y margen IA.' : 'Consumo del dominio e importe.'}</div>
       </div>
       <div class="small">${isSuper ? 'Superadmin' : esc(String(user?.role || 'usuario'))} · dominio: <b>${esc(tenant)}</b></div>
     </div>
@@ -977,7 +1159,7 @@ function renderTokenControlPage(user) {
         <label>Hasta<input id="fTo" type="date"/></label>
         
         <details class="multiFilter" id="typeFilter">
-          <summary>Tipo: Todos</summary>
+          <summary>Tipo IA: Todos</summary>
           <div class="multiMenu">
             <div class="multiTools"><button type="button" data-select-all="tokenType">Todos</button><button type="button" data-clear-all="tokenType">Ninguno</button></div>
             <label><input type="checkbox" name="tokenType" value="pedidos" checked/>Pedidos</label>
@@ -990,6 +1172,7 @@ function renderTokenControlPage(user) {
             <div class="multiTools"><button type="button" data-select-all="tokenChannel">Todos</button><button type="button" data-clear-all="tokenChannel">Ninguno</button></div>
             <label><input type="checkbox" name="tokenChannel" value="whatsapp" checked/>WhatsApp</label>
             <label><input type="checkbox" name="tokenChannel" value="qr_web" checked/>QR Web</label>
+            <label><input type="checkbox" name="tokenChannel" value="api_messages" checked/>API Mensajes</label>
           </div>
         </details>
         <button class="btn" type="button" id="btnReload">Actualizar</button>
@@ -1005,7 +1188,7 @@ function renderTokenControlPage(user) {
       ${isSuper ? `
       <div class="kpi"><div class="t">Costo real</div><div class="v money" id="kpiRealCost">US$ 0</div></div>
       <div class="kpi"><div class="t">Importe a cobrar</div><div class="v money" id="kpiBilledCost">US$ 0</div></div>
-      <div class="kpi"><div class="t">Margen bruto</div><div class="v profit" id="kpiMargin">US$ 0</div></div>` : `
+      <div class="kpi"><div class="t">Margen IA</div><div class="v profit" id="kpiMargin">US$ 0</div></div>` : `
       <div class="kpi"><div class="t">Eventos</div><div class="v" id="kpiEvents">0</div></div>
       <div class="kpi"><div class="t">Importe</div><div class="v money" id="kpiBilledCost">US$ 0</div></div>
       <div class="kpi"><div class="t">Último uso</div><div class="v" id="kpiLastUse" style="font-size:16px">-</div></div>`}
@@ -1016,16 +1199,16 @@ function renderTokenControlPage(user) {
         <div>
           <h2>Resumen por dominio</h2>
           <div class="small">${isSuper
-            ? 'El costo real usa token_cost_* del dominio. El importe a cobrar usa token_charge_* del dominio.'
-            : 'El importe mostrado usa la tarifa comercial configurada para tu dominio.'}</div>
+            ? 'Costo real y margen corresponden a IA. A cobrar incluye IA y, cuando corresponda, ventanas valorizadas de API Mensajes.'
+            : 'Importe incluye IA y las ventanas valorizadas de API Mensajes. Si usan monedas distintas se muestran por separado.'}</div>
         </div>
       </div>
       <div class="tableWrap">
         <table>
           <thead>
             ${isSuper ? `<tr>
-              <th>Dominio</th><th>Entrada texto</th><th>Salida texto</th><th>Audio entrada</th><th>Audio salida</th><th>Total tokens</th><th>Eventos</th><th>Costo real</th><th>A cobrar</th><th>Margen</th><th>Último uso</th>
-            </tr>` : `<tr>
+                <th>Dominio</th><th>Entrada texto</th><th>Salida texto</th><th>Audio entrada</th><th>Audio salida</th><th>Total tokens</th><th>Eventos</th><th>Costo real</th><th>A cobrar</th><th>Margen IA</th><th>Último uso</th>
+           </tr>` : `<tr>
               <th>Dominio</th><th>Total tokens</th><th>Eventos</th><th>Último uso</th><th>Importe</th>
             </tr>`}
           </thead>
@@ -1067,14 +1250,38 @@ function renderTokenControlPage(user) {
         <table>
           <thead>
             ${isSuper ? `<tr>
-              <th>Dominio / estado</th><th>Cliente</th><th>Conversación</th><th>Período</th><th>Entrada</th><th>Salida</th><th>Audios</th><th>Total tokens</th><th>Eventos</th><th>Costo real</th><th>A cobrar</th><th>Margen</th>
-            </tr>` : `<tr>
+                 <th>Dominio / estado</th><th>Cliente</th><th>Conversación</th><th>Período</th><th>Entrada</th><th>Salida</th><th>Audios</th><th>Total tokens</th><th>Eventos</th><th>Costo real</th><th>A cobrar</th><th>Margen IA</th>
+          </tr>` : `<tr>
               <th>Dominio / estado</th><th>Cliente</th><th>Período</th><th>Total tokens</th><th>Eventos</th><th>Importe</th>
             </tr>`}
           </thead>
           <tbody id="detailRows">
             <tr><td colspan="${isSuper ? 12 : 6}" class="small">Cargando…</td></tr>
            </tbody>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" id="apiMessagesCard">
+      <div class="sectionTitle">
+        <div>
+          <h2>Mensajería API · ventanas valorizadas</h2>
+          <div class="small">Cada ventana agrupa los mensajes enviados al mismo número durante el período configurado en el dominio. El importe corresponde al valor histórico guardado al crear la ventana.</div>
+        </div>
+      </div>
+      <div class="apiSummary" id="apiMessageSummary">
+        <span class="chip">Cargando…</span>
+      </div>
+      <div class="tableWrap">
+        <table style="min-width:900px">
+          <thead>
+            <tr>
+              <th>Dominio</th><th>Destinatario</th><th>Período</th><th>Ventana</th><th>Mensajes</th><th>Valor ventana</th><th>Importe</th><th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="apiMessageRows">
+            <tr><td colspan="8" class="small">Cargando…</td></tr>
           </tbody>
         </table>
       </div>
@@ -1090,6 +1297,9 @@ function renderTokenControlPage(user) {
   const rowsEl = document.getElementById('rows');
   const detailRowsEl = document.getElementById('detailRows');
   const detailNoteEl = document.getElementById('detailNote');
+  const apiMessagesCard = document.getElementById('apiMessagesCard');
+  const apiMessageSummary = document.getElementById('apiMessageSummary');
+  const apiMessageRows = document.getElementById('apiMessageRows');
   const msgEl = document.getElementById('msg');
   const kpiTokens = document.getElementById('kpiTokens');
   const kpiRealCost = document.getElementById('kpiRealCost');
@@ -1120,6 +1330,49 @@ function renderTokenControlPage(user) {
       minimumFractionDigits:2,
       maximumFractionDigits:6
     }).format(num(v));
+  }
+
+  function fmtCurrency(v,currency){
+    const c=String(currency||'ARS').toUpperCase();
+    try{
+      return new Intl.NumberFormat('es-AR',{
+        style:'currency',
+        currency:c,
+        minimumFractionDigits:2,
+        maximumFractionDigits:c==='USD'?6:2
+      }).format(num(v));
+    }catch{
+      return c+' '+num(v).toFixed(2);
+    }
+  }
+  function amountMapWithAi(aiUsd,apiMap){
+    const out={};
+    const ai=num(aiUsd);
+    if(ai) out.USD=ai;
+    Object.keys(apiMap||{}).forEach(function(c){
+      const key=String(c||'ARS').toUpperCase();
+      out[key]=num(out[key])+num(apiMap[c]);
+    });
+    return out;
+  }
+  function amountMapText(map){
+    const keys=Object.keys(map||{}).filter(function(c){return Math.abs(num(map[c]))>0;});
+    if(!keys.length)return fmtCurrency(0,'USD');
+    keys.sort(function(a,b){if(a==='USD')return -1;if(b==='USD')return 1;if(a==='ARS')return -1;if(b==='ARS')return 1;return a.localeCompare(b);});
+    return keys.map(function(c){return fmtCurrency(map[c],c);}).join(' / ');
+  }
+  function amountStackHtml(aiUsd,apiMap){
+    const apiKeys=Object.keys(apiMap||{}).filter(function(c){return Math.abs(num(apiMap[c]))>0;});
+    const combined=amountMapWithAi(aiUsd,apiMap);
+    const main='<span class="main">'+esc(amountMapText(combined))+'</span>';
+    if(!apiKeys.length)return '<div class="amountStack">'+main+'</div>';
+    const apiText=apiKeys.map(function(c){return fmtCurrency(apiMap[c],c);}).join(' / ');
+    return '<div class="amountStack">'+main+'<span class="sub">Incluye API Mensajes: '+esc(apiText)+'</span></div>';
+  }
+  function newerDate(a,b){
+    const ta=Date.parse(a||0),tb=Date.parse(b||0);
+    if(Number.isFinite(tb)&&(!Number.isFinite(ta)||tb>ta))return b;
+    return a;
   }
 
   function fmtOrderMoney(v){
@@ -1188,16 +1441,46 @@ function renderTokenControlPage(user) {
     return j || {};
   }
 
-  function renderDomainSummary(j){
-    const items = Array.isArray(j.items) ? j.items : [];
+  function renderDomainSummary(j,apiJ){
+    const aiItems = Array.isArray(j.items) ? j.items : [];
     const totals = j.totals || {};
 
+    const apiTenants = Array.isArray(apiJ&&apiJ.byTenant) ? apiJ.byTenant : [];
+    const apiTotals = (apiJ&&apiJ.totals) || {};
+
+    const merged=new Map();
+    aiItems.forEach(function(it){
+      merged.set(String(it.tenantId||''),Object.assign({},it,{api_amounts:{},api_windows:0,api_messages:0}));
+    });
+    apiTenants.forEach(function(api){
+      const key=String(api.tenantId||'');
+      let it=merged.get(key);
+      if(!it){
+        it={
+          tenantId:key,
+          company:api.company||'',
+          number:api.number||'',
+          message_input_tokens:0,message_output_tokens:0,audio_input_tokens:0,audio_output_tokens:0,
+          total_tokens:0,events:0,billed_cost:0,real_cost:0,gross_margin:0,
+          billing_configured:true,last_at:null
+        };
+        merged.set(key,it);
+      }
+      if(!it.company)it.company=api.company||'';
+      if(!it.number)it.number=api.number||'';
+      it.api_amounts=api.byCurrency||{};
+      it.api_windows=num(api.windows);
+      it.api_messages=num(api.messages);
+      it.last_at=newerDate(it.last_at,api.last_at);
+    });
+    const items=Array.from(merged.values()).sort(function(a,b){return String(a.tenantId||'').localeCompare(String(b.tenantId||''));});
+
     kpiTokens.textContent = fmtInt(totals.total_tokens || 0);
-    kpiBilledCost.textContent = fmtMoney(totals.billed_cost || 0);
+    kpiBilledCost.innerHTML = amountStackHtml(totals.billed_cost || 0, apiTotals.byCurrency || {});
     if (isSuper && kpiRealCost) kpiRealCost.textContent = fmtMoney(totals.real_cost || 0);
     if (isSuper && kpiMargin) kpiMargin.textContent = fmtMoney(totals.gross_margin || 0);
     if (!isSuper && kpiEvents) kpiEvents.textContent = fmtInt(totals.events || 0);
-    if (!isSuper && kpiLastUse) kpiLastUse.textContent = fmtDate(totals.last_at);
+    if (!isSuper && kpiLastUse) kpiLastUse.textContent = fmtDate(newerDate(totals.last_at,apiTotals.last_at));
 
     if (!items.length) {
       rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">No hay consumos para los filtros seleccionados.</td></tr>';
@@ -1207,27 +1490,30 @@ function renderTokenControlPage(user) {
     rowsEl.innerHTML = items.map(function(it){
      const company = String(it.company || '').trim();
       const number = String(it.number || '').trim();
-      const billingWarning = it.billing_configured === false
-        ? '<span class="small" style="color:#b45309">Tarifa comercial sin configurar</span>'
+      const billingWarning = num(it.total_tokens)>0 && it.billing_configured === false
+        ? '<span class="small" style="color:#b45309">Tarifa comercial IA sin configurar</span>'
         : '';
-        if (!isSuper) {
+      const apiInfo = num(it.api_windows)>0
+        ? '<span class="small">'+fmtInt(it.api_windows)+' ventanas API · '+fmtInt(it.api_messages)+' mensajes</span>'
+        : '';
+      if (!isSuper) {
         return '<tr>' +
-         '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
-          (company ? '<span class="small">' + esc(company) + '</span>' : '') + billingWarning + '</div></td>' +
+          '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
+          (company ? '<span class="small">' + esc(company) + '</span>' : '') + apiInfo + billingWarning + '</div></td>' +
           '<td><b>' + fmtInt(it.total_tokens) + '</b></td>' +
           '<td>' + fmtInt(it.events) + '</td>' +
           '<td>' + esc(fmtDate(it.last_at)) + '</td>' +
-          '<td class="money">' + fmtMoney(it.billed_cost) + '</td>' +
+          '<td class="money">' + amountStackHtml(it.billed_cost,it.api_amounts||{}) + '</td>' +
         '</tr>';
       }
       return '<tr>' +
         '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
         (company ? '<span class="small">' + esc(company) + '</span>' : '') +
-        (number ? '<span class="small">' + esc(number) + '</span>' : '') + billingWarning + '</div></td>' +
+        (number ? '<span class="small">' + esc(number) + '</span>' : '') + apiInfo + billingWarning + '</div></td>' +
         '<td>' + fmtInt(it.message_input_tokens) + '</td><td>' + fmtInt(it.message_output_tokens) + '</td>' +
         '<td>' + fmtInt(it.audio_input_tokens) + '</td><td>' + fmtInt(it.audio_output_tokens) + '</td>' +
         '<td><b>' + fmtInt(it.total_tokens) + '</b></td><td>' + fmtInt(it.events) + '</td>' +
-        '<td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money">' + fmtMoney(it.billed_cost) + '</td>' +
+        '<td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money">' + amountStackHtml(it.billed_cost,it.api_amounts||{}) + '</td>' +
         '<td class="profit">' + fmtMoney(it.gross_margin) + '</td><td>' + esc(fmtDate(it.last_at)) + '</td>' +
       '</tr>';
     }).join('');
@@ -1291,29 +1577,73 @@ function renderTokenControlPage(user) {
     }).join('');
   }
 
+
+  function renderApiMessageWindows(j){
+    const enabled=!!(j&&j.enabled);
+    if(apiMessagesCard)apiMessagesCard.style.display=enabled?'block':'none';
+    if(!enabled)return;
+
+    const items=Array.isArray(j.items)?j.items:[];
+    const totals=j.totals||{};
+    const amounts=amountMapText(totals.byCurrency||{});
+    apiMessageSummary.innerHTML=
+      '<span class="chip"><b>'+fmtInt(totals.windows||0)+'</b> ventanas</span>'+
+      '<span class="chip"><b>'+fmtInt(totals.messages||0)+'</b> mensajes enviados</span>'+
+      '<span class="chip">Importe: <b>'+esc(amounts)+'</b></span>';
+
+    if(!items.length){
+      apiMessageRows.innerHTML='<tr><td colspan="8" class="small">No hay ventanas de API Mensajes para los filtros seleccionados.</td></tr>';
+      return;
+    }
+
+    const now=Date.now();
+    apiMessageRows.innerHTML=items.map(function(it){
+      const endMs=Date.parse(it.windowEndsAt||0);
+      const isOpen=Number.isFinite(endMs)&&endMs>now;
+      return '<tr>'+
+        '<td><span class="pill">'+esc(it.tenantId||'')+'</span></td>'+
+        '<td><div class="stack"><b>'+esc(it.contact||'-')+'</b>'+(it.numeroFrom?'<span class="small">Desde: '+esc(it.numeroFrom)+'</span>':'')+'</div></td>'+
+        '<td><div class="stack"><span>'+esc(fmtDate(it.windowStartedAt))+'</span><span class="small">hasta '+esc(fmtDate(it.windowEndsAt))+'</span></div></td>'+
+        '<td>'+fmtInt(it.windowMinutes||0)+' min</td>'+
+        '<td><b>'+fmtInt(it.messageCount||0)+'</b></td>'+
+        '<td>'+esc(fmtCurrency(it.unitValue||0,it.currency||'ARS'))+'</td>'+
+        '<td class="money">'+esc(fmtCurrency(it.amount||0,it.currency||'ARS'))+'</td>'+
+        '<td><span class="status '+(isOpen?'pending':'closed')+'">'+(isOpen?'ABIERTA':'CERRADA')+'</span></td>'+
+      '</tr>';
+    }).join('');
+  }
+
+
+
   async function load(){
     msgEl.textContent = '';
     rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">Cargando…</td></tr>';
     detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '6') + '" class="small">Cargando…</td></tr>';
+    if(apiMessageRows) apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Cargando…</td></tr>';
+    if(apiMessageSummary) apiMessageSummary.innerHTML='<span class="chip">Cargando…</span>';
 
     try{
       const summaryUrl = '/api/token-control/summary?' + buildQuery(false).toString();
       const conversationsUrl = '/api/token-control/conversations?' + buildQuery(true).toString();
+      const apiMessagesUrl = '/api/token-control/api-message-windows?' + buildQuery(true).toString();
       const result = await Promise.all([
         getJson(summaryUrl),
-        getJson(conversationsUrl)
+        getJson(conversationsUrl),
+        getJson(apiMessagesUrl)
       ]);
-      renderDomainSummary(result[0]);
+      renderDomainSummary(result[0],result[2]);
       renderConversationSummary(result[1]);
+      renderApiMessageWindows(result[2]);
     } catch(e){
       msgEl.textContent = e && e.message ? e.message : String(e);
       rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">Error cargando datos.</td></tr>';
       detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '6') + '" class="small">Error cargando detalle por conversación.</td></tr>';
+      if(apiMessageRows) apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Error cargando ventanas API Mensajes.</td></tr>';
     }
   }
 
   btnReload.addEventListener('click', load);
-  setupMulti('typeFilter','tokenType','Tipo');
+  setupMulti('typeFilter','tokenType','Tipo IA');
   setupMulti('channelFilter','tokenChannel','Canal');
   if (isSuper && tenantEl) tenantEl.addEventListener('keydown', function(ev){ if (ev.key === 'Enter') load(); });
   load();
@@ -1406,10 +1736,35 @@ function mountTokenControlRoutes(app, auth) {
       return res.status(500).json({ ok: false, error: "internal" });
     }
   });
+
+ app.get("/api/token-control/api-message-windows", requireAuth, requireTokenControlAccess, async (req, res) => {
+    try {
+      const role = String(req.user?.role || "").toLowerCase();
+      const isSuper = role === "superadmin";
+      const tenantId = isSuper
+        ? String(req.query?.tenantId || "").trim()
+        : (typeof auth.resolveTenantId === "function" ? auth.resolveTenantId(req) : String(req.user?.tenantId || "").trim());
+
+      const data = await buildApiMessageWindowBilling({
+        tenantId,
+        from: String(req.query?.from || "").trim(),
+        to: String(req.query?.to || "").trim(),
+        types: String(req.query?.types || "").trim(),
+        channels: String(req.query?.channels || "").trim(),
+        limit: req.query?.limit
+      });
+      return res.json(data);
+    } catch (e) {
+      console.error("[token-control] api-message-windows error:", e);
+      return res.status(500).json({ ok: false, error: "internal" });
+    }
+  });
+
 }
 
 module.exports = {
   mountTokenControlRoutes,
   buildTokenSummary,
   buildTokenConversationSummary,
+  buildApiMessageWindowBilling,
 };
