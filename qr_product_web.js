@@ -15,7 +15,7 @@ const {
   clearEndedFlag,
 } = require('./logic');
 
-const QR_BUILD = '2026-08-22-v4';
+const QR_BUILD = '2026-08-25-v5-contacto-operador';
 const qrJson = express.json({ limit: '512kb' });
 const rateState = new Map();
 
@@ -606,6 +606,135 @@ function parseReply(raw) {
   return text || 'No pude generar información adicional en este momento.';
 }
 
+function parseQrStructuredReply(raw) {
+  const text = String(raw || '').trim();
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object') {
+      return {
+        response: String(parsed.response || '').trim() || 'No pude generar información adicional en este momento.',
+        lead: parsed.lead && typeof parsed.lead === 'object' ? parsed.lead : null,
+      };
+    }
+  } catch {}
+  return { response: text || 'No pude generar información adicional en este momento.', lead: null };
+}
+
+function normalizeQrContactPhone(value) {
+  const raw = clean(value, 80);
+  if (!raw) return '';
+  const digits = raw.replace(/\D/g, '');
+  return digits.length >= 8 && digits.length <= 20 ? digits : '';
+}
+
+function contactHintsFromUserText(value) {
+  const text = clean(value, 2500);
+  const out = { name: '', email: '', phone: '' };
+  if (!text) return out;
+
+  const email = text.match(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i);
+  if (email) out.email = clean(email[0], 300);
+
+  const phoneCandidates = text.match(/(?:\+?\d[\d\s().-]{6,}\d)/g) || [];
+  for (const candidate of phoneCandidates) {
+    const phone = normalizeQrContactPhone(candidate);
+    if (phone) { out.phone = phone; break; }
+  }
+
+  const nameMatch = text.match(/\b(?:me llamo|mi nombre es)\s+([A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ' .-]{1,79})/i);
+  if (nameMatch) out.name = clean(nameMatch[1].replace(/[.,;:!?]+$/g, ''), 120);
+  return out;
+}
+
+function mergeQrContactLead(lead, userText) {
+  const src = lead && typeof lead === 'object' ? { ...lead } : {};
+  const hints = contactHintsFromUserText(userText);
+  const phone = normalizeQrContactPhone(src.phone) || hints.phone;
+  const email = clean(src.email, 300) || hints.email;
+  const name = clean(src.name, 200) || hints.name;
+  const company = clean(src.company, 200);
+  const hasContact = !!(phone || email || name || company);
+  return {
+    ...src,
+    capture: src.capture === true || hasContact,
+    type: clean(src.type, 40).toLowerCase() === 'cotizacion' ? 'cotizacion' : (hasContact ? 'contacto' : clean(src.type, 40)),
+    name,
+    company,
+    email,
+    phone,
+  };
+}
+
+async function upsertQrContactLead(db, { tenant, conversationId, waId, lead, userText }) {
+  const normalized = mergeQrContactLead(lead, userText);
+  if (normalized.capture !== true) return null;
+
+  const now = new Date();
+  const oid = conversationId instanceof ObjectId ? conversationId : new ObjectId(String(conversationId));
+  const leadType = String(normalized.type || '').toLowerCase() === 'cotizacion' ? 'cotizacion' : 'contacto';
+  const filter = { tenantId: tenant, source: 'qr_web', conversationId: oid };
+  const set = {
+    tenantId: tenant,
+    source: 'qr_web',
+    conversationId: oid,
+    channelType: 'qr_web',
+    waId: clean(waId, 120),
+    leadType,
+    status: 'open',
+    updatedAt: now,
+    lastMessage: clean(userText, 2000),
+  };
+
+  for (const [key, max] of Object.entries({ name: 200, company: 200, email: 300 })) {
+    const value = clean(normalized[key], max);
+    if (value) set[key] = value;
+  }
+  const phone = normalizeQrContactPhone(normalized.phone);
+  if (phone) set.phone = phone;
+
+  const quote = {
+    origin: clean(normalized.origin, 300),
+    destination: clean(normalized.destination, 300),
+    cargo: clean(normalized.cargo, 800),
+    packages: clean(normalized.packages, 300),
+    weight: clean(normalized.weight, 300),
+    dimensions: clean(normalized.dimensions, 500),
+    notes: clean(normalized.notes, 1000),
+  };
+  for (const [key, value] of Object.entries(quote)) if (value) set[`quote.${key}`] = value;
+
+  const result = await db.collection('leads').findOneAndUpdate(
+    filter,
+    {
+      $set: set,
+      $setOnInsert: {
+        createdAt: now,
+        message: clean(userText, 2000),
+        quoteReady: false,
+        page: 'bot/qr_web',
+      },
+    },
+    { upsert: true, returnDocument: 'after' }
+  );
+  let doc = result?.value || result || null;
+  if (!doc?._id) doc = await db.collection('leads').findOne(filter).catch(() => null);
+
+  const leadId = doc?._id || null;
+  const convSet = { hasLead: true, leadType, leadUpdatedAt: now };
+  if (leadId) convSet.leadId = leadId;
+  if (set.name) convSet.contactName = set.name;
+  if (phone) convSet.contactPhone = phone;
+  if (set.email) convSet.contactEmail = set.email;
+
+  await db.collection('conversations').updateOne(
+    { _id: oid, tenantId: tenant },
+    { $set: convSet }
+  );
+
+  console.log(`[qr] contacto guardado tenant=${tenant} conv=${String(oid)} name=${set.name ? 'si' : 'no'} phone=${phone ? 'si' : 'no'} email=${set.email ? 'si' : 'no'}`);
+  return doc;
+}
+
 function allowAiRequest(req, sessionId) {
   const ip = clean(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '', 120).split(',')[0].trim();
   const key = `${ip}|${safeSessionId(sessionId)}`;
@@ -649,15 +778,19 @@ function pageHtml({ tenant, code }) {
 <script>
 const TENANT=${JSON.stringify(tenant)};
 const CODE=${JSON.stringify(code)};
-let PRODUCT=null, AI_ENABLED=false, sending=false, started=false;
+let PRODUCT=null, AI_ENABLED=false, sending=false, started=false, conversationId='', pollTimer=null;
 const el=id=>document.getElementById(id);
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 function sessionId(){let s=sessionStorage.getItem('asistoQrSession');if(!s){try{s=crypto.randomUUID().replace(/-/g,'_')}catch(_){s='qr_'+Date.now()+'_'+Math.random().toString(36).slice(2)}sessionStorage.setItem('asistoQrSession',s)}return s}
 function money(v,currency){if(v==null||v==='')return 'Consultar';try{return new Intl.NumberFormat('es-AR',{style:'currency',currency:currency||'ARS',maximumFractionDigits:2}).format(Number(v))}catch{return '$ '+Number(v).toLocaleString('es-AR',{maximumFractionDigits:2})}}
 function richText(s){let x=esc(s);x=x.replace(/\*([^*\n]+)\*/g,'<strong>$1</strong>');x=x.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener">$1</a>');return x.replace(/\n/g,'<br>')}
 function now(){return new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}
-function addMsg(role,text,typing=false){const row=document.createElement('div');row.className='msg '+(role==='user'?'user':'bot');if(typing)row.id='typing';row.innerHTML='<div class="bubble">'+(typing?'<span class="typing"><i></i><i></i><i></i></span>':richText(text))+'<span class="meta">'+(role==='user'?'Vos':'Asisto')+' · '+esc(now())+'</span></div>';el('chatBody').appendChild(row);el('chatBody').scrollTop=el('chatBody').scrollHeight}
+function msgTime(v){if(!v)return now();const d=new Date(v);return isNaN(d)?now():d.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}
+function addMsg(role,text,typing=false,label='',at=''){const row=document.createElement('div');row.className='msg '+(role==='user'?'user':'bot');if(typing)row.id='typing';const who=label||(role==='user'?'Vos':'Asisto');row.innerHTML='<div class="bubble">'+(typing?'<span class="typing"><i></i><i></i><i></i></span>':richText(text))+'<span class="meta">'+esc(who)+' · '+esc(msgTime(at))+'</span></div>';el('chatBody').appendChild(row);el('chatBody').scrollTop=el('chatBody').scrollHeight}
 function removeTyping(){const n=el('typing');if(n)n.remove()}
+function renderServerMessages(items){const body=el('chatBody');body.innerHTML='';for(const m of (items||[])){const role=String(m.role||'')==='user'?'user':'bot';const label=role==='user'?'Vos':(m.fromOperator?'Asesor':'Asisto');addMsg(role,m.content||'',false,label,m.createdAt)}}
+async function syncChatMessages(force=false){if(sending&&!force)return;try{const u=new URL('/api/ext/qr/chat/messages',location.origin);u.searchParams.set('tenant',TENANT);u.searchParams.set('codigo',CODE);u.searchParams.set('sessionId',sessionId());const j=await jsonFetch(u.toString());if(j.conversationId)conversationId=j.conversationId;if(Array.isArray(j.items))renderServerMessages(j.items)}catch(_){}}
+function startChatPolling(){if(pollTimer)return;pollTimer=setInterval(()=>{if(started&&el('chat').classList.contains('open')&&!sending)syncChatMessages(false)},3000)}
 async function jsonFetch(url,opts={}){const r=await fetch(url,{cache:'no-store',...opts});const text=await r.text();let j={};try{j=text?JSON.parse(text):{}}catch{}if(!r.ok)throw new Error(j.detail||j.error||('HTTP '+r.status));return j}
 function safeColor(v,fallback){const x=String(v||'').trim();return /^#[0-9a-f]{6}$/i.test(x)?x:fallback}
 function renderPrices(p,currency){
@@ -726,8 +859,8 @@ function renderProduct(j){
   if(AI_ENABLED&&el('moreBtn'))el('moreBtn').addEventListener('click',startAi);
 }
 async function loadProduct(){try{el('productCard').innerHTML='<div class="loading">Consultando producto...</div>';const u=new URL('/api/ext/qr/product',location.origin);u.searchParams.set('tenant',TENANT);u.searchParams.set('codigo',CODE);renderProduct(await jsonFetch(u.toString()))}catch(e){el('productCard').innerHTML='<div class="error"><b>No pudimos cargar este producto.</b><br/><span>'+esc(e.message)+'</span><div style="margin-top:12px"><button class="btn btnPrimary" id="retryProductBtn" type="button">Reintentar</button></div></div>';const rb=el('retryProductBtn');if(rb)rb.addEventListener('click',loadProduct)}}
- async function callAi(message,initial=false){if(sending)return;sending=true;const btn=el('sendBtn');if(btn)btn.disabled=true;if(message&&!initial)addMsg('user',message);addMsg('bot','',true);try{const j=await jsonFetch('/api/ext/qr/chat',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({tenant:TENANT,codigo:CODE,sessionId:sessionId(),message:message||'',initial})});removeTyping();addMsg('bot',j.reply||'Sin respuesta');started=true}catch(e){removeTyping();addMsg('bot','No pude obtener información adicional en este momento. '+e.message)}finally{sending=false;if(btn)btn.disabled=false}}
-async function startAi(){el('chat').classList.add('open');el('chat').scrollIntoView({behavior:'smooth',block:'start'});if(!started){const b=el('moreBtn');if(b)b.disabled=true;await callAi('',true);if(b)b.disabled=false}else el('message').focus()}
+ async function callAi(message,initial=false){if(sending)return;sending=true;const btn=el('sendBtn');if(btn)btn.disabled=true;if(message&&!initial)addMsg('user',message);addMsg('bot','',true);try{const j=await jsonFetch('/api/ext/qr/chat',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({tenant:TENANT,codigo:CODE,sessionId:sessionId(),message:message||'',initial})});removeTyping();if(j.conversationId)conversationId=j.conversationId;started=true;await syncChatMessages(true);startChatPolling()}catch(e){removeTyping();addMsg('bot','No pude obtener información adicional en este momento. '+e.message)}finally{sending=false;if(btn)btn.disabled=false}}
+async function startAi(){el('chat').classList.add('open');el('chat').scrollIntoView({behavior:'smooth',block:'start'});if(!started){const b=el('moreBtn');if(b)b.disabled=true;await callAi('',true);if(b)b.disabled=false}else{await syncChatMessages(true);startChatPolling();el('message').focus()}}
 async function send(){const box=el('message');const msg=String(box.value||'').trim();if(!msg||sending)return;box.value='';await callAi(msg,false);box.focus()}
 el('sendBtn').addEventListener('click',send);el('message').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});el('closeChat').addEventListener('click',()=>el('chat').classList.remove('open'));loadProduct();
 </script>
@@ -808,6 +941,43 @@ function mountQrProductWeb(app) {
     }
   });
 
+  app.get('/api/ext/qr/chat/messages', async (req, res) => {
+    try {
+      const tenant = safeTenant(req.query?.tenant);
+      const code = digitsOrText(req.query?.codigo, 180);
+      const sid = safeSessionId(req.query?.sessionId);
+      if (!tenant || !code || !sid) return res.status(400).json({ ok: false, error: 'tenant_codigo_session_required' });
+      const db = await getDb();
+      const conv = await db.collection('conversations').findOne(
+        { tenantId: tenant, qrSessionId: sid, qrProductCode: code, channelType: 'qr_web', botMode: 'conversacional' },
+        { sort: { updatedAt: -1, openedAt: -1 } }
+      );
+      if (!conv) return res.json({ ok: true, conversationId: '', manualOpen: false, items: [] });
+
+      const messages = await db.collection('messages')
+        .find({ tenantId: tenant, conversationId: conv._id })
+        .sort({ ts: 1, createdAt: 1 })
+        .limit(500)
+        .toArray();
+
+      return res.json({
+        ok: true,
+        conversationId: String(conv._id),
+        manualOpen: conv.manualOpen === true,
+        items: messages.map(m => ({
+          _id: String(m._id),
+          role: m.role,
+          content: clean(m.content, 20000),
+          createdAt: m.ts || m.createdAt,
+          fromOperator: ['operator','admin'].includes(String(m?.meta?.from || '').toLowerCase()),
+        })),
+      });
+    } catch (e) {
+      console.error('[qr] chat messages:', e?.message || e);
+      return res.status(500).json({ ok: false, error: 'internal' });
+    }
+  });
+
   app.post('/api/ext/qr/chat', qrJson, async (req, res) => {
     const startedAt = Date.now();
     try {
@@ -840,6 +1010,10 @@ function mountQrProductWeb(app) {
         ? `Solicitó más información sobre ${product.description} (SKU: ${product.code})`
         : message;
       await saveQrMessage(db, { tenant, conversationId: convId, waId, role: 'user', content: visibleUserText, product, meta: { initial } });
+
+      if (conv.manualOpen === true) {
+        return res.json({ ok: true, conversationId: String(convId), manual: true, reply: '' });
+      }
 
       const ctx = productContext(product, cfg);
       const behaviorOverride = cfg.aiUseSameBehavior
@@ -929,7 +1103,7 @@ function mountQrProductWeb(app) {
         botModeOverride: 'conversacional',
         historyModeOverride: 'compact',
         behaviorTextOverride: behaviorOverride,
-        leadCaptureOverride: cfg.aiUseSameBehavior ? undefined : false,
+        leadCaptureOverride: true,
         disableExternalActions: initial === true,
         additionalExternalActions: extraActions,
         externalApiContext: {
@@ -938,12 +1112,28 @@ function mountQrProductWeb(app) {
           consulta: message || product.description,
         },
       });
-      const reply = parseReply(raw);
-      await saveQrMessage(db, { tenant, conversationId: convId, waId, role: 'assistant', content: reply, product, meta: { ai: true } });
+      const parsedReply = parseQrStructuredReply(raw);
+      const reply = parsedReply.response;
+      const capturedLead = await upsertQrContactLead(db, {
+        tenant,
+        conversationId: convId,
+        waId,
+        lead: parsedReply.lead,
+        userText: visibleUserText,
+      });
+      await saveQrMessage(db, {
+        tenant,
+        conversationId: convId,
+        waId,
+        role: 'assistant',
+        content: reply,
+        product,
+        meta: { ai: true, leadId: capturedLead?._id ? String(capturedLead._id) : null },
+      });
 
       console.log(`[qr] ai tenant=${tenant} sku=${product.code} conv=${String(convId)} ms=${Date.now() - startedAt}`);
       res.setHeader('Cache-Control', 'no-store');
-      return res.json({ ok: true, conversationId: String(convId), reply });
+      return res.json({ ok: true, conversationId: String(convId), reply, contactCaptured: !!capturedLead });
     } catch (e) {
       console.error('[qr] chat:', e?.response?.data || e?.message || e);
       return res.status(500).json({ ok: false, error: 'qr_ai_failed', detail: clean(e?.message || 'No se pudo obtener respuesta', 500) });

@@ -172,6 +172,7 @@ const ASSISTANT_CONVERSATIONAL_RESPONSE_SCHEMA = {
         "name",
         "company",
         "email",
+        "phone",
         "origin",
         "destination",
         "cargo",
@@ -187,6 +188,7 @@ const ASSISTANT_CONVERSATIONAL_RESPONSE_SCHEMA = {
         name: { type: "string" },
         company: { type: "string" },
         email: { type: "string" },
+        phone: { type: "string" },
         origin: { type: "string" },
         destination: { type: "string" },
         cargo: { type: "string" },
@@ -2269,7 +2271,9 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
               "Usá lead.capture=true cuando el usuario pida cotización, presupuesto, precio para un servicio, quiera enviar/transportar algo, solicite contacto comercial o siga aportando datos de una consulta comercial iniciada previamente.",
               "Para una cotización usá lead.type=\"cotizacion\".",
               "Extraé solo datos que el usuario haya dado explícitamente en esta conversación. No inventes.",
-              "Campos disponibles: name, company, email, origin, destination, cargo, packages, weight, dimensions y notes.",
+              "Campos disponibles: name, company, email, phone, origin, destination, cargo, packages, weight, dimensions y notes.",
+              "Si el usuario proporciona nombre, teléfono, email o empresa porque se le pidió un dato de contacto, capturalo con lead.capture=true y lead.type=\"contacto\".",
+              "Extraé phone solo si el usuario lo proporcionó explícitamente; conservá el número informado sin inventar prefijos.",
               "Si faltan datos relevantes, pedilos naturalmente en response y mantené lead.capture=true con los datos conocidos.",
               "Usá lead.complete=true solamente cuando ya haya información suficiente para que una persona continúe la gestión comercial; para transporte, como mínimo origen, destino y qué se transporta.",
               "Cuando no sea una consulta comercial, devolvé lead.capture=false, lead.type=\"\", lead.complete=false y los demás campos como string vacío."
@@ -2660,7 +2664,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       if (!leadCaptureEnabled) {
         return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","action":{"call":false,"name":"","query":""}}';
       }
-      return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","lead":{"capture":false,"type":"","complete":false,"name":"","company":"","email":"","origin":"","destination":"","cargo":"","packages":"","weight":"","dimensions":"","notes":""},"action":{"call":false,"name":"","query":""}}';
+      return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","lead":{"capture":false,"type":"","complete":false,"name":"","company":"","email":"","phone":"","origin":"","destination":"","cargo":"","packages":"","weight":"","dimensions":"","notes":""},"action":{"call":false,"name":"","query":""}}';
    }
     return '{"response":"Lo siento, ocurrió un error. Intenta nuevamente.","estado":"IN_PROGRESS","Pedido":{"items":[],"total_pedido":0}}';
   }
