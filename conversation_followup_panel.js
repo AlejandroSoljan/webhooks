@@ -22,7 +22,7 @@ const LIVE_AI_QUIET_MS = 15 * 1000;
 const LIVE_AI_MIN_INTERVAL_MS = 60 * 1000;
 const aiClassificationInFlight = new Set();
 const openaiClients = new Map();
-const FOLLOWUP_BUILD = '2026-08-25-v7-chat-operador-qr';
+const FOLLOWUP_BUILD = '2026-08-25-v8-reabrir-chat-cerrado';
 
 function htmlEscape(value) {
   return String(value ?? '')
@@ -988,13 +988,21 @@ async function sendFromFollowupChat(){
   const box=el('chatMessage'),btn=el('chatSendBtn'),text=String(box.value||'').trim();
   if(!text)return;btn.disabled=true;
   try{
+    let reopened=false;
+    if(activeItem.finalized===true){
+      await requestJson('/api/conversation-followup/'+encodeURIComponent(activeId)+'/reopen',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      activeItem.finalized=false;activeItem.manualOpen=true;reopened=true;
+    }
     if(String(activeItem.channelType||'whatsapp').toLowerCase()==='qr_web'){
       await requestJson('/api/conversation-followup/'+encodeURIComponent(activeId)+'/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
     }else{
       await requestJson('/api/admin/conversation-manual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({convId:activeId,manualOpen:true})});
       await requestJson('/api/admin/send-message',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({convId:activeId,text})});
     }
-    box.value='';await refreshOpenChatMessages(activeId);await loadRows();
+    box.value='';
+    if(reopened)toast('Conversación reabierta en atención manual');
+    await loadRows();
+    await openChat(activeId);
   }catch(e){toast(e.message,true)}finally{btn.disabled=false;box.focus()}
 }
 async function openChat(id){
@@ -1007,7 +1015,10 @@ async function openChat(id){
     el('chatSubtitle').textContent=(x.channelType==='qr_web'?('QR Web'+(x.qrProductCode?' · SKU '+x.qrProductCode:'')):(x.waId||''))+' · '+(x.finalized?'Finalizada':(x.manualOpen?'Atención manual':'Bot activo'))+' · última actividad '+fmt(x.lastAt);
     const contactParts=[];if(x.lead?.phone||x.contactPhone)contactParts.push('Tel: '+(x.lead?.phone||x.contactPhone));if(x.lead?.email||x.contactEmail)contactParts.push('Email: '+(x.lead?.email||x.contactEmail));if(x.lead?.company)contactParts.push('Empresa: '+x.lead.company);el('chatContact').textContent=contactParts.join(' · ');
     renderFollowupChatMessages(m.items||[]);
-    if(CAN_INBOX&&!x.finalized)el('chatComposer').classList.remove('hidden');
+    if(CAN_INBOX){
+      el('chatComposer').classList.remove('hidden');
+      el('chatMessage').placeholder=x.finalized?'Escribí una respuesta… Al enviar, la conversación se reabrirá en atención manual.':'Escribí una respuesta al cliente…';
+    }
     let foot='';if(!x.finalized)foot+='<button class="btn btnDanger" id="closeNowBtn">Finalizar conversación</button>';foot+='<button class="btn btnPrimary" id="chatFollowBtn">Seguimiento</button>';el('chatFoot').innerHTML=foot;
     if(el('closeNowBtn'))el('closeNowBtn').onclick=()=>closeNow(x._id);if(el('chatFollowBtn'))el('chatFollowBtn').onclick=()=>{closeModal('chatModal');openFollow(x._id)};
     startOpenChatPolling(id);setTimeout(()=>el('chatMessage')?.focus(),0);
@@ -1350,6 +1361,52 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
       return res.json({ ok: true, item: bundle.item, config: bundle.config, build: FOLLOWUP_BUILD });
     } catch (e) {
       console.error('[followup] get:', e);
+      return res.status(500).json({ ok: false, error: 'internal' });
+    }
+  });
+
+  app.post('/api/conversation-followup/:id/reopen', async (req, res) => {
+    try {
+      if (!hasPageAccess(auth, req, 'inbox')) return res.status(403).json({ ok: false, error: 'forbidden' });
+      const tenant = resolveTenant(req, auth);
+      const id = String(req.params.id || '').trim();
+      if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+
+      const db = await getDb();
+      const oid = new ObjectId(id);
+      const conv = await db.collection('conversations').findOne({ _id: oid, tenantId: tenant, botMode: 'conversacional' });
+      if (!conv) return res.status(404).json({ ok: false, error: 'not_found' });
+
+      const now = new Date();
+      const operator = cleanString(req.user?.username || req.user?.uid || req.user?.email || 'operador', 120);
+      const set = {
+        finalized: false,
+        manualOpen: true,
+        status: 'OPEN',
+        updatedAt: now,
+        manualStartedAt: now,
+        reopenedAt: now,
+        reopenedBy: operator,
+        followupReviewPending: false,
+      };
+      if (conv.closedAt) set.lastClosedAt = conv.closedAt;
+
+      await db.collection('conversations').updateOne(
+        { _id: oid, tenantId: tenant },
+        {
+          $set: set,
+          $unset: {
+            closedAt: '',
+            closeReason: '',
+            manualEndedAt: '',
+            followupAutoClosedAt: '',
+          },
+        }
+      );
+
+      return res.json({ ok: true, finalized: false, manualOpen: true });
+    } catch (e) {
+      console.error('[followup] reopen:', e);
       return res.status(500).json({ ok: false, error: 'internal' });
     }
   });
