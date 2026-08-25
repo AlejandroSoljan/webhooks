@@ -736,7 +736,7 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}button,input,select,textarea{font:inherit}button{cursor:pointer}.wrap{padding:14px;min-height:100vh}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}.title h1{font-size:22px;margin:0 0 4px}.title p{margin:0;color:var(--muted);font-size:12px}.topActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.tenantPicker{display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid var(--line);border-radius:10px;background:#fff}.tenantPicker label{font-size:11px;font-weight:800;color:#475467}.tenantPicker select{min-width:150px;border:0;background:transparent;color:var(--text);font-weight:800;outline:none}.btn{border:1px solid var(--line);border-radius:9px;padding:8px 11px;background:#fff;color:var(--text);font-weight:750}.btn:hover{background:#f8fafc}.btnPrimary{background:var(--primary);border-color:var(--primary);color:#fff}.btnPrimary:hover{background:var(--primary2)}.btnDanger{color:var(--danger);border-color:#f4c7c3}.btnSm{padding:6px 9px;font-size:12px}.muted{color:var(--muted);font-size:12px}
 .kpis{display:grid;grid-template-columns:repeat(6,minmax(95px,1fr));gap:6px;margin-bottom:8px}.kpi{background:#fff;border:1px solid var(--line);border-radius:10px;padding:6px 9px;box-shadow:0 2px 8px rgba(16,24,40,.04);min-height:52px}.kpi b{display:block;font-size:18px;line-height:1.05}.kpi span{font-size:10px;color:var(--muted);line-height:1.15}
 .filters{display:grid;grid-template-columns:minmax(210px,1.25fr) 120px 120px minmax(140px,.75fr) minmax(145px,.8fr) minmax(155px,.85fr) minmax(145px,.8fr);gap:8px;background:#fff;border:1px solid var(--line);padding:9px;border-radius:12px;margin-bottom:10px;align-items:end}.filters>input,.dateFilter input{width:100%;border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:white;min-height:38px}.dateFilter{display:flex;flex-direction:column;gap:4px}.dateFilter label{font-size:10px;font-weight:800;color:#475467;padding-left:2px}.multiFilter{position:relative}.multiFilter summary{list-style:none;width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 30px 9px 10px;background:#fff;min-height:38px;font-size:12px;font-weight:750;color:#344054;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative}.multiFilter summary::-webkit-details-marker{display:none}.multiFilter summary:after{content:'▾';position:absolute;right:10px;top:8px;color:#667085}.multiFilter[open] summary{border-color:#98a2b3}.multiMenu{position:absolute;z-index:20;left:0;right:0;top:43px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:7px;box-shadow:0 12px 30px rgba(16,24,40,.16);max-height:260px;overflow:auto}.multiMenu label{display:flex;align-items:center;gap:8px;padding:6px 7px;border-radius:7px;font-size:12px;cursor:pointer}.multiMenu label:hover{background:#f8fafc}.multiMenu input{width:auto;margin:0}.multiTools{display:flex;gap:6px;padding:3px 4px 7px;border-bottom:1px solid #edf1f4;margin-bottom:3px}.multiTools button{border:0;background:#f2f4f7;border-radius:6px;padding:4px 7px;font-size:10px;font-weight:800;color:#475467}
-.tableCard{background:#fff;border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);overflow:hidden}.tableHead{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.tableWrap{overflow:auto;max-height:calc(100vh - 300px);min-height:330px}table{width:100%;border-collapse:collapse;font-size:12px;min-width:1120px}th{position:sticky;top:0;z-index:2;background:#f8fafc;color:#475467;font-size:11px;text-transform:uppercase;letter-spacing:.02em;text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}td{padding:10px;border-bottom:1px solid #edf1f4;vertical-align:middle}tr:hover td{background:#fbfdfd}.clientName{font-size:13px;font-weight:800;max-width:250px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.phone{font-size:11px;color:var(--muted);margin-top:2px}.summaryCell{max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#475467}.actionsCell{display:flex;gap:6px;white-space:nowrap}.badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:800;border:1px solid transparent;white-space:nowrap}.bOpen{background:#eff8ff;color:#175cd3}.bClosed{background:#f2f4f7;color:#344054}.bPending{background:#fffaeb;color:#b54708}.bFollow{background:#f4f3ff;color:#5925dc}.bResolved{background:#ecfdf3;color:#067647}.bDiscarded{background:#f2f4f7;color:#475467}.bDue{background:#fef3f2;color:#b42318}.bYes{background:#eef4ff;color:#3538cd}.bNo{background:#f2f4f7;color:#475467}.bAi{background:#ecfdf3;color:#067647}.bAiPending{background:#fff7ed;color:#c2410c}.bAiError{background:#fef3f2;color:#b42318}.stars{color:#b54708;font-size:13px;letter-spacing:1px}.empty{padding:40px;text-align:center;color:var(--muted)}
+.apiMessageCard{margin-top:10px}.apiMoney{font-weight:850;color:#067647}.apiMessageText{max-width:560px;white-space:pre-wrap;overflow-wrap:anywhere}.tableCard{background:#fff;border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);overflow:hidden}.tableHead{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.tableWrap{overflow:auto;max-height:calc(100vh - 300px);min-height:330px}table{width:100%;border-collapse:collapse;font-size:12px;min-width:1120px}th{position:sticky;top:0;z-index:2;background:#f8fafc;color:#475467;font-size:11px;text-transform:uppercase;letter-spacing:.02em;text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}td{padding:10px;border-bottom:1px solid #edf1f4;vertical-align:middle}tr:hover td{background:#fbfdfd}.clientName{font-size:13px;font-weight:800;max-width:250px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.phone{font-size:11px;color:var(--muted);margin-top:2px}.summaryCell{max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#475467}.actionsCell{display:flex;gap:6px;white-space:nowrap}.badge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:800;border:1px solid transparent;white-space:nowrap}.bOpen{background:#eff8ff;color:#175cd3}.bClosed{background:#f2f4f7;color:#344054}.bPending{background:#fffaeb;color:#b54708}.bFollow{background:#f4f3ff;color:#5925dc}.bResolved{background:#ecfdf3;color:#067647}.bDiscarded{background:#f2f4f7;color:#475467}.bDue{background:#fef3f2;color:#b42318}.bYes{background:#eef4ff;color:#3538cd}.bNo{background:#f2f4f7;color:#475467}.bAi{background:#ecfdf3;color:#067647}.bAiPending{background:#fff7ed;color:#c2410c}.bAiError{background:#fef3f2;color:#b42318}.stars{color:#b54708;font-size:13px;letter-spacing:1px}.empty{padding:40px;text-align:center;color:var(--muted)}
 .modal{display:none;position:fixed;z-index:80;inset:0;background:rgba(15,23,42,.50);align-items:center;justify-content:center;padding:18px}.modal.open{display:flex}.modalCard{width:min(900px,96vw);max-height:92vh;background:#fff;border-radius:16px;box-shadow:0 28px 80px rgba(0,0,0,.3);display:flex;flex-direction:column;overflow:hidden}.modalCard.wide{width:min(1050px,97vw)}.modalHead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line)}.modalHead h3{margin:0;font-size:17px}.modalBody{padding:14px 16px;overflow:auto}.modalFoot{padding:11px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}.chat{background:#f6f8fa;padding:14px;min-height:360px;max-height:68vh;overflow:auto}.msgRow{display:flex;margin:7px 0}.msgRow.user{justify-content:flex-start}.msgRow.assistant{justify-content:flex-end}.bubble{max-width:78%;padding:9px 11px;border-radius:12px;font-size:13px;line-height:1.42;white-space:pre-wrap;overflow-wrap:anywhere}.user .bubble{background:#fff;border:1px solid var(--line);border-bottom-left-radius:4px}.assistant .bubble{background:#dff6e9;border:1px solid #c4ebd5;border-bottom-right-radius:4px}.msgAt{display:block;font-size:10px;color:var(--muted);margin-top:5px}.media{margin-top:7px}.media img{max-width:320px;max-height:250px;border-radius:8px}.media audio,.media video{max-width:320px}
 .aiBox{background:#f5fbfa;border:1px solid #cfe9e6;border-radius:12px;padding:11px 12px;margin-bottom:12px}.aiBoxHead{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:6px}.aiBox h4{margin:0;font-size:13px}.aiGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px}.aiMini{background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px}.aiMini label{display:block;font-size:10px;color:var(--muted);margin-bottom:3px}.aiMini b{font-size:12px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.field{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}.field label{font-size:11px;font-weight:800;color:#475467}.field input,.field select,.field textarea{width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 10px;background:#fff}.field textarea{min-height:76px;resize:vertical}.check{display:flex;gap:8px;align-items:center;padding:9px 10px;border:1px solid var(--line);border-radius:9px;margin-bottom:10px}.check input{width:auto}.history{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}.histItem{padding:8px;border:1px solid var(--line);border-radius:9px;margin:6px 0;background:#fafbfc;font-size:11px}.leadBox{background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:9px;margin-bottom:10px;font-size:11px}.toast{position:fixed;right:18px;bottom:18px;background:#101828;color:#fff;padding:10px 13px;border-radius:10px;display:none;z-index:100;font-size:12px}.toast.show{display:block}.toast.err{background:#b42318}
 @media(max-width:1100px){.filters{grid-template-columns:1fr 1fr 1fr}.kpis{grid-template-columns:repeat(3,1fr)}.aiGrid{grid-template-columns:1fr 1fr}}@media(max-width:700px){.wrap{padding:8px}.filters{grid-template-columns:1fr 1fr}.filters>input{grid-column:1/-1}.kpis{grid-template-columns:repeat(3,1fr)}.grid2{grid-template-columns:1fr}.aiGrid{grid-template-columns:1fr 1fr}.modal{padding:6px}.modalCard{max-height:97vh}}@media(max-width:460px){.filters{grid-template-columns:1fr}.filters>input{grid-column:auto}.kpis{grid-template-columns:1fr 1fr}}
@@ -774,6 +774,7 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
         <div class="multiTools"><button type="button" data-select-all="channelFilterValue">Todos</button><button type="button" data-clear-all="channelFilterValue">Ninguno</button></div>
         <label><input type="checkbox" name="channelFilterValue" value="whatsapp" checked/>WhatsApp</label>
         <label><input type="checkbox" name="channelFilterValue" value="qr_web" checked/>QR Web</label>
+        <label><input type="checkbox" name="channelFilterValue" value="api_messages" checked/>API Mensajes</label>
       </div>
     </details>
 
@@ -823,7 +824,18 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
       </table>
     </div>
   </section>
+
+  <section class="tableCard apiMessageCard" id="apiMessageCard">
+    <div class="tableHead"><strong>Mensajería API · ventanas valorizadas</strong><span class="muted" id="apiWindowSummary">0 ventanas</span></div>
+    <div class="tableWrap" style="min-height:180px;max-height:360px">
+      <table style="min-width:900px">
+        <thead><tr><th>Destinatario</th><th>Inicio</th><th>Último envío</th><th>Ventana</th><th>Mensajes</th><th>Importe</th><th>Estado</th><th>Detalle</th></tr></thead>
+        <tbody id="apiWindowBody"><tr><td colspan="8" class="empty">Cargando…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
 </div>
+<div class="modal" id="apiWindowModal"><div class="modalCard wide"><div class="modalHead"><div><h3 id="apiWindowTitle">Ventana API Mensajes</h3><div class="muted" id="apiWindowSubtitle"></div></div><button class="btn btnSm" data-close="apiWindowModal">Cerrar</button></div><div class="modalBody" id="apiWindowDetail"><div class="empty">Cargando…</div></div></div></div>
 
 <div class="modal" id="chatModal"><div class="modalCard wide"><div class="modalHead"><div><h3 id="chatTitle">Conversación</h3><div class="muted" id="chatSubtitle"></div></div><button class="btn btnSm" data-close="chatModal">Cerrar</button></div><div class="chat" id="chatBody"><div class="empty">Cargando…</div></div><div class="modalFoot" id="chatFoot"></div></div></div>
 <div class="modal" id="followModal"><div class="modalCard wide"><div class="modalHead"><div><h3 id="followTitle">Seguimiento</h3><div class="muted" id="followSubtitle"></div></div><button class="btn btnSm" data-close="followModal">Cerrar</button></div><div class="modalBody" id="followBody"><div class="empty">Cargando…</div></div><div class="modalFoot" id="followFoot"></div></div></div>
@@ -834,12 +846,13 @@ let TENANT=${JSON.stringify(tenant)};
 const CAN_INBOX=${canInbox ? 'true' : 'false'};
 const CAN_EDIT_CONFIG=${canEditConfig ? 'true' : 'false'};
 const CAN_SELECT_TENANT=${canSelectTenant ? 'true' : 'false'};
-let rows=[];let activeId='';let activeItem=null;let config={autoCloseEnabled:true,inactivityMinutes:30};let debounce=null;let classificationTouched=false;
+let rows=[];let apiWindows=[];let activeId='';let activeItem=null;let config={autoCloseEnabled:true,inactivityMinutes:30};let debounce=null;let classificationTouched=false;
 const el=id=>document.getElementById(id);
 function api(path){const u=new URL(path,location.origin);if(TENANT)u.searchParams.set('tenant',TENANT);return u.toString()}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 function fmt(v){if(!v)return '-';const d=new Date(v);return isNaN(d)?'-':d.toLocaleString('es-AR',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'})}
 function fmtInput(v){if(!v)return '';const d=new Date(v);if(isNaN(d))return '';const z=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate())+'T'+z(d.getHours())+':'+z(d.getMinutes())}
+function fmtMoney(v,currency){const n=Number(v||0);const c=String(currency||'ARS').toUpperCase();try{return new Intl.NumberFormat('es-AR',{style:'currency',currency:c,minimumFractionDigits:2,maximumFractionDigits:4}).format(n)}catch{return c+' '+n.toFixed(2)}}
 function toast(msg,err=false){const t=el('toast');t.textContent=msg;t.className='toast show'+(err?' err':'');setTimeout(()=>t.className='toast',2800)}
 function workflowLabel(v){return ({active:'Bot activo',manual:'Atención manual',pending_review:'Pendiente',follow_up:'En seguimiento',resolved:'Resuelta',discarded:'Descartada'})[v]||v}
 function workflowBadge(v){return ({active:'bOpen',manual:'bFollow',pending_review:'bPending',follow_up:'bFollow',resolved:'bResolved',discarded:'bDiscarded'})[v]||'bPending'}
@@ -861,7 +874,60 @@ function cfgText(){el('cfgLabel').textContent=config.autoCloseEnabled?('Cierre: 
 async function loadConfig(){const j=await requestJson('/api/conversation-followup/config');config=j.config||config;cfgText()}
 function renderKpis(s){el('kActive').textContent=s.active||0;el('kManual').textContent=s.manual||0;el('kClosed').textContent=s.closed||0;el('kPending').textContent=s.pending_review||0;el('kFollow').textContent=s.follow_up||0;el('kDue').textContent=s.due||0}
 function renderRows(){el('listCount').textContent=rows.length+' registros';if(!rows.length){el('tbody').innerHTML='<tr><td colspan="10" class="empty">No hay conversaciones con estos filtros.</td></tr>';return}el('tbody').innerHTML=rows.map(x=>{const nm=x.contactName||x.lead?.name||x.waId||'Sin nombre';const channelInfo=x.channelType==='qr_web'?('QR Web'+(x.qrProductCode?' · SKU '+x.qrProductCode:'')):(x.waId||'');const status=x.finalized?'<span class="badge bClosed">Finalizada</span>':(x.manualOpen?'<span class="badge bFollow">Atención manual</span>':'<span class="badge bOpen">Bot activo</span>');const workflow='<span class="badge '+workflowBadge(x.workflowStatus)+'">'+esc(workflowLabel(x.workflowStatus))+'</span>'+(x.isDue?' <span class="badge bDue">Vencido</span>':'');const cat=x.category?'<span class="badge bYes">'+esc(categoryLabel(x.category))+'</span> '+aiBadge(x):aiBadge(x)||'<span class="badge bNo">Sin clasificar</span>';const next=x.pendingContact?(x.isDue?'<span class="badge bDue">'+esc(fmt(x.nextContactAt))+'</span>':esc(fmt(x.nextContactAt))):'—';return '<tr><td><div class="clientName" title="'+esc(nm)+'">'+esc(nm)+'</div><div class="phone">'+esc(channelInfo)+'</div></td><td>'+esc(fmt(x.lastAt))+'</td><td>'+status+'</td><td>'+workflow+'</td><td>'+cat+'</td><td>'+quoteBadge(x.quoteRequested,x.finalized)+'</td><td>'+stars(x.satisfaction)+'</td><td><div class="summaryCell" title="'+esc(x.summary||'')+'">'+esc(x.summary||'—')+'</div></td><td>'+next+'</td><td><div class="actionsCell"><button class="btn btnSm" data-chat="'+esc(x._id)+'">💬 Ver chat</button><button class="btn btnSm btnPrimary" data-follow="'+esc(x._id)+'">✎ Seguimiento</button></div></td></tr>'}).join('');el('tbody').querySelectorAll('[data-chat]').forEach(b=>b.addEventListener('click',()=>openChat(b.dataset.chat)));el('tbody').querySelectorAll('[data-follow]').forEach(b=>b.addEventListener('click',()=>openFollow(b.dataset.follow)))}
-async function loadRows(){const p=new URLSearchParams();p.set('limit','500');const q=el('q').value.trim();if(q)p.set('q',q);const channels=checkedValues('channelFilterValue');const states=checkedValues('state');const workflows=checkedValues('workflowFilterValue');const categories=checkedValues('categoryFilterValue');const allChannels=allValues('channelFilterValue');const allStates=allValues('state');const allWorkflows=allValues('workflowFilterValue');const allCategories=allValues('categoryFilterValue');p.set('channel',channels.length===allChannels.length?'all':(channels.length?channels.join(','):'none'));p.set('conversationState',states.length===allStates.length?'all':(states.length?states.join(','):'none'));p.set('workflow',workflows.length===allWorkflows.length?'all':(workflows.length?workflows.join(','):'none'));p.set('category',categories.length===allCategories.length?'all':(categories.length?categories.join(','):'none'));const dateFrom=localDateBoundary('dateFrom',false);const dateTo=localDateBoundary('dateTo',true);if(dateFrom)p.set('dateFrom',dateFrom);if(dateTo)p.set('dateTo',dateTo);const j=await requestJson('/api/conversation-followup/conversations?'+p.toString());rows=j.items||[];renderKpis(j.summary||{});renderRows()}
+function renderApiWindows(summary){
+  const card=el('apiMessageCard');
+  const selected=checkedValues('channelFilterValue');
+  const show=selected.includes('api_messages');
+  card.style.display=show?'block':'none';
+  if(!show)return;
+  const byCurrency=summary&&summary.byCurrency?summary.byCurrency:{};
+  const amounts=Object.keys(byCurrency).sort().map(c=>fmtMoney(byCurrency[c],c));
+  el('apiWindowSummary').textContent=(summary?.windows||0)+' ventanas · '+(summary?.messages||0)+' mensajes'+(amounts.length?' · '+amounts.join(' / '):'');
+  if(!apiWindows.length){el('apiWindowBody').innerHTML='<tr><td colspan="8" class="empty">No hay ventanas de mensajes API con estos filtros.</td></tr>';return}
+  el('apiWindowBody').innerHTML=apiWindows.map(x=>{
+    const open=x.windowEndsAt&&new Date(x.windowEndsAt).getTime()>Date.now();
+    return '<tr>'+
+      '<td><div class="clientName">'+esc(x.contactName||x.contact||'Sin nombre')+'</div><div class="phone">'+esc(x.contact||'')+(x.numeroFrom?' · desde '+esc(x.numeroFrom):'')+'</div></td>'+
+      '<td>'+esc(fmt(x.windowStartedAt))+'</td>'+
+      '<td>'+esc(fmt(x.lastMessageAt))+'</td>'+
+      '<td>'+esc(String(x.windowMinutes||20))+' min</td>'+
+      '<td><b>'+esc(String(x.messageCount||0))+'</b></td>'+
+      '<td><span class="apiMoney">'+esc(fmtMoney(x.amount||0,x.currency||'ARS'))+'</span></td>'+
+      '<td>'+(open?'<span class="badge bOpen">Abierta</span>':'<span class="badge bClosed">Cerrada</span>')+'</td>'+
+      '<td><button class="btn btnSm" data-api-window="'+esc(x._id)+'">Ver mensajes</button></td>'+
+    '</tr>'
+  }).join('');
+  el('apiWindowBody').querySelectorAll('[data-api-window]').forEach(b=>b.addEventListener('click',()=>openApiWindow(b.dataset.apiWindow)));
+}
+async function openApiWindow(id){
+  openModal('apiWindowModal');el('apiWindowDetail').innerHTML='<div class="empty">Cargando…</div>';
+  try{
+    const j=await requestJson('/api/conversation-followup/api-message-window/'+encodeURIComponent(id));
+    const x=j.item||{};const msgs=Array.isArray(x.messages)?x.messages:[];
+    el('apiWindowTitle').textContent='Ventana · '+(x.contactName||x.contact||'');
+    el('apiWindowSubtitle').textContent=fmt(x.windowStartedAt)+' → '+fmt(x.windowEndsAt)+' · '+String(x.messageCount||0)+' mensajes · '+fmtMoney(x.amount||0,x.currency||'ARS');
+    el('apiWindowDetail').innerHTML=msgs.length?msgs.map(m=>'<div class="histItem"><b>'+esc(fmt(m.at))+'</b> · '+esc(m.type||'text')+(m.id_msj_dest?'<span class="muted"> · dest '+esc(m.id_msj_dest)+'</span>':'')+(m.id_msj_renglon?'<span class="muted"> · renglón '+esc(m.id_msj_renglon)+'</span>':'')+'<div class="apiMessageText" style="margin-top:5px">'+esc(m.text||'')+'</div></div>').join(''):'<div class="empty">No hay detalle guardado para esta ventana.</div>';
+  }catch(e){el('apiWindowDetail').innerHTML='<div class="empty">Error cargando detalle.</div>';toast(e.message,true)}
+}
+async function loadRows(){
+  const p=new URLSearchParams();p.set('limit','500');const q=el('q').value.trim();if(q)p.set('q',q);
+  const channels=checkedValues('channelFilterValue');const states=checkedValues('state');const workflows=checkedValues('workflowFilterValue');const categories=checkedValues('categoryFilterValue');
+  const allStates=allValues('state');const allWorkflows=allValues('workflowFilterValue');const allCategories=allValues('categoryFilterValue');
+  const conversationChannels=channels.filter(v=>v==='whatsapp'||v==='qr_web');
+  p.set('channel',conversationChannels.length?conversationChannels.join(','):'none');
+  p.set('conversationState',states.length===allStates.length?'all':(states.length?states.join(','):'none'));
+  p.set('workflow',workflows.length===allWorkflows.length?'all':(workflows.length?workflows.join(','):'none'));
+  p.set('category',categories.length===allCategories.length?'all':(categories.length?categories.join(','):'none'));
+  const dateFrom=localDateBoundary('dateFrom',false);const dateTo=localDateBoundary('dateTo',true);if(dateFrom)p.set('dateFrom',dateFrom);if(dateTo)p.set('dateTo',dateTo);
+  const tasks=[];
+  if(conversationChannels.length)tasks.push(requestJson('/api/conversation-followup/conversations?'+p.toString()));else tasks.push(Promise.resolve({items:[],summary:{}}));
+  if(channels.includes('api_messages')){
+    const ap=new URLSearchParams();ap.set('limit','1000');if(q)ap.set('q',q);if(dateFrom)ap.set('dateFrom',dateFrom);if(dateTo)ap.set('dateTo',dateTo);
+    tasks.push(requestJson('/api/conversation-followup/api-message-windows?'+ap.toString()));
+  }else tasks.push(Promise.resolve({items:[],summary:{windows:0,messages:0,byCurrency:{}}}));
+  const [j,aw]=await Promise.all(tasks);
+  rows=j.items||[];apiWindows=aw.items||[];renderKpis(j.summary||{});renderRows();renderApiWindows(aw.summary||{});
+}
 function renderMedia(m){if(!m.media||!m.media.url)return '';const u=api(m.media.url);const k=String(m.media.kind||'');if(k==='image')return '<div class="media"><a href="'+esc(u)+'" target="_blank"><img src="'+esc(u)+'"/></a></div>';if(k==='audio')return '<div class="media"><audio controls src="'+esc(u)+'"></audio></div>';if(k==='video')return '<div class="media"><video controls src="'+esc(u)+'"></video></div>';return '<div class="media"><a href="'+esc(u)+'" target="_blank">📎 '+esc(m.media.filename||'Archivo')+'</a></div>'}
 async function openChat(id){activeId=id;openModal('chatModal');el('chatBody').innerHTML='<div class="empty">Cargando conversación…</div>';el('chatFoot').innerHTML='';try{const [d,m]=await Promise.all([requestJson('/api/conversation-followup/'+encodeURIComponent(id)),requestJson('/api/conversation-followup/'+encodeURIComponent(id)+'/messages')]);const x=d.item;activeItem=x;const nm=x.contactName||x.lead?.name||x.waId||'Sin nombre';el('chatTitle').textContent=nm;el('chatSubtitle').textContent=(x.channelType==='qr_web'?('QR Web'+(x.qrProductCode?' · SKU '+x.qrProductCode:'')):(x.waId||''))+' · '+(x.finalized?'Finalizada':(x.manualOpen?'Atención manual':'Bot activo'))+' · última actividad '+fmt(x.lastAt);const msgs=m.items||[];el('chatBody').innerHTML=msgs.length?msgs.map(v=>'<div class="msgRow '+(v.role==='user'?'user':'assistant')+'"><div class="bubble">'+esc(v.content||'')+renderMedia(v)+'<span class="msgAt">'+esc(fmt(v.createdAt))+'</span></div></div>').join(''):'<div class="empty">No hay mensajes guardados.</div>';el('chatBody').scrollTop=el('chatBody').scrollHeight;let foot='';if(CAN_INBOX)foot+='<button class="btn" id="openInboxBtn">Abrir en WhatsApp</button>';if(!x.finalized)foot+='<button class="btn btnDanger" id="closeNowBtn">Finalizar conversación</button>';foot+='<button class="btn btnPrimary" id="chatFollowBtn">Seguimiento</button>';el('chatFoot').innerHTML=foot;if(el('openInboxBtn'))el('openInboxBtn').onclick=()=>window.open('/admin/inbox?convId='+encodeURIComponent(x._id)+(TENANT?'&tenant='+encodeURIComponent(TENANT):''),'_blank');if(el('closeNowBtn'))el('closeNowBtn').onclick=()=>closeNow(x._id);if(el('chatFollowBtn'))el('chatFollowBtn').onclick=()=>{closeModal('chatModal');openFollow(x._id)}}catch(e){el('chatBody').innerHTML='<div class="empty">Error cargando el chat.</div>';toast(e.message,true)}}
 function aiInfoHtml(x){let status='Pendiente';if(x.manualClassificationEditedAt)status='Clasificación editada manualmente';else if(x.aiClassificationStatus==='done'&&x.aiClassificationStage==='live')status='Clasificación provisoria · se actualiza mientras avanza la conversación';else if(x.aiClassificationStatus==='done'&&String(x.classifiedBy||'').toLowerCase()==='asisto-ai')status='Clasificación final automática';else if(x.aiClassificationStatus==='error')status='No se pudo clasificar automáticamente';else if(!x.finalized)status='Analizando conversación…';return '<div class="aiBox"><div class="aiBoxHead"><div><h4>Clasificación automática</h4><span class="muted">'+esc(status)+(x.aiModel?' · '+esc(x.aiModel):'')+(x.aiClassifierBuild?' · '+esc(x.aiClassifierBuild):'')+'</span></div>'+('<button class="btn btnSm" id="reclassifyBtn">↻ Analizar ahora</button>')+'</div><div class="aiGrid"><div class="aiMini"><label>Tipo</label><b>'+esc(categoryLabel(x.category))+'</b></div><div class="aiMini"><label>Cotización</label><b>'+(x.quoteRequested===true?'Sí':(x.quoteRequested===false?'No':'Pendiente'))+'</b></div><div class="aiMini"><label>Satisfacción</label><b>'+(x.satisfaction?('★'.repeat(x.satisfaction)+'☆'.repeat(5-x.satisfaction)):'Pendiente')+'</b></div><div class="aiMini"><label>¿Requiere contacto?</label><b>'+(x.aiNeedsFollowUp?'Sí':'No')+'</b></div></div>'+(x.aiFollowUpReason?'<div class="muted" style="margin-top:8px"><b>Motivo sugerido:</b> '+esc(x.aiFollowUpReason)+'</div>':'')+(x.aiClassificationError?'<div class="muted" style="margin-top:8px;color:#b42318">'+esc(x.aiClassificationError)+'</div>':'')+'</div>'}
@@ -1045,6 +1111,94 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
       return res.json({ ok: true, items, summary, config });
     } catch (e) {
       console.error('[followup] list:', e);
+      return res.status(500).json({ ok: false, error: 'internal' });
+    }
+  });
+
+  app.get('/api/conversation-followup/api-message-windows', async (req, res) => {
+    try {
+      const tenant = resolveTenant(req, auth);
+      const db = await getDb();
+      const limit = intValue(req.query?.limit, 1000, 1, 5000);
+      const qText = cleanString(req.query?.q, 150);
+      const dateFrom = safeDate(req.query?.dateFrom);
+      const dateTo = safeDate(req.query?.dateTo);
+      const q = { tenantId: tenant };
+      if (qText) {
+        const rx = new RegExp(escapeRegex(qText), 'i');
+        q.$or = [{ contact: rx }, { contactName: rx }, { 'messages.text': rx }];
+      }
+      if (dateFrom || dateTo) {
+        q.windowStartedAt = {};
+        if (dateFrom) q.windowStartedAt.$gte = dateFrom;
+        if (dateTo) q.windowStartedAt.$lte = dateTo;
+      }
+
+      const docs = await db.collection('wa_api_message_windows')
+        .find(q)
+        .sort({ windowStartedAt: -1 })
+        .limit(limit)
+        .toArray();
+
+      const items = docs.map(x => ({
+        _id: String(x._id || ''),
+        tenantId: x.tenantId || tenant,
+        numeroFrom: x.numeroFrom || '',
+        contact: x.contact || '',
+        contactName: x.contactName || '',
+        channelType: 'api_messages',
+        windowMinutes: Number(x.windowMinutes || 20),
+        windowStartedAt: x.windowStartedAt || null,
+        windowEndsAt: x.windowEndsAt || null,
+        lastMessageAt: x.lastMessageAt || null,
+        messageCount: Number(x.messageCount || 0),
+        unitValue: Number(x.unitValue || 0),
+        amount: Number(x.amount || 0),
+        currency: String(x.currency || 'ARS').toUpperCase(),
+      }));
+
+      const summary = { windows: items.length, messages: 0, byCurrency: {} };
+      for (const x of items) {
+        summary.messages += Number(x.messageCount || 0);
+        const c = x.currency || 'ARS';
+        summary.byCurrency[c] = Number(summary.byCurrency[c] || 0) + Number(x.amount || 0);
+      }
+      return res.json({ ok: true, items, summary });
+    } catch (e) {
+      console.error('[followup] api message windows:', e);
+      return res.status(500).json({ ok: false, error: 'internal' });
+    }
+  });
+
+  app.get('/api/conversation-followup/api-message-window/:id', async (req, res) => {
+    try {
+      const tenant = resolveTenant(req, auth);
+      const id = String(req.params.id || '').trim();
+      if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
+      const db = await getDb();
+      const doc = await db.collection('wa_api_message_windows').findOne({ _id: new ObjectId(id), tenantId: tenant });
+      if (!doc) return res.status(404).json({ ok: false, error: 'not_found' });
+      return res.json({
+        ok: true,
+        item: {
+          _id: String(doc._id),
+          tenantId: doc.tenantId || tenant,
+          numeroFrom: doc.numeroFrom || '',
+          contact: doc.contact || '',
+          contactName: doc.contactName || '',
+          windowMinutes: Number(doc.windowMinutes || 20),
+          windowStartedAt: doc.windowStartedAt || null,
+          windowEndsAt: doc.windowEndsAt || null,
+          lastMessageAt: doc.lastMessageAt || null,
+          messageCount: Number(doc.messageCount || 0),
+          unitValue: Number(doc.unitValue || 0),
+          amount: Number(doc.amount || 0),
+          currency: String(doc.currency || 'ARS').toUpperCase(),
+          messages: Array.isArray(doc.messages) ? doc.messages : [],
+        }
+      });
+    } catch (e) {
+      console.error('[followup] api message window detail:', e);
       return res.status(500).json({ ok: false, error: 'internal' });
     }
   });

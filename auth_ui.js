@@ -3938,6 +3938,7 @@ function mountAuthRoutes(app) {
                 <button class="btn2" type="button" id="tc_btnAddTag">Agregar TAG versión</button>
                 <button class="btn2" type="button" id="tc_btnAddTokenCosts">Agregar tarifas tokens</button>
                 <button class="btn2" type="button" id="tc_btnAddWwebRetention" title="Agrega wweb_message_log_retention_days. 0 o campo ausente = no borrar; 30 = conservar 30 días.">Retención historial WWeb</button>
+                <button class="btn2" type="button" id="tc_btnAddApiMessageWindows" title="Configura minutos y valor por ventana para mensajes enviados por ConsultaApiMensajes.">Ventanas API Mensajes</button>
                 <button class="btn2" type="button" id="tc_btnClear">Limpiar</button>
                 ${isSuper ? `<button class="btn2 btnDanger" type="button" id="tc_btnDelete">Eliminar</button>` : ``}
               </div>
@@ -3961,6 +3962,7 @@ function mountAuthRoutes(app) {
         const btnAddTag = document.getElementById('tc_btnAddTag');
         const btnAddTokenCosts = document.getElementById('tc_btnAddTokenCosts');
         const btnAddWwebRetention = document.getElementById('tc_btnAddWwebRetention');
+        const btnAddApiMessageWindows = document.getElementById('tc_btnAddApiMessageWindows');
         const btnClear = document.getElementById('tc_btnClear');
         const btnReload = document.getElementById('tc_btnReload');
         const btnNew = document.getElementById('tc_btnNew');
@@ -4333,6 +4335,17 @@ function mountAuthRoutes(app) {
           if (valInput) {
             valInput.title = 'Cantidad de días a conservar en wa_wweb_message_log. 0 o campo ausente = no borrar.';
           }
+        });
+        if (btnAddApiMessageWindows) btnAddApiMessageWindows.addEventListener('click', ()=> {
+          const r1 = ensureFieldRow('api_mensajes_window_minutes', '20');
+          const r2 = ensureFieldRow('api_mensajes_window_value', '0');
+          const r3 = ensureFieldRow('api_mensajes_window_currency', 'ARS');
+         const i1 = r1 && r1.querySelector('[data-v]');
+          const i2 = r2 && r2.querySelector('[data-v]');
+          const i3 = r3 && r3.querySelector('[data-v]');
+          if (i1) i1.title = 'Minutos de la ventana. Mensajes al mismo número dentro de este período cuentan como una sola ventana.';
+          if (i2) i2.title = 'Importe a valorizar por cada ventana nueva.';
+          if (i3) i3.title = 'Moneda de la valorización, por ejemplo ARS o USD.';
         });
         if (btnCopy && copyFromEl) {
           btnCopy.addEventListener('click', async ()=> {

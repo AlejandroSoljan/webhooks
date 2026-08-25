@@ -149,7 +149,162 @@ mountConversationFollowupPanel(app, { auth });
 mountBotTestPanel(app, { auth });
 mountQrProductWeb(app);
 mountDemoCatalogApi(app);
+// ===================== Índices seguimiento ventanas API Mensajes =====================
+let apiMessageWindowIndexesReady = false;
+async function ensureApiMessageWindowIndexes() {
+  if (apiMessageWindowIndexesReady) return;
+  try {
+    const db = await getDb();
+    const coll = db.collection('wa_api_message_windows');
+    await Promise.all([
+      coll.createIndex(
+        { tenantId: 1, numeroFrom: 1, contact: 1, windowEndsAt: -1 },
+        { name: 'tenant_from_contact_windowEnd' }
+      ),
+      coll.createIndex(
+        { tenantId: 1, windowStartedAt: -1 },
+        { name: 'tenant_windowStart' }
+      )
+    ]);
+    apiMessageWindowIndexesReady = true;
+  } catch (e) {
+    console.warn('[api-message-windows] no se pudo crear/verificar índices:', e?.message || e);
+  }
+}
+setTimeout(() => ensureApiMessageWindowIndexes().catch(() => {}), 20 * 1000);
 
+
+
+// ===================== Retención de wa_wweb_message_log =====================
+// Configuración por dominio en tenant_config:
+//   wweb_message_log_retention_days = N
+// - N > 0: conserva N días y elimina registros anteriores.
+// - 0 / ausente: no elimina nada (compatibilidad con el comportamiento histórico).
+// El cleanup se ejecuta centralmente en el servidor para no duplicarlo en cada PC/worker WWeb.
+const WWEB_MESSAGE_LOG_CLEANUP_EVERY_MS = 6 * 60 * 60 * 1000; // 6 horas
+const WWEB_MESSAGE_LOG_CLEANUP_START_DELAY_MS = 30 * 1000;     // 30 segundos
+const WWEB_MESSAGE_LOG_CLEANUP_BATCH_SIZE = 5000;
+const WWEB_MESSAGE_LOG_CLEANUP_MAX_BATCHES_PER_TENANT = 50;
+let wwebMessageLogCleanupRunning = false;
+let wwebMessageLogCleanupIndexReady = false;
+
+function wwebMessageLogRetentionDays(doc) {
+  const raw =
+    doc?.wweb_message_log_retention_days ??
+    doc?.wwebMessageLogRetentionDays ??
+    doc?.message_log_retention_days ??
+    0;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.max(1, Math.min(3650, Math.floor(n)));
+}
+
+async function cleanupWwebMessageLog(reason = "interval") {
+  if (wwebMessageLogCleanupRunning) return;
+  wwebMessageLogCleanupRunning = true;
+  try {
+    const db = await getDb();
+    const logs = db.collection("wa_wweb_message_log");
+
+    if (!wwebMessageLogCleanupIndexReady) {
+      try {
+        await logs.createIndex(
+          { tenantId: 1, at: 1 },
+          { name: "tenantId_1_at_1_cleanup" }
+        );
+        wwebMessageLogCleanupIndexReady = true;
+      } catch (e) {
+        console.warn("[wweb-log-cleanup] no se pudo crear/verificar índice:", e?.message || e);
+      }
+    }
+
+    const configs = await db.collection("tenant_config").find(
+      {
+        $or: [
+          { wweb_message_log_retention_days: { $exists: true } },
+          { wwebMessageLogRetentionDays: { $exists: true } },
+          { message_log_retention_days: { $exists: true } }
+        ]
+      },
+      {
+        projection: {
+          _id: 1,
+          tenantId: 1,
+          tenantid: 1,
+          wweb_message_log_retention_days: 1,
+          wwebMessageLogRetentionDays: 1,
+          message_log_retention_days: 1
+        }
+      }
+    ).toArray();
+
+    let tenantsProcessed = 0;
+    let deletedTotal = 0;
+
+    for (const cfg of configs) {
+      const retentionDays = wwebMessageLogRetentionDays(cfg);
+      if (retentionDays <= 0) continue;
+
+      const tenantId = String(cfg?.tenantId || cfg?.tenantid || cfg?._id || "").trim();
+      if (!tenantId) continue;
+
+      const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+      let deletedTenant = 0;
+      let batches = 0;
+
+      while (batches < WWEB_MESSAGE_LOG_CLEANUP_MAX_BATCHES_PER_TENANT) {
+        const oldRows = await logs.find(
+         { tenantId, at: { $lt: cutoff } },
+          { projection: { _id: 1 } }
+        ).sort({ at: 1 }).limit(WWEB_MESSAGE_LOG_CLEANUP_BATCH_SIZE).toArray();
+
+        if (!oldRows.length) break;
+
+        const ids = oldRows.map((r) => r?._id).filter(Boolean);
+        if (!ids.length) break;
+
+        const result = await logs.deleteMany({ _id: { $in: ids } });
+        const deleted = Number(result?.deletedCount || 0);
+        deletedTenant += deleted;
+        batches += 1;
+
+        if (oldRows.length < WWEB_MESSAGE_LOG_CLEANUP_BATCH_SIZE || deleted <= 0) break;
+      }
+
+      tenantsProcessed += 1;
+      deletedTotal += deletedTenant;
+
+      if (deletedTenant > 0 || reason === "startup") {
+        console.log(
+          `[wweb-log-cleanup] tenant=${tenantId} retentionDays=${retentionDays} deleted=${deletedTenant} cutoff=${cutoff.toISOString()} batches=${batches} reason=${reason}`
+        );
+      }
+    }
+
+    if (deletedTotal > 0) {
+      console.log(`[wweb-log-cleanup] total deleted=${deletedTotal} tenants=${tenantsProcessed} reason=${reason}`);
+    }
+  } catch (e) {
+    console.error("[wweb-log-cleanup] error:", e?.message || e);
+  } finally {
+    wwebMessageLogCleanupRunning = false;
+  }
+}
+
+function startWwebMessageLogCleanup() {
+  const first = setTimeout(() => {
+    cleanupWwebMessageLog("startup").catch(() => {});
+  }, WWEB_MESSAGE_LOG_CLEANUP_START_DELAY_MS);
+  if (typeof first.unref === "function") first.unref();
+
+  const timer = setInterval(() => {
+    cleanupWwebMessageLog("interval").catch(() => {});
+  }, WWEB_MESSAGE_LOG_CLEANUP_EVERY_MS);
+  if (typeof timer.unref === "function") timer.unref();
+}
+
+startWwebMessageLogCleanup();
+ 
 
 // ===================== Tenant Channels (WhatsApp/OpenAI por tenant/canal) =====================
 // Permite definir por tenant (y por teléfono) los valores que antes estaban en .env:
@@ -469,6 +624,7 @@ const WWEB_AGENT_ALLOWED_COLLECTIONS = new Set([
   'wa_wweb_actions',
   'wa_wweb_message_log',
   'wa_api_mensajes_confirmaciones',
+  'wa_api_message_windows',
 ]);
 const WWEB_AGENT_ALLOWED_OPERATIONS = new Set([
   'findOne', 'find', 'insertOne', 'updateOne', 'updateMany',
@@ -570,6 +726,9 @@ function wwebAgentScopeQuery(collection, query, tenantId, numero) {
   if (collection === 'wa_api_mensajes_confirmaciones') {
     return wwebAgentAnd(q, { tenantId: tenant, numeroFrom: phone });
   }
+  if (collection === 'wa_api_message_windows') {
+    return wwebAgentAnd(q, { tenantId: tenant, numeroFrom: phone });
+  }
   return q;
 }
 
@@ -580,11 +739,13 @@ function wwebAgentScopeDocument(collection, document, tenantId, numero) {
   const doc = { ...(document || {}) };
 
   if (collection === 'tenant_channels' || collection === 'wa_lid_phone_map' ||
-      collection === 'wa_wweb_message_log' || collection === 'wa_api_mensajes_confirmaciones') {
+      collection === 'wa_wweb_message_log' || collection === 'wa_api_mensajes_confirmaciones' ||
+      collection === 'wa_api_message_windows') {
     doc.tenantId = tenant;
   }
   if (collection === 'wa_wweb_message_log') doc.numero = phone;
   if (collection === 'wa_api_mensajes_confirmaciones') doc.numeroFrom = phone;
+  if (collection === 'wa_api_message_windows') doc.numeroFrom = phone;
   if (collection === 'wa_wweb_history') {
     doc.lockId = lockId;
     doc.tenantId = tenant;
@@ -623,6 +784,7 @@ function wwebAgentScopeUpdate(collection, update, tenantId, numero) {
   }
   if (collection === 'wa_wweb_message_log') Object.assign(ensureSet(), { tenantId: tenant, numero: phone });
   if (collection === 'wa_api_mensajes_confirmaciones') Object.assign(ensureSet(), { tenantId: tenant, numeroFrom: phone });
+  if (collection === 'wa_api_message_windows') Object.assign(ensureSet(), { tenantId: tenant, numeroFrom: phone });
   return out;
 }
 
