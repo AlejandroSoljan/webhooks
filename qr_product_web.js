@@ -560,6 +560,45 @@ function qrDirectWebSearchQuery(product) {
   return parts.join(' ').trim().slice(0, 1200);
 }
 
+function qrCatalogAlternativeHint(product) {
+  const description = clean(product?.description, 400);
+  const category = clean(product?.category, 120);
+  const subcategory = clean(product?.subcategory, 120);
+
+  const words = String(subcategory || description || '')
+    .toUpperCase()
+    .replace(/[^A-ZÁÉÍÓÚÜÑ0-9]+/g, ' ')
+    .split(/\s+/)
+    .map(v => v.trim())
+    .filter(v => v.length >= 4);
+
+  const variants = [];
+  for (const word of words.slice(0, 4)) {
+    if (!variants.includes(word)) variants.push(word);
+    let singular = word;
+    if (word.endsWith('ES') && word.length > 5) singular = word.slice(0, -2);
+    else if (word.endsWith('S') && word.length > 4) singular = word.slice(0, -1);
+    if (singular.length >= 4 && !variants.includes(singular)) variants.push(singular);
+  }
+
+  const broadExamples = variants.slice(0, 4).map(v => `%${v}%`);
+
+  return [
+    '[REGLA DE BÚSQUEDA DE ALTERNATIVAS EN EL CATÁLOGO]',
+    'Si el visitante pide "otro", "similar", "alternativa", "qué otros tienen" o un producto relacionado que el negocio podría vender, usá consulta_articulos.',
+    'No busques únicamente con la descripción completa del producto QR ni con especificaciones demasiado restrictivas.',
+    'Empezá por términos comerciales representativos y, si no devuelve resultados, ampliá progresivamente la búsqueda dentro del mismo turno.',
+    'Podés hacer hasta tres búsquedas distintas antes de concluir que no hay alternativas.',
+    'La última búsqueda debe ser amplia por tipo/subrubro del producto.',
+    subcategory ? `Subrubro del producto actual: ${subcategory}.` : '',
+    category ? `Rubro del producto actual: ${category}.` : '',
+    description ? `Descripción del producto actual: ${description}.` : '',
+    broadExamples.length ? `Patrones amplios sugeridos para intentar si hace falta: ${broadExamples.join(', ')}.` : '',
+    'No concluyas que el negocio no tiene alternativas si una búsqueda específica devolvió vacío. Solo podés afirmarlo después de haber probado una búsqueda amplia razonable con consulta_articulos.',
+    'Internet no confirma productos del negocio: para nombre, SKU, precio y disponibilidad, la fuente válida sigue siendo consulta_articulos.'
+  ].filter(Boolean).join('\n');
+}
+
 function qrWebResultContext(result) {
   if (result?.ok && result?.body) {
     const sourceLines = (Array.isArray(result.sources) ? result.sources : [])
@@ -1087,6 +1126,9 @@ function mountQrProductWeb(app) {
             '',
             '[PREGUNTA DEL VISITANTE]',
             message,
+            '',
+            qrCatalogAlternativeHint(product),
+            '',
             cfg.aiWebSearchEnabled
                ? 'Si la respuesta requiere información técnica o pública que no esté confirmada en el contexto ni en el historial, podés usar buscar_web_qr. No uses Internet para reemplazar precio o disponibilidad del negocio.'
               : 'Respondé con la información confirmada disponible. No inventes datos externos.',
