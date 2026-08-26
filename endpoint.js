@@ -9156,7 +9156,12 @@ app.get("/canales", async (req, res) => {
 app.get("/api/behavior", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
-    const cfg = await loadBehaviorConfigFromMongo(tenant);
+    const [cfg, helpCfg] = await Promise.all([
+      loadBehaviorConfigFromMongo(tenant),
+      loadHelpConfig("MANAGER")
+    ]);
+    const helpPublic = publicHelpConfig(helpCfg);
+
     res.json({
       source: "mongo",
       tenant,
