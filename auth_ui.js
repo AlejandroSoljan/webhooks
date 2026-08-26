@@ -3651,7 +3651,9 @@ function mountAuthRoutes(app) {
     "token_cost_chat_input_per_1k",
     "token_cost_chat_output_per_1k",
     "token_cost_audio_input_per_1k",
-    "token_cost_audio_output_per_1k"
+    "token_cost_audio_output_per_1k",
+    "token_cost_help_input_per_1k",
+    "token_cost_help_output_per_1k"
   ];
 
 
@@ -4111,12 +4113,16 @@ function mountAuthRoutes(app) {
               ['token_cost_chat_input_per_1k', '0'],
               ['token_cost_chat_output_per_1k', '0'],
               ['token_cost_audio_input_per_1k', '0'],
-              ['token_cost_audio_output_per_1k', '0']
+              ['token_cost_audio_output_per_1k', '0'],
+              ['token_cost_help_input_per_1k', '0.0002'],
+              ['token_cost_help_output_per_1k', '0.0012']
             ] : []),
             ['token_charge_chat_input_per_1k', '0'],
             ['token_charge_chat_output_per_1k', '0'],
             ['token_charge_audio_input_per_1k', '0'],
-            ['token_charge_audio_output_per_1k', '0']
+            ['token_charge_audio_output_per_1k', '0'],
+            ['token_charge_help_input_per_1k', '0'],
+            ['token_charge_help_output_per_1k', '0']
           ];
           defs.forEach(([field, value]) => ensureFieldRow(field, value));
         }
@@ -5475,7 +5481,9 @@ function protectRoutes(app) {
       p.startsWith("/qr/") ||
       p.startsWith("/api/ext/qr/") ||
       p.startsWith("/api/ext/wweb/") ||
-      p.startsWith("/api/ext/domain-status")
+      p.startsWith("/api/ext/domain-status") ||
+      p.startsWith("/api/ext/help") ||
+      p.startsWith("/api/ext/ayuda")
     ) return next();
 
 // =============================

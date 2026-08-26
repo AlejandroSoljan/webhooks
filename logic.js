@@ -3010,6 +3010,9 @@ module.exports = {
   invalidateBehaviorCache,
   normalizeBotMode,
   invalidateTenantAiConfigCache,
+  // control de consumo IA (reutilizado también por la herramienta Ayuda)
+  recordTokenUsage,
+  parseTokenUsagePair,
   // catálogo
   loadCatalogTextFromMongo,
 

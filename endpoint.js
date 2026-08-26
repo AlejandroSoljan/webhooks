@@ -116,6 +116,12 @@ const { mountBotTestPanel } = require("./bot_test_panel");
 const { mountQrProductWeb } = require("./qr_product_web");
 const { mountDemoCatalogApi } = require("./demo_catalog_api");
 const {
+  mountHelpTool,
+  loadHelpConfig,
+  saveHelpConfig,
+  publicHelpConfig,
+} = require("./help_tool");
+const {
   loadOrderConfig,
   orderFeatureEnabled,
   orderRequiredEnabled,
@@ -149,6 +155,7 @@ mountConversationFollowupPanel(app, { auth });
 mountBotTestPanel(app, { auth });
 mountQrProductWeb(app);
 mountDemoCatalogApi(app);
+mountHelpTool(app);
 // ===================== Índices seguimiento ventanas API Mensajes =====================
 let apiMessageWindowIndexesReady = false;
 async function ensureApiMessageWindowIndexes() {
@@ -513,7 +520,7 @@ function domainStatusVersion(value) {
   return m ? m[0] : raw;
 }
 
-function domainStatusServices(conf, channel) {
+function domainStatusServices(conf, channel, helpGlobalEnabled = false) {
   const out = [];
 
   const habilitarBot = domainStatusBool(
@@ -556,6 +563,15 @@ function domainStatusServices(conf, channel) {
   if (habilitarBot && logicMode === "chatgpt") {
     out.push("Pedidos ChatGPT");
   }
+
+  const ayudaDominioEnabled = domainStatusBool(
+    conf.help_enabled ?? conf.ayuda_enabled ?? conf.ayudaManagerEnabled,
+    true
+  );
+  if (helpGlobalEnabled && ayudaDominioEnabled) {
+    out.push("Ayuda Manager");
+  }
+
 
   // Servicios futuros opcionales configurados directamente en tenant_config.
   const extra = conf.services ?? conf.servicios ?? conf.servicios_habilitados ?? conf.serviciosHabilitados;
@@ -1341,7 +1357,7 @@ app.get("/api/ext/domain-status", requireDomainStatusAccess, async (req, res) =>
       "i"
     );
 
-    const [tenantDoc, locks, policies, channels] = await Promise.all([
+    const [tenantDoc, locks, policies, channels, helpCfg] = await Promise.all([
       db.collection("tenant_config").findOne({
         $or: [{ _id: tenantId }, { tenantId }, { tenantid: tenantId }]
       }),
@@ -1359,7 +1375,8 @@ app.get("/api/ext/domain-status", requireDomainStatusAccess, async (req, res) =>
           { _id: tenantRegex }
         ]
       }).limit(1000).toArray(),
-      db.collection("tenant_channels").find({ tenantId }).limit(500).toArray()
+      db.collection("tenant_channels").find({ tenantId }).limit(500).toArray(),
+      loadHelpConfig("MANAGER").catch(() => ({ enabled: false }))
     ]);
 
     if (!tenantDoc && !locks.length) {
@@ -1370,6 +1387,8 @@ app.get("/api/ext/domain-status", requireDomainStatusAccess, async (req, res) =>
     }
 
     const conf = domainStatusConfig(tenantDoc);
+    const helpStatus = publicHelpConfig(helpCfg || {});
+    const helpServiceEnabled = helpStatus.enabled !== false && helpStatus.api_key_configured === true && !!helpStatus.source_url;
     const policyById = new Map(
       policies.map((p) => [String(p._id || ""), p])
     );
@@ -1389,7 +1408,7 @@ app.get("/api/ext/domain-status", requireDomainStatusAccess, async (req, res) =>
         numero,
         estado: domainStatusEstado(lock, policy),
         version: domainStatusVersion(lock.runtimeVersion || lock.currentVersion),
-        servicios: domainStatusServices(conf, channel),
+        servicios: domainStatusServices(conf, channel, helpServiceEnabled),
         pc: String(lock.host || lock.hostname || "").trim() || null
       };
     }).sort((a, b) =>
@@ -8407,6 +8426,27 @@ app.get("/comportamiento-ui.js", (_req, res) => {
           el.style.fontWeight=isError?'600':'400';
         }
 
+        function toggleHelpUi(){
+          var enabled=document.getElementById('helpEnabled') && document.getElementById('helpEnabled').checked;
+          var box=document.getElementById('helpConfigFields');
+          if(box) box.style.opacity=enabled?'1':'0.58';
+        }
+
+        function applyHelpEditable(editable,serviceAccountEmail,apiKeyConfigured){
+          ['helpEnabled','helpModel','helpSourceUrl','helpSourceCacheMinutes','helpAiCacheDays','helpMaxVideos','helpBehavior'].forEach(function(id){
+            var el=document.getElementById(id); if(el) el.disabled=!editable;
+          });
+          var note=document.getElementById('helpConfigNote');
+          if(note){
+            var parts=[editable ? 'La configuración de Ayuda es global para MANAGER y solo la puede modificar SuperAdmin.' : 'Solo SuperAdmin puede modificar la configuración global de Ayuda.'];
+            if(serviceAccountEmail) parts.push('Compartí la hoja con '+serviceAccountEmail+' como Lector.');
+            else parts.push('No hay Service Account configurada: la hoja debe estar publicada o accesible sin login.');
+            if(!apiKeyConfigured) parts.push('Falta configurar HELP_API_KEY (o DOMAIN_STATUS_API_KEY/WWEB_API_KEY) para habilitar el acceso externo.');
+            note.textContent=parts.join(' ');
+          }
+        }
+
+
         function toggleQrUi(){
           var enabled=document.getElementById('qrEnabled') && document.getElementById('qrEnabled').checked;
           var cfg=document.getElementById('qrConfigFields');
@@ -8427,6 +8467,7 @@ app.get("/comportamiento-ui.js", (_req, res) => {
         ['qrEnabled','qrAiEnabled','qrAiUseSameBehavior'].forEach(function(id){
           var node=document.getElementById(id); if(node) node.addEventListener('change',toggleQrUi);
         });
+        var helpEnabledNode=document.getElementById('helpEnabled'); if(helpEnabledNode) helpEnabledNode.addEventListener('change',toggleHelpUi);
         var tenantNode=document.getElementById('tenant'); if(tenantNode) tenantNode.addEventListener('input',toggleQrUi);
 
 
@@ -8443,6 +8484,16 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             document.getElementById('botMode').value = (j.bot_mode || 'pedidos');
             document.getElementById('historyMode').value = (j.history_mode || 'standard');
             document.getElementById('leadCaptureEnabled').checked = j.lead_capture_enabled === true;
+            document.getElementById('helpEnabled').checked = j.help_enabled !== false;
+            document.getElementById('helpAgent').value = j.help_agent || 'MANAGER';
+            document.getElementById('helpModel').value = j.help_model || 'gpt-5.6-luna';
+            document.getElementById('helpSourceUrl').value = j.help_source_url || '';
+            document.getElementById('helpSourceCacheMinutes').value = j.help_source_cache_minutes || 5;
+            document.getElementById('helpAiCacheDays').value = j.help_ai_cache_days || 3650;
+            document.getElementById('helpMaxVideos').value = j.help_max_videos || 20;
+            document.getElementById('helpBehavior').value = j.help_behavior || '';
+            applyHelpEditable(j.help_config_editable === true,j.help_google_service_account_email||'',j.help_api_key_configured===true);
+            toggleHelpUi();
 
             document.getElementById('qrEnabled').checked = j.qr_enabled === true;
             document.getElementById('qrPageTitle').value = j.qr_page_title || 'Información del producto';
@@ -8496,6 +8547,16 @@ app.get("/comportamiento-ui.js", (_req, res) => {
           const m=document.getElementById('historyMode').value||'standard';
           const b=document.getElementById('botMode').value||'pedidos';
           const leadCaptureEnabled=document.getElementById('leadCaptureEnabled').checked === true;
+          const helpPayload={
+            help_enabled:document.getElementById('helpEnabled').checked===true,
+            help_agent:document.getElementById('helpAgent').value||'MANAGER',
+            help_model:document.getElementById('helpModel').value||'gpt-5.6-luna',
+            help_source_url:document.getElementById('helpSourceUrl').value||'',
+            help_source_cache_minutes:Number(document.getElementById('helpSourceCacheMinutes').value||5),
+            help_ai_cache_days:Number(document.getElementById('helpAiCacheDays').value||3650),
+            help_max_videos:Number(document.getElementById('helpMaxVideos').value||20),
+            help_behavior:document.getElementById('helpBehavior').value||''
+          };
           const qrPayload={
             qr_enabled:document.getElementById('qrEnabled').checked===true,
             qr_page_title:document.getElementById('qrPageTitle').value||'',
@@ -8543,6 +8604,7 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             body:JSON.stringify({
               text:v,tenantId:t,history_mode:m,bot_mode:b,lead_capture_enabled:leadCaptureEnabled,
               external_actions:externalActions,
+              ...helpPayload,
               ...qrPayload
             })
           });
@@ -8568,7 +8630,11 @@ app.get("/comportamiento-ui.js", (_req, res) => {
 app.get("/comportamiento", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
-    const cfg = await loadBehaviorConfigFromMongo(tenant);
+    const [cfg, helpCfg] = await Promise.all([
+      loadBehaviorConfigFromMongo(tenant),
+      loadHelpConfig("MANAGER")
+    ]);
+    const helpPublic = publicHelpConfig(helpCfg);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html><html><head><meta charset="utf-8" />
       <title>Comportamiento del Bot (${tenant})</title>
@@ -8625,7 +8691,24 @@ app.get("/comportamiento", async (req, res) => {
         <span class="hint">Solo se aplica al modo Conversacional. Los pedidos no usan esta opción.</span>
       </div>
 
-        <div class="row"><strong>Ficha pública de producto por QR</strong></div>
+      <div class="externalCard" style="margin-top:18px">
+        <div class="row"><strong>Ayuda contextual de Manager</strong><span class="tag">Nueva herramienta</span></div>
+        <div class="hint" style="margin-top:4px">Configuración global del agente MANAGER. Las ventanas técnicas exactas se resuelven sin IA; solo las categorías escritas en lenguaje natural consumen tokens.</div>
+        <div class="row" style="margin-top:10px"><label><input id="helpEnabled" type="checkbox" /> Habilitar API de Ayuda</label></div>
+        <div id="helpConfigFields" class="externalGrid" style="margin-top:10px">
+          <label>Agente<input id="helpAgent" type="text" value="MANAGER" readonly /></label>
+          <label>Modelo para categorías<input id="helpModel" type="text" value="gpt-5.6-luna" placeholder="gpt-5.6-luna" /></label>
+          <label style="grid-column:1/-1">Fuente Google Sheets / CSV<input id="helpSourceUrl" type="text" placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=0" /><span class="hint">Si hay Service Account configurada, la hoja puede quedar privada y debe compartirse como lector con esa cuenta. Sin Service Account, la hoja debe ser accesible por enlace/publicación CSV.</span></label>
+          <label>Cache de la hoja (minutos)<input id="helpSourceCacheMinutes" type="number" min="1" max="60" value="5" /></label>
+          <label>Cache decisiones IA (días)<input id="helpAiCacheDays" type="number" min="1" max="3650" value="3650" /></label>
+          <label>Máximo de videos por respuesta<input id="helpMaxVideos" type="number" min="1" max="100" value="20" /></label>
+          <label style="grid-column:1/-1">Comportamiento para resolver categorías<textarea id="helpBehavior" class="smallArea" placeholder="Reglas para decidir si una ventana técnica pertenece a una categoría..."></textarea></label>
+          <div style="grid-column:1/-1" class="hint">API: <b>/api/ext/help</b> o <b>/api/ext/ayuda</b>. Requiere <code>X-API-Key</code> y los parámetros agente, ventana, version, dominio y usuario. La fecha la fija Asisto.</div>
+          <div id="helpConfigNote" style="grid-column:1/-1" class="hint"></div>
+        </div>
+      </div>
+
+        <div class="row" style="margin-top:18px"><strong>Ficha pública de producto por QR</strong></div>
         <div class="hint" style="margin-top:4px">El escaneo consulta únicamente esta API y muestra la ficha sin consumir tokens. La IA se activa recién cuando el visitante toca “Mostrar más info” o abre el chat.</div>
         <div class="row" style="margin-top:10px"><label><input id="qrEnabled" type="checkbox" /> Habilitar ficha QR para este dominio</label></div>
         <div id="qrConfigFields" class="externalGrid" style="margin-top:12px">
@@ -9097,6 +9180,20 @@ app.get("/api/behavior", async (req, res) => {
       external_api_max_chars: cfg.external_api_max_chars || 30000,
       external_api_result_instructions: cfg.external_api_result_instructions || "",
 
+      // Herramienta Ayuda. Configuración global del agente MANAGER; solo SuperAdmin la edita.
+      help_enabled: helpPublic.enabled !== false,
+      help_agent: helpPublic.agent || "MANAGER",
+      help_source_url: helpPublic.source_url || "",
+      help_model: helpPublic.model || "gpt-5.6-luna",
+      help_behavior: helpPublic.behavior || "",
+      help_source_cache_minutes: helpPublic.source_cache_minutes || 5,
+      help_ai_cache_days: helpPublic.ai_cache_days || 3650,
+      help_max_videos: helpPublic.max_videos || 20,
+      help_google_service_account_email: helpPublic.google_service_account_email || null,
+      help_api_key_configured: helpPublic.api_key_configured === true,
+      help_config_editable: String(req.user?.role || "").toLowerCase() === "superadmin",
+
+
       // Ficha pública por QR. El secreto nunca se devuelve al navegador.
       qr_enabled: cfg.qr_enabled === true,
       qr_page_title: cfg.qr_page_title || "Información del producto",
@@ -9149,6 +9246,20 @@ app.post("/api/behavior", async (req, res) => {
     const db = await require("./db").getDb();
     const _id = `behavior:${tenant}`;
     const existing = await db.collection("settings").findOne({ _id }) || {};
+
+    const isSuperadmin = String(req.user?.role || "").toLowerCase() === "superadmin";
+    const hasHelpPayload = Object.keys(req.body || {}).some((key) => String(key).startsWith("help_"));
+    const helpPayload = (isSuperadmin && hasHelpPayload) ? {
+      enabled: req.body?.help_enabled,
+      agent: req.body?.help_agent || "MANAGER",
+      source_url: req.body?.help_source_url,
+      model: req.body?.help_model,
+      behavior: req.body?.help_behavior,
+      source_cache_ms: Math.max(1, Math.min(60, Number(req.body?.help_source_cache_minutes || 5) || 5)) * 60000,
+      ai_cache_days: Math.max(1, Math.min(3650, Number(req.body?.help_ai_cache_days || 3650) || 3650)),
+      max_videos: Math.max(1, Math.min(100, Number(req.body?.help_max_videos || 20) || 20))
+    } : null;
+
 
     let rawActions = req.body?.external_actions ?? req.body?.externalActions;
     if (!Array.isArray(rawActions)) {
@@ -9299,6 +9410,15 @@ app.post("/api/behavior", async (req, res) => {
     if (Object.keys(unset).length) update.$unset = unset;
 
     await db.collection("settings").updateOne({ _id }, update, { upsert: true });
+    if (helpPayload) {
+      try {
+        await saveHelpConfig(helpPayload.agent || "MANAGER", helpPayload);
+      } catch (helpError) {
+        const helpMessage = String(helpError?.message || helpError || "help_config_invalid");
+        console.error("POST /api/behavior help config error:", helpMessage);
+        return res.status(400).json({ error: helpMessage });
+      }
+    }
     invalidateBehaviorCache(tenant);
     res.json({
       ok: true,

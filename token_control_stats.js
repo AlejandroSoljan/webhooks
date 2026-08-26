@@ -5,6 +5,13 @@ const { ObjectId } = require("mongodb");
 
 const { getDb } = require("./db");
 
+// Tarifas reales por defecto para Ayuda cuando usa gpt-5.6-luna.
+// Se expresan por 1K tokens para mantener el mismo esquema del panel.
+// Se pueden sobreescribir por dominio con token_cost_help_*_per_1k.
+const DEFAULT_HELP_COST_INPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_HELP_INPUT_PER_1K) || 0.0002;
+const DEFAULT_HELP_COST_OUTPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_HELP_OUTPUT_PER_1K) || 0.0012;
+
+
 function esc(s) {
   return String(s || "")
     .replace(/&/g, "&amp;")
@@ -49,7 +56,12 @@ function parseCsvFilter(raw, allowed = []) {
 function tokenTypeMatches(item, types = []) {
   if (!types.length) return true;
   const botMode = String(item?.botMode || "").trim().toLowerCase();
-  return types.some(type => type === "conversacional" ? botMode === "conversacional" : botMode !== "conversacional");
+  const channel = String(item?.channelType || "").trim().toLowerCase();
+  return types.some((type) => {
+    if (type === "ayuda") return channel === "help_api" || botMode === "ayuda";
+    if (type === "conversacional") return botMode === "conversacional" && channel !== "help_api";
+    return botMode !== "conversacional" && channel !== "help_api";
+  });
 }
 
 function tokenChannelMatches(item, channels = []) {
@@ -92,10 +104,14 @@ async function loadTenantCosts(db, tenantIds = []) {
         token_cost_chat_output_per_1k: 1,
         token_cost_audio_input_per_1k: 1,
         token_cost_audio_output_per_1k: 1,
+        token_cost_help_input_per_1k: 1,
+        token_cost_help_output_per_1k: 1,
         token_charge_chat_input_per_1k: 1,
         token_charge_chat_output_per_1k: 1,
         token_charge_audio_input_per_1k: 1,
-        token_charge_audio_output_per_1k: 1
+        token_charge_audio_output_per_1k: 1,
+        token_charge_help_input_per_1k: 1,
+        token_charge_help_output_per_1k: 1
       }
     }).toArray();
 
@@ -105,6 +121,10 @@ async function loadTenantCosts(db, tenantIds = []) {
 function calculateCostWithRates(row, tenantDoc = {}, mode = "real") {
   const messageInput = Number(row.message_input_tokens || 0);
   const messageOutput = Number(row.message_output_tokens || 0);
+  const helpInput = Math.max(0, Math.min(messageInput, Number(row.help_input_tokens || 0)));
+  const helpOutput = Math.max(0, Math.min(messageOutput, Number(row.help_output_tokens || 0)));
+  const regularMessageInput = Math.max(0, messageInput - helpInput);
+  const regularMessageOutput = Math.max(0, messageOutput - helpOutput);
   const audioInput = Number(row.audio_input_tokens || 0);
   const audioOutput = Number(row.audio_output_tokens || 0);
 
@@ -114,10 +134,18 @@ function calculateCostWithRates(row, tenantDoc = {}, mode = "real") {
   const chatOutput = toPositiveNumber(tenantDoc[prefix + "chat_output_per_1k"]);
   const audioInputRate = toPositiveNumber(tenantDoc[prefix + "audio_input_per_1k"]);
   const audioOutputRate = toPositiveNumber(tenantDoc[prefix + "audio_output_per_1k"]);
+  // Ayuda puede usar un modelo distinto al bot principal (p.ej. Luna).
+  // Si no se configuró una tarifa específica, mantiene compatibilidad usando la tarifa de chat.
+  const helpInputRate = toPositiveNumber(tenantDoc[prefix + "help_input_per_1k"]) ||
+    (charge ? chatInput : DEFAULT_HELP_COST_INPUT_PER_1K);
+  const helpOutputRate = toPositiveNumber(tenantDoc[prefix + "help_output_per_1k"]) ||
+    (charge ? chatOutput : DEFAULT_HELP_COST_OUTPUT_PER_1K);
 
   return Number((
-    (messageInput / 1000) * chatInput +
-    (messageOutput / 1000) * chatOutput +
+    (regularMessageInput / 1000) * chatInput +
+    (regularMessageOutput / 1000) * chatOutput +
+    (helpInput / 1000) * helpInputRate +
+    (helpOutput / 1000) * helpOutputRate +
     (audioInput / 1000) * audioInputRate +
     (audioOutput / 1000) * audioOutputRate
   ).toFixed(6));
@@ -136,7 +164,9 @@ function tenantChargeRatesConfigured(tenantDoc = {}) {
     "token_charge_chat_input_per_1k",
     "token_charge_chat_output_per_1k",
     "token_charge_audio_input_per_1k",
-    "token_charge_audio_output_per_1k"
+    "token_charge_audio_output_per_1k",
+    "token_charge_help_input_per_1k",
+    "token_charge_help_output_per_1k"
   ].some((field) => toPositiveNumber(tenantDoc[field]) > 0);
 }
 
@@ -181,8 +211,8 @@ async function buildApiMessageWindowBilling({
 
   const noTypes = String(types || "").trim().toLowerCase() === "none";
   const noChannels = String(channels || "").trim().toLowerCase() === "none";
-  const safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional"]);
-  const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages"]);
+  const safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional", "ayuda"]);
+  const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages", "help_api"]);
   const safeLimit = clampInt(limit, 1, 5000, 500);
 
   // "Tipo IA" no aplica a la mensajería saliente del API. Estas ventanas
@@ -331,8 +361,8 @@ async function buildTokenSummary({
   const { match, safeTenant } = buildUsageMatch({ tenantId, from, to });
   const noTypes = String(types || "").trim().toLowerCase() === "none";
   const noChannels = String(channels || "").trim().toLowerCase() === "none";
-  const safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional"]);
-  const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages"]);
+  const safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional", "ayuda"]);
+  const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages", "help_api"]);
 
   if (noTypes || noChannels) {
     return {
@@ -470,6 +500,24 @@ async function buildTokenSummary({
             $cond: [{ $eq: ["$kind", "message"] }, { $ifNull: ["$outputTokens", 0] }, 0]
           }
         },
+        help_input_tokens: {
+          $sum: {
+            $cond: [
+              { $eq: [{ $ifNull: ["$channelType", "$meta.channelType"] }, "help_api"] },
+              { $ifNull: ["$inputTokens", 0] },
+              0
+            ]
+          }
+        },
+        help_output_tokens: {
+          $sum: {
+            $cond: [
+              { $eq: [{ $ifNull: ["$channelType", "$meta.channelType"] }, "help_api"] },
+              { $ifNull: ["$outputTokens", 0] },
+              0
+            ]
+          }
+        },
         audio_input_tokens: {
           $sum: {
             $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$inputTokens", 0] }, 0]
@@ -505,6 +553,8 @@ async function buildTokenSummary({
       number: String(doc.numero || "").trim(),
       message_input_tokens: Number(row.message_input_tokens || 0),
       message_output_tokens: Number(row.message_output_tokens || 0),
+      help_input_tokens: Number(row.help_input_tokens || 0),
+      help_output_tokens: Number(row.help_output_tokens || 0),
       audio_input_tokens: Number(row.audio_input_tokens || 0),
       audio_output_tokens: Number(row.audio_output_tokens || 0),
       total_tokens: Number(row.total_tokens || 0),
@@ -526,6 +576,8 @@ async function buildTokenSummary({
       item.cost_chat_output_per_1k = toPositiveNumber(doc.token_cost_chat_output_per_1k);
       item.cost_audio_input_per_1k = toPositiveNumber(doc.token_cost_audio_input_per_1k);
       item.cost_audio_output_per_1k = toPositiveNumber(doc.token_cost_audio_output_per_1k);
+      item.cost_help_input_per_1k = toPositiveNumber(doc.token_cost_help_input_per_1k) || DEFAULT_HELP_COST_INPUT_PER_1K;
+      item.cost_help_output_per_1k = toPositiveNumber(doc.token_cost_help_output_per_1k) || DEFAULT_HELP_COST_OUTPUT_PER_1K;
     }
 
     return item;
@@ -615,8 +667,8 @@ async function buildTokenConversationSummary({
   const safeView = ["all", "completed", "conversational"].includes(rawView) ? rawView : "all";
   const noTypes = String(types || "").trim().toLowerCase() === "none";
   const noChannels = String(channels || "").trim().toLowerCase() === "none";
-  let safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional"]);
-  const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages"]);
+  let safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional", "ayuda"]);
+  const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages", "help_api"]);
   if (!noTypes && !safeTypes.length && safeView === "conversational") safeTypes = ["conversacional"];
   const safeLimit = clampInt(limit, 1, 5000, 500);
   const aggregateLimit = Math.min(4000, Math.max(500, safeLimit * 6));
@@ -657,6 +709,16 @@ async function buildTokenConversationSummary({
               message_output_tokens: {
                 $sum: {
                   $cond: [{ $eq: ["$kind", "message"] }, { $ifNull: ["$outputTokens", 0] }, 0]
+                }
+              },
+              help_input_tokens: {
+                $sum: {
+                  $cond: [{ $eq: ["$_channelType", "help_api"] }, { $ifNull: ["$inputTokens", 0] }, 0]
+                }
+              },
+              help_output_tokens: {
+                $sum: {
+                  $cond: [{ $eq: ["$_channelType", "help_api"] }, { $ifNull: ["$outputTokens", 0] }, 0]
                 }
               },
               audio_input_tokens: {
@@ -831,6 +893,8 @@ async function buildTokenConversationSummary({
       channelType: "",
       message_input_tokens: 0,
       message_output_tokens: 0,
+      help_input_tokens: 0,
+      help_output_tokens: 0,
       audio_input_tokens: 0,
       audio_output_tokens: 0,
       total_tokens: 0,
@@ -847,6 +911,10 @@ async function buildTokenConversationSummary({
       if (kind === "message") {
         out.message_input_tokens += input;
         out.message_output_tokens += output;
+        if (String(ev._channelType || "").toLowerCase() === "help_api") {
+          out.help_input_tokens += input;
+          out.help_output_tokens += output;
+        }
       } else if (kind === "audio") {
         out.audio_input_tokens += input;
        out.audio_output_tokens += output;
@@ -921,8 +989,11 @@ async function buildTokenConversationSummary({
     const order = orderByConversation.get(conversationId) || null;
     const pedido = pedidoFromDocs(conv, order);
     const tenantDoc = cfgByTenant.get(tenantKey) || {};
-    const botMode = String(conv?.botMode || "pedidos").trim().toLowerCase();
-    let status = normalizeStatus(conv, order);
+    const resolvedChannelType = String(row.channelType || conv?.channelType || "whatsapp").trim().toLowerCase();
+    const botMode = resolvedChannelType === "help_api"
+      ? "ayuda"
+      : String(conv?.botMode || "pedidos").trim().toLowerCase();
+    let status = resolvedChannelType === "help_api" ? "HELP" : normalizeStatus(conv, order);
 
     if (botMode === "conversacional" && Number(row.sessionCount || 1) > 1 && Number(row.sessionNumber || 1) < Number(row.sessionCount || 1)) {
       status = "CLOSED_INACTIVITY";
@@ -958,8 +1029,11 @@ async function buildTokenConversationSummary({
       contactName,
       waId,
       channelType: String(row.channelType || conv?.channelType || "whatsapp").trim().toLowerCase(),
+      channelType: resolvedChannelType,
       message_input_tokens: Number(row.message_input_tokens || 0),
       message_output_tokens: Number(row.message_output_tokens || 0),
+      help_input_tokens: Number(row.help_input_tokens || 0),
+      help_output_tokens: Number(row.help_output_tokens || 0),
       audio_input_tokens: Number(row.audio_input_tokens || 0),
       audio_output_tokens: Number(row.audio_output_tokens || 0),
       total_tokens: Number(row.total_tokens || 0),
@@ -1162,6 +1236,7 @@ function renderTokenControlPage(user) {
             <div class="multiTools"><button type="button" data-select-all="tokenType">Todos</button><button type="button" data-clear-all="tokenType">Ninguno</button></div>
             <label><input type="checkbox" name="tokenType" value="pedidos" checked/>Pedidos</label>
             <label><input type="checkbox" name="tokenType" value="conversacional" checked/>Conversacional</label>
+            <label><input type="checkbox" name="tokenType" value="ayuda" checked/>Ayuda</label>
           </div>
         </details>
         <details class="multiFilter" id="channelFilter">
@@ -1171,6 +1246,7 @@ function renderTokenControlPage(user) {
             <label><input type="checkbox" name="tokenChannel" value="whatsapp" checked/>WhatsApp</label>
             <label><input type="checkbox" name="tokenChannel" value="qr_web" checked/>QR Web</label>
             <label><input type="checkbox" name="tokenChannel" value="api_messages" checked/>API Mensajes</label>
+            <label><input type="checkbox" name="tokenChannel" value="help_api" checked/>Ayuda API</label>
           </div>
         </details>
         <button class="btn" type="button" id="btnReload">Actualizar</button>
@@ -1547,7 +1623,9 @@ function renderTokenControlPage(user) {
         : '';
       const orderInfo = it.orderId
         ? '<span class="small">Pedido: ' + esc(shortId(it.orderId)) + '</span>'
-        : (isConversational ? '<span class="small">Conversacional</span>' : '<span class="small">Sin pedido</span>');
+        : (String(it.botMode || '').toLowerCase() === 'ayuda'
+            ? '<span class="small">Consulta de ayuda</span>'
+            : (isConversational ? '<span class="small">Conversacional</span>' : '<span class="small">Sin pedido</span>'));
       const orderTotal = num(it.pedido_total) > 0
         ? '<span class="small">Total pedido: ' + esc(fmtOrderMoney(it.pedido_total)) + '</span>'
         : '';
@@ -1556,7 +1634,8 @@ function renderTokenControlPage(user) {
           '<td><div class="stack"><span class="pill">' + esc(it.tenantId || '') + '</span><span class="status ' + statusClass(status) + '">' + esc(status) + '</span></div></td>' +
           '<td><div class="stack">' + (client ? '<b>' + esc(client) + '</b>' : '<span class="small">Sin nombre</span>') +
           (waId ? '<span class="small">' + esc(waId) + '</span>' : '') +
-          '<span class="small">' + esc(it.channelType === 'qr_web' ? 'QR Web' : 'WhatsApp') + '</span></div></td>' +
+          '<span class="small">' + esc(it.channelType === 'qr_web' ? 'QR Web' : (it.channelType === 'help_api' ? 'Ayuda API' : (it.channelType === 'api_messages' ? 'API Mensajes' : 'WhatsApp'))) + '</span></div></td>' +
+ 
           '<td><div class="stack"><span>' + esc(fmtDate(it.first_at)) + '</span><span class="small">hasta ' + esc(fmtDate(it.last_at)) + '</span></div></td>' +
           '<td><b>' + fmtInt(it.total_tokens) + '</b></td><td>' + fmtInt(it.events) + '</td><td class="money">' + fmtMoney(it.billed_cost) + '</td>' +
         '</tr>';
