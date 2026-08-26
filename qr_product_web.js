@@ -778,7 +778,7 @@ function pageHtml({ tenant, code }) {
 <script>
 const TENANT=${JSON.stringify(tenant)};
 const CODE=${JSON.stringify(code)};
-let PRODUCT=null, AI_ENABLED=false, sending=false, started=false, conversationId='', pollTimer=null;
+let PRODUCT=null, AI_ENABLED=false, sending=false, started=false, conversationId='', pollTimer=null, lastMessagesSignature='';
 const el=id=>document.getElementById(id);
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 function sessionId(){let s=sessionStorage.getItem('asistoQrSession');if(!s){try{s=crypto.randomUUID().replace(/-/g,'_')}catch(_){s='qr_'+Date.now()+'_'+Math.random().toString(36).slice(2)}sessionStorage.setItem('asistoQrSession',s)}return s}
@@ -786,9 +786,29 @@ function money(v,currency){if(v==null||v==='')return 'Consultar';try{return new 
 function richText(s){let x=esc(s);x=x.replace(/\*([^*\n]+)\*/g,'<strong>$1</strong>');x=x.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener">$1</a>');return x.replace(/\n/g,'<br>')}
 function now(){return new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}
 function msgTime(v){if(!v)return now();const d=new Date(v);return isNaN(d)?now():d.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}
-function addMsg(role,text,typing=false,label='',at=''){const row=document.createElement('div');row.className='msg '+(role==='user'?'user':'bot');if(typing)row.id='typing';const who=label||(role==='user'?'Vos':'Asisto');row.innerHTML='<div class="bubble">'+(typing?'<span class="typing"><i></i><i></i><i></i></span>':richText(text))+'<span class="meta">'+esc(who)+' · '+esc(msgTime(at))+'</span></div>';el('chatBody').appendChild(row);el('chatBody').scrollTop=el('chatBody').scrollHeight}
+function addMsg(role,text,typing=false,label='',at='',autoScroll=true){const row=document.createElement('div');row.className='msg '+(role==='user'?'user':'bot');if(typing)row.id='typing';const who=label||(role==='user'?'Vos':'Asisto');row.innerHTML='<div class="bubble">'+(typing?'<span class="typing"><i></i><i></i><i></i></span>':richText(text))+'<span class="meta">'+esc(who)+' · '+esc(msgTime(at))+'</span></div>';const body=el('chatBody');body.appendChild(row);if(autoScroll)body.scrollTop=body.scrollHeight}
 function removeTyping(){const n=el('typing');if(n)n.remove()}
-function renderServerMessages(items){const body=el('chatBody');body.innerHTML='';for(const m of (items||[])){const role=String(m.role||'')==='user'?'user':'bot';const label=role==='user'?'Vos':(m.fromOperator?'Asesor':'Asisto');addMsg(role,m.content||'',false,label,m.createdAt)}}
+function renderServerMessages(items){
+  const body=el('chatBody');
+  const list=Array.isArray(items)?items:[];
+  const signature=JSON.stringify(list.map(m=>[String(m._id||m.id||''),String(m.role||''),String(m.content||''),String(m.createdAt||''),m.fromOperator===true]));
+  if(signature===lastMessagesSignature)return;
+
+  const hadMessages=body.children.length>0;
+  const previousTop=body.scrollTop;
+  const distanceFromBottom=body.scrollHeight-body.scrollTop-body.clientHeight;
+  const wasNearBottom=!hadMessages||distanceFromBottom<=80;
+
+  body.innerHTML='';
+  for(const m of list){
+    const role=String(m.role||'')==='user'?'user':'bot';
+    const label=role==='user'?'Vos':(m.fromOperator?'Asesor':'Asisto');
+    addMsg(role,m.content||'',false,label,m.createdAt,false);
+  }
+  lastMessagesSignature=signature;
+  if(wasNearBottom)body.scrollTop=body.scrollHeight;
+  else body.scrollTop=previousTop;
+}
 async function syncChatMessages(force=false){if(sending&&!force)return;try{const u=new URL('/api/ext/qr/chat/messages',location.origin);u.searchParams.set('tenant',TENANT);u.searchParams.set('codigo',CODE);u.searchParams.set('sessionId',sessionId());const j=await jsonFetch(u.toString());if(j.conversationId)conversationId=j.conversationId;if(Array.isArray(j.items))renderServerMessages(j.items)}catch(_){}}
 function startChatPolling(){if(pollTimer)return;pollTimer=setInterval(()=>{if(started&&el('chat').classList.contains('open')&&!sending)syncChatMessages(false)},3000)}
 async function jsonFetch(url,opts={}){const r=await fetch(url,{cache:'no-store',...opts});const text=await r.text();let j={};try{j=text?JSON.parse(text):{}}catch{}if(!r.ok)throw new Error(j.detail||j.error||('HTTP '+r.status));return j}
