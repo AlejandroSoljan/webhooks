@@ -59,6 +59,32 @@ Reglas de interpretación:
 - Ejemplo obligatorio: "w_pro_abm_productos" SI pertenece a "Todas las ventanas de ABM de clientes, proveedores, articulos y entidades en general".
 - Seguí siendo estricto para relaciones que no puedan inferirse claramente del propio nombre técnico.
 `.trim();
+
+const QUERY_ANSWER_GUIDANCE = `
+MODO CONSULTA INTELIGENTE DE AYUDA.
+
+Recibirás:
+- consulta: pregunta del usuario.
+- ventana: nombre técnico de la ventana actual; puede estar vacío.
+- videos: candidatos de la base de ayuda.
+
+Objetivo:
+- Respondé la consulta usando EXCLUSIVAMENTE la información contenida en los videos candidatos.
+- Si \"ventana\" tiene valor, dale prioridad fuerte a los videos que correspondan a esa ventana o a una categoría general que claramente la incluya.
+- Si \"ventana\" está vacía, resolvé la consulta de forma general con los candidatos disponibles.
+- Podés combinar información de varios videos si ayuda a responder mejor.
+- Elegí solamente videos realmente útiles para la consulta.
+- No inventes pasos, botones, menús, funciones ni datos que no estén respaldados por título, tags, descripción o ventana/categoría.
+- Si la información disponible no alcanza para responder con seguridad, indicá eso claramente y usá \"encontrado\": false.
+
+IMPORTANTE: para este modo IGNORÁ cualquier instrucción anterior que pida devolver solamente \"vimeo_ids\".
+Respondé únicamente JSON válido con este formato:
+{
+  \"encontrado\": true,
+  \"respuesta_texto\": \"respuesta clara y breve en español\",
+  \"vimeo_ids\": [\"<id>\"]
+}
+`.trim();
  
 
 const EXPECTED_HEADERS = {
@@ -619,6 +645,7 @@ async function ensureIndexes(db) {
   try {
     await Promise.all([
       db.collection('help_category_cache').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: 'help_cache_expiry' }),
+      db.collection('help_intelligent_query_cache').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: 'help_intelligent_query_cache_expiry' }),
       db.collection('help_query_log').createIndex({ createdAt: -1 }, { name: 'help_query_createdAt' }),
       db.collection('help_query_log').createIndex({ dominio: 1, createdAt: -1 }, { name: 'help_query_domain_createdAt' })
     ]);
@@ -767,6 +794,318 @@ async function resolveNaturalCategories({ cfg, sourceHash, windowName, rows, dom
   return { vimeoIds, aiUsed: true, cacheHit: false, usage };
 }
 
+function intelligentQueryTokens(value) {
+  const normalized = normalizeNaturalText(value);
+  const stop = new Set([
+    'como','hago','hacer','para','por','que','qué','una','uno','unos','unas',
+    'del','de','la','las','el','los','en','con','sin','sobre','quiero','puedo',
+    'se','me','mi','un','y','o','a','al'
+  ]);
+  return [...new Set(
+    normalized
+      .split(/[_\s]+/)
+      .map(v => v.trim())
+      .filter(v => v.length >= 3 && !stop.has(v))
+  )];
+}
+
+function intelligentQueryRowScore(query, row) {
+  const tokens = intelligentQueryTokens(query);
+  if (!tokens.length) return 0;
+
+  const title = normalizeNaturalText(row?.title);
+  const tags = normalizeNaturalText((row?.tags || []).join(' '));
+  const description = normalizeNaturalText(row?.description);
+  const appliesTo = normalizeNaturalText(row?.appliesTo);
+
+  let score = 0;
+  for (const token of tokens) {
+    if (title.includes(token)) score += 14;
+    if (tags.includes(token)) score += 10;
+    if (appliesTo.includes(token)) score += 7;
+    if (description.includes(token)) score += 4;
+  }
+
+  const whole = normalizeNaturalText(query);
+  if (whole && title.includes(whole)) score += 25;
+  if (whole && tags.includes(whole)) score += 18;
+  if (whole && description.includes(whole)) score += 8;
+
+  score += Math.max(0, Number(row?.importance || 0)) * 0.25;
+  return score;
+}
+
+function dedupeRowsByVimeo(rows = []) {
+  const map = new Map();
+  for (const row of rows || []) {
+    const id = String(row?.vimeoId || '').trim();
+    if (!id) continue;
+    const previous = map.get(id);
+    if (!previous || Number(row?.importance || 0) > Number(previous?.importance || 0)) {
+      map.set(id, row);
+    }
+  }
+  return [...map.values()];
+}
+
+function compactQueryVideo(row) {
+  return {
+    vimeo_id: String(row?.vimeoId || ''),
+    titulo: clean(row?.title, 500),
+    importancia: Number(row?.importance || 0),
+    tags: (Array.isArray(row?.tags) ? row.tags : []).slice(0, 15),
+    ventana_aplica: clean(row?.appliesTo, 900),
+    descripcion: clean(row?.description, 1200)
+  };
+}
+
+async function buildIntelligentQueryCandidates({
+  cfg,
+  sourceHash,
+  eligible,
+  windowName,
+  query,
+  domain,
+  user
+}) {
+  const wantedWindow = normalizeWindow(windowName);
+  const exactRows = [];
+  const naturalRows = [];
+
+  if (wantedWindow) {
+    for (const row of eligible) {
+      const technical = technicalWindowsFromRule(row.appliesTo);
+      if (technical) {
+        if (technical.includes(wantedWindow)) exactRows.push(row);
+      } else {
+        naturalRows.push(row);
+      }
+    }
+  }
+
+  const obviousNaturalRows = wantedWindow
+    ? naturalRows.filter(row => obviousNaturalCategoryApplies(windowName, row.appliesTo))
+    : [];
+
+  let naturalSelected = [...obviousNaturalRows];
+  let categoryAiInfo = { aiUsed: false, cacheHit: false, usage: null };
+  let categoryAiError = null;
+
+  if (wantedWindow && naturalRows.length) {
+    try {
+      const resolved = await resolveNaturalCategories({
+        cfg,
+        sourceHash,
+        windowName,
+        rows: naturalRows,
+        domain,
+        user
+      });
+      categoryAiInfo = resolved;
+      const ids = new Set([
+        ...obviousNaturalRows.map(r => String(r.vimeoId)),
+        ...resolved.vimeoIds.map(String)
+      ]);
+      naturalSelected = naturalRows.filter(r => ids.has(String(r.vimeoId)));
+    } catch (e) {
+      categoryAiError = e;
+      console.warn(`[help] consulta: clasificación de ventana falló agent=${cfg.agent} domain=${domain} window=${windowName}:`, e?.message || e);
+    }
+  }
+
+  const scored = eligible
+    .map(row => ({ row, score: intelligentQueryRowScore(query, row) }))
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score || Number(b.row.importance || 0) - Number(a.row.importance || 0))
+    .map(x => x.row);
+
+  const priority = dedupeRowsByVimeo([...exactRows, ...naturalSelected]);
+  const fallbackImportant = sortVideos(eligible).slice(0, 12);
+  const combined = dedupeRowsByVimeo([
+    ...priority,
+    ...scored.slice(0, 30),
+    ...(scored.length < 8 ? fallbackImportant : [])
+  ]);
+
+  return {
+    rows: combined.slice(0, 36),
+    exactRows,
+    naturalRows,
+    naturalSelected,
+    categoryAiInfo,
+    categoryAiError
+  };
+}
+
+async function resolveIntelligentHelpQuery({
+  cfg,
+  sourceHash,
+  windowName,
+  query,
+  rows,
+  domain,
+  user
+}) {
+  const db = await getDb();
+  await ensureIndexes(db);
+
+  const effectiveBehavior = [
+    cfg.behavior,
+    CATEGORY_MATCH_GUIDANCE,
+    QUERY_ANSWER_GUIDANCE
+  ].filter(Boolean).join('\n\n').trim();
+
+  const behaviorHash = sha256(effectiveBehavior);
+  const candidateIds = rows.map(r => String(r.vimeoId || '')).filter(Boolean);
+  const cacheKey = sha256(JSON.stringify({
+    agent: cfg.agent,
+    query: normalizeNaturalText(query),
+    window: normalizeWindow(windowName),
+    sourceHash,
+    model: cfg.model,
+    behaviorHash,
+    candidateIds
+  }));
+
+  const cached = await db.collection('help_intelligent_query_cache').findOne({
+    _id: cacheKey,
+    expiresAt: { $gt: new Date() }
+  });
+
+  if (cached) {
+    return {
+      found: cached.found === true,
+      answerText: String(cached.answerText || ''),
+      vimeoIds: Array.isArray(cached.vimeoIds) ? cached.vimeoIds.map(String) : [],
+      aiUsed: false,
+      cacheHit: true,
+      usage: null
+    };
+  }
+
+  if (!rows.length) {
+    return {
+      found: false,
+      answerText: 'No encontré información suficiente en la ayuda disponible para responder esa consulta.',
+      vimeoIds: [],
+      aiUsed: false,
+      cacheHit: false,
+      usage: null
+    };
+  }
+
+  const apiKey = await getOpenAiKey(domain);
+  if (!apiKey) throw new Error('openai_api_key_missing');
+  const client = getOpenAiClient(apiKey);
+  if (!client) throw new Error('openai_client_unavailable');
+
+  const payloadText = JSON.stringify({
+    consulta: query,
+    ventana: windowName || '',
+    videos: rows.map(compactQueryVideo)
+  });
+
+  const request = {
+    model: cfg.model,
+    messages: [
+      { role: 'system', content: effectiveBehavior },
+      { role: 'user', content: payloadText }
+    ],
+    response_format: { type: 'json_object' },
+    reasoning_effort: 'none',
+    max_completion_tokens: 900
+  };
+
+  let response;
+  try {
+    response = await client.chat.completions.create(request);
+  } catch (e) {
+    const message = String(e?.message || e || '');
+    if (/max_completion_tokens|unsupported parameter/i.test(message)) {
+      delete request.max_completion_tokens;
+      request.max_tokens = 900;
+      response = await client.chat.completions.create(request);
+    } else {
+      throw e;
+    }
+  }
+
+  const raw = response?.choices?.[0]?.message?.content || '';
+  const parsed = extractJsonObject(raw) || {};
+  const allowed = new Set(rows.map(r => String(r.vimeoId)));
+  const vimeoIds = [...new Set(
+    (Array.isArray(parsed.vimeo_ids) ? parsed.vimeo_ids : [])
+      .map(v => String(v || '').trim())
+      .filter(v => allowed.has(v))
+  )];
+
+  const answerText = clean(
+    parsed.respuesta_texto ?? parsed.respuesta ?? parsed.answer ?? '',
+    12000
+  );
+  const found = parsed.encontrado === true ||
+    ['1','true','yes','si','sí'].includes(String(parsed.encontrado || '').trim().toLowerCase());
+
+  const usage = parseTokenUsagePair(response?.usage || null, 'message');
+  const traceId = `help-query:${cfg.agent}:${domain}:${Date.now()}:${crypto.randomBytes(3).toString('hex')}`;
+  const conversationId = `${traceId}:${clean(user, 80).replace(/[^a-zA-Z0-9_.-]/g, '_') || 'user'}`;
+
+  await recordTokenUsage({
+    tenantId: domain,
+    kind: 'message',
+    provider: 'openai',
+    model: response?.model || cfg.model,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    totalTokens: usage.totalTokens,
+    conversationId,
+    waId: user,
+    channelType: 'help_api',
+    usageTraceId: traceId,
+    meta: {
+      usageType: 'ayuda_consulta',
+      agent: cfg.agent,
+      window: windowName || '',
+      query,
+      user,
+      sourceHash,
+      candidates: rows.length
+    }
+  });
+
+  const expiresAt = new Date(Date.now() + cfg.ai_cache_days * 24 * 60 * 60 * 1000);
+  await db.collection('help_intelligent_query_cache').updateOne(
+    { _id: cacheKey },
+    {
+      $set: {
+        agent: cfg.agent,
+        query: normalizeNaturalText(query),
+        window: normalizeWindow(windowName),
+        sourceHash,
+        model: response?.model || cfg.model,
+        behaviorHash,
+        candidateIds,
+        found,
+        answerText,
+        vimeoIds,
+        updatedAt: new Date(),
+        expiresAt
+      },
+      $setOnInsert: { createdAt: new Date() }
+    },
+    { upsert: true }
+  ).catch(e => console.warn('[help] intelligent query cache write:', e?.message || e));
+
+  return {
+    found,
+    answerText,
+    vimeoIds,
+    aiUsed: true,
+    cacheHit: false,
+    usage
+  };
+}
+
 function asistoDateParts(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: ASISTO_TZ,
@@ -801,11 +1140,14 @@ async function handleHelpQuery(req, res) {
 
   const agent = normalizeAgent(requestField(req, 'agente', 'agent') || DEFAULT_AGENT);
   const windowName = clean(requestField(req, 'ventana', 'window'), 300);
+  const query = clean(requestField(req, 'consulta', 'query', 'pregunta'), 4000);
   const version = clean(requestField(req, 'version', 'versión'), 80);
   const domain = clean(requestField(req, 'dominio', 'domain', 'tenant', 'tenantId'), 120).toUpperCase();
   const user = clean(requestField(req, 'usuario', 'user', 'username'), 200);
 
-  if (!windowName) return res.status(400).json({ ok: false, error: 'ventana_required' });
+  // Sin consulta se mantiene el contrato histórico: ventana obligatoria.
+  // Con consulta, ventana es opcional y actúa como contexto prioritario.
+  if (!query && !windowName) return res.status(400).json({ ok: false, error: 'ventana_required' });
   if (!version) return res.status(400).json({ ok: false, error: 'version_required' });
   if (!domain) return res.status(400).json({ ok: false, error: 'dominio_required' });
   if (!user) return res.status(400).json({ ok: false, error: 'usuario_required' });
@@ -820,7 +1162,8 @@ async function handleHelpQuery(req, res) {
         ok: true,
         ...dateInfo,
         agente: agent,
-        ventana: windowName,
+        ventana: windowName || '',
+        ...(query ? { consulta: query } : {}),
         version,
         dominio: domain,
         usuario: user,
@@ -833,6 +1176,90 @@ async function handleHelpQuery(req, res) {
     const eligible = source.rows.filter(r =>
       r.vimeoId && r.appliesTo && versionApplies(version, r.versionFrom, r.versionTo)
     );
+
+    // ===================== MODO CONSULTA INTELIGENTE =====================
+    // Si consulta viene vacía, este bloque no se ejecuta y el modo anterior
+    // continúa funcionando sin cambios.
+    if (query) {
+      const candidateInfo = await buildIntelligentQueryCandidates({
+        cfg,
+        sourceHash: source.hash,
+        eligible,
+        windowName,
+        query,
+        domain,
+        user
+      });
+
+      const intelligent = await resolveIntelligentHelpQuery({
+        cfg,
+        sourceHash: source.hash,
+        windowName,
+        query,
+        rows: candidateInfo.rows,
+        domain,
+        user
+      });
+
+      const selectedIds = new Set(intelligent.vimeoIds.map(String));
+      const selectedRows = candidateInfo.rows.filter(r => selectedIds.has(String(r.vimeoId)));
+      const videos = sortVideos(selectedRows).slice(0, cfg.max_videos).map(outputVideo);
+
+      const responseBody = {
+        ok: true,
+        ...dateInfo,
+        agente: agent,
+        ventana: windowName || '',
+        consulta: query,
+        version,
+        dominio: domain,
+        usuario: user,
+        respuesta: intelligent.found ? 'S' : 'N',
+        respuesta_texto: intelligent.answerText || (
+          intelligent.found
+            ? 'Encontré información relacionada con tu consulta.'
+            : 'No encontré información suficiente en la ayuda disponible para responder esa consulta.'
+        ),
+        videos
+      };
+
+      if (candidateInfo.categoryAiError) {
+        responseBody.clasificacion_ventana_parcial = true;
+        responseBody.clasificacion_ventana_error = String(
+          candidateInfo.categoryAiError?.message || candidateInfo.categoryAiError || 'error_ia'
+        ).slice(0, 240);
+      }
+
+      const db = await getDb();
+      await ensureIndexes(db);
+      await db.collection('help_query_log').insertOne({
+        createdAt: now,
+        fechaAsisto: dateInfo.fecha,
+        agente: agent,
+        ventana: windowName || '',
+        consulta: query,
+        version,
+        dominio: domain,
+        usuario: user,
+        respuesta: responseBody.respuesta,
+        respuestaTexto: responseBody.respuesta_texto,
+        videoIds: videos.map(v => v.vimeo_id),
+        mode: 'intelligent_query',
+        candidates: candidateInfo.rows.length,
+        exactMatches: candidateInfo.exactRows.length,
+        naturalCandidates: candidateInfo.naturalRows.length,
+        naturalSelectedForWindow: candidateInfo.naturalSelected.length,
+        categoryAiUsed: candidateInfo.categoryAiInfo.aiUsed === true,
+        categoryAiCacheHit: candidateInfo.categoryAiInfo.cacheHit === true,
+        answerAiUsed: intelligent.aiUsed === true,
+        answerAiCacheHit: intelligent.cacheHit === true,
+        sourceHash: source.hash,
+        durationMs: Date.now() - started
+      }).catch(e => console.warn('[help] intelligent query log:', e?.message || e));
+
+      res.set('Cache-Control', 'no-store');
+      return res.json(responseBody);
+    }
 
     const wantedWindow = normalizeWindow(windowName);
     const exactRows = [];
@@ -939,6 +1366,7 @@ async function handleHelpQuery(req, res) {
       ...dateInfo,
       agente: agent,
       ventana: windowName || null,
+      ...(query ? { consulta: query } : {}),
       version: version || null,
       dominio: domain || null,
       usuario: user || null,
@@ -992,5 +1420,8 @@ module.exports = {
   versionApplies,
   technicalWindowsFromRule,
   obviousNaturalCategoryApplies,
+  intelligentQueryRowScore,
+  buildIntelligentQueryCandidates,
+  resolveIntelligentHelpQuery,
   googlePublicCsvUrl
 };
