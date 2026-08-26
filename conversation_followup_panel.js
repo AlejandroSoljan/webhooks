@@ -851,7 +851,7 @@ let TENANT=${JSON.stringify(tenant)};
 const CAN_INBOX=${canInbox ? 'true' : 'false'};
 const CAN_EDIT_CONFIG=${canEditConfig ? 'true' : 'false'};
 const CAN_SELECT_TENANT=${canSelectTenant ? 'true' : 'false'};
-let rows=[];let apiWindows=[];let activeId='';let activeItem=null;let config={autoCloseEnabled:true,inactivityMinutes:30};let debounce=null;let classificationTouched=false;let chatPollTimer=null;
+let rows=[];let apiWindows=[];let activeId='';let activeItem=null;let config={autoCloseEnabled:true,inactivityMinutes:30};let debounce=null;let classificationTouched=false;let chatPollTimer=null;let lastChatMessagesSignature='';
 const el=id=>document.getElementById(id);
 function api(path){const u=new URL(path,location.origin);if(TENANT)u.searchParams.set('tenant',TENANT);return u.toString()}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
@@ -973,10 +973,30 @@ async function loadRows(){
   rows=j.items||[];apiWindows=aw.items||[];renderKpis(j.summary||{});renderRows();
 }
 function renderMedia(m){if(!m.media||!m.media.url)return '';const u=api(m.media.url);const k=String(m.media.kind||'');if(k==='image')return '<div class="media"><a href="'+esc(u)+'" target="_blank"><img src="'+esc(u)+'"/></a></div>';if(k==='audio')return '<div class="media"><audio controls src="'+esc(u)+'"></audio></div>';if(k==='video')return '<div class="media"><video controls src="'+esc(u)+'"></video></div>';return '<div class="media"><a href="'+esc(u)+'" target="_blank">📎 '+esc(m.media.filename||'Archivo')+'</a></div>'}
-function renderFollowupChatMessages(items){
-  const body=el('chatBody');const msgs=items||[];
+function renderFollowupChatMessages(items,forceBottom=false){
+  const body=el('chatBody');const msgs=Array.isArray(items)?items:[];
+  const signature=JSON.stringify(msgs.map(v=>[
+    String(v._id||v.id||''),
+    String(v.role||''),
+    String(v.content||''),
+    String(v.createdAt||''),
+    String(v.media?.url||''),
+    String(v.media?.kind||''),
+    String(v.media?.filename||'')
+  ]));
+
+  if(!forceBottom&&signature===lastChatMessagesSignature)return;
+
+  const hadContent=body.children.length>0&&!body.querySelector('.empty');
+  const previousTop=body.scrollTop;
+  const distanceFromBottom=body.scrollHeight-body.scrollTop-body.clientHeight;
+  const wasNearBottom=!hadContent||distanceFromBottom<=80;
+
   body.innerHTML=msgs.length?msgs.map(v=>'<div class="msgRow '+(v.role==='user'?'user':'assistant')+'"><div class="bubble">'+esc(v.content||'')+renderMedia(v)+'<span class="msgAt">'+esc(fmt(v.createdAt))+'</span></div></div>').join(''):'<div class="empty">No hay mensajes guardados.</div>';
-  body.scrollTop=body.scrollHeight;
+  lastChatMessagesSignature=signature;
+
+  if(forceBottom||wasNearBottom)body.scrollTop=body.scrollHeight;
+  else body.scrollTop=previousTop;
 }
 async function refreshOpenChatMessages(id){
   if(!id||activeId!==id||!el('chatModal').classList.contains('open'))return;
@@ -1006,7 +1026,7 @@ async function sendFromFollowupChat(){
   }catch(e){toast(e.message,true)}finally{btn.disabled=false;box.focus()}
 }
 async function openChat(id){
-  activeId=id;openModal('chatModal');el('chatBody').innerHTML='<div class="empty">Cargando conversación…</div>';el('chatFoot').innerHTML='';el('chatContact').textContent='';el('chatComposer').classList.add('hidden');
+  activeId=id;lastChatMessagesSignature='';openModal('chatModal');el('chatBody').innerHTML='<div class="empty">Cargando conversación…</div>';el('chatFoot').innerHTML='';el('chatContact').textContent='';el('chatComposer').classList.add('hidden');
   try{
     const [d,m]=await Promise.all([requestJson('/api/conversation-followup/'+encodeURIComponent(id)),requestJson('/api/conversation-followup/'+encodeURIComponent(id)+'/messages')]);
     const x=d.item;activeItem=x;
@@ -1014,7 +1034,7 @@ async function openChat(id){
     el('chatTitle').textContent=nm;
     el('chatSubtitle').textContent=(x.channelType==='qr_web'?('QR Web'+(x.qrProductCode?' · SKU '+x.qrProductCode:'')):(x.waId||''))+' · '+(x.finalized?'Finalizada':(x.manualOpen?'Atención manual':'Bot activo'))+' · última actividad '+fmt(x.lastAt);
     const contactParts=[];if(x.lead?.phone||x.contactPhone)contactParts.push('Tel: '+(x.lead?.phone||x.contactPhone));if(x.lead?.email||x.contactEmail)contactParts.push('Email: '+(x.lead?.email||x.contactEmail));if(x.lead?.company)contactParts.push('Empresa: '+x.lead.company);el('chatContact').textContent=contactParts.join(' · ');
-    renderFollowupChatMessages(m.items||[]);
+    renderFollowupChatMessages(m.items||[],true);
     if(CAN_INBOX){
       el('chatComposer').classList.remove('hidden');
       el('chatMessage').placeholder=x.finalized?'Escribí una respuesta… Al enviar, la conversación se reabrirá en atención manual.':'Escribí una respuesta al cliente…';
