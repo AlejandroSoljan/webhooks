@@ -7,7 +7,6 @@
 
 const crypto = require('crypto');
 const express = require('express');
-const fetch = require('node-fetch');
 const OpenAI = require('openai');
 
 const { getDb } = require('./db');
