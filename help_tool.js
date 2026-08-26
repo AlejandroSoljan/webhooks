@@ -41,6 +41,26 @@ Responde UNICAMENTE con JSON valido en este formato:
 {"vimeo_ids":["<vimeo_id>"]}
 Si ninguna categoria aplica, responde {"vimeo_ids":[]}.`;
 
+
+// Reglas mínimas internas para interpretar nombres técnicos de Manager.
+// Se anexan al comportamiento configurable para que las categorías generales
+// se resuelvan semánticamente aun cuando el comportamiento guardado sea viejo.
+// Ejemplo: w_pro_abm_productos pertenece claramente a una categoría que diga
+// "todas las ventanas de ABM de ... artículos ...".
+const CATEGORY_MATCH_GUIDANCE = `
+Interpretá semánticamente los componentes evidentes del nombre técnico de la ventana; no exijas coincidencia literal de palabras.
+
+Reglas de interpretación:
+- Si el nombre contiene "_abm_" o comienza/termina con una forma equivalente, es una ventana de ABM.
+- "productos" y "articulos" representan la misma entidad funcional a estos efectos.
+- "acreedores" y "proveedores" representan la misma entidad funcional a estos efectos.
+- "clientes" corresponde a clientes.
+- Una categoría general debe incluirse cuando el nombre técnico indique claramente que la ventana pertenece a una de las entidades o tipos mencionados por esa categoría.
+- Ejemplo obligatorio: "w_pro_abm_productos" SI pertenece a "Todas las ventanas de ABM de clientes, proveedores, articulos y entidades en general".
+- Seguí siendo estricto para relaciones que no puedan inferirse claramente del propio nombre técnico.
+`.trim();
+ 
+
 const EXPECTED_HEADERS = {
   title: ['titulo', 'título'],
   vimeoId: ['id vimeo', 'id_vimeo', 'vimeo id', 'vimeo_id'],
@@ -578,7 +598,8 @@ async function resolveNaturalCategories({ cfg, sourceHash, windowName, rows, dom
   const db = await getDb();
   await ensureIndexes(db);
 
-  const behaviorHash = sha256(cfg.behavior);
+  const effectiveBehavior = `${cfg.behavior}\n\n${CATEGORY_MATCH_GUIDANCE}`.trim();
+  const behaviorHash = sha256(effectiveBehavior);
   const cacheKey = sha256(JSON.stringify({
     agent: cfg.agent,
     window: normalizeWindow(windowName),
@@ -606,7 +627,7 @@ async function resolveNaturalCategories({ cfg, sourceHash, windowName, rows, dom
   const request = {
     model: cfg.model,
     messages: [
-      { role: 'system', content: cfg.behavior },
+      { role: 'system', content: effectiveBehavior },
       { role: 'user', content: payloadText }
     ],
     response_format: { type: 'json_object' },
