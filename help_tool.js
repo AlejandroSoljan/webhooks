@@ -535,6 +535,67 @@ function technicalWindowsFromRule(value) {
   return [...new Set(parts.map(normalizeWindow))];
 }
 
+function normalizeNaturalText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Fallback determinístico para relaciones MUY evidentes en categorías generales.
+// No reemplaza a la IA: suma coincidencias seguras y deja los casos ambiguos a Luna.
+// Ejemplo: w_pro_abm_productos + "... ABM ... articulos ..." => aplica.
+function obviousNaturalCategoryApplies(windowName, categoryText) {
+  const win = normalizeNaturalText(windowName);
+  const cat = normalizeNaturalText(categoryText);
+  if (!win || !cat) return false;
+
+  const isAbmWindow = /(^|_)abm(_|$)/.test(win);
+  const categoryIsAbm = /\babm\b/.test(cat);
+
+  // Si la categoría habla específicamente de ABM, la ventana también debe ser ABM.
+  if (categoryIsAbm && !isAbmWindow) return false;
+
+  const entityAliases = [
+    {
+      window: ['producto', 'productos', 'articulo', 'articulos'],
+      category: ['producto', 'productos', 'articulo', 'articulos']
+    },
+    {
+      window: ['acreedor', 'acreedores', 'proveedor', 'proveedores'],
+      category: ['acreedor', 'acreedores', 'proveedor', 'proveedores']
+    },
+    {
+      window: ['cliente', 'clientes'],
+      category: ['cliente', 'clientes']
+    }
+  ];
+
+  const winTokens = new Set(win.split(/[_\s]+/).filter(Boolean));
+  const catTokens = new Set(cat.split(/[_\s]+/).filter(Boolean));
+
+  for (const group of entityAliases) {
+    const windowMatches = group.window.some(t => winTokens.has(t));
+    const categoryMatches = group.category.some(t => catTokens.has(t));
+    if (windowMatches && categoryMatches) return true;
+  }
+
+  // "entidades en general" se considera general sólo para ventanas ABM cuyo
+  // nombre técnico evidencia una entidad conocida. Evitamos incluir cualquier ABM.
+  if (
+    isAbmWindow &&
+    /\bentidad(?:es)?\b/.test(cat) &&
+    entityAliases.some(group => group.window.some(t => winTokens.has(t)))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function sortVideos(rows = []) {
   return [...rows].sort((a, b) => {
     const imp = Number(b.importance || 0) - Number(a.importance || 0);
@@ -785,7 +846,14 @@ async function handleHelpQuery(req, res) {
       }
     }
 
-    let naturalIds = [];
+    // Coincidencias naturales obvias que podemos resolver sin IA.
+    // Se UNEN a lo que determine Luna; nunca sustituyen la clasificación IA.
+    const obviousNaturalRows = naturalRows.filter(row =>
+      obviousNaturalCategoryApplies(windowName, row.appliesTo)
+    );
+    const obviousNaturalIds = obviousNaturalRows.map(row => String(row.vimeoId));
+
+    let naturalIds = [...obviousNaturalIds];
     let aiError = null;
     if (naturalRows.length) {
       try {
@@ -797,7 +865,10 @@ async function handleHelpQuery(req, res) {
           domain,
           user
         });
-        naturalIds = resolved.vimeoIds;
+        naturalIds = [...new Set([
+          ...obviousNaturalIds,
+          ...resolved.vimeoIds.map(String)
+        ])];
         aiInfo = resolved;
       } catch (e) {
         aiError = e;
@@ -829,7 +900,10 @@ async function handleHelpQuery(req, res) {
       respuesta: videos.length ? 'S' : 'N',
       videos
     };
-    if (aiError && exactRows.length) responseBody.parcial = true;
+    if (aiError && (exactRows.length || obviousNaturalRows.length)) {
+      responseBody.parcial = true;
+      responseBody.ia_error = String(aiError?.message || aiError || 'error_ia').slice(0, 240);
+    }
 
     const db = await getDb();
     await ensureIndexes(db);
@@ -844,7 +918,7 @@ async function handleHelpQuery(req, res) {
       respuesta: responseBody.respuesta,
       videoIds: videos.map(v => v.vimeo_id),
       exactMatches: exactRows.length,
-      naturalCandidates: naturalRows.length,
+      naturalDeterministicMatches: obviousNaturalRows.length,
       aiUsed: aiInfo.aiUsed === true,
       aiCacheHit: aiInfo.cacheHit === true,
       sourceHash: source.hash,
@@ -917,5 +991,6 @@ module.exports = {
   matrixToHelpRows,
   versionApplies,
   technicalWindowsFromRule,
+  obviousNaturalCategoryApplies,
   googlePublicCsvUrl
 };
