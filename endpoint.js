@@ -1981,19 +1981,19 @@ app.get("/novedades", (_req, res) => {
 
 
 
-+    <main class="carousel-container">
-+      <div class="carousel-frame" id="carouselFrame">
-+        <div id="slideContent" class="slide-content"></div>
-+        <div class="counter" id="counter"></div>
-+
-+        <div class="nav">
-+          <button type="button" class="nav-btn" id="prevBtn" aria-label="Anterior">&#10094;</button>
-+          <button type="button" class="nav-btn" id="nextBtn" aria-label="Siguiente">&#10095;</button>
+    <main class="carousel-container">
+      <div class="carousel-frame" id="carouselFrame">
+        <div id="slideContent" class="slide-content"></div>
+        <div class="counter" id="counter"></div>
+
+        <div class="nav">
+          <button type="button" class="nav-btn" id="prevBtn" aria-label="Anterior">&#10094;</button>
+          <button type="button" class="nav-btn" id="nextBtn" aria-label="Siguiente">&#10095;</button>
         </div>
 
-+      </div>
-+
-+      <div class="dots" id="dots" aria-label="Navegación del carrusel"></div>
+      </div>
+
+      <div class="dots" id="dots" aria-label="Navegación del carrusel"></div>
     </main>
 
     <footer class="footer">
