@@ -119,6 +119,8 @@ const {
   mountHelpTool,
   loadHelpConfig,
   saveHelpConfig,
+  loadHelpDomainEnabled,
+  saveHelpDomainEnabled,
   publicHelpConfig,
 } = require("./help_tool");
 const {
@@ -566,7 +568,7 @@ function domainStatusServices(conf, channel, helpGlobalEnabled = false) {
 
   const ayudaDominioEnabled = domainStatusBool(
     conf.help_enabled ?? conf.ayuda_enabled ?? conf.ayudaManagerEnabled,
-    true
+    false
   );
   if (helpGlobalEnabled && ayudaDominioEnabled) {
     out.push("Ayuda Manager");
@@ -1388,7 +1390,9 @@ app.get("/api/ext/domain-status", requireDomainStatusAccess, async (req, res) =>
 
     const conf = domainStatusConfig(tenantDoc);
     const helpStatus = publicHelpConfig(helpCfg || {});
-    const helpServiceEnabled = helpStatus.enabled !== false && helpStatus.api_key_configured === true && !!helpStatus.source_url;
+    // La habilitación es por dominio. Acá sólo verificamos que el servicio
+    // global tenga fuente y clave configuradas.
+    const helpServiceEnabled = helpStatus.api_key_configured === true && !!helpStatus.source_url;
     const policyById = new Map(
       policies.map((p) => [String(p._id || ""), p])
     );
@@ -8438,7 +8442,9 @@ app.get("/comportamiento-ui.js", (_req, res) => {
           });
           var note=document.getElementById('helpConfigNote');
           if(note){
-            var parts=[editable ? 'La configuración de Ayuda es global para MANAGER y solo la puede modificar SuperAdmin.' : 'Solo SuperAdmin puede modificar la configuración global de Ayuda.'];
+            var parts=[editable
+              ? 'La habilitación de Ayuda corresponde al dominio seleccionado. Modelo, fuente, comportamiento y caches son globales para MANAGER.'
+              : 'La habilitación corresponde a este dominio; la configuración general de MANAGER solo la puede modificar SuperAdmin.'];
             if(serviceAccountEmail) parts.push('Compartí la hoja con '+serviceAccountEmail+' como Lector.');
             else parts.push('No hay Service Account configurada: la hoja debe estar publicada o accesible sin login.');
             if(!apiKeyConfigured) parts.push('Falta configurar HELP_API_KEY (o DOMAIN_STATUS_API_KEY/WWEB_API_KEY) para habilitar el acceso externo.');
@@ -8630,11 +8636,12 @@ app.get("/comportamiento-ui.js", (_req, res) => {
 app.get("/comportamiento", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
-    const [cfg, helpCfg] = await Promise.all([
+    const [cfg, helpCfg, helpDomainEnabled] = await Promise.all([
       loadBehaviorConfigFromMongo(tenant),
       // La pantalla de Comportamiento debe recuperar siempre el valor real de Mongo.
       // No usamos el cache interno de Ayuda al pulsar Recargar.
-      loadHelpConfig("MANAGER", { force: true })
+      loadHelpConfig("MANAGER"),
+      loadHelpDomainEnabled(tenant, { force: true })
     ]);
     const helpPublic = publicHelpConfig(helpCfg);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -8695,8 +8702,8 @@ app.get("/comportamiento", async (req, res) => {
 
       <div class="externalCard" style="margin-top:18px">
         <div class="row"><strong>Ayuda contextual de Manager</strong><span class="tag">Nueva herramienta</span></div>
-        <div class="hint" style="margin-top:4px">Configuración global del agente MANAGER. Las ventanas técnicas exactas se resuelven sin IA; solo las categorías escritas en lenguaje natural consumen tokens.</div>
-        <div class="row" style="margin-top:10px"><label><input id="helpEnabled" type="checkbox" /> Habilitar API de Ayuda</label></div>
+        <div class="hint" style="margin-top:4px">La habilitación es por dominio. La fuente, modelo y reglas del agente MANAGER son globales. Las ventanas técnicas exactas se resuelven sin IA; solo las categorías escritas en lenguaje natural consumen tokens.</div>
+        <div class="row" style="margin-top:10px"><label><input id="helpEnabled" type="checkbox" /> Habilitar API de Ayuda en este dominio</label></div>
         <div id="helpConfigFields" class="externalGrid" style="margin-top:10px">
           <label>Agente<input id="helpAgent" type="text" value="MANAGER" readonly /></label>
           <label>Modelo para categorías<input id="helpModel" type="text" value="gpt-5.6-luna" placeholder="gpt-5.6-luna" /></label>
@@ -9158,11 +9165,12 @@ app.get("/canales", async (req, res) => {
 app.get("/api/behavior", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
-    const [cfg, helpCfg] = await Promise.all([
+    const [cfg, helpCfg, helpDomainEnabled] = await Promise.all([
       loadBehaviorConfigFromMongo(tenant),
       // La pantalla de Comportamiento debe recuperar siempre el valor real de Mongo.
       // No usamos el cache interno de Ayuda al pulsar Recargar.
-      loadHelpConfig("MANAGER", { force: true })
+      loadHelpConfig("MANAGER"),
+      loadHelpDomainEnabled(tenant, { force: true })
     ]);
     const helpPublic = publicHelpConfig(helpCfg);
 
@@ -9189,8 +9197,8 @@ app.get("/api/behavior", async (req, res) => {
       external_api_max_chars: cfg.external_api_max_chars || 30000,
       external_api_result_instructions: cfg.external_api_result_instructions || "",
 
-      // Herramienta Ayuda. Configuración global del agente MANAGER; solo SuperAdmin la edita.
-      help_enabled: helpPublic.enabled !== false,
+      // Ayuda: habilitación por dominio; configuración general MANAGER global.
+      help_enabled: helpDomainEnabled === true,
       help_agent: helpPublic.agent || "MANAGER",
       help_source_url: helpPublic.source_url || "",
       help_model: helpPublic.model || "gpt-5.6-luna",
@@ -9258,8 +9266,12 @@ app.post("/api/behavior", async (req, res) => {
 
     const isSuperadmin = String(req.user?.role || "").toLowerCase() === "superadmin";
     const hasHelpPayload = Object.keys(req.body || {}).some((key) => String(key).startsWith("help_"));
+    const helpDomainEnabled = (isSuperadmin && hasHelpPayload)
+      ? behaviorBool(req.body?.help_enabled, false)
+      : null;
+
     const helpPayload = (isSuperadmin && hasHelpPayload) ? {
-      enabled: req.body?.help_enabled,
+
       agent: req.body?.help_agent || "MANAGER",
       source_url: req.body?.help_source_url,
       model: req.body?.help_model,
@@ -9421,7 +9433,10 @@ app.post("/api/behavior", async (req, res) => {
     await db.collection("settings").updateOne({ _id }, update, { upsert: true });
     if (helpPayload) {
       try {
+        // Fuente/modelo/comportamiento siguen siendo globales para MANAGER.
         await saveHelpConfig(helpPayload.agent || "MANAGER", helpPayload);
+       // El checkbox de habilitación pertenece EXCLUSIVAMENTE al dominio actual.
+        await saveHelpDomainEnabled(tenant, helpDomainEnabled === true);
       } catch (helpError) {
         const helpMessage = String(helpError?.message || helpError || "help_config_invalid");
         console.error("POST /api/behavior help config error:", helpMessage);

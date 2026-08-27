@@ -100,6 +100,7 @@ const EXPECTED_HEADERS = {
 
 const _configCache = new Map();
 const _sourceCache = new Map();
+const _helpDomainEnabledCache = new Map();
 const _openAiClients = new Map();
 let _indexesReady = false;
 let _googleTokenCache = null;
@@ -175,6 +176,90 @@ function requireHelpExternalAccess(req, res, next) {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
   return next();
+}
+
+function normalizeHelpDomain(value) {
+  return clean(value, 120).toUpperCase();
+}
+
+async function loadHelpDomainEnabled(domain, { force = false } = {}) {
+  const safeDomain = normalizeHelpDomain(domain);
+  if (!safeDomain) return false;
+
+  const cached = _helpDomainEnabledCache.get(safeDomain);
+  if (!force && cached && (Date.now() - cached.at) < 5 * 60 * 1000) {
+    return cached.value === true;
+  }
+
+  const db = await getDb();
+  const doc = await db.collection('tenant_config').findOne({
+    $or: [
+      { _id: safeDomain },
+      { tenantId: safeDomain },
+     { tenantid: safeDomain }
+    ]
+  }) || {};
+
+  const nested = doc?.configuracion && typeof doc.configuracion === 'object'
+    ? doc.configuracion
+    : {};
+
+  const raw =
+    nested.help_enabled ??
+    nested.ayuda_enabled ??
+    nested.ayudaManagerEnabled ??
+    doc.help_enabled ??
+    doc.ayuda_enabled ??
+    doc.ayudaManagerEnabled;
+
+  // IMPORTANTE: Ayuda queda deshabilitada por defecto.
+  // Sólo responde un dominio que haya sido habilitado explícitamente.
+  const enabled = raw === undefined ? false : boolValue(raw, false);
+
+  _helpDomainEnabledCache.set(safeDomain, { value: enabled, at: Date.now() });
+  return enabled;
+}
+
+async function saveHelpDomainEnabled(domain, enabled) {
+  const safeDomain = normalizeHelpDomain(domain);
+  if (!safeDomain) throw new Error('help_domain_required');
+
+  const db = await getDb();
+  const existing = await db.collection('tenant_config').findOne({
+    $or: [
+      { _id: safeDomain },
+      { tenantId: safeDomain },
+      { tenantid: safeDomain }
+    ]
+  });
+
+  const filter = existing?._id
+    ? { _id: existing._id }
+    : { _id: safeDomain };
+
+  const setDoc = {
+    help_enabled: boolValue(enabled, false),
+    updatedAt: new Date()
+  };
+  if (!existing) setDoc.tenantId = safeDomain;
+
+  await db.collection('tenant_config').updateOne(
+    filter,
+    {
+      $set: setDoc,
+      $setOnInsert: { createdAt: new Date() }
+    },
+    { upsert: true }
+  );
+
+  _helpDomainEnabledCache.delete(safeDomain);
+  return loadHelpDomainEnabled(safeDomain, { force: true });
+}
+
+function invalidateHelpDomainEnabledCache(domain = '') {
+  const safeDomain = normalizeHelpDomain(domain);
+  if (safeDomain) _helpDomainEnabledCache.delete(safeDomain);
+  else _helpDomainEnabledCache.clear();
 }
 
 function publicHelpConfig(cfg = {}) {
@@ -1228,6 +1313,7 @@ async function handleHelpQuery(req, res) {
   const dateInfo = asistoDateParts(now);
 
   const agent = normalizeAgent(requestField(req, 'agente', 'agent') || DEFAULT_AGENT);
+  
   const windowName = clean(requestField(req, 'ventana', 'window'), 300);
   const query = clean(requestField(req, 'consulta', 'query', 'pregunta'), 4000);
   const version = clean(requestField(req, 'version', 'versión'), 80);
@@ -1256,7 +1342,8 @@ async function handleHelpQuery(req, res) {
   let aiInfo = { aiUsed: false, cacheHit: false, usage: null };
   try {
     cfg = await loadHelpConfig(agent);
-    if (cfg.enabled === false) {
+    const domainEnabled = await loadHelpDomainEnabled(domain);
+    if (!domainEnabled) {
       await recordHelpApiRequestEvent({
         usageContext,
         version,
@@ -1531,11 +1618,14 @@ function mountHelpTool(app) {
   app.get('/api/ext/help/status', requireHelpExternalAccess, async (req, res) => {
     try {
       const agent = normalizeAgent(requestField(req, 'agente', 'agent') || DEFAULT_AGENT);
+      const domain = normalizeHelpDomain(requestField(req, 'dominio', 'domain', 'tenant', 'tenantId'));
       const cfg = await loadHelpConfig(agent);
+      const domainEnabled = domain ? await loadHelpDomainEnabled(domain) : false;
       return res.json({
         ok: true,
         agente: agent,
-        enabled: cfg.enabled !== false,
+        dominio: domain || null,
+        enabled: domain ? domainEnabled : false,
         source_configured: !!cfg.source_url,
         model: cfg.model,
         google_service_account: !!clean(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || '', 500)
@@ -1554,6 +1644,9 @@ module.exports = {
   loadHelpConfig,
   saveHelpConfig,
   invalidateHelpConfigCache,
+  loadHelpDomainEnabled,
+  saveHelpDomainEnabled,
+  invalidateHelpDomainEnabledCache,
   publicHelpConfig,
   mountHelpTool,
   // Exportados para pruebas unitarias/smoke tests.
