@@ -1743,10 +1743,17 @@ app.get("/novedades", (_req, res) => {
     content="Conocé las novedades, actualizaciones y nuevas funciones de Asisto."
   >
   <meta property="og:url" content="${canonical}">
-  <meta property="og:image" content="${absUrl("/static/novedades-bg.png")}">
+  <meta property="og:image" content="${absUrl("/static/novedades-inicio.jpg")}">
 
   <style>
     *{box-sizing:border-box}
+
+
+    :root{
+      --brand:#02c38f;
+      --brand-hover:#04976f;
+      --dot:rgba(255,255,255,.35);
+    }
 
     html,
     body{
@@ -1771,9 +1778,9 @@ app.get("/novedades", (_req, res) => {
       background-image:
         linear-gradient(
           90deg,
-          rgba(5,24,45,.04) 0%,
-          rgba(5,24,45,.08) 45%,
-          rgba(5,24,45,.26) 100%
+          rgba(5,24,45,.18) 0%,
+          rgba(5,24,45,.08) 48%,
+          rgba(5,24,45,.20) 100%
         ),
         url("/static/novedades-bg.png");
 
@@ -1784,117 +1791,186 @@ app.get("/novedades", (_req, res) => {
     }
 
     .page{
-      position:relative;
+      
       min-height:100vh;
+      width:100%;
       display:flex;
       flex-direction:column;
-      padding:38px 52px;
+      justify-content:center;
+      padding:22px 24px 16px;
     }
 
-    
-
-    .content{
-      flex:1;
-      display:flex;
-      align-items:center;
-      justify-content:flex-end;
-      padding:60px 3vw;
+    .carousel-container{
+      width:min(1480px, 94vw);
+      margin:0 auto;
     }
 
-    .panel{
-      width:min(430px, 100%);
-      padding:24px 26px;
+    .carousel-frame{
+      width:100%;
+      aspect-ratio:16 / 9;
+      position:relative;
+      overflow:hidden;
       border-radius:22px;
-      background:rgba(4,22,42,.46);
+      background:rgba(3,17,34,.68);
       border:1px solid rgba(255,255,255,.12);
-      box-shadow:0 24px 70px rgba(0,0,0,.25);
-      backdrop-filter:blur(16px);
+      box-shadow:0 28px 80px rgba(0,0,0,.34);
+      backdrop-filter:blur(8px);
+      -webkit-backdrop-filter:blur(8px);
     }
 
-    .tag{
-      display:inline-flex;
-      align-items:center;
-      gap:7px;
-      padding:6px 10px;
-      margin-bottom:12px;
-      border-radius:999px;
-      background:rgba(0,214,170,.12);
-      border:1px solid rgba(0,214,170,.22);
-      color:#37e0bd;
-      font-size:12px;
-      font-weight:700;
-      letter-spacing:.04em;
-      text-transform:uppercase;
+    .slide-content{
+      width:100%;
+      height:100%;
     }
 
-    .tag::before{
-      content:"";
-      width:7px;
-      height:7px;
-      border-radius:50%;
-      background:#27d6b2;
-      box-shadow:0 0 12px rgba(39,214,178,.8);
-    }
-
-
-
-    .lead{
-      margin:20px 0 0;
-      max-width:470px;
-      color:rgba(255,255,255,.76);
-      font-size:17px;
-      line-height:1.65;
-    }
-
-    .soon{
-      margin-top:16px;
-      padding:14px 16px;
-      border-radius:15px;
-      background:rgba(255,255,255,.06);
-      border:1px solid rgba(255,255,255,.08);
-    }
-
-    .soon strong{
+    .slide-content img,
+    .slide-content iframe{
+      width:100%;
+      height:100%;
       display:block;
-      margin-bottom:4px;
-      font-size:14px;
+      border:0;
     }
 
-    .soon span{
-      color:rgba(255,255,255,.65);
+    .slide-content img{
+      object-fit:contain;
+      background:#071d35;
+    }
+
+    .counter{
+      position:absolute;
+      top:16px;
+      right:16px;
+      z-index:4;
+      padding:7px 12px;
+      border-radius:999px;
+      background:rgba(2,12,25,.58);
+      border:1px solid rgba(255,255,255,.12);
+      color:#fff;
       font-size:13px;
-      line-height:1.45;
+      font-weight:700;
+      backdrop-filter:blur(8px);
+    }
+
+    .nav{
+      position:absolute;
+      inset:0;
+      z-index:3;
+     display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding:14px;
+      pointer-events:none;
+    }
+
+    .nav-btn{
+      pointer-events:auto;
+      width:46px;
+      height:46px;
+      display:grid;
+      place-items:center;
+      border:1px solid rgba(255,255,255,.18);
+      border-radius:50%;
+      background:rgba(2,195,143,.88);
+      color:#fff;
+      font-size:22px;
+      line-height:1;
+      cursor:pointer;
+      box-shadow:0 8px 24px rgba(0,0,0,.28);
+      transition:background .18s ease, transform .18s ease;
+    }
+
+    .nav-btn:hover{
+      background:var(--brand-hover);
+      transform:scale(1.05);
+    }
+
+    .nav-btn:focus-visible,
+    .dot:focus-visible{
+      outline:3px solid rgba(255,255,255,.9);
+      outline-offset:3px;
+    }
+
+    .dots{
+      display:flex;
+      justify-content:center;
+      align-items:center;
+      gap:9px;
+      margin-top:14px;
+      min-height:22px;
+      flex-wrap:wrap;
+    }
+
+    .dot{
+      appearance:none;
+      border:0;
+      padding:0;
+      width:9px;
+      height:9px;
+      border-radius:999px;
+      background:var(--dot);
+      cursor:pointer;
+      transition:width .18s ease, background .18s ease;
+    }
+
+    .dot.active{
+      width:26px;
+      background:var(--brand);
     }
 
     .footer{
-      display:flex;
-      justify-content:flex-end;
-      color:rgba(255,255,255,.45);
+      width:min(1480px, 94vw);
+      margin:8px auto 0;
+      text-align:right;
+      color:rgba(255,255,255,.48);
       font-size:12px;
     }
 
     @media(max-width:800px){
       body{
+      background-attachment:scroll;
         background-position:left center;
-        background-attachment:scroll;
+     
       }
 
       .page{
-        padding:22px 20px;
+        min-height:100vh;
+        padding:10px 8px 12px;
       }
 
-      .content{
-        align-items:flex-end;
-        padding:260px 0 28px;
+      .carousel-container{
+        width:100%;
       }
 
-      .panel{
-        padding:26px 24px;
-        background:rgba(4,22,42,.72);
+      .carousel-frame{
+        border-radius:14px;
+      }
+
+      .nav{
+        padding:8px;
+      }
+
+      .nav-btn{
+        width:40px;
+        height:40px;
+        font-size:19px;
+      }
+
+      .counter{
+        top:9px;
+        right:9px;
+        font-size:12px;
+        padding:5px 9px;
+      }
+
+      .dots{
+        margin-top:10px;
       }
 
       .footer{
-        justify-content:center;
+        width:100%;
+        margin-top:4px;
+        padding-right:4px;
+        text-align:center;
       }
     }
   </style>
@@ -1905,21 +1981,19 @@ app.get("/novedades", (_req, res) => {
 
 
 
-    <main class="content">
-      <section class="panel">
-
-        <div class="tag">Novedades</div>
-
-      
-        <div class="soon">
-          <strong>Muy pronto</strong>
-          <span>
-            Vas a encontrar acá todas las novedades y actualizaciones
-            de la plataforma.
-          </span>
++    <main class="carousel-container">
++      <div class="carousel-frame" id="carouselFrame">
++        <div id="slideContent" class="slide-content"></div>
++        <div class="counter" id="counter"></div>
++
++        <div class="nav">
++          <button type="button" class="nav-btn" id="prevBtn" aria-label="Anterior">&#10094;</button>
++          <button type="button" class="nav-btn" id="nextBtn" aria-label="Siguiente">&#10095;</button>
         </div>
 
-      </section>
++      </div>
++
++      <div class="dots" id="dots" aria-label="Navegación del carrusel"></div>
     </main>
 
     <footer class="footer">
@@ -1927,6 +2001,186 @@ app.get("/novedades", (_req, res) => {
     </footer>
 
   </div>
+
+
+  <script>
+    const DEFAULT_SLIDES = [
+      "/static/novedades-inicio.jpg",
+      "/static/novedades-envio-ws.jpg",
+      "/static/novedades-contacto.jpg"
+    ];
+
+    const AUTOPLAY_MS = 6000;
+
+    function getSlidesFromQuery(){
+      const params = new URLSearchParams(window.location.search);
+      const raw = params.get("imgs");
+
+      if (!raw) return DEFAULT_SLIDES.slice();
+
+      let decoded = raw;
+      try {
+        decoded = decodeURIComponent(raw);
+      } catch {}
+
+      const arr = decoded
+        .split("|")
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      return arr.length ? arr : DEFAULT_SLIDES.slice();
+    }
+
+    function getVimeoId(value){
+      const slide = String(value || "").trim();
+
+      if (/^(vimeo|video):/i.test(slide)) {
+        return slide.split(":").slice(1).join(":").trim();
+      }
+
+      const match = slide.match(/vimeo\\.com\\/(?:video\\/)?([0-9]+)/i);
+      return match ? match[1] : null;
+    }
+
+    function normalizeSlide(value){
+      const vimeoId = getVimeoId(value);
+
+      if (vimeoId) {
+        return { type:"vimeo", id:vimeoId };
+      }
+
+      return { type:"image", src:value };
+    }
+
+    const slides = getSlidesFromQuery().map(normalizeSlide);
+    const slideContent = document.getElementById("slideContent");
+    const carouselFrame = document.getElementById("carouselFrame");
+    const counter = document.getElementById("counter");
+    const dotsContainer = document.getElementById("dots");
+    const prevBtn = document.getElementById("prevBtn");
+    const nextBtn = document.getElementById("nextBtn");
+
+    let index = 0;
+    let autoInterval = null;
+    let startX = 0;
+
+    function stopAuto(){
+      if (autoInterval) {
+        clearInterval(autoInterval);
+        autoInterval = null;
+      }
+    }
+
+    function startAuto(){
+      stopAuto();
+
+      if (slides.length <= 1) return;
+      if (slides[index]?.type === "vimeo") return;
+
+      autoInterval = setInterval(() => {
+        index = (index + 1) % slides.length;
+        render();
+      }, AUTOPLAY_MS);
+    }
+
+    function buildDots(){
+      dotsContainer.innerHTML = "";
+
+      slides.forEach((_, i) => {
+        const dot = document.createElement("button");
+        dot.type = "button";
+        dot.className = "dot";
+        dot.setAttribute("aria-label", "Ir a la novedad " + (i + 1));
+        dot.addEventListener("click", () => {
+          index = i;
+          render();
+        });
+        dotsContainer.appendChild(dot);
+      });
+    }
+
+    function render(){
+      const slide = slides[index];
+      slideContent.innerHTML = "";
+
+      if (slide.type === "vimeo") {
+        const iframe = document.createElement("iframe");
+        iframe.src =
+          "https://player.vimeo.com/video/" +
+          encodeURIComponent(slide.id) +
+         "?texttrack=es&title=0&byline=0&portrait=0";
+        iframe.allow = "autoplay; fullscreen; picture-in-picture";
+        iframe.allowFullscreen = true;
+        iframe.title = "Video " + (index + 1);
+        slideContent.appendChild(iframe);
+      } else {
+        const img = document.createElement("img");
+        img.src = slide.src;
+        img.alt = "Novedad Asisto " + (index + 1);
+        slideContent.appendChild(img);
+      }
+
+      counter.textContent = (index + 1) + " / " + slides.length;
+
+     [...dotsContainer.children].forEach((dot, i) => {
+        dot.classList.toggle("active", i === index);
+        dot.setAttribute("aria-current", i === index ? "true" : "false");
+      });
+
+      const showNav = slides.length > 1;
+      prevBtn.style.display = showNav ? "" : "none";
+      nextBtn.style.display = showNav ? "" : "none";
+      dotsContainer.style.display = showNav ? "flex" : "none";
+      counter.style.display = showNav ? "" : "none";
+
+      startAuto();
+    }
+
+    function next(){
+      index = (index + 1) % slides.length;
+      render();
+    }
+
+    function prev(){
+      index = (index - 1 + slides.length) % slides.length;
+     render();
+    }
+
+    nextBtn.addEventListener("click", next);
+    prevBtn.addEventListener("click", prev);
+
+    document.addEventListener("keydown", (event) => {
+      if (slides.length <= 1) return;
+     if (event.key === "ArrowRight") next();
+      if (event.key === "ArrowLeft") prev();
+    });
+
+    carouselFrame.addEventListener("mouseenter", stopAuto);
+    carouselFrame.addEventListener("mouseleave", startAuto);
+
+    carouselFrame.addEventListener("touchstart", (event) => {
+      if (!event.touches?.length) return;
+      startX = event.touches[0].clientX;
+    }, { passive:true });
+
+    carouselFrame.addEventListener("touchend", (event) => {
+      if (slides.length <= 1 || !event.changedTouches?.length) return;
+
+      const diff = event.changedTouches[0].clientX - startX;
+      if (Math.abs(diff) <= 50) return;
+
+      if (diff < 0) next();
+      else prev();
+    }, { passive:true });
+
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) stopAuto();
+      else startAuto();
+    });
+
+    buildDots();
+    render();
+  </script> 
 </body>
 </html>`);
 });
