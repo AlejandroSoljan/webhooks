@@ -632,11 +632,29 @@ function sortVideos(rows = []) {
 
 function outputVideo(row) {
   return {
-    titulo: row.title,
     vimeo_id: row.vimeoId,
-    importancia: Number(row.importance || 0),
-    tags: Array.isArray(row.tags) ? row.tags : [],
-    descripcion: row.description || ''
+    titulo: row.title,
+    importancia: Number(row.importance || 0)
+  };
+}
+
+// Respuesta pública compacta del API.
+// Internamente se conservan todos los datos para logs, cache y Control de Tokens.
+function compactHelpApiResponse({ dateInfo, responseBody, intelligent = false } = {}) {
+  const videos = Array.isArray(responseBody?.videos)
+    ? [...responseBody.videos].sort((a, b) => {
+        const imp = Number(b?.importancia || 0) - Number(a?.importancia || 0);
+        if (imp) return imp;
+        return String(a?.titulo || '').localeCompare(String(b?.titulo || ''), 'es');
+      })
+    : [];
+
+  return {
+    respuesta: intelligent
+      ? String(responseBody?.respuesta_texto || '')
+      : String(responseBody?.respuesta || ''),
+    fecha: String(dateInfo?.fechaHora || dateInfo?.fecha || ''),
+    videos
   };
 }
 
@@ -1247,18 +1265,11 @@ async function handleHelpQuery(req, res) {
         aiUsed: false,
         aiCacheHit: false
       });
-      return res.json({
-        ok: true,
-        ...dateInfo,
-        agente: agent,
-        ventana: windowName || '',
-        ...(query ? { consulta: query } : {}),
-        version,
-        dominio: domain,
-        usuario: user,
-        respuesta: 'N',
-        videos: []
-      });
+      return res.json(compactHelpApiResponse({
+        dateInfo,
+        responseBody: { respuesta: 'N', videos: [] },
+        intelligent: !!query
+      }));
     }
 
     source = await loadHelpSource(cfg);
@@ -1360,7 +1371,11 @@ async function handleHelpQuery(req, res) {
       });
 
       res.set('Cache-Control', 'no-store');
-      return res.json(responseBody);
+      return res.json(compactHelpApiResponse({
+        dateInfo,
+        responseBody,
+        intelligent: true
+      }));
     }
 
     const wantedWindow = normalizeWindow(windowName);
@@ -1465,7 +1480,11 @@ async function handleHelpQuery(req, res) {
     });
 
     res.set('Cache-Control', 'no-store');
-    return res.json(responseBody);
+    return res.json(compactHelpApiResponse({
+      dateInfo,
+      responseBody,
+      intelligent: false
+    }));
   } catch (e) {
     const message = String(e?.message || e || 'internal');
     console.error(`[help] query error agent=${agent} domain=${domain} window=${windowName}:`, message);
