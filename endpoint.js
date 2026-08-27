@@ -8632,7 +8632,9 @@ app.get("/comportamiento", async (req, res) => {
     const tenant = resolveTenantId(req);
     const [cfg, helpCfg] = await Promise.all([
       loadBehaviorConfigFromMongo(tenant),
-      loadHelpConfig("MANAGER")
+      // La pantalla de Comportamiento debe recuperar siempre el valor real de Mongo.
+      // No usamos el cache interno de Ayuda al pulsar Recargar.
+      loadHelpConfig("MANAGER", { force: true })
     ]);
     const helpPublic = publicHelpConfig(helpCfg);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -9158,7 +9160,9 @@ app.get("/api/behavior", async (req, res) => {
     const tenant = resolveTenantId(req);
     const [cfg, helpCfg] = await Promise.all([
       loadBehaviorConfigFromMongo(tenant),
-      loadHelpConfig("MANAGER")
+      // La pantalla de Comportamiento debe recuperar siempre el valor real de Mongo.
+      // No usamos el cache interno de Ayuda al pulsar Recargar.
+      loadHelpConfig("MANAGER", { force: true })
     ]);
     const helpPublic = publicHelpConfig(helpCfg);
 
