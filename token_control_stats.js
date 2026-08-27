@@ -701,6 +701,15 @@ async function buildTokenConversationSummary({
               },
               waId: { $last: "$_waId" },
               channelType: { $last: "$_channelType" },
+              help_query: { $max: { $ifNull: ["$meta.query", ""] } },
+              help_window: { $max: { $ifNull: ["$meta.window", ""] } },
+              help_version: { $max: { $ifNull: ["$meta.version", ""] } },
+              help_result: { $max: { $ifNull: ["$meta.result", ""] } },
+              help_request_count: {
+                $sum: {
+                  $cond: [{ $eq: ["$meta.usageType", "ayuda_request"] }, 1, 0]
+                }
+              },
               message_input_tokens: {
                 $sum: {
                   $cond: [{ $eq: ["$kind", "message"] }, { $ifNull: ["$inputTokens", 0] }, 0]
@@ -1028,8 +1037,12 @@ async function buildTokenConversationSummary({
       completed: status === "COMPLETED",
       contactName,
       waId,
-      channelType: String(row.channelType || conv?.channelType || "whatsapp").trim().toLowerCase(),
       channelType: resolvedChannelType,
+      helpQuery: String(row.help_query || "").trim(),
+      helpWindow: String(row.help_window || "").trim(),
+      helpVersion: String(row.help_version || "").trim(),
+      helpResult: String(row.help_result || "").trim(),
+      helpRequestCount: Number(row.help_request_count || 0),
       message_input_tokens: Number(row.message_input_tokens || 0),
       message_output_tokens: Number(row.message_output_tokens || 0),
       help_input_tokens: Number(row.help_input_tokens || 0),
@@ -1316,7 +1329,7 @@ function renderTokenControlPage(user) {
       <div class="sectionTitle">
         <div>
           <h2>Detalle por conversación</h2>
-          <div class="small">Pedidos: una fila por conversationId. Conversacionales: si un conversationId histórico quedó abierto, se separa en sesiones usando el tiempo de inactividad configurado en Seguimiento (30 min por defecto).</div>
+          <div class="small">Pedidos: una fila por conversationId. Conversacionales: se separan por sesiones cuando corresponde. Ayuda API: una fila por cada consulta realizada, incluso si se resolvió sin IA o desde cache y consumió 0 tokens.</div>
         </div>
       </div>
       <div id="detailNote" class="small" style="margin-bottom:10px"></div>
@@ -1621,10 +1634,21 @@ function renderTokenControlPage(user) {
       const sessionInfo = isConversational
         ? '<span class="small">Sesión ' + fmtInt(it.sessionNumber || 1) + (num(it.sessionCount) > 1 ? (' de ' + fmtInt(it.sessionCount)) : '') + ' · corte ' + fmtInt(it.inactivityMinutes || 30) + ' min</span>'
         : '';
+      const isHelp = String(it.botMode || '').toLowerCase() === 'ayuda';
+      const helpQuery = String(it.helpQuery || '').trim();
+      const helpWindow = String(it.helpWindow || '').trim();
+      const helpVersion = String(it.helpVersion || '').trim();
+      const helpResult = String(it.helpResult || '').trim();
+      const helpInfo = isHelp
+        ? '<span class="small"><b>Consulta:</b> ' + esc(helpQuery || '(sin texto; consulta por ventana)') + '</span>' +
+          (helpWindow ? '<span class="small"><b>Ventana:</b> ' + esc(helpWindow) + '</span>' : '') +
+          (helpVersion ? '<span class="small"><b>Versión:</b> ' + esc(helpVersion) + '</span>' : '') +
+          (helpResult ? '<span class="small"><b>Resultado:</b> ' + esc(helpResult) + '</span>' : '')
+        : '';
       const orderInfo = it.orderId
         ? '<span class="small">Pedido: ' + esc(shortId(it.orderId)) + '</span>'
-        : (String(it.botMode || '').toLowerCase() === 'ayuda'
-            ? '<span class="small">Consulta de ayuda</span>'
+        : (isHelp
+            ? helpInfo
             : (isConversational ? '<span class="small">Conversacional</span>' : '<span class="small">Sin pedido</span>'));
       const orderTotal = num(it.pedido_total) > 0
         ? '<span class="small">Total pedido: ' + esc(fmtOrderMoney(it.pedido_total)) + '</span>'
@@ -1634,7 +1658,10 @@ function renderTokenControlPage(user) {
           '<td><div class="stack"><span class="pill">' + esc(it.tenantId || '') + '</span><span class="status ' + statusClass(status) + '">' + esc(status) + '</span></div></td>' +
           '<td><div class="stack">' + (client ? '<b>' + esc(client) + '</b>' : '<span class="small">Sin nombre</span>') +
           (waId ? '<span class="small">' + esc(waId) + '</span>' : '') +
-          '<span class="small">' + esc(it.channelType === 'qr_web' ? 'QR Web' : (it.channelType === 'help_api' ? 'Ayuda API' : (it.channelType === 'api_messages' ? 'API Mensajes' : 'WhatsApp'))) + '</span></div></td>' +
+          '<span class="small">' + esc(it.channelType === 'qr_web' ? 'QR Web' : (it.channelType === 'help_api' ? 'Ayuda API' : (it.channelType === 'api_messages' ? 'API Mensajes' : 'WhatsApp'))) + '</span>' +
+          (isHelp && helpQuery ? '<span class="small"><b>Consulta:</b> ' + esc(helpQuery) + '</span>' : '') +
+          (isHelp && helpWindow ? '<span class="small"><b>Ventana:</b> ' + esc(helpWindow) + '</span>' : '') +
+          '</div></td>' +
  
           '<td><div class="stack"><span>' + esc(fmtDate(it.first_at)) + '</span><span class="small">hasta ' + esc(fmtDate(it.last_at)) + '</span></div></td>' +
           '<td><b>' + fmtInt(it.total_tokens) + '</b></td><td>' + fmtInt(it.events) + '</td><td class="money">' + fmtMoney(it.billed_cost) + '</td>' +

@@ -681,7 +681,7 @@ function extractJsonObject(text) {
   return null;
 }
 
-async function resolveNaturalCategories({ cfg, sourceHash, windowName, rows, domain, user }) {
+async function resolveNaturalCategories({ cfg, sourceHash, windowName, rows, domain, user, usageContext = null }) {
   if (!rows.length) return { vimeoIds: [], aiUsed: false, cacheHit: false, usage: null };
   const db = await getDb();
   await ensureIndexes(db);
@@ -748,8 +748,10 @@ async function resolveNaturalCategories({ cfg, sourceHash, windowName, rows, dom
   )];
 
   const usage = parseTokenUsagePair(response?.usage || null, 'message');
-  const traceId = `help:${cfg.agent}:${domain}:${Date.now()}:${crypto.randomBytes(3).toString('hex')}`;
-  const conversationId = `${traceId}:${clean(user, 80).replace(/[^a-zA-Z0-9_.-]/g, '_') || 'user'}`;
+  const traceId = usageContext?.traceId ||
+    `help:${cfg.agent}:${domain}:${Date.now()}:${crypto.randomBytes(3).toString('hex')}`;
+  const conversationId = usageContext?.conversationId ||
+    `${traceId}:${clean(user, 80).replace(/[^a-zA-Z0-9_.-]/g, '_') || 'user'}`;
   await recordTokenUsage({
     tenantId: domain,
     kind: 'message',
@@ -768,7 +770,8 @@ async function resolveNaturalCategories({ cfg, sourceHash, windowName, rows, dom
       window: windowName,
       user,
       sourceHash,
-      categoryCandidates: rows.length
+      categoryCandidates: rows.length,
+      requestId: usageContext?.requestId || null
     }
   });
 
@@ -866,7 +869,8 @@ async function buildIntelligentQueryCandidates({
   windowName,
   query,
   domain,
-  user
+  user,
+  usageContext = null
 }) {
   const wantedWindow = normalizeWindow(windowName);
   const exactRows = [];
@@ -899,7 +903,8 @@ async function buildIntelligentQueryCandidates({
         windowName,
         rows: naturalRows,
         domain,
-        user
+        user,
+        usageContext
       });
       categoryAiInfo = resolved;
       const ids = new Set([
@@ -944,7 +949,8 @@ async function resolveIntelligentHelpQuery({
   query,
   rows,
   domain,
-  user
+  user,
+  usageContext = null
 }) {
   const db = await getDb();
   await ensureIndexes(db);
@@ -1047,8 +1053,10 @@ async function resolveIntelligentHelpQuery({
     ['1','true','yes','si','sí'].includes(String(parsed.encontrado || '').trim().toLowerCase());
 
   const usage = parseTokenUsagePair(response?.usage || null, 'message');
-  const traceId = `help-query:${cfg.agent}:${domain}:${Date.now()}:${crypto.randomBytes(3).toString('hex')}`;
-  const conversationId = `${traceId}:${clean(user, 80).replace(/[^a-zA-Z0-9_.-]/g, '_') || 'user'}`;
+  const traceId = usageContext?.traceId ||
+    `help-query:${cfg.agent}:${domain}:${Date.now()}:${crypto.randomBytes(3).toString('hex')}`;
+  const conversationId = usageContext?.conversationId ||
+    `${traceId}:${clean(user, 80).replace(/[^a-zA-Z0-9_.-]/g, '_') || 'user'}`;
 
   await recordTokenUsage({
     tenantId: domain,
@@ -1069,7 +1077,8 @@ async function resolveIntelligentHelpQuery({
       query,
       user,
       sourceHash,
-      candidates: rows.length
+      candidates: rows.length,
+      requestId: usageContext?.requestId || null
     }
   });
 
@@ -1133,6 +1142,68 @@ function requestField(req, ...names) {
   return '';
 }
 
+function buildHelpApiUsageContext({ agent, domain, user, windowName, query } = {}) {
+  const requestId = `help-api:${Date.now()}:${crypto.randomBytes(4).toString('hex')}`;
+  const traceId = `${requestId}:${normalizeAgent(agent || DEFAULT_AGENT)}:${clean(domain, 120) || 'DOMAIN'}`;
+  const safeUser = clean(user, 80).replace(/[^a-zA-Z0-9_.-]/g, '_') || 'user';
+  return {
+    requestId,
+    traceId,
+    conversationId: `${traceId}:${safeUser}`,
+    agent: normalizeAgent(agent || DEFAULT_AGENT),
+    domain: clean(domain, 120).toUpperCase(),
+    user: clean(user, 200),
+    windowName: clean(windowName, 300),
+    query: clean(query, 4000)
+  };
+}
+
+async function recordHelpApiRequestEvent({
+  usageContext,
+  version,
+  result = '',
+  videoCount = 0,
+  aiUsed = false,
+  aiCacheHit = false,
+  error = ''
+} = {}) {
+  try {
+    const ctx = usageContext || {};
+    if (!ctx.domain) return null;
+
+    return await recordTokenUsage({
+      tenantId: ctx.domain,
+      kind: 'help_request',
+      provider: 'asisto',
+      model: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 0,
+      conversationId: ctx.conversationId,
+      waId: ctx.user,
+      channelType: 'help_api',
+      usageTraceId: ctx.traceId,
+      meta: {
+        usageType: 'ayuda_request',
+        requestId: ctx.requestId,
+        agent: ctx.agent,
+        window: ctx.windowName || '',
+        query: ctx.query || '',
+        version: clean(version, 80),
+        user: ctx.user,
+        result: clean(result, 40),
+        videoCount: Math.max(0, Number(videoCount || 0)),
+        aiUsed: aiUsed === true,
+        aiCacheHit: aiCacheHit === true,
+        error: clean(error, 500)
+      }
+    });
+  } catch (e) {
+    console.warn('[help] no se pudo registrar consulta API en control de tokens:', e?.message || e);
+    return null;
+  }
+}
+
 async function handleHelpQuery(req, res) {
   const started = Date.now();
   const now = new Date();
@@ -1152,12 +1223,30 @@ async function handleHelpQuery(req, res) {
   if (!domain) return res.status(400).json({ ok: false, error: 'dominio_required' });
   if (!user) return res.status(400).json({ ok: false, error: 'usuario_required' });
 
+  // Cada llamada al API tiene una sola identidad en Control de Tokens.
+  // Todas las llamadas internas a IA de esta consulta comparten conversationId.
+  const usageContext = buildHelpApiUsageContext({
+    agent,
+    domain,
+    user,
+    windowName,
+    query
+  });
+
   let cfg;
   let source;
   let aiInfo = { aiUsed: false, cacheHit: false, usage: null };
   try {
     cfg = await loadHelpConfig(agent);
     if (cfg.enabled === false) {
+      await recordHelpApiRequestEvent({
+        usageContext,
+        version,
+        result: 'N',
+        videoCount: 0,
+        aiUsed: false,
+        aiCacheHit: false
+      });
       return res.json({
         ok: true,
         ...dateInfo,
@@ -1188,7 +1277,8 @@ async function handleHelpQuery(req, res) {
         windowName,
         query,
         domain,
-        user
+        user,
+        usageContext
       });
 
       const intelligent = await resolveIntelligentHelpQuery({
@@ -1198,7 +1288,8 @@ async function handleHelpQuery(req, res) {
         query,
         rows: candidateInfo.rows,
         domain,
-        user
+        user,
+        usageContext
       });
 
       const selectedIds = new Set(intelligent.vimeoIds.map(String));
@@ -1257,6 +1348,17 @@ async function handleHelpQuery(req, res) {
         durationMs: Date.now() - started
       }).catch(e => console.warn('[help] intelligent query log:', e?.message || e));
 
+      await recordHelpApiRequestEvent({
+        usageContext,
+        version,
+        result: responseBody.respuesta,
+        videoCount: videos.length,
+        aiUsed: candidateInfo.categoryAiInfo.aiUsed === true || intelligent.aiUsed === true,
+        aiCacheHit:
+          candidateInfo.categoryAiInfo.cacheHit === true ||
+          intelligent.cacheHit === true
+      });
+
       res.set('Cache-Control', 'no-store');
       return res.json(responseBody);
     }
@@ -1290,7 +1392,8 @@ async function handleHelpQuery(req, res) {
           windowName,
           rows: naturalRows,
           domain,
-          user
+          user,
+          usageContext
         });
         naturalIds = [...new Set([
           ...obviousNaturalIds,
@@ -1352,6 +1455,15 @@ async function handleHelpQuery(req, res) {
       durationMs: Date.now() - started
     }).catch(e => console.warn('[help] query log:', e?.message || e));
 
+    await recordHelpApiRequestEvent({
+      usageContext,
+      version,
+      result: responseBody.respuesta,
+      videoCount: videos.length,
+      aiUsed: aiInfo.aiUsed === true,
+      aiCacheHit: aiInfo.cacheHit === true
+    });
+
     res.set('Cache-Control', 'no-store');
     return res.json(responseBody);
   } catch (e) {
@@ -1361,6 +1473,17 @@ async function handleHelpQuery(req, res) {
       : /openai_api_key_missing/.test(message) ? 503
       : /source_|google_sheet|google_service_account/.test(message) ? 502
       : 500;
+
+    await recordHelpApiRequestEvent({
+      usageContext,
+      version,
+      result: 'ERROR',
+      videoCount: 0,
+      aiUsed: false,
+      aiCacheHit: false,
+      error: message
+    });
+
     return res.status(status).json({
       ok: false,
       ...dateInfo,
