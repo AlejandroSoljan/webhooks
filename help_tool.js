@@ -100,7 +100,8 @@ const EXPECTED_HEADERS = {
 
 const _configCache = new Map();
 const _sourceCache = new Map();
-const _helpDomainEnabledCache = new Map();
+const _helpDomainConfigCache = new Map();
+const _helpAgentOwnerCache = new Map();
 const _openAiClients = new Map();
 let _indexesReady = false;
 let _googleTokenCache = null;
@@ -182,29 +183,12 @@ function normalizeHelpDomain(value) {
   return clean(value, 120).toUpperCase();
 }
 
-async function loadHelpDomainEnabled(domain, { force = false } = {}) {
-  const safeDomain = normalizeHelpDomain(domain);
-  if (!safeDomain) return false;
-
-  const cached = _helpDomainEnabledCache.get(safeDomain);
-  if (!force && cached && (Date.now() - cached.at) < 5 * 60 * 1000) {
-    return cached.value === true;
-  }
-
-  const db = await getDb();
-  const doc = await db.collection('tenant_config').findOne({
-    $or: [
-      { _id: safeDomain },
-      { tenantId: safeDomain },
-     { tenantid: safeDomain }
-    ]
-  }) || {};
-
+function helpDomainConfigFromDoc(doc = {}, fallbackDomain = '') {
   const nested = doc?.configuracion && typeof doc.configuracion === 'object'
     ? doc.configuracion
     : {};
 
-  const raw =
+  const rawEnabled =
     nested.help_enabled ??
     nested.ayuda_enabled ??
     nested.ayudaManagerEnabled ??
@@ -212,19 +196,184 @@ async function loadHelpDomainEnabled(domain, { force = false } = {}) {
     doc.ayuda_enabled ??
     doc.ayudaManagerEnabled;
 
-  // IMPORTANTE: Ayuda queda deshabilitada por defecto.
-  // Sólo responde un dominio que haya sido habilitado explícitamente.
-  const enabled = raw === undefined ? false : boolValue(raw, false);
+  const rawAgent =
+    nested.help_agent ??
+    nested.helpAgent ??
+    nested.agente_ayuda ??
+    nested.agenteAyuda ??
+    doc.help_agent ??
+    doc.helpAgent ??
+    doc.agente_ayuda ??
+    doc.agenteAyuda;
 
-  _helpDomainEnabledCache.set(safeDomain, { value: enabled, at: Date.now() });
-  return enabled;
+  const agentExplicit = !!clean(rawAgent, 80);
+  return {
+    domain: normalizeHelpDomain(
+      doc?.tenantId ||
+      doc?.tenantid ||
+      doc?._id ||
+      fallbackDomain
+    ),
+    enabled: rawEnabled === undefined ? false : boolValue(rawEnabled, false),
+    agent: normalizeAgent(rawAgent || DEFAULT_AGENT),
+    agentExplicit
+  };
 }
 
-async function saveHelpDomainEnabled(domain, enabled) {
+async function loadHelpDomainConfig(domain, { force = false } = {}) {
   const safeDomain = normalizeHelpDomain(domain);
+  if (!safeDomain) {
+    return { domain: '', enabled: false, agent: DEFAULT_AGENT, agentExplicit: false };
+  }
+
+  const cached = _helpDomainConfigCache.get(safeDomain);
+  if (!force && cached && (Date.now() - cached.at) < 5 * 60 * 1000) {
+    return cached.value;
+  }
+
+  const db = await getDb();
+  const doc = await db.collection('tenant_config').findOne({
+    $or: [
+      { _id: safeDomain },
+      { tenantId: safeDomain },
+      { tenantid: safeDomain }
+    ]
+  }) || {};
+
+  const value = helpDomainConfigFromDoc(doc, safeDomain);
+  _helpDomainConfigCache.set(safeDomain, { value, at: Date.now() });
+  return value;
+}
+
+async function loadHelpDomainEnabled(domain, { force = false } = {}) {
+  const cfg = await loadHelpDomainConfig(domain, { force });
+  return cfg.enabled === true;
+}
+
+// Busca el dominio ASISTO propietario de un agente.
+// El campo "dominio" recibido por el API puede ser un cliente/instalación externa
+// (ej. CLIENTE_001) y NO se usa para facturación ni para habilitar Ayuda.
+async function resolveHelpDomainByAgent(agent = DEFAULT_AGENT, { force = false } = {}) {
+  const safeAgent = normalizeAgent(agent);
+  const cached = _helpAgentOwnerCache.get(safeAgent);
+  if (!force && cached && (Date.now() - cached.at) < 5 * 60 * 1000) {
+    return cached.value;
+  }
+
+  const db = await getDb();
+  const docs = await db.collection('tenant_config').find(
+    {
+      $or: [
+        { help_enabled: { $exists: true } },
+        { ayuda_enabled: { $exists: true } },
+        { ayudaManagerEnabled: { $exists: true } },
+        { help_agent: { $exists: true } },
+        { helpAgent: { $exists: true } },
+        { 'configuracion.help_enabled': { $exists: true } },
+        { 'configuracion.ayuda_enabled': { $exists: true } },
+        { 'configuracion.ayudaManagerEnabled': { $exists: true } },
+        { 'configuracion.help_agent': { $exists: true } },
+        { 'configuracion.helpAgent': { $exists: true } }
+      ]
+    },
+    {
+      projection: {
+        _id: 1,
+        tenantId: 1,
+        tenantid: 1,
+        help_enabled: 1,
+        ayuda_enabled: 1,
+        ayudaManagerEnabled: 1,
+        help_agent: 1,
+        helpAgent: 1,
+        agente_ayuda: 1,
+        agenteAyuda: 1,
+        configuracion: 1
+      }
+    }
+  ).toArray();
+
+  const configs = docs
+    .map(doc => helpDomainConfigFromDoc(doc))
+    .filter(cfg => cfg.domain && cfg.enabled === true);
+
+  // Primero mandan las asociaciones explícitas agente -> dominio.
+  const exact = configs.filter(cfg => cfg.agentExplicit && cfg.agent === safeAgent);
+  if (exact.length > 1) {
+    throw new Error(`help_agent_multiple_domains:${safeAgent}`);
+  }
+  if (exact.length === 1) {
+    const value = { ...exact[0], legacy: false };
+    _helpAgentOwnerCache.set(safeAgent, { value, at: Date.now() });
+    return value;
+  }
+
+  // Compatibilidad con la versión anterior: help_enabled podía existir sin
+  // help_agent. Si hay UN solo dominio habilitado así, lo tomamos como dueño
+  // del agente solicitado y evitamos obligar a guardar nuevamente la pantalla.
+  const legacy = configs.filter(cfg => !cfg.agentExplicit);
+  if (legacy.length > 1) {
+    throw new Error(`help_agent_domain_ambiguous:${safeAgent}`);
+  }
+  if (legacy.length === 1) {
+    const value = { ...legacy[0], agent: safeAgent, legacy: true };
+    _helpAgentOwnerCache.set(safeAgent, { value, at: Date.now() });
+    return value;
+  }
+
+  _helpAgentOwnerCache.set(safeAgent, { value: null, at: Date.now() });
+  return null;
+}
+
+async function saveHelpDomainEnabled(domain, enabled, agent = DEFAULT_AGENT) {
+  const safeDomain = normalizeHelpDomain(domain);
+  const safeAgent = normalizeAgent(agent);
   if (!safeDomain) throw new Error('help_domain_required');
 
   const db = await getDb();
+
+  // Un agente habilitado pertenece a un único dominio Asisto. Esto evita
+  // ambigüedad en facturación y Control de Tokens.
+  if (boolValue(enabled, false)) {
+    const docs = await db.collection('tenant_config').find(
+      {
+        $or: [
+          { help_agent: safeAgent },
+          { helpAgent: safeAgent },
+          { 'configuracion.help_agent': safeAgent },
+          { 'configuracion.helpAgent': safeAgent }
+        ]
+      },
+      {
+        projection: {
+          _id: 1,
+          tenantId: 1,
+          tenantid: 1,
+          help_enabled: 1,
+          ayuda_enabled: 1,
+          ayudaManagerEnabled: 1,
+          help_agent: 1,
+          helpAgent: 1,
+          configuracion: 1
+        }
+      }
+    ).toArray();
+
+    const conflict = docs
+      .map(doc => helpDomainConfigFromDoc(doc))
+      .find(cfg =>
+        cfg.domain &&
+        cfg.domain !== safeDomain &&
+        cfg.enabled === true &&
+        cfg.agentExplicit &&
+        cfg.agent === safeAgent
+      );
+
+    if (conflict) {
+      throw new Error(`help_agent_already_assigned:${safeAgent}:${conflict.domain}`);
+    }
+  }
+
   const existing = await db.collection('tenant_config').findOne({
     $or: [
       { _id: safeDomain },
@@ -239,6 +388,7 @@ async function saveHelpDomainEnabled(domain, enabled) {
 
   const setDoc = {
     help_enabled: boolValue(enabled, false),
+    help_agent: safeAgent,
     updatedAt: new Date()
   };
   if (!existing) setDoc.tenantId = safeDomain;
@@ -252,14 +402,16 @@ async function saveHelpDomainEnabled(domain, enabled) {
     { upsert: true }
   );
 
-  _helpDomainEnabledCache.delete(safeDomain);
-  return loadHelpDomainEnabled(safeDomain, { force: true });
+  _helpDomainConfigCache.delete(safeDomain);
+  _helpAgentOwnerCache.clear();
+  return loadHelpDomainConfig(safeDomain, { force: true });
 }
 
 function invalidateHelpDomainEnabledCache(domain = '') {
   const safeDomain = normalizeHelpDomain(domain);
-  if (safeDomain) _helpDomainEnabledCache.delete(safeDomain);
-  else _helpDomainEnabledCache.clear();
+  if (safeDomain) _helpDomainConfigCache.delete(safeDomain);
+  else _helpDomainConfigCache.clear();
+  _helpAgentOwnerCache.clear();
 }
 
 function publicHelpConfig(cfg = {}) {
@@ -870,6 +1022,7 @@ async function resolveNaturalCategories({ cfg, sourceHash, windowName, rows, dom
     meta: {
       usageType: 'ayuda',
       agent: cfg.agent,
+      requestDomain: usageContext?.requestDomain || '',
       window: windowName,
       user,
       sourceHash,
@@ -1176,6 +1329,7 @@ async function resolveIntelligentHelpQuery({
     meta: {
       usageType: 'ayuda_consulta',
       agent: cfg.agent,
+      requestDomain: usageContext?.requestDomain || '',
       window: windowName || '',
       query,
       user,
@@ -1245,7 +1399,7 @@ function requestField(req, ...names) {
   return '';
 }
 
-function buildHelpApiUsageContext({ agent, domain, user, windowName, query } = {}) {
+function buildHelpApiUsageContext({ agent, domain, requestDomain, user, windowName, query } = {}) {
   const requestId = `help-api:${Date.now()}:${crypto.randomBytes(4).toString('hex')}`;
   const traceId = `${requestId}:${normalizeAgent(agent || DEFAULT_AGENT)}:${clean(domain, 120) || 'DOMAIN'}`;
   const safeUser = clean(user, 80).replace(/[^a-zA-Z0-9_.-]/g, '_') || 'user';
@@ -1254,7 +1408,10 @@ function buildHelpApiUsageContext({ agent, domain, user, windowName, query } = {
     traceId,
     conversationId: `${traceId}:${safeUser}`,
     agent: normalizeAgent(agent || DEFAULT_AGENT),
+    // domain = dominio ASISTO propietario del agente (facturación/tokens/OpenAI)
     domain: clean(domain, 120).toUpperCase(),
+    // requestDomain = dominio informado por Manager/cliente (auditoría)
+    requestDomain: clean(requestDomain, 120).toUpperCase(),
     user: clean(user, 200),
     windowName: clean(windowName, 300),
     query: clean(query, 4000)
@@ -1290,6 +1447,7 @@ async function recordHelpApiRequestEvent({
         usageType: 'ayuda_request',
         requestId: ctx.requestId,
         agent: ctx.agent,
+        requestDomain: ctx.requestDomain || '',
         window: ctx.windowName || '',
         query: ctx.query || '',
         version: clean(version, 80),
@@ -1317,47 +1475,48 @@ async function handleHelpQuery(req, res) {
   const windowName = clean(requestField(req, 'ventana', 'window'), 300);
   const query = clean(requestField(req, 'consulta', 'query', 'pregunta'), 4000);
   const version = clean(requestField(req, 'version', 'versión'), 80);
-  const domain = clean(requestField(req, 'dominio', 'domain', 'tenant', 'tenantId'), 120).toUpperCase();
+  // Dominio informado por Manager/cliente. NO define el tenant Asisto que
+  // habilita/paga la herramienta; ese tenant se resuelve por "agente".
+  const requestDomain = clean(requestField(req, 'dominio', 'domain', 'tenant', 'tenantId'), 120).toUpperCase();
   const user = clean(requestField(req, 'usuario', 'user', 'username'), 200);
 
   // Sin consulta se mantiene el contrato histórico: ventana obligatoria.
   // Con consulta, ventana es opcional y actúa como contexto prioritario.
   if (!query && !windowName) return res.status(400).json({ ok: false, error: 'ventana_required' });
   if (!version) return res.status(400).json({ ok: false, error: 'version_required' });
-  if (!domain) return res.status(400).json({ ok: false, error: 'dominio_required' });
+  if (!requestDomain) return res.status(400).json({ ok: false, error: 'dominio_required' });
   if (!user) return res.status(400).json({ ok: false, error: 'usuario_required' });
 
-  // Cada llamada al API tiene una sola identidad en Control de Tokens.
-  // Todas las llamadas internas a IA de esta consulta comparten conversationId.
-  const usageContext = buildHelpApiUsageContext({
-    agent,
-    domain,
-    user,
-    windowName,
-    query
-  });
+  let ownerDomain = '';
+  let usageContext = null;
 
   let cfg;
   let source;
   let aiInfo = { aiUsed: false, cacheHit: false, usage: null };
   try {
     cfg = await loadHelpConfig(agent);
-    const domainEnabled = await loadHelpDomainEnabled(domain);
-    if (!domainEnabled) {
-      await recordHelpApiRequestEvent({
-        usageContext,
-        version,
-        result: 'N',
-        videoCount: 0,
-        aiUsed: false,
-        aiCacheHit: false
-      });
+
+    // El agente determina a qué dominio Asisto pertenece la herramienta.
+    // Ej.: MANAGER -> MSM. El request puede traer dominio=CLIENTE_001 y eso
+    // queda sólo como dato del cliente que originó la consulta.
+    const owner = await resolveHelpDomainByAgent(agent);
+    if (!owner || !owner.domain || owner.enabled !== true) {
       return res.json(compactHelpApiResponse({
         dateInfo,
         responseBody: { respuesta: 'N', videos: [] },
         intelligent: !!query
       }));
     }
+
+    ownerDomain = owner.domain;
+    usageContext = buildHelpApiUsageContext({
+      agent,
+      domain: ownerDomain,
+      requestDomain,
+      user,
+      windowName,
+      query
+    });
 
     source = await loadHelpSource(cfg);
     const eligible = source.rows.filter(r =>
@@ -1374,7 +1533,7 @@ async function handleHelpQuery(req, res) {
         eligible,
         windowName,
         query,
-        domain,
+        domain: ownerDomain,
         user,
         usageContext
       });
@@ -1385,7 +1544,7 @@ async function handleHelpQuery(req, res) {
         windowName,
         query,
         rows: candidateInfo.rows,
-        domain,
+        domain: ownerDomain,
         user,
         usageContext
       });
@@ -1401,7 +1560,7 @@ async function handleHelpQuery(req, res) {
         ventana: windowName || '',
         consulta: query,
         version,
-        dominio: domain,
+        dominio: requestDomain,
         usuario: user,
         respuesta: intelligent.found ? 'S' : 'N',
         respuesta_texto: intelligent.answerText || (
@@ -1423,12 +1582,13 @@ async function handleHelpQuery(req, res) {
       await ensureIndexes(db);
       await db.collection('help_query_log').insertOne({
         createdAt: now,
+        tenantId: ownerDomain,
         fechaAsisto: dateInfo.fecha,
         agente: agent,
         ventana: windowName || '',
         consulta: query,
         version,
-        dominio: domain,
+        dominio: requestDomain,
         usuario: user,
         respuesta: responseBody.respuesta,
         respuestaTexto: responseBody.respuesta_texto,
@@ -1493,7 +1653,7 @@ async function handleHelpQuery(req, res) {
           sourceHash: source.hash,
           windowName,
           rows: naturalRows,
-          domain,
+          domain: ownerDomain,
           user,
           usageContext
         });
@@ -1504,7 +1664,7 @@ async function handleHelpQuery(req, res) {
         aiInfo = resolved;
       } catch (e) {
         aiError = e;
-        console.warn(`[help] categoria IA agent=${agent} domain=${domain} window=${windowName}:`, e?.message || e);
+        console.warn(`[help] categoria IA agent=${agent} ownerDomain=${ownerDomain} requestDomain=${requestDomain} window=${windowName}:`, e?.message || e);
         if (!exactRows.length) throw e;
       }
     }
@@ -1527,7 +1687,7 @@ async function handleHelpQuery(req, res) {
       agente: agent,
       ventana: windowName,
       version,
-      dominio: domain,
+      dominio: requestDomain,
       usuario: user,
       respuesta: videos.length ? 'S' : 'N',
       videos
@@ -1540,12 +1700,13 @@ async function handleHelpQuery(req, res) {
     const db = await getDb();
     await ensureIndexes(db);
     await db.collection('help_query_log').insertOne({
+      tenantId: ownerDomain,
       createdAt: now,
       fechaAsisto: dateInfo.fecha,
       agente: agent,
       ventana: windowName,
       version,
-      dominio: domain,
+      dominio: requestDomain,
       usuario: user,
       respuesta: responseBody.respuesta,
       videoIds: videos.map(v => v.vimeo_id),
@@ -1574,7 +1735,7 @@ async function handleHelpQuery(req, res) {
     }));
   } catch (e) {
     const message = String(e?.message || e || 'internal');
-    console.error(`[help] query error agent=${agent} domain=${domain} window=${windowName}:`, message);
+    console.error(`[help] query error agent=${agent} ownerDomain=${ownerDomain || '-'} requestDomain=${requestDomain} window=${windowName}:`, message);
     const status = /required|invalid/.test(message) ? 400
       : /openai_api_key_missing/.test(message) ? 503
       : /source_|google_sheet|google_service_account/.test(message) ? 502
@@ -1597,7 +1758,7 @@ async function handleHelpQuery(req, res) {
       ventana: windowName || null,
       ...(query ? { consulta: query } : {}),
       version: version || null,
-      dominio: domain || null,
+      dominio: requestDomain || null,
       usuario: user || null,
       error: message.slice(0, 240)
     });
@@ -1618,14 +1779,13 @@ function mountHelpTool(app) {
   app.get('/api/ext/help/status', requireHelpExternalAccess, async (req, res) => {
     try {
       const agent = normalizeAgent(requestField(req, 'agente', 'agent') || DEFAULT_AGENT);
-      const domain = normalizeHelpDomain(requestField(req, 'dominio', 'domain', 'tenant', 'tenantId'));
       const cfg = await loadHelpConfig(agent);
-      const domainEnabled = domain ? await loadHelpDomainEnabled(domain) : false;
+      const owner = await resolveHelpDomainByAgent(agent, { force: true });
       return res.json({
         ok: true,
         agente: agent,
-        dominio: domain || null,
-        enabled: domain ? domainEnabled : false,
+        dominio_asisto: owner?.domain || null,
+        enabled: !!(owner?.domain && owner?.enabled === true),
         source_configured: !!cfg.source_url,
         model: cfg.model,
         google_service_account: !!clean(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || '', 500)
@@ -1644,7 +1804,9 @@ module.exports = {
   loadHelpConfig,
   saveHelpConfig,
   invalidateHelpConfigCache,
+  loadHelpDomainConfig,
   loadHelpDomainEnabled,
+  resolveHelpDomainByAgent,
   saveHelpDomainEnabled,
   invalidateHelpDomainEnabledCache,
   publicHelpConfig,

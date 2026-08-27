@@ -119,6 +119,7 @@ const {
   mountHelpTool,
   loadHelpConfig,
   saveHelpConfig,
+  loadHelpDomainConfig,
   loadHelpDomainEnabled,
   saveHelpDomainEnabled,
   publicHelpConfig,
@@ -8636,14 +8637,7 @@ app.get("/comportamiento-ui.js", (_req, res) => {
 app.get("/comportamiento", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
-    const [cfg, helpCfg, helpDomainEnabled] = await Promise.all([
-      loadBehaviorConfigFromMongo(tenant),
-      // La pantalla de Comportamiento debe recuperar siempre el valor real de Mongo.
-      // No usamos el cache interno de Ayuda al pulsar Recargar.
-      loadHelpConfig("MANAGER"),
-      loadHelpDomainEnabled(tenant, { force: true })
-    ]);
-    const helpPublic = publicHelpConfig(helpCfg);
+    const cfg = await loadBehaviorConfigFromMongo(tenant);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html><html><head><meta charset="utf-8" />
       <title>Comportamiento del Bot (${tenant})</title>
@@ -8702,7 +8696,7 @@ app.get("/comportamiento", async (req, res) => {
 
       <div class="externalCard" style="margin-top:18px">
         <div class="row"><strong>Ayuda contextual de Manager</strong><span class="tag">Nueva herramienta</span></div>
-        <div class="hint" style="margin-top:4px">La habilitación es por dominio. La fuente, modelo y reglas del agente MANAGER son globales. Las ventanas técnicas exactas se resuelven sin IA; solo las categorías escritas en lenguaje natural consumen tokens.</div>
+        <div class="hint" style="margin-top:4px">La habilitación es por dominio Asisto y el agente identifica a qué dominio pertenece. La fuente, modelo y reglas de cada agente son globales. Las ventanas técnicas exactas se resuelven sin IA; solo las categorías escritas en lenguaje natural consumen tokens.</div>
         <div class="row" style="margin-top:10px"><label><input id="helpEnabled" type="checkbox" /> Habilitar API de Ayuda en este dominio</label></div>
         <div id="helpConfigFields" class="externalGrid" style="margin-top:10px">
           <label>Agente<input id="helpAgent" type="text" value="MANAGER" readonly /></label>
@@ -9165,13 +9159,11 @@ app.get("/canales", async (req, res) => {
 app.get("/api/behavior", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
-    const [cfg, helpCfg, helpDomainEnabled] = await Promise.all([
+    const [cfg, helpDomainCfg] = await Promise.all([
       loadBehaviorConfigFromMongo(tenant),
-      // La pantalla de Comportamiento debe recuperar siempre el valor real de Mongo.
-      // No usamos el cache interno de Ayuda al pulsar Recargar.
-      loadHelpConfig("MANAGER"),
-      loadHelpDomainEnabled(tenant, { force: true })
+      loadHelpDomainConfig(tenant, { force: true })
     ]);
+    const helpCfg = await loadHelpConfig(helpDomainCfg.agent || "MANAGER");
     const helpPublic = publicHelpConfig(helpCfg);
 
     res.json({
@@ -9198,8 +9190,8 @@ app.get("/api/behavior", async (req, res) => {
       external_api_result_instructions: cfg.external_api_result_instructions || "",
 
       // Ayuda: habilitación por dominio; configuración general MANAGER global.
-      help_enabled: helpDomainEnabled === true,
-      help_agent: helpPublic.agent || "MANAGER",
+      help_enabled: helpDomainCfg.enabled === true,
+      help_agent: helpDomainCfg.agent || helpPublic.agent || "MANAGER",
       help_source_url: helpPublic.source_url || "",
       help_model: helpPublic.model || "gpt-5.6-luna",
       help_behavior: helpPublic.behavior || "",
@@ -9436,7 +9428,11 @@ app.post("/api/behavior", async (req, res) => {
         // Fuente/modelo/comportamiento siguen siendo globales para MANAGER.
         await saveHelpConfig(helpPayload.agent || "MANAGER", helpPayload);
        // El checkbox de habilitación pertenece EXCLUSIVAMENTE al dominio actual.
-        await saveHelpDomainEnabled(tenant, helpDomainEnabled === true);
+        await saveHelpDomainEnabled(
+          tenant,
+          helpDomainEnabled === true,
+          helpPayload.agent || "MANAGER"
+        );
       } catch (helpError) {
         const helpMessage = String(helpError?.message || helpError || "help_config_invalid");
         console.error("POST /api/behavior help config error:", helpMessage);
