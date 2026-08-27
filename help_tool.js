@@ -861,7 +861,13 @@ function obviousNaturalCategoryApplies(windowName, categoryText) {
 
 function sortVideos(rows = []) {
   return [...rows].sort((a, b) => {
-    const imp = Number(b.importance || 0) - Number(a.importance || 0);
+    // Importancia: 1 = más importante, 5 = menos importante.
+    // Los valores 0/vacíos quedan al final.
+    const ai = Number(a.importance || 0);
+    const bi = Number(b.importance || 0);
+    const av = ai > 0 ? ai : Number.MAX_SAFE_INTEGER;
+    const bv = bi > 0 ? bi : Number.MAX_SAFE_INTEGER;
+    const imp = av - bv;
     if (imp) return imp;
     return String(a.title || '').localeCompare(String(b.title || ''), 'es');
   });
@@ -878,9 +884,15 @@ function outputVideo(row) {
 // Respuesta pública compacta del API.
 // Internamente se conservan todos los datos para logs, cache y Control de Tokens.
 function compactHelpApiResponse({ dateInfo, responseBody, intelligent = false } = {}) {
-  const videos = Array.isArray(responseBody?.videos)
+  const vimeo_ids = Array.isArray(responseBody?.videos)
     ? [...responseBody.videos].sort((a, b) => {
-        const imp = Number(b?.importancia || 0) - Number(a?.importancia || 0);
+        // Importancia: 1 = más importante, 5 = menos importante.
+        // Los valores 0/vacíos quedan al final.
+        const ai = Number(a?.importancia || 0);
+        const bi = Number(b?.importancia || 0);
+        const av = ai > 0 ? ai : Number.MAX_SAFE_INTEGER;
+        const bv = bi > 0 ? bi : Number.MAX_SAFE_INTEGER;
+        const imp = av - bv;
         if (imp) return imp;
         return String(a?.titulo || '').localeCompare(String(b?.titulo || ''), 'es');
       })
@@ -891,7 +903,7 @@ function compactHelpApiResponse({ dateInfo, responseBody, intelligent = false } 
       ? String(responseBody?.respuesta_texto || '')
       : String(responseBody?.respuesta || ''),
     fecha: String(dateInfo?.fechaHora || dateInfo?.fecha || ''),
-    videos
+    vimeo_ids
   };
 }
 
@@ -1090,7 +1102,11 @@ function intelligentQueryRowScore(query, row) {
   if (whole && tags.includes(whole)) score += 18;
   if (whole && description.includes(whole)) score += 8;
 
-  score += Math.max(0, Number(row?.importance || 0)) * 0.25;
+  const importance = Number(row?.importance || 0);
+  if (importance > 0) {
+    // 1 recibe mayor bonus que 5.
+    score += Math.max(0, 6 - importance) * 0.25;
+  }
   return score;
 }
 
@@ -1100,7 +1116,12 @@ function dedupeRowsByVimeo(rows = []) {
     const id = String(row?.vimeoId || '').trim();
     if (!id) continue;
     const previous = map.get(id);
-    if (!previous || Number(row?.importance || 0) > Number(previous?.importance || 0)) {
+    const currentImportance = Number(row?.importance || 0);
+    const previousImportance = Number(previous?.importance || 0);
+    if (
+      !previous ||
+      (currentImportance > 0 && (previousImportance <= 0 || currentImportance < previousImportance))
+    ) {
       map.set(id, row);
     }
   }
@@ -1177,7 +1198,14 @@ async function buildIntelligentQueryCandidates({
   const scored = eligible
     .map(row => ({ row, score: intelligentQueryRowScore(query, row) }))
     .filter(x => x.score > 0)
-    .sort((a, b) => b.score - a.score || Number(b.row.importance || 0) - Number(a.row.importance || 0))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const ai = Number(a.row.importance || 0);
+      const bi = Number(b.row.importance || 0);
+      const av = ai > 0 ? ai : Number.MAX_SAFE_INTEGER;
+      const bv = bi > 0 ? bi : Number.MAX_SAFE_INTEGER;
+      return av - bv;
+    })
     .map(x => x.row);
 
   const priority = dedupeRowsByVimeo([...exactRows, ...naturalSelected]);
@@ -1676,7 +1704,12 @@ async function handleHelpQuery(req, res) {
       const key = String(row.vimeoId || '').trim();
       if (!key) continue;
       const previous = dedupe.get(key);
-      if (!previous || Number(row.importance || 0) > Number(previous.importance || 0)) dedupe.set(key, row);
+      const currentImportance = Number(row.importance || 0);
+      const previousImportance = Number(previous?.importance || 0);
+      if (
+        !previous ||
+        (currentImportance > 0 && (previousImportance <= 0 || currentImportance < previousImportance))
+      ) dedupe.set(key, row);
     }
 
     const selected = sortVideos([...dedupe.values()]).slice(0, cfg.max_videos);
