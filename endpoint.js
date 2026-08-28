@@ -1786,7 +1786,7 @@ app.get("/novedades", (_req, res) => {
           rgba(5,24,45,.08) 48%,
           rgba(5,24,45,.20) 100%
         ),
-        url("/static/novedades-bg.png");
+        url("/static/wa-session-bg.png");
 
       background-size:cover;
       background-position:left center;
