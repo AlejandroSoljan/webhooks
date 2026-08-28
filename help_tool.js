@@ -28,6 +28,13 @@ const HELP_API_KEY = String(
 ).trim();
 const ASISTO_TZ = String(process.env.STORE_TZ || 'America/Argentina/Cordoba').trim() || 'America/Argentina/Cordoba';
 
+// Chat web embebible. La API key nunca se envía al navegador.
+const HELP_WEB_SIGNING_SECRET = String(process.env.HELP_WEB_SIGNING_SECRET || HELP_API_KEY || '').trim();
+const HELP_WEB_TOKEN_TTL_MS = Math.max(300000, Math.min(86400000, Number(process.env.HELP_WEB_TOKEN_TTL_MS || 43200000) || 43200000));
+const HELP_WEB_RATE_WINDOW_MS = Math.max(60000, Math.min(3600000, Number(process.env.HELP_WEB_RATE_WINDOW_MS || 600000) || 600000));
+const HELP_WEB_RATE_MAX = Math.max(5, Math.min(500, Number(process.env.HELP_WEB_RATE_MAX || 60) || 60));
+const _helpWebRate = new Map();
+
 const DEFAULT_BEHAVIOR = `Tenes una lista de videos cuyo campo "categoria" describe en lenguaje natural a que ventanas aplica (no son nombres tecnicos exactos), por ejemplo "todas las ventanas de ABM".
 
 Te doy el nombre tecnico de UNA ventana puntual. Tu tarea es decidir, para cada video de la lista, si esa ventana claramente pertenece a la categoria descripta.
@@ -1798,9 +1805,139 @@ async function handleHelpQuery(req, res) {
   }
 }
 
+
+function signHelpWebContext(payload = {}) {
+  if (!HELP_WEB_SIGNING_SECRET) throw new Error('help_web_signing_secret_missing');
+  const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const sig = crypto.createHmac('sha256', HELP_WEB_SIGNING_SECRET).update(body).digest('base64url');
+  return `${body}.${sig}`;
+}
+
+function verifyHelpWebContext(token) {
+  if (!HELP_WEB_SIGNING_SECRET) throw new Error('help_web_signing_secret_missing');
+  const raw = clean(token, 12000);
+  const dot = raw.lastIndexOf('.');
+  if (dot <= 0) throw new Error('help_web_token_invalid');
+  const body = raw.slice(0, dot);
+  const provided = raw.slice(dot + 1);
+  const expected = crypto.createHmac('sha256', HELP_WEB_SIGNING_SECRET).update(body).digest('base64url');
+  if (!safeTimingEqual(provided, expected)) throw new Error('help_web_token_invalid');
+  let payload;
+  try { payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')); }
+  catch { throw new Error('help_web_token_invalid'); }
+  if (!Number.isFinite(Number(payload?.exp)) || Number(payload.exp) < Date.now()) throw new Error('help_web_token_expired');
+  return {
+    agent: normalizeAgent(payload?.agent || DEFAULT_AGENT),
+    domain: normalizeHelpDomain(payload?.domain || ''),
+    version: clean(payload?.version, 80),
+    user: clean(payload?.user || 'WEB', 200)
+  };
+}
+
+function helpWebRateAllowed(req) {
+  const now = Date.now();
+  const forwarded = String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
+  const key = forwarded || String(req.ip || req.socket?.remoteAddress || 'unknown');
+  let rec = _helpWebRate.get(key);
+  if (!rec || now - rec.startedAt >= HELP_WEB_RATE_WINDOW_MS) rec = { startedAt: now, count: 0 };
+  rec.count += 1;
+  _helpWebRate.set(key, rec);
+  if (_helpWebRate.size > 2000) {
+    for (const [k,v] of _helpWebRate.entries()) if (now - Number(v?.startedAt || 0) > HELP_WEB_RATE_WINDOW_MS * 2) _helpWebRate.delete(k);
+  }
+  return rec.count <= HELP_WEB_RATE_MAX;
+}
+
+// Reutiliza exactamente la lógica del API sin exponer HELP_API_KEY.
+async function executeHelpQueryInternal(payload = {}) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    let statusCode = 200;
+    const req = { body: payload, query: {}, headers: {} };
+    const res = {
+      status(code) { statusCode = Number(code || 200) || 200; return this; },
+      set() { return this; },
+      json(body) { if (!done) { done = true; resolve({ statusCode, body }); } return this; }
+    };
+    Promise.resolve(handleHelpQuery(req, res)).catch(e => { if (!done) reject(e); });
+  });
+}
+
+function helpWebFrameHeaders(res) {
+  try { res.removeHeader('X-Frame-Options'); } catch {}
+  res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data: https:; frame-src https://player.vimeo.com; frame-ancestors *; base-uri 'none'; form-action 'self'");
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+}
+
+function renderHelpWebChat(config = {}) {
+  const cfg = {
+    title: clean(config.title || 'Ayuda Manager', 120),
+    token: clean(config.token, 12000),
+    windowName: clean(config.windowName || '', 300)
+  };
+  const cfgJson = JSON.stringify(cfg).replace(/</g, '\\u003c');
+  return `<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>${cfg.title.replace(/[<>&"]/g,'')}</title>
+<style>
+:root{--bg:#f5f8fb;--card:#fff;--text:#10233f;--muted:#6b7b91;--line:#dce5ef;--brand:#0f4f78;--brand2:#158197;--user:#e8f3f6}
+*{box-sizing:border-box}html,body{height:100%;margin:0}body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}
+.shell{height:100%;min-height:420px;display:flex;flex-direction:column;background:#fff;overflow:hidden}.head{display:flex;align-items:center;gap:11px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.logo{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;font-weight:900;font-size:18px}.headText{min-width:0;flex:1}.title{font-weight:800;font-size:16px}.subtitle{color:var(--muted);font-size:12px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.status{width:8px;height:8px;border-radius:50%;background:#18a874;box-shadow:0 0 0 4px rgba(24,168,116,.1)}
+.messages{flex:1;overflow:auto;padding:18px 14px 10px;background:linear-gradient(180deg,#f8fafc,#f3f7fa)}.row{display:flex;margin:0 0 12px}.row.user{justify-content:flex-end}.bubble{max-width:min(84%,720px);padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.48;white-space:pre-wrap;word-break:break-word;box-shadow:0 4px 14px rgba(15,47,75,.05)}.assistant .bubble{background:#fff;border:1px solid var(--line);border-bottom-left-radius:5px}.user .bubble{background:var(--user);border:1px solid #cfe5e9;border-bottom-right-radius:5px}
+.typing{display:inline-flex;gap:5px}.typing i{width:6px;height:6px;background:#8aa0b5;border-radius:50%;animation:pulse 1.1s infinite}.typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}@keyframes pulse{0%,70%,100%{opacity:.28}35%{opacity:1;transform:translateY(-3px)}}
+.videos{display:grid;gap:8px;margin:9px 0 14px;max-width:min(88%,760px)}.videoCard{background:#fff;border:1px solid var(--line);border-radius:13px;padding:10px 11px;box-shadow:0 4px 14px rgba(15,47,75,.05)}.videoTop{display:flex;gap:10px;align-items:center}.badge{min-width:26px;height:26px;padding:0 8px;border-radius:8px;display:grid;place-items:center;background:#eaf3f7;color:var(--brand);font-size:11px;font-weight:900}.videoTitle{font-size:13px;font-weight:750;line-height:1.3;flex:1}.watch{border:0;background:var(--brand);color:#fff;border-radius:9px;padding:7px 10px;font-size:12px;font-weight:750;cursor:pointer}.player{display:none;margin-top:10px;aspect-ratio:16/9;border-radius:10px;overflow:hidden;background:#0b1825}.player iframe{width:100%;height:100%;border:0}
+.composer{padding:11px;border-top:1px solid var(--line)}.form{display:flex;gap:8px;align-items:flex-end}.inputWrap{flex:1;border:1px solid var(--line);border-radius:14px;padding:9px 11px}.inputWrap:focus-within{border-color:#8cb9c9;box-shadow:0 0 0 3px rgba(21,129,151,.08)}textarea{width:100%;min-height:24px;max-height:110px;border:0;outline:0;resize:none;padding:0;background:transparent;font:inherit;font-size:14px;color:var(--text)}.send{width:43px;height:43px;border:0;border-radius:13px;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;font-size:19px;font-weight:900;cursor:pointer}.send:disabled{opacity:.5}.foot{font-size:10px;color:#94a2b3;text-align:center;padding-top:6px}
+@media(max-width:560px){.head{padding:11px 12px}.messages{padding:14px 10px 8px}.bubble{max-width:91%}.videos{max-width:94%}}
+</style></head><body><div class="shell"><header class="head"><div class="logo">A</div><div class="headText"><div class="title" id="title"></div><div class="subtitle" id="ctx"></div></div><div class="status"></div></header><main class="messages" id="messages"></main><footer class="composer"><form class="form" id="form"><div class="inputWrap"><textarea id="input" rows="1" maxlength="4000" placeholder="¿En qué te puedo ayudar?"></textarea></div><button class="send" id="send" type="submit">➜</button></form><div class="foot">Ayuda contextual · Asisto</div></footer></div>
+<script>(function(){'use strict';const CFG=${cfgJson};let currentWindow=CFG.windowName||'',busy=false;const m=document.getElementById('messages'),input=document.getElementById('input'),send=document.getElementById('send'),form=document.getElementById('form');document.getElementById('title').textContent=CFG.title||'Ayuda Manager';function context(){document.getElementById('ctx').textContent=currentWindow?'Ayuda contextual · '+currentWindow:'Asistente general de ayuda'}function scroll(){m.scrollTop=m.scrollHeight}function bubble(role,text,id){const r=document.createElement('div');r.className='row '+role;if(id)r.id=id;const b=document.createElement('div');b.className='bubble';b.textContent=String(text||'');r.appendChild(b);m.appendChild(r);scroll()}function typing(){const r=document.createElement('div');r.className='row assistant';r.id='typing';r.innerHTML='<div class="bubble"><span class="typing"><i></i><i></i><i></i></span></div>';m.appendChild(r);scroll()}function stopTyping(){const x=document.getElementById('typing');if(x)x.remove()}function videos(j){const a=Array.isArray(j&&j.vimeo_ids)?j.vimeo_ids:(Array.isArray(j&&j.videos)?j.videos:[]);return a.slice().sort((x,y)=>{const xi=Number(x&&x.importancia||0),yi=Number(y&&y.importancia||0);return(xi>0?xi:999)-(yi>0?yi:999)})}function addVideos(list){if(!list.length)return;const w=document.createElement('div');w.className='videos';list.forEach(v=>{const id=String(v&&v.vimeo_id||'').replace(/[^0-9]/g,'');if(!id)return;const c=document.createElement('div');c.className='videoCard';const top=document.createElement('div');top.className='videoTop';const badge=document.createElement('span');badge.className='badge';badge.textContent='#'+String(v.importancia||'-');const t=document.createElement('div');t.className='videoTitle';t.textContent=String(v.titulo||'Video de ayuda');const btn=document.createElement('button');btn.type='button';btn.className='watch';btn.textContent='Ver video';const p=document.createElement('div');p.className='player';btn.onclick=()=>{const open=p.style.display==='block';if(open){p.style.display='none';p.innerHTML='';btn.textContent='Ver video'}else{p.style.display='block';const f=document.createElement('iframe');f.src='https://player.vimeo.com/video/'+id;f.allow='autoplay; fullscreen; picture-in-picture';f.allowFullscreen=true;p.appendChild(f);btn.textContent='Cerrar';setTimeout(scroll,100)}};top.append(badge,t,btn);c.append(top,p);w.appendChild(c)});if(w.children.length){m.appendChild(w);scroll()}}async function ask(q){q=String(q||'').trim();if(!q||busy)return;busy=true;send.disabled=true;input.disabled=true;bubble('user',q);typing();try{const r=await fetch('/api/ext/ayuda/chat-web',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify({token:CFG.token,consulta:q,ventana:currentWindow})});let j={};try{j=await r.json()}catch{}stopTyping();if(!r.ok){bubble('assistant',r.status===429?'Se realizaron demasiadas consultas. Probá nuevamente en unos minutos.':'No pude consultar la ayuda en este momento.');return}const a=String(j&&j.respuesta||'').trim();bubble('assistant',a&&a!=='S'&&a!=='N'?a:(a==='N'?'No encontré información suficiente para esa consulta.':'Encontré estos contenidos relacionados:'));addVideos(videos(j))}catch(e){stopTyping();bubble('assistant','No pude conectar con el servicio de ayuda.')}finally{busy=false;send.disabled=false;input.disabled=false;input.focus()}}form.onsubmit=e=>{e.preventDefault();const q=input.value;input.value='';input.style.height='auto';ask(q)};input.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();form.requestSubmit()}};input.oninput=function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,110)+'px'};window.addEventListener('message',e=>{const d=e&&e.data;if(d&&d.type==='asisto-help-context'&&typeof d.ventana==='string'){currentWindow=d.ventana.trim().slice(0,300);context()}});context();bubble('assistant',currentWindow?'Hola. Puedo ayudarte con esta pantalla o con cualquier consulta sobre Manager.':'Hola. ¿Qué necesitás saber de Manager?');input.focus()})();</script></body></html>`;
+}
+
 function mountHelpTool(app) {
   if (!app) throw new Error('app_required');
   const json = express.json({ limit: '128kb' });
+
+  // Web de chat embebible.
+  app.get(['/ayuda/chat', '/help/chat'], async (req, res) => {
+    try {
+      if (!HELP_WEB_SIGNING_SECRET) return res.status(503).send('Chat de ayuda no configurado.');
+      const agent = normalizeAgent(req.query?.agente || req.query?.agent || DEFAULT_AGENT);
+      const domain = normalizeHelpDomain(req.query?.dominio || req.query?.domain || '');
+      const version = clean(req.query?.version, 80);
+      const user = clean(req.query?.usuario || req.query?.user || 'WEB', 200);
+      const windowName = clean(req.query?.ventana || req.query?.window || '', 300);
+      const title = clean(req.query?.titulo || req.query?.title || 'Ayuda Manager', 120);
+      if (!domain || !version) return res.status(400).send('Faltan parámetros dominio y version.');
+      const owner = await resolveHelpDomainByAgent(agent);
+      if (!owner || !owner.domain || owner.enabled !== true) return res.status(404).send('La herramienta de ayuda no está habilitada.');
+      const token = signHelpWebContext({ agent, domain, version, user, exp: Date.now() + HELP_WEB_TOKEN_TTL_MS });
+      helpWebFrameHeaders(res);
+      return res.type('html').send(renderHelpWebChat({ title, token, windowName }));
+    } catch (e) {
+      console.error('[help-web] render:', e?.message || e);
+      return res.status(500).send('No se pudo abrir el chat de ayuda.');
+    }
+  });
+
+  // Proxy interno: no expone HELP_API_KEY al navegador.
+  app.post('/api/ext/ayuda/chat-web', json, async (req, res) => {
+    try {
+      if (!helpWebRateAllowed(req)) return res.status(429).json({ respuesta: 'Demasiadas consultas.', fecha: asistoDateParts().fechaHora, vimeo_ids: [] });
+      const ctx = verifyHelpWebContext(req.body?.token);
+      const query = clean(req.body?.consulta || req.body?.query || '', 4000);
+      const windowName = clean(req.body?.ventana || req.body?.window || '', 300);
+      if (!query) return res.status(400).json({ respuesta: 'consulta_required', fecha: asistoDateParts().fechaHora, vimeo_ids: [] });
+      const result = await executeHelpQueryInternal({ agente: ctx.agent, ventana: windowName, version: ctx.version, dominio: ctx.domain, usuario: ctx.user, consulta: query });
+      return res.status(result.statusCode || 200).json(result.body || {});
+    } catch (e) {
+      const message = String(e?.message || e || 'internal');
+      const status = /token_invalid|token_expired/.test(message) ? 401 : /signing_secret/.test(message) ? 503 : 500;
+      console.error('[help-web] query:', message);
+      return res.status(status).json({ respuesta: 'No pude procesar la consulta.', fecha: asistoDateParts().fechaHora, vimeo_ids: [] });
+    }
+  });
 
   // Alias inglés y español para facilitar integración con Manager.
   app.get('/api/ext/help', requireHelpExternalAccess, handleHelpQuery);
@@ -1853,5 +1990,9 @@ module.exports = {
   intelligentQueryRowScore,
   buildIntelligentQueryCandidates,
   resolveIntelligentHelpQuery,
+  executeHelpQueryInternal,
+  signHelpWebContext,
+  verifyHelpWebContext,
+  renderHelpWebChat,
   googlePublicCsvUrl
 };
