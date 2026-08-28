@@ -884,7 +884,8 @@ function outputVideo(row) {
   return {
     vimeo_id: row.vimeoId,
     titulo: row.title,
-    importancia: Number(row.importance || 0)
+    importancia: Number(row.importance || 0),
+    descripcion: row.description || ''
   };
 }
 
