@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.002 | Fecha: 2026-08-29
 'use strict';
 
 const axios = require('axios');

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.002 | Fecha: 2026-08-29
 // order_config.js
 // Configuración de reglas/validaciones de pedidos por dominio (tenant).
 // Defaults 100% retrocompatibles: si no existe config en Mongo, el backend conserva el comportamiento actual.
