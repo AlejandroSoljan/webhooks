@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.

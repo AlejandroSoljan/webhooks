@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // db.js
 const os = require("os");
 const { MongoClient, ServerApiVersion } = require("mongodb");

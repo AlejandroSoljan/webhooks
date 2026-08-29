@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 /*script:app_asisto*/
 /*version:1.06.02   11/07/2025*/
 

@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // conversation_followup_panel.js
 // Seguimiento de conversaciones del bot en modo "conversacional".
 // - Vista principal simple en tabla.

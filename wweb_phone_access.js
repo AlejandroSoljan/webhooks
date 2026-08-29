@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // wweb_phone_access.js
 // Acceso web simple para PowerBuilder WebControl.
 // Muestra QR si la sesión está en estado QR, o estado de sesión si ya está conectada.

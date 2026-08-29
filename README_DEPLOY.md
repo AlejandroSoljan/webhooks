@@ -1,3 +1,4 @@
+<!-- Asisto | Version: 5.00.001 | Fecha: 2026-08-29-->
 # Proyecto listo (endpoint.js / Render)
 
 Este zip incluye DOS ubicaciones de los archivos:

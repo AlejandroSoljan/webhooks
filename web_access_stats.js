@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 const { getDb } = require("./db");
 
 const COLLECTION = "web_access_log";

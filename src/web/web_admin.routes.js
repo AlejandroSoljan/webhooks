@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // src/web/web_admin.routes.js
 // Rutas Web/Admin (productos + comportamiento + horarios).
 // Código movido 1:1 desde endpoint.js para facilitar mantenimiento.

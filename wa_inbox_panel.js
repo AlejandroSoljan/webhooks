@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // wa_inbox_panel.js
 // Panel WhatsApp aislado: agrega rutas nuevas sin tocar la lógica existente de /admin Conversaciones.
 

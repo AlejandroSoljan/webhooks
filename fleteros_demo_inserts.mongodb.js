@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // fleteros_demo_inserts.mongodb.js
 // Inserts/upserts de ejemplo para probar el panel de viajes de fleteros.
 // Uso en mongosh:

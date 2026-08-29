@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // src/web/tenant_channels.routes.js
 // Rutas para configurar canales (WhatsApp/OpenAI) por tenant/telefono.
 // Retrocompatible: el webhook cae a .env si no encuentra runtime en DB.

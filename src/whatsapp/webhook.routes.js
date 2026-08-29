@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // src/whatsapp/webhook.routes.js
 // Webhook de WhatsApp (verify + mensajes).
 // Código movido 1:1 desde endpoint.js para separar la capa WhatsApp.

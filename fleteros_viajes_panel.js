@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // fleteros_viajes_panel.js
 // Panel móvil para carga de viajes de fleteros.
 // Script nuevo y aislado: no modifica endpoint.js, auth_ui.js, logic.js ni db.js.

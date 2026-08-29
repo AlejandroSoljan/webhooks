@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // order_config_panel.js
 // Panel aislado para configurar reglas/validaciones de pedidos por dominio.
 

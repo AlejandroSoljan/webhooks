@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // tenant_runtime.js
 // Carga configuración runtime por tenant/canal (WhatsApp/OpenAI) desde Mongo.
 // 100% retrocompatible: si no hay config en DB, se usa .env.

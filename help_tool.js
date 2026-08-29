@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // help_tool.js
 // Herramienta de Ayuda contextual de Asisto.
 // - Fuente: Google Sheets (privado con Service Account o CSV público/directo).

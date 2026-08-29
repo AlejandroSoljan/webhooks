@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // bot_test_panel.js
 // Simulador interno del bot Asisto.
 // - Permite probar conversaciones sin WhatsApp, QR ni teléfono conectado.

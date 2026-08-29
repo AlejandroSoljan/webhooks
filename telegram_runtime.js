@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 /*script:telegram_runtime*/
 /*version:2.00.00   21/04/2026   */
 

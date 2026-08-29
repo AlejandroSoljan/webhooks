@@ -1,3 +1,4 @@
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // client_phone_access.js
 // Filtro global de clientes por tenant para todos los canales/lógicas.
 // Por compatibilidad, si el filtro no existe o está desactivado, todos responden.
