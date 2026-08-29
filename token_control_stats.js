@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.003 | Fecha: 2026-08-29
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -1232,7 +1232,7 @@ function renderTokenControlPage(user) {
   <div class="shell">
     <div class="toolbar">
       <div>
-        <h1 style="margin:0 0 4px">Control de consumo IA</h1>
+        <h1 style="margin:0 0 4px">Control de Consumos</h1>
         <div class="small">${isSuper ? 'Vista administrativa: costo real IA, importe a cobrar y margen IA.' : 'Consumo del dominio e importe.'}</div>
       </div>
       <div class="small">${isSuper ? 'Superadmin' : esc(String(user?.role || 'usuario'))} · dominio: <b>${esc(tenant)}</b></div>
