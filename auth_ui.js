@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.007 | Fecha: 2026-08-30
+// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -367,7 +367,6 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <link rel="icon" type="image/png" href="/static/logo.png"/>
   <title>${htmlEscape(title || "Asisto")}</title>
    ${robotsMeta}
   ${head || ""}
@@ -4453,7 +4452,6 @@ function mountAuthRoutes(app) {
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <link rel="icon" type="image/png" href="/static/logo.png"/>
   <title>Dominio Config · Asisto</title>
   <style>
     html,body{margin:0;padding:0;background:transparent;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}

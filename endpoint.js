@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.007 | Fecha: 2026-08-30
+// Asisto | Version: 5.00.008 | Fecha: 2026-08-30
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -144,7 +144,7 @@ app.use("/static", express.static(path.join(__dirname, "static")));
 //    Ej.: /static/logo.png -> <proyecto>/logo.png
 app.use("/static", express.static(path.join(__dirname)));
 // Favicon global para todas las páginas, incluidas las plantillas independientes.
-app.get("/favicon.ico", (_req, res) => res.sendFile(path.join(__dirname, "logo.png")));
+app.get("/favicon.ico", (_req, res) => res.set("Cache-Control", "no-cache").sendFile(path.join(__dirname, "static", "favicon-asisto.png")));
 // Necesario para formularios HTML (login / admin users)
 app.use(express.urlencoded({ extended: true }));
 // Adjunta req.user desde cookie de sesión (si existe)
