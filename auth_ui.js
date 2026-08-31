@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.009 | Fecha: 2026-08-30
+// Asisto | Version: 5.00.010 | Fecha: 2026-08-30
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -674,7 +674,7 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
       border-bottom: 1px solid rgba(255,255,255,.10);
       margin-bottom: 12px;
     }
-    .sideBrand img{width:34px;height:34px;object-fit:contain; filter: drop-shadow(0 6px 12px rgba(0,0,0,.25));}
+    .sideBrand img{width:auto;height:34px;max-width:60px;object-fit:contain; filter: drop-shadow(0 6px 12px rgba(0,0,0,.25));}
     .sideTitle{font-weight:800; letter-spacing:.2px;}
     .sideSub{font-size:12px; color: rgba(255,255,255,.70); margin-top:2px;}
     .nav{display:flex; flex-direction:column; gap:6px; padding: 4px 0;}
@@ -799,8 +799,9 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
       box-shadow: inset 0 1px 0 rgba(255,255,255,.7);
     }
     .homeLogo{
-      width: 116px;
-      height: 116px;
+      width:auto;
+      height:90px;
+      max-width:160px;
       object-fit:contain;
       filter: drop-shadow(0 10px 18px rgba(0,0,0,.18));
     }
@@ -1219,7 +1220,7 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
       <button type="button" class="menuBtn" id="menuBtn" aria-label="Abrir menú">☰</button>
       ${showSidebarToggle ? `<button type="button" class="sidebarToggleBtn" id="sidebarToggleBtn" aria-label="Ocultar menú lateral" title="Ocultar menú lateral"><span class="icon">☰</span><span class="when-open">Ocultar menú</span><span class="when-closed">Mostrar menú</span></button>` : ``}
       <div class="pill">
-        <img src="/static/logo.png" alt="Asisto" style="width:28px;height:28px;object-fit:contain"/>
+        <img src="/static/logo-asisto-transparent.png?v=5.00.010" alt="Asisto" style="width:auto;height:28px;max-width:50px;object-fit:contain"/>
         <strong>Asisto</strong>
         <span>·</span>
         <span>${u}</span>
@@ -1378,7 +1379,7 @@ function sidebarHtml(user, activeKey) {
   return `
     <aside class="sidebar">
       <div class="sideBrand">
-        <img src="/static/logo.png" alt="Asisto"/>
+        <img src="/static/logo-asisto-transparent.png?v=5.00.010" alt="Asisto"/>
         <div>
           <div class="sideTitle">Asisto</div>
           <div class="sideSub">${htmlEscape(user.tenantId)} · ${htmlEscape(user.role)}</div>
@@ -1453,7 +1454,7 @@ function loginPage({ error, msg, to, baseUrl }) {
       <main class="lpMain">
         <section class="lpLeft" aria-label="Asisto">
           <div class="lpBrandLockup">
-            <img class="lpLogo" src="/static/favicon-asisto.png?v=5.00.009" alt="Asisto"/>
+            <img class="lpLogo" src="/static/logo-asisto-transparent.png?v=5.00.010" alt="Asisto"/>
             <div class="lpBrandName">Asisto</div>
           </div>
 
@@ -1599,7 +1600,7 @@ function appMenuPage({ user, routes }) {
       <section class="homeCard">
         <div class="homeLogoWrap">
           <div class="homeLogoHalo">
-            <img class="homeLogo" src="/static/logo.png" alt="Asisto"/>
+            <img class="homeLogo" src="/static/logo-asisto-transparent.png?v=5.00.010" alt="Asisto"/>
           </div>
         </div>
 
