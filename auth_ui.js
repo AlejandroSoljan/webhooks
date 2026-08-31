@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.009 | Fecha: 2026-08-30
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -960,8 +960,9 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
       }
       
       .lpLogo{
-        width:108px;
-        height:92px;
+        width:auto;
+        height:72px;
+        max-width:110px;
         object-fit:contain;
         filter:drop-shadow(0 12px 26px rgba(0,0,0,.28));
       }
@@ -1144,7 +1145,7 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
         .lpMain{grid-template-columns:minmax(0,1fr) minmax(430px,.95fr);gap:34px}
         .lpLeft{padding-left:8px}
         .lpBrandName{font-size:64px}
-        .lpLogo{width:90px;height:78px}
+        .lpLogo{width:auto;height:64px;max-width:100px}
         .lpFeatureText{font-size:15px}
       }
       @media (max-width: 900px){
@@ -1165,7 +1166,7 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
       @media (max-width: 560px){
         .lp{padding:18px 12px 14px}
         .lpBrandLockup{gap:10px}
-        .lpLogo{width:70px;height:62px}
+        .lpLogo{width:auto;height:54px;max-width:84px}
         .lpBrandName{font-size:48px;letter-spacing:-2px}
         .lpHeroTitle{font-size:28px}
         .lpFeatures{gap:20px}
@@ -1452,7 +1453,7 @@ function loginPage({ error, msg, to, baseUrl }) {
       <main class="lpMain">
         <section class="lpLeft" aria-label="Asisto">
           <div class="lpBrandLockup">
-            <img class="lpLogo" src="/static/logo.png" alt="Asisto"/>
+            <img class="lpLogo" src="/static/favicon-asisto.png?v=5.00.009" alt="Asisto"/>
             <div class="lpBrandName">Asisto</div>
           </div>
 
