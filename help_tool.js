@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.011 | Fecha: 2026-09-01
 // help_tool.js
 // Herramienta de Ayuda contextual de Asisto.
 // - Fuente: Google Sheets (privado con Service Account o CSV público/directo).
@@ -97,6 +97,7 @@ Respondé únicamente JSON válido con este formato:
 
 const EXPECTED_HEADERS = {
   title: ['titulo', 'título'],
+  cover: ['caratula', 'carátula'],
   vimeoId: ['id vimeo', 'id_vimeo', 'vimeo id', 'vimeo_id'],
   appliesTo: ['ventana que aplica', 'ventana_que_aplica', 'ventana aplica'],
   versionFrom: ['version desde', 'versión desde', 'version_desde'],
@@ -717,6 +718,7 @@ function matrixToHelpRows(matrix = []) {
     const item = {
       rowNumber: i + 1,
       title: clean(r[columns.title], 500),
+      cover: clean(r[columns.cover], 5000),
       vimeoId: clean(r[columns.vimeoId], 120),
       appliesTo: clean(r[columns.appliesTo], 5000),
       versionFrom: clean(r[columns.versionFrom], 80),
@@ -885,6 +887,7 @@ function outputVideo(row) {
   return {
     vimeo_id: row.vimeoId,
     titulo: row.title,
+    caratula: row.cover || '',
     importancia: Number(row.importance || 0),
     descripcion: row.description || ''
   };
