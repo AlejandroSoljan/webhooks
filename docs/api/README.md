@@ -8,6 +8,11 @@ Esta carpeta centraliza la documentación de integración de las APIs de Asisto.
 - [API de Ayuda — manual completo](MANUAL_API_AYUDA.md): modos inteligente y contextual.
 - [API de Ayuda — sin consulta inteligente](MANUAL_API_AYUDA_SIN_CONSULTA.md): selección contextual de videos mediante ventana y versión.
 
+### Versiones PDF
+
+- [API de Ayuda — manual completo PDF](../../output/pdf/Manual_API_Ayuda_Asisto_v5.00.011.pdf)
+- [API de Ayuda — sin consulta inteligente PDF](../../output/pdf/Manual_API_Ayuda_Sin_Consulta_v5.00.011.pdf)
+
 Los ejemplos utilizan claves ficticias. Las credenciales reales deben permanecer en variables de entorno y nunca deben guardarse en la documentación o el repositorio.
 
 ## Política de versiones
