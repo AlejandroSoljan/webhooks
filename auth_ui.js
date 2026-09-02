@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.010 | Fecha: 2026-08-30
+// Asisto | Version: 5.00.012 | Fecha: 2026-09-02
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -3945,11 +3945,14 @@ function mountAuthRoutes(app) {
                 <button class="btn2" type="button" id="tc_btnAddWwebRetention" title="Agrega wweb_message_log_retention_days. 0 o campo ausente = no borrar; 30 = conservar 30 días.">Retención historial WWeb</button>
                 <button class="btn2" type="button" id="tc_btnAddApiMessageWindows" title="Configura minutos y valor por ventana para mensajes enviados por ConsultaApiMensajes.">Ventanas API Mensajes</button>
                 <button class="btn2" type="button" id="tc_btnAddApiDailyLimit" title="Máximo de mensajes salientes automáticos por día. 0 significa sin límite.">Límite diario API</button>
+                <button class="btn2" type="button" id="tc_btnAddApiRiskFilters" title="Agrega el límite para números sin contacto o historial y el requisito de seguridad.">Filtros de riesgo API</button>
+                <button class="btn2" type="button" id="tc_btnAddApiCircuit" title="Configura el corte automático por falta de respuesta y fallos consecutivos.">Circuit breaker API</button>
                 <button class="btn2" type="button" id="tc_btnClear">Limpiar</button>
                 ${isSuper ? `<button class="btn2 btnDanger" type="button" id="tc_btnDelete">Eliminar</button>` : ``}
               </div>
 
               <div class="tc-meta" id="tc_meta"></div>
+              <div class="card" id="tc_apiMetrics" style="margin-top:12px"><b>Métricas de permisos (hoy)</b><div class="small" id="tc_apiMetricsBody" style="margin-top:6px">Seleccioná un dominio.</div></div>
             </form>
           </div>
         </div>
@@ -3970,6 +3973,9 @@ function mountAuthRoutes(app) {
         const btnAddWwebRetention = document.getElementById('tc_btnAddWwebRetention');
         const btnAddApiMessageWindows = document.getElementById('tc_btnAddApiMessageWindows');
         const btnAddApiDailyLimit = document.getElementById('tc_btnAddApiDailyLimit');
+        const btnAddApiRiskFilters = document.getElementById('tc_btnAddApiRiskFilters');
+        const btnAddApiCircuit = document.getElementById('tc_btnAddApiCircuit');
+        const apiMetricsBody = document.getElementById('tc_apiMetricsBody');
         const btnClear = document.getElementById('tc_btnClear');
         const btnReload = document.getElementById('tc_btnReload');
         const btnNew = document.getElementById('tc_btnNew');
@@ -4088,6 +4094,22 @@ function mountAuthRoutes(app) {
             valInput.step = '1';
             valInput.title = 'Máximo diario de mensajes salientes automáticos. 0 = sin límite.';
           }
+          if (String(key || '').trim().toLowerCase() === 'api_mensajes_limite_no_contactos' && valInput) {
+            valInput.type = 'number';
+            valInput.min = '0';
+            valInput.step = '1';
+            valInput.title = 'Máximo diario de solicitudes de permiso a números no agendados y sin conversación entrante previa. 0 = sin límite específico.';
+          }
+          if (String(key || '').trim().toLowerCase() === 'api_mensajes_requerir_contacto_o_historial' && valInput) {
+            valInput.title = 'true obliga a tener contacto o historial cuando la confirmación previa está deshabilitada.';
+          }
+          if (String(key || '').trim().toLowerCase() === 'api_mensajes_historial_whatsapp_limite' && valInput) {
+            valInput.type = 'number';
+            valInput.min = '1';
+            valInput.max = '500';
+            valInput.step = '1';
+            valInput.title = 'Cantidad máxima de mensajes recientes a revisar en el historial del chat (1 a 500).';
+          }
           if (keyInput) {
             keyInput.addEventListener('input', ()=> applyRowProtection(tr));
             keyInput.addEventListener('blur', ()=> applyRowProtection(tr));
@@ -4190,6 +4212,22 @@ function mountAuthRoutes(app) {
                 throw new Error('api_mensajes_limite_diario debe ser un número entero mayor o igual a 0.');
               }
             }
+            if (k.toLowerCase() === 'api_mensajes_limite_no_contactos') {
+              if (!Number.isInteger(parsed) || parsed < 0) {
+                throw new Error('api_mensajes_limite_no_contactos debe ser un número entero mayor o igual a 0.');
+              }
+            }
+            if (k.toLowerCase() === 'api_mensajes_requerir_contacto_o_historial' && typeof parsed !== 'boolean') {
+              throw new Error('api_mensajes_requerir_contacto_o_historial debe ser true o false.');
+            }
+            if (k.toLowerCase() === 'api_mensajes_historial_whatsapp_limite') {
+              if (!Number.isInteger(parsed) || parsed < 1 || parsed > 500) {
+                throw new Error('api_mensajes_historial_whatsapp_limite debe ser un entero entre 1 y 500.');
+              }
+            }
+            if (k.toLowerCase() === 'api_mensajes_circuit_sin_respuesta_ratio') {
+              if (typeof parsed !== 'number' || parsed < 0 || parsed > 1) throw new Error('api_mensajes_circuit_sin_respuesta_ratio debe estar entre 0 y 1.');
+            }
             doc[k] = parsed;
           }
           return doc;
@@ -4225,6 +4263,20 @@ function mountAuthRoutes(app) {
           const j = await r.json().catch(()=>null);
           if(!r.ok) throw new Error((j && (j.error||j.message)) || ('HTTP '+r.status));
           return j;
+        }
+
+        async function loadApiMetrics(tenantId){
+          if (!apiMetricsBody) return;
+          apiMetricsBody.textContent = 'Cargando…';
+          try {
+            const r = await fetch('/api/tenant-config/whatsapp-metrics?tenantId='+encodeURIComponent(tenantId), { headers:{'Accept':'application/json'}, credentials:'same-origin' });
+            const j = await r.json().catch(()=>null);
+            if (!r.ok) throw new Error((j && (j.error||j.message)) || ('HTTP '+r.status));
+            const m = j.metrics || {};
+            const exclusions = Array.isArray(j.exclusiones) ? j.exclusiones : [];
+            apiMetricsBody.innerHTML = '<div>Solicitados: '+(m.solicitados||0)+' · OK: '+(m.ok||0)+' · BAJA: '+(m.baja||0)+' · Ignorados: '+(m.ignorados||0)+' · Fallos: '+(m.fallos||0)+' · Bloqueados/excluidos: '+(m.bloqueados||0)+'</div>'+
+              '<div style="margin-top:6px"><b>Exclusión permanente:</b> '+(exclusions.length ? exclusions.map(x => esc(x.nroTel||'')+' ('+esc(x.motivo||'')+')').join(', ') : 'sin registros')+'</div>';
+          } catch(e) { apiMetricsBody.textContent = 'No se pudieron cargar las métricas.'; }
         }
 
         async function apiSave(tenantId, doc, ruleFields){
@@ -4338,6 +4390,7 @@ function mountAuthRoutes(app) {
             }
             renderMeta({ createdAt: doc.createdAt, updatedAt: doc.updatedAt });
             setFieldsFromDoc(doc.data || {});
+            loadApiMetrics(tid);
             renderCopyOptions(tenantListCache);
             if (openAfterLoad) openModal('Editar dominio · ' + tid);
           } catch (e) {
@@ -4380,6 +4433,37 @@ function mountAuthRoutes(app) {
             valInput.step = '1';
             valInput.title = 'Máximo diario de mensajes salientes automáticos. 0 = sin límite.';
           }
+        });
+        if (btnAddApiRiskFilters) btnAddApiRiskFilters.addEventListener('click', ()=> {
+          const r1 = ensureFieldRow('api_mensajes_limite_no_contactos', '20');
+          const r2 = ensureFieldRow('api_mensajes_requerir_contacto_o_historial', 'true');
+          const r3 = ensureFieldRow('api_mensajes_historial_whatsapp_limite', '100');
+          const i1 = r1 && r1.querySelector('[data-v]');
+          const i2 = r2 && r2.querySelector('[data-v]');
+          const i3 = r3 && r3.querySelector('[data-v]');
+          if (i1) {
+            i1.type = 'number';
+            i1.min = '0';
+            i1.step = '1';
+            i1.title = 'Máximo diario de solicitudes de permiso a números no agendados y sin conversación entrante previa. 0 = sin límite específico.';
+          }
+          if (i2) i2.title = 'true obliga a tener contacto o historial cuando la confirmación previa está deshabilitada.';
+          if (i3) {
+            i3.type = 'number';
+            i3.min = '1';
+            i3.max = '500';
+            i3.step = '1';
+            i3.title = 'Cantidad máxima de mensajes recientes a revisar en el historial del chat (1 a 500).';
+          }
+        });
+        if (btnAddApiCircuit) btnAddApiCircuit.addEventListener('click', ()=> {
+          [
+            ['api_mensajes_circuit_min_muestra','10'],
+            ['api_mensajes_circuit_sin_respuesta_ratio','0.8'],
+            ['api_mensajes_circuit_antiguedad_ms','7200000'],
+            ['api_mensajes_circuit_fallos_consecutivos','3'],
+            ['api_mensajes_respuestas_baja','BAJA']
+          ].forEach(([k,v]) => ensureFieldRow(k,v));
         });
         if (btnCopy && copyFromEl) {
           btnCopy.addEventListener('click', async ()=> {
@@ -4509,6 +4593,42 @@ function mountAuthRoutes(app) {
   });
 
   // API
+  app.get("/api/tenant-config/whatsapp-metrics", requireAuth, requireAdmin, async (req, res) => {
+    try {
+      if (!hasAccess(req.user, "tenant_config")) return res.status(403).json({ ok:false, error:"forbidden" });
+      const role = String(req.user?.role || "").toLowerCase();
+      const requested = String(req.query?.tenantId || "").trim();
+      const tenantId = requested || String(req.user?.tenantId || "default");
+      if (role !== "superadmin" && tenantId !== String(req.user?.tenantId || "default")) return res.status(403).json({ ok:false, error:"forbidden_tenant" });
+      const db = await getDb();
+      const tenantConfig = await db.collection('tenant_config').findOne({ _id: tenantId }) || {};
+      const matureMs = Math.max(60000, Number(tenantConfig.api_mensajes_circuit_antiguedad_ms || 7200000));
+      const matureCutoff = Date.now() - matureMs;
+      const parts = new Intl.DateTimeFormat('sv-SE', { timeZone:'America/Argentina/Buenos_Aires', year:'numeric', month:'2-digit', day:'2-digit' }).formatToParts(new Date());
+      const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+      const dayKey = `${map.year}-${map.month}-${map.day}`;
+      const docs = await db.collection('wa_api_mensajes_confirmaciones').find({ tenantId: tenantId.toUpperCase(), solicitudDayKey: dayKey }).limit(5000).toArray();
+      const normales = docs.filter(d => d.tipoDocumento !== 'metrica');
+      const metrics = { solicitados:normales.length, ok:0, baja:0, ignorados:0, fallos:0, bloqueados:0 };
+      for (const d of docs) {
+        if (d.tipoDocumento === 'metrica') {
+          metrics.fallos += Number(d.contadores?.fallos || 0);
+          metrics.bloqueados += Number(d.contadores?.bloqueos || 0);
+          continue;
+        }
+        if (d.estado === 'aceptado') metrics.ok++;
+        if (d.exclusionMotivo === 'baja_cliente') metrics.baja++;
+        if (d.motivoCancelacion === 'sin_respuesta_timeout' || (d.estado === 'pendiente' && new Date(d.pedidoAt || 0).getTime() <= matureCutoff)) metrics.ignorados++;
+        if (String(d.motivoCancelacion || '').includes('error')) metrics.fallos++;
+        if (d.exclusionPermanente === true) metrics.bloqueados++;
+      }
+      const exclusions = await db.collection('wa_api_mensajes_confirmaciones').find({ tenantId:tenantId.toUpperCase(), exclusionPermanente:true }, { projection:{ nroTel:1, exclusionMotivo:1, exclusionAt:1 } }).sort({ exclusionAt:-1 }).limit(100).toArray();
+      return res.json({ ok:true, tenantId, dayKey, metrics, exclusiones:exclusions.map(d => ({ nroTel:d.nroTel||'', motivo:d.exclusionMotivo||'', at:d.exclusionAt||null })) });
+    } catch (e) {
+      return res.status(500).json({ ok:false, error:String(e?.message || e) });
+    }
+  });
+
   app.get("/api/tenant-config", requireAuth, requireAdmin, async (req, res) => {
     try {
       if (!hasAccess(req.user, "tenant_config")) return res.status(403).json({ ok:false, error:"forbidden" });
