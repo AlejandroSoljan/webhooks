@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.012 | Fecha: 2026-09-02
+// Asisto | Version: 5.00.013 | Fecha: 2026-09-02
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -2191,7 +2191,8 @@ function wwebSessionsAdminPage({ user }) {
                 <th>Dueño</th>
                 <th>Tiempos</th>
                 <th>Política</th>
-                <th style="width:360px">Acciones</th>
+                <th>Permisos</th>
+                <th style="width:230px">Acciones</th>
               </tr>
             </thead>
             <tbody id="wwebBody">
@@ -2255,6 +2256,15 @@ function wwebSessionsAdminPage({ user }) {
                 <tbody id="statsContactsBody">
                   <tr><td colspan="5" class="small">Sin datos.</td></tr>
                 </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card" style="margin-top:12px; padding:10px 12px">
+            <div class="cellMain" style="margin-bottom:6px">Permisos y exclusiones del rango</div>
+            <div class="tableWrap statsTableWrap">
+              <table class="table statsTable">
+                <thead><tr><th>Teléfono</th><th>Estado</th><th>Motivo</th><th>Solicitud</th><th>Respuesta</th></tr></thead>
+                <tbody id="statsPermissionsBody"><tr><td colspan="5" class="small">Sin datos.</td></tr></tbody>
               </table>
             </div>
           </div>
@@ -2390,6 +2400,7 @@ function wwebSessionsAdminPage({ user }) {
       var statsApply = document.getElementById('statsApply');
       var statsClose = document.getElementById('statsClose');
       var statsContactsBody = document.getElementById('statsContactsBody');
+      var statsPermissionsBody = document.getElementById('statsPermissionsBody');
       var statsTenant = '';
       var statsNumero = '';
 
@@ -2431,6 +2442,8 @@ function wwebSessionsAdminPage({ user }) {
         var summary = data && data.summary ? data.summary : {};
         var overall = data && data.overall ? data.overall : {};
         var contacts = Array.isArray(data && data.contacts) ? data.contacts : [];
+        var permissionSummary = data && data.permissionSummary ? data.permissionSummary : {};
+        var permissions = Array.isArray(data && data.permissions) ? data.permissions : [];
         statsMeta.textContent = 'Rango: ' + (data.from || '-') + ' a ' + (data.to || '-')
           + ' · Último mensaje global: ' + (overall.lastMessageAt ? fmtDate(overall.lastMessageAt) : '-');
         statsCards.innerHTML = ''
@@ -2440,26 +2453,37 @@ function wwebSessionsAdminPage({ user }) {
           + statsCard('Contactos', String(summary.contacts || 0))
           + statsCard('Último mensaje del rango', summary.lastAt ? fmtDate(summary.lastAt) : '-')
           + statsCard('Inactividad actual', overall.inactivityLabel || fmtDurationMs(overall.inactivityMs || 0));
+        statsCards.innerHTML += ''
+          + statsCard('Permisos solicitados', String(permissionSummary.solicitados || 0))
+          + statsCard('OK', String(permissionSummary.ok || 0))
+          + statsCard('BAJA', String(permissionSummary.baja || 0))
+          + statsCard('Ignorados', String(permissionSummary.ignorados || 0))
+          + statsCard('Fallos', String(permissionSummary.fallos || 0))
+          + statsCard('Bloqueados/excluidos', String(permissionSummary.bloqueados || 0));
 
         if(!contacts.length){
           statsContactsBody.innerHTML = '<tr><td colspan="5" class="small">No hay mensajes en el rango seleccionado.</td></tr>';
-          return;
+        } else {
+          statsContactsBody.innerHTML = contacts.map(function(c){
+            return '<tr>'
+              + '<td class="mono">' + escapeHtml(c.contact || '-') + '</td>'
+              + '<td>' + escapeHtml(String(c.incoming || 0)) + '</td>'
+              + '<td>' + escapeHtml(String(c.outgoing || 0)) + '</td>'
+              + '<td>' + escapeHtml(String(c.total || 0)) + '</td>'
+              + '<td>' + escapeHtml(c.lastAt ? fmtDate(c.lastAt) : '-') + '</td>'
+              + '</tr>';
+          }).join('');
         }
-        statsContactsBody.innerHTML = contacts.map(function(c){
-          return '<tr>'
-            + '<td class="mono">' + escapeHtml(c.contact || '-') + '</td>'
-            + '<td>' + escapeHtml(String(c.incoming || 0)) + '</td>'
-            + '<td>' + escapeHtml(String(c.outgoing || 0)) + '</td>'
-            + '<td>' + escapeHtml(String(c.total || 0)) + '</td>'
-            + '<td>' + escapeHtml(c.lastAt ? fmtDate(c.lastAt) : '-') + '</td>'
-            + '</tr>';
-        }).join('');
+        statsPermissionsBody.innerHTML = permissions.length ? permissions.map(function(p){
+          return '<tr><td class="mono">'+escapeHtml(p.numero||'-')+'</td><td>'+escapeHtml(p.estado||'-')+'</td><td>'+escapeHtml(p.motivo||'-')+'</td><td>'+escapeHtml(p.pedidoAt?fmtDate(p.pedidoAt):'-')+'</td><td>'+escapeHtml(p.respuestaAt?fmtDate(p.respuestaAt):'-')+'</td></tr>';
+        }).join('') : '<tr><td colspan="5" class="small">No hay permisos en el rango seleccionado.</td></tr>';
       }
       function loadStats(){
         if(!statsTenant || !statsNumero) return;
         statsMeta.textContent = 'Cargando…';
         statsCards.innerHTML = '';
         statsContactsBody.innerHTML = '<tr><td colspan="5" class="small">Cargando…</td></tr>';
+        statsPermissionsBody.innerHTML = '<tr><td colspan="5" class="small">Cargando…</td></tr>';
         return api('/api/wweb/stats?tenantId=' + encodeURIComponent(statsTenant) + '&numero=' + encodeURIComponent(statsNumero)
           + '&from=' + encodeURIComponent(statsFrom.value || '') + '&to=' + encodeURIComponent(statsTo.value || ''), { method:'GET' })
           .then(renderStats)
@@ -2595,6 +2619,11 @@ function wwebSessionsAdminPage({ user }) {
           + '</div>';
 
         var statsToday = lock.statsToday || { incoming:0, outgoing:0, contacts:0 };
+        var permissionToday = lock.permissionToday || { solicitados:0, ok:0, baja:0, ignorados:0, fallos:0, bloqueados:0 };
+        var permissionHtml = '<div class="cellSub"><b>Sol/OK:</b> '+escapeHtml(String(permissionToday.solicitados||0))+' / '+escapeHtml(String(permissionToday.ok||0))+'</div>'
+          + '<div class="cellSub"><b>Baja/Ign.:</b> '+escapeHtml(String(permissionToday.baja||0))+' / '+escapeHtml(String(permissionToday.ignorados||0))+'</div>'
+          + '<div class="cellSub"><b>Fallos/Bloq.:</b> '+escapeHtml(String(permissionToday.fallos||0))+' / '+escapeHtml(String(permissionToday.bloqueados||0))+'</div>'
+          + (CAN_VIEW_STATS ? '<button class="btn2" style="margin-top:6px" type="button" data-action="stats" data-tenant="'+escapeHtml(tenantId)+'" data-numero="'+escapeHtml(numero)+'">Métricas</button>' : '');
         var timesHtml = ''
           + '<div class="cellSub"><b>Inicio:</b> ' + escapeHtml(fmtDate(lock.startedAt) || '-') + '</div>'
           + '<div class="cellSub"><b>Heartbeat:</b> ' + escapeHtml(fmtDate(lock.lastSeenAt) || '-') + '</div>'
@@ -2612,6 +2641,7 @@ function wwebSessionsAdminPage({ user }) {
           + '<td>' + ownerHtml + '</td>'
           + '<td>' + timesHtml + '</td>'
           + '<td>' + policyHtml + '</td>'
+          + '<td>' + permissionHtml + '</td>'
           + '<td class="wa-actions-cell"><div class="actionBar">' + actions + '</div></td>'
 
           + '</tr>';
@@ -2939,11 +2969,12 @@ document.addEventListener('click', function(e){
 
       .wwebTable td, .wwebTable th{white-space:normal; word-break:break-word; vertical-align:top}
       .wwebTable th:nth-child(1){width:160px}
-      .wwebTable th:nth-child(2){width:190px}
-      .wwebTable th:nth-child(3){width:240px}
+      .wwebTable th:nth-child(2){width:125px}
+      .wwebTable th:nth-child(3){width:175px}
       .wwebTable th:nth-child(4){width:220px}
-      .wwebTable th:nth-child(5){width:170px}
-      .wwebTable th:nth-child(6){width:240px}
+      .wwebTable th:nth-child(5){width:135px}
+      .wwebTable th:nth-child(6){width:175px}
+      .wwebTable th:nth-child(7){width:230px}
 
       .cellMain{font-weight:700}
       .cellSub{font-size:12px; opacity:.85; margin-top:2px}
@@ -5049,6 +5080,30 @@ function mountAuthRoutes(app) {
     return map;
   }
 
+  async function wwebPermissionStatsMap(db, tenantFilter, fromYmd, toYmd) {
+    const query = { solicitudDayKey: { $gte: fromYmd, $lte: toYmd } };
+    if (tenantFilter?.tenantId) query.tenantId = String(tenantFilter.tenantId).toUpperCase();
+    const docs = await db.collection('wa_api_mensajes_confirmaciones').find(query).limit(10000).toArray();
+    const map = new Map();
+    for (const d of docs) {
+      const key = String(d.tenantId || '') + '::' + String(d.numeroFrom || '');
+      const m = map.get(key) || { solicitados:0, ok:0, baja:0, ignorados:0, fallos:0, bloqueados:0 };
+      if (d.tipoDocumento === 'metrica') {
+        m.fallos += Number(d.contadores?.fallos || 0);
+        m.bloqueados += Number(d.contadores?.bloqueos || 0);
+      } else {
+        m.solicitados++;
+        if (d.estado === 'aceptado') m.ok++;
+        if (d.exclusionMotivo === 'baja_cliente') m.baja++;
+        if (d.motivoCancelacion === 'sin_respuesta_timeout' || (d.estado === 'pendiente' && new Date(d.pedidoAt || 0).getTime() <= Date.now() - 7200000)) m.ignorados++;
+        if (String(d.motivoCancelacion || '').includes('error')) m.fallos++;
+        if (d.exclusionPermanente === true) m.bloqueados++;
+      }
+      map.set(key, m);
+    }
+    return map;
+  }
+
   // Listado de locks activos/inactivos (colección: wa_locks)
   app.get("/api/wweb/locks", requireAuth, requireWwebAccess, async (req, res) => {
     try {
@@ -5074,6 +5129,7 @@ function mountAuthRoutes(app) {
       const todayYmd = wwebArYmd(new Date());
       const { start: todayStart, end: todayEnd } = wwebArDateRange(todayYmd, todayYmd);
       const statsMap = await wwebBuildStatsMap(db, filter, todayStart, todayEnd);
+      const permissionStatsMap = await wwebPermissionStatsMap(db, filter, todayYmd, todayYmd);
 
       const polMap = new Map();
       for (const p of (policies || [])) {
@@ -5103,6 +5159,7 @@ function mountAuthRoutes(app) {
         const key = tid + "::" + num;
         const policy = polMap.get(key) || { mode: "any", pinnedHost: "", blockedHosts: [], disabled: false, paused: false, blocked: false, messagesBlocked: false, blockMode: "" };
         const stats = statsMap.get(key) || { incoming: 0, outgoing: 0, contacts: 0, lastMessageAt: null };
+        const permissionToday = permissionStatsMap.get(key) || { solicitados:0, ok:0, baja:0, ignorados:0, fallos:0, bloqueados:0 };
         const inactivityMs = stats.lastMessageAt ? Math.max(0, now.getTime() - new Date(stats.lastMessageAt).getTime()) : null;
         return {
           _id: String(l._id),
@@ -5121,6 +5178,7 @@ function mountAuthRoutes(app) {
             outgoing: Number(stats.outgoing || 0),
             contacts: Number(stats.contacts || 0),
           },
+          permissionToday,
           lastMessageAt: stats.lastMessageAt || null,
           inactivityMs,
           inactivityLabel: inactivityMs == null ? '' : wwebHumanizeMs(inactivityMs),
@@ -5479,6 +5537,30 @@ function mountAuthRoutes(app) {
       const summary = summaryRows[0] || { incoming: 0, outgoing: 0, total: 0, contactsSet: [], firstAt: null, lastAt: null };
       const lastOverall = overallLast[0] || null;
       const inactivityMs = lastOverall?.at ? Math.max(0, Date.now() - new Date(lastOverall.at).getTime()) : null;
+      const permissionDocs = await db.collection('wa_api_mensajes_confirmaciones').find({
+        tenantId: tenantId.toUpperCase(), numeroFrom: numero,
+        solicitudDayKey: { $gte: from, $lte: to }
+      }).sort({ pedidoAt:-1, updatedAt:-1 }).limit(5000).toArray();
+      const permissionSummary = { solicitados:0, ok:0, baja:0, ignorados:0, fallos:0, bloqueados:0 };
+      const permissions = [];
+      for (const d of permissionDocs) {
+        if (d.tipoDocumento === 'metrica') {
+          permissionSummary.fallos += Number(d.contadores?.fallos || 0);
+          permissionSummary.bloqueados += Number(d.contadores?.bloqueos || 0);
+          continue;
+        }
+        permissionSummary.solicitados++;
+        if (d.estado === 'aceptado') permissionSummary.ok++;
+        if (d.exclusionMotivo === 'baja_cliente') permissionSummary.baja++;
+        if (d.motivoCancelacion === 'sin_respuesta_timeout' || (d.estado === 'pendiente' && new Date(d.pedidoAt || 0).getTime() <= Date.now() - 7200000)) permissionSummary.ignorados++;
+        if (String(d.motivoCancelacion || '').includes('error')) permissionSummary.fallos++;
+        if (d.exclusionPermanente === true) permissionSummary.bloqueados++;
+        permissions.push({
+          numero:String(d.nroTel || ''), estado:String(d.estado || ''),
+          motivo:String(d.exclusionMotivo || d.motivoCancelacion || ''),
+          pedidoAt:d.pedidoAt || null, respuestaAt:d.aceptadoAt || d.canceladoAt || d.updatedAt || null
+        });
+      }
 
       return res.status(200).json({
         ok: true,
@@ -5500,6 +5582,8 @@ function mountAuthRoutes(app) {
           inactivityMs,
           inactivityLabel: inactivityMs == null ? '' : wwebHumanizeMs(inactivityMs),
         },
+        permissionSummary,
+        permissions,
         contacts: (contactRows || []).map((r) => ({
           contact: String(r._id || ''),
           incoming: Number(r.incoming || 0),
