@@ -3944,6 +3944,7 @@ function mountAuthRoutes(app) {
                 <button class="btn2" type="button" id="tc_btnAddTokenCosts">Agregar tarifas tokens</button>
                 <button class="btn2" type="button" id="tc_btnAddWwebRetention" title="Agrega wweb_message_log_retention_days. 0 o campo ausente = no borrar; 30 = conservar 30 días.">Retención historial WWeb</button>
                 <button class="btn2" type="button" id="tc_btnAddApiMessageWindows" title="Configura minutos y valor por ventana para mensajes enviados por ConsultaApiMensajes.">Ventanas API Mensajes</button>
+                <button class="btn2" type="button" id="tc_btnAddApiDailyLimit" title="Máximo de mensajes salientes automáticos por día. 0 significa sin límite.">Límite diario API</button>
                 <button class="btn2" type="button" id="tc_btnClear">Limpiar</button>
                 ${isSuper ? `<button class="btn2 btnDanger" type="button" id="tc_btnDelete">Eliminar</button>` : ``}
               </div>
@@ -3968,6 +3969,7 @@ function mountAuthRoutes(app) {
         const btnAddTokenCosts = document.getElementById('tc_btnAddTokenCosts');
         const btnAddWwebRetention = document.getElementById('tc_btnAddWwebRetention');
         const btnAddApiMessageWindows = document.getElementById('tc_btnAddApiMessageWindows');
+        const btnAddApiDailyLimit = document.getElementById('tc_btnAddApiDailyLimit');
         const btnClear = document.getElementById('tc_btnClear');
         const btnReload = document.getElementById('tc_btnReload');
         const btnNew = document.getElementById('tc_btnNew');
@@ -4078,7 +4080,14 @@ function mountAuthRoutes(app) {
           
           tr.querySelector('[data-rm]').addEventListener('click', ()=> { if (tr.getAttribute('data-protected') !== '1') tr.remove(); });
           const keyInput = tr.querySelector('[data-k]');
+          const valInput = tr.querySelector('[data-v]');
           const ruleCheck = tr.querySelector('[data-superonly]');
+          if (String(key || '').trim().toLowerCase() === 'api_mensajes_limite_diario' && valInput) {
+            valInput.type = 'number';
+            valInput.min = '0';
+            valInput.step = '1';
+            valInput.title = 'Máximo diario de mensajes salientes automáticos. 0 = sin límite.';
+          }
           if (keyInput) {
             keyInput.addEventListener('input', ()=> applyRowProtection(tr));
             keyInput.addEventListener('blur', ()=> applyRowProtection(tr));
@@ -4175,7 +4184,13 @@ function mountAuthRoutes(app) {
             if (isSuperadminOnlyField(k)) continue;
             if (keys.has(k)) throw new Error('Campo duplicado: ' + k);
             keys.add(k);
-            doc[k] = parseValue(vRaw);
+            const parsed = parseValue(vRaw);
+            if (k.toLowerCase() === 'api_mensajes_limite_diario') {
+              if (!Number.isInteger(parsed) || parsed < 0) {
+                throw new Error('api_mensajes_limite_diario debe ser un número entero mayor o igual a 0.');
+              }
+            }
+            doc[k] = parsed;
           }
           return doc;
         }
@@ -4355,6 +4370,16 @@ function mountAuthRoutes(app) {
           if (i1) i1.title = 'Minutos de la ventana. Mensajes al mismo número dentro de este período cuentan como una sola ventana.';
           if (i2) i2.title = 'Importe a valorizar por cada ventana nueva.';
           if (i3) i3.title = 'Moneda de la valorización, por ejemplo ARS o USD.';
+        });
+        if (btnAddApiDailyLimit) btnAddApiDailyLimit.addEventListener('click', ()=> {
+          const row = ensureFieldRow('api_mensajes_limite_diario', '70');
+          const valInput = row && row.querySelector('[data-v]');
+          if (valInput) {
+            valInput.type = 'number';
+            valInput.min = '0';
+            valInput.step = '1';
+            valInput.title = 'Máximo diario de mensajes salientes automáticos. 0 = sin límite.';
+          }
         });
         if (btnCopy && copyFromEl) {
           btnCopy.addEventListener('click', async ()=> {
