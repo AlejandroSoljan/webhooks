@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.008 | Fecha: 2026-08-30
+// Asisto | Version: 5.00.014 | Fecha: 2026-09-03
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -795,6 +795,15 @@ function wwebAgentScopeUpdate(collection, update, tenantId, numero) {
   const ensureSet = () => { out.$set = { ...(out.$set || {}) }; return out.$set; };
   const ensureInsert = () => { out.$setOnInsert = { ...(out.$setOnInsert || {}) }; return out.$setOnInsert; };
 
+  // MongoDB no permite modificar _id. Algunos wrappers/modelos pueden devolver
+  // documentos completos y reenviarlo dentro de $set (u otro operador).
+  // Se conserva únicamente en $setOnInsert para los locks creados por upsert.
+  for (const [operator, payload] of Object.entries(out)) {
+    if (operator === '$setOnInsert') continue;
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) delete payload._id;
+  }
+  delete out._id;
+
   if (collection === 'wa_locks' || collection === 'wa_wweb_policies') {
     // $set también se aplica cuando updateOne hace upsert, por lo que tenantId,
     // tenantid y numero no deben repetirse en $setOnInsert. MongoDB rechaza una
@@ -807,6 +816,7 @@ function wwebAgentScopeUpdate(collection, update, tenantId, numero) {
     delete out.$setOnInsert.tenantId;
     delete out.$setOnInsert.tenantid;
     delete out.$setOnInsert.numero;
+    out.$setOnInsert._id = lockId;
   }
   if (collection === 'wa_wweb_message_log') Object.assign(ensureSet(), { tenantId: tenant, numero: phone });
   if (collection === 'wa_api_mensajes_confirmaciones') Object.assign(ensureSet(), { tenantId: tenant, numeroFrom: phone });
