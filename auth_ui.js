@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.016 | Fecha: 2026-09-03
+// Asisto | Version: 5.00.017 | Fecha: 2026-09-03
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -4476,9 +4476,11 @@ function mountAuthRoutes(app) {
           const r1 = ensureFieldRow('api_mensajes_limite_no_contactos', '20');
           const r2 = ensureFieldRow('api_mensajes_requerir_contacto_o_historial', 'true');
           const r3 = ensureFieldRow('api_mensajes_historial_whatsapp_limite', '100');
+          const r4 = ensureFieldRow('api_mensajes_confirmacion_prioridades', '[3]');
           const i1 = r1 && r1.querySelector('[data-v]');
           const i2 = r2 && r2.querySelector('[data-v]');
           const i3 = r3 && r3.querySelector('[data-v]');
+          const i4 = r4 && r4.querySelector('[data-v]');
           if (i1) {
             i1.type = 'number';
             i1.min = '0';
@@ -4493,6 +4495,7 @@ function mountAuthRoutes(app) {
             i3.step = '1';
             i3.title = 'Cantidad máxima de mensajes recientes a revisar en el historial del chat (1 a 500).';
           }
+          if (i4) i4.title = 'Lista de prioridades que requieren confirmación. Ejemplo: [3].';
         });
         if (btnAddApiCircuit) btnAddApiCircuit.addEventListener('click', ()=> {
           [
