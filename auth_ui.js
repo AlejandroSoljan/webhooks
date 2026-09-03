@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.014 | Fecha: 2026-09-03
+// Asisto | Version: 5.00.015 | Fecha: 2026-09-03
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -4257,6 +4257,10 @@ function mountAuthRoutes(app) {
               }
             }
             if (k.toLowerCase() === 'api_mensajes_circuit_sin_respuesta_ratio') {
+              if (parsed === '') {
+                // Vacío: quitar la personalización y usar el valor por defecto del cliente.
+                continue;
+              }
               if (typeof parsed !== 'number' || parsed < 0 || parsed > 1) throw new Error('api_mensajes_circuit_sin_respuesta_ratio debe estar entre 0 y 1.');
             }
             doc[k] = parsed;

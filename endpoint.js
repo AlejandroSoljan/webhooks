@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.014 | Fecha: 2026-09-03
+// Asisto | Version: 5.00.015 | Fecha: 2026-09-03
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -723,13 +723,7 @@ function wwebAgentScopeQuery(collection, query, tenantId, numero) {
     });
   }
   if (collection === 'wa_locks' || collection === 'wa_wweb_policies') {
-    return wwebAgentAnd(q, {
-      $or: [
-        { _id: lockId },
-        { tenantId: tenant, numero: phone },
-        { tenantid: tenant, numero: phone }
-      ]
-    });
+    return { _id: lockId };
   }
   if (collection === 'wa_wweb_actions') {
     return wwebAgentAnd(q, { lockId });
@@ -793,14 +787,21 @@ function wwebAgentScopeUpdate(collection, update, tenantId, numero) {
   const lockId = `${tenant}:${phone}`;
   const out = { ...(update || {}) };
   const ensureSet = () => { out.$set = { ...(out.$set || {}) }; return out.$set; };
-  const ensureInsert = () => { out.$setOnInsert = { ...(out.$setOnInsert || {}) }; return out.$setOnInsert; };
 
   // MongoDB no permite modificar _id. Algunos wrappers/modelos pueden devolver
-  // documentos completos y reenviarlo dentro de $set (u otro operador).
-  // Se conserva únicamente en $setOnInsert para los locks creados por upsert.
+  // documentos completos y reenviarlo dentro de cualquier operador. El _id de
+  // locks/políticas se obtiene exclusivamente del filtro canónico del upsert.
   for (const [operator, payload] of Object.entries(out)) {
-    if (operator === '$setOnInsert') continue;
-    if (payload && typeof payload === 'object' && !Array.isArray(payload)) delete payload._id;
+    if (!operator.startsWith('$') || !payload || typeof payload !== 'object' || Array.isArray(payload)) continue;
+    for (const key of Object.keys(payload)) {
+      if (key === '_id' || key.startsWith('_id.')) delete payload[key];
+    }
+    if (operator === '$rename') {
+      for (const [key, target] of Object.entries(payload)) {
+        const targetPath = String(target || '');
+        if (key === '_id' || key.startsWith('_id.') || targetPath === '_id' || targetPath.startsWith('_id.')) delete payload[key];
+      }
+    }
   }
   delete out._id;
 
@@ -809,14 +810,15 @@ function wwebAgentScopeUpdate(collection, update, tenantId, numero) {
     // tenantid y numero no deben repetirse en $setOnInsert. MongoDB rechaza una
     // actualización cuando la misma ruta aparece en ambos operadores.
     Object.assign(ensureSet(), { tenantId: tenant, tenantid: tenant, numero: phone });
-    Object.assign(ensureInsert(), { _id: lockId });
 
     // Limpieza defensiva por si el agente envía alguno de estos campos dentro de
     // $setOnInsert. Evita el error "Updating the path ... would create a conflict".
-    delete out.$setOnInsert.tenantId;
-    delete out.$setOnInsert.tenantid;
-    delete out.$setOnInsert.numero;
-    out.$setOnInsert._id = lockId;
+    if (out.$setOnInsert) {
+      delete out.$setOnInsert.tenantId;
+      delete out.$setOnInsert.tenantid;
+      delete out.$setOnInsert.numero;
+      if (!Object.keys(out.$setOnInsert).length) delete out.$setOnInsert;
+    }
   }
   if (collection === 'wa_wweb_message_log') Object.assign(ensureSet(), { tenantId: tenant, numero: phone });
   if (collection === 'wa_api_mensajes_confirmaciones') Object.assign(ensureSet(), { tenantId: tenant, numeroFrom: phone });
