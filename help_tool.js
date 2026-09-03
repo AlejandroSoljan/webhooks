@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.011 | Fecha: 2026-09-01
+// Asisto | Version: 5.00.019 | Fecha: 2026-09-03
 // help_tool.js
 // Herramienta de Ayuda contextual de Asisto.
 // - Fuente: Google Sheets (privado con Service Account o CSV público/directo).
@@ -82,7 +82,7 @@ Objetivo:
 - Si \"ventana\" está vacía, resolvé la consulta de forma general con los candidatos disponibles.
 - Podés combinar información de varios videos si ayuda a responder mejor.
 - Elegí solamente videos realmente útiles para la consulta.
-- No inventes pasos, botones, menús, funciones ni datos que no estén respaldados por título, tags, descripción o ventana/categoría.
+- No inventes pasos, botones, menús, funciones ni datos que no estén respaldados por título, tags, descripción, transcripción o ventana/categoría.
 - Si la información disponible no alcanza para responder con seguridad, indicá eso claramente y usá \"encontrado\": false.
 
 IMPORTANTE: para este modo IGNORÁ cualquier instrucción anterior que pida devolver solamente \"vimeo_ids\".
@@ -104,7 +104,8 @@ const EXPECTED_HEADERS = {
   versionTo: ['version hasta', 'versión hasta', 'version_hasta'],
   importance: ['importancia'],
   tags: ['tags', 'tag'],
-  description: ['descripcion', 'descripción']
+  description: ['descripcion', 'descripción'],
+  transcription: ['transcripcion', 'transcripción']
 };
 
 const _configCache = new Map();
@@ -725,7 +726,8 @@ function matrixToHelpRows(matrix = []) {
       versionTo: clean(r[columns.versionTo], 80),
       importance: Number(r[columns.importance] || 0) || 0,
       tags: tagsArray(r[columns.tags]),
-      description: clean(r[columns.description], 12000)
+      description: clean(r[columns.description], 12000),
+      transcription: clean(r[columns.transcription], 50000)
     };
     if (!item.title && !item.vimeoId && !item.appliesTo) continue;
     out.push(item);
@@ -1099,6 +1101,7 @@ function intelligentQueryRowScore(query, row) {
   const title = normalizeNaturalText(row?.title);
   const tags = normalizeNaturalText((row?.tags || []).join(' '));
   const description = normalizeNaturalText(row?.description);
+  const transcription = normalizeNaturalText(row?.transcription);
   const appliesTo = normalizeNaturalText(row?.appliesTo);
 
   let score = 0;
@@ -1107,12 +1110,14 @@ function intelligentQueryRowScore(query, row) {
     if (tags.includes(token)) score += 10;
     if (appliesTo.includes(token)) score += 7;
     if (description.includes(token)) score += 4;
+    if (transcription.includes(token)) score += 5;
   }
 
   const whole = normalizeNaturalText(query);
   if (whole && title.includes(whole)) score += 25;
   if (whole && tags.includes(whole)) score += 18;
   if (whole && description.includes(whole)) score += 8;
+  if (whole && transcription.includes(whole)) score += 10;
 
   const importance = Number(row?.importance || 0);
   if (importance > 0) {
@@ -1140,15 +1145,32 @@ function dedupeRowsByVimeo(rows = []) {
   return [...map.values()];
 }
 
-function compactQueryVideo(row) {
+function compactQueryVideo(row, transcriptionMax = 0) {
+  const transcription = transcriptionMax > 0
+    ? clean(row?.transcription, transcriptionMax)
+    : '';
   return {
     vimeo_id: String(row?.vimeoId || ''),
     titulo: clean(row?.title, 500),
     importancia: Number(row?.importance || 0),
     tags: (Array.isArray(row?.tags) ? row.tags : []).slice(0, 15),
     ventana_aplica: clean(row?.appliesTo, 900),
-    descripcion: clean(row?.description, 1200)
+    descripcion: clean(row?.description, 1200),
+    transcripcion: transcription
   };
+}
+
+function compactQueryVideos(rows = []) {
+  // Las transcripciones pueden ser extensas. Conservamos contexto suficiente por
+  // video y un presupuesto total para evitar prompts desmedidos cuando hay muchos
+  // candidatos.
+  let remaining = 90000;
+  return (rows || []).map(row => {
+    const max = Math.max(0, Math.min(12000, remaining));
+    const video = compactQueryVideo(row, max);
+    remaining = Math.max(0, remaining - video.transcripcion.length);
+    return video;
+  });
 }
 
 async function buildIntelligentQueryCandidates({
@@ -1266,7 +1288,15 @@ async function resolveIntelligentHelpQuery({
     sourceHash,
     model: cfg.model,
     behaviorHash,
-    candidateIds
+    candidateIds,
+    candidateContentHash: sha256(JSON.stringify(rows.map(r => [
+      r.vimeoId,
+      r.title,
+      r.tags,
+      r.appliesTo,
+      r.description,
+      r.transcription
+    ])))
   }));
 
   const cached = await db.collection('help_intelligent_query_cache').findOne({
@@ -1304,7 +1334,7 @@ async function resolveIntelligentHelpQuery({
   const payloadText = JSON.stringify({
     consulta: query,
     ventana: windowName || '',
-    videos: rows.map(compactQueryVideo)
+    videos: compactQueryVideos(rows)
   });
 
   const request = {
