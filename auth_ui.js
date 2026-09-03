@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.017 | Fecha: 2026-09-03
+// Asisto | Version: 5.00.018 | Fecha: 2026-09-03
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -3888,12 +3888,17 @@ function mountAuthRoutes(app) {
         .tc-rule-cell{white-space:nowrap}
         .tc-rule-label{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:#475569;font-weight:800}
         .tc-rule-label input{width:auto;height:auto;margin:0}
+        .tc-row-actions{display:flex;align-items:center;gap:6px;white-space:nowrap}
+        .tc-help-btn{width:34px;height:34px;padding:0;border-radius:50%;font-size:16px;color:#0f3b68;border-color:#93c5fd;background:#eff6ff}
+        .tc-help-modal{width:min(560px,100%);background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(15,23,42,.36);border:1px solid rgba(148,163,184,.28)}
+        .tc-help-text{white-space:pre-line;line-height:1.5;color:#334155}
         body.dark .card{background:#0f172a;border-color:rgba(148,163,184,.18)}
         body.dark .btn2, body.dark .inp, body.dark .tc-close{background:#111827;color:#e5e7eb;border-color:rgba(148,163,184,.28)}
         body.dark .tbl thead th{background:#111827;color:#e5e7eb}
         body.dark .tbl th, body.dark .tbl td{border-bottom-color:rgba(148,163,184,.16)}
         body.dark .tc-modal{background:#0f172a;border-color:rgba(148,163,184,.22)}
         body.dark .tc-modal-head{background:#0f172a;border-bottom-color:rgba(148,163,184,.18)}
+        body.dark .tc-help-modal{background:#0f172a;color:#e5e7eb;border-color:rgba(148,163,184,.22)}
       </style>
 
       <div class="tc-toolbar">
@@ -3989,6 +3994,19 @@ function mountAuthRoutes(app) {
         </div>
       </div>
 
+      <div class="tc-modal-backdrop" id="tc_helpBackdrop" aria-hidden="true">
+        <div class="tc-help-modal" role="dialog" aria-modal="true" aria-labelledby="tc_helpTitle">
+          <div class="tc-modal-head">
+            <div id="tc_helpTitle" style="font-weight:700;font-size:18px">Ayuda del campo</div>
+            <button class="tc-close" type="button" id="tc_btnCloseHelp">Cerrar</button>
+          </div>
+          <div class="tc-modal-body">
+            <div class="small" id="tc_helpField" style="font-weight:800;margin-bottom:8px"></div>
+            <div class="tc-help-text" id="tc_helpText"></div>
+          </div>
+        </div>
+      </div>
+
       <script>
       (function(){
         const isSuper = ${isSuper ? "true" : "false"};
@@ -4016,6 +4034,47 @@ function mountAuthRoutes(app) {
         const modalBackdrop = document.getElementById('tc_modalBackdrop');
         const btnCloseModal = document.getElementById('tc_btnCloseModal');
         const modalTitle = document.getElementById('tc_modalTitle');
+        const helpBackdrop = document.getElementById('tc_helpBackdrop');
+        const btnCloseHelp = document.getElementById('tc_btnCloseHelp');
+        const helpField = document.getElementById('tc_helpField');
+        const helpText = document.getElementById('tc_helpText');
+
+        const fieldHelp = {
+          nom_emp:'Nombre de la empresa que se muestra en paneles y mensajes.', numero:'Número de WhatsApp asociado al dominio, con código de país.', release_tag:'Versión del script cliente que debe instalar automáticamente este dominio.', version:'Versión informativa reportada por la instalación.', script:'Nombre del script principal del cliente.', puerto:'Puerto HTTP local utilizado por el agente.', direccion:'Dirección o ubicación informativa de la empresa.', dsn:'Nombre del origen ODBC usado para conectar con Manager.', headless:'Define si el navegador de WhatsApp Web se ejecuta sin ventana visible.', wweb_engine:'Motor de WhatsApp Web. Valores habituales: wwebjs o baileys.', habilitar_bot:'Activa o desactiva el procesamiento automático de mensajes entrantes.', habilitar_consulta_mensajes:'Activa la consulta y envío de mensajes pendientes desde la API.', habilitar_mensajes_info:'Activa el procesamiento del origen local es_mensajes.', habilitar_odbc_manager:'Habilita la conexión ODBC con la base de Manager.',
+          api:'URL del API principal que procesa mensajes entrantes.', api2:'URL del API que consulta mensajes salientes pendientes.', api3:'URL del API que actualiza el estado de los destinatarios.', actualiza:'URL alternativa o histórica usada para actualizar estados.', key:'Clave utilizada para autenticar las APIs de mensajes.', api_mensajes_alta:'URL que registra nuevos mensajes en Api_Mensajes/Alta.', api_mensajes_alta_key:'Clave de autenticación específica del API de Alta.', api_mensajes_alta_nro_tel_from:'Número emisor utilizado al registrar mensajes mediante Alta.', compra_mensajes_usar_api_alta:'Si es true, las notificaciones de compra se registran en el API de Alta.', entrega_mensajes_usar_api_alta:'Si es true, las notificaciones de entrega se registran en el API de Alta.',
+          api_mensajes_confirmacion_habilitada:'Activa la solicitud de permiso antes de enviar mensajes automáticos.', api_mensajes_confirmacion_prioridades:'Lista de prioridades que requieren confirmación. Ejemplo: [3]. Si no existe, se confirman todas.', api_mensajes_confirmacion_mensaje:'Texto principal utilizado para solicitar autorización al cliente.', api_mensajes_confirmacion_mensajes:'Lista de variantes del mensaje de autorización; el cliente elige una para evitar repeticiones.', api_mensajes_confirmacion_respuestas_ok:'Respuestas que se consideran autorización, por ejemplo OK, SI o SÍ.', api_mensajes_confirmacion_reenviar_ms:'Tiempo en milisegundos antes de permitir otra solicitud de autorización.', api_mensajes_confirmacion_validez_ms:'Duración en milisegundos de una autorización concedida.', api_mensajes_respuestas_baja:'Palabras que solicitan exclusión permanente; se evalúan según las reglas de BAJA.',
+          api_mensajes_limite_diario:'Máximo diario de mensajes automáticos. 0 significa sin límite.', api_mensajes_limite_no_contactos:'Máximo diario de solicitudes a números sin contacto ni historial.', api_mensajes_requerir_contacto_o_historial:'Exige contacto agendado o conversación previa cuando no se usa confirmación.', api_mensajes_historial_whatsapp_limite:'Cantidad máxima de mensajes del chat que se revisan para buscar historial u OK.', api_mensajes_circuit_min_muestra:'Cantidad mínima de solicitudes evaluadas antes de activar el circuit breaker.', api_mensajes_circuit_sin_respuesta_ratio:'Proporción de solicitudes sin respuesta que detiene el lote. Rango: 0 a 1.', api_mensajes_circuit_antiguedad_ms:'Antigüedad mínima, en milisegundos, para considerar una solicitud sin respuesta.', api_mensajes_circuit_fallos_consecutivos:'Cantidad de fallos consecutivos que detiene temporalmente el lote.',
+          api_mensajes_window_minutes:'Duración en minutos de la ventana usada para métricas o facturación.', api_mensajes_window_value:'Valor monetario asignado a cada ventana de mensajes.', api_mensajes_window_currency:'Moneda usada para valorar las ventanas, por ejemplo ARS o USD.', consulta_mensajes_respetar_horarios:'Si es true, la consulta de mensajes respeta los horarios configurados.', seg_desde:'Extremo del rango de espera entre envíos al mismo número, en milisegundos.', seg_hasta:'Otro extremo del rango de espera entre envíos al mismo número, en milisegundos.', seg_desde2:'Extremo del rango de espera entre clientes diferentes, en milisegundos.', seg_hasta2:'Otro extremo del rango de espera entre clientes diferentes, en milisegundos.', seg_msg:'Espera general o última espera calculada entre mensajes, en milisegundos.', seg_tele:'Pausa base del ciclo de telemarketing o consultas, en milisegundos.',
+          heartbeat_ms:'Frecuencia en milisegundos con que el cliente informa que sigue activo.', lease_ms:'Duración del permiso de ejecución exclusivo antes de considerarlo vencido.', panel_restart_mode:'Modo utilizado por el panel para reiniciar el agente.', control_api_enabled:'Habilita la API remota de control del cliente.', control_api_url:'Dirección de la API remota de control.', control_api_token:'Token secreto de acceso a la API de control.', wweb_message_log_retention_days:'Días que se conserva el historial técnico de WhatsApp Web. 0 significa no eliminar.',
+          OPENAI_MAX_TOKENS:'Máximo de tokens que puede generar el modelo en una respuesta.', OPENAI_TEMPERATURE:'Nivel de variación de las respuestas del modelo.', CHAT_MODEL:'Modelo utilizado para conversaciones de texto.', VISION_MODEL:'Modelo utilizado para analizar imágenes.', OPENAI_TRANSCRIBE_MODEL:'Modelo utilizado para transcribir audios.', help_enabled:'Activa las herramientas internas de ayuda basadas en IA.',
+          telegram_bot_token:'Token secreto del bot de Telegram.', telegram_bot_username:'Nombre público del bot de Telegram.', email_err:'Correo que recibe avisos de error.', cant_lim:'Cantidad límite utilizada por procesos históricos del cliente.', time_cad:'Tiempo de caducidad de esperas conversacionales, en milisegundos.', msg_inicio:'Mensaje mostrado al iniciar una interacción.', msg_fin:'Mensaje utilizado al finalizar una interacción.', msg_can:'Mensaje de cancelación.', msg_cad:'Mensaje enviado cuando una interacción caduca.', msg_lim:'Mensaje mostrado al alcanzar un límite.', tl_activo:'Activa el componente histórico de Telegram.', ws_activo:'Activa el componente histórico de WhatsApp.'
+        };
+
+        function fieldHelpDescription(name){
+          const raw = String(name || '').trim();
+          if (!raw) return 'Ingresá el nombre del campo para consultar su función.';
+          if (fieldHelp[raw]) return fieldHelp[raw];
+          const lower = raw.toLowerCase();
+          const exact = Object.keys(fieldHelp).find(k => k.toLowerCase() === lower);
+          if (exact) return fieldHelp[exact];
+          if (lower.startsWith('token_cost_')) return 'Costo real por cada 1.000 tokens para esta modalidad; se usa en métricas internas.';
+          if (lower.startsWith('token_charge_')) return 'Importe a cobrar por cada 1.000 tokens para esta modalidad.';
+          if (lower.includes('api_key') || lower.endsWith('_key') || lower.endsWith('_token')) return 'Credencial secreta utilizada para autenticar el servicio indicado por el nombre del campo.';
+          if (lower.includes('api_url') || lower.endsWith('_url') || lower === 'api') return 'URL del servicio externo indicado por el nombre del campo.';
+          if (lower.endsWith('_ms')) return 'Tiempo expresado en milisegundos que controla la función indicada por el nombre del campo.';
+          if (lower.startsWith('fleteros_')) return 'Configuración de la integración con el sistema de fleteros.';
+          if (lower.startsWith('tl_')) return 'Configuración histórica del componente Telegram local.';
+          return 'Campo personalizado del dominio. Su valor se entrega al cliente y su función depende del módulo que lo consume.';
+        }
+
+        function openFieldHelp(name){
+          const field = String(name || '').trim();
+          helpField.textContent = field || 'Campo sin nombre';
+          helpText.textContent = fieldHelpDescription(field);
+          helpBackdrop.classList.add('open');
+          helpBackdrop.setAttribute('aria-hidden','false');
+        }
+        function closeFieldHelp(){ helpBackdrop.classList.remove('open'); helpBackdrop.setAttribute('aria-hidden','true'); }
 
         let currentId = null;
         let currentDocMeta = null;
@@ -4113,10 +4172,11 @@ function mountAuthRoutes(app) {
             '<td><input class="inp" data-k value="' + esc(key) + '" placeholder="campo"/></td>' +
             '<td><input class="inp" data-v value="' + esc(value) + '" placeholder="valor"/></td>' +
             (isSuper ? '<td class="tc-rule-cell"><label class="tc-rule-label" title="Permiso restringido"><input type="checkbox" data-superonly aria-label="Permiso restringido"/></label></td>' : '') +
-            '<td><button class="btn2" type="button" data-rm>✕</button></td>';
+            '<td><div class="tc-row-actions"><button class="btn2 tc-help-btn" type="button" data-help aria-label="Ayuda del campo" title="Ayuda">?</button><button class="btn2" type="button" data-rm>✕</button></div></td>';
           
           tr.querySelector('[data-rm]').addEventListener('click', ()=> { if (tr.getAttribute('data-protected') !== '1') tr.remove(); });
           const keyInput = tr.querySelector('[data-k]');
+          tr.querySelector('[data-help]').addEventListener('click', ()=> openFieldHelp(keyInput && keyInput.value));
           const valInput = tr.querySelector('[data-v]');
           const ruleCheck = tr.querySelector('[data-superonly]');
           if (String(key || '').trim().toLowerCase() === 'api_mensajes_limite_diario' && valInput) {
@@ -4570,6 +4630,8 @@ function mountAuthRoutes(app) {
         });
 
         btnCloseModal.addEventListener('click', closeModal);
+        if (btnCloseHelp) btnCloseHelp.addEventListener('click', closeFieldHelp);
+        if (helpBackdrop) helpBackdrop.addEventListener('click', (e)=> { if (e.target === helpBackdrop) closeFieldHelp(); });
         modalBackdrop.addEventListener('click', (e)=>{
           if(e.target === modalBackdrop) closeModal();
         });
