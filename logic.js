@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.028 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.031 | Fecha: 2026-09-04
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
 // Incluye logs completos de OpenAI (payload y response).
@@ -2255,8 +2255,13 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
       ? opts.leadCaptureOverride === true
       : cfg.lead_capture_enabled === true
   );
+  const disabledExternalActionTypes = new Set(
+    (Array.isArray(opts.disabledExternalActionTypes) ? opts.disabledExternalActionTypes : [])
+      .map(value => normalizeConversationalExternalActionType(value))
+  );
   const externalActions = (botMode === "conversacional" && opts.disableExternalActions !== true)
     ? getUsableConversationalExternalActions(cfg)
+        .filter(action => !disabledExternalActionTypes.has(normalizeConversationalExternalActionType(action?.type)))
     : [];
   const externalApiEnabled = externalActions.length > 0;
  const configuredHistoryMode = String(opts.historyModeOverride || cfg.history_mode || "standard").toLowerCase();

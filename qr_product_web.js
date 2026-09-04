@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.030 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.031 | Fecha: 2026-09-04
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -588,6 +588,27 @@ function stripCommercialDeferrals(value) {
     .trim();
 }
 
+function compactMobileReply(value, maxUnits, maxChars) {
+  const units = String(value || '')
+    .split(/\r?\n|(?<=[.!?])\s+/)
+    .map(item => item.trim())
+    .filter(Boolean);
+  const selected = [];
+  for (const unit of units) {
+    if (selected.length >= maxUnits) break;
+    const candidate = [...selected, unit].join('\n');
+    if (candidate.length > maxChars) {
+      if (!selected.length) {
+        const clipped = unit.slice(0, maxChars - 1).replace(/\s+\S*$/, '').trim();
+        if (clipped) selected.push(`${clipped}…`);
+      }
+      break;
+    }
+    selected.push(unit);
+  }
+  return selected.join('\n').trim();
+}
+
 function requestsCatalogData(value) {
   return /(?:\bsimilar(?:es)?\b|\balternativ(?:a|as)\b|\botr(?:o|os|a|as)\b|\bopci(?:[oó]n|ones)\b|\bcat[aá]logo\b|qu[eé]\s+(?:m[aá]s|otros?)\s+(?:tienen|hay)|m[aá]s\s+potencia)/i.test(String(value || ''));
 }
@@ -637,7 +658,7 @@ function commercialProductsFromExternalResult(result, cfg) {
   if (!result?.ok || !result?.body) return [];
   let payload;
   try { payload = typeof result.body === 'string' ? JSON.parse(result.body) : result.body; } catch { return []; }
-  return externalProductRows(payload).slice(0, 100).map(raw => {
+  return externalProductRows(payload).slice(0, 1000).map(raw => {
     const code = firstDefined(raw, [cfg.fieldCode, 'Codigo', 'codigo', 'code', 'sku', 'SKU']);
     const description = firstDefined(raw, [cfg.fieldDescription, 'Descripcion', 'descripcion', 'description', 'nombre', 'name']);
     if (!code || !description) return null;
@@ -670,7 +691,7 @@ function mergeConfirmedCommercialProducts(existing, incoming) {
     const code = String(product?.code || '').trim().toUpperCase();
     if (code) byCode.set(code, product);
   }
-  return [...byCode.values()].slice(-100);
+  return [...byCode.values()].slice(-500);
 }
 
 function catalogProductsMentionedInReply(reply, products, currentCode) {
@@ -1307,7 +1328,7 @@ function mountQrProductWeb(app) {
             '',
             '[SOLICITUD DEL VISITANTE]',
             'El visitante tocó "Mostrar más info".',
-            'Respondé rápido y de forma breve únicamente con la información confirmada del producto. No busques en Internet en este primer turno ni inventes datos externos.',
+            'Mostrá únicamente 3 características concretas del producto, en 3 viñetas cortas y sin introducción. No agregues recomendaciones de uso, seguridad, despedidas ni frases como "si querés". No busques en Internet ni inventes datos externos.',
             '',
             'Redactá directamente la respuesta final. No pidas una acción web en este turno.'          ].join('\n')
         : [
@@ -1362,6 +1383,7 @@ function mountQrProductWeb(app) {
         leadCaptureOverride: true,
         disableExternalActions: initial === true,
         additionalExternalActions: extraActions,
+        disabledExternalActionTypes: catalogRequest ? ['web'] : [],
         externalApiContext: {
           telefono_cliente: waId,
           telefono_qr: product.code,
@@ -1393,6 +1415,11 @@ function mountQrProductWeb(app) {
       }
       let narrativeReply = stripModelCommercialClaims(parsedReply.response);
       if (commercialResolution.product) narrativeReply = stripCommercialDeferrals(narrativeReply);
+      narrativeReply = compactMobileReply(
+        narrativeReply,
+        initial ? 3 : (catalogRequest ? 4 : 6),
+        initial ? 360 : (catalogRequest ? 520 : 900)
+      );
       const mentionedCatalogProducts = catalogProductsMentionedInReply(
         parsedReply.response,
         observedCommercialProducts,
