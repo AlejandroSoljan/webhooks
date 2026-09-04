@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.027 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.028 | Fecha: 2026-09-04
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -578,6 +578,16 @@ function stripModelCommercialClaims(value) {
     .trim();
 }
 
+function stripCommercialDeferrals(value) {
+  const deferral = /(?:prefiero\s+no\s+pasarte|no\s+puedo\s+confirmar|asesor[^.!?\n]*verifi|necesito[^.!?\n]*sku|indicame[^.!?\n]*sku)/i;
+  return String(value || '')
+    .split(/\r?\n/)
+    .map(line => line.split(/(?<=[.!?])\s+/).filter(sentence => !deferral.test(sentence)).join(' ').trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
 function requestsCommercialData(value) {
   return /(?:\bprecio(?:s)?\b|\bcu[aá]nto\s+(?:sale|cuesta|vale)\b|\bcosto\b|\bvalor\b|\bstock\b|disponib|\bhay\s+(?:unidades|existencia)\b|transferencia|dep[oó]sito|cuotas?|oferta|promoci[oó]n)/i.test(String(value || ''));
 }
@@ -606,19 +616,79 @@ function alternativeProductCodes(messages, currentCode) {
   return codes.slice(0, 5);
 }
 
-async function resolveRequestedCommercialProduct(db, cfg, tenant, conversationId, message, currentProduct) {
+function externalProductRows(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== 'object') return [];
+  for (const key of ['data', 'items', 'results', 'articulos', 'productos']) {
+    if (Array.isArray(payload[key])) return payload[key];
+    if (payload[key] && typeof payload[key] === 'object') {
+      const nested = externalProductRows(payload[key]);
+      if (nested.length) return nested;
+    }
+  }
+  return [payload];
+}
+
+function commercialProductsFromExternalResult(result, cfg) {
+  if (!result?.ok || !result?.body) return [];
+  let payload;
+  try { payload = typeof result.body === 'string' ? JSON.parse(result.body) : result.body; } catch { return []; }
+  return externalProductRows(payload).slice(0, 100).map(raw => {
+    const code = firstDefined(raw, [cfg.fieldCode, 'Codigo', 'codigo', 'code', 'sku', 'SKU']);
+    const description = firstDefined(raw, [cfg.fieldDescription, 'Descripcion', 'descripcion', 'description', 'nombre', 'name']);
+    if (!code || !description) return null;
+    const primaryPrice = parseNumber(firstDefined(raw, [cfg.fieldPrice, 'Precio', 'precio', 'Precio_Lp1', 'price']));
+    const prices = [{
+      field: cfg.fieldPrice,
+      label: cfg.priceLabel || 'Precio',
+      note: cfg.priceNote || '',
+      value: primaryPrice,
+      primary: true,
+    }];
+    for (const item of cfg.additionalPrices || []) {
+      const value = parseNumber(firstDefined(raw, [item.field]));
+      if (value == null) continue;
+      prices.push({ field: item.field, label: item.label || '', note: item.note || '', value, primary: false });
+    }
+    return {
+      code: clean(code, 180),
+      description: clean(description, 600),
+      price: primaryPrice,
+      prices,
+      available: parseStock(firstDefined(raw, [cfg.fieldStock, 'Stock', 'stock', 'disponible', 'availability'])),
+    };
+  }).filter(product => product?.code);
+}
+
+function mergeConfirmedCommercialProducts(existing, incoming) {
+  const byCode = new Map();
+  for (const product of [...(Array.isArray(existing) ? existing : []), ...(Array.isArray(incoming) ? incoming : [])]) {
+    const code = String(product?.code || '').trim().toUpperCase();
+    if (code) byCode.set(code, product);
+  }
+  return [...byCode.values()].slice(-100);
+}
+
+async function resolveRequestedCommercialProduct(db, cfg, tenant, conversation, message, currentProduct) {
   if (!requestsCommercialData(message)) return { requested: false, product: null, unresolved: false };
   if (refersToCurrentQrProduct(message, currentProduct)) {
     return { requested: true, product: currentProduct, unresolved: false };
   }
 
   const recentAssistantMessages = await db.collection('messages')
-    .find({ tenantId: tenant, conversationId, role: 'assistant' })
+    .find({ tenantId: tenant, conversationId: conversation._id, role: 'assistant' })
     .sort({ ts: -1, createdAt: -1 })
     .limit(8)
     .project({ content: 1 })
     .toArray();
   const candidates = alternativeProductCodes(recentAssistantMessages, currentProduct?.code);
+  const confirmedProducts = Array.isArray(conversation?.qrConfirmedCommercialProducts)
+    ? conversation.qrConfirmedCommercialProducts
+    : [];
+  for (const candidate of candidates) {
+    const confirmed = confirmedProducts.find(item => String(item?.code || '').toUpperCase() === candidate.toUpperCase());
+    if (confirmed) return { requested: true, product: confirmed, unresolved: false };
+  }
   const alternativeDiscussed = recentAssistantMessages.some(item =>
     /(?:alternativ|similar|otra\s+opci[oó]n|otro\s+producto|recomendar[ií]a|m[aá]s\s+potencia)/i.test(String(item?.content || ''))
   );
@@ -632,6 +702,9 @@ async function resolveRequestedCommercialProduct(db, cfg, tenant, conversationId
     }
   }
 
+  if (alternativeDiscussed && confirmedProducts.length === 1) {
+    return { requested: true, product: confirmedProducts[0], unresolved: false };
+  }
   if (candidates.length || alternativeDiscussed) return { requested: true, product: null, unresolved: true };
   return { requested: true, product: currentProduct, unresolved: false };
 }
@@ -1172,9 +1245,9 @@ function mountQrProductWeb(app) {
       const conv = await ensureQrConversation(db, tenant, sessionId, product, req);
       const convId = conv._id;
       const waId = conv.waId || `QRWEB:${sessionId}`;
-      const commercialResolution = priorDifferentProduct
+      let commercialResolution = priorDifferentProduct
         ? { requested: true, product, unresolved: false }
-        : await resolveRequestedCommercialProduct(db, cfg, tenant, convId, message, product);
+        : await resolveRequestedCommercialProduct(db, cfg, tenant, conv, message, product);
       const from = qrSessionFrom(sessionId, product.code);
       syncSessionConversation(tenant, from, String(convId));
       clearEndedFlag(tenant, from);
@@ -1236,6 +1309,7 @@ function mountQrProductWeb(app) {
       }
 
 
+      const observedCommercialProducts = [];
       const raw = await getGPTReply(tenant, from, hiddenInstruction, {
         tenantId: tenant,
         openaiApiKey: apiKey,
@@ -1255,9 +1329,32 @@ function mountQrProductWeb(app) {
           telefono_qr: product.code,
           consulta: message || product.description,
         },
+        onExternalActionResult: async ({ actionName, result }) => {
+          if (actionName !== 'consulta_articulos') return;
+          observedCommercialProducts.push(...commercialProductsFromExternalResult(result, cfg));
+        },
       });
       const parsedReply = parseQrStructuredReply(raw);
-      const narrativeReply = stripModelCommercialClaims(parsedReply.response);
+      if (observedCommercialProducts.length) {
+        const mergedProducts = mergeConfirmedCommercialProducts(
+          conv.qrConfirmedCommercialProducts,
+          observedCommercialProducts
+        );
+        conv.qrConfirmedCommercialProducts = mergedProducts;
+        await db.collection('conversations').updateOne(
+          { _id: convId },
+          { $set: { qrConfirmedCommercialProducts: mergedProducts, updatedAt: new Date() } }
+        );
+        if (commercialResolution.requested && !commercialResolution.product) {
+          const replyCandidates = alternativeProductCodes([{ content: parsedReply.response }], product.code);
+          const selected = replyCandidates
+            .map(candidate => mergedProducts.find(item => String(item?.code || '').toUpperCase() === candidate.toUpperCase()))
+            .find(Boolean);
+          if (selected) commercialResolution = { requested: true, product: selected, unresolved: false };
+        }
+      }
+      let narrativeReply = stripModelCommercialClaims(parsedReply.response);
+      if (commercialResolution.product) narrativeReply = stripCommercialDeferrals(narrativeReply);
       const commercialBlock = commercialResolution.product
         ? authoritativeCommercialBlock(commercialResolution.product, cfg)
         : '';

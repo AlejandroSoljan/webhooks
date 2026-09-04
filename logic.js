@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.022 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.028 | Fecha: 2026-09-04
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
 // Incluye logs completos de OpenAI (payload y response).
@@ -2537,6 +2537,14 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
             } catch (e) {
               console.warn("[tokens] web_search usage error:", e?.message || e);
             }
+          }
+        }
+
+        if (typeof opts.onExternalActionResult === 'function') {
+          try {
+            await opts.onExternalActionResult({ action, actionName, result: externalResult });
+          } catch (e) {
+            console.warn('[external-api] result observer error:', e?.message || e);
           }
         }
 
