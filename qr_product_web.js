@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.033 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.034 | Fecha: 2026-09-04
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -588,6 +588,13 @@ function stripCommercialDeferrals(value) {
     .trim();
 }
 
+function stripUnexpectedScripts(value) {
+  return String(value || '')
+    .replace(/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF]+/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
 function compactMobileReply(value, maxUnits, maxChars) {
   const units = String(value || '')
     .split(/\r?\n|(?<=[.!?])\s+/)
@@ -610,7 +617,7 @@ function compactMobileReply(value, maxUnits, maxChars) {
 }
 
 function requestsCatalogData(value) {
-  return /(?:\bsimilar(?:es)?\b|\balternativ(?:a|as)\b|\botr(?:o|os|a|as)\b|\bopci(?:[oó]n|ones)\b|\bcat[aá]logo\b|qu[eé]\s+(?:m[aá]s|otros?)\s+(?:tienen|hay)|m[aá]s\s+potencia)/i.test(String(value || ''));
+  return /(?:\bsimilar(?:es)?\b|\balternativ(?:a|as)\b|\botr(?:o|os|a|as)\b|\bopci(?:[oó]n|ones)\b|\bcat[aá]logo\b|qu[eé]\s+(?:m[aá]s|otros?)\s+(?:tienen|hay)|m[aá]s\s+potencia|m[aá]s\s+(?:econ[oó]mic|barat)|menor\s+precio)/i.test(String(value || ''));
 }
 
 function requestsLeadCapture(value) {
@@ -736,7 +743,7 @@ function selectConfirmedCatalogProducts(reply, products, currentProduct, message
   const sameSubcategory = currentSubcategory
     ? candidates.filter(item => String(item?.subcategory || '').trim().toUpperCase() === currentSubcategory)
     : [];
-  if (currentSubcategory) candidates = sameSubcategory;
+  if (!mentioned.length && currentSubcategory) candidates = sameSubcategory;
   if (/(?:m[aá]s\s+(?:econ[oó]mic|barat)|menor\s+precio)/i.test(String(message || ''))) {
     candidates = candidates.filter(item => Number(item.price) < Number(currentProduct?.price || 0));
     candidates.sort((a, b) => Number(b.price) - Number(a.price));
@@ -1379,7 +1386,7 @@ function mountQrProductWeb(app) {
             '',
             '[SOLICITUD DEL VISITANTE]',
             'El visitante tocó "Mostrar más info".',
-            'No repitas la descripción ni sus cifras textualmente. Transformá los datos disponibles en 3 aportes útiles y breves: beneficio práctico, tipo de uso recomendado y un aspecto operativo relevante. Usá 3 viñetas cortas, sin introducción, despedida ni frases como "si querés". No busques en Internet; hacé sólo inferencias prudentes y no inventes especificaciones.',
+            'Mostrá 4 viñetas breves: 2 datos técnicos concretos de la ficha y 2 aportes útiles que expliquen su beneficio práctico, uso recomendado o aspecto operativo. Podés repetir sólo las cifras técnicas esenciales; no copies la descripción completa. Escribí únicamente en español, sin introducción, despedida ni frases como "si querés". No busques en Internet; hacé sólo inferencias prudentes y no inventes especificaciones.',
             '',
             'Redactá directamente la respuesta final. No pidas una acción web en este turno.'          ].join('\n')
         : [
@@ -1464,13 +1471,13 @@ function mountQrProductWeb(app) {
           if (selected) commercialResolution = { requested: true, product: selected, unresolved: false };
         }
       }
-      let narrativeReply = stripModelCommercialClaims(parsedReply.response);
+      let narrativeReply = stripUnexpectedScripts(stripModelCommercialClaims(parsedReply.response));
       if (commercialResolution.product) narrativeReply = stripCommercialDeferrals(narrativeReply);
       if (!requestsLeadCapture(message)) narrativeReply = stripPrematureContactRequest(narrativeReply);
       narrativeReply = compactMobileReply(
         narrativeReply,
-        initial ? 3 : (catalogRequest ? 4 : 6),
-        initial ? 360 : (catalogRequest ? 520 : 900)
+        initial ? 4 : (catalogRequest ? 4 : 6),
+        initial ? 520 : (catalogRequest ? 520 : 900)
       );
       const mentionedCatalogProducts = catalogProductsMentionedInReply(
         parsedReply.response,
