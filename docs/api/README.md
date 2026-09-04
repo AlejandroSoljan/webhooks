@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.011 | Fecha: 2026-09-01 -->
+<!-- Asisto | Version: 5.00.021 | Fecha: 2026-09-04 -->
 # Manuales de API de Asisto
 
 Esta carpeta centraliza la documentación de integración de las APIs de Asisto.
@@ -7,6 +7,7 @@ Esta carpeta centraliza la documentación de integración de las APIs de Asisto.
 
 - [API de Ayuda — manual completo](MANUAL_API_AYUDA.md): modos inteligente y contextual.
 - [API de Ayuda — sin consulta inteligente](MANUAL_API_AYUDA_SIN_CONSULTA.md): selección contextual de videos mediante ventana y versión.
+- [API pública QR](MANUAL_API_QR.md): ficha de producto, chat y parámetros de rendimiento.
 
 ### Versiones PDF
 
