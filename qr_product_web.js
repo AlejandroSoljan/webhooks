@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.031 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.032 | Fecha: 2026-09-04
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -613,6 +613,20 @@ function requestsCatalogData(value) {
   return /(?:\bsimilar(?:es)?\b|\balternativ(?:a|as)\b|\botr(?:o|os|a|as)\b|\bopci(?:[oó]n|ones)\b|\bcat[aá]logo\b|qu[eé]\s+(?:m[aá]s|otros?)\s+(?:tienen|hay)|m[aá]s\s+potencia)/i.test(String(value || ''));
 }
 
+function requestsLeadCapture(value) {
+  return /(?:quiero\s+(?:comprar|reservar|encargar)|\bcompr(?:ar|o|amos)\b|\breserv(?:ar|a|o)\b|\bcotiz|\bpresupuesto\b|\bcontact(?:ar|o)\b|\bhablar\s+con\s+(?:un\s+)?asesor\b|\bque\s+me\s+llamen\b)/i.test(String(value || ''));
+}
+
+function stripPrematureContactRequest(value) {
+  const contactRequest = /(?:pasame|decime|dejame|necesito)[^.!?\n]*(?:nombre|tel[eé]fono|whatsapp|contacto)|(?:asesor|vendedor)[^.!?\n]*(?:contacte|llame|contin[uú]e)/i;
+  return String(value || '')
+    .split(/\r?\n/)
+    .map(line => line.split(/(?<=[.!?])\s+/).filter(sentence => !contactRequest.test(sentence)).join(' ').trim())
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
 function requestsCommercialData(value) {
   return /(?:\bprecio(?:s)?\b|\bcu[aá]nto\s+(?:sale|cuesta|vale)\b|\bcosto\b|\bvalor\b|\bstock\b|disponib|\bhay\s+(?:unidades|existencia)\b|transferencia|dep[oó]sito|cuotas?|oferta|promoci[oó]n)/i.test(String(value || ''));
 }
@@ -700,7 +714,10 @@ function catalogProductsMentionedInReply(reply, products, currentCode) {
   const seen = new Set();
   return (Array.isArray(products) ? products : []).filter(product => {
     const code = String(product?.code || '').trim().toUpperCase();
-    if (!code || code === current || seen.has(code) || !text.includes(code)) return false;
+    if (!code || code === current || seen.has(code)) return false;
+    const escapedCode = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const exactCode = new RegExp(`(^|[^A-Z0-9])${escapedCode}(?=$|[^A-Z0-9])`, 'i');
+    if (!exactCode.test(text)) return false;
     seen.add(code);
     return true;
   });
@@ -1328,7 +1345,7 @@ function mountQrProductWeb(app) {
             '',
             '[SOLICITUD DEL VISITANTE]',
             'El visitante tocó "Mostrar más info".',
-            'Mostrá únicamente 3 características concretas del producto, en 3 viñetas cortas y sin introducción. No agregues recomendaciones de uso, seguridad, despedidas ni frases como "si querés". No busques en Internet ni inventes datos externos.',
+            'No repitas la descripción ni sus cifras textualmente. Transformá los datos disponibles en 3 aportes útiles y breves: beneficio práctico, tipo de uso recomendado y un aspecto operativo relevante. Usá 3 viñetas cortas, sin introducción, despedida ni frases como "si querés". No busques en Internet; hacé sólo inferencias prudentes y no inventes especificaciones.',
             '',
             'Redactá directamente la respuesta final. No pidas una acción web en este turno.'          ].join('\n')
         : [
@@ -1380,7 +1397,7 @@ function mountQrProductWeb(app) {
         botModeOverride: 'conversacional',
         historyModeOverride: 'compact',
         behaviorTextOverride: behaviorOverride,
-        leadCaptureOverride: true,
+        leadCaptureOverride: requestsLeadCapture(message),
         disableExternalActions: initial === true,
         additionalExternalActions: extraActions,
         disabledExternalActionTypes: catalogRequest ? ['web'] : [],
@@ -1415,6 +1432,7 @@ function mountQrProductWeb(app) {
       }
       let narrativeReply = stripModelCommercialClaims(parsedReply.response);
       if (commercialResolution.product) narrativeReply = stripCommercialDeferrals(narrativeReply);
+      if (!requestsLeadCapture(message)) narrativeReply = stripPrematureContactRequest(narrativeReply);
       narrativeReply = compactMobileReply(
         narrativeReply,
         initial ? 3 : (catalogRequest ? 4 : 6),
