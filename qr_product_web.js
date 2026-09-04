@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.032 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.033 | Fecha: 2026-09-04
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -695,6 +695,8 @@ function commercialProductsFromExternalResult(result, cfg) {
       price: primaryPrice,
       prices,
       available: parseStock(firstDefined(raw, [cfg.fieldStock, 'Stock', 'stock', 'disponible', 'availability'])),
+      category: clean(firstDefined(raw, [cfg.fieldCategory, 'Desc_Rubro', 'rubro', 'category']), 180),
+      subcategory: clean(firstDefined(raw, [cfg.fieldSubcategory, 'Desc_Subrubro', 'subrubro', 'subcategory']), 180),
     };
   }).filter(product => product?.code);
 }
@@ -721,6 +723,38 @@ function catalogProductsMentionedInReply(reply, products, currentCode) {
     seen.add(code);
     return true;
   });
+}
+
+function selectConfirmedCatalogProducts(reply, products, currentProduct, message) {
+  const currentCode = String(currentProduct?.code || '').trim().toUpperCase();
+  const unique = mergeConfirmedCommercialProducts([], products)
+    .filter(item => String(item?.code || '').trim().toUpperCase() !== currentCode)
+    .filter(item => Number(item?.price) > 0);
+  const mentioned = catalogProductsMentionedInReply(reply, unique, currentProduct?.code);
+  let candidates = mentioned.length ? mentioned : unique;
+  const currentSubcategory = String(currentProduct?.subcategory || '').trim().toUpperCase();
+  const sameSubcategory = currentSubcategory
+    ? candidates.filter(item => String(item?.subcategory || '').trim().toUpperCase() === currentSubcategory)
+    : [];
+  if (currentSubcategory) candidates = sameSubcategory;
+  if (/(?:m[aá]s\s+(?:econ[oó]mic|barat)|menor\s+precio)/i.test(String(message || ''))) {
+    candidates = candidates.filter(item => Number(item.price) < Number(currentProduct?.price || 0));
+    candidates.sort((a, b) => Number(b.price) - Number(a.price));
+  } else {
+    candidates.sort((a, b) => Math.abs(Number(a.price) - Number(currentProduct?.price || 0)) - Math.abs(Number(b.price) - Number(currentProduct?.price || 0)));
+  }
+  return candidates.slice(0, 4);
+}
+
+function deterministicCatalogNarrative(products, message) {
+  if (!products.length) {
+    return /(?:m[aá]s\s+(?:econ[oó]mic|barat)|menor\s+precio)/i.test(String(message || ''))
+      ? 'No encontré una alternativa más económica confirmada en el catálogo actual.'
+      : 'No encontré otra alternativa comparable confirmada en el catálogo actual.';
+  }
+  return products.map(product =>
+    `• ${clean(product.description, 105)} (SKU: ${clean(product.code, 80)})`
+  ).join('\n');
 }
 
 function authoritativeCatalogPricesBlock(products, cfg) {
@@ -830,7 +864,7 @@ function qrCatalogAlternativeHint(product) {
     '[REGLA DE BÚSQUEDA DE ALTERNATIVAS EN EL CATÁLOGO]',
     'Si el visitante pide "otro", "similar", "alternativa", "qué otros tienen" o un producto relacionado que el negocio podría vender, usá consulta_articulos.',
     'No busques únicamente con la descripción completa del producto QR ni con especificaciones demasiado restrictivas.',
-    'Empezá por términos comerciales representativos y, si no devuelve resultados, ampliá progresivamente la búsqueda dentro del mismo turno.',
+    'Empezá con el patrón amplio sugerido para el tipo o subrubro; después refiná sólo si hace falta. No reutilices alternativas mencionadas en turnos anteriores si no aparecen en el resultado actual.',
     'Podés hacer hasta tres búsquedas distintas antes de concluir que no hay alternativas.',
     'La última búsqueda debe ser amplia por tipo/subrubro del producto.',
     subcategory ? `Subrubro del producto actual: ${subcategory}.` : '',
@@ -1443,7 +1477,11 @@ function mountQrProductWeb(app) {
         observedCommercialProducts,
         product.code
       );
-      const catalogPricesBlock = authoritativeCatalogPricesBlock(mentionedCatalogProducts, cfg);
+      const confirmedCatalogProducts = catalogRequest
+        ? selectConfirmedCatalogProducts(parsedReply.response, observedCommercialProducts, product, message)
+        : mentionedCatalogProducts;
+      if (catalogRequest) narrativeReply = deterministicCatalogNarrative(confirmedCatalogProducts, message);
+      const catalogPricesBlock = authoritativeCatalogPricesBlock(confirmedCatalogProducts, cfg);
       const commercialBlock = commercialResolution.product
         ? authoritativeCommercialBlock(commercialResolution.product, cfg)
         : '';
