@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.019 | Fecha: 2026-09-03
+// Asisto | Version: 5.00.020 | Fecha: 2026-09-03
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.019 | Fecha: 2026-09-03
+// Asisto | Version: 5.00.020 | Fecha: 2026-09-03
 // help_tool.js
 // Herramienta de Ayuda contextual de Asisto.
 // - Fuente: Google Sheets (privado con Service Account o CSV público/directo).
@@ -82,6 +82,9 @@ Objetivo:
 - Si \"ventana\" está vacía, resolvé la consulta de forma general con los candidatos disponibles.
 - Podés combinar información de varios videos si ayuda a responder mejor.
 - Elegí solamente videos realmente útiles para la consulta.
+- Usá la transcripción como fuente principal para dar instrucciones concretas y suficientemente detalladas; no respondas con un resumen genérico si allí figuran pasos, opciones o diferencias relevantes.
+- Si una consulta general abarca variantes de la misma operación (por ejemplo, factura de venta de contado y en cuenta corriente), explicá las variantes y seleccioná todos los videos pertinentes. Omití una variante solamente cuando el usuario haya especificado claramente cuál necesita.
+- Cuando existan pasos respaldados por la información disponible, presentalos en el orden operativo y mencioná las diferencias importantes entre alternativas.
 - No inventes pasos, botones, menús, funciones ni datos que no estén respaldados por título, tags, descripción, transcripción o ventana/categoría.
 - Si la información disponible no alcanza para responder con seguridad, indicá eso claramente y usá \"encontrado\": false.
 
@@ -1127,6 +1130,23 @@ function intelligentQueryRowScore(query, row) {
   return score;
 }
 
+function queryCoverageVideoIds(query, rows = [], maxVideos = 12) {
+  const scored = (rows || [])
+    .map(row => ({ row, score: intelligentQueryRowScore(query, row) }))
+    .filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+  if (!scored.length) return [];
+
+  // Conserva variantes con una relevancia cercana a la mejor coincidencia. Así
+  // una consulta general no pierde un segundo flujo igualmente pertinente.
+  const threshold = Math.max(10, scored[0].score * 0.72);
+  return scored
+    .filter(item => item.score >= threshold)
+    .slice(0, Math.max(1, maxVideos))
+    .map(item => String(item.row?.vimeoId || ''))
+    .filter(Boolean);
+}
+
 function dedupeRowsByVimeo(rows = []) {
   const map = new Map();
   for (const row of rows || []) {
@@ -1345,7 +1365,7 @@ async function resolveIntelligentHelpQuery({
     ],
     response_format: { type: 'json_object' },
     reasoning_effort: 'none',
-    max_completion_tokens: 900
+    max_completion_tokens: 1500
   };
 
   let response;
@@ -1355,7 +1375,7 @@ async function resolveIntelligentHelpQuery({
     const message = String(e?.message || e || '');
     if (/max_completion_tokens|unsupported parameter/i.test(message)) {
       delete request.max_completion_tokens;
-      request.max_tokens = 900;
+      request.max_tokens = 1500;
       response = await client.chat.completions.create(request);
     } else {
       throw e;
@@ -1365,7 +1385,7 @@ async function resolveIntelligentHelpQuery({
   const raw = response?.choices?.[0]?.message?.content || '';
   const parsed = extractJsonObject(raw) || {};
   const allowed = new Set(rows.map(r => String(r.vimeoId)));
-  const vimeoIds = [...new Set(
+  const selectedVimeoIds = [...new Set(
     (Array.isArray(parsed.vimeo_ids) ? parsed.vimeo_ids : [])
       .map(v => String(v || '').trim())
       .filter(v => allowed.has(v))
@@ -1377,6 +1397,11 @@ async function resolveIntelligentHelpQuery({
   );
   const found = parsed.encontrado === true ||
     ['1','true','yes','si','sí'].includes(String(parsed.encontrado || '').trim().toLowerCase());
+  const coverageIds = found
+    ? queryCoverageVideoIds(query, rows, Math.min(12, Math.max(1, Number(cfg.max_videos || 12))))
+    : [];
+  const vimeoIds = [...new Set([...selectedVimeoIds, ...coverageIds])]
+    .filter(v => allowed.has(v));
 
   const usage = parseTokenUsagePair(response?.usage || null, 'message');
   const traceId = usageContext?.traceId ||
