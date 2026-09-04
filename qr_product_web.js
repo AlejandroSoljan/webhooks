@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.028 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.029 | Fecha: 2026-09-04
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -667,6 +667,32 @@ function mergeConfirmedCommercialProducts(existing, incoming) {
     if (code) byCode.set(code, product);
   }
   return [...byCode.values()].slice(-100);
+}
+
+function catalogProductsMentionedInReply(reply, products, currentCode) {
+  const text = String(reply || '').toUpperCase();
+  const current = String(currentCode || '').trim().toUpperCase();
+  const seen = new Set();
+  return (Array.isArray(products) ? products : []).filter(product => {
+    const code = String(product?.code || '').trim().toUpperCase();
+    if (!code || code === current || seen.has(code) || !text.includes(code)) return false;
+    seen.add(code);
+    return true;
+  });
+}
+
+function authoritativeCatalogPricesBlock(products, cfg) {
+  const rows = [];
+  for (const product of products || []) {
+    const validPrices = (Array.isArray(product?.prices) ? product.prices : []).filter(item => item?.value != null);
+    if (!validPrices.length) continue;
+    const priceParts = validPrices.map((item, index) => {
+      const label = clean(item.label || (index === 0 ? cfg.priceLabel : '') || item.note || `Precio ${index + 1}`, 80);
+      return `${label}: ${formatQrCommercialMoney(item.value, cfg.currency)}`;
+    });
+    rows.push(`- ${clean(product.description, 120)} (SKU: ${clean(product.code, 80)}): ${priceParts.join(' | ')}`);
+  }
+  return rows.length ? ['Precios informados por el catálogo:', ...rows].join('\n') : '';
 }
 
 async function resolveRequestedCommercialProduct(db, cfg, tenant, conversation, message, currentProduct) {
@@ -1355,13 +1381,19 @@ function mountQrProductWeb(app) {
       }
       let narrativeReply = stripModelCommercialClaims(parsedReply.response);
       if (commercialResolution.product) narrativeReply = stripCommercialDeferrals(narrativeReply);
+      const mentionedCatalogProducts = catalogProductsMentionedInReply(
+        parsedReply.response,
+        observedCommercialProducts,
+        product.code
+      );
+      const catalogPricesBlock = authoritativeCatalogPricesBlock(mentionedCatalogProducts, cfg);
       const commercialBlock = commercialResolution.product
         ? authoritativeCommercialBlock(commercialResolution.product, cfg)
         : '';
       const unresolvedNotice = commercialResolution.unresolved
         ? 'No puedo confirmar el precio ni la disponibilidad del producto alternativo sin identificarlo en la API comercial. Indicame su SKU exacto para consultarlo.'
         : '';
-      const safeParts = [narrativeReply, commercialBlock, unresolvedNotice].filter(Boolean);
+      const safeParts = [narrativeReply, catalogPricesBlock, commercialBlock, unresolvedNotice].filter(Boolean);
       const reply = safeParts.join('\n\n') || 'No pude generar información adicional en este momento.';
       const capturedLead = await upsertQrContactLead(db, {
         tenant,
