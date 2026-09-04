@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.029 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.030 | Fecha: 2026-09-04
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -588,6 +588,10 @@ function stripCommercialDeferrals(value) {
     .trim();
 }
 
+function requestsCatalogData(value) {
+  return /(?:\bsimilar(?:es)?\b|\balternativ(?:a|as)\b|\botr(?:o|os|a|as)\b|\bopci(?:[oó]n|ones)\b|\bcat[aá]logo\b|qu[eé]\s+(?:m[aá]s|otros?)\s+(?:tienen|hay)|m[aá]s\s+potencia)/i.test(String(value || ''));
+}
+
 function requestsCommercialData(value) {
   return /(?:\bprecio(?:s)?\b|\bcu[aá]nto\s+(?:sale|cuesta|vale)\b|\bcosto\b|\bvalor\b|\bstock\b|disponib|\bhay\s+(?:unidades|existencia)\b|transferencia|dep[oó]sito|cuotas?|oferta|promoci[oó]n)/i.test(String(value || ''));
 }
@@ -690,7 +694,7 @@ function authoritativeCatalogPricesBlock(products, cfg) {
       const label = clean(item.label || (index === 0 ? cfg.priceLabel : '') || item.note || `Precio ${index + 1}`, 80);
       return `${label}: ${formatQrCommercialMoney(item.value, cfg.currency)}`;
     });
-    rows.push(`- ${clean(product.description, 120)} (SKU: ${clean(product.code, 80)}): ${priceParts.join(' | ')}`);
+    rows.push(`- SKU ${clean(product.code, 80)}: ${priceParts.join(' | ')}`);
   }
   return rows.length ? ['Precios informados por el catálogo:', ...rows].join('\n') : '';
 }
@@ -797,7 +801,9 @@ function qrCatalogAlternativeHint(product) {
     broadExamples.length ? `Patrones amplios sugeridos para intentar si hace falta: ${broadExamples.join(', ')}.` : '',
     'No concluyas que el negocio no tiene alternativas si una búsqueda específica devolvió vacío. Solo podés afirmarlo después de haber probado una búsqueda amplia razonable con consulta_articulos.',
     'Internet no confirma productos del negocio: para nombre, SKU, precio y disponibilidad, la fuente válida sigue siendo consulta_articulos.',
-    'Al presentar cada alternativa encontrada, incluí siempre su SKU exacto devuelto por consulta_articulos para que las preguntas posteriores puedan identificarla sin ambigüedad.'
+    'Al presentar alternativas, mostrales primero únicamente los datos devueltos por consulta_articulos. No solicites búsqueda web ni agregues características externas en este turno.',
+    'Mostrá como máximo 4 opciones, una línea breve por producto, e incluí siempre su SKU exacto. El servidor agregará los precios confirmados.',
+    'Si después el visitante pide características de una opción concreta, recién en ese turno podés solicitar búsqueda web y responder de forma breve.'
   ].filter(Boolean).join('\n');
 }
 
@@ -829,7 +835,8 @@ function qrWebResultContext(result) {
 function defaultQrBehavior() {
   return [
     'Sos un asesor de producto para una ficha pública abierta desde un código QR.',
-    'Respondé en español, de forma clara, breve y útil para pantalla de celular.',
+    'Respondé en español, de forma clara y útil para pantalla de celular.',
+    'Mantené cada respuesta muy breve: máximo 4 oraciones cortas o 4 viñetas; evitá introducciones, repeticiones y cierres innecesarios.',
     'Usá el contexto del producto escaneado como identidad del artículo.',
     'Para especificaciones técnicas, usos, compatibilidades, manuales, recomendaciones y datos del fabricante podés usar búsqueda web cuando esté habilitada.',
     'No inventes especificaciones. Si no hay evidencia suficiente, indicá que no pudiste confirmarlo.',
@@ -1288,6 +1295,7 @@ function mountQrProductWeb(app) {
       }
 
       const ctx = productContext(product, cfg);
+      const catalogRequest = !initial && requestsCatalogData(message);
       const behaviorOverride = cfg.aiUseSameBehavior
         ? undefined
         : (cfg.aiBehavior || defaultQrBehavior());
@@ -1310,14 +1318,17 @@ function mountQrProductWeb(app) {
             '',
             qrCatalogAlternativeHint(product),
             '',
-            cfg.aiWebSearchEnabled
-               ? 'Si la respuesta requiere información técnica o pública que no esté confirmada en el contexto ni en el historial, podés usar buscar_web_qr. No uses Internet para reemplazar precio o disponibilidad del negocio.'
-              : 'Respondé con la información confirmada disponible. No inventes datos externos.',
+            'La respuesta debe ser breve para celular: máximo 4 oraciones cortas o 4 viñetas.',
+            catalogRequest
+              ? 'Este turno es una consulta de catálogo: usá únicamente consulta_articulos, no busques en Internet y mostrá primero hasta 4 resultados comerciales confirmados.'
+              : (cfg.aiWebSearchEnabled
+                  ? 'Si el visitante pide características técnicas concretas que no estén confirmadas en el catálogo ni en el historial, podés usar buscar_web_qr. Respondé con poco texto y no uses Internet para precio o disponibilidad.'
+                  : 'Respondé brevemente con la información confirmada disponible. No inventes datos externos.'),
           ].join('\n');
 
       // La búsqueda web queda disponible sólo para preguntas posteriores que
       // realmente necesiten información técnica externa.
-      const extraActions = (!initial && cfg.aiWebSearchEnabled) ? [{
+      const extraActions = (!initial && !catalogRequest && cfg.aiWebSearchEnabled) ? [{
         id: 'qr_web_search',
         type: 'web',
         enabled: true,
@@ -1330,7 +1341,7 @@ function mountQrProductWeb(app) {
         result_instructions: 'Priorizá fuentes del fabricante, manuales y documentación técnica. Diferenciá claramente los datos obtenidos en Internet de los datos comerciales del negocio. Si la búsqueda falla o vence el tiempo de espera, no lo interpretes como que no existe información del producto: respondé igual con una evaluación general basada únicamente en los datos confirmados del QR y aclarando solo las especificaciones exactas que no pudieron verificarse.',
       }] : [];
 
-      if (!initial && cfg.aiWebSearchEnabled) {
+      if (!initial && !catalogRequest && cfg.aiWebSearchEnabled) {
         console.log(`[qr] web-search action enabled tenant=${tenant} sku=${product.code} timeoutMs=${cfg.aiWebSearchTimeoutMs} context=${cfg.aiWebSearchContextSize}`);
       }
 
@@ -1340,6 +1351,7 @@ function mountQrProductWeb(app) {
         tenantId: tenant,
         openaiApiKey: apiKey,
         chatModel: cfg.aiModel || undefined,
+        chatMaxTokens: 700,
         waId,
         conversationId: String(convId),
         channelType: 'qr_web',
