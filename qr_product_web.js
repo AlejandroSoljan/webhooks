@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.022 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.024 | Fecha: 2026-09-04
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -537,8 +537,6 @@ async function saveQrMessage(db, { tenant, conversationId, waId, role, content, 
 }
 
 function productContext(product, cfg) {
-  const price = product.price == null ? 'No informado' : `${product.price} ${cfg.currency}`;
-  const availability = product.available === true ? 'Disponible' : (product.available === false ? 'Sin disponibilidad' : 'No informada');
   return [
     '[CONTEXTO DEL PRODUCTO ESCANEADO POR QR]',
     `SKU/Código: ${product.code}`,
@@ -546,10 +544,49 @@ function productContext(product, cfg) {
     product.brand ? `Marca: ${product.brand}` : '',
     product.category ? `Rubro: ${product.category}` : '',
     product.subcategory ? `Subrubro: ${product.subcategory}` : '',
-    `Precio mostrado por la API del negocio: ${price}`,
-    `Disponibilidad indicada por la API del negocio: ${availability}`,
-    'El precio y la disponibilidad de este bloque son la fuente comercial válida. La búsqueda web NO debe reemplazarlos ni contradecirlos.',
+    'El servidor agregará precio y disponibilidad después de tu respuesta usando exclusivamente la API del negocio.',
+    'No menciones, copies, calcules ni reformules precio, stock o disponibilidad en tu respuesta.',
   ].filter(Boolean).join('\n');
+}
+
+function formatQrCommercialMoney(value, currency) {
+  if (value == null || !Number.isFinite(Number(value))) return 'Consultar';
+  try {
+    return new Intl.NumberFormat('es-AR', {
+      style: 'currency',
+      currency: currency || 'ARS',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number(value));
+  } catch {
+    return `$ ${Number(value).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+}
+
+function stripModelCommercialClaims(value) {
+  return String(value || '')
+    .split(/\r?\n/)
+    .filter(line => !/(?:\bprecio\b|\bstock\b|disponib|datos comerciales|[$€]\s*\d)/i.test(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function authoritativeCommercialBlock(product, cfg) {
+  const prices = Array.isArray(product.prices) ? product.prices.filter(item => item?.value != null) : [];
+  const lines = ['Datos comerciales del producto:'];
+  if (!prices.length) {
+    lines.push('- Precio: Consultar');
+  } else {
+    prices.forEach((item, index) => {
+      const label = clean(item.label || (index === 0 ? cfg.priceLabel : '') || item.note || `Precio ${index + 1}`, 80);
+      const note = item.note && item.note !== label ? ` (${clean(item.note, 180)})` : '';
+      lines.push(`- ${label}: ${formatQrCommercialMoney(item.value, cfg.currency)}${note}`);
+    });
+  }
+  const availability = product.available === true ? 'Disponible' : (product.available === false ? 'Sin disponibilidad' : 'Consultar');
+  lines.push(`- Disponibilidad: ${availability}`);
+  return lines.join('\n');
 }
 
 function qrDirectWebSearchQuery(product) {
@@ -1144,7 +1181,9 @@ function mountQrProductWeb(app) {
         },
       });
       const parsedReply = parseQrStructuredReply(raw);
-      const reply = parsedReply.response;
+      const narrativeReply = stripModelCommercialClaims(parsedReply.response);
+      const commercialBlock = authoritativeCommercialBlock(product, cfg);
+      const reply = narrativeReply ? `${narrativeReply}\n\n${commercialBlock}` : commercialBlock;
       const capturedLead = await upsertQrContactLead(db, {
         tenant,
         conversationId: convId,
