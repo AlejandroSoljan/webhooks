@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.021 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.022 | Fecha: 2026-09-04
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -258,6 +258,7 @@ async function loadQrConfig(db, tenant) {
     fieldSubcategory: clean(doc.qr_field_subcategory || 'Desc_Subrubro', 120),
     aiEnabled: boolValue(doc.qr_ai_enabled, true),
     aiUseSameBehavior: boolValue(doc.qr_ai_use_same_behavior, true),
+    aiModel: clean(doc.qr_ai_model || doc.chat_model || '', 120),
     aiBehavior: clean(doc.qr_ai_behavior, 30000),
     aiWebSearchEnabled: boolValue(doc.qr_ai_web_search_enabled, true),
     aiWebSearchContextSize: ['low', 'medium', 'high'].includes(webContext) ? webContext : 'low',
@@ -1125,6 +1126,7 @@ function mountQrProductWeb(app) {
       const raw = await getGPTReply(tenant, from, hiddenInstruction, {
         tenantId: tenant,
         openaiApiKey: apiKey,
+        chatModel: cfg.aiModel || undefined,
         waId,
         conversationId: String(convId),
         channelType: 'qr_web',

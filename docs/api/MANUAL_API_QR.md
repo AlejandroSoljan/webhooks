@@ -1,9 +1,9 @@
-<!-- Asisto | Version: 5.00.021 | Fecha: 2026-09-04 -->
+<!-- Asisto | Version: 5.00.022 | Fecha: 2026-09-04 -->
 # Manual de integración - API pública QR de Asisto
 
 ## 1. Objetivo
 
-La API QR presenta la ficha de un producto y permite iniciar una conversación asistida. La versión 5.00.021 prioriza la velocidad de respuesta: el primer turno usa únicamente datos confirmados del producto y no realiza una búsqueda web automática.
+La API QR presenta la ficha de un producto y permite iniciar una conversación asistida. La versión 5.00.022 prioriza la velocidad de respuesta: el primer turno usa únicamente datos confirmados del producto y no realiza una búsqueda web automática.
 
 URL base:
 
@@ -113,7 +113,7 @@ Respuesta:
 
 La búsqueda web permanece habilitada como acción opcional. Sólo se utiliza si la pregunta requiere información técnica o pública no disponible en la ficha ni en el historial.
 
-Parámetros de rendimiento de la versión 5.00.021:
+Parámetros de rendimiento de la versión 5.00.022:
 
 | Parámetro | Valor | Finalidad |
 |---|---:|---|
@@ -124,7 +124,20 @@ Parámetros de rendimiento de la versión 5.00.021:
 | Máximo de salida web | 1200 tokens | Reducir procesamiento innecesario. |
 | Máximo de contenido web | 5000 caracteres | Mantener acotado el contexto enviado a IA. |
 
-## 7. Consultar mensajes
+## 7. Selección del modelo de IA
+
+Desde Comportamiento del Bot se puede elegir un modelo por dominio:
+
+| Modelo | Uso recomendado |
+|---|---|
+| `gpt-5.6-luna` | Respuestas rápidas, alto volumen y menor costo. Opción recomendada para QR. |
+| `gpt-5.6-terra` | Mejor equilibrio entre calidad, razonamiento y costo. |
+| `gpt-5.4-mini` | Alternativa rápida y compatible para tareas bien definidas. |
+| `gpt-5.4` | Mayor calidad cuando la velocidad y el costo no son prioritarios. |
+
+El selector Modelo conversacional se aplica al modo Conversacional del dominio. El selector Modelo del chat QR permite elegir un modelo específico o heredar el modelo conversacional. Luna es la opción recomendada para priorizar velocidad y costo. Si se deja "Usar configuración general actual", el dominio conserva su modelo previo sin cambios.
+
+## 8. Consultar mensajes
 
 ```http
 GET /api/ext/qr/chat/messages?tenant=RDV&codigo=12345&sessionId=sesion_unica_del_navegador
@@ -148,7 +161,7 @@ Respuesta abreviada:
 }
 ```
 
-## 8. Errores habituales
+## 9. Errores habituales
 
 | HTTP | Error | Motivo |
 |---:|---|---|
@@ -160,7 +173,7 @@ Respuesta abreviada:
 | 500 | `qr_ai_failed` | No se pudo generar la respuesta. |
 | 503 | `qr_api_not_configured` | No se configuró la API comercial. |
 
-## 9. Medición de velocidad
+## 10. Medición de velocidad
 
 El servidor registra el tiempo total de cada respuesta IA en los logs de Render:
 
@@ -176,7 +189,7 @@ Para comparar correctamente, probar el mismo producto y distinguir:
 - Pregunta posterior que no necesita Internet.
 - Pregunta técnica que sí activa búsqueda web.
 
-## 10. Recomendaciones de integración
+## 11. Recomendaciones de integración
 
 1. Mantener estable el `sessionId` durante la sesión del navegador.
 2. Mostrar un indicador de escritura mientras `/api/ext/qr/chat` responde.

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.022 | Fecha: 2026-09-04
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
 // Incluye logs completos de OpenAI (payload y response).
@@ -348,6 +348,7 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   const doc = await db.collection("settings").findOne({ _id }) || {};
   const fallbackEnv = process.env.COMPORTAMIENTO || "";
   const text = String(doc.text || fallbackEnv).trim();
+  const chat_model = String(doc.chat_model || doc.chatModel || "").trim();
   const history_mode = (doc.history_mode || process.env.HISTORY_MODE || "standard").trim();
   // Retrocompatibilidad total: si el campo no existe, sigue funcionando como bot de pedidos.
   const bot_mode = normalizeBotMode(doc.bot_mode || doc.botMode || process.env.BOT_MODE || "pedidos");
@@ -409,13 +410,14 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   const qr_field_subcategory = String(doc.qr_field_subcategory || "Desc_Subrubro").trim();
   const qr_ai_enabled = doc.qr_ai_enabled === undefined ? true : (doc.qr_ai_enabled === true || ["1","true","yes","si","sí","on"].includes(String(doc.qr_ai_enabled || "").trim().toLowerCase()));
   const qr_ai_use_same_behavior = doc.qr_ai_use_same_behavior === undefined ? true : (doc.qr_ai_use_same_behavior === true || ["1","true","yes","si","sí","on"].includes(String(doc.qr_ai_use_same_behavior || "").trim().toLowerCase()));
+  const qr_ai_model = String(doc.qr_ai_model || doc.qrAiModel || "").trim();
   const qr_ai_behavior = String(doc.qr_ai_behavior || "").trim();
   const qr_ai_web_search_enabled = doc.qr_ai_web_search_enabled === undefined ? true : (doc.qr_ai_web_search_enabled === true || ["1","true","yes","si","sí","on"].includes(String(doc.qr_ai_web_search_enabled || "").trim().toLowerCase()));
-  const _qrWebCtx = String(doc.qr_ai_web_search_context_size || "medium").trim().toLowerCase();
-  const qr_ai_web_search_context_size = ["low","medium","high"].includes(_qrWebCtx) ? _qrWebCtx : "medium";
+  const _qrWebCtx = String(doc.qr_ai_web_search_context_size || "low").trim().toLowerCase();
+  const qr_ai_web_search_context_size = ["low","medium","high"].includes(_qrWebCtx) ? _qrWebCtx : "low";
   // La búsqueda web vía Responses puede tardar más de 30 s. Se configura aparte
   // del timeout del API comercial del QR para no mezclar ambos recorridos.
-  const qr_ai_web_search_timeout_ms = Math.max(10000, Math.min(120000, Number(doc.qr_ai_web_search_timeout_ms || 90000) || 90000));
+  const qr_ai_web_search_timeout_ms = Math.max(5000, Math.min(120000, Number(doc.qr_ai_web_search_timeout_ms || 20000) || 20000));
 
 
   // Nuevo formato: varias acciones externas por comportamiento. Si todavía no existe
@@ -440,6 +442,7 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
 
   const cfg = {
     text,
+    chat_model,
     history_mode,
     bot_mode,
     lead_capture_enabled,
@@ -485,6 +488,7 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
     qr_field_subcategory,
     qr_ai_enabled,
     qr_ai_use_same_behavior,
+    qr_ai_model,
     qr_ai_behavior,
     qr_ai_web_search_enabled,
     qr_ai_web_search_context_size,
@@ -2388,6 +2392,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
     const tenantAiCfg = await loadTenantAiConfigFromMongo(tenantId);
     const model = String(
       opts.chatModel ||
+      (botMode === "conversacional" ? cfg.chat_model : "") ||
       tenantAiCfg.chatModel ||
       CHAT_MODEL ||
       "gpt-5.4"

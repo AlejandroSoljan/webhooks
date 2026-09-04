@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.021 | Fecha: 2026-09-04 -->
+<!-- Asisto | Version: 5.00.022 | Fecha: 2026-09-04 -->
 # Manuales de API de Asisto
 
 Esta carpeta centraliza la documentación de integración de las APIs de Asisto.
@@ -13,6 +13,7 @@ Esta carpeta centraliza la documentación de integración de las APIs de Asisto.
 
 - [API de Ayuda — manual completo PDF](../../output/pdf/Manual_API_Ayuda_Asisto_v5.00.011.pdf)
 - [API de Ayuda — sin consulta inteligente PDF](../../output/pdf/Manual_API_Ayuda_Sin_Consulta_v5.00.011.pdf)
+- [API pública QR PDF](../../output/pdf/Manual_API_QR_Asisto_v5.00.022.pdf)
 
 Los ejemplos utilizan claves ficticias. Las credenciales reales deben permanecer en variables de entorno y nunca deben guardarse en la documentación o el repositorio.
 

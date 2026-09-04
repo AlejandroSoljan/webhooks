@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.020 | Fecha: 2026-09-03
+// Asisto | Version: 5.00.022 | Fecha: 2026-09-04
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -8762,6 +8762,7 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             if(!r.ok) throw new Error(j.error||('HTTP '+r.status));
             document.getElementById('txt').value=j.text||'';
             document.getElementById('botMode').value = (j.bot_mode || 'pedidos');
+            document.getElementById('chatModel').value = j.chat_model || '';
             document.getElementById('historyMode').value = (j.history_mode || 'standard');
             document.getElementById('leadCaptureEnabled').checked = j.lead_capture_enabled === true;
             document.getElementById('helpEnabled').checked = j.help_enabled !== false;
@@ -8806,6 +8807,7 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             document.getElementById('qrFieldSubcategory').value = j.qr_field_subcategory || 'Desc_Subrubro';
             document.getElementById('qrAiEnabled').checked = j.qr_ai_enabled !== false;
             document.getElementById('qrAiUseSameBehavior').checked = j.qr_ai_use_same_behavior !== false;
+            document.getElementById('qrAiModel').value = j.qr_ai_model || '';
             document.getElementById('qrAiBehavior').value = j.qr_ai_behavior || '';
             document.getElementById('qrAiWebSearch').checked = j.qr_ai_web_search_enabled !== false;
             document.getElementById('qrAiWebContext').value = j.qr_ai_web_search_context_size || 'medium';
@@ -8826,6 +8828,7 @@ app.get("/comportamiento-ui.js", (_req, res) => {
           const v=document.getElementById('txt').value||'';
           const m=document.getElementById('historyMode').value||'standard';
           const b=document.getElementById('botMode').value||'pedidos';
+          const chatModel=document.getElementById('chatModel').value||'';
           const leadCaptureEnabled=document.getElementById('leadCaptureEnabled').checked === true;
           const helpPayload={
             help_enabled:document.getElementById('helpEnabled').checked===true,
@@ -8868,10 +8871,11 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             qr_field_subcategory:document.getElementById('qrFieldSubcategory').value||'Desc_Subrubro',
             qr_ai_enabled:document.getElementById('qrAiEnabled').checked===true,
             qr_ai_use_same_behavior:document.getElementById('qrAiUseSameBehavior').checked===true,
+            qr_ai_model:document.getElementById('qrAiModel').value||'',
             qr_ai_behavior:document.getElementById('qrAiBehavior').value||'',
             qr_ai_web_search_enabled:document.getElementById('qrAiWebSearch').checked===true,
-            qr_ai_web_search_context_size:document.getElementById('qrAiWebContext').value||'medium',
-            qr_ai_web_search_timeout_ms:Number(document.getElementById('qrAiWebTimeout').value||90000)
+            qr_ai_web_search_context_size:document.getElementById('qrAiWebContext').value||'low',
+            qr_ai_web_search_timeout_ms:Number(document.getElementById('qrAiWebTimeout').value||20000)
           };
 
           setBehaviorStatus('Guardando...',false);
@@ -8882,7 +8886,7 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             cache:'no-store',
             headers:{'Content-Type':'application/json'},
             body:JSON.stringify({
-              text:v,tenantId:t,history_mode:m,bot_mode:b,lead_capture_enabled:leadCaptureEnabled,
+              text:v,tenantId:t,history_mode:m,bot_mode:b,chat_model:chatModel,lead_capture_enabled:leadCaptureEnabled,
               external_actions:externalActions,
               ...helpPayload,
               ...qrPayload
@@ -8948,6 +8952,14 @@ app.get("/comportamiento", async (req, res) => {
           </select>
         </label>
         <span class="hint">Conversacional usa solo Comportamiento + historial y no ejecuta reglas de pedidos.</span>
+        <label>Modelo conversacional:&nbsp;
+          <select id="chatModel">
+            <option value="gpt-5.6-luna">GPT-5.6 Luna - rápido y económico (recomendado)</option>
+            <option value="gpt-5.6-terra">GPT-5.6 Terra - equilibrio y mayor calidad</option>
+            <option value="gpt-5.4-mini">GPT-5.4 Mini - rápido y compatible</option>
+            <option value="gpt-5.4">GPT-5.4 - máxima calidad, mayor costo</option>
+          </select>
+        </label>
       </div>
       <div class="row" style="margin-top:8px">
         <label>Modo de historial:&nbsp;
@@ -9019,11 +9031,18 @@ app.get("/comportamiento", async (req, res) => {
         </div>
         <div class="row" id="qrAiToggleRow" style="margin-top:14px"><label><input id="qrAiEnabled" type="checkbox" checked /> Habilitar “Mostrar más info” + chat con IA</label></div>
         <div id="qrAiConfig" class="externalGrid" style="margin-top:10px">
+          <label>Modelo del chat QR<select id="qrAiModel">
+            <option value="">Usar modelo conversacional del dominio</option>
+            <option value="gpt-5.6-luna">GPT-5.6 Luna - rápido y económico</option>
+            <option value="gpt-5.6-terra">GPT-5.6 Terra - equilibrio y calidad</option>
+            <option value="gpt-5.4-mini">GPT-5.4 Mini - rápido y compatible</option>
+            <option value="gpt-5.4">GPT-5.4 - máxima calidad</option>
+          </select></label>
           <label style="grid-column:1/-1"><span><input id="qrAiUseSameBehavior" type="checkbox" checked /> Usar el mismo comportamiento Conversacional del dominio</span><span class="hint">Si lo desmarcás, podés escribir un comportamiento exclusivo para la ficha QR.</span></label>
           <label id="qrAiOwnBehaviorWrap" style="grid-column:1/-1;display:none">Comportamiento exclusivo para QR<textarea id="qrAiBehavior" class="smallArea" placeholder="Cómo debe responder el asesor IA de la ficha QR..."></textarea></label>
           <label><span><input id="qrAiWebSearch" type="checkbox" checked /> Permitir búsqueda en Internet</span><span class="hint">Se usa para ampliar información técnica. Nunca reemplaza precio ni stock de la API.</span></label>
-          <label>Contexto de búsqueda<select id="qrAiWebContext"><option value="low">low</option><option value="medium" selected>medium</option><option value="high">high</option></select></label>
-          <label>Timeout búsqueda web (ms)<input id="qrAiWebTimeout" type="number" min="10000" max="120000" step="1000" value="90000" /><span class="hint">Tiempo máximo para la búsqueda de Internet. Recomendado: 90000.</span></label>
+          <label>Contexto de búsqueda<select id="qrAiWebContext"><option value="low" selected>low</option><option value="medium">medium</option><option value="high">high</option></select></label>
+          <label>Timeout búsqueda web (ms)<input id="qrAiWebTimeout" type="number" min="5000" max="120000" step="1000" value="20000" /><span class="hint">Tiempo máximo para la búsqueda de Internet. Recomendado: 20000.</span></label>
         </div>
       </div>
 
@@ -9443,6 +9462,7 @@ app.get("/api/behavior", async (req, res) => {
       source: "mongo",
       tenant,
       text: cfg.text,
+      chat_model: cfg.chat_model || "",
       history_mode: cfg.history_mode,
       bot_mode: normalizeBotMode(cfg.bot_mode),
       lead_capture_enabled: cfg.lead_capture_enabled === true,
@@ -9506,10 +9526,11 @@ app.get("/api/behavior", async (req, res) => {
       qr_field_subcategory: cfg.qr_field_subcategory || "Desc_Subrubro",
       qr_ai_enabled: cfg.qr_ai_enabled !== false,
       qr_ai_use_same_behavior: cfg.qr_ai_use_same_behavior !== false,
+      qr_ai_model: cfg.qr_ai_model || "",
       qr_ai_behavior: cfg.qr_ai_behavior || "",
       qr_ai_web_search_enabled: cfg.qr_ai_web_search_enabled !== false,
-      qr_ai_web_search_context_size: cfg.qr_ai_web_search_context_size || "medium",
-      qr_ai_web_search_timeout_ms: cfg.qr_ai_web_search_timeout_ms || 90000
+      qr_ai_web_search_context_size: cfg.qr_ai_web_search_context_size || "low",
+      qr_ai_web_search_timeout_ms: cfg.qr_ai_web_search_timeout_ms || 20000
     });
   } catch (e) {
     console.error("GET /api/behavior error:", e?.message || e);
@@ -9521,6 +9542,10 @@ app.post("/api/behavior", async (req, res) => {
   try {
     const tenant = (req.body?.tenantId || resolveTenantId(req)).toString().trim();
     const text = String(req.body?.text || "").trim();
+    const allowedChatModels = new Set(["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.4-mini", "gpt-5.4"]);
+    const chatModelRaw = String(req.body?.chat_model || "").trim();
+    if (chatModelRaw && !allowedChatModels.has(chatModelRaw)) return res.status(400).json({ error: "chat_model_invalid" });
+    const chat_model = chatModelRaw;
     const history_mode = String(req.body?.history_mode || "").trim() || "standard";
     const bot_mode = normalizeBotMode(req.body?.bot_mode || req.body?.botMode || "pedidos");
     const leadCaptureRaw = req.body?.lead_capture_enabled ?? req.body?.leadCaptureEnabled ?? false;
@@ -9609,11 +9634,14 @@ app.post("/api/behavior", async (req, res) => {
     const qr_field_subcategory = String(req.body?.qr_field_subcategory || "Desc_Subrubro").trim().slice(0, 120);
     const qr_ai_enabled = behaviorBool(req.body?.qr_ai_enabled, true);
     const qr_ai_use_same_behavior = behaviorBool(req.body?.qr_ai_use_same_behavior, true);
+    const qrAiModelRaw = String(req.body?.qr_ai_model || "").trim();
+    if (qrAiModelRaw && !allowedChatModels.has(qrAiModelRaw)) return res.status(400).json({ error: "qr_ai_model_invalid" });
+    const qr_ai_model = qrAiModelRaw;
     const qr_ai_behavior = String(req.body?.qr_ai_behavior || "").trim().slice(0, 30000);
     const qr_ai_web_search_enabled = behaviorBool(req.body?.qr_ai_web_search_enabled, true);
-    const qrWebCtxRaw = String(req.body?.qr_ai_web_search_context_size || "medium").trim().toLowerCase();
-    const qr_ai_web_search_context_size = ["low", "medium", "high"].includes(qrWebCtxRaw) ? qrWebCtxRaw : "medium";
-    const qr_ai_web_search_timeout_ms = Math.max(10000, Math.min(120000, Number(req.body?.qr_ai_web_search_timeout_ms || 90000) || 90000));
+    const qrWebCtxRaw = String(req.body?.qr_ai_web_search_context_size || "low").trim().toLowerCase();
+    const qr_ai_web_search_context_size = ["low", "medium", "high"].includes(qrWebCtxRaw) ? qrWebCtxRaw : "low";
+    const qr_ai_web_search_timeout_ms = Math.max(5000, Math.min(120000, Number(req.body?.qr_ai_web_search_timeout_ms || 20000) || 20000));
     const qrIncomingSecret = String(req.body?.qr_api_auth_value || "").trim().replace(/[\r\n]/g, "").slice(0, 4000);
     const qrClearSecret = behaviorBool(req.body?.qr_api_auth_clear, false);
 
@@ -9634,6 +9662,7 @@ app.post("/api/behavior", async (req, res) => {
 
     const setDoc = {
       text,
+      chat_model,
       history_mode,
       bot_mode,
       lead_capture_enabled,
@@ -9680,6 +9709,7 @@ app.post("/api/behavior", async (req, res) => {
       qr_field_subcategory,
       qr_ai_enabled,
       qr_ai_use_same_behavior,
+      qr_ai_model,
       qr_ai_behavior,
       qr_ai_web_search_enabled,
      qr_ai_web_search_context_size,
@@ -9716,6 +9746,8 @@ app.post("/api/behavior", async (req, res) => {
     res.json({
       ok: true,
       tenant,
+      chat_model,
+      qr_ai_model,
       history_mode,
       bot_mode,
       lead_capture_enabled,
