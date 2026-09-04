@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.025 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.026 | Fecha: 2026-09-04
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -576,6 +576,60 @@ function requestsCommercialData(value) {
   return /(?:\bprecio(?:s)?\b|\bcu[aá]nto\s+(?:sale|cuesta|vale)\b|\bcosto\b|\bvalor\b|\bstock\b|disponib|\bhay\s+(?:unidades|existencia)\b|transferencia|dep[oó]sito|cuotas?|oferta|promoci[oó]n)/i.test(String(value || ''));
 }
 
+function refersToCurrentQrProduct(value, product) {
+  const text = String(value || '');
+  const code = String(product?.code || '').trim();
+  if (code && text.toUpperCase().includes(code.toUpperCase())) return true;
+  return /(?:producto\s+(?:original|escaneado|de\s+la\s+ficha)|\b(?:original|escaneado)\b)/i.test(text);
+}
+
+function alternativeProductCodes(messages, currentCode) {
+  const current = String(currentCode || '').trim().toUpperCase();
+  const seen = new Set();
+  const codes = [];
+  const pattern = /\b(?=[A-Z0-9.-]{5,40}\b)(?=[A-Z0-9.-]*[A-Z])(?=[A-Z0-9.-]*\d)[A-Z0-9]+(?:[-.][A-Z0-9]+)+\b/gi;
+  for (const item of messages || []) {
+    const matches = String(item?.content || '').match(pattern) || [];
+    for (const match of matches) {
+      const code = match.toUpperCase();
+      if (code === current || seen.has(code)) continue;
+      seen.add(code);
+      codes.push(match);
+    }
+  }
+  return codes.slice(0, 5);
+}
+
+async function resolveRequestedCommercialProduct(db, cfg, tenant, conversationId, message, currentProduct) {
+  if (!requestsCommercialData(message)) return { requested: false, product: null, unresolved: false };
+  if (refersToCurrentQrProduct(message, currentProduct)) {
+    return { requested: true, product: currentProduct, unresolved: false };
+  }
+
+  const recentAssistantMessages = await db.collection('messages')
+    .find({ tenantId: tenant, conversationId, role: 'assistant' })
+    .sort({ ts: -1, createdAt: -1 })
+    .limit(8)
+    .project({ content: 1 })
+    .toArray();
+  const candidates = alternativeProductCodes(recentAssistantMessages, currentProduct?.code);
+  const alternativeDiscussed = recentAssistantMessages.some(item =>
+    /(?:alternativ|similar|otra\s+opci[oó]n|otro\s+producto|recomendar[ií]a|m[aá]s\s+potencia)/i.test(String(item?.content || ''))
+  );
+
+  for (const candidate of candidates) {
+    try {
+      const resolved = await fetchQrProduct(cfg, tenant, candidate);
+      if (resolved?.code) return { requested: true, product: resolved, unresolved: false };
+    } catch (e) {
+      console.warn(`[qr] alternative commercial lookup tenant=${tenant} sku=${candidate} error=${e?.message || e}`);
+    }
+  }
+
+  if (candidates.length || alternativeDiscussed) return { requested: true, product: null, unresolved: true };
+  return { requested: true, product: currentProduct, unresolved: false };
+}
+
 function authoritativeCommercialBlock(product, cfg) {
   const prices = Array.isArray(product.prices) ? product.prices.filter(item => item?.value != null) : [];
   const lines = ['Datos comerciales del producto:'];
@@ -637,7 +691,8 @@ function qrCatalogAlternativeHint(product) {
     description ? `Descripción del producto actual: ${description}.` : '',
     broadExamples.length ? `Patrones amplios sugeridos para intentar si hace falta: ${broadExamples.join(', ')}.` : '',
     'No concluyas que el negocio no tiene alternativas si una búsqueda específica devolvió vacío. Solo podés afirmarlo después de haber probado una búsqueda amplia razonable con consulta_articulos.',
-    'Internet no confirma productos del negocio: para nombre, SKU, precio y disponibilidad, la fuente válida sigue siendo consulta_articulos.'
+    'Internet no confirma productos del negocio: para nombre, SKU, precio y disponibilidad, la fuente válida sigue siendo consulta_articulos.',
+    'Al presentar cada alternativa encontrada, incluí siempre su SKU exacto devuelto por consulta_articulos para que las preguntas posteriores puedan identificarla sin ambigüedad.'
   ].filter(Boolean).join('\n');
 }
 
@@ -1108,10 +1163,12 @@ function mountQrProductWeb(app) {
             channelType: 'qr_web',
           }, { projection: { _id: 1 } })
         : null;
-      const includeCommercialData = requestsCommercialData(message) || !!priorDifferentProduct;
       const conv = await ensureQrConversation(db, tenant, sessionId, product, req);
       const convId = conv._id;
       const waId = conv.waId || `QRWEB:${sessionId}`;
+      const commercialResolution = priorDifferentProduct
+        ? { requested: true, product, unresolved: false }
+        : await resolveRequestedCommercialProduct(db, cfg, tenant, convId, message, product);
       const from = qrSessionFrom(sessionId, product.code);
       syncSessionConversation(tenant, from, String(convId));
       clearEndedFlag(tenant, from);
@@ -1195,10 +1252,14 @@ function mountQrProductWeb(app) {
       });
       const parsedReply = parseQrStructuredReply(raw);
       const narrativeReply = stripModelCommercialClaims(parsedReply.response);
-      const commercialBlock = includeCommercialData ? authoritativeCommercialBlock(product, cfg) : '';
-      const reply = commercialBlock
-        ? (narrativeReply ? `${narrativeReply}\n\n${commercialBlock}` : commercialBlock)
-        : (narrativeReply || 'No pude generar información adicional en este momento.');
+      const commercialBlock = commercialResolution.product
+        ? authoritativeCommercialBlock(commercialResolution.product, cfg)
+        : '';
+      const unresolvedNotice = commercialResolution.unresolved
+        ? 'No puedo confirmar el precio ni la disponibilidad del producto alternativo sin identificarlo en la API comercial. Indicame su SKU exacto para consultarlo.'
+        : '';
+      const safeParts = [narrativeReply, commercialBlock, unresolvedNotice].filter(Boolean);
+      const reply = safeParts.join('\n\n') || 'No pude generar información adicional en este momento.';
       const capturedLead = await upsertQrContactLead(db, {
         tenant,
         conversationId: convId,
