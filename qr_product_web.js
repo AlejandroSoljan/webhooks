@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.038 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.039 | Fecha: 2026-09-04
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -1099,7 +1099,18 @@ function allowAiRequest(req, sessionId) {
   return state.count <= max;
 }
 
-function pageHtml({ tenant, code }) {
+function qrPublicBranding(cfg) {
+  return {
+    pageTitle: cfg.pageTitle,
+    pageSubtitle: cfg.pageSubtitle,
+    companyName: cfg.companyName,
+    companyLogoUrl: cfg.companyLogoUrl,
+    buttonColor: cfg.buttonColor,
+    buttonTextColor: cfg.buttonTextColor,
+  };
+}
+
+function pageHtml({ tenant, code, branding = {} }) {
   return String.raw`<!doctype html>
 <html lang="es">
 <head>
@@ -1128,6 +1139,7 @@ function pageHtml({ tenant, code }) {
 </div>
 <script>
 const TENANT=${JSON.stringify(tenant)};
+const BRANDING=${JSON.stringify(branding)};
 let CODE=${JSON.stringify(code)};
 let PRODUCT=null, AI_ENABLED=false, sending=false, started=false, conversationId='', pollTimer=null, lastMessagesSignature='', scanStream=null, scanFrame=0, scanCandidate='', scanHits=0, scanCandidateAt=0;
 const el=id=>document.getElementById(id);
@@ -1164,6 +1176,7 @@ async function syncChatMessages(force=false){if(sending&&!force)return;try{const
 function startChatPolling(){if(pollTimer)return;pollTimer=setInterval(()=>{if(started&&el('chat').classList.contains('open')&&!sending)syncChatMessages(false)},3000)}
 async function jsonFetch(url,opts={}){const r=await fetch(url,{cache:'no-store',...opts});const text=await r.text();let j={};try{j=text?JSON.parse(text):{}}catch{}if(!r.ok)throw new Error(j.detail||j.error||('HTTP '+r.status));return j}
 function safeColor(v,fallback){const x=String(v||'').trim();return /^#[0-9a-f]{6}$/i.test(x)?x:fallback}
+function applyBranding(j){const company=String(j.companyName||'').trim()||j.pageTitle||'Información del producto';el('companyName').textContent=company;el('pageTitle').textContent=j.pageTitle||'Información del producto';el('pageSubtitle').textContent=j.pageSubtitle||'';document.documentElement.style.setProperty('--primary',safeColor(j.buttonColor,'#0f766e'));document.documentElement.style.setProperty('--buttonText',safeColor(j.buttonTextColor,'#ffffff'));const logo=el('companyLogo'),mark=el('brandMark');if(j.companyLogoUrl){logo.src=j.companyLogoUrl;logo.classList.remove('hidden');mark.classList.add('hidden');logo.onerror=()=>{logo.classList.add('hidden');mark.classList.remove('hidden')}}else{logo.classList.add('hidden');mark.classList.remove('hidden')}mark.textContent=(company.trim().charAt(0)||'A').toUpperCase()}
 function renderPrices(p,currency){
   const prices=Array.isArray(p.prices)&&p.prices.length?p.prices:[{label:'Precio',note:'',value:p.price,primary:true}];
   const valid=prices.filter(x=>x&&x.value!==null&&x.value!==undefined&&x.value!=='');
@@ -1182,25 +1195,7 @@ function renderProduct(j){
   AI_ENABLED=j.aiEnabled===true;
   document.title=PRODUCT.description||'Producto';
 
-  const company=String(j.companyName||'').trim()||j.pageTitle||'Información del producto';
-  el('companyName').textContent=company;
-  el('pageTitle').textContent=j.pageTitle||'Información del producto';
-  el('pageSubtitle').textContent=j.pageSubtitle||'';
-
-  document.documentElement.style.setProperty('--primary',safeColor(j.buttonColor,'#0f766e'));
-  document.documentElement.style.setProperty('--buttonText',safeColor(j.buttonTextColor,'#ffffff'));
-
-  const logo=el('companyLogo'),mark=el('brandMark');
-  if(j.companyLogoUrl){
-    logo.src=j.companyLogoUrl;
-    logo.classList.remove('hidden');
-    mark.classList.add('hidden');
-    logo.onerror=()=>{logo.classList.add('hidden');mark.classList.remove('hidden')};
-  }else{
-    logo.classList.add('hidden');
-    mark.classList.remove('hidden');
-  }
-  mark.textContent=(company.trim().charAt(0)||'A').toUpperCase();
+  applyBranding(j);
 
   const p=PRODUCT;
   const availability=p.available===true
@@ -1238,7 +1233,7 @@ async function loadProduct(){try{el('productCard').innerHTML='<div class="loadin
  async function callAi(message,initial=false){if(sending)return;sending=true;const btn=el('sendBtn');if(btn)btn.disabled=true;if(message&&!initial)addMsg('user',message);addMsg('bot','',true);try{const j=await jsonFetch('/api/ext/qr/chat',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({tenant:TENANT,codigo:CODE,sessionId:sessionId(),message:message||'',initial})});removeTyping();if(j.conversationId)conversationId=j.conversationId;started=true;await syncChatMessages(true);startChatPolling()}catch(e){removeTyping();addMsg('bot','No pude obtener información adicional en este momento. '+e.message)}finally{sending=false;if(btn)btn.disabled=false}}
 async function startAi(){el('chat').classList.add('open');el('chat').scrollIntoView({behavior:'smooth',block:'start'});if(!started){const b=el('moreBtn');if(b)b.disabled=true;await callAi('',true);if(b)b.disabled=false}else{await syncChatMessages(true);startChatPolling();el('message').focus()}}
 async function send(){const box=el('message');const msg=String(box.value||'').trim();if(!msg||sending)return;box.value='';await callAi(msg,false);box.focus()}
-el('sendBtn').addEventListener('click',send);el('message').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});el('closeChat').addEventListener('click',()=>el('chat').classList.remove('open'));el('scanBtn').addEventListener('click',startScanner);el('stopScanBtn').addEventListener('click',stopScanner);el('lookupBtn').addEventListener('click',()=>openCode(el('codeInput').value));el('codeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openCode(e.currentTarget.value)}});window.addEventListener('pagehide',stopScanner);if(CODE){el('lookup').classList.add('hidden');loadProduct()}else{el('productCard').classList.add('hidden');el('pageSubtitle').textContent='Escaneá un QR, un código de barras o ingresá el código manualmente.'}
+el('sendBtn').addEventListener('click',send);el('message').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});el('closeChat').addEventListener('click',()=>el('chat').classList.remove('open'));el('scanBtn').addEventListener('click',startScanner);el('stopScanBtn').addEventListener('click',stopScanner);el('lookupBtn').addEventListener('click',()=>openCode(el('codeInput').value));el('codeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openCode(e.currentTarget.value)}});window.addEventListener('pagehide',stopScanner);applyBranding(BRANDING);if(CODE){el('lookup').classList.add('hidden');loadProduct()}else{el('productCard').classList.add('hidden');if(!BRANDING.pageSubtitle)el('pageSubtitle').textContent='Escaneá un QR, un código de barras o ingresá el código manualmente.'}
 </script>
 </body>
 </html>`;
@@ -1267,20 +1262,24 @@ function mountQrProductWeb(app) {
     const tenant = safeTenant(req.params.tenant);
     const code = digitsOrText(req.query?.codigo, 180);
     if (!tenant) return res.status(404).send('Dominio inválido');
+    const db = await getDb();
+    const cfg = await loadQrConfig(db, tenant);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-    return res.status(200).send(pageHtml({ tenant, code }));
+    return res.status(200).send(pageHtml({ tenant, code, branding: qrPublicBranding(cfg) }));
   });
 
   app.get('/qr/:tenant/:codigo', async (req, res) => {
     const tenant = safeTenant(req.params.tenant);
     const code = digitsOrText(req.params.codigo, 180);
     if (!tenant || !code) return res.status(404).send('QR inválido');
+    const db = await getDb();
+    const cfg = await loadQrConfig(db, tenant);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-    return res.status(200).send(pageHtml({ tenant, code }));
+    return res.status(200).send(pageHtml({ tenant, code, branding: qrPublicBranding(cfg) }));
   });
 
   app.get('/api/ext/qr/product', async (req, res) => {
