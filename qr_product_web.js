@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.024 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.025 | Fecha: 2026-09-04
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -572,6 +572,10 @@ function stripModelCommercialClaims(value) {
     .trim();
 }
 
+function requestsCommercialData(value) {
+  return /(?:\bprecio(?:s)?\b|\bcu[aá]nto\s+(?:sale|cuesta|vale)\b|\bcosto\b|\bvalor\b|\bstock\b|disponib|\bhay\s+(?:unidades|existencia)\b|transferencia|dep[oó]sito|cuotas?|oferta|promoci[oó]n)/i.test(String(value || ''));
+}
+
 function authoritativeCommercialBlock(product, cfg) {
   const prices = Array.isArray(product.prices) ? product.prices.filter(item => item?.value != null) : [];
   const lines = ['Datos comerciales del producto:'];
@@ -1096,6 +1100,15 @@ function mountQrProductWeb(app) {
       ]);
       if (!apiKey) return res.status(503).json({ ok: false, error: 'ai_not_configured' });
 
+      const priorDifferentProduct = initial
+        ? await db.collection('conversations').findOne({
+            tenantId: tenant,
+            qrSessionId: safeSessionId(sessionId),
+            qrProductCode: { $ne: product.code },
+            channelType: 'qr_web',
+          }, { projection: { _id: 1 } })
+        : null;
+      const includeCommercialData = requestsCommercialData(message) || !!priorDifferentProduct;
       const conv = await ensureQrConversation(db, tenant, sessionId, product, req);
       const convId = conv._id;
       const waId = conv.waId || `QRWEB:${sessionId}`;
@@ -1182,8 +1195,10 @@ function mountQrProductWeb(app) {
       });
       const parsedReply = parseQrStructuredReply(raw);
       const narrativeReply = stripModelCommercialClaims(parsedReply.response);
-      const commercialBlock = authoritativeCommercialBlock(product, cfg);
-      const reply = narrativeReply ? `${narrativeReply}\n\n${commercialBlock}` : commercialBlock;
+      const commercialBlock = includeCommercialData ? authoritativeCommercialBlock(product, cfg) : '';
+      const reply = commercialBlock
+        ? (narrativeReply ? `${narrativeReply}\n\n${commercialBlock}` : commercialBlock)
+        : (narrativeReply || 'No pude generar información adicional en este momento.');
       const capturedLead = await upsertQrContactLead(db, {
         tenant,
         conversationId: convId,
