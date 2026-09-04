@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.034 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.035 | Fecha: 2026-09-04
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -618,6 +618,28 @@ function compactMobileReply(value, maxUnits, maxChars) {
 
 function requestsCatalogData(value) {
   return /(?:\bsimilar(?:es)?\b|\balternativ(?:a|as)\b|\botr(?:o|os|a|as)\b|\bopci(?:[oó]n|ones)\b|\bcat[aá]logo\b|qu[eé]\s+(?:m[aá]s|otros?)\s+(?:tienen|hay)|m[aá]s\s+potencia|m[aá]s\s+(?:econ[oó]mic|barat)|menor\s+precio)/i.test(String(value || ''));
+}
+
+function requestsCatalogFollowUp(value) {
+  return /(?:cu[aá]l(?:es)?\s+(?:me\s+)?recomend|qu[eé]\s+(?:me\s+)?recomend|cu[aá]l\s+(?:me\s+)?conviene|cu[aá]l\s+es\s+(?:el\s+)?mejor|de\s+esos|entre\s+esos|m[aá]s\s+(?:econ[oó]mic|barat)|menor\s+precio|m[aá]s\s+potencia)/i.test(String(value || ''));
+}
+function catalogCodesFromText(value) {
+  const codes=[], seen=new Set(), pattern=/\bSKU\s*:?\s*([A-Z0-9][A-Z0-9.-]{1,39})\b/gi; let match;
+  while ((match=pattern.exec(String(value||'')))!==null) { const code=String(match[1]||'').trim().toUpperCase(); if(code&&!seen.has(code)){seen.add(code);codes.push(code);} }
+  return codes;
+}
+async function activeCatalogProducts(db, tenant, conversation, currentCode) {
+  const confirmed=Array.isArray(conversation?.qrConfirmedCommercialProducts)?conversation.qrConfirmedCommercialProducts:[];
+  let codes=Array.isArray(conversation?.qrLastShownCatalogCodes)?conversation.qrLastShownCatalogCodes.map(code=>String(code||'').trim().toUpperCase()).filter(Boolean):[];
+  if(!codes.length){const recent=await db.collection('messages').find({tenantId:tenant,conversationId:conversation._id,role:'assistant'}).sort({ts:-1,createdAt:-1}).limit(8).project({content:1}).toArray();const msg=recent.find(item=>/Precios informados por el cat[aá]logo/i.test(String(item?.content||'')));if(msg)codes=catalogCodesFromText(msg.content);}
+  const current=String(currentCode||'').trim().toUpperCase();
+  return codes.map(code=>confirmed.find(item=>String(item?.code||'').trim().toUpperCase()===code)).filter(item=>item&&String(item.code||'').trim().toUpperCase()!==current&&Number(item.price)>0).slice(0,4);
+}
+function catalogFollowUpReply(products, message, cfg) {
+  const text=String(message||'');
+  if(/(?:m[aá]s\s+(?:econ[oó]mic|barat)|menor\s+precio)/i.test(text)){const selected=[...products].sort((a,b)=>Number(a.price)-Number(b.price))[0];return clean(selected.description,120)+' (SKU: '+clean(selected.code,80)+') es la opción de menor precio entre las mostradas.\n\n'+authoritativeCommercialBlock(selected,cfg);}
+  if(/m[aá]s\s+potencia/i.test(text)){const ranked=products.map(product=>({product,hp:Number(String(product.description||'').match(/(\d+(?:[.,]\d+)?)\s*HP\b/i)?.[1]?.replace(',','.'))})).filter(item=>Number.isFinite(item.hp)).sort((a,b)=>b.hp-a.hp);if(ranked.length){const selected=ranked[0].product;return clean(selected.description,150)+' (SKU: '+clean(selected.code,80)+') es la de mayor potencia confirmada entre las mostradas.';}}
+  return '¿Qué priorizás: menor precio, potencia o comodidad de uso? También podés decirme si es para un espacio chico, mediano o grande.';
 }
 
 function requestsLeadCapture(value) {
@@ -1356,6 +1378,8 @@ function mountQrProductWeb(app) {
         : null;
       const conv = await ensureQrConversation(db, tenant, sessionId, product, req);
       const convId = conv._id;
+      const shownCatalogProducts = initial ? [] : await activeCatalogProducts(db, tenant, conv, product.code);
+      const catalogFollowUp = !initial && shownCatalogProducts.length > 0 && requestsCatalogFollowUp(message);
       const waId = conv.waId || `QRWEB:${sessionId}`;
       let commercialResolution = priorDifferentProduct
         ? { requested: true, product, unresolved: false }
@@ -1371,6 +1395,14 @@ function mountQrProductWeb(app) {
 
       if (conv.manualOpen === true) {
         return res.json({ ok: true, conversationId: String(convId), manual: true, reply: '' });
+      }
+
+      if (catalogFollowUp) {
+        const reply = catalogFollowUpReply(shownCatalogProducts, message, cfg);
+        await saveQrMessage(db, { tenant, conversationId: convId, waId, role: 'assistant', content: reply, product, meta: { catalogFollowUp: true } });
+        console.log(`[qr] catalog follow-up tenant=${tenant} sku=${product.code} conv=${String(convId)} ms=${Date.now() - startedAt}`);
+        res.setHeader('Cache-Control', 'no-store');
+        return res.json({ ok: true, conversationId: String(convId), reply, contactCaptured: false });
       }
 
       const ctx = productContext(product, cfg);
@@ -1487,6 +1519,13 @@ function mountQrProductWeb(app) {
       const confirmedCatalogProducts = catalogRequest
         ? selectConfirmedCatalogProducts(parsedReply.response, observedCommercialProducts, product, message)
         : mentionedCatalogProducts;
+      if (catalogRequest) {
+        const shownCodes = confirmedCatalogProducts.map(item => String(item?.code || '').trim()).filter(Boolean);
+        await db.collection('conversations').updateOne(
+          { _id: convId },
+          shownCodes.length ? { $set: { qrLastShownCatalogCodes: shownCodes, qrLastShownCatalogAt: new Date(), updatedAt: new Date() } } : { $unset: { qrLastShownCatalogCodes: '', qrLastShownCatalogAt: '' }, $set: { updatedAt: new Date() } }
+        );
+      }
       if (catalogRequest) narrativeReply = deterministicCatalogNarrative(confirmedCatalogProducts, message);
       const catalogPricesBlock = authoritativeCatalogPricesBlock(confirmedCatalogProducts, cfg);
       const commercialBlock = commercialResolution.product
