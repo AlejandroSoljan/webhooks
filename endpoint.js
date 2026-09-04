@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.022 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.023 | Fecha: 2026-09-04
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -8954,10 +8954,10 @@ app.get("/comportamiento", async (req, res) => {
         <span class="hint">Conversacional usa solo Comportamiento + historial y no ejecuta reglas de pedidos.</span>
         <label>Modelo conversacional:&nbsp;
           <select id="chatModel">
-            <option value="gpt-5.6-luna">GPT-5.6 Luna - rápido y económico (recomendado)</option>
-            <option value="gpt-5.6-terra">GPT-5.6 Terra - equilibrio y mayor calidad</option>
-            <option value="gpt-5.4-mini">GPT-5.4 Mini - rápido y compatible</option>
-            <option value="gpt-5.4">GPT-5.4 - máxima calidad, mayor costo</option>
+            <option value="gpt-5.6-luna">GPT-5.6 Luna - rápido y económico (recomendado) - USD 0,20 entrada / 1,20 salida por 1M</option>
+            <option value="gpt-5.6-terra">GPT-5.6 Terra - equilibrio y mayor calidad - USD 2,00 entrada / 12,00 salida por 1M</option>
+            <option value="gpt-5.4-mini">GPT-5.4 Mini - rápido y compatible - USD 0,75 entrada / 4,50 salida por 1M</option>
+            <option value="gpt-5.4">GPT-5.4 - máxima calidad, mayor costo - USD 2,50 entrada / 15,00 salida por 1M</option>
           </select>
         </label>
       </div>
@@ -9033,10 +9033,10 @@ app.get("/comportamiento", async (req, res) => {
         <div id="qrAiConfig" class="externalGrid" style="margin-top:10px">
           <label>Modelo del chat QR<select id="qrAiModel">
             <option value="">Usar modelo conversacional del dominio</option>
-            <option value="gpt-5.6-luna">GPT-5.6 Luna - rápido y económico</option>
-            <option value="gpt-5.6-terra">GPT-5.6 Terra - equilibrio y calidad</option>
-            <option value="gpt-5.4-mini">GPT-5.4 Mini - rápido y compatible</option>
-            <option value="gpt-5.4">GPT-5.4 - máxima calidad</option>
+            <option value="gpt-5.6-luna">GPT-5.6 Luna - rápido y económico - USD 0,20 entrada / 1,20 salida por 1M</option>
+            <option value="gpt-5.6-terra">GPT-5.6 Terra - equilibrio y calidad - USD 2,00 entrada / 12,00 salida por 1M</option>
+            <option value="gpt-5.4-mini">GPT-5.4 Mini - rápido y compatible - USD 0,75 entrada / 4,50 salida por 1M</option>
+            <option value="gpt-5.4">GPT-5.4 - máxima calidad - USD 2,50 entrada / 15,00 salida por 1M</option>
           </select></label>
           <label style="grid-column:1/-1"><span><input id="qrAiUseSameBehavior" type="checkbox" checked /> Usar el mismo comportamiento Conversacional del dominio</span><span class="hint">Si lo desmarcás, podés escribir un comportamiento exclusivo para la ficha QR.</span></label>
           <label id="qrAiOwnBehaviorWrap" style="grid-column:1/-1;display:none">Comportamiento exclusivo para QR<textarea id="qrAiBehavior" class="smallArea" placeholder="Cómo debe responder el asesor IA de la ficha QR..."></textarea></label>
