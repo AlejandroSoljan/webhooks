@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.026 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.027 | Fecha: 2026-09-04
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -564,9 +564,15 @@ function formatQrCommercialMoney(value, currency) {
 }
 
 function stripModelCommercialClaims(value) {
+  const blockedClaim = /(?:datos\s+comerciales|[$€]\s*[\d?]|\bprecio\b[^.!?\n]*\d|\b(?:tenemos|hay|con|sin)\s+(?:stock|disponibilidad)\b|\b(?:est[aá]|se\s+encuentra)\s+(?:disponible|agotado)\b)/i;
   return String(value || '')
     .split(/\r?\n/)
-    .filter(line => !/(?:\bprecio\b|\bstock\b|disponib|datos comerciales|[$€]\s*\d)/i.test(line))
+    .map(line => line
+      .split(/(?<=[.!?])\s+/)
+      .filter(sentence => !blockedClaim.test(sentence))
+      .join(' ')
+      .trim())
+    .filter(Boolean)
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
