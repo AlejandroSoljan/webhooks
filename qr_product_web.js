@@ -1,7 +1,7 @@
-// Asisto | Version: 5.00.042 | Fecha: 2026-09-05
+// Asisto | Version: 5.00.043 | Fecha: 2026-09-05
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
-// La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
+// La carga inicial consulta el catálogo local y su API de respaldo: NO usa OpenAI.
 // La IA comienza recién cuando el visitante toca "Mostrar más info" o envía un mensaje.
 
 const crypto = require('crypto');
@@ -9,27 +9,19 @@ const express = require('express');
 const axios = require('axios');
 const { ObjectId } = require('mongodb');
 const { getDb } = require('./db');
+const { createProductCatalog, sourceKey } = require('./product_catalog');
 const {
   getGPTReply,
   syncSessionConversation,
   clearEndedFlag,
 } = require('./logic');
 
-const QR_BUILD = '2026-09-05-v7-product-api-protection';
+const QR_BUILD = '2026-09-05-v8-mongo-catalog';
 const qrJson = express.json({ limit: '512kb' });
 const rateState = new Map();
 let lastRateCleanupAt = 0;
 
 
-const QR_PRODUCT_CACHE_TTL_MS = Math.max(
-  0,
-  Math.min(300000, Number(process.env.QR_PRODUCT_CACHE_TTL_MS || 300000) || 300000)
-);
-const QR_PRODUCT_CACHE_MAX = Math.max(
-  20,
-  Math.min(2000, Number(process.env.QR_PRODUCT_CACHE_MAX || 500) || 500)
-);
-const qrProductCache = new Map();
 const QR_PRODUCT_API_MAX_CONCURRENT = Math.max(1, Math.min(50, Number(process.env.QR_PRODUCT_API_MAX_CONCURRENT || 10) || 10));
 const QR_PRODUCT_API_QUEUE_MAX = Math.max(0, Math.min(1000, Number(process.env.QR_PRODUCT_API_QUEUE_MAX || 100) || 100));
 const QR_PRODUCT_API_QUEUE_WAIT_MS = Math.max(500, Math.min(30000, Number(process.env.QR_PRODUCT_API_QUEUE_WAIT_MS || 8000) || 8000));
@@ -74,10 +66,17 @@ function recordQrProductApiFailure(tenant, error) {
   const state = !previous || now - Number(previous.windowStartedAt || 0) > 60000 ? { failures: 0, windowStartedAt: now, openUntil: 0 } : previous;
   state.failures += 1; if (state.failures >= 5) state.openUntil = now + 20000; qrProductCircuit.set(key, state);
 }
+const productCatalog = createProductCatalog({
+  getDb, fetchExternal: fetchQrProductProtected, normalize: normalizeQrProduct,
+});
 async function fetchQrProduct(cfg, tenant, code) {
-  const cached = getCachedQrProduct(tenant, code);
-  if (cached) { console.log(`[qr] product cache hit tenant=${tenant} sku=${code}`); return cached; }
-  const requestKey = qrProductCacheKey(tenant, code), shared = qrProductInflight.get(requestKey);
+  if (!cfg.enabled) throw Object.assign(new Error('qr_disabled'), { statusCode: 404 });
+  const codigo = digitsOrText(code, 180);
+  if (!codigo) throw Object.assign(new Error('codigo_required'), { statusCode: 400 });
+  return productCatalog.get(cfg, tenant, codigo);
+}
+async function fetchQrProductProtected(cfg, tenant, code) {
+  const requestKey = JSON.stringify([tenant, sourceKey(cfg), code]), shared = qrProductInflight.get(requestKey);
   if (shared) { qrProductMetrics.coalesced += 1; return shared; }
   const now = Date.now(), circuit = qrProductCircuit.get(String(tenant || '').toUpperCase());
   if (circuit?.openUntil > now) {
@@ -101,42 +100,6 @@ async function fetchQrProduct(cfg, tenant, code) {
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
-}
-
-function qrProductCacheKey(tenant, code) {
-  return `${String(tenant || '').trim().toUpperCase()}|${String(code || '').trim()}`;
-}
-
-function getCachedQrProduct(tenant, code) {
-  if (!QR_PRODUCT_CACHE_TTL_MS) return null;
-  const key = qrProductCacheKey(tenant, code);
-  const item = qrProductCache.get(key);
-  if (!item) return null;
-  if ((Date.now() - Number(item.at || 0)) > QR_PRODUCT_CACHE_TTL_MS) {
-    qrProductCache.delete(key);
-    return null;
-  }
-  return item.product || null;
-}
-
-function setCachedQrProduct(tenant, code, product) {
-  if (!QR_PRODUCT_CACHE_TTL_MS || !product) return;
-  const key = qrProductCacheKey(tenant, code);
-  qrProductCache.set(key, { at: Date.now(), product });
-
-  if (qrProductCache.size > QR_PRODUCT_CACHE_MAX) {
-    const now = Date.now();
-    for (const [k, item] of qrProductCache) {
-      if ((now - Number(item?.at || 0)) > QR_PRODUCT_CACHE_TTL_MS) {
-        qrProductCache.delete(k);
-      }
-    }
-    while (qrProductCache.size > QR_PRODUCT_CACHE_MAX) {
-      const oldestKey = qrProductCache.keys().next().value;
-      if (!oldestKey) break;
-      qrProductCache.delete(oldestKey);
-    }
-  }
 }
 
 function clean(value, max = 500) {
@@ -341,12 +304,6 @@ async function fetchQrProductDirect(cfg, tenant, code) {
   const codigo = digitsOrText(code, 180);
   if (!codigo) throw Object.assign(new Error('codigo_required'), { statusCode: 400 });
 
-  const cached = getCachedQrProduct(tenant, codigo);
-  if (cached) {
-    console.log(`[qr] product cache hit tenant=${tenant} sku=${codigo}`);
-    return cached;
-  }
-
   const variables = { codigo, tenant };
   let url = replaceTemplateString(cfg.apiUrl, variables);
   const headers = { Accept: 'application/json' };
@@ -374,7 +331,6 @@ async function fetchQrProductDirect(cfg, tenant, code) {
       }
     }
     if (!body) body = { [cfg.apiCodeParam || 'codigo']: codigo };
-    request.data = body;
     baseRequest.data = body;
     baseRequest.headers = { ...headers, 'Content-Type': 'application/json' };
   }
@@ -404,6 +360,7 @@ async function fetchQrProductDirect(cfg, tenant, code) {
 
       if (resp.status >= 200 && resp.status < 300) break;
 
+      if (resp.status === 404) throw Object.assign(new Error('product_not_found'), { statusCode: 404 });
       const retryableStatus = [502, 503, 504].includes(Number(resp.status));
       if (retryableStatus && attempt < maxAttempts) {
         await sleep(500);
@@ -465,17 +422,26 @@ async function fetchQrProductDirect(cfg, tenant, code) {
     });
   }
 
-  const raw = firstProductPayload(resp.data);
-  if (!raw || typeof raw !== 'object') {
-    throw Object.assign(new Error('product_not_found'), { statusCode: 404 });
-  }
+  const rows = externalProductRows(resp.data);
+  const exact = rows.find(item => item && String(firstDefined(item,
+    [cfg.fieldCode, 'Codigo', 'codigo', 'code', 'sku', 'SKU']) ?? '').trim() === codigo);
+  const barcodes = exact ? [] : rows.filter(item => item && String(firstDefined(item,
+    ['Codbarra', 'codbarra', 'barcode']) ?? '').trim() === codigo);
+  if (barcodes.length > 1) throw Object.assign(new Error('catalog_ambiguous_barcode'), { statusCode: 409 });
+  const raw = exact || barcodes[0];
+  if (!raw) throw Object.assign(new Error('product_not_found'), { statusCode: 404 });
+  normalizeQrProduct(raw, cfg);
+  return raw;
+}
 
+function normalizeQrProduct(raw, cfg) {
+  if (!raw || typeof raw !== 'object') throw Object.assign(new Error('product_not_found'), { statusCode: 404 });
   const productCode =
-    firstDefined(raw, [cfg.fieldCode, 'Codigo', 'codigo', 'code', 'sku', 'SKU']) ?? codigo;
+    firstDefined(raw, [cfg.fieldCode, 'Codigo', 'codigo', 'code', 'sku', 'SKU']);
   const description =
     firstDefined(raw, [cfg.fieldDescription, 'Descripcion', 'descripcion', 'description', 'nombre', 'name']);
 
-  if (!description) {
+  if (productCode == null || !String(productCode).trim() || !description) {
     throw Object.assign(new Error('product_not_found'), { statusCode: 404 });
   }
   const priceRaw = firstDefined(raw, [cfg.fieldPrice, 'Precio', 'precio', 'Precio_Lp1', 'price']);
@@ -521,7 +487,6 @@ async function fetchQrProductDirect(cfg, tenant, code) {
     subcategory: clean(subcategory, 180),
   };
 
-  setCachedQrProduct(tenant, codigo, product);
   return product;
 }
 
@@ -756,7 +721,7 @@ function alternativeProductCodes(messages, currentCode) {
 function externalProductRows(payload) {
   if (Array.isArray(payload)) return payload;
   if (!payload || typeof payload !== 'object') return [];
-  for (const key of ['data', 'items', 'results', 'articulos', 'productos']) {
+  for (const key of ['data', 'items', 'results', 'articulos', 'productos', 'product', 'articulo']) {
     if (Array.isArray(payload[key])) return payload[key];
     if (payload[key] && typeof payload[key] === 'object') {
       const nested = externalProductRows(payload[key]);
@@ -1330,6 +1295,7 @@ function mountQrProductWeb(app) {
       await Promise.all([
         db.collection('conversations').createIndex({ tenantId: 1, qrSessionId: 1, qrProductCode: 1, finalized: 1, updatedAt: -1 }),
         db.collection('messages').createIndex({ tenantId: 1, conversationId: 1, ts: 1 }),
+        productCatalog.ensureIndexes(),
       ]);
     } catch (e) {
       console.warn('[qr] indexes:', e?.message || e);
@@ -1649,4 +1615,4 @@ function mountQrProductWeb(app) {
   });
 }
 
-module.exports = { mountQrProductWeb };
+module.exports = { mountQrProductWeb, loadQrConfig, normalizeQrProduct };

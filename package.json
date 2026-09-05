@@ -5,6 +5,7 @@
   "main": "endpoint.js",
   "type": "commonjs",
   "scripts": {
+    "test": "node --test tests/product_catalog.test.js tests/qr_product_catalog.test.js tests/import_product_catalog.test.js",
     "start": "node endpoint.js",
     "dev": "nodemon endpoint.js"
   },
