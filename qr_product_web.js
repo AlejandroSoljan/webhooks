@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.041 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.042 | Fecha: 2026-09-05
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta únicamente la API de productos configurada: NO usa OpenAI.
@@ -15,7 +15,7 @@ const {
   clearEndedFlag,
 } = require('./logic');
 
-const QR_BUILD = '2026-09-04-v6-fast-response';
+const QR_BUILD = '2026-09-05-v7-product-api-protection';
 const qrJson = express.json({ limit: '512kb' });
 const rateState = new Map();
 let lastRateCleanupAt = 0;
@@ -30,6 +30,74 @@ const QR_PRODUCT_CACHE_MAX = Math.max(
   Math.min(2000, Number(process.env.QR_PRODUCT_CACHE_MAX || 500) || 500)
 );
 const qrProductCache = new Map();
+const QR_PRODUCT_API_MAX_CONCURRENT = Math.max(1, Math.min(50, Number(process.env.QR_PRODUCT_API_MAX_CONCURRENT || 10) || 10));
+const QR_PRODUCT_API_QUEUE_MAX = Math.max(0, Math.min(1000, Number(process.env.QR_PRODUCT_API_QUEUE_MAX || 100) || 100));
+const QR_PRODUCT_API_QUEUE_WAIT_MS = Math.max(500, Math.min(30000, Number(process.env.QR_PRODUCT_API_QUEUE_WAIT_MS || 8000) || 8000));
+const qrProductInflight = new Map();
+const qrProductCircuit = new Map();
+const qrProductApiQueue = [];
+let qrProductApiActive = 0;
+let qrProductMetricsLastLog = 0;
+const qrProductMetrics = { requests: 0, coalesced: 0, successes: 0, failures: 0, rejected: 0, circuitOpen: 0 };
+
+function logQrProductMetrics(now = Date.now()) {
+  if (now - qrProductMetricsLastLog < 60000) return;
+  qrProductMetricsLastLog = now;
+  console.log(`[qr-metrics] product-api ${JSON.stringify({ ...qrProductMetrics, active: qrProductApiActive, queued: qrProductApiQueue.length, inflight: qrProductInflight.size })}`);
+}
+function releaseQrProductApiSlot() {
+  qrProductApiActive = Math.max(0, qrProductApiActive - 1);
+  const next = qrProductApiQueue.shift();
+  if (!next) return;
+  clearTimeout(next.timer); qrProductApiActive += 1; next.resolve(releaseQrProductApiSlot);
+}
+function acquireQrProductApiSlot() {
+  if (qrProductApiActive < QR_PRODUCT_API_MAX_CONCURRENT) { qrProductApiActive += 1; return Promise.resolve(releaseQrProductApiSlot); }
+  if (qrProductApiQueue.length >= QR_PRODUCT_API_QUEUE_MAX) {
+    qrProductMetrics.rejected += 1;
+    throw Object.assign(new Error('product_api_busy'), { statusCode: 503, publicDetail: 'Hay muchas consultas simultáneas. Reintentá en unos segundos.' });
+  }
+  return new Promise((resolve, reject) => {
+    const entry = { resolve, reject, timer: null };
+    entry.timer = setTimeout(() => {
+      const index = qrProductApiQueue.indexOf(entry); if (index >= 0) qrProductApiQueue.splice(index, 1);
+      qrProductMetrics.rejected += 1;
+      reject(Object.assign(new Error('product_api_queue_timeout'), { statusCode: 503, publicDetail: 'La consulta está demorando. Reintentá en unos segundos.' }));
+    }, QR_PRODUCT_API_QUEUE_WAIT_MS);
+    if (typeof entry.timer.unref === 'function') entry.timer.unref();
+    qrProductApiQueue.push(entry);
+  });
+}
+function recordQrProductApiFailure(tenant, error) {
+  if (error?.statusCode === 404 || error?.message === 'product_not_found') return;
+  const now = Date.now(), key = String(tenant || '').toUpperCase(), previous = qrProductCircuit.get(key);
+  const state = !previous || now - Number(previous.windowStartedAt || 0) > 60000 ? { failures: 0, windowStartedAt: now, openUntil: 0 } : previous;
+  state.failures += 1; if (state.failures >= 5) state.openUntil = now + 20000; qrProductCircuit.set(key, state);
+}
+async function fetchQrProduct(cfg, tenant, code) {
+  const cached = getCachedQrProduct(tenant, code);
+  if (cached) { console.log(`[qr] product cache hit tenant=${tenant} sku=${code}`); return cached; }
+  const requestKey = qrProductCacheKey(tenant, code), shared = qrProductInflight.get(requestKey);
+  if (shared) { qrProductMetrics.coalesced += 1; return shared; }
+  const now = Date.now(), circuit = qrProductCircuit.get(String(tenant || '').toUpperCase());
+  if (circuit?.openUntil > now) {
+    qrProductMetrics.circuitOpen += 1; logQrProductMetrics(now);
+    throw Object.assign(new Error('product_api_circuit_open'), { statusCode: 503, publicDetail: 'El sistema de productos está temporalmente ocupado. Reintentá en unos segundos.' });
+  }
+  qrProductMetrics.requests += 1;
+  const request = (async () => {
+    const release = await acquireQrProductApiSlot();
+    try {
+      const product = await fetchQrProductDirect(cfg, tenant, code);
+      qrProductMetrics.successes += 1; qrProductCircuit.delete(String(tenant || '').toUpperCase()); return product;
+    } catch (error) {
+      qrProductMetrics.failures += 1; recordQrProductApiFailure(tenant, error); throw error;
+    } finally { release(); logQrProductMetrics(); }
+  })();
+  qrProductInflight.set(requestKey, request);
+  try { return await request; }
+  finally { if (qrProductInflight.get(requestKey) === request) qrProductInflight.delete(requestKey); }
+}
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, Math.max(0, Number(ms) || 0)));
@@ -267,7 +335,7 @@ async function loadQrConfig(db, tenant) {
   };
 }
 
-async function fetchQrProduct(cfg, tenant, code) {
+async function fetchQrProductDirect(cfg, tenant, code) {
   if (!cfg.enabled) throw Object.assign(new Error('qr_disabled'), { statusCode: 404 });
   if (!/^https?:\/\//i.test(cfg.apiUrl)) throw Object.assign(new Error('qr_api_not_configured'), { statusCode: 503 });
   const codigo = digitsOrText(code, 180);
@@ -1241,7 +1309,7 @@ function renderProduct(j){
 function normalizedCode(value){let code=String(value||'').trim();if(!code)return '';try{const u=new URL(code,location.origin);if(/^https?:/i.test(code)){const extracted=u.searchParams.get('codigo')||((u.pathname.match(/^\/qr\/[^/]+\/(.+)$/)||[])[1]);if(!extracted)return '' ;code=extracted}}catch(_){}try{code=decodeURIComponent(code).trim()}catch(_){}return code} function openCode(value){const code=normalizedCode(value);if(!code)return;stopScanner();location.href='/qr/'+encodeURIComponent(TENANT)+'?codigo='+encodeURIComponent(code)} function openScannerPanel(){el('lookup').classList.remove('hidden');el('lookup').scrollIntoView({behavior:'smooth',block:'start'});startScanner()}
 function stopScanner(hide=true){if(scanFrame)cancelAnimationFrame(scanFrame);scanFrame=0;if(scanStream){for(const track of scanStream.getTracks())track.stop();scanStream=null}el('scanBtn').classList.remove('hidden');if(hide)el('scanner').classList.add('hidden')}
 async function startScanner(){stopScanner(false);el('scanBtn').classList.add('hidden');const status=el('scanStatus'),video=el('scanVideo');el('scanner').classList.remove('hidden');video.classList.remove('hidden');scanCandidate='';scanHits=0;scanCandidateAt=0;status.textContent='Apuntá al QR o al código de barras.';if(!navigator.mediaDevices?.getUserMedia){status.textContent='La cámara no está disponible en este navegador. Ingresá el código manualmente.';el('scanBtn').classList.remove('hidden');return}if(!('BarcodeDetector' in window)){status.textContent='Este navegador no admite lectura automática. Ingresá el código manualmente.';el('scanBtn').classList.remove('hidden');return}try{const supported=await BarcodeDetector.getSupportedFormats();const wanted=['qr_code','ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf','codabar'].filter(x=>supported.includes(x));const detector=new BarcodeDetector({formats:wanted});scanStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});video.srcObject=scanStream;await video.play();const detect=async()=>{if(!scanStream)return;try{const found=await detector.detect(video);const code=normalizedCode(found[0]?.rawValue);if(code){if(code===scanCandidate){scanHits+=1}else{scanCandidate=code;scanHits=1;scanCandidateAt=Date.now()}status.textContent='Leyendo: '+code;if(scanHits>=4&&Date.now()-scanCandidateAt>=350){el('codeInput').value=code;stopScanner(false);video.classList.add('hidden');status.textContent='Código detectado: '+code+'. Buscando producto…';setTimeout(()=>openCode(code),450);return}}else{scanCandidate='';scanHits=0}}catch(_){}scanFrame=requestAnimationFrame(detect)};detect()}catch(_){stopScanner(false);video.classList.add('hidden');status.textContent='No se pudo abrir la cámara. Podés ingresar el código manualmente.'}}
-async function loadProduct(){try{el('productCard').innerHTML='<div class="loading">Consultando producto...</div>';const u=new URL('/api/ext/qr/product',location.origin);u.searchParams.set('tenant',TENANT);u.searchParams.set('codigo',CODE);renderProduct(await jsonFetch(u.toString()))}catch(e){el('productCard').innerHTML='<div class="error"><b>No encontramos este producto.</b><br/><span>Código consultado: '+esc(CODE)+'</span><br/><span>'+esc(e.message)+'</span><div class="actions"><button class="btn btnPrimary" id="rescanProductBtn" type="button">Escanear o ingresar otro código</button></div></div>';const sb=el('rescanProductBtn');if(sb)sb.addEventListener('click',openScannerPanel)}}
+async function loadProduct(){try{el('productCard').innerHTML='<div class="loading">Consultando producto...</div>';const u=new URL('/api/ext/qr/product',location.origin);u.searchParams.set('tenant',TENANT);u.searchParams.set('codigo',CODE);renderProduct(await jsonFetch(u.toString()))}catch(e){el('productCard').innerHTML='<div class="error"><b>No pudimos cargar este producto.</b><br/><span>Código consultado: '+esc(CODE)+'</span><br/><span>'+esc(e.message)+'</span><div class="actions"><button class="btn btnPrimary" id="rescanProductBtn" type="button">Escanear o ingresar otro código</button></div></div>';const sb=el('rescanProductBtn');if(sb)sb.addEventListener('click',openScannerPanel)}}
  async function callAi(message,initial=false){if(sending)return;sending=true;const btn=el('sendBtn');if(btn)btn.disabled=true;if(message&&!initial)addMsg('user',message);addMsg('bot','',true);try{const j=await jsonFetch('/api/ext/qr/chat',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({tenant:TENANT,codigo:CODE,sessionId:sessionId(),message:message||'',initial})});removeTyping();if(j.conversationId)conversationId=j.conversationId;started=true;await syncChatMessages(true);startChatPolling()}catch(e){removeTyping();addMsg('bot','No pude obtener información adicional en este momento. '+e.message)}finally{sending=false;if(btn)btn.disabled=false}}
 async function startAi(){el('chat').classList.add('open');el('chat').scrollIntoView({behavior:'smooth',block:'start'});if(!started){const b=el('moreBtn');if(b)b.disabled=true;await callAi('',true);if(b)b.disabled=false}else{await syncChatMessages(true);startChatPolling();el('message').focus()}}
 async function send(){const box=el('message');const msg=String(box.value||'').trim();if(!msg||sending)return;box.value='';await callAi(msg,false);box.focus()}
