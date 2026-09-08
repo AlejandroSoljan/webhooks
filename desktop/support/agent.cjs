@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.062 | Fecha: 2026-09-08
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -48,15 +48,10 @@ async function run(options = {}) {
     store.write('auth:' + id, value == null ? null : JSON.stringify(value, b.BufferJSON.replacer));
   };
   const clearAuth = () => { for (const id of store.read('auth-index') || []) store.write('auth:' + id, null); store.write('auth-index', []); };
-  const order = new Map(), seen = new Set(store.read('outbox-index') || []);
-  let renewedAt = Date.now();
-  for (const id of seen) {
-    const pending = store.read('outbox:' + id);
-    if (pending) order.set(id, Date.parse(pending.at));
-    if (Date.now() - renewedAt > 5000) { await request('heartbeat', { queuedMessages: seen.size }); renewedAt = Date.now(); }
-  }
+  // Preserve the saved queue order without reading thousands of payload files at startup.
+  const order = new Map(Object.entries(store.read('outbox-order') || {})), seen = new Set(store.read('outbox-index') || []);
+  let uploadLimit = 25;
   const recentFirst = ids => ids.sort((a, b) => (order.get(b) || 0) - (order.get(a) || 0));
-  if (seen.size) store.write('outbox-index', recentFirst([...seen]));
   const queue = async (messages, historical = false) => {
     for (let offset = 0; offset < messages.length; offset += 50) {
       const index = new Set(store.read('outbox-index') || []);
@@ -72,7 +67,7 @@ async function run(options = {}) {
       // An interrupted upload is replayed idempotently using the WhatsApp ID.
       if (!seen.has(id)) { store.write('outbox:' + id, { ...message, historical }); index.add(id); seen.add(id); order.set(id, Date.parse(message.at)); changed = true; }
       }
-      if (changed) store.write('outbox-index', recentFirst([...index]));
+      if (changed) { store.write('outbox-index', recentFirst([...index])); store.write('outbox-order', Object.fromEntries(order)); }
       // Large history events must yield so heartbeat and uploads keep running.
       await pause(0);
     }
@@ -107,25 +102,31 @@ async function run(options = {}) {
       if (state.desired !== 'connected') {
         if (socket) { stopSocket(); await request('session', { state: 'disconnected' }); }
       } else if (!socket && Date.now() >= retryAt) connect();
+      // Processing must progress even when a subsequent upload times out.
+      await request('work');
+      await request('heartbeat', { queuedMessages: (store.read('outbox-index') || []).length });
       // Bounded batches avoid one HTTP request and one full index rewrite per message.
       const messages = [], ids = [];
-      for (const id of (store.read('outbox-index') || []).slice(0, 25)) {
+      for (const id of (store.read('outbox-index') || []).slice(0, uploadLimit)) {
         const message = store.read('outbox:' + id);
         if (message && Buffer.byteLength(JSON.stringify({ messages: [...messages, message] })) > 110000) break;
         ids.push(id); if (message) messages.push(message);
       }
-      if (messages.length) await request('messages', { messages });
+      if (messages.length) {
+        try { await request('messages', { messages }); }
+        catch (error) { uploadLimit = Math.max(1, Math.floor(uploadLimit / 2)); throw error; }
+      }
       if (ids.length) {
         const sent = new Set(ids);
         store.write('outbox-index', (store.read('outbox-index') || []).filter(value => !sent.has(value)));
         for (const id of ids) store.write('outbox:' + id, null);
       }
       await request('heartbeat', { queuedMessages: (store.read('outbox-index') || []).length });
-      await request('work');
     } catch (error) {
-      stopSocket();
-      if (error.status === 401 || error.status === 403) { status({ state: 'access_revoked' }); process.exitCode = 2; return; }
-      status({ state: 'reconnecting' });
+      if (error.status === 401 || error.status === 403) { stopSocket(); status({ state: 'access_revoked' }); process.exitCode = 2; return; }
+      if (error.status === 409) stopSocket();
+      // A slow Asisto request does not require reconnecting WhatsApp and importing history again.
+      status({ state: 'retrying', error: error.status || error.name, uploadLimit });
     }
     await pause((store.read('outbox-index') || []).length ? 250 : 5000);
   }
