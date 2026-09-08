@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.049 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.051 | Fecha: 2026-09-08
 const crypto = require('node:crypto');
 // AAD binds every ciphertext to tenant, user (or tenant integration), and record purpose.
 function createVault(keyring, activeKey) {
@@ -25,5 +25,20 @@ function createVault(keyring, activeKey) {
     },
   };
 }
-const vaultFromEnv = () => createVault(JSON.parse(process.env.SUPPORT_ENCRYPTION_KEYS || '{}'), process.env.SUPPORT_ACTIVE_KEY);
-module.exports = { createVault, vaultFromEnv };
+function hasSecureCookieSecret(env) {
+  return typeof env.AUTH_COOKIE_SECRET === 'string' && env.AUTH_COOKIE_SECRET.length >= 32 && env.AUTH_COOKIE_SECRET !== 'dev-unsafe-secret-change-me';
+}
+function vaultFromEnv(env = process.env) {
+  // Preserve explicitly configured keyrings, including failures: never silently
+  // switch keys when a deployment has a malformed or incomplete configuration.
+  if (env.SUPPORT_ENCRYPTION_KEYS !== undefined || env.SUPPORT_ACTIVE_KEY !== undefined) {
+    return createVault(JSON.parse(env.SUPPORT_ENCRYPTION_KEYS || '{}'), env.SUPPORT_ACTIVE_KEY);
+  }
+  if (!hasSecureCookieSecret(env)) throw new Error('support_secure_cookie_secret_required');
+  // Domain separation keeps the AES key distinct from the cookie-signing key,
+  // while reusing Asisto's existing secret without another managed variable.
+  const key = Buffer.from(crypto.hkdfSync('sha256', env.AUTH_COOKIE_SECRET,
+    'asisto/support/v1', 'session-and-content-encryption', 32));
+  return createVault({ 'asisto-auth-v1': key.toString('base64') }, 'asisto-auth-v1');
+}
+module.exports = { createVault, vaultFromEnv, hasSecureCookieSecret };

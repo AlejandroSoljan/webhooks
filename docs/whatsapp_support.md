@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.050 | Fecha: 2026-09-08 -->
+<!-- Asisto | Version: 5.00.051 | Fecha: 2026-09-08 -->
 # Tickets desde WhatsApp: diseño y primera vertical
 
 ## Estado de esta entrega
@@ -7,7 +7,7 @@ Vertical experimental, con procesamiento desactivado por defecto. Incluye sesió
 
 ## Orden de validación acordado
 
-1. Activar claves y worker; vincular un WhatsApp desde el QR de Asisto y comprobar reconexión sin volver a escanear.
+1. Activar el worker reutilizando la configuración existente de Asisto; vincular un WhatsApp desde el QR y comprobar reconexión sin volver a escanear.
 2. Probar un contacto habilitado y uno excluido, mensajes entrantes/salientes y un período histórico corto. Confirmar que cada ventana conserva el contexto.
 3. Configurar el transcriptor local y probar un audio real. Revisar su texto, tiempo de procesamiento y resultado antes de analizar un volumen mayor.
 4. Revisar un lote pequeño de borradores, recordar nombres de empresa/contacto, editar y aprobar dentro de Asisto. Corregir detección y agrupación con los casos observados.
@@ -122,7 +122,7 @@ Hasta implementar y probar esto, el módulo carece deliberadamente de método HT
 
 ## API de esta vertical
 
-Base `/api/support`, cookie de Asisto. Para mutaciones: JSON, `Origin` idéntico a `SUPPORT_PUBLIC_ORIGIN` y `X-Asisto-Support: 1`.
+Base `/api/support`, cookie de Asisto. Para mutaciones: JSON, `Origin` idéntico al origen de `PUBLIC_BASE_URL` (o `SUPPORT_PUBLIC_ORIGIN` si se configuró explícitamente) y `X-Asisto-Support: 1`.
 
 | Método y ruta | Uso |
 | --- | --- |
@@ -145,17 +145,17 @@ Base `/api/support`, cookie de Asisto. Para mutaciones: JSON, `Origin` idéntico
 
 ## Activación y operación
 
-Usar Node 24, MongoDB y un servicio worker separado del proceso web. No ejecutar migraciones contra producción desde tests.
+Usar Node 24, MongoDB y un servicio worker separado del proceso web. No ejecutar migraciones contra producción desde tests. Reutilizar `MONGODB_URI`, `MONGODB_DBNAME`, `PUBLIC_BASE_URL` y `AUTH_COOKIE_SECRET` de Asisto. No hace falta crear una clave ni un dominio adicionales para soporte. El único interruptor de activación es:
 
 ```text
 SUPPORT_ENABLED=true
-SUPPORT_PUBLIC_ORIGIN=https://tu-asisto.example
-SUPPORT_ACTIVE_KEY=v1
-SUPPORT_ENCRYPTION_KEYS={"v1":"<clave de 32 bytes en base64 desde tu gestor de secretos>"}
-AUTH_COOKIE_SECRET=<secreto aleatorio de al menos 32 caracteres>
 ```
 
-Configurar las claves en ambos procesos, nunca en archivos versionados ni variables públicas del frontend. Agregar un nuevo `kid` activo permite cifrar nuevas escrituras sin perder lectura de datos antiguos; mantener las claves anteriores hasta recifrar todos sus registros. El recifrado masivo y la rotación de la cuenta de HubSpot son operaciones pendientes de runbook específico.
+Web y worker deben recibir el mismo secreto existente `AUTH_COOKIE_SECRET`, de al menos 32 caracteres y distinto del valor de desarrollo. HKDF-SHA256 deriva internamente una clave AES de 32 bytes con salt `asisto/support/v1`, contexto `session-and-content-encryption` e identificador `asisto-auth-v1`. Así se separa su uso de la firma de cookies sin administrar otro secreto. No se guardan claves en archivos versionados ni en variables públicas del frontend.
+
+Al reutilizar el secreto de sesión, su rotación también afecta la lectura de los datos cifrados de soporte: conservar el secreto anterior y recifrar los registros antes de retirarlo. No rotarlo como una simple invalidación de cookies. El recifrado masivo sigue pendiente de un runbook específico.
+
+Por compatibilidad, una configuración explícita previa de `SUPPORT_ENCRYPTION_KEYS` y `SUPPORT_ACTIVE_KEY` mantiene prioridad; no se cambia su cifrado automáticamente. Una configuración explícita incompleta o inválida bloquea el módulo, sin recurrir silenciosamente a otra clave. `SUPPORT_PUBLIC_ORIGIN` también se conserva como override opcional del dominio existente.
 
 ```bash
 npm ci
@@ -184,7 +184,7 @@ Rollback: desactivar el flag en la web, detener el worker y conservar las colecc
 
 `npm test` ejecuta los tests existentes y los de soporte. `npm run test:support` ejecuta sólo el módulo. Se usa un proceso MongoDB efímero real (`mongodb-memory-server`); la primera corrida necesita descargar su binario o disponer de `MONGOMS_SYSTEM_BINARY`. No usa la URI de producción.
 
-Resultado tras integrar los cambios actuales de main: 48 pruebas aprobadas (25 de soporte y 23 existentes). Se cubren: cifrado/contexto/rotación, aislamiento, CSRF, permisos, claves binarias Baileys, QR/eventos/logout con socket simulado, exclusiones, debounce, histórico superpuesto, edición concurrente, evidencia tardía, audio pendiente/transcrito, límites de audio, métricas, reparación de cola, claims simultáneos, lease vencido y contrato HubSpot con transporte simulado. Las pruebas también verifican el menú, el shell, el editor de permisos y el diagnóstico sin secretos cuando falta configuración. Se verificaron selección, edición y aprobación local en navegador con una fixture descartable. No se han vinculado teléfonos reales, transcrito audios reales ni creado tickets remotos.
+Resultado tras integrar los cambios actuales de main: 51 pruebas aprobadas (28 de soporte y 23 existentes). Se cubren: cifrado/contexto/rotación, aislamiento, CSRF, permisos, claves binarias Baileys, QR/eventos/logout con socket simulado, exclusiones, debounce, histórico superpuesto, edición concurrente, evidencia tardía, audio pendiente/transcrito, límites de audio, métricas, reparación de cola, claims simultáneos, lease vencido y contrato HubSpot con transporte simulado. Las pruebas también verifican el menú, el shell, el editor de permisos y el diagnóstico sin secretos cuando falta configuración. Se verificaron selección, edición y aprobación local en navegador con una fixture descartable. No se han vinculado teléfonos reales, transcrito audios reales ni creado tickets remotos.
 
 El audit de dependencias detectó 15 avisos (13 moderados y 2 críticos) en cadenas legacy de Express/qs, Telegram/request, Google y ExcelJS. No se aplicaron actualizaciones mayores ajenas a esta vertical. Evaluar esas dependencias antes de desplegar el piloto expuesto. Baileys queda fijado a `7.0.0-rc14`; validar vinculación y reconexión reales antes de producción y actualizarlo mediante un cambio probado.
 

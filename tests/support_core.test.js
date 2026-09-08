@@ -1,7 +1,7 @@
-// Asisto | Version: 5.00.049 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.051 | Fecha: 2026-09-08
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createVault } = require('../src/support/crypto');
+const { createVault, vaultFromEnv } = require('../src/support/crypto');
 const { scopeOf, settings, excluded, groupMessages, analyze, range, scopedId } = require('../src/support/core');
 const { HubSpotContract } = require('../src/support/hubspot');
 const { localTranscriber } = require('../src/support/baileys');
@@ -22,6 +22,39 @@ test('setup diagnostics fail closed and do not expose secrets', () => {
   const { ready, checks } = inspectConfiguration({ SUPPORT_ENABLED: 'true', SUPPORT_PUBLIC_ORIGIN: 'http://public.example', SUPPORT_ENCRYPTION_KEYS: 'secret-invalid-json', AUTH_COOKIE_SECRET: 'short' });
   assert.equal(ready, false); assert.equal(checks.find(c => c.key === 'origin').ok, false);
   assert.equal(JSON.stringify(checks).includes('secret-invalid-json'), false);
+});
+
+test('existing Asisto variables configure web and worker encryption consistently', () => {
+  const env = { SUPPORT_ENABLED: 'true', PUBLIC_BASE_URL: 'https://asisto.example/app', AUTH_COOKIE_SECRET: 'fixture-only-existing-cookie-secret-123456', MONGODB_URI: 'mongodb://fixture' };
+  const web = inspectConfiguration(env), worker = vaultFromEnv({ ...env });
+  assert.equal(web.ready, true);
+  assert.equal(web.publicOrigin, 'https://asisto.example');
+  const sealed = web.vault.seal({ text: 'private' }, 'owner');
+  assert.deepEqual(worker.open(sealed, 'owner'), { text: 'private' });
+  assert.throws(() => worker.open(sealed, 'other-owner'));
+  assert.throws(() => vaultFromEnv({ ...env, AUTH_COOKIE_SECRET: 'different-fixture-cookie-secret-123456' }).open(sealed, 'owner'));
+  // The existing cookie secret is input to a domain-separated derivation,
+  // not used directly as the AES key.
+  const raw = createVault({ [sealed.kid]: Buffer.from(env.AUTH_COOKIE_SECRET).subarray(0, 32).toString('base64') }, sealed.kid);
+  assert.throws(() => raw.open(sealed, 'owner'));
+});
+
+test('derived encryption rejects missing and unsafe existing secrets', () => {
+  for (const AUTH_COOKIE_SECRET of [undefined, '', 'short', 'dev-unsafe-secret-change-me']) {
+    assert.throws(() => vaultFromEnv({ AUTH_COOKIE_SECRET }), /support_secure_cookie_secret_required/);
+  }
+});
+
+test('existing explicit keyrings and origin overrides retain priority without silent fallback', () => {
+  const key = Buffer.alloc(32, 7).toString('base64');
+  const env = { AUTH_COOKIE_SECRET: 'fixture-only-existing-cookie-secret-123456', PUBLIC_BASE_URL: 'https://asisto.example', SUPPORT_PUBLIC_ORIGIN: 'https://override.example', SUPPORT_ENCRYPTION_KEYS: JSON.stringify({ v1: key }), SUPPORT_ACTIVE_KEY: 'v1' };
+  const sealed = createVault({ v1: key }, 'v1').seal({ kept: true }, 'owner');
+  assert.deepEqual(vaultFromEnv(env).open(sealed, 'owner'), { kept: true });
+  assert.equal(inspectConfiguration(env).publicOrigin, 'https://override.example');
+  for (const overrides of [{ SUPPORT_ENCRYPTION_KEYS: 'invalid' }, { SUPPORT_ENCRYPTION_KEYS: undefined }, { SUPPORT_ACTIVE_KEY: undefined }, { SUPPORT_ENCRYPTION_KEYS: '' }]) {
+    assert.throws(() => vaultFromEnv({ ...env, ...overrides }));
+  }
+  assert.equal(inspectConfiguration({ ...env, SUPPORT_PUBLIC_ORIGIN: 'http://unsafe.example' }).publicOrigin, undefined);
 });
 test('scope cannot fall back to a global tenant and respects page access', () => {
   assert.throws(() => scopeOf({ uid: '1', role: 'user' }), /authentication_required/);
