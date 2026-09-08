@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.055 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.056 | Fecha: 2026-09-08
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".

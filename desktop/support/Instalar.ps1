@@ -1,7 +1,7 @@
-# Asisto | Version: 5.00.055 | Fecha: 2026-09-08
+# Asisto | Version: 5.00.056 | Fecha: 2026-09-08
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:LOCALAPPDATA 'AsistoSupport'
-$release = Join-Path $root 'app-5.00.055'
+$release = Join-Path $root 'app-5.00.056'
 $arch = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
 $runtime = Join-Path $root "node-v24.12.0-win-$arch"
 $node = Join-Path $runtime 'node.exe'
@@ -36,6 +36,15 @@ if ($LASTEXITCODE -ne 0) { throw 'No se pudo proteger el perfil local.' }
 $runScript = Join-Path $release 'run.ps1'
 $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runScript`" -Profile `"$profile`" -Node `"$node`""
 & (Join-Path $release 'startup.ps1') -Profile $profile -Node $node
+# Let Task Scheduler release its previous instance before requesting a new run.
+# Otherwise IgnoreNew can discard the start while the old wrapper is exiting.
+$taskName = "AsistoSupport-$profileId"
+Stop-ScheduledTask -TaskName $taskName
+$deadline = (Get-Date).AddSeconds(15)
+while ((Get-ScheduledTask -TaskName $taskName).State -eq 'Running') {
+  if ((Get-Date) -gt $deadline) { throw 'La tarea anterior no se detuvo. Reintenta la instalacion.' }
+  Start-Sleep -Milliseconds 200
+}
 # Only replace processes for this exact, preserved profile, after registration succeeds.
 $owned = @(Get-CimInstance Win32_Process | Where-Object {
   $_.Name -in @('powershell.exe','node.exe') -and $_.CommandLine -and
@@ -45,7 +54,12 @@ $owned = @(Get-CimInstance Win32_Process | Where-Object {
 foreach ($proc in ($owned | Sort-Object @{Expression={if ($_.Name -eq 'powershell.exe') {0} else {1}}})) {
   Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
 }
-Start-ScheduledTask -TaskName "AsistoSupport-$profileId"
+Start-ScheduledTask -TaskName $taskName
+$deadline = (Get-Date).AddSeconds(10)
+while ((Get-ScheduledTask -TaskName $taskName).State -ne 'Running') {
+  if ((Get-Date) -gt $deadline) { throw 'Windows no inicio la tarea de Asisto. Revisa el Programador de tareas.' }
+  Start-Sleep -Milliseconds 200
+}
 Write-Host 'Instalado. Se abrira Asisto para autorizar esta PC con tu usuario.'
 Write-Host 'Luego el agente iniciara automaticamente al ingresar a Windows.'
 Write-Host "Perfil instalado: $profile"

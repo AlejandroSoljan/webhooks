@@ -1,4 +1,4 @@
-# Asisto | Version: 5.00.055 | Fecha: 2026-09-08
+# Asisto | Version: 5.00.056 | Fecha: 2026-09-08
 param([Parameter(Mandatory=$true)][string]$Profile, [Parameter(Mandatory=$true)][string]$Node)
 $ErrorActionPreference = 'Stop'
 $profileId = Split-Path -Leaf $Profile
