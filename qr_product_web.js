@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.043 | Fecha: 2026-09-05
+// Asisto | Version: 5.00.045 | Fecha: 2026-09-08
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta el catálogo local y su API de respaldo: NO usa OpenAI.
@@ -10,6 +10,7 @@ const axios = require('axios');
 const { ObjectId } = require('mongodb');
 const { getDb } = require('./db');
 const { createProductCatalog, sourceKey } = require('./product_catalog');
+const { startManagerCatalogScheduler } = require('./product_catalog_sync');
 const {
   getGPTReply,
   syncSessionConversation,
@@ -1287,6 +1288,8 @@ el('sendBtn').addEventListener('click',send);el('message').addEventListener('key
 function mountQrProductWeb(app) {
   if (!app || app.__asistoQrProductWebMounted) return;
   app.__asistoQrProductWebMounted = true;
+
+  startManagerCatalogScheduler({ getDb, loadConfig: loadQrConfig, normalize: normalizeQrProduct });
 
   // Índices defensivos. No bloquean el arranque si Mongo todavía no está disponible.
   setImmediate(async () => {
