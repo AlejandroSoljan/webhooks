@@ -234,7 +234,12 @@ test('incomplete setup leaves the panel visible and operations blocked without c
     const response = await fetch(base + '/api/support/status'), status = await response.json();
     assert.equal(response.status, 200); assert.equal(status.ready, false);
     assert.equal(JSON.stringify(status).includes('invalid-secret-fixture'), false);
-    assert.equal((await fetch(base + '/admin/support')).status, 200);
+    const panel = await fetch(base + '/admin/support');
+    assert.equal(panel.status, 200);
+    const directives = new Map(panel.headers.get('content-security-policy').split(';').map(part => { const [name, ...sources] = part.trim().split(/\s+/); return [name, sources]; }));
+    assert.deepEqual(directives.get('connect-src'), ["'self'", 'http://127.0.0.1:17658']);
+    assert.deepEqual(directives.get('script-src'), ["'self'"]);
+    assert.deepEqual(directives.get('frame-ancestors'), ["'self'"]);
     assert.equal((await fetch(base + '/api/support/session', { method: 'POST' })).status, 503);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });

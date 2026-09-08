@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.059 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.060 | Fecha: 2026-09-08
 const express = require('express');
 const path = require('node:path');
 const QRCode = require('qrcode');
@@ -127,7 +127,7 @@ function mountSupport(app) {
   });
   app.get('/admin/support', (req, res) => {
     try { scopeOf(req.user); } catch { return res.status(403).send('No autorizado'); }
-    res.set('Cache-Control', 'no-store').set('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-ancestors 'self'");
+    res.set('Cache-Control', 'no-store').set('Content-Security-Policy', "default-src 'self'; connect-src 'self' http://127.0.0.1:17658; img-src 'self' data:; style-src 'self'; script-src 'self'; frame-ancestors 'self'");
     res.sendFile(path.join(__dirname, 'panel.html'));
   });
 }
