@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.046 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.047 | Fecha: 2026-09-08
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const axios = require('axios');
@@ -25,6 +25,8 @@ test('arma la pagina completa sin perder key ni enviar un codigo particular', ()
   assert.equal(url.searchParams.get('valor'), '*');
   assert.equal(url.searchParams.get('pag_num'), '3');
   assert.equal(url.searchParams.get('pag_cant_reg'), '500');
+  assert.equal(url.searchParams.get('inactivos'), 'S');
+  assert.equal(url.searchParams.get('solo_stock'), 'N');
   assert.equal(url.searchParams.get('error_sin_registros'), 'false');
 });
 

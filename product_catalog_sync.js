@@ -1,10 +1,10 @@
-// Asisto | Version: 5.00.046 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.047 | Fecha: 2026-09-08
 // Sincronizacion paginada y conservadora del catalogo Manager hacia MongoDB.
 const axios = require('axios');
 const { COLLECTION, sourceKey } = require('./product_catalog');
 
 const STATE_COLLECTION = 'qr_product_catalog_sync';
-const SYNC_VERSION = 2;
+const SYNC_VERSION = 3;
 const text = value => String(value ?? '').trim();
 const intEnv = (name, fallback, min, max) => {
   const value = Number(process.env[name]);
@@ -31,6 +31,10 @@ function managerPageRequest(cfg, page, pageSize) {
   url.searchParams.set('valor', '*');
   url.searchParams.set('pag_num', String(page));
   url.searchParams.set('pag_cant_reg', String(pageSize));
+  // La API Manager omite miles de registros con el valor predeterminado,
+  // incluso algunos que una consulta individual informa como activos.
+  url.searchParams.set('inactivos', 'S');
+  url.searchParams.set('solo_stock', 'N');
   url.searchParams.set('error_sin_registros', 'false');
   const headers = { Accept: 'application/json' };
   if (cfg.apiAuthHeader && cfg.apiAuthValue) headers[cfg.apiAuthHeader] = cfg.apiAuthValue;
