@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.062 | Fecha: 2026-09-08 -->
+<!-- Asisto | Version: 5.00.063 | Fecha: 2026-09-08 -->
 # Tickets desde WhatsApp: agente personal en cada PC
 
 ## Arquitectura acordada
@@ -105,3 +105,5 @@ Ejecutar `npm test`, `npm run support:migrate` y desplegar la web normalmente. L
 Se prueban emparejamiento/CSRF, usuarios simultáneos, reemplazo/revocación, recuperación de lease, aislamiento de mensajes/trabajos, DPAPI en Windows y los flujos previos. Las dependencias del instalador no reportaron vulnerabilidades en la validación. La vinculación y reconexión reales con WhatsApp requieren el teléfono del usuario.
 
 Rollback: desactivar `SUPPORT_ENABLED`, revocar la PC o deshabilitar su inicio de Windows. Conservar perfiles y colecciones cifradas hasta decidir su retención. No se modifican colecciones legacy ni se publican datos en HubSpot.
+
+La bandeja muestra por defecto borradores para revisar. El selector Mostrar permite consultar los descartados y todas las conversaciones, con contacto y fecha. Un descarte explica los límites del detector y permite consultar los mensajes de origen, incluso para registros anteriores; no abre un formulario vacío. La evidencia tardía actualiza campos generados automáticamente sólo si no hubo intervención humana.

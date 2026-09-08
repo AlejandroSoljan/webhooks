@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.063 | Fecha: 2026-09-08
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupMessages, analyze, text, range } = require('./core');
 
@@ -181,16 +181,27 @@ class SupportService {
       const memory = await this.col('memory').findOne({ ...scope, jid: job.jid });
       const draft = { ...result, messageDate: group[0].at.toISOString(), companyId: memory?.companyId || '', company: memory?.company || '', contactId: memory?.contactId || '', contact: memory?.contact || group.find(m => !m.fromMe)?.name || '', identitySource: memory?.source || (memory?.verifiedAt ? 'hubspot' : 'unassigned'), proposedAction: 'review' };
       if (existing.length) {
-        // Keep human edits; any new evidence invalidates the previous approval.
-        await this.col('drafts').updateOne({ _id, ...scope }, { $set: { fingerprint, messageIds: ids, state: 'needs_review', sourceChanged: true, source: this.vault.seal(draft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'source_changed', at: this.now() } } });
+        // Refresh generated fields as history arrives, but never overwrite human edits.
+        const untouched = existing[0].events?.every(event => ['generated', 'source_changed'].includes(event.action)) === true;
+        await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision }, { $set: { fingerprint, messageIds: ids, state: untouched ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !untouched, ...(untouched ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(draft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'source_changed', at: this.now() } } });
       } else {
         await this.col('drafts').updateOne({ _id, ...scope }, { $setOnInsert: { ...scope, jid: job.jid, messageIds: ids, fingerprint, state: result.result === 'ignored' ? 'ignored' : 'pending', revision: 1, fields: this.vault.seal(draft, _id), source: this.vault.seal(draft, _id + ':source'), mode: config.mode, createdAt: this.now(), updatedAt: this.now(), events: [{ action: 'generated', at: this.now() }] } }, { upsert: true });
       }
     }
   }
-  async listDrafts(scope, before) {
-    const rows = await this.col('drafts').find({ ...scope, ...(before ? { _id: { $lt: text(before, 64) } } : {}) }).sort({ _id: -1 }).limit(50).toArray();
+  async listDrafts(scope, before, view = 'all') {
+    if (!['all', 'tasks', 'ignored'].includes(view)) fail('invalid_draft_view');
+    const rows = await this.col('drafts').find({ ...scope, ...(view === 'tasks' ? { state: { $ne: 'ignored' } } : view === 'ignored' ? { state: 'ignored' } : {}), ...(before ? { _id: { $lt: text(before, 64) } } : {}) }).sort({ _id: -1 }).limit(50).toArray();
     return rows.map(({ fields, source, ...row }) => ({ ...row, fields: this.vault.open(fields, row._id), source: this.vault.open(source, row._id + ':source') }));
+  }
+  async evidence(scope, id) {
+    const draft = await this.col('drafts').findOne({ _id: text(id, 64), ...scope });
+    if (!draft) fail('not_found', 404);
+    const rows = await this.col('messages').find({ ...scope, _id: { $in: draft.messageIds } }).sort({ at: 1, _id: 1 }).limit(500).toArray();
+    return { description: rows.map(row => {
+      const payload = this.vault.open(row.payload, row._id);
+      return `${row.at.toISOString()} ${row.fromMe ? 'Operador' : 'Contacto'}: ${row.audio && !payload.transcribed ? '[Audio pendiente de transcripción]' : payload.text}`;
+    }).join('\n').slice(0, 100000) };
   }
   async editDraft(scope, id, revision, input, approve = false) {
     if (!Number.isInteger(revision) || revision < 1) fail('revision_required', 409);

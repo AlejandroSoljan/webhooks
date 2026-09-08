@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.063 | Fecha: 2026-09-08
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -242,6 +242,34 @@ test('incomplete setup leaves the panel visible and operations blocked without c
     assert.deepEqual(directives.get('frame-ancestors'), ["'self'"]);
     assert.equal((await fetch(base + '/api/support/session', { method: 'POST' })).status, 503);
   } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test('discarded conversations have evidence, a separate scoped view, and populate fields when later history reveals a task', async () => {
+  const [discarded] = await processMessages([message('greeting', 0, { text: 'Buen día' })]);
+  assert.equal(discarded.state, 'ignored');
+  assert.match(discarded.source.description, /Buen día/);
+  assert.equal((await service.listDrafts(scope, null, 'tasks')).length, 0);
+  assert.equal((await service.listDrafts(scope, null, 'ignored')).length, 1);
+  assert.equal((await service.listDrafts(other, null, 'ignored')).length, 0);
+  assert.match((await service.evidence(scope, discarded._id)).description, /Buen día/);
+  await assert.rejects(() => service.evidence(other, discarded._id), /not_found/);
+  await assert.rejects(() => service.listDrafts(scope, null, 'invalid'), /invalid_draft_view/);
+  await processMessages([message('problem', 30)]);
+  const [draft] = await service.listDrafts(scope, null, 'tasks');
+  assert.equal(draft._id, discarded._id);
+  assert.equal(draft.state, 'pending');
+  assert.match(draft.fields.subject, /Manager/);
+  assert.match(draft.fields.description, /Buen día/);
+  assert.equal(draft.sourceChanged, false);
+  assert.equal((await service.listDrafts(scope, null, 'ignored')).length, 0);
+});
+
+test('more greeting history keeps an untouched discarded conversation out of the review inbox', async () => {
+  await processMessages([message('greeting', 0, { text: 'Hola' })]);
+  await processMessages([message('reply', 30, { text: 'Buen día', fromMe: true })]);
+  assert.equal((await service.listDrafts(scope, null, 'tasks')).length, 0);
+  const [draft] = await service.listDrafts(scope, null, 'ignored');
+  assert.match(draft.source.description, /Buen día/);
 });
 
 test('history requested before sync processes later messages only within the selected period and owner', async () => {

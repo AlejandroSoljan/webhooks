@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.063 | Fecha: 2026-09-08
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
@@ -66,18 +66,32 @@
     $('drafts').replaceChildren();
     for (const row of rows) {
       const item = document.createElement('li'), button = document.createElement('button');
-      button.textContent = `${row.fields.subject || 'Conversación sin tarea detectada'} · ${caption(row.state)}`;
-      button.onclick = action(async () => { await save(); show(selected?._id === row._id && selected.revision > row.revision ? selected : row); }); item.append(button); $('drafts').append(item);
+      const who = row.fields.contact || row.jid.replace(/@s\.whatsapp\.net$/, '');
+      const when = new Date(row.fields.messageDate).toLocaleString('es-AR');
+      button.textContent = `${who} · ${when} · ${row.fields.subject || (row.state === 'ignored' ? 'Descartado por el detector' : 'Conversación para revisar')} · ${caption(row.state)}`;
+      button.onclick = action(async () => { await save(); await show(selected?._id === row._id && selected.revision > row.revision ? selected : row); }); item.append(button); $('drafts').append(item);
     }
-    if (!rows.length) $('drafts').textContent = 'Todavía no hay conversaciones procesadas.';
+    if (!rows.length) $('drafts').textContent = $('draftView').value === 'tasks' ? 'No hay borradores para revisar. Podés consultar los descartados por el detector en Mostrar. Revisá el progreso del período para ver si quedan conversaciones pendientes.' : 'No hay conversaciones en esta vista.';
   }
   async function refresh(more = false) {
     if (loading) return; loading = true;
-    try { const page = await api('/drafts' + (more && rows.length ? '?before=' + rows.at(-1)._id : '')); rows = more ? [...rows, ...page] : page; $('more').hidden = page.length < 50; renderList(); } finally { loading = false; }
+    const view = $('draftView').value;
+    try { const query = new URLSearchParams({ view }); if (more && rows.length) query.set('before', rows.at(-1)._id); const page = await api('/drafts?' + query); if (view !== $('draftView').value) return; rows = more ? [...rows, ...page] : page; $('more').hidden = page.length < 50; renderList(); } finally { loading = false; if (view !== $('draftView').value) await refresh(); }
   }
-  function show(row) {
+  async function show(row) {
     selected = structuredClone(row); dirty = false; $('fields').replaceChildren(); $('editor').hidden = false;
     selectionLabel();
+    const discarded = row.state === 'ignored' || (row.fields.result === 'ignored' && !row.fields.subject);
+    $('discarded').hidden = !discarded; $('editor').hidden = discarded;
+    $('reviewTitle').textContent = discarded ? 'Conversación descartada por el detector' : 'Revisión del borrador';
+    if (discarded) {
+      $('discardedEvidence').textContent = row.source.description || 'Cargando los mensajes considerados…';
+      if (!row.source.description) {
+        const evidence = await api('/drafts/' + row._id + '/evidence');
+        if (selected?._id === row._id) $('discardedEvidence').textContent = evidence.description || 'Los mensajes originales ya no están disponibles.';
+      }
+      return;
+    }
     $('memoryJid').value = row.jid; $('memoryCompany').value = row.fields.company || ''; $('memoryContact').value = row.fields.contact || ''; $('existingTickets').textContent = '';
     $('evidence').textContent = row.source.description || row.source.reason || '';
     $('acknowledge').hidden = !row.sourceChanged || !!row.reconciliationRequired;
@@ -149,6 +163,7 @@
   $('tokenForm').onsubmit = action(async () => { try { await api('/hubspot', 'PUT', { token: $('token').value }); $('notice').textContent = 'HubSpot conectado.'; } finally { $('token').value = ''; } });
   $('memoryForm').onsubmit = action(async () => { await api('/memory', 'PUT', { jid: $('memoryJid').value, company: $('memoryCompany').value, contact: $('memoryContact').value }); $('notice').textContent = 'Contacto y empresa guardados en Asisto para próximos borradores.'; await memories(); });
   $('refresh').onclick = action(() => refresh()); $('more').onclick = action(() => refresh(true)); $('editor').onsubmit = action(save);
+  $('draftView').onchange = action(async () => { await save(); selected = null; $('editor').hidden = true; $('discarded').hidden = true; $('selection').textContent = 'Seleccioná una conversación.'; renderedList = null; await refresh(); });
   $('approve').onclick = action(async () => { await save(); const result = await api('/drafts/' + selected._id + '/approve', 'POST', { revision: selected.revision }); selected.revision = result.revision; selected.state = 'approved'; selectionLabel(); $('notice').textContent = 'Aprobación guardada en Asisto. No se envió a HubSpot.'; await refresh(); });
   $('acknowledge').onclick = action(async () => { await save(); const result = await api('/drafts/' + selected._id + '/acknowledge-source', 'POST', { revision: selected.revision }); selected.revision = result.revision; selected.sourceChanged = false; $('approve').disabled = selected.mode === 'suggest'; $('acknowledge').hidden = true; });
   $('tickets').onclick = action(async () => { await save(); const tickets = await api('/hubspot/companies/' + encodeURIComponent(selected.fields.companyId) + '/tickets'); $('existingTickets').textContent = tickets.map(t => `${t.id} · ${t.properties.subject}\n${t.properties.content || ''}`).join('\n\n') || 'No se encontraron tickets.'; });

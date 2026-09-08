@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.049 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.063 | Fecha: 2026-09-08
 const crypto = require('node:crypto');
 
 class SupportError extends Error {
@@ -53,7 +53,7 @@ function analyze(messages) {
   const description = messages.map(m => `${m.at.toISOString()} ${m.fromMe ? 'Operador' : 'Contacto'}: ${m.text}`).join('\n');
   const incoming = normalize(messages.filter(m => !m.fromMe).map(m => m.text).join(' '));
   const support = /\bmanager\b/.test(incoming) && /error|problema|no (puedo|funciona|imprime|abre)|como |configur|actualiz|necesito|consulta|falla/.test(incoming);
-  if (!support) return { result: 'ignored', reason: 'no_explicit_manager_task' };
+  if (!support) return { result: 'ignored', reason: 'no_explicit_manager_task', description };
   const errorType = /actualiz/.test(incoming) ? 'Actualización' : /configur/.test(incoming) ? 'Configuración / Implementación' : /como |consulta/.test(incoming) ? 'Consulta / Capacitacion' : 'Error software';
   return { result: 'draft', subject: messages.find(m => !m.fromMe && /manager/i.test(m.text))?.text.slice(0, 120) || 'Consulta sobre Manager', description, category: 'Soporte Remoto', errorType, status: 'Nuevo', channel: 'WhatsApp', confidence: 'needs_review' };
 }

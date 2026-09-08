@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.063 | Fecha: 2026-09-08
 const express = require('express');
 const path = require('node:path');
 const QRCode = require('qrcode');
@@ -54,7 +54,8 @@ function createRouter({ getService, hubspotFactory = token => new HubSpotContrac
   }));
   router.post('/history', route((req, s, scope) => s.history(scope, req.body.from, req.body.to)));
   router.get('/history/status', route((req, s, scope) => s.historyStatus(scope, req.query.from, req.query.to)));
-  router.get('/drafts', route((req, s, scope) => s.listDrafts(scope, req.query.before)));
+  router.get('/drafts', route((req, s, scope) => s.listDrafts(scope, req.query.before, req.query.view || 'tasks')));
+  router.get('/drafts/:id/evidence', route((req, s, scope) => s.evidence(scope, req.params.id)));
   router.patch('/drafts/:id', route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, req.body.fields)));
   router.post('/drafts/:id/approve', route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, {}, true)));
   router.post('/drafts/:id/acknowledge-source', route(async (req, s, scope) => {
