@@ -1,6 +1,6 @@
-// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.066 | Fecha: 2026-09-08
 const crypto = require('node:crypto');
-const { fail, scopedId, hash, settings, excluded, groupMessages, analyze, text, range } = require('./core');
+const { fail, scopedId, hash, settings, excluded, groupMessages, analyze, ANALYZER_VERSION, text, range } = require('./core');
 
 class SupportService {
   constructor(db, vault, { transcribe = null, now = () => new Date() } = {}) {
@@ -145,7 +145,7 @@ class SupportService {
       if (ids.length > 500) fail('conversation_window_too_large', 422);
       const fingerprint = hash(ids);
       const existing = await this.col('drafts').find({ ...scope, jid: job.jid, messageIds: { $in: ids } }).toArray();
-      if (existing.length === 1 && existing[0].fingerprint === fingerprint) continue;
+      if (existing.length === 1 && existing[0].fingerprint === fingerprint && existing[0].analyzerVersion === ANALYZER_VERSION) continue;
       if (existing.length > 1) {
         await this.col('drafts').updateMany({ ...scope, _id: { $in: existing.map(d => d._id) } }, { $set: { state: 'needs_review', sourceChanged: true, reconciliationRequired: true, updatedAt: this.now() }, $inc: { revision: 1 } });
         continue;
@@ -178,15 +178,15 @@ class SupportService {
       if (result.description?.length > 100000) fail('conversation_window_too_large', 422);
       const _id = existing[0]?._id || scopedId(scope, 'draft', ids[0]);
       await check();
-      await this.col('usage').insertOne({ ...scope, conversationId: job.jid, recordId: _id, fingerprint, model: 'manager-rules-v1', kind: 'analysis', inputTokens: 0, outputTokens: 0, audioSeconds: 0, processingUnits: decoded.reduce((n, m) => n + m.text.length, 0), unit: 'characters', costUsd: 0, durationMs: Date.now() - started, result: result.result, at: this.now() });
+      await this.col('usage').insertOne({ ...scope, conversationId: job.jid, recordId: _id, fingerprint, model: ANALYZER_VERSION, kind: 'analysis', inputTokens: 0, outputTokens: 0, audioSeconds: 0, processingUnits: decoded.reduce((n, m) => n + m.text.length, 0), unit: 'characters', costUsd: 0, durationMs: Date.now() - started, result: result.result, at: this.now() });
       const memory = await this.col('memory').findOne({ ...scope, jid: job.jid });
       const draft = { ...result, messageDate: group[0].at.toISOString(), companyId: memory?.companyId || '', company: memory?.company || '', contactId: memory?.contactId || '', contact: memory?.contact || group.find(m => !m.fromMe)?.name || '', identitySource: memory?.source || (memory?.verifiedAt ? 'hubspot' : 'unassigned'), proposedAction: 'review' };
       if (existing.length) {
         // Refresh generated fields as history arrives, but never overwrite human edits.
         const untouched = existing[0].events?.every(event => ['generated', 'source_changed'].includes(event.action)) === true;
-        await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision }, { $set: { fingerprint, messageIds: ids, state: untouched ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !untouched, ...(untouched ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(draft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'source_changed', at: this.now() } } });
+        await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision }, { $set: { fingerprint, analyzerVersion: ANALYZER_VERSION, messageIds: ids, state: untouched ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !untouched, ...(untouched ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(draft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'source_changed', at: this.now() } } });
       } else {
-        await this.col('drafts').updateOne({ _id, ...scope }, { $setOnInsert: { ...scope, jid: job.jid, messageIds: ids, fingerprint, state: result.result === 'ignored' ? 'ignored' : 'pending', revision: 1, fields: this.vault.seal(draft, _id), source: this.vault.seal(draft, _id + ':source'), mode: config.mode, createdAt: this.now(), updatedAt: this.now(), events: [{ action: 'generated', at: this.now() }] } }, { upsert: true });
+        await this.col('drafts').updateOne({ _id, ...scope }, { $setOnInsert: { ...scope, jid: job.jid, messageIds: ids, fingerprint, analyzerVersion: ANALYZER_VERSION, state: result.result === 'ignored' ? 'ignored' : 'pending', revision: 1, fields: this.vault.seal(draft, _id), source: this.vault.seal(draft, _id + ':source'), mode: config.mode, createdAt: this.now(), updatedAt: this.now(), events: [{ action: 'generated', at: this.now() }] } }, { upsert: true });
       }
     }
   }

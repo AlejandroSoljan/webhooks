@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.063 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.066 | Fecha: 2026-09-08
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -245,7 +245,9 @@ test('incomplete setup leaves the panel visible and operations blocked without c
 });
 
 test('discarded conversations have evidence, a separate scoped view, and populate fields when later history reveals a task', async () => {
-  const [discarded] = await processMessages([message('greeting', 0, { text: 'Buen día' })]);
+  const [generated] = await processMessages([message('greeting', 0, { text: 'Buen día' })]);
+  await service.col('drafts').updateOne({ _id: generated._id }, { $set: { state: 'ignored', analyzerVersion: 'manager-rules-v1' } });
+  const [discarded] = await service.listDrafts(scope, null, 'ignored');
   assert.equal(discarded.state, 'ignored');
   assert.match(discarded.source.description, /Buen día/);
   assert.equal((await service.listDrafts(scope, null, 'tasks')).length, 0);
@@ -264,11 +266,11 @@ test('discarded conversations have evidence, a separate scoped view, and populat
   assert.equal((await service.listDrafts(scope, null, 'ignored')).length, 0);
 });
 
-test('more greeting history keeps an untouched discarded conversation out of the review inbox', async () => {
+test('more history keeps a non-excluded conversation available for review', async () => {
   await processMessages([message('greeting', 0, { text: 'Hola' })]);
   await processMessages([message('reply', 30, { text: 'Buen día', fromMe: true })]);
-  assert.equal((await service.listDrafts(scope, null, 'tasks')).length, 0);
-  const [draft] = await service.listDrafts(scope, null, 'ignored');
+  assert.equal((await service.listDrafts(scope, null, 'tasks')).length, 1);
+  const [draft] = await service.listDrafts(scope, null, 'tasks');
   assert.match(draft.source.description, /Buen día/);
 });
 
@@ -339,4 +341,20 @@ test('deferred HubSpot phase rejects all connection endpoints before invoking th
     assert.equal(saved.status, 200); assert.equal((await saved.json()).source, 'manual');
     assert.equal(remoteCalls, 0);
   } finally { await new Promise(resolve => server.close(resolve)); }
+});
+test('upgraded analysis recovers an old discarded task even when its message fingerprint is unchanged', async () => {
+  const rows = [message('totals', 0, { text: 'Necesitaría un totalizador por cuenta entre fechas para revisar gastos.' }), message('guidance', 60, { fromMe: true, text: 'Tenés que ir al módulo de contabilidad para sumas y saldos. Ahora te paso un video.' })];
+  const [draft] = await processMessages(rows);
+  const old = { ...draft.fields, result: 'ignored', subject: '', description: '', reason: 'no_explicit_manager_task' };
+  await service.col('drafts').updateOne({ _id: draft._id }, { $set: { analyzerVersion: 'manager-rules-v1', state: 'ignored', fields: vault.seal(old, draft._id), source: vault.seal(old, draft._id + ':source') } });
+  await service.history(scope, '2026-09-01T10:00:00Z', '2026-09-01T12:00:00Z');
+  await service.runOne();
+  const [recovered] = await service.listDrafts(scope, null, 'tasks');
+  assert.equal(recovered._id, draft._id);
+  assert.equal(recovered.fingerprint, draft.fingerprint);
+  assert.equal(recovered.state, 'pending');
+  assert.equal(recovered.fields.subject, 'Totalizador de gastos por cuenta y período');
+  assert.equal(recovered.fields.status, 'En Proceso');
+  assert.equal(recovered.revision, 2);
+  assert.equal((await service.listDrafts(scope, null, 'ignored')).length, 0);
 });

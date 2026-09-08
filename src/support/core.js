@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.063 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.066 | Fecha: 2026-09-08
 const crypto = require('node:crypto');
 
 class SupportError extends Error {
@@ -48,13 +48,49 @@ function groupMessages(messages, inactivityMs) {
   }
   return groups;
 }
-// Conservative, inspectable baseline. No inferred identity or automatic CRM writes.
+// Every non-excluded exchange is documented. Categories are reviewable HubSpot labels.
+const ANALYZER_VERSION = 'support-documentation-v3';
 function analyze(messages) {
-  const description = messages.map(m => `${m.at.toISOString()} ${m.fromMe ? 'Operador' : 'Contacto'}: ${m.text}`).join('\n');
+  const transcript = messages.map(m => `${m.at.toISOString()} ${m.fromMe ? 'Operador' : 'Contacto'}: ${m.text}`).join('\n');
   const incoming = normalize(messages.filter(m => !m.fromMe).map(m => m.text).join(' '));
-  const support = /\bmanager\b/.test(incoming) && /error|problema|no (puedo|funciona|imprime|abre)|como |configur|actualiz|necesito|consulta|falla/.test(incoming);
-  if (!support) return { result: 'ignored', reason: 'no_explicit_manager_task', description };
-  const errorType = /actualiz/.test(incoming) ? 'Actualización' : /configur/.test(incoming) ? 'Configuración / Implementación' : /como |consulta/.test(incoming) ? 'Consulta / Capacitacion' : 'Error software';
-  return { result: 'draft', subject: messages.find(m => !m.fromMe && /manager/i.test(m.text))?.text.slice(0, 120) || 'Consulta sobre Manager', description, category: 'Soporte Remoto', errorType, status: 'Nuevo', channel: 'WhatsApp', confidence: 'needs_review' };
+  const outgoing = normalize(messages.filter(m => m.fromMe).map(m => m.text).join(' '));
+  const context = incoming + ' ' + outgoing;
+  if (!messages.some(message => message.text.trim())) return { result: 'ignored', reason: 'empty_conversation', description: transcript };
+  const accounting = /contabili|contable|sumas? y saldos?|estado de resultado/.test(context);
+  const totals = accounting && /totaliz/.test(incoming) && /cuenta/.test(incoming);
+  const period = /fecha|periodo|mes|agosto/.test(incoming);
+  const guidance = !!incoming && !!outgoing;
+  const promisedVideo = /(?:paso|mando|voy a (?:pasar|enviar)|enviare).{0,60}vide(?:o|ito)/.test(outgoing);
+  let description = transcript;
+  if (totals) {
+    const lines = ['Solicitud: Obtener un totalizador por cuenta' + (period ? ' para un rango de fechas' : '') + (/gasto/.test(incoming) ? ' para analizar los gastos.' : '.')];
+    if (/modulo de contabilidad/.test(outgoing)) lines.push('Orientación brindada: Consultar los reportes del módulo de contabilidad.');
+    if (/suma.*saldo/.test(outgoing)) lines.push('Se indicó consultar sumas y saldos por niveles.');
+    if (/interfaz contable/.test(outgoing)) lines.push('Se explicó el uso de la interfaz contable para generar los movimientos hacia contabilidad.');
+    if (promisedVideo) lines.push('Seguimiento: El operador indicó que enviaría un video explicativo; el envío y la resolución deben confirmarse.');
+    description = lines.join('\n') + '\n\nConversación de origen:\n' + transcript;
+  }
+  const category = /servidor virtual|\bvps\b/.test(context) ? 'Soporte Servidor Virtual'
+    : /preinstall|preinstal/.test(context) ? 'Soporte Preinstall'
+    : /presencial|visita tecnica|en (tu|su) (oficina|local)/.test(context) ? 'Soporte en Lugar'
+    : /desarroll|programar|nuevo modulo|agregar (una )?funcionalidad/.test(context) ? 'Desarrollo'
+    : /implement|migracion|relevamiento|puesta en marcha/.test(context) ? 'Analisis e Implementacion'
+    : /reunion|videollamada/.test(context) ? 'Reunion Cliente'
+    : /licencia|abono|renovacion|pago del servicio/.test(context) ? 'Soporte Administrativo'
+    : /impresora|disco rigido|memoria ram|teclado|monitor|hardware/.test(context) ? 'Soporte Hardware'
+    : /(?:enviame|pasame|solicito|necesito).*(?:listado|archivo|datos)|exportar datos/.test(incoming) ? 'Solicitud de Datos'
+    : 'Soporte Remoto';
+  const errorType = /actualiz/.test(incoming) ? 'Actualización'
+    : /preinstall|preinstal/.test(context) ? 'Preinstall'
+    : /relevamiento/.test(context) ? 'Relevamiento'
+    : /no (existe|tiene|permite).*funcionalidad|falta (una )?funcionalidad/.test(context) ? 'Falta funcionalidad'
+    : /(?:depende|pendiente).*(?:proveedor|tercero)/.test(context) ? 'Falta soporte 3ro'
+    : /error de configuracion|mal configurad/.test(context) ? 'Error configuración'
+    : /error de usuario|error al cargar|cargaste mal/.test(context) ? 'Error usuario'
+    : /configur|implement/.test(incoming) ? 'Configuración / Implementación'
+    : /error|problema|no (puedo|funciona|imprime|abre)|falla/.test(incoming) ? 'Error software'
+    : /consulta|necesit|como |posibilidad|totaliz/.test(incoming) ? 'Consulta / Capacitacion' : 'No es error';
+  const subject = totals ? 'Totalizador' + (/gasto/.test(incoming) ? ' de gastos' : '') + ' por cuenta' + (period ? ' y período' : '') : accounting ? 'Consulta sobre reportes contables' : messages.find(m => !m.fromMe && /manager/i.test(m.text))?.text.slice(0, 120) || messages.find(m => !m.fromMe && m.text.trim())?.text.slice(0, 120) || 'Consulta de soporte';
+  return { result: 'draft', subject, description, category, errorType, status: guidance || promisedVideo ? 'En Proceso' : 'Nuevo', channel: 'WhatsApp', confidence: 'needs_review' };
 }
-module.exports = { SupportError, fail, scopeOf, hash, scopedId, text, range, normalize, settings, excluded, groupMessages, analyze };
+module.exports = { SupportError, fail, scopeOf, hash, scopedId, text, range, normalize, settings, excluded, groupMessages, analyze, ANALYZER_VERSION };

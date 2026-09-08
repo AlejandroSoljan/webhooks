@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.065 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.066 | Fecha: 2026-09-08
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createVault, vaultFromEnv } = require('../src/support/crypto');
@@ -98,8 +98,8 @@ test('inactivity groups ordered full exchanges including outgoing messages', () 
   assert.equal(groups.length, 2);
   assert.match(analyze(groups[0]).description, /Operador: Revisamos/);
   assert.equal(analyze(groups[0]).channel, 'WhatsApp');
-  assert.equal(analyze(groups[1]).result, 'ignored');
-  assert.equal(analyze([{ _id: 'x', at: at(0), text: 'Manager error', fromMe: true }]).result, 'ignored');
+  assert.equal(analyze(groups[1]).result, 'draft');
+  assert.equal(analyze([{ _id: 'x', at: at(0), text: 'Manager error', fromMe: true }]).result, 'draft');
 });
 test('HubSpot fetch paginates, pins origin and never exposes server error details', async () => {
   const calls = [];
@@ -155,4 +155,42 @@ test('installed Baileys decrypts audio from directPath without requiring the rem
     const bytes = await downloadAudio(raw, { seconds: 5, bytes: 50 });
     assert.equal(bytes.toString(), 'fixture audio bytes');
   } finally { global.fetch = originalFetch; }
+});
+test('accounting guidance is a documentable task without a literal Manager mention', () => {
+  const rows = [
+    { _id: 'request', at: new Date('2026-09-08T14:19:14Z'), fromMe: false, text: 'Necesitaría tener un totalizador por cuenta entre fechas. Por ejemplo, todo agosto, cuánto asignamos a cada cuenta para la definición del gasto.' },
+    { _id: 'reply', at: new Date('2026-09-08T14:20:57Z'), fromMe: true, text: 'Tenés que ir al módulo de contabilidad y sacar sumas y saldos por niveles. Previamente tenés que hacer la interfaz contable para pasar los movimientos. Ahora te paso un videíto del proceso.' },
+    { _id: 'thanks', at: new Date('2026-09-08T14:22:00Z'), fromMe: false, text: 'Dale, perfecto. Genial.' },
+  ];
+  const result = analyze(rows);
+  assert.equal(result.result, 'draft');
+  assert.equal(result.subject, 'Totalizador de gastos por cuenta y período');
+  assert.equal(result.errorType, 'Consulta / Capacitacion');
+  assert.equal(result.status, 'En Proceso');
+  assert.match(result.description, /interfaz contable/);
+  assert.match(result.description, /envío y la resolución deben confirmarse/);
+  assert.match(result.description, /Conversación de origen/);
+});
+
+test('non-excluded conversations are documented without a keyword or speaker gate', () => {
+  const incoming = text => ({ _id: 'in', at: new Date(), fromMe: false, text });
+  const outgoing = text => ({ _id: 'out', at: new Date(), fromMe: true, text });
+  assert.equal(analyze([incoming('Hola, buen día'), outgoing('Tenés que ir a contabilidad')]).result, 'draft');
+  assert.equal(analyze([incoming('Necesito organizar el cumpleaños'), outgoing('Yo trabajo con un sistema contable')]).result, 'draft');
+  assert.equal(analyze([outgoing('Necesitás configurar Manager')]).result, 'draft');
+  assert.equal(analyze([incoming('Necesito un reporte de stock por depósito')]).result, 'draft');
+});
+test('task categories use the existing HubSpot taxonomy', () => {
+  for (const [text, expected] of [
+    ['Necesito revisar el servidor virtual', 'Soporte Servidor Virtual'],
+    ['Coordinamos una visita técnica presencial', 'Soporte en Lugar'],
+    ['Necesito desarrollar un nuevo módulo', 'Desarrollo'],
+    ['Hagamos el relevamiento para la implementación', 'Analisis e Implementacion'],
+    ['Coordinemos una reunión por el proyecto', 'Reunion Cliente'],
+    ['Necesito renovar la licencia', 'Soporte Administrativo'],
+    ['La impresora tiene un problema', 'Soporte Hardware'],
+    ['Necesito un listado con los datos', 'Solicitud de Datos'],
+    ['Consulta por preinstall', 'Soporte Preinstall'],
+    ['Revisamos los reportes de contabilidad', 'Soporte Remoto'],
+  ]) assert.equal(analyze([{ _id: 'case', at: new Date(), fromMe: false, text }]).category, expected);
 });

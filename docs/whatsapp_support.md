@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.064 | Fecha: 2026-09-08 -->
+<!-- Asisto | Version: 5.00.066 | Fecha: 2026-09-08 -->
 # Tickets desde WhatsApp: agente personal en cada PC
 
 ## Arquitectura acordada
@@ -69,7 +69,7 @@ Los mensajes históricos se guardan sin disparar análisis automático fuera de 
 
 El agente recibe mensajes entrantes, salientes e historial, omitiendo grupos, broadcasts y newsletters. Conserva una cola local cifrada para reintentar entregas. El backend aplica exclusiones del usuario y tenant y deduplica por propietario, chat, ID y dirección.
 
-Se agrupan ventanas tras 3 minutos de inactividad (30 segundos a 30 minutos configurables). El agente solicita procesar trabajos únicamente de su usuario. El detector `manager-rules-v1` exige una mención entrante de Manager y términos de problema/consulta; es un filtro conservador por reglas. Toda propuesta requiere revisión.
+Se agrupan ventanas tras 3 minutos de inactividad (30 segundos a 30 minutos configurables). El agente solicita procesar trabajos únicamente de su usuario. El criterio `support-documentation-v3` documenta todos los intercambios no vacíos que superaron las exclusiones del usuario y tenant, incluso sin mencionar Manager o sin palabras clave. Propone categoría y tipo de error con los nombres existentes de HubSpot. Las propuestas siguen basadas en reglas y requieren revisión; no se infieren empresa, identidad ni resolución. La versión del análisis permite recuperar descartes antiguos al reprocesar el mismo período, conservando las ediciones humanas.
 
 Los borradores admiten nombres manuales de empresa/contacto y aprobación sin HubSpot. Se usa revisión optimista; evidencia tardía invalida la aprobación sin pisar ediciones. La memoria manual elimina verificaciones remotas anteriores.
 
@@ -106,4 +106,6 @@ Se prueban emparejamiento/CSRF, usuarios simultáneos, reemplazo/revocación, re
 
 Rollback: desactivar `SUPPORT_ENABLED`, revocar la PC o deshabilitar su inicio de Windows. Conservar perfiles y colecciones cifradas hasta decidir su retención. No se modifican colecciones legacy ni se publican datos en HubSpot.
 
-La bandeja muestra por defecto borradores para revisar. El selector Mostrar permite consultar los descartados y todas las conversaciones, con contacto y fecha. Un descarte explica los límites del detector y permite consultar los mensajes de origen, incluso para registros anteriores; no abre un formulario vacío. La evidencia tardía actualiza campos generados automáticamente sólo si no hubo intervención humana.
+La bandeja muestra por defecto borradores para revisar. El selector Mostrar permite consultar los descartados y todas las conversaciones, con contacto y fecha. Un descarte anterior explica el cambio de criterio y permite consultar los mensajes de origen, incluso para registros anteriores; no abre un formulario vacío. La evidencia tardía actualiza campos generados automáticamente sólo si no hubo intervención humana.
+
+Ejemplo de referencia: un cliente pide un totalizador de gastos por cuenta y período y recibe orientación sobre sumas y saldos e interfaz contable. Se documenta como Soporte Remoto / Consulta / Capacitacion, En Proceso. La promesa de enviar un video no acredita envío ni cierre resuelto.

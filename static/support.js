@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.066 | Fecha: 2026-09-08
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
@@ -85,6 +85,7 @@
     $('discarded').hidden = !discarded; $('editor').hidden = discarded;
     $('reviewTitle').textContent = discarded ? 'Conversación descartada por el detector' : 'Revisión del borrador';
     if (discarded) {
+      $('discardReason').textContent = row.source.reason === 'empty_conversation' ? 'No hay texto disponible para documentar en esta conversación.' : 'Registro descartado con un criterio anterior. Las conversaciones no excluidas ahora se documentan como tareas para revisión.';
       $('discardedEvidence').textContent = row.source.description || 'Cargando los mensajes considerados…';
       if (!row.source.description) {
         const evidence = await api('/drafts/' + row._id + '/evidence');
