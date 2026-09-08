@@ -1,1 +1,1 @@
-{"name":"asisto-support-desktop","version":"5.0.56","private":true,"type":"commonjs","dependencies":{"@whiskeysockets/baileys":"7.0.0-rc14","pino":"9.14.0"}}
+{"name":"asisto-support-desktop","version":"5.0.58","private":true,"type":"commonjs","dependencies":{"@whiskeysockets/baileys":"7.0.0-rc14","pino":"9.14.0"}}

@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.056 | Fecha: 2026-09-08 -->
+<!-- Asisto | Version: 5.00.058 | Fecha: 2026-09-08 -->
 # Tickets desde WhatsApp: agente personal en cada PC
 
 ## Arquitectura acordada
@@ -14,7 +14,7 @@ HubSpot queda para la última etapa. No se pide su token, no se llama su API ni 
 1. Ingresar a Asisto y abrir **Sesiones WhatsApp Web**, `/admin/wweb`. La sección personal muestra únicamente la PC y el QR del usuario autenticado. Los permisos `support` permiten esta sección; las APIs y controles legacy siguen requiriendo `wweb`.
 2. Descargar el ZIP, descomprimirlo y ejecutar `Instalar.cmd` en la PC del usuario.
 3. El instalador prepara un runtime privado Node 24.12.0, verifica el SHA256 del ZIP oficial e instala las dependencias fijadas. No requiere administrador.
-4. El agente abre Asisto en el navegador con un código de vinculación. El usuario inicia sesión, comprueba el nombre de su PC y pulsa **Autorizar esta PC**.
+4. El usuario abre manualmente el acceso **Vincular Asisto** del escritorio. Este lee el enlace vigente del agente; el usuario inicia sesión, comprueba el nombre de su PC y pulsa **Autorizar esta PC**. Ni la instalación, ni el inicio de Windows, ni la renovación de códigos abren el navegador automáticamente.
 5. El agente inicia Baileys automáticamente y el panel muestra el QR para escanear desde WhatsApp → Dispositivos vinculados.
 6. Las siguientes sesiones de Windows recuperan el proceso y las credenciales locales; no necesitan otra instalación ni un QR salvo que WhatsApp cierre la vinculación.
 
@@ -94,7 +94,7 @@ La API de revisión permanece en `/api/support`. `/status` informa el agente de 
 
 ## Compilación, pruebas y despliegue
 
-`scripts/build_support_desktop.ps1` produce `static/downloads/AsistoSupport-5.00.056.zip` desde una lista explícita, sin `.env`, perfiles, claves ni `node_modules`. El instalador ejecuta `npm ci --omit=dev --ignore-scripts` con su lockfile.
+`scripts/build_support_desktop.ps1` produce `static/downloads/AsistoSupport-5.00.058.zip` desde una lista explícita, sin `.env`, perfiles, claves ni `node_modules`. El instalador ejecuta `npm ci --omit=dev --ignore-scripts` con su lockfile.
 
 Ejecutar `npm test`, `npm run support:migrate` y desplegar la web normalmente. La migración es aditiva y repetible; incorpora índices de dispositivos con expiración y unicidad por usuario. Los tests usan MongoDB efímero.
 

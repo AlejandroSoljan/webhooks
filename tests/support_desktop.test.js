@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.058 | Fecha: 2026-09-08
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -7,6 +7,35 @@ const path = require('node:path');
 const { storage } = require('../desktop/support/storage.cjs');
 const { EventEmitter } = require('node:events');
 const { run } = require('../desktop/support/agent.cjs');
+
+test('pending pairing and subsequent retries never open the browser', async () => {
+  const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'asisto-agent-test-'));
+  const childProcess = require('node:child_process'), originalSpawn = childProcess.spawn;
+  const agentPath = require.resolve('../desktop/support/agent.cjs');
+  const data = new Map(); let launches = 0, starts = 0;
+  const listeners = new Map(['SIGINT', 'SIGTERM'].map(signal => [signal, new Set(process.listeners(signal))]));
+  try {
+    childProcess.spawn = () => { launches++; return { unref() {} }; };
+    delete require.cache[agentPath];
+    const { run: pendingRun } = require(agentPath);
+    for (let retry = 0; retry < 2; retry++) {
+      await pendingRun({ profile, store: { read: key => data.get(key), write: (key, value) => data.set(key, value) }, loadBaileys: async () => ({}),
+        fetchImpl: async url => {
+          if (url.endsWith('/start')) { starts++; return { ok: true, json: async () => ({ token: 'fixture', expiresAt: new Date(Date.now() + 600000), verificationUrl: 'https://asistobot.com.ar/admin/wweb?device=ABCDEF123456' }) }; }
+          return { ok: false, status: 401 };
+        },
+      });
+    }
+    assert.equal(starts, 2); assert.equal(launches, 0);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(profile, 'status.json'))).verificationUrl, 'https://asistobot.com.ar/admin/wweb?device=ABCDEF123456');
+  } finally {
+    childProcess.spawn = originalSpawn; delete require.cache[agentPath];
+    for (const [signal, old] of listeners) for (const listener of process.listeners(signal)) if (!old.has(listener)) process.removeListener(signal, listener);
+    assert.equal(path.dirname(path.resolve(profile)), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(profile).startsWith('asisto-agent-test-'));
+    fs.rmSync(profile, { recursive: true, force: true });
+  }
+});
 test('desktop credentials survive restart protected by the Windows user account', { skip: process.platform !== 'win32' }, () => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'asisto-storage-test-'));
   try {

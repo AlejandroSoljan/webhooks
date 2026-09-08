@@ -1,9 +1,8 @@
-// Asisto | Version: 5.00.056 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.058 | Fecha: 2026-09-08
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const crypto = require('node:crypto');
-const { spawn } = require('node:child_process');
 const { storage } = require('./storage.cjs');
 const BASE = 'https://asistobot.com.ar';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -27,11 +26,10 @@ async function run(options = {}) {
     if (!account || new Date(account.expiresAt) <= new Date()) {
       account = await request('start', { name: os.hostname(), sessionsPanel: true }); store.write('account', account);
     }
-    // This is the user's one-time account approval, in their normal browser.
+    // Publish the pairing link for manual opening; the background agent never opens a browser.
     const url = new URL(account.verificationUrl);
     if (url.origin !== BASE || !['/ui/support', '/admin/wweb'].includes(url.pathname)) throw new Error('Invalid approval URL');
     status({ state: 'awaiting_approval', verificationUrl: url.href });
-    spawn('rundll32.exe', ['url.dll,FileProtocolHandler', url.href], { windowsHide: true, stdio: 'ignore' }).unref();
     while (!stopped && new Date(account.expiresAt) > new Date()) {
       try {
         const state = await request('poll');
