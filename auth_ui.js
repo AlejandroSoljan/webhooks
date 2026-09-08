@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.059 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -2269,7 +2269,18 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
           <div id="statsMeta" class="small" style="margin:10px 0"></div>
           <div id="statsCards" class="statsCards"></div>
           <div class="card" style="margin-top:12px; padding:10px 12px">
-            <div class="cellMain" style="margin-bottom:6px">Contactos del rango</div>
+            <div class="statsSectionHeader">
+              <div>
+                <div class="cellMain">Contactos del rango</div>
+                <div class="small" id="statsContactsCount">0 registros</div>
+              </div>
+              <div class="statsTableTools">
+                <input class="inp statsSearch" id="statsContactsSearch" type="search" placeholder="Buscar teléfono" />
+                <select class="inp statsPageSize" id="statsContactsPageSize" aria-label="Filas por página">
+                  <option value="25">25 filas</option><option value="50">50 filas</option><option value="100">100 filas</option>
+                </select>
+              </div>
+            </div>
             <div class="tableWrap statsTableWrap">
               <table class="table statsTable">
                 <thead>
@@ -2286,15 +2297,28 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
                 </tbody>
               </table>
             </div>
+            <div class="statsPager"><button class="btn2" id="statsContactsPrev" type="button">Anterior</button><span class="small" id="statsContactsPage"></span><button class="btn2" id="statsContactsNext" type="button">Siguiente</button></div>
           </div>
           <div class="card" style="margin-top:12px; padding:10px 12px">
-            <div class="cellMain" style="margin-bottom:6px">Permisos y exclusiones del rango</div>
+            <div class="statsSectionHeader">
+              <div>
+                <div class="cellMain">Permisos y exclusiones del rango</div>
+                <div class="small" id="statsPermissionsCount">0 registros</div>
+              </div>
+              <div class="statsTableTools">
+                <input class="inp statsSearch" id="statsPermissionsSearch" type="search" placeholder="Buscar teléfono, estado o motivo" />
+                <select class="inp statsPageSize" id="statsPermissionsPageSize" aria-label="Filas por página">
+                  <option value="25">25 filas</option><option value="50">50 filas</option><option value="100">100 filas</option>
+                </select>
+              </div>
+            </div>
             <div class="tableWrap statsTableWrap">
               <table class="table statsTable">
                 <thead><tr><th>Teléfono</th><th>Estado</th><th>Motivo</th><th>Solicitud</th><th>Respuesta</th></tr></thead>
                 <tbody id="statsPermissionsBody"><tr><td colspan="5" class="small">Sin datos.</td></tr></tbody>
               </table>
             </div>
+            <div class="statsPager"><button class="btn2" id="statsPermissionsPrev" type="button">Anterior</button><span class="small" id="statsPermissionsPage"></span><button class="btn2" id="statsPermissionsNext" type="button">Siguiente</button></div>
           </div>
         </div>
       </div>
@@ -2429,8 +2453,24 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
       var statsClose = document.getElementById('statsClose');
       var statsContactsBody = document.getElementById('statsContactsBody');
       var statsPermissionsBody = document.getElementById('statsPermissionsBody');
+      var statsContactsSearch = document.getElementById('statsContactsSearch');
+      var statsPermissionsSearch = document.getElementById('statsPermissionsSearch');
+      var statsContactsPageSize = document.getElementById('statsContactsPageSize');
+      var statsPermissionsPageSize = document.getElementById('statsPermissionsPageSize');
+      var statsContactsCount = document.getElementById('statsContactsCount');
+      var statsPermissionsCount = document.getElementById('statsPermissionsCount');
+      var statsContactsPageLabel = document.getElementById('statsContactsPage');
+      var statsPermissionsPageLabel = document.getElementById('statsPermissionsPage');
+      var statsContactsPrev = document.getElementById('statsContactsPrev');
+      var statsContactsNext = document.getElementById('statsContactsNext');
+      var statsPermissionsPrev = document.getElementById('statsPermissionsPrev');
+      var statsPermissionsNext = document.getElementById('statsPermissionsNext');
       var statsTenant = '';
       var statsNumero = '';
+      var statsContactsRows = [];
+      var statsPermissionsRows = [];
+      var statsContactsPageIndex = 1;
+      var statsPermissionsPageIndex = 1;
 
       function statsSetOpen(open){
         if(!statsModal) return;
@@ -2466,6 +2506,47 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
           + (sub ? ('<div class="small" style="margin-top:4px; color:#475467">' + escapeHtml(sub) + '</div>') : '')
           + '</div>';
       }
+      function statsContains(value, query){
+        return String(value == null ? '' : value).toLowerCase().indexOf(query) >= 0;
+      }
+      function statsPage(rows, query, size, page){
+        var q = String(query || '').trim().toLowerCase();
+        var filtered = !q ? rows : rows.filter(function(row){
+          return Object.keys(row || {}).some(function(key){ return statsContains(row[key], q); });
+        });
+        var pageSize = Math.max(1, Number(size) || 25);
+        var pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+        var current = Math.max(1, Math.min(Number(page) || 1, pages));
+        return { rows:filtered.slice((current-1)*pageSize, current*pageSize), total:filtered.length, pages:pages, page:current };
+      }
+      function renderStatsContacts(){
+        var result = statsPage(statsContactsRows, statsContactsSearch && statsContactsSearch.value, statsContactsPageSize && statsContactsPageSize.value, statsContactsPageIndex);
+        statsContactsPageIndex = result.page;
+        if(statsContactsCount) statsContactsCount.textContent = result.total + ' registro' + (result.total === 1 ? '' : 's');
+        if(statsContactsPageLabel) statsContactsPageLabel.textContent = 'Página ' + result.page + ' de ' + result.pages;
+        if(statsContactsPrev) statsContactsPrev.disabled = result.page <= 1;
+        if(statsContactsNext) statsContactsNext.disabled = result.page >= result.pages;
+        statsContactsBody.innerHTML = result.rows.length ? result.rows.map(function(c){
+          return '<tr>'
+            + '<td class="mono">' + escapeHtml(c.contact || '-') + '</td>'
+            + '<td>' + escapeHtml(String(c.incoming || 0)) + '</td>'
+            + '<td>' + escapeHtml(String(c.outgoing || 0)) + '</td>'
+            + '<td>' + escapeHtml(String(c.total || 0)) + '</td>'
+            + '<td>' + escapeHtml(c.lastAt ? fmtDate(c.lastAt) : '-') + '</td>'
+            + '</tr>';
+        }).join('') : '<tr><td colspan="5" class="small">No hay contactos para este filtro.</td></tr>';
+      }
+      function renderStatsPermissions(){
+        var result = statsPage(statsPermissionsRows, statsPermissionsSearch && statsPermissionsSearch.value, statsPermissionsPageSize && statsPermissionsPageSize.value, statsPermissionsPageIndex);
+        statsPermissionsPageIndex = result.page;
+        if(statsPermissionsCount) statsPermissionsCount.textContent = result.total + ' registro' + (result.total === 1 ? '' : 's');
+        if(statsPermissionsPageLabel) statsPermissionsPageLabel.textContent = 'Página ' + result.page + ' de ' + result.pages;
+        if(statsPermissionsPrev) statsPermissionsPrev.disabled = result.page <= 1;
+        if(statsPermissionsNext) statsPermissionsNext.disabled = result.page >= result.pages;
+        statsPermissionsBody.innerHTML = result.rows.length ? result.rows.map(function(p){
+          return '<tr><td class="mono">'+escapeHtml(p.numero||'-')+'</td><td>'+escapeHtml(p.estado||'-')+'</td><td>'+escapeHtml(p.motivo||'-')+'</td><td>'+escapeHtml(p.pedidoAt?fmtDate(p.pedidoAt):'-')+'</td><td>'+escapeHtml(p.respuestaAt?fmtDate(p.respuestaAt):'-')+'</td></tr>';
+        }).join('') : '<tr><td colspan="5" class="small">No hay permisos para este filtro.</td></tr>';
+      }
       function renderStats(data){
         var summary = data && data.summary ? data.summary : {};
         var overall = data && data.overall ? data.overall : {};
@@ -2489,22 +2570,12 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
           + statsCard('Fallos', String(permissionSummary.fallos || 0))
           + statsCard('Bloqueados/excluidos', String(permissionSummary.bloqueados || 0));
 
-        if(!contacts.length){
-          statsContactsBody.innerHTML = '<tr><td colspan="5" class="small">No hay mensajes en el rango seleccionado.</td></tr>';
-        } else {
-          statsContactsBody.innerHTML = contacts.map(function(c){
-            return '<tr>'
-              + '<td class="mono">' + escapeHtml(c.contact || '-') + '</td>'
-              + '<td>' + escapeHtml(String(c.incoming || 0)) + '</td>'
-              + '<td>' + escapeHtml(String(c.outgoing || 0)) + '</td>'
-              + '<td>' + escapeHtml(String(c.total || 0)) + '</td>'
-              + '<td>' + escapeHtml(c.lastAt ? fmtDate(c.lastAt) : '-') + '</td>'
-              + '</tr>';
-          }).join('');
-        }
-        statsPermissionsBody.innerHTML = permissions.length ? permissions.map(function(p){
-          return '<tr><td class="mono">'+escapeHtml(p.numero||'-')+'</td><td>'+escapeHtml(p.estado||'-')+'</td><td>'+escapeHtml(p.motivo||'-')+'</td><td>'+escapeHtml(p.pedidoAt?fmtDate(p.pedidoAt):'-')+'</td><td>'+escapeHtml(p.respuestaAt?fmtDate(p.respuestaAt):'-')+'</td></tr>';
-        }).join('') : '<tr><td colspan="5" class="small">No hay permisos en el rango seleccionado.</td></tr>';
+        statsContactsRows = contacts;
+        statsPermissionsRows = permissions;
+        statsContactsPageIndex = 1;
+        statsPermissionsPageIndex = 1;
+        renderStatsContacts();
+        renderStatsPermissions();
       }
       function loadStats(){
         if(!statsTenant || !statsNumero) return;
@@ -2536,6 +2607,14 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
       }
       if(statsApply) statsApply.addEventListener('click', loadStats);
       if(statsClose) statsClose.addEventListener('click', closeStats);
+      if(statsContactsSearch) statsContactsSearch.addEventListener('input', function(){ statsContactsPageIndex = 1; renderStatsContacts(); });
+      if(statsPermissionsSearch) statsPermissionsSearch.addEventListener('input', function(){ statsPermissionsPageIndex = 1; renderStatsPermissions(); });
+      if(statsContactsPageSize) statsContactsPageSize.addEventListener('change', function(){ statsContactsPageIndex = 1; renderStatsContacts(); });
+      if(statsPermissionsPageSize) statsPermissionsPageSize.addEventListener('change', function(){ statsPermissionsPageIndex = 1; renderStatsPermissions(); });
+      if(statsContactsPrev) statsContactsPrev.addEventListener('click', function(){ statsContactsPageIndex = Math.max(1, statsContactsPageIndex-1); renderStatsContacts(); });
+      if(statsContactsNext) statsContactsNext.addEventListener('click', function(){ statsContactsPageIndex++; renderStatsContacts(); });
+      if(statsPermissionsPrev) statsPermissionsPrev.addEventListener('click', function(){ statsPermissionsPageIndex = Math.max(1, statsPermissionsPageIndex-1); renderStatsPermissions(); });
+      if(statsPermissionsNext) statsPermissionsNext.addEventListener('click', function(){ statsPermissionsPageIndex++; renderStatsPermissions(); });
       if(statsModal) statsModal.addEventListener('click', function(ev){
         var t = ev && ev.target;
         if(t && t.getAttribute && t.getAttribute('data-stats-close')) closeStats();
@@ -3116,20 +3195,40 @@ document.addEventListener('click', function(e){
       .modalHeader{display:flex; justify-content:space-between; align-items:flex-start; gap:10px}
       .qrWrap{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:12px; overflow:hidden; display:flex; align-items:center; justify-content:center; min-height:340px}
       #qrImg{max-width:100%; height:auto; display:none}
-      .statsModalCard{width:min(980px,96vw); color:#0f172a}
+      .statsModalCard{width:min(1180px,97vw); max-height:94vh; overflow:auto; color:#0f172a}
+      .statsModalCard>.modalHeader{position:sticky; top:-14px; z-index:8; margin:-14px -14px 0; padding:14px; background:#fff; border-bottom:1px solid rgba(16,24,40,.08)}
       .statsModalCard .small,
       .statsModalCard label,
       .statsModalCard #statsMeta,
       .statsModalCard #statsSub{color:#475467}
-      .statsCards{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-top:8px}
-      .statsMiniCard{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:12px; padding:10px 12px; color:#0f172a}
+      .statsCards{display:grid; grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); gap:8px; margin-top:8px}
+      .statsMiniCard{background:rgba(16,24,40,.03); border:1px solid rgba(16,24,40,.08); border-radius:10px; padding:8px 10px; color:#0f172a}
       .statsMiniCard .cellMain{color:#0f172a !important; font-weight:800}
       .statsMiniCard .small{color:#475467 !important}
-      .statsTableWrap{max-height:48vh; overflow:auto; padding-bottom:0}
+      .statsSectionHeader{display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:8px}
+      .statsTableTools{display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap}
+      .statsSearch{width:min(300px,42vw); min-width:210px}
+      .statsPageSize{width:auto; min-width:105px}
+      .statsPager{display:flex; justify-content:flex-end; align-items:center; gap:10px; margin-top:8px}
+      .statsPager .small{min-width:100px; text-align:center}
+      .statsTableWrap{max-height:360px; overflow:auto; padding-bottom:0; border:1px solid rgba(16,24,40,.08); border-radius:10px}
       .statsTable{width:100%; table-layout:fixed}
+      .statsTable thead th{position:sticky; top:0; z-index:3; background:#f8fafc; box-shadow:0 1px 0 rgba(16,24,40,.1)}
+      .statsTable tbody tr:nth-child(even){background:rgba(15,23,42,.025)}
+      .statsTable tbody tr:hover{background:#eef6ff}
       .statsTable th:nth-child(1){width:190px}
       .statsTable th:nth-child(2), .statsTable th:nth-child(3), .statsTable th:nth-child(4){width:90px}
       .statsTable th:nth-child(5){width:180px}
+      @media (max-width:720px){
+        .statsModalCard{width:98vw; max-height:96vh; padding:10px}
+        .statsModalCard>.modalHeader{position:static; margin:-10px -10px 0; padding:10px; flex-direction:column}
+        .statsSectionHeader{align-items:stretch; flex-direction:column}
+        .statsTableTools{justify-content:stretch}
+        .statsSearch{width:100%; min-width:0; flex:1 1 100%}
+        .statsPageSize{flex:1 1 auto}
+        .statsCards{grid-template-columns:repeat(2,minmax(0,1fr))}
+        .statsTableWrap{max-height:330px}
+      }
 
     </style>
     `,
