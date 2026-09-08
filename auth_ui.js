@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.057 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.059 | Fecha: 2026-09-08
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -2160,7 +2160,6 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
         document.getElementById('personalQrOpen').onclick = openPersonalQr;
         document.getElementById('personalQrClose').onclick = function(){ dialog.close(); };
         dialog.addEventListener('close', function(){ frame.removeAttribute('src'); });
-        ${code ? 'openPersonalQr();' : ''}
       })();
     </script>` : '';
   if (!hasAccess(user, 'wweb')) return appShell({ title: 'Sesiones WhatsApp Web · Asisto', user, active: 'wweb', main: '<h2>Sesiones WhatsApp Web</h2>' + personal });

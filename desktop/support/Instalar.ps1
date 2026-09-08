@@ -1,7 +1,7 @@
-# Asisto | Version: 5.00.058 | Fecha: 2026-09-08
+# Asisto | Version: 5.00.059 | Fecha: 2026-09-08
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:LOCALAPPDATA 'AsistoSupport'
-$release = Join-Path $root 'app-5.00.058'
+$release = Join-Path $root 'app-5.00.059'
 $arch = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
 $runtime = Join-Path $root "node-v24.12.0-win-$arch"
 $node = Join-Path $runtime 'node.exe'
@@ -16,7 +16,7 @@ if (-not (Test-Path -LiteralPath $node)) {
   Remove-Item -LiteralPath $zip
 }
 New-Item -ItemType Directory -Path $release -Force | Out-Null
-foreach ($name in @('agent.cjs','storage.cjs','protect.ps1','run.ps1','startup.ps1','Vincular.ps1','package.json','package-lock.json')) {
+foreach ($name in @('agent.cjs','local.cjs','storage.cjs','protect.ps1','run.ps1','startup.ps1','package.json','package-lock.json')) {
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $release $name) -Force
 }
 $env:PATH = "$runtime;$env:PATH"
@@ -61,12 +61,12 @@ while ((Get-ScheduledTask -TaskName $taskName).State -ne 'Running') {
   Start-Sleep -Milliseconds 200
 }
 $shell = New-Object -ComObject WScript.Shell
-$shortcut = $shell.CreateShortcut((Join-Path ([Environment]::GetFolderPath('Desktop')) 'Vincular Asisto.lnk'))
-$shortcut.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-$shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $release 'Vincular.ps1')`" -Profile `"$profile`""
-$shortcut.Description = 'Abrir manualmente Asisto para vincular esta PC con tu usuario.'
-$shortcut.Save()
-Write-Host 'Instalado. Abre el acceso Vincular Asisto del escritorio cuando quieras autorizar esta PC.'
+$link = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Vincular Asisto.lnk'
+if (Test-Path -LiteralPath $link) {
+  $shortcut = $shell.CreateShortcut($link)
+  if ($shortcut.Arguments -like '*AsistoSupport*Vincular.ps1*') { Remove-Item -LiteralPath $link }
+}
+Write-Host 'Instalado. Ingresa a la web con tu usuario y usa Escanear mi QR > Vincular / reconectar.'
 Write-Host 'El agente no abre el navegador automaticamente.'
 Write-Host 'Luego el agente iniciara automaticamente al ingresar a Windows.'
 Write-Host "Perfil instalado: $profile"

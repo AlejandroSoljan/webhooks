@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.056 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.059 | Fecha: 2026-09-08
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
@@ -99,7 +99,26 @@
     });
     return saving;
   }
-  $('connect').onclick = action(async () => { await api('/session', 'POST', { desired: 'connected' }); await session(); });
+  $('connect').onclick = action(async () => {
+    $('connect').disabled = true;
+    try {
+      let local;
+      try {
+        const response = await fetch('http://127.0.0.1:17658/pairing', { headers: { 'X-Asisto-Local': '1' }, credentials: 'omit', cache: 'no-store', targetAddressSpace: 'loopback', signal: AbortSignal.timeout(20000) });
+        if (!response.ok) throw new Error('local_unavailable');
+        local = await response.json();
+      } catch { throw new Error('No se pudo acceder al agente de esta PC. Comprobá que esté iniciado y permití el acceso local si el navegador lo solicita.'); }
+      if (local.state === 'pending' && /^[A-F0-9]{12}$/.test(local.code || '')) {
+        await api('/device/approve', 'POST', { code: local.code });
+      } else if (local.state === 'approved') {
+        const identity = await api('/capabilities');
+        if (local.userId !== identity.userId || local.tenantId !== identity.tenantId) throw new Error('El agente de esta PC pertenece a otra cuenta de Asisto. Ingresá con esa cuenta para desvincularlo antes de cambiar de usuario.');
+      } else throw new Error('El agente está preparando la conexión. Volvé a intentar en unos segundos.');
+      await api('/session', 'POST', { desired: 'connected' });
+      $('notice').textContent = 'Conectando tu WhatsApp. El QR aparecerá aquí.';
+      await session();
+    } finally { $('connect').disabled = false; }
+  });
   $('disconnect').onclick = action(async () => { await api('/session', 'POST', { desired: 'disconnected' }); await session(); });
   $('settingsForm').onsubmit = action(async () => { const lines = id => $(id).value.split('\n').map(s => s.trim()).filter(Boolean); await api('/settings', 'PUT', { inactivityMs: Number($('inactivity').value) * 60000, mode: $('mode').value, excludedJids: lines('excludedJids'), excludedNames: lines('excludedNames') }); $('notice').textContent = 'Preferencias guardadas.'; });
   $('historyForm').onsubmit = action(async () => { const result = await api('/history', 'POST', { from: new Date($('from').value).toISOString(), to: new Date($('to').value).toISOString() }); $('notice').textContent = `${result.conversations} conversaciones encoladas desde el historial sincronizado.`; });
@@ -129,7 +148,7 @@
     await Promise.all([session(), refresh(), memories()]);
     } else await session();
     const deviceCode = new URLSearchParams(location.search).get('device');
-    if (deviceCode) { $('deviceCode').value = deviceCode; await lookupDevice(); }
+    if (deviceCode) { $('deviceForm').hidden = false; $('deviceCode').value = deviceCode; await lookupDevice(); }
   }
   $('setupRefresh').onclick = action(initialize);
   initialize().catch(notice);

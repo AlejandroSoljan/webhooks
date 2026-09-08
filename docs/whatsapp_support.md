@@ -1,11 +1,11 @@
-<!-- Asisto | Version: 5.00.058 | Fecha: 2026-09-08 -->
+<!-- Asisto | Version: 5.00.059 | Fecha: 2026-09-08 -->
 # Tickets desde WhatsApp: agente personal en cada PC
 
 ## Arquitectura acordada
 
 **Baileys corre en la PC de cada usuario, en un proceso propio.** Render aloja el panel y la API de Asisto; no inicia sockets de WhatsApp ni un worker compartido. Se retiraron el supervisor y el comando del worker de servidor introducidos en 5.00.052. Las integraciones preexistentes continúan independientes.
 
-El agente de Windows se instala una vez por perfil y se inicia automáticamente al ingresar a Windows, aunque el navegador esté cerrado. La PC debe permanecer encendida y con Internet. No se ejecuta Baileys dentro del navegador. Cada instalación tiene un perfil local y un proceso independiente; cuentas distintas pueden funcionar simultáneamente. Una cuenta de Asisto autoriza una PC activa a la vez.
+El agente de Windows se instala una vez por perfil y se inicia automáticamente al ingresar a Windows, aunque el navegador esté cerrado. La PC debe permanecer encendida y con Internet. No se ejecuta Baileys dentro del navegador. Cada instalación tiene un perfil local y un proceso independiente; cuentas distintas pueden funcionar simultáneamente en PCs distintas. Una cuenta de Asisto autoriza una PC activa a la vez.
 
 HubSpot queda para la última etapa. No se pide su token, no se llama su API ni se publican tickets con la configuración actual. La aprobación de borradores se guarda en Asisto y no autoriza futuros envíos automáticamente.
 
@@ -14,15 +14,15 @@ HubSpot queda para la última etapa. No se pide su token, no se llama su API ni 
 1. Ingresar a Asisto y abrir **Sesiones WhatsApp Web**, `/admin/wweb`. La sección personal muestra únicamente la PC y el QR del usuario autenticado. Los permisos `support` permiten esta sección; las APIs y controles legacy siguen requiriendo `wweb`.
 2. Descargar el ZIP, descomprimirlo y ejecutar `Instalar.cmd` en la PC del usuario.
 3. El instalador prepara un runtime privado Node 24.12.0, verifica el SHA256 del ZIP oficial e instala las dependencias fijadas. No requiere administrador.
-4. El usuario abre manualmente el acceso **Vincular Asisto** del escritorio. Este lee el enlace vigente del agente; el usuario inicia sesión, comprueba el nombre de su PC y pulsa **Autorizar esta PC**. Ni la instalación, ni el inicio de Windows, ni la renovación de códigos abren el navegador automáticamente.
+4. El usuario ingresa normalmente a Asisto y abre **Sesiones WhatsApp Web → Escanear mi QR → Vincular / reconectar**. La web consulta exclusivamente `http://127.0.0.1:17658/pairing` y asocia el agente pendiente con la cuenta autenticada. El navegador puede pedir permiso de acceso local. No hay acceso de escritorio ni aperturas automáticas de páginas o diálogos.
 5. El agente inicia Baileys automáticamente y el panel muestra el QR para escanear desde WhatsApp → Dispositivos vinculados.
 6. Las siguientes sesiones de Windows recuperan el proceso y las credenciales locales; no necesitan otra instalación ni un QR salvo que WhatsApp cierre la vinculación.
 
-La autorización inicial y el escaneo requieren al usuario; una página web no instala ni autoriza silenciosamente un programa local. El enlace del agente completa el código. No se copian claves de Render, MongoDB ni OpenAI a las PCs.
+La instalación inicial y el escaneo requieren al usuario. El clic en Vincular / reconectar autoriza la PC; no se ingresan códigos ni otra contraseña. El puente local sólo escucha en loopback y exige origen exacto de Asisto, Host de loopback y encabezado propio; no expone tokens ni credenciales de WhatsApp. Un agente ya asociado a otra cuenta se rechaza, comparando usuario y dominio. No se copian claves de Render, MongoDB ni OpenAI a las PCs.
 
 `Desvincular mi PC` revoca su acceso a Asisto. Para desactivar también el arranque, deshabilitar la tarea `AsistoSupport-<perfil>` en el Programador de tareas. Se ejecuta al iniciar sesión con la cuenta actual de Windows, token interactivo y privilegios limitados, sin contraseña adicional. No tiene límite de duración, permite batería y evita instancias duplicadas. El supervisor reinicia el agente si termina inesperadamente.
 
-Reinstalar conserva el único perfil existente de esa cuenta de Windows; registra la tarea antes de retirar el inicio anterior en HKCU Run y sustituye sólo los procesos de ese perfil. Si Windows impide registrar tareas, el instalador informa el error y conserva el arranque anterior. No hay borrado automático de conversaciones. Los agentes anteriores conservan su enlace compatible `/ui/support`; los nuevos abren `/admin/wweb`.
+Reinstalar conserva el único perfil existente de esa cuenta de Windows; registra la tarea antes de retirar el inicio anterior en HKCU Run y sustituye sólo los procesos de ese perfil. Si Windows impide registrar tareas, el instalador informa el error y conserva el arranque anterior. No hay borrado automático de conversaciones. Los enlaces de vinculación anteriores siguen aceptándose por compatibilidad; ningún agente abre el navegador. El puente local admite un perfil activo por PC.
 
 ## Componentes
 
@@ -94,7 +94,7 @@ La API de revisión permanece en `/api/support`. `/status` informa el agente de 
 
 ## Compilación, pruebas y despliegue
 
-`scripts/build_support_desktop.ps1` produce `static/downloads/AsistoSupport-5.00.058.zip` desde una lista explícita, sin `.env`, perfiles, claves ni `node_modules`. El instalador ejecuta `npm ci --omit=dev --ignore-scripts` con su lockfile.
+`scripts/build_support_desktop.ps1` produce `static/downloads/AsistoSupport-5.00.059.zip` desde una lista explícita, sin `.env`, perfiles, claves ni `node_modules`. El instalador ejecuta `npm ci --omit=dev --ignore-scripts` con su lockfile.
 
 Ejecutar `npm test`, `npm run support:migrate` y desplegar la web normalmente. La migración es aditiva y repetible; incorpora índices de dispositivos con expiración y unicidad por usuario. Los tests usan MongoDB efímero.
 

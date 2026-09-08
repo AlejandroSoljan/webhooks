@@ -281,7 +281,7 @@ test('deferred HubSpot phase rejects all connection endpoints before invoking th
   const base = `http://127.0.0.1:${server.address().port}/api/support`;
   const headers = { 'Content-Type': 'application/json', Origin: 'https://asisto.example', 'X-Asisto-Support': '1' };
   try {
-    assert.deepEqual(await (await fetch(base + '/capabilities')).json(), { hubspotEnabled: false });
+    assert.deepEqual(await (await fetch(base + '/capabilities')).json(), { hubspotEnabled: false, ...scope });
     for (const [path, method] of [['/hubspot', 'PUT'], ['/hubspot/metadata', 'GET'], ['/hubspot/companies/123/tickets', 'GET'], ['/memory/verify', 'PUT']]) {
       const response = await fetch(base + path, { method, headers, ...(method === 'PUT' ? { body: '{}' } : {}) });
       assert.equal(response.status, 409); assert.equal((await response.json()).error, 'hubspot_deferred');

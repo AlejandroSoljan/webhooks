@@ -1,9 +1,10 @@
-// Asisto | Version: 5.00.058 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.059 | Fecha: 2026-09-08
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const crypto = require('node:crypto');
 const { storage } = require('./storage.cjs');
+const { startLocal } = require('./local.cjs');
 const BASE = 'https://asistobot.com.ar';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -106,5 +107,11 @@ async function run(options = {}) {
   }
   await tail;
 }
-if (require.main === module) run().catch(() => { console.error('Asisto: no se pudo iniciar el agente. Se reintentará automáticamente.'); process.exitCode = 1; });
+async function main() {
+  const profile = process.argv[2], store = storage(profile);
+  const local = await startLocal({ readAccount: () => store.read('account') });
+  try { await run({ profile, store }); }
+  finally { local.closeAllConnections(); await new Promise(resolve => local.close(resolve)); }
+}
+if (require.main === module) main().catch(() => { console.error('Asisto: no se pudo iniciar el agente. Se reintentará automáticamente.'); process.exitCode = 1; });
 module.exports = { run };

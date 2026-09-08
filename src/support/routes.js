@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.059 | Fecha: 2026-09-08
 const express = require('express');
 const path = require('node:path');
 const QRCode = require('qrcode');
@@ -36,7 +36,7 @@ function createRouter({ getService, hubspotFactory = token => new HubSpotContrac
     if (!row) fail('hubspot_not_configured', 409);
     return hubspotFactory(s.vault.open(row.token, hash(scope.tenantId, 'hubspot')));
   };
-  router.get('/capabilities', (req, res) => res.json({ hubspotEnabled }));
+  router.get('/capabilities', (req, res) => res.json({ hubspotEnabled, ...req.supportScope }));
   router.get('/settings', route((req, s, scope) => s.config(scope)));
   router.put('/settings', route((req, s, scope) => s.saveConfig(scope, req.body)));
   router.put('/tenant-settings', route((req, s, scope) => { admin(req); return s.saveConfig({ ...scope, userId: '*' }, req.body); }));

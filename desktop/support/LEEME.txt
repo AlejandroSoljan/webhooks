@@ -1,10 +1,10 @@
-Asisto | Version: 5.00.058 | Fecha: 2026-09-08
+Asisto | Version: 5.00.059 | Fecha: 2026-09-08
 
 AGENTE PERSONAL DE WHATSAPP PARA WINDOWS
 
 1. Descomprimi todos los archivos y ejecuta Instalar.cmd.
-2. Cuando quieras vincular, abre Vincular Asisto desde el escritorio e ingresa con TU usuario.
-3. Revisa el nombre de tu PC y pulsa Autorizar esta PC.
+2. Ingresa a la web de Asisto con TU usuario y abre Sesiones WhatsApp Web.
+3. Pulsa Escanear mi QR y luego Vincular / reconectar. La web detecta el agente de esta PC y lo asocia con tu usuario y dominio. Si el navegador pide acceso local, permitilo para conectar con el agente.
 4. Escanea el QR con WhatsApp > Dispositivos vinculados.
 
 Desde ese momento el proceso de Baileys inicia automaticamente al ingresar
