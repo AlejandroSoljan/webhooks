@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.050 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupMessages, analyze, text, range } = require('./core');
 
@@ -65,17 +65,17 @@ class SupportService {
     await this.audit(scope, 'history_requested', `${dates.start.toISOString()}/${dates.end.toISOString()}`);
     return { conversations: jids.length, source: 'locally_synced_messages', completeHistoryGuaranteed: false };
   }
-  async repairQueue() {
-    const rows = await this.col('messages').find({ queued: false }).limit(100).toArray();
+  async repairQueue(owner = {}) {
+    const rows = await this.col('messages').find({ ...owner, queued: false }).limit(100).toArray();
     for (const row of rows) {
       const scope = { tenantId: row.tenantId, userId: row.userId };
       await this.enqueue(scope, row.jid, (await this.config(scope)).inactivityMs);
       await this.col('messages').updateOne({ _id: row._id, ...scope }, { $set: { queued: true } });
     }
   }
-  async runOne(assertOwner = async () => {}) {
+  async runOne(assertOwner = async () => {}, owner = {}) {
     const claim = crypto.randomUUID();
-    const job = await this.col('jobs').findOneAndUpdate({ $or: [
+    const job = await this.col('jobs').findOneAndUpdate({ ...owner, $or: [
       { state: 'pending', dueAt: { $lte: this.now() } },
       { state: 'processing', leaseUntil: { $lte: this.now() } },
     ] }, { $set: { state: 'processing', claim, leaseUntil: new Date(+this.now() + 120000) }, $inc: { attempts: 1 } }, { sort: { dueAt: 1 }, returnDocument: 'after' });

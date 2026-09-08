@@ -9,7 +9,6 @@
     "start": "node endpoint.js",
     "dev": "nodemon endpoint.js",
     "support:migrate": "node scripts/migrate_support.js",
-    "support:worker": "node src/support/worker.js",
     "test:support": "node --test tests/support*.test.js"
   },
   "dependencies": {

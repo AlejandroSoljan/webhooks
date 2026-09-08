@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.050 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
 const express = require('express');
 const path = require('node:path');
 const QRCode = require('qrcode');
@@ -7,6 +7,7 @@ const { inspectConfiguration } = require('./config');
 const { scopeOf, scopedId, hash, fail, text, SupportError } = require('./core');
 const { SupportService } = require('./service');
 const { HubSpotContract } = require('./hubspot');
+const { createDeviceRouter, deviceLeaseId } = require('./devices');
 
 function createRouter({ getService, hubspotFactory = token => new HubSpotContract(token), publicOrigin, hubspotEnabled = process.env.SUPPORT_HUBSPOT_ENABLED === 'true' }) {
   const router = express.Router();
@@ -97,14 +98,15 @@ function mountSupport(app) {
   const { publicOrigin, vault } = configuration;
   app.get('/api/support/status', async (req, res) => {
     res.set('Cache-Control', 'no-store');
-    try { scopeOf(req.user); } catch { return res.status(403).json({ error: 'forbidden' }); }
+    let scope;
+    try { scope = scopeOf(req.user); } catch { return res.status(403).json({ error: 'forbidden' }); }
     const checks = configuration.checks.map(check => ({ ...check }));
     let workerRunning = false;
     if (configuration.ready) {
       try {
         const db = await getDb();
         checks.push({ key: 'migration', ok: !!await db.collection('support_migrations').findOne({ _id: '001' }), label: 'Preparar las colecciones de soporte' });
-        workerRunning = !!await db.collection('support_leases').findOne({ _id: 'intake-worker', until: { $gt: new Date() } });
+        workerRunning = !!await db.collection('support_leases').findOne({ _id: deviceLeaseId(scope), source: 'desktop', until: { $gt: new Date() } });
       } catch { checks.push({ key: 'connection', ok: false, label: 'Restablecer la conexión a la base de datos' }); }
     }
     res.json({ ready: checks.every(check => check.ok), checks, workerRunning });
@@ -115,7 +117,10 @@ function mountSupport(app) {
     if (!await db.collection('support_migrations').findOne({ _id: '001' })) fail('support_migration_required', 503);
     return new SupportService(db, vault);
   };
-  if (configuration.ready) app.use('/api/support', createRouter({ getService, publicOrigin }));
+  if (configuration.ready) {
+    app.use('/api/support/device', createDeviceRouter({ getService, publicOrigin }));
+    app.use('/api/support', createRouter({ getService, publicOrigin }));
+  }
   else app.use('/api/support', (req, res) => {
     try { scopeOf(req.user); } catch { return res.status(403).json({ error: 'forbidden' }); }
     res.set('Cache-Control', 'no-store').status(503).json({ error: 'support_setup_required' });

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.051 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
 const crypto = require('node:crypto');
 // AAD binds every ciphertext to tenant, user (or tenant integration), and record purpose.
 function createVault(keyring, activeKey) {
@@ -25,8 +25,10 @@ function createVault(keyring, activeKey) {
     },
   };
 }
-function hasSecureCookieSecret(env) {
-  return typeof env.AUTH_COOKIE_SECRET === 'string' && env.AUTH_COOKIE_SECRET.length >= 32 && env.AUTH_COOKIE_SECRET !== 'dev-unsafe-secret-change-me';
+function hasConfiguredCookieSecret(env) {
+  // Authentication continues to use Asisto's existing cookie configuration.
+  // Encryption independently requires a suitable existing secret below.
+  return typeof env.AUTH_COOKIE_SECRET === 'string' && !!env.AUTH_COOKIE_SECRET.trim() && env.AUTH_COOKIE_SECRET !== 'dev-unsafe-secret-change-me';
 }
 function vaultFromEnv(env = process.env) {
   // Preserve explicitly configured keyrings, including failures: never silently
@@ -34,11 +36,17 @@ function vaultFromEnv(env = process.env) {
   if (env.SUPPORT_ENCRYPTION_KEYS !== undefined || env.SUPPORT_ACTIVE_KEY !== undefined) {
     return createVault(JSON.parse(env.SUPPORT_ENCRYPTION_KEYS || '{}'), env.SUPPORT_ACTIVE_KEY);
   }
-  if (!hasSecureCookieSecret(env)) throw new Error('support_secure_cookie_secret_required');
+  if (!hasConfiguredCookieSecret(env)) throw new Error('support_secure_cookie_secret_required');
   // Domain separation keeps the AES key distinct from the cookie-signing key,
   // while reusing Asisto's existing secret without another managed variable.
-  const key = Buffer.from(crypto.hkdfSync('sha256', env.AUTH_COOKIE_SECRET,
-    'asisto/support/v1', 'session-and-content-encryption', 32));
-  return createVault({ 'asisto-auth-v1': key.toString('base64') }, 'asisto-auth-v1');
+  const sources = [
+    ['asisto-auth-v1', env.AUTH_COOKIE_SECRET],
+    ['asisto-wweb-v1', env.WWEB_API_KEY],
+    ['asisto-openai-v1', env.OPENAI_API_KEY],
+  ].filter(([, secret]) => typeof secret === 'string' && secret.trim().length >= 32);
+  if (!sources.length) throw new Error('support_secure_cookie_secret_required');
+  const keyring = Object.fromEntries(sources.map(([id, secret]) => [id, Buffer.from(crypto.hkdfSync('sha256', secret,
+    'asisto/support/v1', 'session-and-content-encryption', 32)).toString('base64')]));
+  return createVault(keyring, sources[0][0]);
 }
-module.exports = { createVault, vaultFromEnv, hasSecureCookieSecret };
+module.exports = { createVault, vaultFromEnv, hasConfiguredCookieSecret };

@@ -1,0 +1,24 @@
+Asisto | Version: 5.00.053 | Fecha: 2026-09-08
+
+AGENTE PERSONAL DE WHATSAPP PARA WINDOWS
+
+1. Descomprimi todos los archivos y ejecuta Instalar.cmd.
+2. El instalador abre Asisto en tu navegador. Ingresa con TU usuario.
+3. Revisa el nombre de tu PC y pulsa Autorizar esta PC.
+4. Escanea el QR con WhatsApp > Dispositivos vinculados.
+
+Desde ese momento el proceso de Baileys inicia automaticamente al ingresar
+a Windows. Tu PC debe permanecer encendida y conectada a Internet.
+La instalacion y autorizacion se realizan una vez por usuario/PC.
+Una nueva autorizacion reemplaza la PC anterior de ese usuario.
+
+Cada perfil tiene su proceso, sesion y almacenamiento protegido por la
+cuenta de Windows. No se instalan credenciales de MongoDB ni claves
+globales de Asisto en la PC. La API de HubSpot sigue deshabilitada.
+
+El instalador descarga Node.js 24.12.0 desde nodejs.org y verifica su SHA256.
+Instala las dependencias fijadas en package-lock.json. No requiere admin.
+
+Para desconectar la cuenta usa Desvincular mi PC en Tickets desde WhatsApp.
+Para desactivar el inicio automatico usa Administrador de tareas > Inicio
+y deshabilita la entrada AsistoSupport correspondiente.

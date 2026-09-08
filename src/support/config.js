@@ -1,5 +1,5 @@
-// Asisto | Version: 5.00.051 | Fecha: 2026-09-08
-const { vaultFromEnv, hasSecureCookieSecret } = require('./crypto');
+// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
+const { vaultFromEnv, hasConfiguredCookieSecret } = require('./crypto');
 
 // Safe diagnostics for the setup panel. Never return environment values or parser errors.
 function inspectConfiguration(env = process.env) {
@@ -13,7 +13,7 @@ function inspectConfiguration(env = process.env) {
     { key: 'enabled', ok: env.SUPPORT_ENABLED === 'true', label: 'Habilitar el procesamiento de soporte' },
     { key: 'origin', ok: !!publicOrigin, label: 'Configurar el dominio de Asisto' },
     { key: 'encryption', ok: !!vault, label: 'Protección de sesiones con la configuración de Asisto' },
-    { key: 'authentication', ok: hasSecureCookieSecret(env), label: 'Configuración de inicio de sesión de Asisto' },
+    { key: 'authentication', ok: hasConfiguredCookieSecret(env), label: 'Configuración de inicio de sesión de Asisto' },
     { key: 'database', ok: !!env.MONGODB_URI, label: 'Configurar la conexión a la base de datos' },
   ];
   return { checks, ready: checks.every(c => c.ok), publicOrigin, vault };

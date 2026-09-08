@@ -1,6 +1,7 @@
-// Asisto | Version: 5.00.049 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
 // Additive, repeatable migration. No writes to existing Asisto collections.
 const indexes = {
+  support_devices: [{ key: { code: 1 }, unique: true, name: 'pairing_code' }, { key: { tenantId: 1, userId: 1 }, unique: true, partialFilterExpression: { state: 'approved' }, name: 'active_owner' }, { key: { expiresAt: 1 }, expireAfterSeconds: 0, name: 'expiry' }],
   support_sessions: [{ key: { tenantId: 1, userId: 1 }, unique: true, name: 'owner' }],
   support_auth: [{ key: { tenantId: 1, userId: 1 }, name: 'owner' }],
   support_settings: [{ key: { tenantId: 1, userId: 1 }, unique: true, name: 'owner' }],

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.051 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createVault, vaultFromEnv } = require('../src/support/crypto');
@@ -43,6 +43,22 @@ test('derived encryption rejects missing and unsafe existing secrets', () => {
   for (const AUTH_COOKIE_SECRET of [undefined, '', 'short', 'dev-unsafe-secret-change-me']) {
     assert.throws(() => vaultFromEnv({ AUTH_COOKIE_SECRET }), /support_secure_cookie_secret_required/);
   }
+});
+
+test('legacy Asisto login can reuse a strong existing API secret for encryption', () => {
+  const env = { SUPPORT_ENABLED: 'true', PUBLIC_BASE_URL: 'https://asisto.example', MONGODB_URI: 'mongodb://fixture', AUTH_COOKIE_SECRET: 'legacy-login', WWEB_API_KEY: 'legacy-wweb', OPENAI_API_KEY: 'fixture-only-api-key-with-at-least-32-characters' };
+  const config = inspectConfiguration(env);
+  assert.equal(config.ready, true);
+  const sealed = config.vault.seal({ preserved: true }, 'owner');
+  assert.equal(sealed.kid, 'asisto-openai-v1');
+  assert.deepEqual(vaultFromEnv(env).open(sealed, 'owner'), { preserved: true });
+  // Adding a suitable preferred source retains decryption by the old source ID.
+  const next = vaultFromEnv({ ...env, WWEB_API_KEY: 'fixture-only-strong-whatsapp-key-1234567890' });
+  assert.deepEqual(next.open(sealed, 'owner'), { preserved: true });
+  assert.equal(next.seal({}, 'owner').kid, 'asisto-wweb-v1');
+  assert.equal(inspectConfiguration({ ...env, AUTH_COOKIE_SECRET: 'dev-unsafe-secret-change-me' }).ready, false);
+  assert.equal(inspectConfiguration({ ...env, OPENAI_API_KEY: 'short' }).ready, false);
+  assert.throws(() => vaultFromEnv({ ...env, OPENAI_API_KEY: 'different-fixture-api-key-with-at-least-32-characters' }).open(sealed, 'owner'));
 });
 
 test('existing explicit keyrings and origin overrides retain priority without silent fallback', () => {

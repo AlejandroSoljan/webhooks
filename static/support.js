@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.050 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
@@ -17,7 +17,23 @@
     const result = await response.json(); if (!response.ok) throw new Error(result.error); return result;
   }
   const action = fn => async event => { event?.preventDefault(); try { await fn(); } catch (e) { notice(e); } };
+  let verifiedDeviceCode = null;
+  async function lookupDevice() {
+    verifiedDeviceCode = null; $('deviceApprove').disabled = true;
+    const code = $('deviceCode').value.trim().toUpperCase();
+    const device = await api('/device/request/' + encodeURIComponent(code));
+    verifiedDeviceCode = device.code; $('deviceName').textContent = `PC: ${device.name}. Autorizá sólo si acabás de instalar el agente en esa PC.`; $('deviceApprove').disabled = false;
+  }
+  $('deviceCode').oninput = () => { verifiedDeviceCode = null; $('deviceApprove').disabled = true; };
+  $('deviceLookup').onclick = action(lookupDevice);
+  $('deviceForm').onsubmit = action(async () => {
+    if (!verifiedDeviceCode) throw new Error('Primero comprobá la PC.');
+    await api('/device/approve', 'POST', { code: verifiedDeviceCode });
+    $('deviceApprove').disabled = true; $('deviceName').textContent = 'PC autorizada. El agente iniciará tu sesión de WhatsApp automáticamente.';
+  });
+  $('deviceRevoke').onclick = action(async () => { await api('/device/revoke', 'POST', {}); $('notice').textContent = 'PC desvinculada de tu cuenta.'; });
   async function session() {
+    const status = await api('/status'); $('deviceStatus').textContent = status.workerRunning ? 'Tu agente está activo en tu PC.' : 'Tu agente no está conectado. Instalalo o encendé la PC donde lo autorizaste.';
     const row = await api('/session'); $('sessionState').textContent = caption(row.state);
     $('qr').hidden = !row.qr; if (row.qr) $('qr').src = row.qr; else $('qr').removeAttribute('src');
   }
@@ -99,11 +115,13 @@
       for (const check of status.checks) { const item = document.createElement('li'); item.textContent = `${check.ok ? 'Listo' : 'Pendiente'}: ${check.label}`; $('setupChecks').append(item); }
       return;
     }
-    if (!status.workerRunning) $('notice').textContent = 'El servicio de WhatsApp no está iniciado. Podés revisar los borradores; la vinculación y el procesamiento esperarán a que se inicie.';
+    if (!status.workerRunning) $('notice').textContent = 'La sincronización comenzará cuando tu agente esté activo en tu PC.';
     const capabilities = await api('/capabilities'); hubspotEnabled = capabilities.hubspotEnabled === true;
     $('hubspotSection').hidden = !hubspotEnabled; $('tickets').hidden = !hubspotEnabled;
     const config = await api('/settings'); $('inactivity').value = config.inactivityMs / 60000; $('mode').value = config.mode; $('excludedJids').value = config.excludedJids.join('\n'); $('excludedNames').value = config.excludedNames.join('\n');
     await Promise.all([session(), refresh(), memories()]);
+    const deviceCode = new URLSearchParams(location.search).get('device');
+    if (deviceCode) { $('deviceCode').value = deviceCode; await lookupDevice(); }
   }
   $('setupRefresh').onclick = action(initialize);
   initialize().catch(notice);

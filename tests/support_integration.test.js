@@ -1,15 +1,15 @@
-// Asisto | Version: 5.00.052 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { MongoClient, ObjectId } = require('mongodb');
 const express = require('express');
 const { EventEmitter } = require('node:events');
-const { fork } = require('node:child_process');
+
 const { migrate } = require('../src/support/migration');
 const { createVault } = require('../src/support/crypto');
 const { SupportService } = require('../src/support/service');
-const { WorkerLease } = require('../src/support/worker');
+
 const { createRouter, mountSupport } = require('../src/support/routes');
 const { encryptedAuth, BaileysSessions } = require('../src/support/baileys');
 const { scopedId, hash } = require('../src/support/core');
@@ -83,16 +83,10 @@ test('missing audio provider fails closed, retries are bounded, local transcript
   await service.history(scope, '2026-09-01T10:30:00Z', '2026-09-01T12:00:00Z'); await service.runOne();
   assert.equal(calls, 1);
 });
-test('queue repairs insertion/enqueue crash and fences an expired worker', async () => {
+test('queue repairs an insertion/enqueue crash', async () => {
   await service.ingest(scope, message('one'));
   await service.col('jobs').deleteMany({}); await service.col('messages').updateMany({}, { $set: { queued: false } });
   await service.repairQueue(); assert.equal(await service.col('jobs').countDocuments(), 1);
-  const first = new WorkerLease(db, () => now), second = new WorkerLease(db, () => now);
-  assert.equal(await first.acquire(), true); assert.equal(await second.acquire(), false);
-  now = new Date(+now + 30001); assert.equal(await second.acquire(), true);
-  await assert.rejects(() => first.assert(), /worker_lease_lost/);
-  await assert.rejects(() => first.renew(), /worker_lease_lost/);
-  await first.release(); await second.assert(); await second.release();
 });
 test('exclusions do not cross tenants and block approval if changed after generation', async () => {
   await service.saveConfig({ ...scope, userId: '*' }, { excludedNames: ['Juan Garziera'] });
@@ -223,25 +217,6 @@ test('incomplete setup leaves the panel visible and operations blocked without c
     assert.equal((await fetch(base + '/api/support/session', { method: 'POST' })).status, 503);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
-test('real worker acquires its lease and releases it when its parent disconnects', { timeout: 15000 }, async () => {
-  const env = { ...process.env, SUPPORT_ENABLED: 'true', AUTH_COOKIE_SECRET: 'worker-fixture-existing-secret-12345678', MONGODB_URI: mongo.getUri(), MONGODB_DBNAME: 'support_test' };
-  delete env.SUPPORT_ENCRYPTION_KEYS; delete env.SUPPORT_ACTIVE_KEY;
-  const child = fork(require.resolve('../src/support/worker'), [], { env, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
-  const exit = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));
-  try {
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('worker readiness timeout')), 10000);
-      child.once('error', e => { clearTimeout(timer); reject(e); });
-      child.once('exit', () => { clearTimeout(timer); reject(new Error('worker exited before readiness')); });
-      child.once('message', message => { clearTimeout(timer); message.type === 'support-ready' ? resolve() : reject(new Error('unexpected worker message')); });
-    });
-    assert.ok(await db.collection('support_leases').findOne({ _id: 'intake-worker', until: { $gt: new Date() } }));
-    child.disconnect();
-    assert.deepEqual(await exit, { code: 0, signal: null });
-    assert.equal(await db.collection('support_leases').countDocuments({ _id: 'intake-worker' }), 0);
-  } finally { child.kill('SIGKILL'); }
-});
-
 test('manual identity flows into a draft and permits local approval with no HubSpot IDs or token', async () => {
   const identity = await service.rememberContact(scope, { jid: '123@s.whatsapp.net', company: 'Empresa de prueba', contact: 'Contacto de prueba' });
   assert.equal(identity.source, 'manual');
