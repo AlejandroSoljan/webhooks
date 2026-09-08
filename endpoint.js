@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.044 | Fecha: 2026-09-06
+// Asisto | Version: 5.00.049 | Fecha: 2026-09-08
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -166,6 +166,7 @@ mountBotTestPanel(app, { auth });
 mountQrProductWeb(app);
 mountDemoCatalogApi(app);
 mountHelpTool(app);
+require('./src/support/routes').mountSupport(app);
 // ===================== Índices seguimiento ventanas API Mensajes =====================
 let apiMessageWindowIndexesReady = false;
 async function ensureApiMessageWindowIndexes() {

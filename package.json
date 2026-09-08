@@ -5,26 +5,32 @@
   "main": "endpoint.js",
   "type": "commonjs",
   "scripts": {
-    "test": "node --test tests/product_catalog.test.js tests/qr_product_catalog.test.js tests/import_product_catalog.test.js tests/product_catalog_sync.test.js",
+    "test": "node --test tests/*.test.js",
     "start": "node endpoint.js",
-    "dev": "nodemon endpoint.js"
+    "dev": "nodemon endpoint.js",
+    "support:migrate": "node scripts/migrate_support.js",
+    "support:worker": "node src/support/worker.js",
+    "test:support": "node --test tests/support*.test.js"
   },
   "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "axios": "^1.6.0",
+    "body-parser": "^1.20.2",
     "dotenv": "^16.4.5",
+    "exceljs": "^4.3.0",
     "express": "^4.19.2",
     "googleapis": "^133.0.0",
-    "openai": "^4.58.1",
-    "node-fetch": "^3.3.2",
-    "mongodb": "^6.8.0",
-    "body-parser": "^1.20.2",
-    "exceljs": "^4.3.0",
-   "pdfkit": "^0.15.0",
     "helmet": "^8.1.0",
-     "axios": "^1.6.0",
-     "node-telegram-bot-api": "^0.66.0"
-    
+    "mongodb": "^6.8.0",
+    "node-fetch": "^3.3.2",
+    "node-telegram-bot-api": "^0.66.0",
+    "openai": "^4.58.1",
+    "pdfkit": "^0.15.0",
+    "pino": "9.14.0",
+    "qrcode": "1.5.4"
   },
   "devDependencies": {
+    "mongodb-memory-server": "11.2.0",
     "nodemon": "^3.1.4"
   },
   "engines": {

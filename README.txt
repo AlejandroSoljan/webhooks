@@ -1,4 +1,10 @@
+# Asisto | Version: 5.00.049 | Fecha: 2026-09-08
 # WhatsApp Webhook con OpenAI + MongoDB
+
+## Módulo experimental: tickets desde WhatsApp
+
+Diseño, alcance, migración y activación: [docs/whatsapp_support.md](docs/whatsapp_support.md).
+Permanece desactivado por defecto. La primera vertical guarda borradores y aprobación local, sin escribir tickets en HubSpot.
 
 ## Variables de entorno necesarias
 - `PORT` = puerto donde corre Express (ej. 3000)
