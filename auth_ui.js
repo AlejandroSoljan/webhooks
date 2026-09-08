@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.056 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.057 | Fecha: 2026-09-08
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -2144,13 +2144,26 @@ function usersAdminPage({ user, users, msg, err }) {
 function wwebSessionsAdminPage({ user, deviceCode = '' }) {
   const code = /^[A-F0-9]{12}$/.test(String(deviceCode)) ? String(deviceCode) : '';
   const personal = hasAccess(user, 'support') ? `
-    <section aria-label="Mi sesión personal" style="margin-bottom:24px">
-      <h2>Mi WhatsApp en esta PC</h2>
-      <p>Ingresaste como <strong>${htmlEscape(user.username || '')}</strong>. La sesión vinculada pertenece a tu cuenta de Asisto.</p>
-      <iframe title="Vincular mi PC y WhatsApp" src="/admin/support?embed=1&amp;view=connection${code ? '&amp;device=' + code : ''}" style="width:100%;height:850px;border:0;border-radius:12px"></iframe>
-      <a href="/ui/support">Abrir mis borradores de tickets</a>
-    </section>` : '';
-  if (!hasAccess(user, 'wweb')) return appShell({ title: 'Sesiones WhatsApp Web · Asisto', user, active: 'wweb', main: personal });
+    <button class="btn2" type="button" id="personalQrOpen">Escanear mi QR</button>
+    <dialog id="personalQrDialog" aria-label="QR de mi usuario" style="width:min(900px,90vw);max-height:90vh;padding:18px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;color:#19344b">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:16px">
+        <strong>WhatsApp de ${htmlEscape(user.username || '')}</strong>
+        <button class="btn2" type="button" id="personalQrClose" autofocus>Cerrar</button>
+      </div>
+      <iframe id="personalQrFrame" title="Vincular mi PC y WhatsApp" data-src="/admin/support?embed=1&amp;view=connection${code ? '&amp;device=' + code : ''}" style="display:block;width:100%;height:70vh;border:0;margin-top:12px"></iframe>
+    </dialog>
+    <script>
+      (function(){
+        var dialog = document.getElementById('personalQrDialog');
+        var frame = document.getElementById('personalQrFrame');
+        function openPersonalQr(){ frame.src = frame.getAttribute('data-src'); dialog.showModal(); }
+        document.getElementById('personalQrOpen').onclick = openPersonalQr;
+        document.getElementById('personalQrClose').onclick = function(){ dialog.close(); };
+        dialog.addEventListener('close', function(){ frame.removeAttribute('src'); });
+        ${code ? 'openPersonalQr();' : ''}
+      })();
+    </script>` : '';
+  if (!hasAccess(user, 'wweb')) return appShell({ title: 'Sesiones WhatsApp Web · Asisto', user, active: 'wweb', main: '<h2>Sesiones WhatsApp Web</h2>' + personal });
   const role = String(user?.role || "").toLowerCase();
   const isSuper = role === "superadmin";
   const canViewStats = role === "admin" || role === "superadmin";
@@ -2160,13 +2173,13 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
     active: "wweb",
     main: `
     <div class="app appWide">
-      ${personal}
       <div class="toolbar">
         <div>
           <h2 style="margin:0 0 6px">Sesiones WhatsApp Web</h2>
                   <div class="small">Acciones: <strong>Reiniciar</strong> reinicia app_asisto_ws completo en la PC dueña y todas sus sesiones WhatsApp. <strong>Pausar/Reanudar</strong> afecta sólo esa sesión y no cierra WhatsApp. <strong>Borrar autenticación</strong> fuerza pedir QR nuevamente.</div>
        <div class="toolbarActions">
           <button class="btn2" type="button" onclick="window.__wwebReload && window.__wwebReload()">Actualizar</button>
+          ${personal}
           <span id="wwebStatus" class="small" style="opacity:.85"></span>
           <a class="btn2" href="/app" style="text-decoration:none">Volver</a>
         </div>

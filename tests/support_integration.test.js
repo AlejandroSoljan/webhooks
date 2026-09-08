@@ -174,7 +174,7 @@ test('Asisto menu, shell and user editor expose support only under the intended 
   try { auth = require('../auth_ui'); } finally { dbModule.getDb = originalGetDb; }
   const app = express();
   app.use((req, res, next) => {
-    req.user = { uid: scope.userId, username: 'fixture', tenantId: scope.tenantId, role: 'admin', allowedPages: req.headers['test-denied'] ? ['users'] : req.headers['test-legacy'] ? ['wweb'] : ['support', 'users'] };
+    req.user = { uid: scope.userId, username: 'fixture', tenantId: scope.tenantId, role: 'admin', allowedPages: req.headers['test-denied'] ? ['users'] : req.headers['test-both'] ? ['wweb', 'support'] : req.headers['test-legacy'] ? ['wweb'] : ['support', 'users'] };
     next();
   });
   auth.protectRoutes(app);
@@ -197,6 +197,13 @@ test('Asisto menu, shell and user editor expose support only under the intended 
     const legacy = await (await fetch(base + '/admin/wweb', { headers: { 'test-legacy': '1' } })).text();
     assert.match(legacy, /id="wwebBody"/);
     assert.doesNotMatch(legacy, /title="Vincular mi PC y WhatsApp"/);
+    const combined = await (await fetch(base + '/admin/wweb', { headers: { 'test-both': '1' } })).text();
+    for (const id of ['wwebBody', 'wwebSearch', 'wwebStateFilter', 'qrModal', 'statsModal']) assert.ok(combined.includes(`id="${id}"`));
+    assert.match(combined, /id="personalQrOpen">Escanear mi QR/);
+    assert.doesNotMatch(combined, /<dialog[^>]*\sopen[\s>]/);
+    assert.doesNotMatch(combined, /<iframe[^>]*\ssrc=/);
+    assert.doesNotMatch(combined, /Mi WhatsApp en esta PC|height:850px/);
+    assert.ok(combined.indexOf('<h2 style="margin:0 0 6px">Sesiones WhatsApp Web') < combined.indexOf('id="personalQrOpen"'));
     const invalidCode = await (await fetch(base + '/admin/wweb?device=%22%3E%3Cscript%3E')).text();
     assert.doesNotMatch(invalidCode, /view=connection&amp;device=/);
     const shell = await fetch(base + '/ui/support'); assert.equal(shell.status, 200);
