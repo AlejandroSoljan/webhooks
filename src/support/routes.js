@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.068 | Fecha: 2026-09-08
 const express = require('express');
 const path = require('node:path');
 const QRCode = require('qrcode');
@@ -9,6 +9,7 @@ const { SupportService } = require('./service');
 const { asistoTranscriber } = require('./transcriber');
 const { HubSpotContract } = require('./hubspot');
 const { createDeviceRouter, deviceLeaseId } = require('./devices');
+const { createExtensionRouter } = require('./extension');
 
 function createRouter({ getService, hubspotFactory = token => new HubSpotContract(token), publicOrigin, hubspotEnabled = process.env.SUPPORT_HUBSPOT_ENABLED === 'true' }) {
   const router = express.Router();
@@ -61,7 +62,7 @@ function createRouter({ getService, hubspotFactory = token => new HubSpotContrac
   router.post('/drafts/:id/approve', route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, {}, true)));
   router.post('/drafts/:id/acknowledge-source', route(async (req, s, scope) => {
     if (!Number.isInteger(req.body.revision)) fail('revision_required', 409);
-    const result = await s.col('drafts').updateOne({ _id: text(req.params.id, 64), ...scope, revision: req.body.revision, state: { $ne: 'merged' }, reconciliationRequired: { $ne: true } }, { $set: { sourceChanged: false, state: 'pending', updatedAt: s.now() }, $inc: { revision: 1 }, $push: { events: { action: 'source_reviewed', at: s.now(), by: scope.userId } } });
+    const result = await s.col('drafts').updateOne({ _id: text(req.params.id, 64), ...scope, revision: req.body.revision, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' }, reconciliationRequired: { $ne: true } }, { $set: { sourceChanged: false, state: 'pending', updatedAt: s.now() }, $inc: { revision: 1 }, $push: { events: { action: 'source_reviewed', at: s.now(), by: scope.userId } } });
     if (!result.matchedCount) fail('revision_conflict_or_reconciliation_required', 409);
     return { revision: req.body.revision + 1 };
   }));
@@ -123,6 +124,7 @@ function mountSupport(app) {
   };
   if (configuration.ready) {
     app.use('/api/support/device', createDeviceRouter({ getService, publicOrigin }));
+    app.use('/api/support/extension', createExtensionRouter({ getService }));
     app.use('/api/support', createRouter({ getService, publicOrigin }));
   }
   else app.use('/api/support', (req, res) => {

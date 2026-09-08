@@ -1,16 +1,19 @@
-// Asisto | Version: 5.00.049 | Fecha: 2026-09-08
-const { fail, text } = require('./core');
+// Asisto | Version: 5.00.068 | Fecha: 2026-09-08
+const { fail, text, SupportError } = require('./core');
 
 class HubSpotContract {
   constructor(token, fetchImpl = fetch) { this.token = token; this.fetch = fetchImpl; }
-  async request(path, body) {
+  async request(path, body, method = body ? 'POST' : 'GET') {
     // All paths are generated here. Never accept an arbitrary host or redirect with credentials.
     const response = await this.fetch(`https://api.hubapi.com${path}`, {
-      method: body ? 'POST' : 'GET', redirect: 'error', signal: AbortSignal.timeout(15000),
+      method, redirect: 'error', signal: AbortSignal.timeout(15000),
       headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
-    if (!response.ok) fail(response.status === 429 ? 'hubspot_rate_limited' : 'hubspot_request_failed', 502);
+    if (!response.ok) {
+      const error = new SupportError(response.status === 429 ? 'hubspot_rate_limited' : 'hubspot_request_failed', 502);
+      error.remoteStatus = response.status; throw error;
+    }
     return response.json();
   }
   async metadata() {
@@ -42,7 +45,10 @@ class HubSpotContract {
     } while (after);
     return results;
   }
-  // Reviewable payload only; no remote mutations in this vertical.
+  async save(payload, ticketId) {
+    if (ticketId) return this.request(`/crm/v3/objects/tickets/${encodeURIComponent(text(ticketId))}`, { properties: payload.properties }, 'PATCH');
+    return this.request('/crm/v3/objects/tickets', payload);
+  }
   prepare(fields, metadata, mapping) {
     const pipeline = metadata.pipelines.find(p => p.id === mapping.pipelineId);
     const stage = pipeline?.stages.find(s => s.id === mapping.stageId);

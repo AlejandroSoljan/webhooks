@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Asisto · Tareas de WhatsApp",
+  "version": "1.0.0",
+  "minimum_chrome_version": "116",
+  "description": "Revisá las tareas de Asisto junto a tus contactos de WhatsApp Web y guardalas en HubSpot.",
+  "permissions": ["storage", "sidePanel"],
+  "host_permissions": ["https://asistobot.com.ar/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Tareas de Asisto" },
+  "side_panel": { "default_path": "panel.html" },
+  "content_scripts": [{ "matches": ["https://web.whatsapp.com/*"], "js": ["matcher.js", "content.js"], "css": ["content.css"] }]
+}

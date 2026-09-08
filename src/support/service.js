@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.068 | Fecha: 2026-09-08
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupTasks, analyze, ANALYZER_VERSION, text, range } = require('./core');
 
@@ -166,12 +166,14 @@ class SupportService {
       if (group.some(m => m.contentTooLarge)) fail('message_too_large', 422);
       if (ids.length > 500 || group.reduce((n, m) => n + m.text.length, 0) > 100000) fail('conversation_window_too_large', 422);
       const existing = await this.col('drafts').find({ ...scope, jid: job.jid, state: { $ne: 'merged' }, messageIds: { $in: ids } }).sort({ createdAt: 1, _id: 1 }).toArray();
-      const untouched = row => row.events?.every(event => ['generated', 'source_changed', 'tasks_merged'].includes(event.action)) === true;
+      if (existing.some(row => ['sending', 'uncertain'].includes(row.hubspot?.state))) fail('hubspot_delivery_in_progress', 409);
+      const untouched = row => !row.hubspot?.ticketId && row.events?.every(event => ['generated', 'source_changed', 'tasks_merged'].includes(event.action)) === true;
       // A narrower historical request must not shrink a consolidated task.
       if (existing.length === 1 && existing[0].analyzerVersion === ANALYZER_VERSION && ids.every(id => existing[0].messageIds.includes(id))) continue;
       const edited = existing.filter(row => !untouched(row));
       if (edited.length > 1 || existing.some(row => row.messageIds.some(id => !ids.includes(id)))) {
-        await this.col('drafts').updateMany({ ...scope, _id: { $in: existing.map(d => d._id) }, state: { $ne: 'merged' } }, { $set: { state: 'needs_review', sourceChanged: true, reconciliationRequired: true, updatedAt: this.now() } });
+        const flagged = await this.col('drafts').updateMany({ ...scope, _id: { $in: existing.map(d => d._id) }, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { state: 'needs_review', sourceChanged: true, reconciliationRequired: true, updatedAt: this.now() } });
+        if (flagged.matchedCount !== existing.length) fail('revision_conflict', 409);
         continue;
       }
       if (edited.length === 1) existing.sort((a, b) => Number(b._id === edited[0]._id) - Number(a._id === edited[0]._id));
@@ -184,10 +186,10 @@ class SupportService {
       const draft = { ...result, messageDate: group[0].at.toISOString(), companyId: memory?.companyId || '', company: memory?.company || '', contactId: memory?.contactId || '', contact: memory?.contact || whatsappContact?.name || group.find(m => !m.fromMe && m.name)?.name || '', identitySource: memory?.source || (memory?.verifiedAt ? 'hubspot' : 'unassigned'), proposedAction: 'review' };
       if (existing.length) {
         const generatedOnly = untouched(existing[0]);
-        const saved = await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision, state: { $ne: 'merged' } }, { $set: { fingerprint, analyzerVersion: ANALYZER_VERSION, messageIds: ids, state: generatedOnly ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !generatedOnly, reconciliationRequired: false, ...(generatedOnly ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(draft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: existing.length > 1 ? 'tasks_merged' : 'source_changed', at: this.now() } } });
+        const saved = await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { fingerprint, analyzerVersion: ANALYZER_VERSION, messageIds: ids, state: generatedOnly ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !generatedOnly, reconciliationRequired: false, ...(generatedOnly ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(draft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: existing.length > 1 ? 'tasks_merged' : 'source_changed', at: this.now() } } });
         if (!saved.matchedCount) fail('revision_conflict', 409);
         for (const duplicate of existing.slice(1)) {
-          const merged = await this.col('drafts').updateOne({ _id: duplicate._id, ...scope, revision: duplicate.revision, state: { $ne: 'merged' } }, { $set: { state: 'merged', mergedInto: _id, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'tasks_merged', into: _id, at: this.now() } } });
+          const merged = await this.col('drafts').updateOne({ _id: duplicate._id, ...scope, revision: duplicate.revision, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { state: 'merged', mergedInto: _id, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'tasks_merged', into: _id, at: this.now() } } });
           if (!merged.matchedCount) fail('revision_conflict', 409);
           await this.col('drafts').updateOne({ _id, ...scope }, { $addToSet: { mergedDraftIds: duplicate._id } });
         }
@@ -225,6 +227,7 @@ class SupportService {
     const current = await this.col('drafts').findOne({ _id: text(id, 64), ...scope });
     if (!current) fail('not_found', 404);
     if (current.state === 'merged') fail('draft_merged', 409);
+    if (current.hubspot?.state === 'sending') fail('hubspot_delivery_in_progress', 409);
     if (approve) {
       const config = await this.config(scope);
       const sources = await this.col('messages').find({ ...scope, _id: { $in: current.messageIds } }).toArray();
@@ -242,7 +245,7 @@ class SupportService {
     if (approve && current.mode === 'suggest') fail('suggestion_only', 409);
     if (approve && (!fields.subject || (!fields.company && !fields.companyId) || fields.proposedAction === 'review')) fail('approval_fields_required');
     const state = approve ? 'approved' : 'pending';
-    const result = await this.col('drafts').updateOne({ _id: id, ...scope, revision }, {
+    const result = await this.col('drafts').updateOne({ _id: id, ...scope, revision, state: { $ne: 'merged' }, 'hubspot.state': { $ne: 'sending' } }, {
       $set: { fields: this.vault.seal(fields, id), state, updatedAt: this.now() }, $inc: { revision: 1 },
       $push: { events: { action: approve ? 'approved' : 'edited', by: scope.userId, revision: revision + 1, at: this.now() } },
     });
