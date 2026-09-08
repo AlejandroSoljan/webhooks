@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.049 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.050 | Fecha: 2026-09-08
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -134,7 +134,7 @@ test('Baileys QR, live/history ingestion and logout operate through backend even
 test('HTTP scope ignores caller tenant/user overrides, rejects CSRF and hides credentials', async () => {
   const app = express();
   app.use((req, res, next) => { req.user = { uid: scope.userId, tenantId: scope.tenantId, role: req.headers['test-role'] || 'user', allowedPages: ['support'] }; next(); });
-  app.use('/api/support', createRouter({ getService: async () => service, publicOrigin: 'https://asisto.example', hubspotFactory: () => ({ metadata: async () => ({ properties: [] }) }) }));
+  app.use('/api/support', createRouter({ getService: async () => service, publicOrigin: 'https://asisto.example', hubspotEnabled: true, hubspotFactory: () => ({ metadata: async () => ({ properties: [] }) }) }));
   const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}/api/support`;
   const headers = { 'Content-Type': 'application/json', Origin: 'https://asisto.example', 'X-Asisto-Support': '1' };
@@ -220,5 +220,50 @@ test('incomplete setup leaves the panel visible and operations blocked without c
     assert.equal(JSON.stringify(status).includes('invalid-secret-fixture'), false);
     assert.equal((await fetch(base + '/admin/support')).status, 200);
     assert.equal((await fetch(base + '/api/support/session', { method: 'POST' })).status, 503);
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test('manual identity flows into a draft and permits local approval with no HubSpot IDs or token', async () => {
+  const identity = await service.rememberContact(scope, { jid: '123@s.whatsapp.net', company: 'Empresa de prueba', contact: 'Contacto de prueba' });
+  assert.equal(identity.source, 'manual');
+  assert.equal(await service.col('memory').findOne(other), null);
+  assert.equal(await service.col('memory').findOne(foreign), null);
+  const [draft] = await processMessages([message('local-only')]);
+  assert.equal(draft.fields.company, identity.company);
+  assert.equal(draft.fields.contact, identity.contact);
+  assert.equal(draft.fields.companyId, ''); assert.equal(draft.fields.contactId, '');
+  assert.equal(draft.fields.identitySource, 'manual');
+  const approval = await service.editDraft(scope, draft._id, draft.revision, { proposedAction: 'create' }, true);
+  assert.equal(approval.state, 'approved'); assert.equal(approval.remoteWrite, false);
+  assert.equal(await service.col('integrations').countDocuments(), 0);
+});
+
+test('manual identity edits clear previous remote verification and reject fabricated verification', async () => {
+  await service.col('memory').insertOne({ ...scope, jid: '123@s.whatsapp.net', companyId: 'remote-1', contactId: 'remote-2', verifiedAt: now, source: 'hubspot' });
+  await service.rememberContact(scope, { jid: '123@s.whatsapp.net', company: 'Otra empresa', contact: 'Nombre manual' });
+  const identity = await service.col('memory').findOne(scope);
+  assert.equal(identity.source, 'manual'); assert.equal(identity.companyId, undefined); assert.equal(identity.contactId, undefined); assert.equal(identity.verifiedAt, undefined);
+  assert.equal(identity.events.at(-1).action, 'identity_recorded_manually');
+  await assert.rejects(() => service.rememberContact(scope, { jid: '123@s.whatsapp.net', company: 'Nombre', source: 'hubspot' }), /manual_identity_fields_only/);
+  await assert.rejects(() => service.rememberContact(scope, { jid: '123@s.whatsapp.net', company: '  ' }), /company_required/);
+});
+
+test('deferred HubSpot phase rejects all connection endpoints before invoking the remote client', async () => {
+  let remoteCalls = 0;
+  const app = express();
+  app.use((req, res, next) => { req.user = { uid: scope.userId, tenantId: scope.tenantId, role: 'admin', allowedPages: ['support'] }; next(); });
+  app.use('/api/support', createRouter({ getService: async () => service, publicOrigin: 'https://asisto.example', hubspotEnabled: false, hubspotFactory: () => { remoteCalls++; throw new Error('unexpected_remote_call'); } }));
+  const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const base = `http://127.0.0.1:${server.address().port}/api/support`;
+  const headers = { 'Content-Type': 'application/json', Origin: 'https://asisto.example', 'X-Asisto-Support': '1' };
+  try {
+    assert.deepEqual(await (await fetch(base + '/capabilities')).json(), { hubspotEnabled: false });
+    for (const [path, method] of [['/hubspot', 'PUT'], ['/hubspot/metadata', 'GET'], ['/hubspot/companies/123/tickets', 'GET'], ['/memory/verify', 'PUT']]) {
+      const response = await fetch(base + path, { method, headers, ...(method === 'PUT' ? { body: '{}' } : {}) });
+      assert.equal(response.status, 409); assert.equal((await response.json()).error, 'hubspot_deferred');
+    }
+    const saved = await fetch(base + '/memory', { method: 'PUT', headers, body: JSON.stringify({ jid: '123@s.whatsapp.net', company: 'Empresa manual', contact: 'Contacto manual' }) });
+    assert.equal(saved.status, 200); assert.equal((await saved.json()).source, 'manual');
+    assert.equal(remoteCalls, 0);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });

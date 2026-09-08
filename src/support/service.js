@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.049 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.050 | Fecha: 2026-09-08
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupMessages, analyze, text, range } = require('./core');
 
@@ -22,6 +22,20 @@ class SupportService {
     const config = settings(input);
     await this.col('settings').updateOne(scope, { $set: { config, updatedAt: this.now() }, $push: { events: { action: 'settings_saved', at: this.now() } } }, { upsert: true });
     return config;
+  }
+  async rememberContact(scope, input) {
+    const jid = text(input.jid);
+    if (!/^[^@]+@(s\.whatsapp\.net|lid)$/.test(jid)) fail('invalid_jid');
+    // Manual labels must never inherit a previously verified remote identity.
+    if (['companyId', 'contactId', 'verifiedAt', 'source'].some(key => Object.hasOwn(input, key))) fail('manual_identity_fields_only');
+    const company = text(input.company || ''), contact = text(input.contact || '');
+    if (!company) fail('company_required');
+    const identity = { company, contact, source: 'manual', updatedAt: this.now() };
+    await this.col('memory').updateOne({ ...scope, jid }, {
+      $set: identity, $unset: { companyId: '', contactId: '', verifiedAt: '' },
+      $push: { events: { action: 'identity_recorded_manually', by: scope.userId, at: this.now() } },
+    }, { upsert: true });
+    return { jid, ...identity };
   }
   async ingest(scope, message) {
     const config = await this.config(scope);
@@ -137,7 +151,7 @@ class SupportService {
       await check();
       await this.col('usage').insertOne({ ...scope, conversationId: job.jid, recordId: _id, fingerprint, model: 'manager-rules-v1', kind: 'analysis', inputTokens: 0, outputTokens: 0, audioSeconds: 0, processingUnits: decoded.reduce((n, m) => n + m.text.length, 0), unit: 'characters', costUsd: 0, durationMs: Date.now() - started, result: result.result, at: this.now() });
       const memory = await this.col('memory').findOne({ ...scope, jid: job.jid });
-      const draft = { ...result, messageDate: group[0].at.toISOString(), companyId: memory?.companyId || '', company: memory?.company || '', contactId: memory?.contactId || '', contact: memory?.contact || group.find(m => !m.fromMe)?.name || '', proposedAction: 'review' };
+      const draft = { ...result, messageDate: group[0].at.toISOString(), companyId: memory?.companyId || '', company: memory?.company || '', contactId: memory?.contactId || '', contact: memory?.contact || group.find(m => !m.fromMe)?.name || '', identitySource: memory?.source || (memory?.verifiedAt ? 'hubspot' : 'unassigned'), proposedAction: 'review' };
       if (existing.length) {
         // Keep human edits; any new evidence invalidates the previous approval.
         await this.col('drafts').updateOne({ _id, ...scope }, { $set: { fingerprint, messageIds: ids, state: 'needs_review', sourceChanged: true, source: this.vault.seal(draft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'source_changed', at: this.now() } } });
@@ -169,7 +183,7 @@ class SupportService {
     if (!Number.isFinite(+new Date(fields.messageDate))) fail('invalid_message_date');
     if (approve && (current.reconciliationRequired || current.sourceChanged)) fail('source_reconciliation_required', 409);
     if (approve && current.mode === 'suggest') fail('suggestion_only', 409);
-    if (approve && (!fields.subject || !fields.companyId || fields.proposedAction === 'review')) fail('approval_fields_required');
+    if (approve && (!fields.subject || (!fields.company && !fields.companyId) || fields.proposedAction === 'review')) fail('approval_fields_required');
     const state = approve ? 'approved' : 'pending';
     const result = await this.col('drafts').updateOne({ _id: id, ...scope, revision }, {
       $set: { fields: this.vault.seal(fields, id), state, updatedAt: this.now() }, $inc: { revision: 1 },

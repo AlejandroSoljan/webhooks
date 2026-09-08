@@ -1,9 +1,19 @@
-<!-- Asisto | Version: 5.00.049 | Fecha: 2026-09-08 -->
+<!-- Asisto | Version: 5.00.050 | Fecha: 2026-09-08 -->
 # Tickets desde WhatsApp: diseño y primera vertical
 
 ## Estado de esta entrega
 
-Vertical experimental, desactivada por defecto. Incluye sesión Baileys por usuario, QR en la web, ingestión continua y de eventos de historial, agrupación temporal, borradores editables, aprobación local, memoria de contactos verificada por API y medición. **No crea, actualiza ni cierra tickets remotos.** Ninguna aprobación activa un envío. Esto permite evaluar el módulo sin duplicar tareas en HubSpot.
+Vertical experimental, con procesamiento desactivado por defecto. Incluye sesión Baileys por usuario, QR en la web, ingestión continua y de eventos de historial, agrupación temporal, borradores editables, aprobación local, memoria manual de contactos y medición. **HubSpot queda para la última etapa:** no se pide token ni se invoca su API con la configuración predeterminada. Ninguna aprobación activa un envío remoto.
+
+## Orden de validación acordado
+
+1. Activar claves y worker; vincular un WhatsApp desde el QR de Asisto y comprobar reconexión sin volver a escanear.
+2. Probar un contacto habilitado y uno excluido, mensajes entrantes/salientes y un período histórico corto. Confirmar que cada ventana conserva el contexto.
+3. Configurar el transcriptor local y probar un audio real. Revisar su texto, tiempo de procesamiento y resultado antes de analizar un volumen mayor.
+4. Revisar un lote pequeño de borradores, recordar nombres de empresa/contacto, editar y aprobar dentro de Asisto. Corregir detección y agrupación con los casos observados.
+5. Finalmente conectar HubSpot, verificar identidades y valores internos, completar conciliación de tareas abiertas y habilitar publicación con aprobación. La aprobación local previa no equivale a autorización automática de envío futuro.
+
+Se puede recordar una empresa y un contacto y aprobar borradores sin IDs ni token de HubSpot. La memoria manual se marca `source: manual`, no como identidad verificada. Cambiarla manualmente elimina cualquier verificación e IDs remotos anteriores para evitar asociaciones incorrectas.
 
 El menú lateral de Asisto incluye **Tickets desde WhatsApp** para usuarios con permiso `support`. Abre `/ui/support`, que conserva el menú lateral y muestra el panel `/admin/support` dentro del shell existente. Si el procesamiento todavía no está configurado, el panel muestra los pasos pendientes, sin iniciar sockets ni habilitar operaciones. También puede abrirse directamente `/admin/support`. No requiere la extensión de Chrome, automatización visual ni agentes de escritorio del proyecto MSM. Las integraciones existentes no se sustituyen.
 
@@ -43,7 +53,7 @@ Todas las colecciones comienzan con `support_`. Los registros de usuario incluye
 | `messages` | `_id` = hash de tenant/usuario/chat/ID WhatsApp/dirección; texto y mensaje de audio original cifrados, fechas, `queued` |
 | `jobs` | Trabajo por chat y rango, generación, estado, vencimiento, claim, intentos |
 | `drafts` | IDs de evidencia, fingerprint, campos y fuente cifrados, revisión, estado y eventos humanos |
-| `memory` | Única por tenant/usuario/JID; IDs y nombres de contacto/empresa, verificación y eventos |
+| `memory` | Única por tenant/usuario/JID; nombres manuales, procedencia y eventos; IDs/verificación opcionales para la etapa final |
 | `integrations` | Única por tenant; token cifrado y eventos de reemplazo |
 | `usage` | Modelo, tarea/conversación, tokens, segundos de audio, unidades, costo, duración y resultado |
 | `audit` | Operaciones de procesamiento, solicitudes históricas y fallos sin secretos |
@@ -87,6 +97,8 @@ Para escalar, particionar la propiedad del socket por tenant/usuario y las tarea
 
 ## Contrato HubSpot
 
+La conexión queda bloqueada por defecto. Sólo para la última etapa se habilitará `SUPPORT_HUBSPOT_ENABLED=true`; mientras tanto no se muestran campos de token/IDs ni consultas de tickets, y sus endpoints devuelven `hubspot_deferred` antes de invocar al cliente remoto.
+
 El cliente usa HTTPS a `api.hubapi.com`, Bearer sólo desde backend, timeout de 15 segundos y no sigue redirects. Expone lectura dinámica de propiedades/pipelines/estados y etiquetas de asociaciones, verificación contacto↔empresa, y búsqueda paginada de tickets asociados a empresa (hasta 1.000; si falta una página, falla explícitamente). Nunca considera un error de búsqueda como “no hay tickets”.
 
 `prepare()` arma un payload revisable con nombres internos y asociaciones descubiertas, rechaza propiedades no escribibles y opciones inválidas, usa `createdate` sólo si es escribible y `closed_date` únicamente para un estado cerrado con fecha explícita. No se inventan IDs a partir de las etiquetas observadas. Las propiedades personalizadas de vía/categoría/error requieren mapping por tenant. El borrador conserva la fecha del mensaje aunque HubSpot no permita escribirla.
@@ -124,7 +136,9 @@ Base `/api/support`, cookie de Asisto. Para mutaciones: JSON, `Origin` idéntico
 | `POST /drafts/:id/approve` | `{revision}`; aprobación local |
 | `POST /drafts/:id/acknowledge-source` | `{revision}`; confirma revisión de evidencia tardía no fusionada |
 | `GET /jobs`, `/usage`, `/audit` | Últimos trabajos/intentos/eventos del usuario |
-| `GET /memory`, `PUT /memory` | Relaciones verificadas `{jid,companyId,contactId}` |
+| `GET /capabilities` | Informa si la etapa HubSpot está habilitada |
+| `GET /memory`, `PUT /memory` | Relaciones manuales `{jid,company,contact}`; no invoca APIs externas |
+| `PUT /memory/verify` | Etapa final: verifica `{jid,companyId,contactId}` en HubSpot |
 | `PUT /hubspot` | Admin: `{token}`; valida y cifra, nunca lo devuelve |
 | `GET /hubspot/metadata` | Propiedades, pipelines y asociaciones reales |
 | `GET /hubspot/companies/:id/tickets` | Consulta de tickets de empresa en el tenant conectado |
@@ -170,7 +184,7 @@ Rollback: desactivar el flag en la web, detener el worker y conservar las colecc
 
 `npm test` ejecuta los tests existentes y los de soporte. `npm run test:support` ejecuta sólo el módulo. Se usa un proceso MongoDB efímero real (`mongodb-memory-server`); la primera corrida necesita descargar su binario o disponer de `MONGOMS_SYSTEM_BINARY`. No usa la URI de producción.
 
-Resultado tras integrar los cambios actuales de main: 45 pruebas aprobadas (22 de soporte y 23 existentes). Se cubren: cifrado/contexto/rotación, aislamiento, CSRF, permisos, claves binarias Baileys, QR/eventos/logout con socket simulado, exclusiones, debounce, histórico superpuesto, edición concurrente, evidencia tardía, audio pendiente/transcrito, límites de audio, métricas, reparación de cola, claims simultáneos, lease vencido y contrato HubSpot con transporte simulado. Las pruebas también verifican el menú, el shell, el editor de permisos y el diagnóstico sin secretos cuando falta configuración. Se verificaron selección, edición y aprobación local en navegador con una fixture descartable. No se han vinculado teléfonos reales, transcrito audios reales ni creado tickets remotos.
+Resultado tras integrar los cambios actuales de main: 48 pruebas aprobadas (25 de soporte y 23 existentes). Se cubren: cifrado/contexto/rotación, aislamiento, CSRF, permisos, claves binarias Baileys, QR/eventos/logout con socket simulado, exclusiones, debounce, histórico superpuesto, edición concurrente, evidencia tardía, audio pendiente/transcrito, límites de audio, métricas, reparación de cola, claims simultáneos, lease vencido y contrato HubSpot con transporte simulado. Las pruebas también verifican el menú, el shell, el editor de permisos y el diagnóstico sin secretos cuando falta configuración. Se verificaron selección, edición y aprobación local en navegador con una fixture descartable. No se han vinculado teléfonos reales, transcrito audios reales ni creado tickets remotos.
 
 El audit de dependencias detectó 15 avisos (13 moderados y 2 críticos) en cadenas legacy de Express/qs, Telegram/request, Google y ExcelJS. No se aplicaron actualizaciones mayores ajenas a esta vertical. Evaluar esas dependencias antes de desplegar el piloto expuesto. Baileys queda fijado a `7.0.0-rc14`; validar vinculación y reconexión reales antes de producción y actualizarlo mediante un cambio probado.
 
