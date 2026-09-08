@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.045 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.048 | Fecha: 2026-09-08
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta el catálogo local y su API de respaldo: NO usa OpenAI.
@@ -1218,7 +1218,7 @@ function renderServerMessages(items){
   else body.scrollTop=previousTop;
   return true;
 }
-async function syncChatMessages(force=false){if(sending&&!force)return false;try{const u=new URL('/api/ext/qr/chat/messages',location.origin);u.searchParams.set('tenant',TENANT);u.searchParams.set('codigo',CODE);u.searchParams.set('sessionId',sessionId());const j=await jsonFetch(u.toString());if(j.conversationId)conversationId=j.conversationId;return Array.isArray(j.items)?renderServerMessages(j.items):false}catch(_){return false}}
+async function syncChatMessages(force=false){if(sending&&!force)return false;try{const u=new URL('/api/ext/qr/chat/messages',location.origin);u.searchParams.set('tenant',TENANT);u.searchParams.set('codigo',(PRODUCT&&PRODUCT.code)||CODE);u.searchParams.set('sessionId',sessionId());const j=await jsonFetch(u.toString());if(j.conversationId)conversationId=j.conversationId;return Array.isArray(j.items)?renderServerMessages(j.items):false}catch(_){return false}}
 function scheduleChatPoll(delay){if(pollTimer)return;pollTimer=setTimeout(runChatPoll,delay)} async function runChatPoll(){pollTimer=null;let changed=false;const active=started&&el('chat').classList.contains('open')&&!sending&&!document.hidden;if(active)changed=await syncChatMessages(false);unchangedPolls=changed?0:Math.min(unchangedPolls+1,20);const delay=document.hidden?30000:(!active?15000:(unchangedPolls<2?3000:(unchangedPolls<6?7000:15000)));scheduleChatPoll(delay)} function startChatPolling(){scheduleChatPoll(3000)}
 async function jsonFetch(url,opts={}){const r=await fetch(url,{cache:'no-store',...opts});const text=await r.text();let j={};try{j=text?JSON.parse(text):{}}catch{}if(!r.ok)throw new Error(j.detail||j.error||('HTTP '+r.status));return j}
 function safeColor(v,fallback){const x=String(v||'').trim();return /^#[0-9a-f]{6}$/i.test(x)?x:fallback}
@@ -1276,7 +1276,7 @@ function normalizedCode(value){let code=String(value||'').trim();if(!code)return
 function stopScanner(hide=true){if(scanFrame)cancelAnimationFrame(scanFrame);scanFrame=0;if(scanStream){for(const track of scanStream.getTracks())track.stop();scanStream=null}el('scanBtn').classList.remove('hidden');if(hide)el('scanner').classList.add('hidden')}
 async function startScanner(){stopScanner(false);el('scanBtn').classList.add('hidden');const status=el('scanStatus'),video=el('scanVideo');el('scanner').classList.remove('hidden');video.classList.remove('hidden');scanCandidate='';scanHits=0;scanCandidateAt=0;status.textContent='Apuntá al QR o al código de barras.';if(!navigator.mediaDevices?.getUserMedia){status.textContent='La cámara no está disponible en este navegador. Ingresá el código manualmente.';el('scanBtn').classList.remove('hidden');return}if(!('BarcodeDetector' in window)){status.textContent='Este navegador no admite lectura automática. Ingresá el código manualmente.';el('scanBtn').classList.remove('hidden');return}try{const supported=await BarcodeDetector.getSupportedFormats();const wanted=['qr_code','ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf','codabar'].filter(x=>supported.includes(x));const detector=new BarcodeDetector({formats:wanted});scanStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}},audio:false});video.srcObject=scanStream;await video.play();const detect=async()=>{if(!scanStream)return;try{const found=await detector.detect(video);const code=normalizedCode(found[0]?.rawValue);if(code){if(code===scanCandidate){scanHits+=1}else{scanCandidate=code;scanHits=1;scanCandidateAt=Date.now()}status.textContent='Leyendo: '+code;if(scanHits>=4&&Date.now()-scanCandidateAt>=350){el('codeInput').value=code;stopScanner(false);video.classList.add('hidden');status.textContent='Código detectado: '+code+'. Buscando producto…';setTimeout(()=>openCode(code),450);return}}else{scanCandidate='';scanHits=0}}catch(_){}scanFrame=requestAnimationFrame(detect)};detect()}catch(_){stopScanner(false);video.classList.add('hidden');status.textContent='No se pudo abrir la cámara. Podés ingresar el código manualmente.'}}
 async function loadProduct(){try{el('productCard').innerHTML='<div class="loading">Consultando producto...</div>';const u=new URL('/api/ext/qr/product',location.origin);u.searchParams.set('tenant',TENANT);u.searchParams.set('codigo',CODE);renderProduct(await jsonFetch(u.toString()))}catch(e){el('productCard').innerHTML='<div class="error"><b>No pudimos cargar este producto.</b><br/><span>Código consultado: '+esc(CODE)+'</span><br/><span>'+esc(e.message)+'</span><div class="actions"><button class="btn btnPrimary" id="rescanProductBtn" type="button">Escanear o ingresar otro código</button></div></div>';const sb=el('rescanProductBtn');if(sb)sb.addEventListener('click',openScannerPanel)}}
- async function callAi(message,initial=false){if(sending)return;sending=true;const btn=el('sendBtn');if(btn)btn.disabled=true;if(message&&!initial)addMsg('user',message);addMsg('bot','',true);try{const j=await jsonFetch('/api/ext/qr/chat',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({tenant:TENANT,codigo:CODE,sessionId:sessionId(),message:message||'',initial})});removeTyping();if(j.conversationId)conversationId=j.conversationId;started=true;await syncChatMessages(true);startChatPolling()}catch(e){removeTyping();addMsg('bot','No pude obtener información adicional en este momento. '+e.message)}finally{sending=false;if(btn)btn.disabled=false}}
+ async function callAi(message,initial=false){if(sending)return;sending=true;const btn=el('sendBtn');if(btn)btn.disabled=true;if(message&&!initial)addMsg('user',message);addMsg('bot','',true);try{const j=await jsonFetch('/api/ext/qr/chat',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({tenant:TENANT,codigo:(PRODUCT&&PRODUCT.code)||CODE,sessionId:sessionId(),message:message||'',initial})});removeTyping();if(j.conversationId)conversationId=j.conversationId;started=true;await syncChatMessages(true);startChatPolling()}catch(e){removeTyping();addMsg('bot','No pude obtener información adicional en este momento. '+e.message)}finally{sending=false;if(btn)btn.disabled=false}}
 async function startAi(){el('chat').classList.add('open');el('chat').scrollIntoView({behavior:'smooth',block:'start'});if(!started){const b=el('moreBtn');if(b)b.disabled=true;await callAi('',true);if(b)b.disabled=false}else{await syncChatMessages(true);startChatPolling();el('message').focus()}}
 async function send(){const box=el('message');const msg=String(box.value||'').trim();if(!msg||sending)return;box.value='';await callAi(msg,false);box.focus()}
 el('sendBtn').addEventListener('click',send);el('message').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});el('closeChat').addEventListener('click',()=>el('chat').classList.remove('open'));el('scanBtn').addEventListener('click',startScanner);el('stopScanBtn').addEventListener('click',stopScanner);el('lookupBtn').addEventListener('click',()=>openCode(el('codeInput').value));el('codeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openCode(e.currentTarget.value)}});window.addEventListener('pagehide',stopScanner);document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(pollTimer){clearTimeout(pollTimer);pollTimer=null}if(started)scheduleChatPoll(0)}});applyBranding(BRANDING);if(CODE){el('lookup').classList.add('hidden');loadProduct()}else{el('productCard').classList.add('hidden');if(!BRANDING.pageSubtitle)el('pageSubtitle').textContent='Escaneá un QR, un código de barras o ingresá el código manualmente.'}
@@ -1372,10 +1372,22 @@ function mountQrProductWeb(app) {
       const sid = safeSessionId(req.query?.sessionId);
       if (!tenant || !code || !sid) return res.status(400).json({ ok: false, error: 'tenant_codigo_session_required' });
       const db = await getDb();
-      const conv = await db.collection('conversations').findOne(
+      let conv = await db.collection('conversations').findOne(
         { tenantId: tenant, qrSessionId: sid, qrProductCode: code, channelType: 'qr_web', botMode: 'conversacional' },
         { sort: { updatedAt: -1, openedAt: -1 } }
       );
+      if (!conv) {
+        try {
+          const cfg = await loadQrConfig(db, tenant);
+          const product = await fetchQrProduct(cfg, tenant, code);
+          if (product.code !== code) {
+            conv = await db.collection('conversations').findOne(
+              { tenantId: tenant, qrSessionId: sid, qrProductCode: product.code, channelType: 'qr_web', botMode: 'conversacional' },
+              { sort: { updatedAt: -1, openedAt: -1 } }
+            );
+          }
+        } catch {}
+      }
       if (!conv) return res.json({ ok: true, conversationId: '', manualOpen: false, items: [] });
 
       const messages = await db.collection('messages')

@@ -1,10 +1,10 @@
-// Asisto | Version: 5.00.047 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.048 | Fecha: 2026-09-08
 // Sincronizacion paginada y conservadora del catalogo Manager hacia MongoDB.
 const axios = require('axios');
 const { COLLECTION, sourceKey } = require('./product_catalog');
 
 const STATE_COLLECTION = 'qr_product_catalog_sync';
-const SYNC_VERSION = 3;
+const SYNC_VERSION = 4;
 const text = value => String(value ?? '').trim();
 const intEnv = (name, fallback, min, max) => {
   const value = Number(process.env[name]);
@@ -45,19 +45,29 @@ async function syncManagerCatalog({ db, cfg, tenant, normalize, log = console.lo
   if (!isManagerCatalog(cfg)) return { skipped: 'not_manager_catalog' };
   const pageSize = intEnv('QR_CATALOG_SYNC_PAGE_SIZE', 500, 50, 2000);
   const maxPages = intEnv('QR_CATALOG_SYNC_MAX_PAGES', 1000, 1, 10000);
-  const leaseMs = intEnv('QR_CATALOG_SYNC_LEASE_MS', 3600000, 60000, 21600000);
+  const leaseMs = intEnv('QR_CATALOG_SYNC_LEASE_MS', 300000, 60000, 21600000);
   const intervalMs = intEnv('QR_CATALOG_SYNC_INTERVAL_MS', 86400000, 3600000, 604800000);
   const tenantId = text(tenant).toUpperCase();
   const source = sourceKey(cfg);
   const stateId = `${tenantId}:${source}`;
   const now = new Date();
   const state = await db.collection(STATE_COLLECTION).findOne({ _id: stateId });
-  if (state?.syncVersion === SYNC_VERSION && state?.lastCompletedAt && now - new Date(state.lastCompletedAt) < intervalMs) {
+  if (state?.syncVersion === SYNC_VERSION && state?.status === 'completed' && state?.lastCompletedAt && now - new Date(state.lastCompletedAt) < intervalMs) {
     return { skipped: 'recent', lastCompletedAt: state.lastCompletedAt };
   }
+  const canResume = state?.syncVersion === SYNC_VERSION && state?.status !== 'completed' && Number(state?.page) >= 1;
+  const startPage = canResume ? Number(state.page) + 1 : 1;
+  let total = canResume ? Number(state.products || 0) : 0;
   const lease = await db.collection(STATE_COLLECTION).findOneAndUpdate(
     { _id: stateId, $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: { $lte: now } }] },
-    { $set: { tenantId, source, syncVersion: SYNC_VERSION, leaseUntil: new Date(now.getTime() + leaseMs), startedAt: now } },
+    {
+      $set: {
+        tenantId, source, syncVersion: SYNC_VERSION, status: 'running',
+        leaseUntil: new Date(now.getTime() + leaseMs), startedAt: now,
+        ...(canResume ? {} : { page: 0, products: 0 }),
+      },
+      $unset: { lastCompletedAt: '', error: '', failedAt: '' },
+    },
     { upsert: true, returnDocument: 'after' }
   ).catch(error => {
     if (error?.code === 11000) return null;
@@ -65,9 +75,8 @@ async function syncManagerCatalog({ db, cfg, tenant, normalize, log = console.lo
   });
   if (!lease) return { skipped: 'locked' };
 
-  let total = 0;
   try {
-    for (let page = 1; page <= maxPages; page++) {
+    for (let page = startPage; page <= maxPages; page++) {
       let rows = [];
       // Manager puede responder 200 con una página vacía transitoria. Confirmamos
       // tres veces antes de considerarla el final real del catálogo.
@@ -102,18 +111,17 @@ async function syncManagerCatalog({ db, cfg, tenant, normalize, log = console.lo
         { _id: stateId },
         { $set: { leaseUntil: new Date(Date.now() + leaseMs), page, products: total } }
       );
-      if (rows.length < pageSize) break;
       if (page === maxPages) throw new Error('catalog_sync_max_pages_reached');
     }
     await db.collection(STATE_COLLECTION).updateOne(
       { _id: stateId },
-      { $set: { lastCompletedAt: new Date(), products: total }, $unset: { leaseUntil: '', error: '' } }
+      { $set: { status: 'completed', lastCompletedAt: new Date(), products: total }, $unset: { leaseUntil: '', error: '' } }
     );
     return { products: total };
   } catch (error) {
     await db.collection(STATE_COLLECTION).updateOne(
       { _id: stateId },
-      { $set: { error: text(error?.message).slice(0, 300), failedAt: new Date() }, $unset: { leaseUntil: '' } }
+      { $set: { status: 'failed', error: text(error?.message).slice(0, 300), failedAt: new Date() }, $unset: { leaseUntil: '' } }
     ).catch(() => {});
     throw error;
   }
@@ -121,7 +129,7 @@ async function syncManagerCatalog({ db, cfg, tenant, normalize, log = console.lo
 
 function startManagerCatalogScheduler({ getDb, loadConfig, normalize, warn = console.warn }) {
   const startupMs = intEnv('QR_CATALOG_SYNC_STARTUP_MS', 30000, 1000, 3600000);
-  const checkMs = intEnv('QR_CATALOG_SYNC_CHECK_MS', 3600000, 60000, 86400000);
+  const checkMs = intEnv('QR_CATALOG_SYNC_CHECK_MS', 60000, 60000, 86400000);
   let running = false;
   const run = async () => {
     if (running) return;

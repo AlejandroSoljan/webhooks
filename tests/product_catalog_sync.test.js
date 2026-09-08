@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.047 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.048 | Fecha: 2026-09-08
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const axios = require('axios');
@@ -52,11 +52,11 @@ test('sincroniza paginas secuenciales y conserva Codigo y Codbarra', async t => 
       states.set(_id, value);
     },
   } };
-  let page = 0;
+  let calls = 0;
   t.mock.method(axios, 'get', async url => {
-    page += 1;
-    assert.equal(new URL(url).searchParams.get('pag_num'), String(page));
-    return { status: 200, data: page === 1
+    calls += 1;
+    const requestedPage = Number(new URL(url).searchParams.get('pag_num'));
+    return { status: 200, data: requestedPage === 1
       ? [{ Codigo: '001', Codbarra: '0001', Descripcion: 'Uno' }]
       : [] };
   });
@@ -64,6 +64,7 @@ test('sincroniza paginas secuenciales y conserva Codigo y Codbarra', async t => 
     db, cfg, tenant: 'tienda', normalize: raw => ({ code: raw.Codigo }), log: () => {},
   });
   assert.equal(result.products, 1);
+  assert.equal(calls, 4);
   assert.equal(writes.length, 1);
   assert.equal(writes[0][0].updateOne.filter.Codigo, '001');
   assert.equal(writes[0][0].updateOne.update.$set.Codbarra, '0001');
@@ -94,13 +95,14 @@ test('una pagina vacia transitoria no corta la sincronizacion', async t => {
   let calls = 0;
   t.mock.method(axios, 'get', async () => {
     calls += 1;
-    if (calls === 1) return { status: 200, data: Array.from({ length: 50 }, (_, i) => ({ Codigo: String(i), Descripcion: 'Fila' })) };
+    if (calls === 1) return { status: 200, data: Array.from({ length: 49 }, (_, i) => ({ Codigo: String(i), Descripcion: 'Fila' })) };
     if (calls === 2) return { status: 200, data: [] };
-    return { status: 200, data: [{ Codigo: '50', Codbarra: '0050', Descripcion: 'Recuperado' }] };
+    if (calls === 3) return { status: 200, data: [{ Codigo: '49', Codbarra: '0049', Descripcion: 'Recuperado' }] };
+    return { status: 200, data: [] };
   });
   const result = await syncManagerCatalog({ db, cfg, tenant: 'tienda', normalize: raw => ({ code: raw.Codigo }), log: () => {} });
-  assert.equal(calls, 3);
-  assert.equal(result.products, 51);
+  assert.equal(calls, 6);
+  assert.equal(result.products, 50);
   assert.equal(writes.length, 2);
-  assert.equal(writes[1][0].updateOne.filter.Codigo, '50');
+  assert.equal(writes[1][0].updateOne.filter.Codigo, '49');
 });
