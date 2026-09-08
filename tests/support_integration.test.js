@@ -1,10 +1,11 @@
-// Asisto | Version: 5.00.050 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.052 | Fecha: 2026-09-08
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { MongoClient, ObjectId } = require('mongodb');
 const express = require('express');
 const { EventEmitter } = require('node:events');
+const { fork } = require('node:child_process');
 const { migrate } = require('../src/support/migration');
 const { createVault } = require('../src/support/crypto');
 const { SupportService } = require('../src/support/service');
@@ -221,6 +222,24 @@ test('incomplete setup leaves the panel visible and operations blocked without c
     assert.equal((await fetch(base + '/admin/support')).status, 200);
     assert.equal((await fetch(base + '/api/support/session', { method: 'POST' })).status, 503);
   } finally { await new Promise(resolve => server.close(resolve)); }
+});
+test('real worker acquires its lease and releases it when its parent disconnects', { timeout: 15000 }, async () => {
+  const env = { ...process.env, SUPPORT_ENABLED: 'true', AUTH_COOKIE_SECRET: 'worker-fixture-existing-secret-12345678', MONGODB_URI: mongo.getUri(), MONGODB_DBNAME: 'support_test' };
+  delete env.SUPPORT_ENCRYPTION_KEYS; delete env.SUPPORT_ACTIVE_KEY;
+  const child = fork(require.resolve('../src/support/worker'), [], { env, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+  const exit = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('worker readiness timeout')), 10000);
+      child.once('error', e => { clearTimeout(timer); reject(e); });
+      child.once('exit', () => { clearTimeout(timer); reject(new Error('worker exited before readiness')); });
+      child.once('message', message => { clearTimeout(timer); message.type === 'support-ready' ? resolve() : reject(new Error('unexpected worker message')); });
+    });
+    assert.ok(await db.collection('support_leases').findOne({ _id: 'intake-worker', until: { $gt: new Date() } }));
+    child.disconnect();
+    assert.deepEqual(await exit, { code: 0, signal: null });
+    assert.equal(await db.collection('support_leases').countDocuments({ _id: 'intake-worker' }), 0);
+  } finally { child.kill('SIGKILL'); }
 });
 
 test('manual identity flows into a draft and permits local approval with no HubSpot IDs or token', async () => {

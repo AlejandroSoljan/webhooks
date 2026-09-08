@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.051 | Fecha: 2026-09-08 -->
+<!-- Asisto | Version: 5.00.052 | Fecha: 2026-09-08 -->
 # Tickets desde WhatsApp: diseño y primera vertical
 
 ## Estado de esta entrega
@@ -145,7 +145,7 @@ Base `/api/support`, cookie de Asisto. Para mutaciones: JSON, `Origin` idéntico
 
 ## Activación y operación
 
-Usar Node 24, MongoDB y un servicio worker separado del proceso web. No ejecutar migraciones contra producción desde tests. Reutilizar `MONGODB_URI`, `MONGODB_DBNAME`, `PUBLIC_BASE_URL` y `AUTH_COOKIE_SECRET` de Asisto. No hace falta crear una clave ni un dominio adicionales para soporte. El único interruptor de activación es:
+Usar Node 24 y MongoDB. El arranque habitual de Asisto (`npm start`, también `server.js`) inicia un worker como proceso hijo separado dentro del mismo servicio de Render cuando la configuración está habilitada y lista. Hereda las variables existentes; no requiere contratar otro servicio. No ejecutar migraciones contra producción desde tests. Reutilizar `MONGODB_URI`, `MONGODB_DBNAME`, `PUBLIC_BASE_URL` y `AUTH_COOKIE_SECRET` de Asisto. No hace falta crear una clave ni un dominio adicionales para soporte. El único interruptor de activación es:
 
 ```text
 SUPPORT_ENABLED=true
@@ -160,13 +160,13 @@ Por compatibilidad, una configuración explícita previa de `SUPPORT_ENCRYPTION_
 ```bash
 npm ci
 npm run support:migrate
-# Proceso web existente:
+# Servicio existente: inicia la web y su worker supervisado:
 npm start
-# Otro proceso, mismo MongoDB y claves:
+# Sólo para operación independiente sin el supervisor web:
 npm run support:worker
 ```
 
-Otorgar permiso `support` en Usuarios y abrir **Tickets desde WhatsApp** en el menú lateral, o directamente `/ui/support`. El formulario de creación y el de edición de usuarios incluyen ese permiso. Los usuarios legacy con acceso completo conservan la política existente; no se amplían automáticamente listas de permisos restringidas. El panel de preparación permanece disponible aunque falte configuración. Las operaciones requieren `SUPPORT_ENABLED=true`, una clave de cookie segura, cifrado, origen válido y migración. Una configuración incompleta no impide arrancar el resto de Asisto. El worker se inicia explícitamente como proceso separado.
+Otorgar permiso `support` en Usuarios y abrir **Tickets desde WhatsApp** en el menú lateral, o directamente `/ui/support`. El formulario de creación y el de edición de usuarios incluyen ese permiso. Los usuarios legacy con acceso completo conservan la política existente; no se amplían automáticamente listas de permisos restringidas. El panel de preparación permanece disponible aunque falte configuración. Las operaciones requieren `SUPPORT_ENABLED=true`, una clave de cookie segura, cifrado, origen válido y migración. Una configuración incompleta no impide arrancar el resto de Asisto. El supervisor reinicia el proceso ante una caída con esperas de 5 a 30 segundos y lo detiene junto con la web. El worker también se cierra si pierde el vínculo con su proceso padre. El lease evita dos propietarios durante un despliegue; el nuevo proceso reintenta hasta quedar disponible. Ambos procesos comparten los recursos del servicio de Render: revisar memoria al ampliar el piloto.
 
 Transcriptor opcional: un gateway **local** ya operado por el tenant, compatible con este contrato:
 
@@ -184,7 +184,7 @@ Rollback: desactivar el flag en la web, detener el worker y conservar las colecc
 
 `npm test` ejecuta los tests existentes y los de soporte. `npm run test:support` ejecuta sólo el módulo. Se usa un proceso MongoDB efímero real (`mongodb-memory-server`); la primera corrida necesita descargar su binario o disponer de `MONGOMS_SYSTEM_BINARY`. No usa la URI de producción.
 
-Resultado tras integrar los cambios actuales de main: 51 pruebas aprobadas (28 de soporte y 23 existentes). Se cubren: cifrado/contexto/rotación, aislamiento, CSRF, permisos, claves binarias Baileys, QR/eventos/logout con socket simulado, exclusiones, debounce, histórico superpuesto, edición concurrente, evidencia tardía, audio pendiente/transcrito, límites de audio, métricas, reparación de cola, claims simultáneos, lease vencido y contrato HubSpot con transporte simulado. Las pruebas también verifican el menú, el shell, el editor de permisos y el diagnóstico sin secretos cuando falta configuración. Se verificaron selección, edición y aprobación local en navegador con una fixture descartable. No se han vinculado teléfonos reales, transcrito audios reales ni creado tickets remotos.
+Resultado tras integrar los cambios actuales de main: 56 pruebas aprobadas (33 de soporte y 23 existentes). Se cubren: cifrado/contexto/rotación, aislamiento, CSRF, permisos, claves binarias Baileys, QR/eventos/logout con socket simulado, exclusiones, debounce, histórico superpuesto, edición concurrente, evidencia tardía, audio pendiente/transcrito, límites de audio, métricas, reparación de cola, claims simultáneos, lease vencido y contrato HubSpot con transporte simulado. Las pruebas también verifican el menú, el shell, el editor de permisos y el diagnóstico sin secretos cuando falta configuración. Se verificaron selección, edición y aprobación local en navegador con una fixture descartable. No se han vinculado teléfonos reales, transcrito audios reales ni creado tickets remotos.
 
 El audit de dependencias detectó 15 avisos (13 moderados y 2 críticos) en cadenas legacy de Express/qs, Telegram/request, Google y ExcelJS. No se aplicaron actualizaciones mayores ajenas a esta vertical. Evaluar esas dependencias antes de desplegar el piloto expuesto. Baileys queda fijado a `7.0.0-rc14`; validar vinculación y reconexión reales antes de producción y actualizarlo mediante un cambio probado.
 

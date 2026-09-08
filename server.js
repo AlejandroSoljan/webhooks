@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.052 | Fecha: 2026-09-08
 require('dotenv').config();
 
 const app = require('./endpoint');
@@ -33,6 +33,7 @@ async function loadTelegramRuntime() {
   }
 })().catch(() => {});
 
+const supportWorker = require('./src/support/supervisor').superviseSupport();
 const server = app.listen(PORT, () => {
   console.log(`🚀 Web corriendo en http://localhost:${PORT}`);
 });
@@ -79,7 +80,7 @@ async function shutdown(signal) {
   if (typeof forceExitTimer.unref === 'function') forceExitTimer.unref();
 
   try {
-    await new Promise((resolve) => server.close(resolve));
+    await Promise.all([supportWorker.stop(), new Promise((resolve) => server.close(resolve))]);
   } catch {}
 
 

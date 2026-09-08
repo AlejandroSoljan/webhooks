@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.049 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.052 | Fecha: 2026-09-08
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -12015,6 +12015,7 @@ app.listen(PORT, () => {
 const PORT = process.env.PORT || 3000;
 
 if (require.main === module) {
+  const supportWorker = require('./src/support/supervisor').superviseSupport();
   const server = app.listen(PORT, () => {
     console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
   });
@@ -12029,7 +12030,7 @@ if (require.main === module) {
     if (typeof forceExitTimer.unref === 'function') forceExitTimer.unref();
 
     try {
-      await new Promise((resolve) => server.close(resolve));
+      await Promise.all([supportWorker.stop(), new Promise((resolve) => server.close(resolve))]);
     } catch {}
 
     try {
