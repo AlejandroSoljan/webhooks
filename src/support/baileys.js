@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.065 | Fecha: 2026-09-08
 const { scopedId, fail } = require('./core');
 
 async function encryptedAuth(service, scope, baileys, assertOwner) {
@@ -132,8 +132,9 @@ async function downloadAudio(raw, audio, loadBaileys = () => import('@whiskeysoc
     // Prefer Baileys' fixed media host over a sender-controlled absolute URL.
     const audioMessage = b.normalizeMessageContent(message.message)?.audioMessage;
     if (!audioMessage?.directPath?.startsWith('/')) fail('invalid_audio_path', 422);
-    delete audioMessage.url;
-    const stream = await b.downloadMediaMessage(message, 'stream', { options: { signal: AbortSignal.timeout(25000), redirect: 'error' } });
+    // downloadMediaMessage requires a URL property even with a directPath.
+    // Download the audio content directly so no sender-provided host is used.
+    const stream = await b.downloadContentFromMessage({ directPath: audioMessage.directPath, mediaKey: audioMessage.mediaKey }, 'audio', { options: { signal: AbortSignal.timeout(25000), redirect: 'error' } });
     const chunks = []; let bytes = 0;
     const timer = setTimeout(() => stream.destroy(new Error('audio_download_timeout')), 25000);
     try {

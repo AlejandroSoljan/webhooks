@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.065 | Fecha: 2026-09-08
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createVault, vaultFromEnv } = require('../src/support/crypto');
@@ -125,10 +125,10 @@ test('HubSpot payload uses discovered internal IDs and writable dates only', () 
 test('local audio gateway receives bounded bytes and download uses abort signal without sender URL', async () => {
   let downloads = 0;
   const gateway = localTranscriber({ SUPPORT_TRANSCRIBER_URL: 'http://127.0.0.1:8090/transcribe', SUPPORT_TRANSCRIBER_MODEL: 'fixture' }, {
-    loadBaileys: async () => ({ BufferJSON: {}, normalizeMessageContent: m => m, downloadMediaMessage: async (message, type, options) => {
+    loadBaileys: async () => ({ BufferJSON: {}, normalizeMessageContent: m => m, downloadContentFromMessage: async (message, type, options) => {
       downloads++;
-      assert.equal(message.message.audioMessage.url, undefined);
-      assert.equal(type, 'stream'); assert.ok(options.options.signal instanceof AbortSignal); assert.equal(options.options.redirect, 'error');
+      assert.equal(message.url, undefined); assert.equal(message.directPath, '/fixture');
+      assert.equal(type, 'audio'); assert.ok(options.options.signal instanceof AbortSignal); assert.equal(options.options.redirect, 'error');
       return Readable.from([Buffer.from('audio')]);
     } }),
     fetchImpl: async (url, options) => {
@@ -140,4 +140,19 @@ test('local audio gateway receives bounded bytes and download uses abort signal 
   assert.deepEqual(await gateway.run(raw, { seconds: 5, bytes: 5, mimetype: 'audio/ogg' }), { text: 'Manager falla', costUsd: 0 });
   await assert.rejects(() => gateway.run(raw, { seconds: 601, bytes: 5 }), /audio_limit_exceeded/);
   assert.equal(downloads, 1);
+});
+test('installed Baileys decrypts audio from directPath without requiring the removed URL field', async () => {
+  const b = await import('@whiskeysockets/baileys');
+  const { createCipheriv } = require('node:crypto');
+  const { downloadAudio } = require('../src/support/baileys');
+  const key = Buffer.alloc(32, 8), keys = await b.getMediaKeys(key, 'audio');
+  const cipher = createCipheriv('aes-256-cbc', keys.cipherKey, keys.iv);
+  const encrypted = Buffer.concat([cipher.update('fixture audio bytes'), cipher.final(), Buffer.alloc(10)]);
+  const originalFetch = global.fetch;
+  global.fetch = async url => { assert.equal(url, 'https://mmg.whatsapp.net/fixture'); return { ok: true, body: Readable.from([encrypted]) }; };
+  try {
+    const raw = JSON.stringify({ message: { audioMessage: { directPath: '/fixture', mediaKey: key, url: 'https://sender.invalid/unused' } } }, b.BufferJSON.replacer);
+    const bytes = await downloadAudio(raw, { seconds: 5, bytes: 50 });
+    assert.equal(bytes.toString(), 'fixture audio bytes');
+  } finally { global.fetch = originalFetch; }
 });
