@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.069 | Fecha: 2026-09-08
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -7,6 +7,29 @@ const path = require('node:path');
 const { storage } = require('../desktop/support/storage.cjs');
 const { EventEmitter } = require('node:events');
 const { run } = require('../desktop/support/agent.cjs');
+
+test('contact snapshot restores saved names and aliases without applying app-state changes', async () => {
+  const { readContactSnapshot } = require('../desktop/support/agent.cjs');
+  const snapshot = { fixture: true }, reads = [];
+  const result = await readContactSnapshot({
+    extractSyncdPatches: async () => ({ critical_unblock_low: { snapshot } }),
+    decodeSyncdSnapshot: async (name, value, getKey, minimum, verify) => {
+      assert.equal(name, 'critical_unblock_low'); assert.equal(value, snapshot); assert.equal(minimum, undefined); assert.equal(verify, true); assert.deepEqual(await getKey('key'), { keyData: 'fixture' });
+      return { mutationMap: { contact: { index: ['contact', '549111@s.whatsapp.net'], syncAction: { value: { contactAction: { fullName: 'Agenda WhatsApp' } } } }, setting: { index: ['setting', '549111@s.whatsapp.net'], syncAction: { value: { muteAction: {} } } } } };
+    },
+  }, { query: async (request, timeout) => { assert.equal(request.content[0].content[0].attrs.return_snapshot, 'true'); assert.equal(timeout, 15000); return {}; } }, key => { reads.push(key); return key === 'app-state-sync-key:key' ? { keyData: 'fixture' } : key === 'lid-mapping:549111' ? '123' : undefined; });
+  assert.deepEqual([...result], [{ id: '549111@s.whatsapp.net', name: 'Agenda WhatsApp', lid: '123@lid', phoneNumber: '549111@s.whatsapp.net' }]);
+  assert.deepEqual(reads, ['app-state-sync-key:key', 'lid-mapping:549111']);
+});
+test('contact snapshot applies incremental pages when the base snapshot has no contacts', async () => {
+  const { readContactSnapshot } = require('../desktop/support/agent.cjs'); let queries = 0, pages = 0;
+  const result = await readContactSnapshot({
+    extractSyncdPatches: async response => ({ critical_unblock_low: response === 1 ? { snapshot: {}, patches: [{}], hasMorePatches: true } : { patches: [{}], hasMorePatches: false } }),
+    decodeSyncdSnapshot: async () => ({ state: { version: 1 }, mutationMap: {} }),
+    decodePatches: async (name, patches, state) => ({ state: { version: state.version + 1 }, mutationMap: { contact: { index: ['contact','123@lid'], syncAction: { value: { lidContactAction: { fullName: ++pages === 1 ? 'Anterior' : 'Actual' } } } } } }),
+  }, { query: async request => { if (++queries === 2) assert.equal(request.content[0].content[0].attrs.version, '2'); return queries; } }, () => undefined);
+  assert.equal(queries, 2); assert.equal(result.length, 1); assert.equal(result[0].name, 'Actual');
+});
 
 test('pending pairing and subsequent retries never open the browser', async () => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'asisto-agent-test-'));

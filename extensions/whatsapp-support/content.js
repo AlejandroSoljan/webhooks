@@ -1,6 +1,8 @@
-// Asisto | Version: 5.00.068 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.069 | Fecha: 2026-09-08
 (() => {
-  let chats = [], timer, stopped = false;
+  let chats = [], owner = '', timer, stopped = false;
+  const remembered = new Map();
+  const extractJid = value => (value || '').match(/(?:^|_)([0-9]+@(?:s\.whatsapp\.net|lid))(?:_|$)/)?.[1] || '';
   function update() {
     if (stopped) return;
     observer.disconnect();
@@ -11,9 +13,16 @@
       if (target.closest('[data-asisto-owned]')) continue;
       const label = target.querySelector('span[title][dir="auto"], span[title]');
       if (!label) continue;
-      const data = target.getAttribute('data-id') || '';
-      const jid = data.match(/(?:^|_)([0-9]+@(?:s\.whatsapp\.net|lid))(?:_|$)/)?.[1] || '';
-      const match = AsistoMatch.matchContact(chats, { jid, name: label.getAttribute('title') });
+      const jid = extractJid(target.getAttribute('data-id') || target.querySelector('[data-id]')?.getAttribute('data-id')) || (target.matches('#main header') ? extractJid(document.querySelector('#main [data-id]')?.getAttribute('data-id')) : '');
+      const name = label.getAttribute('title');
+      if (jid && name && remembered.get(jid) !== name) {
+        remembered.set(jid, name);
+        chrome.runtime.sendMessage({ action: 'CONTACT', jid, name }).then(result => {
+          if (result?.data?.saved) refresh();
+          else if (result?.error) remembered.delete(jid);
+        }).catch(() => {});
+      }
+      const match = AsistoMatch.matchContact(chats, { jid, name });
       let button = target.querySelector('.asisto-task-badge');
       if (!match) { button?.remove(); continue; }
       if (!button) {
@@ -35,7 +44,7 @@
   }
   const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(update, 180); });
   async function refresh() {
-    try { const result = await chrome.runtime.sendMessage({ action: 'INDEX' }); chats = result?.data?.chats || []; }
+    try { const result = await chrome.runtime.sendMessage({ action: 'INDEX' }); if (owner !== result?.data?.owner) remembered.clear(); owner = result?.data?.owner || ''; chats = result?.data?.chats || []; }
     catch { chats = []; if (!chrome.runtime?.id) stopped = true; }
     update();
   }

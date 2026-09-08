@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.068 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.069 | Fecha: 2026-09-08
 const express = require('express');
 const crypto = require('node:crypto');
 const { scopeOf, scopedId, hash, text, fail, SupportError } = require('./core');
@@ -56,6 +56,14 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const contact = await s.col('contacts').findOne({ _id: scopedId(scope, 'contact', jid), ...scope });
     const rows = await s.col('drafts').find({ ...scope, jid: { $in: [...new Set([jid, ...(contact?.aliases || [])])] }, state: { $nin: ['merged', 'ignored'] } }).sort({ updatedAt: -1 }).limit(100).toArray();
     return rows.map(row => { const fields = s.vault.open(row.fields, row._id); return { id: row._id, subject: fields.subject || 'Tarea para revisar', contact: fields.contact || contact?.name || '', state: row.state, hubspot: row.hubspot || null }; });
+  }));
+  router.post('/contact', route(async (req, s, scope) => {
+    const jid = text(req.body.jid, 200), name = text(req.body.name, 200);
+    if (!/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(jid) || !name) fail('invalid_contact');
+    // A visible WhatsApp label can enrich only a conversation already owned by this user.
+    if (!await s.col('messages').findOne({ ...scope, jid }, { projection: { _id: 1 } }) && !await s.col('drafts').findOne({ ...scope, jid }, { projection: { _id: 1 } })) return { saved: false };
+    await s.col('contacts').updateOne({ _id: scopedId(scope, 'contact', jid), ...scope }, { $set: { jid, name, source: 'whatsapp-web', updatedAt: s.now() }, $addToSet: { aliases: jid } }, { upsert: true });
+    return { saved: true };
   }));
   router.get('/drafts/:id', route(async (req, s, scope) => {
     const row = await rowFor(s, scope, req.params.id), fields = s.vault.open(row.fields, row._id);

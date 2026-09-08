@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.068 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.069 | Fecha: 2026-09-08
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -50,6 +50,13 @@ test('index contains contact labels and counts, respects exclusions and omits pr
  const result=await call('/index');assert.equal(result.data.chats[0].name,'Juan');assert.equal(result.data.chats[0].count,1);assert.ok(!JSON.stringify(result).includes(fields.description));
  await service.saveConfig(scope,{excludedNames:['Juan']});assert.equal((await call('/index')).data.chats.length,0);
  assert.equal((await call('/drafts/'+id+'/publish',{revision:1,mapping})).data.error,'conversation_excluded');
+});
+test('visible WhatsApp contact names enrich existing owned chats but never create foreign contacts',async()=>{
+ assert.equal((await call('/contact',{jid:'123@lid',name:'Nombre de WhatsApp'})).data.saved,true);
+ assert.equal((await call('/index')).data.chats[0].name,'Nombre de WhatsApp');
+ assert.equal((await call('/contact',{jid:'123@lid',name:'Ajeno'},{'test-user':'other'})).data.saved,false);
+ assert.equal(await service.col('contacts').countDocuments(),1);
+ const saved=await service.col('drafts').findOne({_id:id});assert.equal(vault.open(saved.fields,id).contact,'Contacto WhatsApp');
 });
 test('publish creates once and subsequent explicit saves update the same HubSpot ticket',async()=>{
  let result=await call('/drafts/'+id+'/publish',{revision:1,mapping});assert.equal(result.status,200);assert.equal(result.data.ticketId,'99');

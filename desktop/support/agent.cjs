@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.069 | Fecha: 2026-09-08
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -7,6 +7,44 @@ const { storage } = require('./storage.cjs');
 const { startLocal } = require('./local.cjs');
 const BASE = 'https://asistobot.com.ar';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+// Read a separate contact snapshot without rewinding Baileys' app-state versions,
+// replacing authentication, or applying settings/messages from the snapshot.
+async function readContactSnapshot(b, socket, readAuth, collection = 'critical_unblock_low') {
+  const response = await socket.query({ tag: 'iq', attrs: { to: 's.whatsapp.net', xmlns: 'w:sync:app:state', type: 'set' }, content: [{ tag: 'sync', attrs: {}, content: [{ tag: 'collection', attrs: { name: collection, version: '0', return_snapshot: 'true' } }] }] }, 15000);
+  const result = (await b.extractSyncdPatches(response, { signal: AbortSignal.timeout(30000) }))[collection];
+  if (!result?.snapshot) throw new Error('contact_snapshot_unavailable');
+  const keyCache = new Map();
+  const getKey = async key => { if (!keyCache.has(key)) keyCache.set(key, readAuth('app-state-sync-key:' + key)); return keyCache.get(key); }, logger = require('pino')({ level: 'silent' });
+  const decoded = await b.decodeSyncdSnapshot(collection, result.snapshot, getKey, undefined, true, logger);
+  let state = decoded.state, batch = result;
+  for (let page = 0; page < 10; page++) {
+    if (batch.patches?.length) {
+      const delta = await b.decodePatches(collection, batch.patches, state, getKey, { signal: AbortSignal.timeout(30000) }, undefined, logger);
+      state = delta.state; Object.assign(decoded.mutationMap, delta.mutationMap);
+    }
+    if (!batch.hasMorePatches) break;
+    if (page === 9) throw new Error('contact_snapshot_incomplete');
+    const more = await socket.query({ tag: 'iq', attrs: { to: 's.whatsapp.net', xmlns: 'w:sync:app:state', type: 'set' }, content: [{ tag: 'sync', attrs: {}, content: [{ tag: 'collection', attrs: { name: collection, version: String(state.version), return_snapshot: 'false' } }] }] }, 15000);
+    batch = (await b.extractSyncdPatches(more, { signal: AbortSignal.timeout(30000) }))[collection];
+    if (!batch) throw new Error('contact_snapshot_incomplete');
+  }
+  const contacts = [];
+  const actions = {};
+  for (const mutation of Object.values(decoded.mutationMap)) {
+    for (const key of Object.keys(mutation.syncAction?.value || {})) if (key.endsWith('Action')) actions[key] = (actions[key] || 0) + 1;
+    const action = mutation.syncAction?.value?.contactAction || mutation.syncAction?.value?.lidContactAction;
+    const id = mutation.index?.[1];
+    if (!action || !/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(id || '')) continue;
+    const name = action.fullName || action.firstName || action.username;
+    if (!name) continue;
+    const user = id.split('@')[0], isLid = id.endsWith('@lid');
+    const mapped = readAuth('lid-mapping:' + user + (isLid ? '_reverse' : ''));
+    contacts.push({ id, name, lid: action.lidJid || (isLid ? id : typeof mapped === 'string' && /^\d+$/.test(mapped) ? mapped + '@lid' : undefined), phoneNumber: action.pnJid || (!isLid ? id : typeof mapped === 'string' && /^\d+$/.test(mapped) ? mapped + '@s.whatsapp.net' : undefined) });
+  }
+  contacts.diagnostics = { collection, mutations: Object.keys(decoded.mutationMap).length, actions };
+  return contacts;
+}
 
 async function run(options = {}) {
   const profile = options.profile || process.argv[2];
@@ -104,7 +142,21 @@ async function run(options = {}) {
     active.ev.on('contacts.update', updates => event(() => rememberContacts(updates)));
     active.ev.on('connection.update', update => event(async () => {
       if (update.qr) await request('session', { state: 'qr', qr: update.qr });
-      if (update.connection === 'open') await request('session', { state: 'connected' });
+      if (update.connection === 'open') {
+        await request('session', { state: 'connected' });
+        const snapshot = store.read('contact-snapshot') || {};
+        if (active.query && b.extractSyncdPatches && !snapshot.completed && (!snapshot.retryAt || Date.now() >= snapshot.retryAt)) {
+          try {
+            const restored = [], diagnostics = [];
+            for (const collection of ['critical_unblock_low', 'critical_block', 'regular_low', 'regular', 'regular_high']) {
+              const rows = await readContactSnapshot(b, active, readAuth, collection);
+              restored.push(...rows); diagnostics.push(rows.diagnostics);
+              if (rows.length) break;
+            }
+            if (generation === socketGeneration) { rememberContacts(restored); store.write('contact-snapshot', { completed: restored.length > 0, count: restored.length, diagnostics, retryAt: Date.now() + 3600000 }); }
+          } catch { store.write('contact-snapshot', { retryAt: Date.now() + 3600000 }); }
+        }
+      }
       if (update.connection === 'close') {
         socket = undefined; retryAt = Date.now() + 10000;
         const logout = update.lastDisconnect?.error?.output?.statusCode === b.DisconnectReason.loggedOut;
@@ -163,4 +215,4 @@ async function main() {
   finally { local.closeAllConnections(); await new Promise(resolve => local.close(resolve)); }
 }
 if (require.main === module) main().catch(() => { console.error('Asisto: no se pudo iniciar el agente. Se reintentará automáticamente.'); process.exitCode = 1; });
-module.exports = { run };
+module.exports = { run, readContactSnapshot };

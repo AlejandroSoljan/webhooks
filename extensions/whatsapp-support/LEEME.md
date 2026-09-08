@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.068 | Fecha: 2026-09-08 -->
+<!-- Asisto | Version: 5.00.069 | Fecha: 2026-09-08 -->
 # Asisto · Tareas de WhatsApp
 
 1. Descomprimí el ZIP en una carpeta que vayas a conservar.
@@ -8,6 +8,10 @@
 5. Revisá y editá el resumen. **Guardar en Asisto** conserva los cambios. **Preparar HubSpot** permite revisar el destino, el estado y la clasificación. **Guardar en HubSpot** crea el ticket; los siguientes guardados de esa misma tarea actualizan el mismo ticket.
 
 La extensión no abre páginas automáticamente. Los iconos se actualizan cada 30 segundos y al desplazarte por la lista. Solo identifica contactos por su identificador visible o por un nombre exacto y único; si hay nombres repetidos, usá el selector del panel. WhatsApp puede cambiar su estructura visual: el selector sigue disponible si un cambio impide colocar el icono.
+
+Si tenés instalada **MSM Tickets desde WhatsApp**, desactivala: es un prototipo distinto que busca un servicio local en el puerto 3210. Esta extensión aparece como **Asisto · Tareas de WhatsApp** y utiliza la sesión de Asisto.
+
+En historiales antiguos puede faltar el nombre. Al abrir un chat, la extensión toma su nombre visible y el identificador de sus mensajes para completar el contacto en Asisto; después puede mostrar el icono también en la lista. Solo se guarda esa identificación para conversaciones que ya pertenecen a tu usuario, sin copiar mensajes ni reemplazar campos de contacto editados manualmente.
 
 ## Conexión de HubSpot
 

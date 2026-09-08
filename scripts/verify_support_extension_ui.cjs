@@ -20,5 +20,8 @@ await page.evaluate(()=>{window.opened=[];window.chrome={runtime:{id:'a',sendMes
 await page.addScriptTag({path:path.join(__dirname,'../extensions/whatsapp-support/matcher.js')});await page.addScriptTag({path:path.join(__dirname,'../extensions/whatsapp-support/content.js')});
 await page.locator('.asisto-task-badge').waitFor();assert.equal(await page.locator('.asisto-task-badge').count(),1);await page.locator('.asisto-task-badge').click();assert.equal(await page.evaluate(()=>opened[0].jid),'1@lid');
 await page.locator('span[title="Juan"]').evaluate(el=>{el.title='Otro';el.textContent='Otro';});await page.waitForTimeout(300);assert.equal(await page.locator('.asisto-task-badge').count(),0);
-assert.deepEqual(errors,[]);console.log('PASS panel load/edit/save/mapping/publish; contact badge click; ambiguous names; recycled row cleanup; no page errors');await browser.close();
+await page.evaluate(()=>{document.body.insertAdjacentHTML('beforeend','<div id="main"><header><span title="Juan">Juan</span></header><div data-id="false_1@lid_MESSAGE"></div></div>');});
+await page.locator('#main .asisto-task-badge').waitFor();assert.equal(await page.evaluate(()=>opened.filter(m=>m.action==='CONTACT'&&m.jid==='1@lid'&&m.name==='Juan').length),1);
+assert.equal(await page.evaluate(()=>opened.filter(m=>m.action==='OPEN').length),1);
+assert.deepEqual(errors,[]);console.log('PASS panel load/edit/save/mapping/publish; contact badge click; ambiguous names; recycled row cleanup; visible contact sync without auto-opening; no page errors');await browser.close();
 })().catch(e=>{console.error(e);process.exit(1)});
