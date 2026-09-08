@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.054 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -242,6 +242,22 @@ test('incomplete setup leaves the panel visible and operations blocked without c
     assert.deepEqual(directives.get('frame-ancestors'), ["'self'"]);
     assert.equal((await fetch(base + '/api/support/session', { method: 'POST' })).status, 503);
   } finally { await new Promise(resolve => server.close(resolve)); }
+});
+
+test('history requested before sync processes later messages only within the selected period and owner', async () => {
+  const from = '2026-09-01T10:00:00Z', to = '2026-09-01T12:00:00Z';
+  assert.equal((await service.history(scope, from, to)).messages, 0);
+  await service.ingest(scope, message('older', -7200), { historical: true });
+  assert.equal(await service.col('jobs').countDocuments(scope), 0);
+  await service.ingest(other, message('other-history'), { historical: true });
+  assert.equal(await service.col('jobs').countDocuments(other), 0);
+  await service.ingest(scope, message('in-range'), { historical: true });
+  now = new Date(+now + 1001); await service.runOne();
+  const [draft] = await service.listDrafts(scope);
+  assert.equal(draft.messageIds.length, 1);
+  assert.equal((await service.historyStatus(scope, from, to)).done, 1);
+  assert.equal((await service.historyStatus(other, from, to)).done, 0);
+  assert.equal((await service.history(scope, from, to)).messages, 1);
 });
 test('history works with the strict MongoDB Stable API used by Asisto', async () => {
   await service.ingest(scope, message('strict-history'));

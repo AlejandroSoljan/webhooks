@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.060 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
 const express = require('express');
 const path = require('node:path');
 const QRCode = require('qrcode');
@@ -53,6 +53,7 @@ function createRouter({ getService, hubspotFactory = token => new HubSpotContrac
     return { desired };
   }));
   router.post('/history', route((req, s, scope) => s.history(scope, req.body.from, req.body.to)));
+  router.get('/history/status', route((req, s, scope) => s.historyStatus(scope, req.query.from, req.query.to)));
   router.get('/drafts', route((req, s, scope) => s.listDrafts(scope, req.query.before)));
   router.patch('/drafts/:id', route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, req.body.fields)));
   router.post('/drafts/:id/approve', route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, {}, true)));
@@ -101,15 +102,16 @@ function mountSupport(app) {
     let scope;
     try { scope = scopeOf(req.user); } catch { return res.status(403).json({ error: 'forbidden' }); }
     const checks = configuration.checks.map(check => ({ ...check }));
-    let workerRunning = false;
+    let workerRunning = false, queuedMessages = null;
     if (configuration.ready) {
       try {
         const db = await getDb();
         checks.push({ key: 'migration', ok: !!await db.collection('support_migrations').findOne({ _id: '001' }), label: 'Preparar las colecciones de soporte' });
-        workerRunning = !!await db.collection('support_leases').findOne({ _id: deviceLeaseId(scope), source: 'desktop', until: { $gt: new Date() } });
+        const lease = await db.collection('support_leases').findOne({ _id: deviceLeaseId(scope), source: 'desktop', until: { $gt: new Date() } });
+        workerRunning = !!lease; queuedMessages = lease?.queuedMessages ?? null;
       } catch { checks.push({ key: 'connection', ok: false, label: 'Restablecer la conexión a la base de datos' }); }
     }
-    res.json({ ready: checks.every(check => check.ok), checks, workerRunning });
+    res.json({ ready: checks.every(check => check.ok), checks, workerRunning, queuedMessages });
   });
   // Resolve the shared DB on every request; db.js may disconnect an idle client.
   const getService = async () => {

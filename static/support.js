@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.059 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
@@ -23,6 +23,15 @@
   }
   const action = fn => async event => { event?.preventDefault(); try { await fn(); } catch (e) { notice(e); } };
   let verifiedDeviceCode = null;
+  let historyRange = null;
+  async function historyProgress() {
+    if (!historyRange) return;
+    const state = await api('/history/status?' + new URLSearchParams(historyRange));
+    const waiting = state.pending + state.processing;
+    const problem = state.errors.map(code => errors[code] || code).join(' · ');
+    $('historyResult').textContent = `${state.done} conversaciones del período procesadas · ${waiting} pendientes/en proceso · ${state.failed} con error.${problem ? ' ' + problem : ''}${state.syncPending > 0 ? ' El historial todavía está sincronizando; los mensajes que lleguen dentro del período se agregarán automáticamente.' : !waiting && !state.failed ? ' Si hay resultados, aparecerán en la Bandeja.' : ''}`;
+    if (!waiting && state.syncPending === 0) historyRange = null;
+  }
   async function lookupDevice() {
     verifiedDeviceCode = null; $('deviceApprove').disabled = true;
     const code = $('deviceCode').value.trim().toUpperCase();
@@ -38,7 +47,7 @@
   });
   $('deviceRevoke').onclick = action(async () => { await api('/device/revoke', 'POST', {}); $('notice').textContent = 'PC desvinculada de tu cuenta.'; });
   async function session() {
-    const status = await api('/status'); $('deviceStatus').textContent = status.workerRunning ? 'Tu agente está activo en tu PC.' : 'Tu agente no está conectado. Instalalo o encendé la PC donde lo autorizaste.';
+    const status = await api('/status'); $('deviceStatus').textContent = status.workerRunning ? 'Tu agente está activo en tu PC.' + (status.queuedMessages > 0 ? ` Quedan ${status.queuedMessages} mensajes del historial total por sincronizar; ese número no es el total del período elegido.` : '') : 'Tu agente no está conectado. Instalalo o encendé la PC donde lo autorizaste.';
     const row = await api('/session'); $('sessionState').textContent = caption(row.state);
     $('qr').hidden = !row.qr; if (row.qr) $('qr').src = row.qr; else $('qr').removeAttribute('src');
   }
@@ -121,7 +130,22 @@
   });
   $('disconnect').onclick = action(async () => { await api('/session', 'POST', { desired: 'disconnected' }); await session(); });
   $('settingsForm').onsubmit = action(async () => { const lines = id => $(id).value.split('\n').map(s => s.trim()).filter(Boolean); await api('/settings', 'PUT', { inactivityMs: Number($('inactivity').value) * 60000, mode: $('mode').value, excludedJids: lines('excludedJids'), excludedNames: lines('excludedNames') }); $('notice').textContent = 'Preferencias guardadas.'; });
-  $('historyForm').onsubmit = action(async () => { const result = await api('/history', 'POST', { from: new Date($('from').value).toISOString(), to: new Date($('to').value).toISOString() }); $('notice').textContent = `${result.conversations} conversaciones encoladas desde el historial sincronizado.`; });
+  $('historyForm').onsubmit = action(async () => {
+    $('historySubmit').disabled = true; historyRange = null;
+    $('historyResult').textContent = 'Buscando mensajes sincronizados en el período…';
+    try {
+      const requested = { from: new Date($('from').value).toISOString(), to: new Date($('to').value).toISOString() };
+      const result = await api('/history', 'POST', requested);
+      historyRange = requested;
+      if (!result.conversations) {
+        $('historyResult').textContent = 'Solicitud guardada. Todavía no hay mensajes sincronizados en ese período; los que lleguen dentro de esas fechas se procesarán automáticamente. Esta acción no descarga por sí sola el historial del teléfono.';
+      } else {
+        historyRange = requested;
+        $('historyResult').textContent = `${result.messages} mensajes de ${result.conversations} conversaciones encolados. El agente de tu PC debe permanecer activo para procesarlos.`;
+      }
+    } catch (error) { $('historyResult').textContent = errors[error.message] || error.message; throw error; }
+    finally { $('historySubmit').disabled = false; }
+  });
   $('tokenForm').onsubmit = action(async () => { try { await api('/hubspot', 'PUT', { token: $('token').value }); $('notice').textContent = 'HubSpot conectado.'; } finally { $('token').value = ''; } });
   $('memoryForm').onsubmit = action(async () => { await api('/memory', 'PUT', { jid: $('memoryJid').value, company: $('memoryCompany').value, contact: $('memoryContact').value }); $('notice').textContent = 'Contacto y empresa guardados en Asisto para próximos borradores.'; await memories(); });
   $('refresh').onclick = action(() => refresh()); $('more').onclick = action(() => refresh(true)); $('editor').onsubmit = action(save);
@@ -152,5 +176,5 @@
   }
   $('setupRefresh').onclick = action(initialize);
   initialize().catch(notice);
-  setInterval(() => { if (ready && !document.hidden) Promise.all(connectionOnly ? [session()] : [session(), refresh()]).catch(notice); }, 5000);
+  setInterval(() => { if (ready && !document.hidden) Promise.all(connectionOnly ? [session()] : [session(), refresh(), historyProgress()]).catch(notice); }, 5000);
 })();

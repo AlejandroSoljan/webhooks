@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.061 | Fecha: 2026-08-29
 // conversation_followup_panel.js
 // Seguimiento de conversaciones del bot en modo "conversacional".
 // - Vista principal simple en tabla.
@@ -669,9 +669,16 @@ async function autoCloseTenant(db, tenant, config) {
   return result.modifiedCount || 0;
 }
 
+async function followupTenantIds(db, collection, filter = {}) {
+  const rows = await db.collection(collection).aggregate([
+    { $match: filter }, { $group: { _id: '$tenantId' } },
+  ]).toArray();
+  return rows.map(row => row._id);
+}
+
 async function runAutoCloseSweep() {
   const db = await getDb();
-  const tenants = await db.collection('conversations').distinct('tenantId', { botMode: 'conversacional' });
+  const tenants = await followupTenantIds(db, 'conversations', { botMode: 'conversacional' });
   for (const raw of tenants) {
     const tenant = String(raw || '').trim();
     if (!tenant) continue;
@@ -710,9 +717,9 @@ async function loadAvailableTenants(db, currentTenant) {
   add(currentTenant);
   const results = await Promise.allSettled([
     db.collection('tenant_config').find({}, { projection: { _id: 1, tenantId: 1, tenantid: 1 } }).limit(2000).toArray(),
-    db.collection('users').distinct('tenantId'),
-    db.collection('tenant_channels').distinct('tenantId'),
-    db.collection('conversations').distinct('tenantId', { botMode: 'conversacional' }),
+    followupTenantIds(db, 'users'),
+    followupTenantIds(db, 'tenant_channels'),
+    followupTenantIds(db, 'conversations', { botMode: 'conversacional' }),
   ]);
   if (results[0].status === 'fulfilled') {
     for (const doc of results[0].value || []) { add(doc?.tenantId); add(doc?.tenantid); add(doc?._id); }

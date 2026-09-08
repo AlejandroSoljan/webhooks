@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.056 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
 const express = require('express');
 const { randomBytes } = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -87,8 +87,9 @@ function createDeviceRouter({ getService, publicOrigin }) {
   }));
   router.post('/heartbeat', route(async (req, s) => {
     const ctx = await context(req, s);
+    const queuedMessages = Number.isSafeInteger(req.body.queuedMessages) && req.body.queuedMessages >= 0 ? req.body.queuedMessages : null;
     try {
-      await s.col('leases').findOneAndUpdate({ _id: ctx.id, $or: [{ owner: ctx.owner }, { until: { $lte: s.now() } }] }, { $set: { ...ctx.scope, owner: ctx.owner, deviceId: ctx.device._id, source: 'desktop', until: new Date(+s.now() + 30000) } }, { upsert: true });
+      await s.col('leases').findOneAndUpdate({ _id: ctx.id, $or: [{ owner: ctx.owner }, { until: { $lte: s.now() } }] }, { $set: { ...ctx.scope, owner: ctx.owner, deviceId: ctx.device._id, source: 'desktop', queuedMessages, until: new Date(+s.now() + 30000) } }, { upsert: true });
     } catch (e) { if (e.code === 11000) fail('device_already_running', 409); throw e; }
     const session = await s.col('sessions').findOne(ctx.scope);
     return { desired: session?.desired || 'disconnected' };
@@ -104,10 +105,12 @@ function createDeviceRouter({ getService, publicOrigin }) {
   router.post('/messages', route(async (req, s) => {
     const ctx = await context(req, s); await assertLease(s, ctx);
     if (!Array.isArray(req.body.messages) || req.body.messages.length > 25) fail('invalid_messages');
-    for (const input of req.body.messages) {
+    for (let offset = 0; offset < req.body.messages.length; offset += 5) {
+    await Promise.all(req.body.messages.slice(offset, offset + 5).map(async input => {
       await assertLease(s, ctx);
       const message = { id: text(input.id, 200), jid: text(input.jid, 200), name: text(input.name || '', 200), fromMe: input.fromMe === true, at: new Date(input.at), text: input.contentTooLarge ? ' '.repeat(20001) : text(input.text || '', 20000), audio: input.audio || null, raw: input.raw ? text(input.raw, 64000) : null };
-      await s.ingest(ctx.scope, message);
+      await s.ingest(ctx.scope, message, { historical: input.historical === true || message.at < ctx.device.approvedAt });
+    }));
     }
     return { accepted: req.body.messages.length };
   }));

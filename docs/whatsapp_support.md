@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.059 | Fecha: 2026-09-08 -->
+<!-- Asisto | Version: 5.00.061 | Fecha: 2026-09-08 -->
 # Tickets desde WhatsApp: agente personal en cada PC
 
 ## Arquitectura acordada
@@ -63,6 +63,10 @@ Los metadatos de índices, como JID y nombre de WhatsApp, no se cifran en MongoD
 
 ## Flujo y límites
 
+La cola local puede contener historial anterior al período elegido. Ese total se muestra separado del resultado de Procesar. El agente prioriza mensajes recientes, sube lotes de hasta 25 mensajes/110 KB y cede ejecución durante la importación para mantener activa su conexión.
+
+Los mensajes históricos se guardan sin disparar análisis automático fuera de los períodos solicitados. Procesar conserva la solicitud durante 30 días y agrega los mensajes del rango que lleguen después. El resultado y el estado aparecen junto al botón; los trabajos del período usan únicamente mensajes dentro de sus fechas. Los mensajes nuevos posteriores a la vinculación siguen el flujo automático.
+
 El agente recibe mensajes entrantes, salientes e historial, omitiendo grupos, broadcasts y newsletters. Conserva una cola local cifrada para reintentar entregas. El backend aplica exclusiones del usuario y tenant y deduplica por propietario, chat, ID y dirección.
 
 Se agrupan ventanas tras 3 minutos de inactividad (30 segundos a 30 minutos configurables). El agente solicita procesar trabajos únicamente de su usuario. El detector `manager-rules-v1` exige una mención entrante de Manager y términos de problema/consulta; es un filtro conservador por reglas. Toda propuesta requiere revisión.
@@ -94,7 +98,7 @@ La API de revisión permanece en `/api/support`. `/status` informa el agente de 
 
 ## Compilación, pruebas y despliegue
 
-`scripts/build_support_desktop.ps1` produce `static/downloads/AsistoSupport-5.00.059.zip` desde una lista explícita, sin `.env`, perfiles, claves ni `node_modules`. El instalador ejecuta `npm ci --omit=dev --ignore-scripts` con su lockfile.
+`scripts/build_support_desktop.ps1` produce `static/downloads/AsistoSupport-5.00.061.zip` desde una lista explícita, sin `.env`, perfiles, claves ni `node_modules`. El instalador ejecuta `npm ci --omit=dev --ignore-scripts` con su lockfile.
 
 Ejecutar `npm test`, `npm run support:migrate` y desplegar la web normalmente. La migración es aditiva y repetible; incorpora índices de dispositivos con expiración y unicidad por usuario. Los tests usan MongoDB efímero.
 

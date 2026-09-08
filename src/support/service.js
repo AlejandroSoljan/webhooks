@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.054 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupMessages, analyze, text, range } = require('./core');
 
@@ -37,18 +37,23 @@ class SupportService {
     }, { upsert: true });
     return { jid, ...identity };
   }
-  async ingest(scope, message) {
+  async ingest(scope, message, { historical = false } = {}) {
     const config = await this.config(scope);
     if (excluded(message, config)) return { ignored: true };
     if (!message.id || !Number.isFinite(+message.at) || message.at > new Date(+this.now() + 300000)) return { ignored: true };
     const _id = scopedId(scope, 'message', message.jid, message.id, !!message.fromMe);
     const { text: content = '', raw = null, ...metadata } = message;
     const contentTooLarge = String(content).length > 20000;
-    const doc = { _id, ...scope, ...metadata, contentTooLarge, payload: this.vault.seal({ text: contentTooLarge ? '' : String(content), raw }, _id), queued: false, receivedAt: this.now() };
+    const doc = { _id, ...scope, ...metadata, historical, contentTooLarge, payload: this.vault.seal({ text: contentTooLarge ? '' : String(content), raw }, _id), queued: false, receivedAt: this.now() };
     await this.col('messages').updateOne({ _id, ...scope }, { $setOnInsert: doc }, { upsert: true });
-    await this.enqueue(scope, message.jid, config.inactivityMs);
+    await this.enqueueMessage(scope, { ...message, historical }, config.inactivityMs);
     await this.col('messages').updateOne({ _id, ...scope }, { $set: { queued: true } });
     return { id: _id };
+  }
+  async enqueueMessage(scope, message, delay) {
+    if (!message.historical) return this.enqueue(scope, message.jid, delay);
+    const requests = await this.col('history_requests').find({ ...scope, 'dates.start': { $lte: message.at }, 'dates.end': { $gt: message.at }, expiresAt: { $gt: this.now() } }).toArray();
+    for (const request of requests) await this.enqueue(scope, message.jid, 1000, request.dates);
   }
   async enqueue(scope, jid, delay = 0, dates = null) {
     const _id = scopedId(scope, 'job', jid, dates ? [dates.start.toISOString(), dates.end.toISOString()] : 'live');
@@ -60,22 +65,39 @@ class SupportService {
   }
   async history(scope, from, to) {
     const dates = range(from, to);
+    await this.col('history_requests').updateOne({ _id: scopedId(scope, 'history', dates.start.toISOString(), dates.end.toISOString()), ...scope }, { $set: { dates, updatedAt: this.now(), expiresAt: new Date(+this.now() + 30 * 86400000) } }, { upsert: true });
     // Asisto's MongoDB pool uses Stable API v1 with apiStrict:true.
     // distinct is unavailable there; aggregate preserves the scoped grouping.
     const chats = await this.col('messages').aggregate([
       { $match: { ...scope, at: { $gte: dates.start, $lt: dates.end } } },
-      { $group: { _id: '$jid' } },
+      { $group: { _id: '$jid', messages: { $sum: 1 } } },
     ]).toArray();
     const jids = chats.map(chat => chat._id);
     for (const jid of jids) await this.enqueue(scope, jid, 0, dates);
     await this.audit(scope, 'history_requested', `${dates.start.toISOString()}/${dates.end.toISOString()}`);
-    return { conversations: jids.length, source: 'locally_synced_messages', completeHistoryGuaranteed: false };
+    return { conversations: jids.length, messages: chats.reduce((n, chat) => n + chat.messages, 0), source: 'locally_synced_messages', completeHistoryGuaranteed: false };
+  }
+  async historyStatus(scope, from, to) {
+    const dates = range(from, to);
+    const rows = await this.col('jobs').aggregate([
+      { $match: { ...scope, 'dates.start': dates.start, 'dates.end': dates.end } },
+      { $group: { _id: { state: '$state', error: '$error' }, count: { $sum: 1 } } },
+    ]).toArray();
+    const result = { pending: 0, processing: 0, done: 0, failed: 0, errors: [] };
+    for (const row of rows) {
+      if (Object.hasOwn(result, row._id.state) && typeof result[row._id.state] === 'number') result[row._id.state] += row.count;
+      if (row._id.error && ['pending', 'failed'].includes(row._id.state)) result.errors.push(row._id.error);
+    }
+    result.errors = [...new Set(result.errors)];
+    const lease = await this.col('leases').findOne({ ...scope, source: 'desktop', until: { $gt: this.now() } });
+    result.syncPending = lease?.queuedMessages ?? null;
+    return result;
   }
   async repairQueue(owner = {}) {
     const rows = await this.col('messages').find({ ...owner, queued: false }).limit(100).toArray();
     for (const row of rows) {
       const scope = { tenantId: row.tenantId, userId: row.userId };
-      await this.enqueue(scope, row.jid, (await this.config(scope)).inactivityMs);
+      await this.enqueueMessage(scope, row, (await this.config(scope)).inactivityMs);
       await this.col('messages').updateOne({ _id: row._id, ...scope }, { $set: { queued: true } });
     }
   }
@@ -112,7 +134,7 @@ class SupportService {
     // Read complete stored chat for stable boundaries across overlapping history requests.
     const rows = await this.col('messages').find({ ...scope, jid: job.jid }).sort({ at: 1, _id: 1 }).limit(5001).toArray();
     if (rows.length > 5000) fail('conversation_requires_pagination', 422);
-    const eligible = rows.filter(m => !excluded(m, config));
+    const eligible = rows.filter(m => !excluded(m, config) && (job.dates ? m.at >= job.dates.start && m.at < job.dates.end : !m.historical));
     for (const group of groupMessages(eligible, config.inactivityMs)) {
       if (job.dates && !group.some(m => m.at >= job.dates.start && m.at < job.dates.end)) continue;
       if (!job.dates && +group.at(-1).receivedAt + config.inactivityMs > +this.now()) continue;

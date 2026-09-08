@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.059 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -48,8 +48,20 @@ async function run(options = {}) {
     store.write('auth:' + id, value == null ? null : JSON.stringify(value, b.BufferJSON.replacer));
   };
   const clearAuth = () => { for (const id of store.read('auth-index') || []) store.write('auth:' + id, null); store.write('auth-index', []); };
-  const queue = messages => {
-    for (const raw of messages) {
+  const order = new Map(), seen = new Set(store.read('outbox-index') || []);
+  let renewedAt = Date.now();
+  for (const id of seen) {
+    const pending = store.read('outbox:' + id);
+    if (pending) order.set(id, Date.parse(pending.at));
+    if (Date.now() - renewedAt > 5000) { await request('heartbeat', { queuedMessages: seen.size }); renewedAt = Date.now(); }
+  }
+  const recentFirst = ids => ids.sort((a, b) => (order.get(b) || 0) - (order.get(a) || 0));
+  if (seen.size) store.write('outbox-index', recentFirst([...seen]));
+  const queue = async (messages, historical = false) => {
+    for (let offset = 0; offset < messages.length; offset += 50) {
+      const index = new Set(store.read('outbox-index') || []);
+      let changed = false;
+      for (const raw of messages.slice(offset, offset + 50)) {
       const msg = b.normalizeMessageContent(raw.message), jid = raw.key?.remoteJid;
       if (!msg || !raw.key?.id || !/^[^@]+@(s\.whatsapp\.net|lid)$/.test(jid || '')) continue;
       const content = msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.documentMessage?.caption || '';
@@ -57,9 +69,12 @@ async function run(options = {}) {
       const audio = msg.audioMessage;
       const message = { id: raw.key.id, jid, fromMe: !!raw.key.fromMe, name: (raw.pushName || '').slice(0, 200), at: new Date(Number(raw.messageTimestamp) * 1000).toISOString(), text: content.length > 20000 ? '' : content, contentTooLarge: content.length > 20000, audio: audio ? { seconds: Number(audio.seconds || 0), mimetype: audio.mimetype || 'audio/ogg', bytes: Number(audio.fileLength || 0) } : null, raw: audio ? JSON.stringify(raw, b.BufferJSON.replacer) : null };
       const id = crypto.createHash('sha256').update(JSON.stringify([jid, raw.key.id, !!raw.key.fromMe])).digest('hex');
-      const index = store.read('outbox-index') || [];
       // An interrupted upload is replayed idempotently using the WhatsApp ID.
-      if (!index.includes(id)) { store.write('outbox-index', [...index, id]); store.write('outbox:' + id, message); }
+      if (!seen.has(id)) { store.write('outbox:' + id, { ...message, historical }); index.add(id); seen.add(id); order.set(id, Date.parse(message.at)); changed = true; }
+      }
+      if (changed) store.write('outbox-index', recentFirst([...index]));
+      // Large history events must yield so heartbeat and uploads keep running.
+      await pause(0);
     }
   };
   const connect = () => {
@@ -72,8 +87,8 @@ async function run(options = {}) {
     socket = active;
     const event = fn => { tail = tail.then(async () => { if (generation === socketGeneration) await fn(); }).catch(() => { if (generation === socketGeneration) { stopSocket(); retryAt = Date.now() + 15000; } }); };
     active.ev.on('creds.update', () => event(() => writeAuth('creds', creds)));
-    active.ev.on('messages.upsert', update => event(() => queue(update.messages)));
-    active.ev.on('messaging-history.set', update => event(() => queue(update.messages)));
+    active.ev.on('messages.upsert', update => event(() => queue(update.messages, update.type === 'append')));
+    active.ev.on('messaging-history.set', update => event(() => queue(update.messages, true)));
     active.ev.on('connection.update', update => event(async () => {
       if (update.qr) await request('session', { state: 'qr', qr: update.qr });
       if (update.connection === 'open') await request('session', { state: 'connected' });
@@ -87,23 +102,32 @@ async function run(options = {}) {
   };
   while (!stopped) {
     try {
-      const state = await request('heartbeat');
+      const state = await request('heartbeat', { queuedMessages: (store.read('outbox-index') || []).length });
       status({ state: 'active', whatsapp: state.desired });
       if (state.desired !== 'connected') {
         if (socket) { stopSocket(); await request('session', { state: 'disconnected' }); }
       } else if (!socket && Date.now() >= retryAt) connect();
-      for (const id of (store.read('outbox-index') || []).slice(0, 10)) {
+      // Bounded batches avoid one HTTP request and one full index rewrite per message.
+      const messages = [], ids = [];
+      for (const id of (store.read('outbox-index') || []).slice(0, 25)) {
         const message = store.read('outbox:' + id);
-        if (message) await request('messages', { messages: [message] });
-        store.write('outbox-index', (store.read('outbox-index') || []).filter(value => value !== id)); store.write('outbox:' + id, null);
+        if (message && Buffer.byteLength(JSON.stringify({ messages: [...messages, message] })) > 110000) break;
+        ids.push(id); if (message) messages.push(message);
       }
+      if (messages.length) await request('messages', { messages });
+      if (ids.length) {
+        const sent = new Set(ids);
+        store.write('outbox-index', (store.read('outbox-index') || []).filter(value => !sent.has(value)));
+        for (const id of ids) store.write('outbox:' + id, null);
+      }
+      await request('heartbeat', { queuedMessages: (store.read('outbox-index') || []).length });
       await request('work');
     } catch (error) {
       stopSocket();
       if (error.status === 401 || error.status === 403) { status({ state: 'access_revoked' }); process.exitCode = 2; return; }
       status({ state: 'reconnecting' });
     }
-    await pause(5000);
+    await pause((store.read('outbox-index') || []).length ? 250 : 5000);
   }
   await tail;
 }

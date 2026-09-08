@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.058 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -65,20 +65,24 @@ test('a previously approved desktop automatically starts Baileys, sends QR/messa
           connections++; const ev = new EventEmitter();
           setImmediate(() => {
             ev.emit('connection.update', { qr: 'fixture-qr' });
-            ev.emit('messages.upsert', { messages: [{ key: { id: 'fixture-message', remoteJid: '123@s.whatsapp.net' }, messageTimestamp: Math.floor(Date.now() / 1000), message: { conversation: 'Manager no imprime' } }] });
+            ev.emit('messages.upsert', { messages: Array.from({ length: 60 }, (_, i) => ({ key: { id: 'fixture-message-' + i, remoteJid: '123@s.whatsapp.net' }, messageTimestamp: Math.floor(Date.now() / 1000), message: { conversation: 'Manager no imprime' } })) });
           });
           return { ev, end() { ends++; } };
         },
       }),
       fetchImpl: async (url, options) => {
         const route = url.split('/').at(-1), body = JSON.parse(options.body); calls.push({ route, body });
-        const revoked = route === 'heartbeat' && ++heartbeats >= 3;
+        const revoked = route === 'heartbeat' && ++heartbeats >= 12;
         return { ok: !revoked, status: revoked ? 401 : 200, json: async () => route === 'heartbeat' ? { desired: 'connected' } : { ok: true } };
       },
     });
     assert.equal(connections, 1); assert.equal(ends, 1);
     assert.ok(calls.some(call => call.route === 'session' && call.body.qr === 'fixture-qr'));
     assert.equal(calls.find(call => call.route === 'messages').body.messages[0].text, 'Manager no imprime');
+    const uploads = calls.filter(call => call.route === 'messages');
+    assert.equal(uploads.reduce((n, call) => n + call.body.messages.length, 0), 60);
+    assert.ok(uploads.some(call => call.body.messages.length === 25));
+    assert.ok(uploads.every(call => call.body.messages.length <= 25 && Buffer.byteLength(JSON.stringify(call.body)) <= 110000));
     assert.deepEqual(data.get('outbox-index'), []);
     assert.equal(JSON.parse(fs.readFileSync(path.join(profile, 'status.json'))).state, 'access_revoked');
   } finally {

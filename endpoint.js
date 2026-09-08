@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -824,6 +824,14 @@ function wwebAgentScopeUpdate(collection, update, tenantId, numero) {
   if (collection === 'wa_wweb_message_log') Object.assign(ensureSet(), { tenantId: tenant, numero: phone });
   if (collection === 'wa_api_mensajes_confirmaciones') Object.assign(ensureSet(), { tenantId: tenant, numeroFrom: phone });
   if (collection === 'wa_api_message_windows') Object.assign(ensureSet(), { tenantId: tenant, numeroFrom: phone });
+  // These scoped values are already written by $set on both insert and update.
+  // Older agents also include them in $setOnInsert for message logs/windows.
+  if (out.$setOnInsert) {
+    for (const key of ['tenantId', 'tenantid', 'numero', 'numeroFrom']) {
+      if (Object.hasOwn(out.$set || {}, key)) delete out.$setOnInsert[key];
+    }
+    if (!Object.keys(out.$setOnInsert).length) delete out.$setOnInsert;
+  }
   return out;
 }
 
