@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.053 | Fecha: 2026-09-08 -->
+<!-- Asisto | Version: 5.00.055 | Fecha: 2026-09-08 -->
 # Tickets desde WhatsApp: agente personal en cada PC
 
 ## Arquitectura acordada
@@ -11,7 +11,7 @@ HubSpot queda para la última etapa. No se pide su token, no se llama su API ni 
 
 ## Instalación y autorización
 
-1. Ingresar a Asisto y abrir **Tickets desde WhatsApp**, `/ui/support`.
+1. Ingresar a Asisto y abrir **Sesiones WhatsApp Web**, `/admin/wweb`. La sección personal muestra únicamente la PC y el QR del usuario autenticado. Los permisos `support` permiten esta sección; las APIs y controles legacy siguen requiriendo `wweb`.
 2. Descargar el ZIP, descomprimirlo y ejecutar `Instalar.cmd` en la PC del usuario.
 3. El instalador prepara un runtime privado Node 24.12.0, verifica el SHA256 del ZIP oficial e instala las dependencias fijadas. No requiere administrador.
 4. El agente abre Asisto en el navegador con un código de vinculación. El usuario inicia sesión, comprueba el nombre de su PC y pulsa **Autorizar esta PC**.
@@ -20,7 +20,9 @@ HubSpot queda para la última etapa. No se pide su token, no se llama su API ni 
 
 La autorización inicial y el escaneo requieren al usuario; una página web no instala ni autoriza silenciosamente un programa local. El enlace del agente completa el código. No se copian claves de Render, MongoDB ni OpenAI a las PCs.
 
-`Desvincular mi PC` revoca su acceso a Asisto. Para desactivar también el arranque, deshabilitar la entrada `AsistoSupport-<perfil>` en Inicio de Windows. La instalación conserva los archivos cifrados locales; no hay borrado automático de conversaciones.
+`Desvincular mi PC` revoca su acceso a Asisto. Para desactivar también el arranque, deshabilitar la tarea `AsistoSupport-<perfil>` en el Programador de tareas. Se ejecuta al iniciar sesión con la cuenta actual de Windows, token interactivo y privilegios limitados, sin contraseña adicional. No tiene límite de duración, permite batería y evita instancias duplicadas. El supervisor reinicia el agente si termina inesperadamente.
+
+Reinstalar conserva el único perfil existente de esa cuenta de Windows; registra la tarea antes de retirar el inicio anterior en HKCU Run y sustituye sólo los procesos de ese perfil. Si Windows impide registrar tareas, el instalador informa el error y conserva el arranque anterior. No hay borrado automático de conversaciones. Los agentes anteriores conservan su enlace compatible `/ui/support`; los nuevos abren `/admin/wweb`.
 
 ## Componentes
 
@@ -92,7 +94,7 @@ La API de revisión permanece en `/api/support`. `/status` informa el agente de 
 
 ## Compilación, pruebas y despliegue
 
-`scripts/build_support_desktop.ps1` produce `static/downloads/AsistoSupport-5.00.053.zip` desde una lista explícita, sin `.env`, perfiles, claves ni `node_modules`. El instalador ejecuta `npm ci --omit=dev --ignore-scripts` con su lockfile.
+`scripts/build_support_desktop.ps1` produce `static/downloads/AsistoSupport-5.00.055.zip` desde una lista explícita, sin `.env`, perfiles, claves ni `node_modules`. El instalador ejecuta `npm ci --omit=dev --ignore-scripts` con su lockfile.
 
 Ejecutar `npm test`, `npm run support:migrate` y desplegar la web normalmente. La migración es aditiva y repetible; incorpora índices de dispositivos con expiración y unicidad por usuario. Los tests usan MongoDB efímero.
 

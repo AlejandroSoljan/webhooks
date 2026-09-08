@@ -1,9 +1,9 @@
-Asisto | Version: 5.00.053 | Fecha: 2026-09-08
+Asisto | Version: 5.00.055 | Fecha: 2026-09-08
 
 AGENTE PERSONAL DE WHATSAPP PARA WINDOWS
 
 1. Descomprimi todos los archivos y ejecuta Instalar.cmd.
-2. El instalador abre Asisto en tu navegador. Ingresa con TU usuario.
+2. El instalador abre Sesiones WhatsApp Web en Asisto. Ingresa con TU usuario.
 3. Revisa el nombre de tu PC y pulsa Autorizar esta PC.
 4. Escanea el QR con WhatsApp > Dispositivos vinculados.
 
@@ -19,6 +19,8 @@ globales de Asisto en la PC. La API de HubSpot sigue deshabilitada.
 El instalador descarga Node.js 24.12.0 desde nodejs.org y verifica su SHA256.
 Instala las dependencias fijadas en package-lock.json. No requiere admin.
 
-Para desconectar la cuenta usa Desvincular mi PC en Tickets desde WhatsApp.
-Para desactivar el inicio automatico usa Administrador de tareas > Inicio
-y deshabilita la entrada AsistoSupport correspondiente.
+Para desconectar la cuenta usa Desvincular mi PC en Sesiones WhatsApp Web.
+Para desactivar el inicio automatico abre el Programador de tareas de Windows
+y deshabilita la tarea AsistoSupport correspondiente. Se ejecuta con tu usuario,
+sin privilegios de administrador ni contrasenas adicionales. Si el agente
+se interrumpe, su supervisor lo reinicia. Reinstalar conserva el perfil existente.

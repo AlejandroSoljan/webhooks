@@ -174,9 +174,10 @@ test('Asisto menu, shell and user editor expose support only under the intended 
   try { auth = require('../auth_ui'); } finally { dbModule.getDb = originalGetDb; }
   const app = express();
   app.use((req, res, next) => {
-    req.user = { uid: scope.userId, username: 'fixture', tenantId: scope.tenantId, role: 'admin', allowedPages: req.headers['test-denied'] ? ['users'] : ['support', 'users'] };
+    req.user = { uid: scope.userId, username: 'fixture', tenantId: scope.tenantId, role: 'admin', allowedPages: req.headers['test-denied'] ? ['users'] : req.headers['test-legacy'] ? ['wweb'] : ['support', 'users'] };
     next();
   });
+  auth.protectRoutes(app);
   auth.mountAuthRoutes(app);
   const server = app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -185,6 +186,19 @@ test('Asisto menu, shell and user editor expose support only under the intended 
     process.env.SUPPORT_ENABLED = 'true';
     const menu = await (await fetch(base + '/app')).text();
     assert.match(menu, /href="\/ui\/support"/);
+    assert.match(menu, /href="\/admin\/wweb"/);
+    const sessions = await fetch(base + '/admin/wweb?device=ABCDEF123456');
+    assert.equal(sessions.status, 200);
+    const personal = await sessions.text();
+    assert.match(personal, /view=connection&amp;device=ABCDEF123456/);
+    assert.doesNotMatch(personal, /id="wwebBody"/);
+    assert.equal((await fetch(base + '/api/wweb/locks')).status, 403);
+    assert.equal((await fetch(base + '/admin/wweb', { headers: { 'test-denied': '1' } })).status, 403);
+    const legacy = await (await fetch(base + '/admin/wweb', { headers: { 'test-legacy': '1' } })).text();
+    assert.match(legacy, /id="wwebBody"/);
+    assert.doesNotMatch(legacy, /title="Vincular mi PC y WhatsApp"/);
+    const invalidCode = await (await fetch(base + '/admin/wweb?device=%22%3E%3Cscript%3E')).text();
+    assert.doesNotMatch(invalidCode, /view=connection&amp;device=/);
     const shell = await fetch(base + '/ui/support'); assert.equal(shell.status, 200);
     assert.match(await shell.text(), /src="\/admin\/support\?embed=1"/);
     const editor = await (await fetch(base + '/admin/users')).text();

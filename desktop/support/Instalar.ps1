@@ -1,7 +1,7 @@
-# Asisto | Version: 5.00.053 | Fecha: 2026-09-08
+# Asisto | Version: 5.00.055 | Fecha: 2026-09-08
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:LOCALAPPDATA 'AsistoSupport'
-$release = Join-Path $root 'app-5.00.053'
+$release = Join-Path $root 'app-5.00.055'
 $arch = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
 $runtime = Join-Path $root "node-v24.12.0-win-$arch"
 $node = Join-Path $runtime 'node.exe'
@@ -16,7 +16,7 @@ if (-not (Test-Path -LiteralPath $node)) {
   Remove-Item -LiteralPath $zip
 }
 New-Item -ItemType Directory -Path $release -Force | Out-Null
-foreach ($name in @('agent.cjs','storage.cjs','protect.ps1','run.ps1','package.json','package-lock.json')) {
+foreach ($name in @('agent.cjs','storage.cjs','protect.ps1','run.ps1','startup.ps1','package.json','package-lock.json')) {
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $release $name) -Force
 }
 $env:PATH = "$runtime;$env:PATH"
@@ -25,7 +25,9 @@ try {
   & $node (Join-Path $runtime 'node_modules/npm/bin/npm-cli.js') ci --omit=dev --ignore-scripts
   if ($LASTEXITCODE -ne 0) { throw 'No se pudieron instalar los componentes de WhatsApp.' }
 } finally { Pop-Location }
-$profileId = [Guid]::NewGuid().ToString()
+$existing = @(Get-ChildItem -LiteralPath (Join-Path $root 'profiles') -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^[a-fA-F0-9-]{36}$' })
+if ($existing.Count -gt 1) { throw 'Hay varios perfiles instalados. Actualiza el perfil correspondiente antes de continuar.' }
+$profileId = if ($existing.Count -eq 1) { $existing[0].Name } else { [Guid]::NewGuid().ToString() }
 $profile = Join-Path (Join-Path $root 'profiles') $profileId
 New-Item -ItemType Directory -Path $profile -Force | Out-Null
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -33,10 +35,17 @@ $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 if ($LASTEXITCODE -ne 0) { throw 'No se pudo proteger el perfil local.' }
 $runScript = Join-Path $release 'run.ps1'
 $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runScript`" -Profile `"$profile`" -Node `"$node`""
-$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-New-Item -Path $runKey -Force | Out-Null
-New-ItemProperty -Path $runKey -Name "AsistoSupport-$profileId" -Value "powershell.exe $arguments" -PropertyType String -Force | Out-Null
-Start-Process -FilePath 'powershell.exe' -ArgumentList $arguments -WindowStyle Hidden
+& (Join-Path $release 'startup.ps1') -Profile $profile -Node $node
+# Only replace processes for this exact, preserved profile, after registration succeeds.
+$owned = @(Get-CimInstance Win32_Process | Where-Object {
+  $_.Name -in @('powershell.exe','node.exe') -and $_.CommandLine -and
+  $_.CommandLine.Contains('"' + $profile + '"') -and $_.CommandLine.Contains($root + '\') -and
+  ($_.CommandLine.Contains('\run.ps1"') -or $_.CommandLine.Contains('\agent.cjs"'))
+})
+foreach ($proc in ($owned | Sort-Object @{Expression={if ($_.Name -eq 'powershell.exe') {0} else {1}}})) {
+  Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+}
+Start-ScheduledTask -TaskName "AsistoSupport-$profileId"
 Write-Host 'Instalado. Se abrira Asisto para autorizar esta PC con tu usuario.'
 Write-Host 'Luego el agente iniciara automaticamente al ingresar a Windows.'
 Write-Host "Perfil instalado: $profile"

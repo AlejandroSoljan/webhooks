@@ -40,6 +40,8 @@ async function register(user) {
 test('PC pairing requires explicit authenticated approval and returns no global credentials', async () => {
   const start = await call('/start', { name: 'Fixture PC' });
   assert.match(start.body.verificationUrl, /^https:\/\/asisto.example\/ui\/support\?device=/);
+  const current = await call('/start', { name: 'PC nueva', sessionsPanel: true });
+  assert.match(current.body.verificationUrl, /^https:\/\/asisto.example\/admin\/wweb\?device=/);
   assert.equal((await call('/approve', { code: start.body.code })).status, 302);
   assert.equal((await call('/approve', { code: start.body.code }, { 'x-test-user': 'a' })).status, 403);
   const headers = { Authorization: 'Bearer ' + start.body.token, 'X-Asisto-Instance': randomUUID() };

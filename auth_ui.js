@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.054 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.055 | Fecha: 2026-09-08
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -104,6 +104,7 @@ function requiredAccessForPath(p) {
   // Panel de carga de viajes de fleteros
   if (path.startsWith("/admin/fleteros") || path.startsWith("/api/fleteros")) return ["fleteros"];
   // Sesiones WhatsApp Web (whatsapp-web.js)
+  if (path === "/admin/wweb") return ["wweb", "support"];
   if (path.startsWith("/admin/wweb") || path.startsWith("/api/wweb")) return ["wweb"];
   // Canales WhatsApp/API
   if (path === "/canales" || path.startsWith("/api/tenant-channels")) return ["canales"];
@@ -1321,7 +1322,7 @@ function getNavItemsForUser(user) {
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
 
   if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
-  if (hasAccess(user, "wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
+  if (hasAccess(user, "wweb", "support")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
    if (isAdmin && hasAccess(user, "canales")) items.push({ key: "canales", title: "Canales", href: "/ui/canales" });
   if (isAdmin && hasAccess(user, "client_access")) items.push({ key: "client_access", title: "Clientes habilitados", href: "/ui/client_access" });
   if (isAdmin && hasAccess(user, "telegram")) items.push({ key: "telegram", title: "Sesiones Telegram", href: "/ui/telegram" });
@@ -2024,7 +2025,7 @@ function usersAdminPage({ user, users, msg, err }) {
         if (allowedKeys.includes("horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
         if (allowedKeys.includes("comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
         if (allowedKeys.includes("leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
-        if (allowedKeys.includes("wweb")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
+        if (allowedKeys.includes("wweb") || allowedKeys.includes("support")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
         if (allowedKeys.includes("canales")) items.push({ key: "canales", title: "Canales", href: "/ui/canales" });
         if (allowedKeys.includes("client_access")) items.push({ key: "client_access", title: "Clientes habilitados", href: "/ui/client_access" });
         if (allowedKeys.includes("telegram")) items.push({ key: "telegram", title: "Sesiones Telegram", href: "/ui/telegram" });
@@ -2140,7 +2141,16 @@ function usersAdminPage({ user, users, msg, err }) {
 }
 
 
-function wwebSessionsAdminPage({ user }) {
+function wwebSessionsAdminPage({ user, deviceCode = '' }) {
+  const code = /^[A-F0-9]{12}$/.test(String(deviceCode)) ? String(deviceCode) : '';
+  const personal = hasAccess(user, 'support') ? `
+    <section aria-label="Mi sesión personal" style="margin-bottom:24px">
+      <h2>Mi WhatsApp en esta PC</h2>
+      <p>Ingresaste como <strong>${htmlEscape(user.username || '')}</strong>. La sesión vinculada pertenece a tu cuenta de Asisto.</p>
+      <iframe title="Vincular mi PC y WhatsApp" src="/admin/support?embed=1&amp;view=connection${code ? '&amp;device=' + code : ''}" style="width:100%;height:850px;border:0;border-radius:12px"></iframe>
+      <a href="/ui/support">Abrir mis borradores de tickets</a>
+    </section>` : '';
+  if (!hasAccess(user, 'wweb')) return appShell({ title: 'Sesiones WhatsApp Web · Asisto', user, active: 'wweb', main: personal });
   const role = String(user?.role || "").toLowerCase();
   const isSuper = role === "superadmin";
   const canViewStats = role === "admin" || role === "superadmin";
@@ -2150,6 +2160,7 @@ function wwebSessionsAdminPage({ user }) {
     active: "wweb",
     main: `
     <div class="app appWide">
+      ${personal}
       <div class="toolbar">
         <div>
           <h2 style="margin:0 0 6px">Sesiones WhatsApp Web</h2>
@@ -5076,9 +5087,9 @@ function mountAuthRoutes(app) {
   // =============================
   // Admin: Sesiones WhatsApp Web (whatsapp-web.js)
   // =============================
-  app.get("/admin/wweb", requireAuth, requireWwebAccess, async (req, res) => {
+  app.get("/admin/wweb", requireAuth, (req, res, next) => hasAccess(req.user, 'wweb', 'support') ? next() : res.status(403).send('403 - No autorizado'), async (req, res) => {
     try {
-      return res.status(200).send(wwebSessionsAdminPage({ user: req.user }));
+      return res.status(200).send(wwebSessionsAdminPage({ user: req.user, deviceCode: req.query.device }));
     } catch (e) {
       console.error("[wweb] page error:", e);
       return res.status(500).send("Error cargando la pantalla de sesiones.");

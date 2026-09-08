@@ -1,7 +1,12 @@
-// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.055 | Fecha: 2026-09-08
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
+  const connectionOnly = new URLSearchParams(location.search).get('view') === 'connection';
+  if (connectionOnly) {
+    document.body.classList.add('connectionOnly');
+    document.title = 'Mi PC y WhatsApp · Asisto';
+  }
   if (new URLSearchParams(location.search).get('embed') === '1') document.querySelector('header').hidden = true;
   let selected = null, saving = Promise.resolve(), saveTimer, rows = [], dirty = false, loading = false, renderedList = null, savingNow = false, ready = false, hubspotEnabled = false;
   const captions = { pending: 'Pendiente', approved: 'Aprobado', ignored: 'Sin tarea detectada', needs_review: 'Requiere revisión', disconnected: 'Desconectado', connected: 'Conectado', queued: 'Esperando al servicio de WhatsApp', qr: 'Escaneá el QR con tu teléfono', reconnecting: 'Reconectando', logged_out: 'Vinculación cerrada desde WhatsApp', access_revoked: 'Acceso revocado', review: 'Revisar', create: 'Crear', update: 'Actualizar', close: 'Cerrar', ignore: 'Ignorar' };
@@ -116,14 +121,17 @@
       return;
     }
     if (!status.workerRunning) $('notice').textContent = 'La sincronización comenzará cuando tu agente esté activo en tu PC.';
+    $('deviceSetup').open = !status.workerRunning || !!new URLSearchParams(location.search).get('device');
+    if (!connectionOnly) {
     const capabilities = await api('/capabilities'); hubspotEnabled = capabilities.hubspotEnabled === true;
     $('hubspotSection').hidden = !hubspotEnabled; $('tickets').hidden = !hubspotEnabled;
     const config = await api('/settings'); $('inactivity').value = config.inactivityMs / 60000; $('mode').value = config.mode; $('excludedJids').value = config.excludedJids.join('\n'); $('excludedNames').value = config.excludedNames.join('\n');
     await Promise.all([session(), refresh(), memories()]);
+    } else await session();
     const deviceCode = new URLSearchParams(location.search).get('device');
     if (deviceCode) { $('deviceCode').value = deviceCode; await lookupDevice(); }
   }
   $('setupRefresh').onclick = action(initialize);
   initialize().catch(notice);
-  setInterval(() => { if (ready && !document.hidden) Promise.all([session(), refresh()]).catch(notice); }, 5000);
+  setInterval(() => { if (ready && !document.hidden) Promise.all(connectionOnly ? [session()] : [session(), refresh()]).catch(notice); }, 5000);
 })();

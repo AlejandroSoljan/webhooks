@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.055 | Fecha: 2026-09-08
 const express = require('express');
 const { randomBytes } = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -53,7 +53,8 @@ function createDeviceRouter({ getService, publicOrigin }) {
     const token = randomBytes(32).toString('base64url'), code = randomBytes(6).toString('hex').toUpperCase();
     const expiresAt = new Date(+s.now() + 600000);
     await s.col('devices').insertOne({ _id: hash(token), code, name: text(req.body.name || 'Mi PC', 80), state: 'pending', createdAt: s.now(), expiresAt });
-    return { token, code, expiresAt, verificationUrl: `${publicOrigin}/ui/support?device=${code}` };
+    const page = req.body.sessionsPanel === true ? '/admin/wweb' : '/ui/support';
+    return { token, code, expiresAt, verificationUrl: `${publicOrigin}${page}?device=${code}` };
   }));
   router.post('/poll', route(async (req, s) => {
     const device = await credential(req, s, true);

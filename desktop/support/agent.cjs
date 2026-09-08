@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.055 | Fecha: 2026-09-08
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -25,11 +25,11 @@ async function run(options = {}) {
   process.on('SIGINT', quit); process.on('SIGTERM', quit);
   if (!account?.approved) {
     if (!account || new Date(account.expiresAt) <= new Date()) {
-      account = await request('start', { name: os.hostname() }); store.write('account', account);
+      account = await request('start', { name: os.hostname(), sessionsPanel: true }); store.write('account', account);
     }
     // This is the user's one-time account approval, in their normal browser.
     const url = new URL(account.verificationUrl);
-    if (url.origin !== BASE || url.pathname !== '/ui/support') throw new Error('Invalid approval URL');
+    if (url.origin !== BASE || !['/ui/support', '/admin/wweb'].includes(url.pathname)) throw new Error('Invalid approval URL');
     status({ state: 'awaiting_approval', verificationUrl: url.href });
     spawn('rundll32.exe', ['url.dll,FileProtocolHandler', url.href], { windowsHide: true, stdio: 'ignore' }).unref();
     while (!stopped && new Date(account.expiresAt) > new Date()) {
