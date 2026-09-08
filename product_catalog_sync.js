@@ -1,9 +1,10 @@
-// Asisto | Version: 5.00.045 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.046 | Fecha: 2026-09-08
 // Sincronizacion paginada y conservadora del catalogo Manager hacia MongoDB.
 const axios = require('axios');
 const { COLLECTION, sourceKey } = require('./product_catalog');
 
 const STATE_COLLECTION = 'qr_product_catalog_sync';
+const SYNC_VERSION = 2;
 const text = value => String(value ?? '').trim();
 const intEnv = (name, fallback, min, max) => {
   const value = Number(process.env[name]);
@@ -47,12 +48,12 @@ async function syncManagerCatalog({ db, cfg, tenant, normalize, log = console.lo
   const stateId = `${tenantId}:${source}`;
   const now = new Date();
   const state = await db.collection(STATE_COLLECTION).findOne({ _id: stateId });
-  if (state?.lastCompletedAt && now - new Date(state.lastCompletedAt) < intervalMs) {
+  if (state?.syncVersion === SYNC_VERSION && state?.lastCompletedAt && now - new Date(state.lastCompletedAt) < intervalMs) {
     return { skipped: 'recent', lastCompletedAt: state.lastCompletedAt };
   }
   const lease = await db.collection(STATE_COLLECTION).findOneAndUpdate(
     { _id: stateId, $or: [{ leaseUntil: { $exists: false } }, { leaseUntil: { $lte: now } }] },
-    { $set: { tenantId, source, leaseUntil: new Date(now.getTime() + leaseMs), startedAt: now } },
+    { $set: { tenantId, source, syncVersion: SYNC_VERSION, leaseUntil: new Date(now.getTime() + leaseMs), startedAt: now } },
     { upsert: true, returnDocument: 'after' }
   ).catch(error => {
     if (error?.code === 11000) return null;
@@ -63,16 +64,23 @@ async function syncManagerCatalog({ db, cfg, tenant, normalize, log = console.lo
   let total = 0;
   try {
     for (let page = 1; page <= maxPages; page++) {
-      const request = managerPageRequest(cfg, page, pageSize);
-      const response = await axios.get(request.url, {
-        headers: request.headers,
-        timeout: cfg.apiTimeoutMs,
-        validateStatus: () => true,
-      });
-      if (response.status < 200 || response.status >= 300) {
-        throw new Error(`catalog_sync_http_${response.status}`);
+      let rows = [];
+      // Manager puede responder 200 con una página vacía transitoria. Confirmamos
+      // tres veces antes de considerarla el final real del catálogo.
+      for (let emptyAttempt = 1; emptyAttempt <= 3; emptyAttempt++) {
+        const request = managerPageRequest(cfg, page, pageSize);
+        const response = await axios.get(request.url, {
+          headers: request.headers,
+          timeout: cfg.apiTimeoutMs,
+          validateStatus: () => true,
+        });
+        if (response.status < 200 || response.status >= 300) {
+          throw new Error(`catalog_sync_http_${response.status}`);
+        }
+        rows = rowsFromPayload(response.data);
+        if (rows.length) break;
+        if (emptyAttempt < 3) await new Promise(resolve => setTimeout(resolve, 750 * emptyAttempt));
       }
-      const rows = rowsFromPayload(response.data);
       if (!rows.length) break;
       const fetchedAt = new Date();
       const operations = rows.map(raw => {

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.045 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.046 | Fecha: 2026-09-08
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const axios = require('axios');
@@ -65,4 +65,40 @@ test('sincroniza paginas secuenciales y conserva Codigo y Codbarra', async t => 
   assert.equal(writes.length, 1);
   assert.equal(writes[0][0].updateOne.filter.Codigo, '001');
   assert.equal(writes[0][0].updateOne.update.$set.Codbarra, '0001');
+});
+
+test('una pagina vacia transitoria no corta la sincronizacion', async t => {
+  const previous = process.env.QR_CATALOG_SYNC_PAGE_SIZE;
+  process.env.QR_CATALOG_SYNC_PAGE_SIZE = '50';
+  t.after(() => {
+    if (previous == null) delete process.env.QR_CATALOG_SYNC_PAGE_SIZE;
+    else process.env.QR_CATALOG_SYNC_PAGE_SIZE = previous;
+  });
+  const writes = [], states = new Map();
+  const db = { collection: name => name === 'qr_product_catalog' ? {
+    bulkWrite: async operations => writes.push(operations),
+  } : {
+    findOne: async ({ _id }) => states.get(_id) || null,
+    findOneAndUpdate: async ({ _id }, update) => {
+      const value = { ...(states.get(_id) || {}), ...(update.$set || {}) };
+      states.set(_id, value); return value;
+    },
+    updateOne: async ({ _id }, update) => {
+      const value = { ...(states.get(_id) || {}), ...(update.$set || {}) };
+      for (const key of Object.keys(update.$unset || {})) delete value[key];
+      states.set(_id, value);
+    },
+  } };
+  let calls = 0;
+  t.mock.method(axios, 'get', async () => {
+    calls += 1;
+    if (calls === 1) return { status: 200, data: Array.from({ length: 50 }, (_, i) => ({ Codigo: String(i), Descripcion: 'Fila' })) };
+    if (calls === 2) return { status: 200, data: [] };
+    return { status: 200, data: [{ Codigo: '50', Codbarra: '0050', Descripcion: 'Recuperado' }] };
+  });
+  const result = await syncManagerCatalog({ db, cfg, tenant: 'tienda', normalize: raw => ({ code: raw.Codigo }), log: () => {} });
+  assert.equal(calls, 3);
+  assert.equal(result.products, 51);
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1][0].updateOne.filter.Codigo, '50');
 });
