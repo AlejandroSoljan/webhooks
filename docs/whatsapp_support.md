@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.063 | Fecha: 2026-09-08 -->
+<!-- Asisto | Version: 5.00.064 | Fecha: 2026-09-08 -->
 # Tickets desde WhatsApp: agente personal en cada PC
 
 ## Arquitectura acordada
@@ -75,7 +75,7 @@ Los borradores admiten nombres manuales de empresa/contacto y aprobación sin Hu
 
 El histórico procesa mensajes ya sincronizados, hasta 31 días por solicitud; no garantiza recuperar todos los chats antiguos del teléfono. Límites actuales: 5.000 mensajes por chat, ventanas de 500 mensajes / 100.000 caracteres. Un mensaje excesivo bloquea su ventana.
 
-**La conexión de un transcriptor y la prueba de audio real siguen pendientes.** Instalar el agente no las completa. Los audios conservan metadatos y quedan pendientes si falta transcripción; no se genera un borrador parcial ignorándolos. La cola reintenta hasta tres veces y permite solicitar el período nuevamente tras resolver el proveedor.
+La transcripción reutiliza `transcribeAudioExternal` de Asisto, la clave del canal del tenant (o `OPENAI_API_KEY` existente) y el modelo de `tenant_config` con los mismos valores de respaldo. Un gateway `SUPPORT_TRANSCRIBER_URL` explícito conserva prioridad. Las claves permanecen en el servidor; no se envían a las PCs. Los audios se descargan con límites de tamaño y tiempo, se transcriben una vez y se conserva el texto cifrado con su consumo. Una transcripción vacía o fallida deja la conversación pendiente, sin omitir el audio. Los trabajos anteriores que fallaron por falta de proveedor se reactivan una sola vez por usuario. La prueba real debe comprobar registros de transcripción exitosa; pasar pruebas con datos simulados no acredita audio real.
 
 No se soportan aún edición/revocación de mensajes, resolución completa LID↔teléfono, OCR, varias tareas semánticas por ventana ni publicación masiva. Validar un contacto permitido, uno excluido, reconexión real y un período corto antes de ampliar el volumen.
 

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
 const express = require('express');
 const { randomBytes } = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -6,7 +6,7 @@ const { scopeOf, scopedId, hash, fail, text, SupportError } = require('./core');
 
 const deviceLeaseId = scope => scopedId(scope, 'desktop-worker');
 function createDeviceRouter({ getService, publicOrigin }) {
-  const router = express.Router(), starts = new Map();
+  const router = express.Router(), starts = new Map(), activeWork = new Map();
   router.use(express.json({ limit: '128kb' }));
   router.use((req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -116,8 +116,18 @@ function createDeviceRouter({ getService, publicOrigin }) {
   }));
   router.post('/work', route(async (req, s) => {
     const ctx = await context(req, s); await assertLease(s, ctx);
-    await s.repairQueue(ctx.scope);
-    return { processed: await s.runOne(() => assertLease(s, ctx), ctx.scope) };
+    // A slow transcription may outlive the agent's HTTP timeout. Do not start
+    // another job for that owner while the original request is still working.
+    if (activeWork.has(ctx.id)) return { processed: false, busy: true };
+    const work = (async () => {
+      if (s.transcribe) await s.col('jobs').updateMany({ ...ctx.scope, state: { $in: ['pending', 'failed'] }, error: 'transcription_provider_required', transcriptionRecoveryV1: { $ne: true } }, {
+        $set: { state: 'pending', attempts: 0, dueAt: s.now(), transcriptionRecoveryV1: true }, $unset: { error: '' },
+      });
+      await s.repairQueue(ctx.scope);
+      return { processed: await s.runOne(() => assertLease(s, ctx), ctx.scope) };
+    })();
+    activeWork.set(ctx.id, work);
+    try { return await work; } finally { activeWork.delete(ctx.id); }
   }));
   router.use((error, req, res, next) => {
     if (res.headersSent) return next(error);

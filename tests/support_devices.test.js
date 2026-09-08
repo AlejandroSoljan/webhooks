@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.054 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
 const { test, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -86,4 +86,30 @@ test('expired desktop lease allows recovery and fences the old process', async (
   assert.equal((await call('/heartbeat', {}, second)).status, 200);
   assert.equal((await call('/session', { state: 'connected' }, first)).status, 409);
   assert.equal((await call('/session', { state: 'connected' }, second)).status, 200);
+});
+// Regression: HTTP retries must not launch concurrent billable jobs for one PC.
+test('work resumes missing-provider failures once for its owner and coalesces slow HTTP retries', async () => {
+  const headers = await register('a'); await call('/heartbeat', {}, headers);
+  await service.col('jobs').insertMany([
+    { _id: 'own', ...a, state: 'failed', error: 'transcription_provider_required', attempts: 3 },
+    { _id: 'foreign', ...b, state: 'failed', error: 'transcription_provider_required', attempts: 3 },
+  ]);
+  const original = service.runOne, originalTranscribe = service.transcribe;
+  let release, entered, calls = 0;
+  const started = new Promise(resolve => { entered = resolve; });
+  const held = new Promise(resolve => { release = resolve; });
+  service.transcribe = { run() {} };
+  service.runOne = async () => { calls++; entered(); await held; return true; };
+  const first = call('/work', {}, headers);
+  try {
+    await started;
+    assert.deepEqual((await call('/work', {}, headers)).body, { processed: false, busy: true });
+    assert.equal(calls, 1);
+    assert.equal((await service.col('jobs').findOne({ _id: 'own' })).state, 'pending');
+    assert.equal((await service.col('jobs').findOne({ _id: 'foreign' })).state, 'failed');
+    release(); await first;
+    await service.col('jobs').updateOne({ _id: 'own' }, { $set: { state: 'failed', error: 'transcription_provider_required' } });
+    await call('/work', {}, headers);
+    assert.equal((await service.col('jobs').findOne({ _id: 'own' })).state, 'failed');
+  } finally { release(); await first; service.runOne = original; service.transcribe = originalTranscribe; }
 });

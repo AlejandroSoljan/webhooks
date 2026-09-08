@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.063 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
@@ -29,7 +29,7 @@
     const state = await api('/history/status?' + new URLSearchParams(historyRange));
     const waiting = state.pending + state.processing;
     const problem = state.errors.map(code => errors[code] || code).join(' · ');
-    $('historyResult').textContent = `${state.done} conversaciones del período procesadas · ${waiting} pendientes/en proceso · ${state.failed} con error.${problem ? ' ' + problem : ''}${state.syncPending > 0 ? ' El historial todavía está sincronizando; los mensajes que lleguen dentro del período se agregarán automáticamente.' : !waiting && !state.failed ? ' Si hay resultados, aparecerán en la Bandeja.' : ''}`;
+    $('historyResult').textContent = `${state.done} conversaciones del período procesadas · ${waiting} pendientes/en proceso (${state.retrying || 0} esperando reintento por error) · ${state.failed} fallidas tras agotar los reintentos.${problem ? ' ' + problem : ''}${state.syncPending > 0 ? ' El historial todavía está sincronizando; los mensajes que lleguen dentro del período se agregarán automáticamente.' : !waiting && !state.failed ? ' Si hay resultados, aparecerán en la Bandeja.' : ''}`;
     if (!waiting && state.syncPending === 0) historyRange = null;
   }
   async function lookupDevice() {

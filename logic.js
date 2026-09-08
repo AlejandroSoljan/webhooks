@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.031 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.064 | Fecha: 2026-09-04
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
 // Incluye logs completos de OpenAI (payload y response).
@@ -1083,7 +1083,7 @@ async function downloadMediaBuffer(mediaUrl, opts = {}) {
 }
 
 // ================== STT (externo -> fallback OpenAI) ==================
-async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApiKey, tenantId, transcribeModel, conversationId, waId, channelType, usageTraceId } = {}) {
+async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApiKey, tenantId, transcribeModel, conversationId, waId, channelType, usageTraceId, transcriptionTimeoutMs } = {}) {
   const prefer = TRANSCRIBE_API_URL;
   if (prefer && publicAudioUrl) {
     try {
@@ -1142,7 +1142,7 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
       TRANSCRIBE_MODEL ||
       "whisper-1"
     ).trim();
-    const r = await client.audio.transcriptions.create({ file: fileObj, model });
+    const r = await client.audio.transcriptions.create({ file: fileObj, model }, transcriptionTimeoutMs ? { timeout: transcriptionTimeoutMs, maxRetries: 0 } : undefined);
     const text = (r.text || "").trim();
     const usageInfo = parseTokenUsagePair(r.usage || null, "audio");
     await recordTokenUsage({
@@ -1159,7 +1159,7 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
       usageTraceId,
       meta: { engine: "openai" }
     });
-    return { text, usage: r.usage || null, engine: "openai" };
+    return { text, usage: r.usage || null, engine: "openai", model };
   } catch (e) {
     console.error("STT OpenAI error:", e.message);
     return { text: "" };

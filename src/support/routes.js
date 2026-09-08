@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.063 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
 const express = require('express');
 const path = require('node:path');
 const QRCode = require('qrcode');
@@ -6,6 +6,7 @@ const { getDb } = require('../../db');
 const { inspectConfiguration } = require('./config');
 const { scopeOf, scopedId, hash, fail, text, SupportError } = require('./core');
 const { SupportService } = require('./service');
+const { asistoTranscriber } = require('./transcriber');
 const { HubSpotContract } = require('./hubspot');
 const { createDeviceRouter, deviceLeaseId } = require('./devices');
 
@@ -118,7 +119,7 @@ function mountSupport(app) {
   const getService = async () => {
     const db = await getDb();
     if (!await db.collection('support_migrations').findOne({ _id: '001' })) fail('support_migration_required', 503);
-    return new SupportService(db, vault);
+    return new SupportService(db, vault, { transcribe: asistoTranscriber() });
   };
   if (configuration.ready) {
     app.use('/api/support/device', createDeviceRouter({ getService, publicOrigin }));

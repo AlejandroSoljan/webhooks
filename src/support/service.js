@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.063 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupMessages, analyze, text, range } = require('./core');
 
@@ -83,10 +83,11 @@ class SupportService {
       { $match: { ...scope, 'dates.start': dates.start, 'dates.end': dates.end } },
       { $group: { _id: { state: '$state', error: '$error' }, count: { $sum: 1 } } },
     ]).toArray();
-    const result = { pending: 0, processing: 0, done: 0, failed: 0, errors: [] };
+    const result = { pending: 0, processing: 0, done: 0, failed: 0, retrying: 0, errors: [] };
     for (const row of rows) {
       if (Object.hasOwn(result, row._id.state) && typeof result[row._id.state] === 'number') result[row._id.state] += row.count;
       if (row._id.error && ['pending', 'failed'].includes(row._id.state)) result.errors.push(row._id.error);
+      if (row._id.error && row._id.state === 'pending') result.retrying += row.count;
     }
     result.errors = [...new Set(result.errors)];
     const lease = await this.col('leases').findOne({ ...scope, source: 'desktop', until: { $gt: this.now() } });
@@ -118,7 +119,7 @@ class SupportService {
     try {
       await this.process(scope, job, check);
       await check();
-      await this.col('jobs').updateOne(filter, { $set: { state: 'done', completedAt: this.now() } });
+      await this.col('jobs').updateOne(filter, { $set: { state: 'done', completedAt: this.now() }, $unset: { error: '' } });
     } catch (error) {
       const code = error.code || 'processing_failed';
       await this.col('jobs').updateOne(filter, { $set: { state: job.attempts >= 3 ? 'failed' : 'pending', error: code, dueAt: new Date(+this.now() + 30000 * job.attempts) } });
@@ -159,11 +160,11 @@ class SupportService {
           const units = { inputTokens: 0, outputTokens: 0, audioSeconds: row.audio.seconds, processingUnits: row.audio.seconds, costUsd: null };
           await this.col('usage').insertOne({ _id: attemptId, ...scope, conversationId: job.jid, messageId: row._id, model: this.transcribe.model, kind: 'transcription', ...units, result: 'started', at: this.now() });
           try {
-            const result = await this.transcribe.run(payload.raw, row.audio);
+            const result = await this.transcribe.run(payload.raw, row.audio, { ...scope, jid: job.jid, conversationId: job._id, messageId: row._id });
             payload.text = text(result.text, 50000); payload.transcribed = true;
             await check();
             await this.col('messages').updateOne({ _id: row._id, ...scope }, { $set: { payload: this.vault.seal(payload, row._id) } });
-            await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'ok', durationMs: Date.now() - started, costUsd: result.costUsd ?? null } });
+            await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'ok', model: result.model || this.transcribe.model, durationMs: Date.now() - started, costUsd: result.costUsd ?? null } });
           } catch (e) {
             await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'error', error: e.code || 'transcription_failed', durationMs: Date.now() - started } });
             throw e;

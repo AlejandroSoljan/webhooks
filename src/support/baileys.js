@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.049 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
 const { scopedId, fail } = require('./core');
 
 async function encryptedAuth(service, scope, baileys, assertOwner) {
@@ -125,13 +125,8 @@ class BaileysSessions {
   }
 }
 
-// Optional LOCAL gateway. Its URL is operator configured and never supplied by a user/message.
-function localTranscriber(env = process.env, { loadBaileys = () => import('@whiskeysockets/baileys'), fetchImpl = fetch } = {}) {
-  if (!env.SUPPORT_TRANSCRIBER_URL) return null;
-  const url = new URL(env.SUPPORT_TRANSCRIBER_URL);
-  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('invalid_transcriber_url');
-  return { model: env.SUPPORT_TRANSCRIBER_MODEL || 'local-transcriber', async run(raw, audio) {
-    if (audio.seconds <= 0 || audio.seconds > 600 || audio.bytes > 16 * 1024 * 1024) fail('audio_limit_exceeded', 422);
+async function downloadAudio(raw, audio, loadBaileys = () => import('@whiskeysockets/baileys')) {
+    if (!Number.isFinite(audio.seconds) || audio.seconds <= 0 || audio.seconds > 600 || !Number.isFinite(audio.bytes) || audio.bytes < 0 || audio.bytes > 16 * 1024 * 1024) fail('audio_limit_exceeded', 422);
     const b = await loadBaileys();
     const message = JSON.parse(raw, b.BufferJSON.reviver);
     // Prefer Baileys' fixed media host over a sender-controlled absolute URL.
@@ -144,10 +139,20 @@ function localTranscriber(env = process.env, { loadBaileys = () => import('@whis
     try {
       for await (const chunk of stream) { bytes += chunk.length; if (bytes > 16 * 1024 * 1024) fail('audio_limit_exceeded', 422); chunks.push(chunk); }
     } finally { clearTimeout(timer); stream.destroy(); }
-    const response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(60000), headers: { 'Content-Type': audio.mimetype, ...(env.SUPPORT_TRANSCRIBER_TOKEN ? { Authorization: `Bearer ${env.SUPPORT_TRANSCRIBER_TOKEN}` } : {}) }, body: Buffer.concat(chunks) });
+    return Buffer.concat(chunks);
+}
+
+// Optional LOCAL gateway. Its URL is operator configured and never supplied by a user/message.
+function localTranscriber(env = process.env, { loadBaileys = () => import('@whiskeysockets/baileys'), fetchImpl = fetch } = {}) {
+  if (!env.SUPPORT_TRANSCRIBER_URL) return null;
+  const url = new URL(env.SUPPORT_TRANSCRIBER_URL);
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('invalid_transcriber_url');
+  return { model: env.SUPPORT_TRANSCRIBER_MODEL || 'local-transcriber', async run(raw, audio) {
+    const buffer = await downloadAudio(raw, audio, loadBaileys);
+    const response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(60000), headers: { 'Content-Type': audio.mimetype, ...(env.SUPPORT_TRANSCRIBER_TOKEN ? { Authorization: `Bearer ${env.SUPPORT_TRANSCRIBER_TOKEN}` } : {}) }, body: buffer });
     if (!response.ok) fail('transcription_failed', 502);
     const result = await response.json();
     return { text: result.text, costUsd: 0 };
   } };
 }
-module.exports = { encryptedAuth, normalizeMessage, BaileysSessions, localTranscriber };
+module.exports = { encryptedAuth, normalizeMessage, BaileysSessions, localTranscriber, downloadAudio };
