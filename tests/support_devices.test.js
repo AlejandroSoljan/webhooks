@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.054 | Fecha: 2026-09-08
 const { test, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -9,6 +9,7 @@ const { migrate } = require('../src/support/migration');
 const { SupportService } = require('../src/support/service');
 const { createVault } = require('../src/support/crypto');
 const { createDeviceRouter, deviceLeaseId } = require('../src/support/devices');
+const { protectRoutes } = require('../auth_ui');
 let mongo, client, db, service, server, base;
 const a = { tenantId: 'a', userId: new ObjectId().toHexString() }, b = { tenantId: 'b', userId: new ObjectId().toHexString() };
 before(async () => {
@@ -16,9 +17,10 @@ before(async () => {
   service = new SupportService(db, createVault({ test: Buffer.alloc(32, 5).toString('base64') }, 'test'));
   const app = express();
   app.use((req, res, next) => { const scope = req.headers['x-test-user'] === 'a' ? a : req.headers['x-test-user'] === 'b' ? b : null; if (scope) req.user = { uid: scope.userId, tenantId: scope.tenantId, role: 'user', allowedPages: ['support'] }; next(); });
-  app.use('/device', createDeviceRouter({ getService: async () => service, publicOrigin: 'https://asisto.example' }));
+  protectRoutes(app);
+  app.use('/api/support/device', createDeviceRouter({ getService: async () => service, publicOrigin: 'https://asisto.example' }));
   server = await new Promise(resolve => { const running = app.listen(0, '127.0.0.1', () => resolve(running)); });
-  base = 'http://127.0.0.1:' + server.address().port + '/device';
+  base = 'http://127.0.0.1:' + server.address().port + '/api/support/device';
 });
 beforeEach(async () => {
   await db.dropDatabase(); await migrate(db);
@@ -26,8 +28,8 @@ beforeEach(async () => {
 });
 after(async () => { await new Promise(resolve => server?.close(resolve)); await client?.close(); await mongo?.stop(); });
 async function call(route, body = {}, headers = {}) {
-  const response = await fetch(base + route, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
-  return { status: response.status, body: await response.json() };
+  const response = await fetch(base + route, { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  return { status: response.status, body: await response.json().catch(() => null) };
 }
 const userHeaders = user => ({ 'x-test-user': user, Origin: 'https://asisto.example', 'X-Asisto-Support': '1' });
 async function register(user) {
@@ -38,7 +40,7 @@ async function register(user) {
 test('PC pairing requires explicit authenticated approval and returns no global credentials', async () => {
   const start = await call('/start', { name: 'Fixture PC' });
   assert.match(start.body.verificationUrl, /^https:\/\/asisto.example\/ui\/support\?device=/);
-  assert.equal((await call('/approve', { code: start.body.code })).status, 401);
+  assert.equal((await call('/approve', { code: start.body.code })).status, 302);
   assert.equal((await call('/approve', { code: start.body.code }, { 'x-test-user': 'a' })).status, 403);
   const headers = { Authorization: 'Bearer ' + start.body.token, 'X-Asisto-Instance': randomUUID() };
   assert.deepEqual((await call('/poll', {}, headers)).body, { state: 'pending' });

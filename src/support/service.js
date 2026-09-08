@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.054 | Fecha: 2026-09-08
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupMessages, analyze, text, range } = require('./core');
 
@@ -60,7 +60,13 @@ class SupportService {
   }
   async history(scope, from, to) {
     const dates = range(from, to);
-    const jids = await this.col('messages').distinct('jid', { ...scope, at: { $gte: dates.start, $lt: dates.end } });
+    // Asisto's MongoDB pool uses Stable API v1 with apiStrict:true.
+    // distinct is unavailable there; aggregate preserves the scoped grouping.
+    const chats = await this.col('messages').aggregate([
+      { $match: { ...scope, at: { $gte: dates.start, $lt: dates.end } } },
+      { $group: { _id: '$jid' } },
+    ]).toArray();
+    const jids = chats.map(chat => chat._id);
     for (const jid of jids) await this.enqueue(scope, jid, 0, dates);
     await this.audit(scope, 'history_requested', `${dates.start.toISOString()}/${dates.end.toISOString()}`);
     return { conversations: jids.length, source: 'locally_synced_messages', completeHistoryGuaranteed: false };

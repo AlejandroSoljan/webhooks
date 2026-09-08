@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.053 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.054 | Fecha: 2026-09-08
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -216,6 +216,15 @@ test('incomplete setup leaves the panel visible and operations blocked without c
     assert.equal((await fetch(base + '/admin/support')).status, 200);
     assert.equal((await fetch(base + '/api/support/session', { method: 'POST' })).status, 503);
   } finally { await new Promise(resolve => server.close(resolve)); }
+});
+test('history works with the strict MongoDB Stable API used by Asisto', async () => {
+  await service.ingest(scope, message('strict-history'));
+  const strict = await new MongoClient(mongo.getUri(), { serverApi: { version: '1', strict: true } }).connect();
+  try {
+    const strictService = new SupportService(strict.db('support_test'), vault, { now: () => now });
+    assert.equal((await strictService.history(scope, '2026-09-01T10:00:00Z', '2026-09-01T12:00:00Z')).conversations, 1);
+    assert.equal((await strictService.history(other, '2026-09-01T10:00:00Z', '2026-09-01T12:00:00Z')).conversations, 0);
+  } finally { await strict.close(); }
 });
 test('manual identity flows into a draft and permits local approval with no HubSpot IDs or token', async () => {
   const identity = await service.rememberContact(scope, { jid: '123@s.whatsapp.net', company: 'Empresa de prueba', contact: 'Contacto de prueba' });
