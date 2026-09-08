@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
 const express = require('express');
 const path = require('node:path');
 const QRCode = require('qrcode');
@@ -61,7 +61,7 @@ function createRouter({ getService, hubspotFactory = token => new HubSpotContrac
   router.post('/drafts/:id/approve', route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, {}, true)));
   router.post('/drafts/:id/acknowledge-source', route(async (req, s, scope) => {
     if (!Number.isInteger(req.body.revision)) fail('revision_required', 409);
-    const result = await s.col('drafts').updateOne({ _id: text(req.params.id, 64), ...scope, revision: req.body.revision, reconciliationRequired: { $ne: true } }, { $set: { sourceChanged: false, state: 'pending', updatedAt: s.now() }, $inc: { revision: 1 }, $push: { events: { action: 'source_reviewed', at: s.now(), by: scope.userId } } });
+    const result = await s.col('drafts').updateOne({ _id: text(req.params.id, 64), ...scope, revision: req.body.revision, state: { $ne: 'merged' }, reconciliationRequired: { $ne: true } }, { $set: { sourceChanged: false, state: 'pending', updatedAt: s.now() }, $inc: { revision: 1 }, $push: { events: { action: 'source_reviewed', at: s.now(), by: scope.userId } } });
     if (!result.matchedCount) fail('revision_conflict_or_reconciliation_required', 409);
     return { revision: req.body.revision + 1 };
   }));

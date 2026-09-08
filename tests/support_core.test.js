@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.066 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createVault, vaultFromEnv } = require('../src/support/crypto');
@@ -193,4 +193,12 @@ test('task categories use the existing HubSpot taxonomy', () => {
     ['Consulta por preinstall', 'Soporte Preinstall'],
     ['Revisamos los reportes de contabilidad', 'Soporte Remoto'],
   ]) assert.equal(analyze([{ _id: 'case', at: new Date(), fromMe: false, text }]).category, expected);
+});
+test('task grouping keeps delayed acknowledgements with the request and splits a new explicit topic', () => {
+  const { groupTasks } = require('../src/support/core');
+  const row = (id, minutes, text, fromMe = false) => ({ _id: id, at: new Date(1700000000000 + minutes * 60000), text, fromMe });
+  const rows = [row('stock', 0, 'Podrías resolver el stock de cereales porque necesito cargar una venta'), row('reply', 3, 'Revisemos el módulo contable', true), row('ack', 45, 'Dale, ya te paso'), row('update', 50, 'También tenemos que coordinar la actualización para la semana que viene')];
+  const groups = groupTasks(rows);
+  assert.deepEqual(groups.map(group => group.map(message => message._id)), [['stock', 'reply', 'ack'], ['update']]);
+  assert.equal(analyze(groups[0]).subject, 'Consulta sobre stock y carga de ventas');
 });

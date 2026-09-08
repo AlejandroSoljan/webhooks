@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.062 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -65,7 +65,9 @@ test('a previously approved desktop automatically starts Baileys, sends QR/messa
           connections++; const ev = new EventEmitter();
           setImmediate(() => {
             ev.emit('connection.update', { qr: 'fixture-qr' });
-            ev.emit('messages.upsert', { messages: Array.from({ length: 60 }, (_, i) => ({ key: { id: 'fixture-message-' + i, remoteJid: '123@s.whatsapp.net' }, messageTimestamp: Math.floor(Date.now() / 1000), message: { conversation: 'Manager no imprime' } })) });
+            ev.emit('contacts.upsert', [{ id: '123@s.whatsapp.net', lid: '123@lid', name: 'Nombre de agenda' }]);
+            ev.emit('contacts.update', [{ id: '123@s.whatsapp.net', notify: 'Nombre del perfil' }]);
+            ev.emit('messages.upsert', { messages: Array.from({ length: 60 }, (_, i) => ({ key: { id: 'fixture-message-' + i, remoteJid: '123@s.whatsapp.net', fromMe: i === 0 }, pushName: i === 0 ? 'Nombre propio' : 'Nombre del perfil', messageTimestamp: Math.floor(Date.now() / 1000), message: { conversation: 'Manager no imprime' } })) });
           });
           return { ev, end() { ends++; } };
         },
@@ -80,7 +82,9 @@ test('a previously approved desktop automatically starts Baileys, sends QR/messa
     assert.equal(connections, 1); assert.equal(ends, 1);
     assert.ok(calls.some(call => call.route === 'session' && call.body.qr === 'fixture-qr'));
     assert.equal(calls.find(call => call.route === 'messages').body.messages[0].text, 'Manager no imprime');
+    assert.ok(calls.some(call => call.route === 'contacts' && call.body.contacts.some(contact => contact.jid === '123@lid' && contact.name === 'Nombre de agenda')));
     const uploads = calls.filter(call => call.route === 'messages');
+    assert.ok(uploads.every(call => call.body.messages.every(message => message.name === 'Nombre de agenda')));
     assert.equal(uploads.slice(1).reduce((n, call) => n + call.body.messages.length, 0), 60);
     assert.ok(uploads.some(call => call.body.messages.length === 25));
     assert.ok(uploads.every(call => call.body.messages.length <= 25 && Buffer.byteLength(JSON.stringify(call.body)) <= 110000));

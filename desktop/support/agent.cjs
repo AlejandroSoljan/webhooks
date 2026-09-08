@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.062 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -50,10 +50,26 @@ async function run(options = {}) {
   const clearAuth = () => { for (const id of store.read('auth-index') || []) store.write('auth:' + id, null); store.write('auth-index', []); };
   // Preserve the saved queue order without reading thousands of payload files at startup.
   const order = new Map(Object.entries(store.read('outbox-order') || {})), seen = new Set(store.read('outbox-index') || []);
+  const contacts = store.read('contacts') || {}, contactPending = new Set(store.read('contacts-pending') || []);
+  const contactName = jid => contacts[jid]?.name || contacts[jid]?.notify || contacts[jid]?.verifiedName || '';
+  const rememberContacts = updates => {
+    let changed = false;
+    for (const update of updates || []) {
+      const aliases = [update.id, update.lid, update.phoneNumber].filter(id => /^[^@]+@(s\.whatsapp\.net|lid)$/.test(id || ''));
+      for (const jid of aliases) {
+        const next = { ...contacts[jid] };
+        next.aliases = [...new Set([...(next.aliases || []), ...aliases])].slice(0, 5);
+        for (const key of ['name', 'notify', 'verifiedName']) if (typeof update[key] === 'string' && update[key].trim()) next[key] = update[key].trim().slice(0, 200);
+        if (JSON.stringify(next) !== JSON.stringify(contacts[jid] || {})) { contacts[jid] = next; contactPending.add(jid); changed = true; }
+      }
+    }
+    if (changed) { store.write('contacts', contacts); store.write('contacts-pending', [...contactPending]); }
+  };
   let uploadLimit = 25;
   const recentFirst = ids => ids.sort((a, b) => (order.get(b) || 0) - (order.get(a) || 0));
   const queue = async (messages, historical = false) => {
     for (let offset = 0; offset < messages.length; offset += 50) {
+      rememberContacts(messages.slice(offset, offset + 50).filter(raw => !raw.key?.fromMe && raw.pushName).map(raw => ({ id: raw.key?.remoteJid, notify: raw.pushName })));
       const index = new Set(store.read('outbox-index') || []);
       let changed = false;
       for (const raw of messages.slice(offset, offset + 50)) {
@@ -62,7 +78,7 @@ async function run(options = {}) {
       const content = msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.documentMessage?.caption || '';
       if (!content && !msg.audioMessage) continue;
       const audio = msg.audioMessage;
-      const message = { id: raw.key.id, jid, fromMe: !!raw.key.fromMe, name: (raw.pushName || '').slice(0, 200), at: new Date(Number(raw.messageTimestamp) * 1000).toISOString(), text: content.length > 20000 ? '' : content, contentTooLarge: content.length > 20000, audio: audio ? { seconds: Number(audio.seconds || 0), mimetype: audio.mimetype || 'audio/ogg', bytes: Number(audio.fileLength || 0) } : null, raw: audio ? JSON.stringify(raw, b.BufferJSON.replacer) : null };
+      const message = { id: raw.key.id, jid, fromMe: !!raw.key.fromMe, name: contactName(jid), at: new Date(Number(raw.messageTimestamp) * 1000).toISOString(), text: content.length > 20000 ? '' : content, contentTooLarge: content.length > 20000, audio: audio ? { seconds: Number(audio.seconds || 0), mimetype: audio.mimetype || 'audio/ogg', bytes: Number(audio.fileLength || 0) } : null, raw: audio ? JSON.stringify(raw, b.BufferJSON.replacer) : null };
       const id = crypto.createHash('sha256').update(JSON.stringify([jid, raw.key.id, !!raw.key.fromMe])).digest('hex');
       // An interrupted upload is replayed idempotently using the WhatsApp ID.
       if (!seen.has(id)) { store.write('outbox:' + id, { ...message, historical }); index.add(id); seen.add(id); order.set(id, Date.parse(message.at)); changed = true; }
@@ -83,7 +99,9 @@ async function run(options = {}) {
     const event = fn => { tail = tail.then(async () => { if (generation === socketGeneration) await fn(); }).catch(() => { if (generation === socketGeneration) { stopSocket(); retryAt = Date.now() + 15000; } }); };
     active.ev.on('creds.update', () => event(() => writeAuth('creds', creds)));
     active.ev.on('messages.upsert', update => event(() => queue(update.messages, update.type === 'append')));
-    active.ev.on('messaging-history.set', update => event(() => queue(update.messages, true)));
+    active.ev.on('messaging-history.set', update => event(() => { rememberContacts(update.contacts); return queue(update.messages || [], true); }));
+    active.ev.on('contacts.upsert', updates => event(() => rememberContacts(updates)));
+    active.ev.on('contacts.update', updates => event(() => rememberContacts(updates)));
     active.ev.on('connection.update', update => event(async () => {
       if (update.qr) await request('session', { state: 'qr', qr: update.qr });
       if (update.connection === 'open') await request('session', { state: 'connected' });
@@ -102,6 +120,12 @@ async function run(options = {}) {
       if (state.desired !== 'connected') {
         if (socket) { stopSocket(); await request('session', { state: 'disconnected' }); }
       } else if (!socket && Date.now() >= retryAt) connect();
+      const contactBatch = [...contactPending].slice(0, 50).map(jid => ({ jid, name: contactName(jid), aliases: contacts[jid]?.aliases || [] })).filter(contact => contact.name);
+      if (contactBatch.length) {
+        await request('contacts', { contacts: contactBatch });
+        for (const contact of contactBatch) if (contactName(contact.jid) === contact.name) contactPending.delete(contact.jid);
+        store.write('contacts-pending', [...contactPending]);
+      }
       // Processing must progress even when a subsequent upload times out.
       await request('work');
       await request('heartbeat', { queuedMessages: (store.read('outbox-index') || []).length });

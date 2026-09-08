@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
 const { test, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -112,4 +112,11 @@ test('work resumes missing-provider failures once for its owner and coalesces sl
     await call('/work', {}, headers);
     assert.equal((await service.col('jobs').findOne({ _id: 'own' })).state, 'failed');
   } finally { release(); await first; service.runOne = original; service.transcribe = originalTranscribe; }
+});
+test('WhatsApp contact sync is owner-scoped and cannot replace a manual contact', async () => {
+  const headers = await register('a'); await call('/heartbeat', {}, headers);
+  assert.equal((await call('/contacts', { contacts: [{ jid: '123@lid', name: 'Contacto', tenantId: b.tenantId, userId: b.userId }] }, headers)).status, 200);
+  assert.equal(await service.col('contacts').countDocuments(a), 1);
+  assert.equal(await service.col('contacts').countDocuments(b), 0);
+  assert.equal((await call('/contacts', { contacts: [{ jid: '123@g.us', name: 'Grupo' }] }, headers)).status, 400);
 });

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -5899,7 +5899,7 @@ function protectRoutes(app) {
     const p = req.path || "";
     // These desktop endpoints authenticate their own device token (start is
     // limited pairing). Browser approval/revocation still require login here.
-    if (req.method === 'POST' && /^\/api\/support\/device\/(start|poll|heartbeat|session|messages|work)$/.test(p)) return next();
+    if (req.method === 'POST' && /^\/api\/support\/device\/(start|poll|heartbeat|session|messages|contacts|work)$/.test(p)) return next();
 
     // públicas
     if (

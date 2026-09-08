@@ -1,6 +1,6 @@
-// Asisto | Version: 5.00.066 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
 const crypto = require('node:crypto');
-const { fail, scopedId, hash, settings, excluded, groupMessages, analyze, ANALYZER_VERSION, text, range } = require('./core');
+const { fail, scopedId, hash, settings, excluded, groupTasks, analyze, ANALYZER_VERSION, text, range } = require('./core');
 
 class SupportService {
   constructor(db, vault, { transcribe = null, now = () => new Date() } = {}) {
@@ -132,68 +132,84 @@ class SupportService {
     const actor = ObjectId.isValid(scope.userId) ? await this.db.collection('users').findOne({ _id: new ObjectId(scope.userId), tenantId: scope.tenantId, isLocked: { $ne: true } }) : null;
     if (!actor || !['user', 'admin', 'superadmin'].includes(actor.role) || (actor.role !== 'superadmin' && Array.isArray(actor.allowedPages) && !actor.allowedPages.includes('support'))) fail('access_revoked', 403);
     const config = await this.config(scope);
-    // Read complete stored chat for stable boundaries across overlapping history requests.
-    const rows = await this.col('messages').find({ ...scope, jid: job.jid }).sort({ at: 1, _id: 1 }).limit(5001).toArray();
+    const whatsappContact = await this.col('contacts').findOne({ _id: scopedId(scope, 'contact', job.jid), ...scope });
+    const rows = (await this.col('messages').find({ ...scope, jid: job.jid }).sort({ at: 1, _id: 1 }).limit(5001).toArray()).map(row => ({ ...row, name: whatsappContact?.name || row.name }));
     if (rows.length > 5000) fail('conversation_requires_pagination', 422);
     const eligible = rows.filter(m => !excluded(m, config) && (job.dates ? m.at >= job.dates.start && m.at < job.dates.end : !m.historical));
-    for (const group of groupMessages(eligible, config.inactivityMs)) {
-      if (job.dates && !group.some(m => m.at >= job.dates.start && m.at < job.dates.end)) continue;
+    const decoded = [];
+    // Group on the actual text, including cached audio transcriptions.
+    for (const row of eligible) {
+      await check();
+      const payload = this.vault.open(row.payload, row._id);
+      if (row.audio && !payload.transcribed) {
+        if (!this.transcribe) fail('transcription_provider_required', 422);
+        const attemptId = crypto.randomUUID(), started = Date.now();
+        const units = { inputTokens: 0, outputTokens: 0, audioSeconds: row.audio.seconds, processingUnits: row.audio.seconds, costUsd: null };
+        await this.col('usage').insertOne({ _id: attemptId, ...scope, conversationId: job.jid, messageId: row._id, model: this.transcribe.model, kind: 'transcription', ...units, result: 'started', at: this.now() });
+        try {
+          const result = await this.transcribe.run(payload.raw, row.audio, { ...scope, jid: job.jid, conversationId: job._id, messageId: row._id });
+          payload.text = text(result.text, 50000); payload.transcribed = true;
+          await check();
+          await this.col('messages').updateOne({ _id: row._id, ...scope }, { $set: { payload: this.vault.seal(payload, row._id) } });
+          await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'ok', model: result.model || this.transcribe.model, durationMs: Date.now() - started, costUsd: result.costUsd ?? null } });
+        } catch (e) {
+          await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'error', error: e.code || 'transcription_failed', durationMs: Date.now() - started } });
+          throw e;
+        }
+      }
+      decoded.push({ ...row, text: payload.text });
+    }
+    for (const group of groupTasks(decoded)) {
       if (!job.dates && +group.at(-1).receivedAt + config.inactivityMs > +this.now()) continue;
       await check();
-      const ids = group.map(m => m._id);
+      const ids = group.map(m => m._id), fingerprint = hash(ids);
       if (group.some(m => m.contentTooLarge)) fail('message_too_large', 422);
-      if (ids.length > 500) fail('conversation_window_too_large', 422);
-      const fingerprint = hash(ids);
-      const existing = await this.col('drafts').find({ ...scope, jid: job.jid, messageIds: { $in: ids } }).toArray();
-      if (existing.length === 1 && existing[0].fingerprint === fingerprint && existing[0].analyzerVersion === ANALYZER_VERSION) continue;
-      if (existing.length > 1) {
-        await this.col('drafts').updateMany({ ...scope, _id: { $in: existing.map(d => d._id) } }, { $set: { state: 'needs_review', sourceChanged: true, reconciliationRequired: true, updatedAt: this.now() }, $inc: { revision: 1 } });
+      if (ids.length > 500 || group.reduce((n, m) => n + m.text.length, 0) > 100000) fail('conversation_window_too_large', 422);
+      const existing = await this.col('drafts').find({ ...scope, jid: job.jid, state: { $ne: 'merged' }, messageIds: { $in: ids } }).sort({ createdAt: 1, _id: 1 }).toArray();
+      const untouched = row => row.events?.every(event => ['generated', 'source_changed', 'tasks_merged'].includes(event.action)) === true;
+      // A narrower historical request must not shrink a consolidated task.
+      if (existing.length === 1 && existing[0].analyzerVersion === ANALYZER_VERSION && ids.every(id => existing[0].messageIds.includes(id))) continue;
+      const edited = existing.filter(row => !untouched(row));
+      if (edited.length > 1 || existing.some(row => row.messageIds.some(id => !ids.includes(id)))) {
+        await this.col('drafts').updateMany({ ...scope, _id: { $in: existing.map(d => d._id) }, state: { $ne: 'merged' } }, { $set: { state: 'needs_review', sourceChanged: true, reconciliationRequired: true, updatedAt: this.now() } });
         continue;
       }
-      const decoded = [];
-      for (const row of group) {
-        await check();
-        const payload = this.vault.open(row.payload, row._id);
-        if (row.audio && !payload.transcribed) {
-          if (!this.transcribe) fail('transcription_provider_required', 422);
-          const attemptId = crypto.randomUUID(), started = Date.now();
-          const units = { inputTokens: 0, outputTokens: 0, audioSeconds: row.audio.seconds, processingUnits: row.audio.seconds, costUsd: null };
-          await this.col('usage').insertOne({ _id: attemptId, ...scope, conversationId: job.jid, messageId: row._id, model: this.transcribe.model, kind: 'transcription', ...units, result: 'started', at: this.now() });
-          try {
-            const result = await this.transcribe.run(payload.raw, row.audio, { ...scope, jid: job.jid, conversationId: job._id, messageId: row._id });
-            payload.text = text(result.text, 50000); payload.transcribed = true;
-            await check();
-            await this.col('messages').updateOne({ _id: row._id, ...scope }, { $set: { payload: this.vault.seal(payload, row._id) } });
-            await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'ok', model: result.model || this.transcribe.model, durationMs: Date.now() - started, costUsd: result.costUsd ?? null } });
-          } catch (e) {
-            await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'error', error: e.code || 'transcription_failed', durationMs: Date.now() - started } });
-            throw e;
-          }
-        }
-        decoded.push({ ...row, text: payload.text });
-      }
-      const started = Date.now();
-      if (decoded.reduce((n, m) => n + m.text.length, 0) > 100000) fail('conversation_window_too_large', 422);
-      const result = analyze(decoded);
+      if (edited.length === 1) existing.sort((a, b) => Number(b._id === edited[0]._id) - Number(a._id === edited[0]._id));
+      const started = Date.now(), result = analyze(group);
       if (result.description?.length > 100000) fail('conversation_window_too_large', 422);
       const _id = existing[0]?._id || scopedId(scope, 'draft', ids[0]);
       await check();
-      await this.col('usage').insertOne({ ...scope, conversationId: job.jid, recordId: _id, fingerprint, model: ANALYZER_VERSION, kind: 'analysis', inputTokens: 0, outputTokens: 0, audioSeconds: 0, processingUnits: decoded.reduce((n, m) => n + m.text.length, 0), unit: 'characters', costUsd: 0, durationMs: Date.now() - started, result: result.result, at: this.now() });
+      await this.col('usage').insertOne({ ...scope, conversationId: job.jid, recordId: _id, fingerprint, model: ANALYZER_VERSION, kind: 'analysis', inputTokens: 0, outputTokens: 0, audioSeconds: 0, processingUnits: group.reduce((n, m) => n + m.text.length, 0), unit: 'characters', costUsd: 0, durationMs: Date.now() - started, result: result.result, at: this.now() });
       const memory = await this.col('memory').findOne({ ...scope, jid: job.jid });
-      const draft = { ...result, messageDate: group[0].at.toISOString(), companyId: memory?.companyId || '', company: memory?.company || '', contactId: memory?.contactId || '', contact: memory?.contact || group.find(m => !m.fromMe)?.name || '', identitySource: memory?.source || (memory?.verifiedAt ? 'hubspot' : 'unassigned'), proposedAction: 'review' };
+      const draft = { ...result, messageDate: group[0].at.toISOString(), companyId: memory?.companyId || '', company: memory?.company || '', contactId: memory?.contactId || '', contact: memory?.contact || whatsappContact?.name || group.find(m => !m.fromMe && m.name)?.name || '', identitySource: memory?.source || (memory?.verifiedAt ? 'hubspot' : 'unassigned'), proposedAction: 'review' };
       if (existing.length) {
-        // Refresh generated fields as history arrives, but never overwrite human edits.
-        const untouched = existing[0].events?.every(event => ['generated', 'source_changed'].includes(event.action)) === true;
-        await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision }, { $set: { fingerprint, analyzerVersion: ANALYZER_VERSION, messageIds: ids, state: untouched ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !untouched, ...(untouched ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(draft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'source_changed', at: this.now() } } });
+        const generatedOnly = untouched(existing[0]);
+        const saved = await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision, state: { $ne: 'merged' } }, { $set: { fingerprint, analyzerVersion: ANALYZER_VERSION, messageIds: ids, state: generatedOnly ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !generatedOnly, reconciliationRequired: false, ...(generatedOnly ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(draft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: existing.length > 1 ? 'tasks_merged' : 'source_changed', at: this.now() } } });
+        if (!saved.matchedCount) fail('revision_conflict', 409);
+        for (const duplicate of existing.slice(1)) {
+          const merged = await this.col('drafts').updateOne({ _id: duplicate._id, ...scope, revision: duplicate.revision, state: { $ne: 'merged' } }, { $set: { state: 'merged', mergedInto: _id, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'tasks_merged', into: _id, at: this.now() } } });
+          if (!merged.matchedCount) fail('revision_conflict', 409);
+          await this.col('drafts').updateOne({ _id, ...scope }, { $addToSet: { mergedDraftIds: duplicate._id } });
+        }
       } else {
         await this.col('drafts').updateOne({ _id, ...scope }, { $setOnInsert: { ...scope, jid: job.jid, messageIds: ids, fingerprint, analyzerVersion: ANALYZER_VERSION, state: result.result === 'ignored' ? 'ignored' : 'pending', revision: 1, fields: this.vault.seal(draft, _id), source: this.vault.seal(draft, _id + ':source'), mode: config.mode, createdAt: this.now(), updatedAt: this.now(), events: [{ action: 'generated', at: this.now() }] } }, { upsert: true });
       }
     }
   }
+
   async listDrafts(scope, before, view = 'all') {
     if (!['all', 'tasks', 'ignored'].includes(view)) fail('invalid_draft_view');
-    const rows = await this.col('drafts').find({ ...scope, ...(view === 'tasks' ? { state: { $ne: 'ignored' } } : view === 'ignored' ? { state: 'ignored' } : {}), ...(before ? { _id: { $lt: text(before, 64) } } : {}) }).sort({ _id: -1 }).limit(50).toArray();
-    return rows.map(({ fields, source, ...row }) => ({ ...row, fields: this.vault.open(fields, row._id), source: this.vault.open(source, row._id + ':source') }));
+    const rows = await this.col('drafts').find({ ...scope, state: { $ne: 'merged' }, ...(view === 'tasks' ? { state: { $nin: ['ignored', 'merged'] } } : view === 'ignored' ? { state: 'ignored' } : {}), ...(before ? { _id: { $lt: text(before, 64) } } : {}) }).sort({ _id: -1 }).limit(50).toArray();
+    const decoded = rows.map(({ fields, source, ...row }) => ({ ...row, fields: this.vault.open(fields, row._id), source: this.vault.open(source, row._id + ':source') }));
+    const missing = [...new Set(decoded.filter(row => !row.fields.contact).map(row => row.jid))];
+    if (missing.length) {
+      const contacts = await this.col('contacts').find({ ...scope, _id: { $in: missing.map(jid => scopedId(scope, 'contact', jid)) } }).toArray();
+      const names = new Map(contacts.map(contact => [contact.jid, contact.name]));
+      const messages = await this.col('messages').aggregate([{ $match: { ...scope, jid: { $in: missing.filter(jid => !names.has(jid)) }, fromMe: false, name: { $type: 'string', $ne: '' } } }, { $sort: { at: -1 } }, { $group: { _id: '$jid', name: { $first: '$name' } } }]).toArray();
+      for (const row of messages) names.set(row._id, row.name);
+      for (const row of decoded) if (!row.fields.contact && names.has(row.jid)) row.fields.contact = names.get(row.jid);
+    }
+    return decoded;
   }
   async evidence(scope, id) {
     const draft = await this.col('drafts').findOne({ _id: text(id, 64), ...scope });
@@ -208,6 +224,7 @@ class SupportService {
     if (!Number.isInteger(revision) || revision < 1) fail('revision_required', 409);
     const current = await this.col('drafts').findOne({ _id: text(id, 64), ...scope });
     if (!current) fail('not_found', 404);
+    if (current.state === 'merged') fail('draft_merged', 409);
     if (approve) {
       const config = await this.config(scope);
       const sources = await this.col('messages').find({ ...scope, _id: { $in: current.messageIds } }).toArray();

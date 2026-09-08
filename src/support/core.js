@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.066 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
 const crypto = require('node:crypto');
 
 class SupportError extends Error {
@@ -48,8 +48,32 @@ function groupMessages(messages, inactivityMs) {
   }
   return groups;
 }
+function taskTopics(value) {
+  const input = normalize(value);
+  return [
+    ['stock', /stock|inventario|cereal/], ['accounting', /contabili|contable|totaliz|sumas? y saldos?/],
+    ['invoicing', /factur|remito/], ['printing', /imprim|impresora/], ['access', /acceso|ingresar|contrasena/],
+    ['update', /actualiz|nueva version/], ['server', /servidor|vps/], ['license', /licencia|abono/],
+  ].filter(([, pattern]) => pattern.test(input)).map(([topic]) => topic);
+}
+function groupTasks(messages) {
+  const groups = [];
+  for (const message of [...messages].sort((a, b) => +a.at - +b.at || a._id.localeCompare(b._id))) {
+    const last = groups.at(-1), input = normalize(message.text);
+    const topics = taskTopics(input);
+    const priorTopics = last ? new Set(last.filter(m => !m.fromMe).flatMap(m => taskTopics(m.text))) : new Set();
+    const request = /necesit|podrias|podes|podemos|quisiera|consulta|problema|error|no (funciona|puedo|abre|imprime)|coordin|actualiz|configur/.test(input);
+    const explicitChange = /otro tema|otra (cosa|consulta|tarea)|por otro lado|ademas|tambien/.test(input) && request;
+    const differentRequest = last && message.at - last.at(-1).at > 180000 && request && topics.length > 0 && priorTopics.size > 0 && topics.every(topic => !priorTopics.has(topic));
+    const continuation = /^(dale|ok|perfecto|listo|gracias|si[, .]|ya te|te paso|ahi|eso|seguimos|sigue|todavia)/.test(input);
+    const longGap = last && message.at - last.at(-1).at > 86400000 && !continuation;
+    if (!last || (!message.fromMe && (explicitChange || differentRequest || longGap))) groups.push([message]);
+    else last.push(message);
+  }
+  return groups;
+}
 // Every non-excluded exchange is documented. Categories are reviewable HubSpot labels.
-const ANALYZER_VERSION = 'support-documentation-v3';
+const ANALYZER_VERSION = 'support-task-groups-v4';
 function analyze(messages) {
   const transcript = messages.map(m => `${m.at.toISOString()} ${m.fromMe ? 'Operador' : 'Contacto'}: ${m.text}`).join('\n');
   const incoming = normalize(messages.filter(m => !m.fromMe).map(m => m.text).join(' '));
@@ -90,7 +114,7 @@ function analyze(messages) {
     : /configur|implement/.test(incoming) ? 'Configuración / Implementación'
     : /error|problema|no (puedo|funciona|imprime|abre)|falla/.test(incoming) ? 'Error software'
     : /consulta|necesit|como |posibilidad|totaliz/.test(incoming) ? 'Consulta / Capacitacion' : 'No es error';
-  const subject = totals ? 'Totalizador' + (/gasto/.test(incoming) ? ' de gastos' : '') + ' por cuenta' + (period ? ' y período' : '') : accounting ? 'Consulta sobre reportes contables' : messages.find(m => !m.fromMe && /manager/i.test(m.text))?.text.slice(0, 120) || messages.find(m => !m.fromMe && m.text.trim())?.text.slice(0, 120) || 'Consulta de soporte';
+  const subject = totals ? 'Totalizador' + (/gasto/.test(incoming) ? ' de gastos' : '') + ' por cuenta' + (period ? ' y período' : '') : /stock|inventario|cereal/.test(incoming) ? (/venta/.test(incoming) ? 'Consulta sobre stock y carga de ventas' : 'Consulta sobre stock') : accounting ? 'Consulta sobre reportes contables' : messages.find(m => !m.fromMe && /manager/i.test(m.text))?.text.slice(0, 120) || messages.find(m => !m.fromMe && m.text.trim())?.text.slice(0, 120) || 'Consulta de soporte';
   return { result: 'draft', subject, description, category, errorType, status: guidance || promisedVideo ? 'En Proceso' : 'Nuevo', channel: 'WhatsApp', confidence: 'needs_review' };
 }
-module.exports = { SupportError, fail, scopeOf, hash, scopedId, text, range, normalize, settings, excluded, groupMessages, analyze, ANALYZER_VERSION };
+module.exports = { SupportError, fail, scopeOf, hash, scopedId, text, range, normalize, settings, excluded, groupMessages, groupTasks, analyze, ANALYZER_VERSION };

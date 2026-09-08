@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
 const express = require('express');
 const { randomBytes } = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -113,6 +113,19 @@ function createDeviceRouter({ getService, publicOrigin }) {
     }));
     }
     return { accepted: req.body.messages.length };
+  }));
+  router.post('/contacts', route(async (req, s) => {
+    const ctx = await context(req, s); await assertLease(s, ctx);
+    if (!Array.isArray(req.body.contacts) || req.body.contacts.length > 50) fail('invalid_contacts');
+    for (const input of req.body.contacts) {
+      const jid = text(input.jid, 200), name = text(input.name, 200);
+      if (!/^[^@]+@(s\.whatsapp\.net|lid)$/.test(jid) || !name) fail('invalid_contact');
+      const aliases = input.aliases || [jid];
+      if (!Array.isArray(aliases) || aliases.length > 5 || aliases.some(id => typeof id !== 'string' || id.length > 200 || !/^[^@]+@(s\.whatsapp\.net|lid)$/.test(id))) fail('invalid_contact');
+      await assertLease(s, ctx);
+      await s.col('contacts').updateOne({ _id: scopedId(ctx.scope, 'contact', jid), ...ctx.scope }, { $set: { jid, name, aliases: [...new Set([jid, ...aliases])], source: 'whatsapp', updatedAt: s.now() } }, { upsert: true });
+    }
+    return { accepted: req.body.contacts.length };
   }));
   router.post('/work', route(async (req, s) => {
     const ctx = await context(req, s); await assertLease(s, ctx);

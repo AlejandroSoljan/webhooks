@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.066 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -357,4 +357,38 @@ test('upgraded analysis recovers an old discarded task even when its message fin
   assert.equal(recovered.fields.status, 'En Proceso');
   assert.equal(recovered.revision, 2);
   assert.equal((await service.listDrafts(scope, null, 'ignored')).length, 0);
+});
+test('historical fragments consolidate idempotently while retaining their records and one human edit', async () => {
+  const input = [message('request', 0, { text: 'Necesito revisar el stock para cargar una venta' }), message('reply', 180, { text: 'Revisemos la cuenta contable', fromMe: true }), message('ack', 2700, { text: 'Dale, ya te paso' })];
+  for (const row of input) await service.ingest(scope, row);
+  const messages = await service.col('messages').find(scope).sort({ at: 1 }).toArray();
+  for (const [index, row] of messages.entries()) {
+    const id = scopedId(scope, 'draft', row._id), fields = { subject: index === 1 ? 'Título revisado' : input[index].text, contact: '', messageDate: row.at.toISOString(), proposedAction: 'review' };
+    await service.col('drafts').insertOne({ _id: id, ...scope, jid: row.jid, messageIds: [row._id], fingerprint: hash([row._id]), analyzerVersion: 'support-documentation-v3', state: 'pending', revision: 1, fields: vault.seal(fields, id), source: vault.seal(fields, id + ':source'), createdAt: now, events: [{ action: index === 1 ? 'edited' : 'generated' }] });
+  }
+  await service.history(scope, '2026-09-01T10:00:00Z', '2026-09-01T12:00:00Z'); await service.runOne();
+  const [draft] = await service.listDrafts(scope);
+  assert.equal((await service.listDrafts(scope)).length, 1);
+  assert.equal(draft.fields.subject, 'Título revisado');
+  assert.equal(draft.messageIds.length, 3); assert.equal(draft.mergedDraftIds.length, 2);
+  assert.match(draft.source.description, /Dale, ya te paso/);
+  assert.equal(draft.sourceChanged, true);
+  const merged = await service.col('drafts').findOne({ ...scope, state: 'merged' });
+  assert.equal(merged.mergedInto, draft._id);
+  await assert.rejects(() => service.editDraft(scope, merged._id, merged.revision, { subject: 'stale form' }), /draft_merged/);
+  await service.history(scope, '2026-09-01T10:00:00Z', '2026-09-01T12:00:00Z'); await service.runOne();
+  assert.equal((await service.listDrafts(scope)).length, 1);
+  assert.equal((await service.listDrafts(scope))[0].revision, draft.revision);
+});
+
+test('late WhatsApp names fill blank contacts and preserve manually entered contact names', async () => {
+  const [draft] = await processMessages([message('anonymous', 0, { name: '' }), message('later-name', 30, { name: 'Nombre del perfil' })]);
+  assert.equal(draft.fields.contact, 'Nombre del perfil');
+  await service.col('contacts').insertOne({ _id: scopedId(scope, 'contact', draft.jid), ...scope, jid: draft.jid, name: 'Nombre de agenda' });
+  await service.editDraft(scope, draft._id, draft.revision, { contact: '' });
+  assert.equal((await service.listDrafts(scope))[0].fields.contact, 'Nombre de agenda');
+  const current = await service.col('drafts').findOne({ _id: draft._id });
+  await service.editDraft(scope, draft._id, current.revision, { contact: 'Nombre corregido' });
+  assert.equal((await service.listDrafts(scope))[0].fields.contact, 'Nombre corregido');
+  assert.equal((await service.listDrafts(other)).length, 0);
 });
