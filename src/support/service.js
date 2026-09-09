@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.072 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.075 | Fecha: 2026-09-09
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupTasks, analyze, ANALYZER_VERSION, text, range } = require('./core');
 
@@ -101,6 +101,26 @@ class SupportService {
       await this.enqueueMessage(scope, row, (await this.config(scope)).inactivityMs);
       await this.col('messages').updateOne({ _id: row._id, ...scope }, { $set: { queued: true } });
     }
+  }
+  async repairTitle(scope) {
+    if (!this.titleAnalyzer) return false;
+    const row = await this.col('drafts').findOne({ ...scope, analyzerVersion: { $ne: ANALYZER_VERSION }, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $ne: 'saved' } }, { sort: { updatedAt: 1 } });
+    if (!row) return false;
+    const generatedOnly = row.events?.every(event => ['generated', 'source_changed', 'tasks_merged'].includes(event.action)) === true;
+    if (!generatedOnly) {
+      await this.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision }, { $set: { analyzerVersion: ANALYZER_VERSION, titleUpgradeSkipped: 'human_edited', updatedAt: this.now() } });
+      return true;
+    }
+    const messages = await this.col('messages').find({ ...scope, _id: { $in: row.messageIds || [] } }).sort({ at: 1, _id: 1 }).limit(500).toArray();
+    const decoded = messages.map(message => ({ ...message, text: this.vault.open(message.payload, message._id).text || '' })).filter(message => message.text.trim());
+    if (!decoded.length) return false;
+    const title = await this.titleAnalyzer.run(decoded, { ...scope, jid: row.jid, draftId: row._id });
+    const fields = this.vault.open(row.fields, row._id), source = this.vault.open(row.source, row._id + ':source');
+    fields.subject = title.subject; source.subject = title.subject;
+    const updated = await this.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision, analyzerVersion: { $ne: ANALYZER_VERSION } }, { $set: { fields: this.vault.seal(fields, row._id), source: this.vault.seal(source, row._id + ':source'), analyzerVersion: ANALYZER_VERSION, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'title_regenerated_ai', at: this.now() } } });
+    if (!updated.matchedCount) return false;
+    await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: row.jid, waId: row.jid, kind: 'message', provider: 'openai', model: title.model, inputTokens: title.inputTokens, outputTokens: title.outputTokens, totalTokens: title.totalTokens || title.inputTokens + title.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_title', source: 'support_task_title_repair' }, createdAt: this.now() });
+    return true;
   }
   async runOne(assertOwner = async () => {}, owner = {}) {
     const claim = crypto.randomUUID();

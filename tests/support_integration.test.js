@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.072 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.075 | Fecha: 2026-09-09
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -250,6 +250,18 @@ test('AI task title replaces chat fragments and records the dedicated token-cont
   const usage = await db.collection('ai_token_usage_log').findOne({ tenantId: scope.tenantId, channelType: 'whatsapp_tasks' });
   assert.equal(usage.meta.usageType, 'whatsapp_task_title');
   assert.equal(usage.totalTokens, 48);
+});
+test('old generated task titles are repaired without overwriting a human title', async () => {
+  let calls = 0;
+  service.titleAnalyzer = { run: async () => { calls++; return { subject: 'Coordinar entrega de mercadería pendiente', model: 'fixture-ai', inputTokens: 20, outputTokens: 6, totalTokens: 26 }; } };
+  let [draft] = await processMessages([message('old-title', 0, { text: 'Después sigo teniendo el tema de la mercadería pendiente de entrega.' })]);
+  await service.col('drafts').updateOne({ _id: draft._id }, { $set: { analyzerVersion: 'support-task-groups-v4' } });
+  assert.equal(await service.repairTitle(scope), true);
+  [draft] = await service.listDrafts(scope); assert.equal(draft.fields.subject, 'Coordinar entrega de mercadería pendiente');
+  await service.editDraft(scope, draft._id, draft.revision, { subject: 'Título definido por la persona' });
+  await service.col('drafts').updateOne({ _id: draft._id }, { $set: { analyzerVersion: 'support-task-groups-v4' } });
+  assert.equal(await service.repairTitle(scope), true);
+  [draft] = await service.listDrafts(scope); assert.equal(draft.fields.subject, 'Título definido por la persona'); assert.equal(calls, 2);
 });
 
 test('discarded conversations have evidence, a separate scoped view, and populate fields when later history reveals a task', async () => {
