@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.077 | Fecha: 2026-09-09
 // wweb_phone_access.js
 // Acceso web simple para PowerBuilder WebControl.
 // Muestra QR si la sesión está en estado QR, o estado de sesión si ya está conectada.
@@ -74,6 +74,18 @@ function normalizeState(v) {
   if (s === "connecting") return "iniciando";
 
   return s;
+}
+
+function effectiveSessionState(lock, policy, nowMs = Date.now()) {
+  if (policy?.disabled === true) return "disabled";
+  if (
+    policy?.paused || policy?.pausado || policy?.blocked || policy?.bloqueado ||
+    policy?.messagesBlocked || policy?.mensajes_bloqueados
+  ) return "paused";
+  const lastSeenAt = lock?.lastSeenAt || lock?.updatedAt || null;
+  const lastSeenMs = lastSeenAt ? new Date(lastSeenAt).getTime() : 0;
+  if (!lastSeenMs || nowMs - lastSeenMs > 30000) return "inactive";
+  return normalizeState(lock?.state);
 }
 
 function formatDate(v) {
@@ -342,10 +354,8 @@ async function findLockByPhone(db, { numero, tenantId }) {
 }
 
 function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route, apiKey, actionMessage, clearMsgParam }) {
-  const isDisabled = !!policy?.disabled;
-  const isBlocked = !!(policy?.paused || policy?.pausado || policy?.blocked || policy?.messagesBlocked);
   const rawState = normalizeState(lock?.state);
-  const state = isDisabled ? "disabled" : (isBlocked ? "paused" : rawState);
+  const state = effectiveSessionState(lock, policy);
   const isStarting = state === "iniciando";
   const hasQr = !!String(lock?.lastQrDataUrl || "").trim();
   const showQr = rawState === "qr" && hasQr;
@@ -454,7 +464,7 @@ function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route
     .state.qr { background:#fff3cd; color:#7a5200; border-color:#ffe69c; }
     .state.online { background:rgba(49,196,141,.18); color:#79f0c4; border-color:rgba(49,196,141,.32); }
     .state.iniciando { background:rgba(45,190,230,.18); color:#9ae8ff; border-color:rgba(45,190,230,.32); }
-    .state.offline, .state.error, .state.disabled { background:rgba(220,53,69,.20); color:#ffb3bc; border-color:rgba(220,53,69,.34); }
+    .state.offline, .state.inactive, .state.error, .state.disabled { background:rgba(220,53,69,.20); color:#ffb3bc; border-color:rgba(220,53,69,.34); }
     .state.blocked, .state.paused { background:rgba(255,176,64,.18); color:#ffd089; border-color:rgba(255,176,64,.30); }
 
     /* QR en blanco para mantener contraste y lectura */
@@ -685,4 +695,4 @@ function mountWwebPhoneAccess(app, options = {}) {
   }
 }
 
-module.exports = { mountWwebPhoneAccess };
+module.exports = { mountWwebPhoneAccess, effectiveSessionState };
