@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.073 | Fecha: 2026-09-09
 const crypto = require('node:crypto');
 
 class SupportError extends Error {
@@ -73,7 +73,7 @@ function groupTasks(messages) {
   return groups;
 }
 // Every non-excluded exchange is documented. Categories are reviewable HubSpot labels.
-const ANALYZER_VERSION = 'support-task-groups-v4';
+const ANALYZER_VERSION = 'support-task-groups-v5-ai-title';
 function analyze(messages) {
   const transcript = messages.map(m => `${m.at.toISOString()} ${m.fromMe ? 'Operador' : 'Contacto'}: ${m.text}`).join('\n');
   const incoming = normalize(messages.filter(m => !m.fromMe).map(m => m.text).join(' '));
