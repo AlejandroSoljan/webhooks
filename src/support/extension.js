@@ -1,6 +1,7 @@
-// Asisto | Version: 5.00.070 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.074 | Fecha: 2026-09-09
 const express = require('express');
 const crypto = require('node:crypto');
+const { ObjectId } = require('mongodb');
 const { scopeOf, scopedId, hash, text, fail, SupportError } = require('./core');
 const { HubSpotContract } = require('./hubspot');
 
@@ -9,7 +10,15 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
   router.use(express.json({ limit: '128kb' }));
   router.use(async (req, res, next) => {
     try {
-      req.scope = scopeOf(req.user); req.service = await getService();
+      req.service = await getService();
+      const deviceToken = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.headers.authorization || '')?.[1];
+      if (deviceToken) {
+        const device = await req.service.col('devices').findOne({ _id: hash(deviceToken), state: 'approved', expiresAt: { $gt: req.service.now() } });
+        const user = device && ObjectId.isValid(device.userId) ? await req.service.db.collection('users').findOne({ _id: new ObjectId(device.userId), tenantId: device.tenantId, isLocked: { $ne: true } }) : null;
+        if (!user) fail('device_unauthorized', 401);
+        req.user = { ...user, uid: String(user._id) };
+      }
+      req.scope = scopeOf(req.user);
       res.set('Cache-Control', 'no-store');
       const id = req.headers['x-asisto-extension-id'];
       if (!/^[a-p]{32}$/.test(id || '')) fail('extension_required', 403);
@@ -39,7 +48,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     return { ...scope, username: req.user.username || '', csrf, canConfigure: ['admin', 'superadmin'].includes(req.user.role) };
   }));
   router.get('/index', route(async (req, s, scope) => {
-    const chats = await s.col('drafts').aggregate([{ $match: { ...scope, state: { $nin: ['merged', 'ignored'] } } }, { $group: { _id: '$jid', count: { $sum: 1 }, updatedAt: { $max: '$updatedAt' } } }, { $sort: { updatedAt: -1 } }, { $limit: 1001 }]).toArray();
+    const chats = await s.col('drafts').aggregate([{ $match: { ...scope, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $ne: 'saved' } } }, { $group: { _id: '$jid', count: { $sum: 1 }, updatedAt: { $max: '$updatedAt' } } }, { $sort: { updatedAt: -1 } }, { $limit: 1001 }]).toArray();
     const jids = chats.slice(0, 1000).map(row => row._id);
     const contacts = await s.col('contacts').find({ ...scope, jid: { $in: jids } }).toArray();
     const names = new Map(contacts.map(row => [row.jid, row]));
@@ -54,7 +63,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
   router.get('/drafts', route(async (req, s, scope) => {
     const jid = text(req.query.jid, 200);
     const contact = await s.col('contacts').findOne({ _id: scopedId(scope, 'contact', jid), ...scope });
-    const rows = await s.col('drafts').find({ ...scope, jid: { $in: [...new Set([jid, ...(contact?.aliases || [])])] }, state: { $nin: ['merged', 'ignored'] } }).sort({ updatedAt: -1 }).limit(100).toArray();
+    const rows = await s.col('drafts').find({ ...scope, jid: { $in: [...new Set([jid, ...(contact?.aliases || [])])] }, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $ne: 'saved' } }).sort({ updatedAt: -1 }).limit(100).toArray();
     return rows.map(row => { const fields = s.vault.open(row.fields, row._id); return { id: row._id, subject: fields.subject || 'Tarea para revisar', contact: fields.contact || contact?.name || '', state: row.state, hubspot: row.hubspot || null }; });
   }));
   router.post('/contact', route(async (req, s, scope) => {
@@ -84,6 +93,14 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     return { id: row._id, jid: row.jid, revision: row.revision, fields, source: s.vault.open(row.source, row._id + ':source'), sourceChanged: !!row.sourceChanged, reconciliationRequired: !!row.reconciliationRequired, hubspot: row.hubspot || null, mode: row.mode };
   }));
   router.post('/drafts/:id/save', route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, req.body.fields)));
+  router.post('/drafts/:id/dismiss', route(async (req, s, scope) => {
+    const row = await rowFor(s, scope, req.params.id);
+    if (row.revision !== req.body.revision) fail('revision_conflict', 409);
+    const result = await s.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $nin: ['sending', 'uncertain', 'saved'] } }, { $set: { state: 'ignored', updatedAt: s.now() }, $inc: { revision: 1 }, $push: { events: { action: 'dismissed_from_extension', by: scope.userId, at: s.now() } } });
+    if (!result.matchedCount) fail('revision_conflict', 409);
+    await s.audit(scope, 'task_dismissed', row._id);
+    return { dismissed: true, revision: row.revision + 1 };
+  }));
   router.get('/hubspot', route(async (req, s, scope) => {
     if (!await s.col('integrations').findOne({ tenantId: scope.tenantId })) return { configured: false };
     const { client, connection } = await clientFor(s, scope);

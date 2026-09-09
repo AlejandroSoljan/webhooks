@@ -1,13 +1,26 @@
-// Asisto | Version: 5.00.070 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.074 | Fecha: 2026-09-09
 const BASE = 'https://asistobot.com.ar/api/support/extension';
+const LOCAL = 'http://127.0.0.1:17658/extension-session';
+let deviceToken = '';
 async function request(path, body, grant) {
   const response = await fetch(BASE + path, { credentials: 'include', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(30000), headers: {
-    'X-Asisto-Extension-Id': chrome.runtime.id, ...(body ? { 'Content-Type': 'application/json', 'X-Asisto-Extension': grant } : {}),
+    'X-Asisto-Extension-Id': chrome.runtime.id, ...(deviceToken ? { Authorization: 'Bearer ' + deviceToken } : {}), ...(body ? { 'Content-Type': 'application/json', 'X-Asisto-Extension': grant } : {}),
   }, ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}) });
   if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('authentication_required');
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'request_failed');
   return result;
+}
+async function authenticatedSession() {
+  try { return await request('/session'); }
+  catch {
+    const local = await fetch(LOCAL, { cache: 'no-store', signal: AbortSignal.timeout(3000), headers: { 'X-Asisto-Local': '1' } });
+    if (!local.ok || !local.headers.get('content-type')?.includes('application/json')) throw new Error('agent_not_authorized');
+    const result = await local.json();
+    if (!/^[A-Za-z0-9_-]{43}$/.test(result.token || '')) throw new Error('agent_not_authorized');
+    deviceToken = result.token;
+    return request('/session');
+  }
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   const fromWhatsApp = sender.tab && sender.url?.startsWith('https://web.whatsapp.com/');
@@ -21,7 +34,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   }
   if (fromWhatsApp && !['INDEX', 'CONTACT', 'CONTACTS'].includes(message.action)) return false;
   (async () => {
-    const session = await request('/session');
+    const session = await authenticatedSession();
     if (message.action === 'SESSION') return { ...session, csrf: undefined };
     if (message.action === 'INDEX') {
       if (sender.tab?.id) chrome.sidePanel.setOptions?.({ tabId: sender.tab.id, path: 'panel.html', enabled: true }).catch(() => {});
@@ -35,6 +48,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       case 'DRAFTS': return request('/drafts?jid=' + encodeURIComponent(String(message.jid || '')));
       case 'DETAIL': return request('/drafts/' + id);
       case 'SAVE': return request('/drafts/' + id + '/save', { revision: message.revision, fields: message.fields }, session.csrf);
+      case 'DISMISS': return request('/drafts/' + id + '/dismiss', { revision: message.revision }, session.csrf);
       case 'HUBSPOT': return request('/hubspot');
       case 'CONNECT': return request('/hubspot/connect', { token: message.token }, session.csrf);
       case 'PUBLISH': return request('/drafts/' + id + '/publish', { revision: message.revision, mapping: message.mapping }, session.csrf);

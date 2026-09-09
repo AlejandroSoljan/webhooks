@@ -3,7 +3,7 @@ const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const { MongoMemoryServer } = require('mongodb-memory-server');
-const { MongoClient } = require('mongodb');
+const { MongoClient, ObjectId } = require('mongodb');
 const { createVault } = require('../src/support/crypto');
 const { SupportService } = require('../src/support/service');
 const { createExtensionRouter } = require('../src/support/extension');
@@ -45,11 +45,25 @@ test('extension requires the session origin, scoped grant and access to the draf
  const expired=Buffer.from(JSON.stringify(vault.seal({...scope,origin:'chrome-extension://'+extensionId,expires:0},'extension-csrf'))).toString('base64url');
  response=await fetch(base+'/drafts/'+id+'/save',{method:'POST',headers:{'Content-Type':'application/json','X-Asisto-Extension-Id':extensionId,'X-Asisto-Extension':expired},body:'{}'});assert.equal(response.status,403);
 });
+test('approved desktop authorization lets the extension connect without a web login',async()=>{
+ const token='D'.repeat(43), userId=new ObjectId();
+ await db.collection('users').insertOne({_id:userId,tenantId:'desktop-tenant',role:'user',allowedPages:['support']});
+ await service.col('devices').insertOne({_id:hash(token),tenantId:'desktop-tenant',userId:String(userId),state:'approved',expiresAt:new Date(Date.now()+60000)});
+ const response=await fetch(base+'/session',{headers:{Authorization:'Bearer '+token,'X-Asisto-Extension-Id':extensionId,Origin:'chrome-extension://'+extensionId}});
+ assert.equal(response.status,200); assert.equal((await response.json()).tenantId,'desktop-tenant');
+});
 test('index contains contact labels and counts, respects exclusions and omits private task contents',async()=>{
  await service.col('contacts').insertOne({_id:scopedId(scope,'contact','123@lid'),...scope,jid:'123@lid',name:'Juan',aliases:['123@lid','549111@s.whatsapp.net']});
  const result=await call('/index');assert.equal(result.data.chats[0].name,'Juan');assert.equal(result.data.chats[0].count,1);assert.ok(!JSON.stringify(result).includes(fields.description));
  await service.saveConfig(scope,{excludedNames:['Juan']});assert.equal((await call('/index')).data.chats.length,0);
  assert.equal((await call('/drafts/'+id+'/publish',{revision:1,mapping})).data.error,'conversation_excluded');
+});
+test('task indicator remains pending until HubSpot save or explicit dismissal',async()=>{
+ assert.equal((await call('/index')).data.chats[0].count,1);
+ assert.equal((await call('/drafts/'+id+'/save',{revision:1,fields:{subject:'Editado'}})).status,200);
+ assert.equal((await call('/index')).data.chats[0].count,1);
+ assert.equal((await call('/drafts/'+id+'/dismiss',{revision:2})).status,200);
+ assert.equal((await call('/index')).data.chats.length,0);
 });
 test('visible WhatsApp contact names enrich existing owned chats but never create foreign contacts',async()=>{
  assert.equal((await call('/contact',{jid:'123@lid',name:'Nombre de WhatsApp'})).data.saved,true);

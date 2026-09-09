@@ -1,10 +1,10 @@
-// Asisto | Version: 5.00.059 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.074 | Fecha: 2026-09-09
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { startLocal } = require('../desktop/support/local.cjs');
 const fs = require('node:fs'), vm = require('node:vm');
 
-test('local discovery is loopback-only, origin restricted, temporary and never exposes credentials', async () => {
+test('local discovery is loopback-only and exposes device authorization only to the fixed Asisto extension', async () => {
   let account = { code: 'ABCDEF123456', token: 'private-device-secret', expiresAt: new Date(Date.now() + 600000) };
   const server = await startLocal({ port: 0, readAccount: () => account });
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -24,8 +24,11 @@ test('local discovery is loopback-only, origin restricted, temporary and never e
     assert.deepEqual(await response.json(), { state: 'pending', code: account.code });
     account.expiresAt = new Date(0);
     assert.deepEqual(await (await fetch(base + '/pairing', { headers })).json(), { state: 'starting' });
-    account = { ...account, approved: true, userId: 'u1', tenantId: 't1' };
+    account = { ...account, token: 'A'.repeat(43), approved: true, userId: 'u1', tenantId: 't1' };
     assert.deepEqual(await (await fetch(base + '/pairing', { headers })).json(), { state: 'approved', userId: 'u1', tenantId: 't1' });
+    assert.equal((await fetch(base + '/extension-session', { headers: { ...headers, Origin: 'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } })).status, 403);
+    const extensionHeaders = { ...headers, Origin: 'chrome-extension://mhdkipfdcoobcghfoklghmpfgkcbbaop' };
+    assert.deepEqual(await (await fetch(base + '/extension-session', { headers: extensionHeaders })).json(), { token: 'A'.repeat(43) });
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
 

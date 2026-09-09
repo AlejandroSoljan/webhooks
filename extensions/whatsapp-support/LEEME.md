@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.070 | Fecha: 2026-09-08 -->
+<!-- Asisto | Version: 5.00.074 | Fecha: 2026-09-09 -->
 # Asisto · Tareas de WhatsApp
 
 1. Descomprimí el ZIP en una carpeta que vayas a conservar.

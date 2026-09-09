@@ -1,8 +1,8 @@
-// Asisto | Version: 5.00.068 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.074 | Fecha: 2026-09-09
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0;
 const errors = {
-  authentication_required: 'Ingresá a Asisto con tu usuario y luego pulsá Actualizar.', connection_failed: 'No se pudo conectar con Asisto. Revisá tu conexión y que tu sesión siga abierta.',
+  authentication_required: 'No se encontró la autorización del agente de esta PC.', agent_not_authorized: 'Iniciá el agente Baileys autorizado en esta PC.', connection_failed: 'No se pudo conectar con el agente Baileys de esta PC.',
   account_changed: 'Cambió el usuario de Asisto. Pulsá Actualizar para cargar sus tareas.', forbidden: 'Tu usuario necesita acceso a Tickets desde WhatsApp en Asisto.',
   revision_conflict: 'La tarea cambió. Seleccionala nuevamente para cargar la última versión.', source_reconciliation_required: 'Revisá los mensajes nuevos o la agrupación de esta tarea en Asisto antes de enviarla.',
   hubspot_not_configured: 'Falta conectar HubSpot para este dominio.', hubspot_mapping_required: 'Completá la clasificación de HubSpot.',
@@ -122,6 +122,11 @@ async function prepareHubSpot() {
 $('refresh').onclick = () => run(refresh);
 $('contacts').onchange = () => run(() => selectContact($('contacts').value));
 $('editor').onsubmit = event => { event.preventDefault(); run(save); };
+$('dismiss').onclick = () => run(async () => {
+  await api('DISMISS', { id: current.id, revision: current.revision });
+  notice('Tarea desestimada.');
+  await refresh();
+});
 $('setup').onclick = () => run(async () => { await save(); await prepareHubSpot(); });
 $('connectionForm').onsubmit = event => { event.preventDefault(); run(async () => { const token = $('token').value; $('token').value = ''; await api('CONNECT', { token }); await prepareHubSpot(); }); };
 $('publish').onclick = () => run(async () => {
@@ -133,6 +138,7 @@ $('publish').onclick = () => run(async () => {
   await chrome.storage.local.set({ ['mapping:' + session.tenantId + ':' + connection.portalId]: mapping });
   notice('Ticket ' + result.ticketId + ' guardado en HubSpot.'); $('taskState').textContent = 'Ticket ' + result.ticketId;
   $('ticket').replaceChildren(); if (result.portalId) { const link = document.createElement('a'); link.href = 'https://app.hubspot.com/contacts/' + encodeURIComponent(result.portalId) + '/record/0-5/' + encodeURIComponent(result.ticketId); link.textContent = 'Abrir ticket en HubSpot'; link.target = '_blank'; link.rel = 'noopener noreferrer'; $('ticket').append(link); }
+  setTimeout(() => run(refresh), 800);
 });
 chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'session' || !Object.keys(changes).some(key => key.startsWith('selection-'))) return;
