@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.078 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.079 | Fecha: 2026-09-09
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0;
 const errors = {
@@ -32,7 +32,10 @@ function renderFields() {
   $('fields').replaceChildren();
   for (const [key, title] of definitions) {
     const label = document.createElement('label'); label.textContent = title;
-    const input = document.createElement(key === 'description' ? 'textarea' : 'input'); input.id = 'field-' + key; input.value = current.fields[key] || ''; input.maxLength = key === 'description' ? 100000 : 200;
+    const values = session.choices?.[key];
+    const input = document.createElement(values ? 'select' : key === 'description' ? 'textarea' : 'input'); input.id = 'field-' + key;
+    if (values) { for (const value of values) option(input, value, value); }
+    input.value = current.fields[key] || ''; input.maxLength = key === 'description' ? 100000 : 200;
     label.append(input); $('fields').append(label);
   }
   $('source').textContent = current.source?.description || '';
@@ -125,6 +128,19 @@ async function prepareHubSpot() {
   }
   $('hubspot').hidden = false; $('ticket').replaceChildren(); notice('Revisá el pipeline, el estado y las categorías antes de guardar.');
 }
+function manualText() {
+  const value = key => $('field-' + key).value.trim();
+  return [
+    'Nombre de la tarea: ' + value('subject'),
+    'Contacto de WhatsApp: ' + value('contact'),
+    'Empresa: ' + value('company'),
+    'Estado: ' + value('status'),
+    'Categoría: ' + value('category'),
+    'Error tipo: ' + value('errorType'),
+    'Vía de contacto: ' + value('channel'),
+    '', 'Descripción:', value('description'),
+  ].join('\n');
+}
 $('refresh').onclick = () => run(refresh);
 $('contacts').onchange = () => run(() => selectContact($('contacts').value));
 $('editor').onsubmit = event => { event.preventDefault(); run(save); };
@@ -134,6 +150,10 @@ $('dismiss').onclick = () => run(async () => {
   await refresh();
 });
 $('setup').onclick = () => run(async () => { await save(); await prepareHubSpot(); });
+$('manualCopy').onclick = () => run(async () => {
+  await navigator.clipboard.writeText(manualText());
+  notice('Campos copiados. Ya podés pegarlos en la carga manual de HubSpot.');
+});
 $('publish').onclick = () => run(async () => {
   const mapping = { pipelineId: $('pipeline').value, stageId: $('stage').value, fields: {} };
   for (const field of ['category','errorType','channel']) { const property = $('property-' + field).value, value = $('value-' + field)?.value; if (!property || !value) throw new Error('hubspot_mapping_required'); mapping.fields[field] = { property, value }; }

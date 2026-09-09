@@ -1,5 +1,12 @@
-// Asisto | Version: 5.00.073 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.079 | Fecha: 2026-09-09
 const crypto = require('node:crypto');
+
+const TASK_CHOICES = Object.freeze({
+  status: ['Nuevo', 'En Proceso', 'Esperando respuesta INTERNA', 'Esperando respuesta CLIENTE', 'Cerrado RESUELTO', 'Cerrado NO RESUELTO'],
+  channel: ['Telefono', 'Email', 'WhatsApp', 'Reunion', 'Interno'],
+  category: ['Solicitud de Datos', 'Analisis e Implementacion', 'Desarrollo', 'Reunion Cliente', 'Soporte Hardware', 'Soporte Preinstall', 'Soporte en Lugar', 'Soporte Remoto', 'Soporte Administrativo', 'Soporte Servidor Virtual'],
+  errorType: ['Error usuario', 'Error software', 'Error configuración', 'Consulta / Capacitacion', 'Configuración / Implementación', 'Actualización', 'Relevamiento', 'Preinstall', 'Falta funcionalidad', 'Falta soporte 3ro', 'No es error'],
+});
 
 class SupportError extends Error {
   constructor(code, status = 400) { super(code); this.code = code; this.status = status; }
@@ -117,4 +124,4 @@ function analyze(messages) {
   const subject = totals ? 'Totalizador' + (/gasto/.test(incoming) ? ' de gastos' : '') + ' por cuenta' + (period ? ' y período' : '') : /stock|inventario|cereal/.test(incoming) ? (/venta/.test(incoming) ? 'Consulta sobre stock y carga de ventas' : 'Consulta sobre stock') : accounting ? 'Consulta sobre reportes contables' : messages.find(m => !m.fromMe && /manager/i.test(m.text))?.text.slice(0, 120) || messages.find(m => !m.fromMe && m.text.trim())?.text.slice(0, 120) || 'Consulta de soporte';
   return { result: 'draft', subject, description, category, errorType, status: guidance || promisedVideo ? 'En Proceso' : 'Nuevo', channel: 'WhatsApp', confidence: 'needs_review' };
 }
-module.exports = { SupportError, fail, scopeOf, hash, scopedId, text, range, normalize, settings, excluded, groupMessages, groupTasks, analyze, ANALYZER_VERSION };
+module.exports = { SupportError, fail, scopeOf, hash, scopedId, text, range, normalize, settings, excluded, groupMessages, groupTasks, analyze, ANALYZER_VERSION, TASK_CHOICES };

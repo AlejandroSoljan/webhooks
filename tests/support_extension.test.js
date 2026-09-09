@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.078 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.079 | Fecha: 2026-09-09
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -51,6 +51,13 @@ test('approved desktop authorization lets the extension connect without a web lo
  await service.col('devices').insertOne({_id:hash(token),tenantId:'desktop-tenant',userId:String(userId),state:'approved',expiresAt:new Date(Date.now()+60000)});
  const response=await fetch(base+'/session',{headers:{Authorization:'Bearer '+token,'X-Asisto-Extension-Id':extensionId,Origin:'chrome-extension://'+extensionId}});
  assert.equal(response.status,200); assert.equal((await response.json()).tenantId,'desktop-tenant');
+});
+test('extension session exposes the existing Asisto classifications as dropdown choices',async()=>{
+ const result=await call('/session');
+ assert.ok(result.data.choices.status.includes('En Proceso'));
+ assert.ok(result.data.choices.category.includes('Soporte Remoto'));
+ assert.ok(result.data.choices.errorType.includes('Consulta / Capacitacion'));
+ assert.deepEqual(result.data.choices.channel,['Telefono','Email','WhatsApp','Reunion','Interno']);
 });
 test('index contains contact labels and counts, respects exclusions and omits private task contents',async()=>{
  await service.col('contacts').insertOne({_id:scopedId(scope,'contact','123@lid'),...scope,jid:'123@lid',name:'Juan',aliases:['123@lid','549111@s.whatsapp.net']});

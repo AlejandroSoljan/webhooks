@@ -1,8 +1,8 @@
-// Asisto | Version: 5.00.078 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.079 | Fecha: 2026-09-09
 const express = require('express');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
-const { scopeOf, scopedId, hash, text, fail, SupportError } = require('./core');
+const { scopeOf, scopedId, hash, text, fail, SupportError, TASK_CHOICES } = require('./core');
 const { HubSpotContract } = require('./hubspot');
 
 function createExtensionRouter({ getService, hubspotFactory = token => new HubSpotContract(token) }) {
@@ -45,7 +45,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
   };
   router.get('/session', route(async (req, s, scope) => {
     const csrf = Buffer.from(JSON.stringify(s.vault.seal({ ...scope, origin: req.extensionOrigin, expires: Date.now() + 600000 }, 'extension-csrf'))).toString('base64url');
-    return { ...scope, username: req.user.username || '', csrf, canConfigure: ['admin', 'superadmin'].includes(req.user.role) };
+    return { ...scope, username: req.user.username || '', csrf, choices: TASK_CHOICES };
   }));
   router.get('/index', route(async (req, s, scope) => {
     const chats = await s.col('drafts').aggregate([{ $match: { ...scope, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $ne: 'saved' } } }, { $group: { _id: '$jid', count: { $sum: 1 }, updatedAt: { $max: '$updatedAt' } } }, { $sort: { updatedAt: -1 } }, { $limit: 1001 }]).toArray();
