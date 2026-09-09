@@ -1,5 +1,7 @@
-// Asisto | Version: 5.00.081 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.082 | Fecha: 2026-09-09
 (() => {
+  if (window.__asistoHubspotRunning) return;
+  window.__asistoHubspotRunning = true;
   const norm = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const visible = element => !!(element && element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -23,6 +25,16 @@
       const value = norm(element.textContent || element.getAttribute('aria-label'));
       return visible(element) && wanted.some(label => value === label || value.startsWith(label + ' '));
     });
+  };
+  const clickableText = labels => {
+    const wanted = labels.map(norm), walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (!wanted.some(label => { const value = norm(node.nodeValue); return value === label || value.startsWith(label + ' '); })) continue;
+      const element = node.parentElement?.closest('button,a,[role="button"],[role="menuitem"],[tabindex]');
+      if (visible(element)) return element;
+    }
+    return null;
   };
   function control(labels) {
     const wanted = labels.map(norm);
@@ -56,7 +68,7 @@
     if (!subject) {
       let create = matchingText(['Crear ticket','Crear un ticket','Crear nuevo ticket','Create ticket']);
       if (!create) {
-        const add = matchingText(['Agregar tickets','Agregar ticket','Add tickets','Add ticket']);
+        const add = matchingText(['Agregar tickets','Agregar ticket','Add tickets','Add ticket']) || clickableText(['Agregar tickets','Agregar ticket','Add tickets','Add ticket']);
         if (add) {
           add.click();
           create = await waitFor(() => matchingText(['Crear ticket','Crear un ticket','Crear nuevo ticket','Create ticket','Nuevo ticket','New ticket'], '[role="menuitem"],button,a,[role="button"]'), 5000);
@@ -68,7 +80,7 @@
           tickets.click();
           create = await waitFor(() => matchingText(['Crear ticket','Crear un ticket','Crear nuevo ticket','Create ticket']), 15000);
           if (!create) {
-            const add = matchingText(['Agregar tickets','Agregar ticket','Add tickets','Add ticket']);
+            const add = matchingText(['Agregar tickets','Agregar ticket','Add tickets','Add ticket']) || clickableText(['Agregar tickets','Agregar ticket','Add tickets','Add ticket']);
             if (add) { add.click(); create = await waitFor(() => matchingText(['Crear ticket','Crear un ticket','Crear nuevo ticket','Create ticket','Nuevo ticket','New ticket'], '[role="menuitem"],button,a,[role="button"]'), 5000); }
           }
         }
@@ -107,6 +119,7 @@
   chrome.runtime.sendMessage({ action:'HUBSPOT_UI_READY' }).then(response => {
     if (response?.data) return fill(response.data);
   }).catch(async error => {
+    window.__asistoHubspotRunning = false;
     status(error.message || 'No se pudo completar el ticket.', true);
     await chrome.runtime.sendMessage({ action:'HUBSPOT_UI_FAILED', error:error.message }).catch(() => {});
   });

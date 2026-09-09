@@ -1,6 +1,6 @@
-# Asisto | Version: 5.00.081 | Fecha: 2026-09-09
+# Asisto | Version: 5.00.082 | Fecha: 2026-09-09
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $source = Join-Path $repo 'extensions/whatsapp-support'
-$destination = Join-Path $repo 'static/downloads/AsistoChrome-1.0.7.zip'
+$destination = Join-Path $repo 'static/downloads/AsistoChrome-1.0.8.zip'
 Compress-Archive -Path (Join-Path $source '*') -DestinationPath $destination -Force

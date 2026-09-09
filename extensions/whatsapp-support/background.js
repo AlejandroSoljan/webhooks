@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.080 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.082 | Fecha: 2026-09-09
 const BASE = 'https://asistobot.com.ar/api/support/extension';
 const LOCAL = 'http://127.0.0.1:17658/extension-session';
 let deviceToken = '';
@@ -53,7 +53,10 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         const job = { id: message.id, revision: message.revision, fields: message.fields, owner: session.tenantId + ':' + session.userId, createdAt: Date.now() };
         await chrome.storage.session.set({ hubspotManualJob: job });
         const tabs = await chrome.tabs.query({ url: 'https://app.hubspot.com/*' });
-        if (tabs[0]?.id) { await chrome.tabs.update(tabs[0].id, { active: true }); await chrome.windows.update(tabs[0].windowId, { focused: true }); }
+        if (tabs[0]?.id) {
+          await chrome.tabs.update(tabs[0].id, { active: true }); await chrome.windows.update(tabs[0].windowId, { focused: true });
+          await chrome.scripting.executeScript({ target: { tabId: tabs[0].id }, files: ['hubspot-ui.js'] });
+        }
         else await chrome.tabs.create({ url: 'https://app.hubspot.com/contacts/', active: true });
         return { started: true };
       }
