@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.079 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.080 | Fecha: 2026-09-09
 const express = require('express');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -103,6 +103,18 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     if (!result.matchedCount) fail('revision_conflict', 409);
     await s.audit(scope, 'task_queued_for_hubspot', row._id);
     return { queued: true, revision: row.revision + 1 };
+  }));
+  router.post('/drafts/:id/manual-complete', route(async (req, s, scope) => {
+    const row = await rowFor(s, scope, req.params.id);
+    if (row.revision !== req.body.revision) fail('revision_conflict', 409);
+    const hubspot = { state: 'saved', method: 'browser_extension', ticketId: text(req.body.ticketId || 'manual', 100), savedAt: s.now() };
+    const result = await s.col('drafts').updateOne(
+      { _id: row._id, ...scope, revision: row.revision, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $nin: ['sending', 'uncertain', 'saved'] } },
+      { $set: { state: 'approved', hubspot, updatedAt: s.now() }, $inc: { revision: 1 }, $push: { events: { action: 'hubspot_saved_from_browser', by: scope.userId, at: s.now() } } }
+    );
+    if (!result.matchedCount) fail('revision_conflict', 409);
+    await s.audit(scope, 'hubspot_saved_from_browser', row._id);
+    return { ...hubspot, revision: row.revision + 1 };
   }));
   router.post('/drafts/:id/dismiss', route(async (req, s, scope) => {
     const row = await rowFor(s, scope, req.params.id);

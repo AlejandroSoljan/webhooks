@@ -1,16 +1,17 @@
 {
   "manifest_version": 3,
   "name": "Asisto · Tareas de WhatsApp",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqX5AJY/1+QjCcEZNF4BqnHst8h9VamkT/WUqaPOCQ12T3bu+Xrmk53g0tkWaDuzBRBkXWBRoQGC2uxSkAnRMJbJRacgnrLUxjs+nj+BsNQ7/exw807nt1lDZ8NkhZg3+Kjv96nQmN/RNQtr9ZBhvp6UbuaTLQ3jigTKeM31Ps11rYBY+WU/C+7j0NnAhRYnuRHWJex5eiEyJOeIc9ZxeCDCRvkOYxOXy8JXaUyW5+ELXBG0gpimkLXzwr03T/bDYPsa9tcSsYgRNkGjCceNOab1c6p8gKJY8EyWE35RonRJo4Ny0cDDdi1bYEoFRHrqSB6Fk46XZodDLikkCswr5zwIDAQAB",
   "minimum_chrome_version": "116",
   "description": "Revisá las tareas de Asisto junto a tus contactos de WhatsApp Web y guardalas en HubSpot.",
-  "permissions": ["storage", "sidePanel", "clipboardWrite"],
-  "host_permissions": ["https://asistobot.com.ar/*", "http://127.0.0.1/*"],
+  "permissions": ["storage", "sidePanel", "tabs"],
+  "host_permissions": ["https://asistobot.com.ar/*", "http://127.0.0.1/*", "https://app.hubspot.com/*"],
   "background": { "service_worker": "background.js" },
   "action": { "default_title": "Tareas de Asisto" },
   "content_scripts": [
     { "matches": ["https://web.whatsapp.com/*"], "js": ["contacts-main.js"], "world": "MAIN", "run_at": "document_idle" },
-    { "matches": ["https://web.whatsapp.com/*"], "js": ["matcher.js", "content.js"], "css": ["content.css"], "run_at": "document_idle" }
+    { "matches": ["https://web.whatsapp.com/*"], "js": ["matcher.js", "content.js"], "css": ["content.css"], "run_at": "document_idle" },
+    { "matches": ["https://app.hubspot.com/*"], "js": ["hubspot-ui.js"], "run_at": "document_idle" }
   ]
 }
