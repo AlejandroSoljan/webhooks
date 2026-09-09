@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.071 | Fecha: 2026-09-09
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -2660,6 +2660,7 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
           : '<span class="badge badgeWarn">Inactiva</span>';
 
           var st = String(lock.state || "").trim();
+        var isDesktopSupport = String(lock.source || '') === 'support-desktop';
 
         var tenantId = String(lock.tenantId || "");
         var numero = String(lock.numero || lock.number || "");
@@ -2706,6 +2707,11 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
           + '</div>'
           + '<button class="btn2 btnQr" type="button" data-action="qr" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '"' + (canQr ? '' : ' disabled') + ' title="QR">QR</button>';
 
+        if(isDesktopSupport){
+          actions = '<span class="badge">Baileys PC</span>'
+            + '<button class="btn2 btnQr" type="button" data-action="qr" data-id="' + escapeHtml(lock._id) + '" data-tenant="' + escapeHtml(tenantId) + '" data-numero="' + escapeHtml(numero) + '"' + (canQr ? '' : ' disabled') + ' title="QR">QR</button>';
+        }
+
         var ageHtml = (ageSec !== null) ? ('<div class="small">hace ' + ageSec + 's</div>') : '';
 
         var stHtml = st ? ('<div class="small" style="margin-top:4px; opacity:.9">estado: ' + escapeHtml(st) + '</div>') : '';
@@ -2716,6 +2722,7 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
         var sessionHtml = ''
           + '<div class="cellMain">' + escapeHtml(tenantId) + '</div>'
           + '<div class="cellSub">' + escapeHtml(numero) + '</div>'
+          + (isDesktopSupport ? '<div class="cellSub"><b>Motor:</b> Baileys en PC</div>' : '')
           + '<div class="cellSub"><b>Versión:</b> ' + escapeHtml(versionLabel || '-') + '</div>'
           + '<div class="cellSub"><b>TAG deseado:</b> ' + escapeHtml(desiredTagLabel || '-') + '</div>';
 
@@ -5364,6 +5371,7 @@ function mountAuthRoutes(app) {
         const inactivityMs = stats.lastMessageAt ? Math.max(0, now.getTime() - new Date(stats.lastMessageAt).getTime()) : null;
         return {
           _id: String(l._id),
+          source: String(l.source || ''),
           tenantId: tid,
           numero: num,
           state: l.state || null,

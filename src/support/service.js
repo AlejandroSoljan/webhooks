@@ -1,10 +1,10 @@
-// Asisto | Version: 5.00.068 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.071 | Fecha: 2026-09-09
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupTasks, analyze, ANALYZER_VERSION, text, range } = require('./core');
 
 class SupportService {
-  constructor(db, vault, { transcribe = null, now = () => new Date() } = {}) {
-    this.db = db; this.vault = vault; this.transcribe = transcribe; this.now = now;
+  constructor(db, vault, { transcribe = null, titleAnalyzer = null, now = () => new Date() } = {}) {
+    this.db = db; this.vault = vault; this.transcribe = transcribe; this.titleAnalyzer = titleAnalyzer; this.now = now;
   }
   col(name) { return this.db.collection(`support_${name}`); }
   async audit(scope, action, recordId, outcome = 'ok') {
@@ -178,6 +178,11 @@ class SupportService {
       }
       if (edited.length === 1) existing.sort((a, b) => Number(b._id === edited[0]._id) - Number(a._id === edited[0]._id));
       const started = Date.now(), result = analyze(group);
+      if (result.result === 'draft' && this.titleAnalyzer) {
+        const title = await this.titleAnalyzer.run(group, { ...scope, jid: job.jid, jobId: job._id });
+        result.subject = title.subject;
+        await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: job.jid, waId: job.jid, kind: 'message', provider: 'openai', model: title.model, inputTokens: title.inputTokens, outputTokens: title.outputTokens, totalTokens: title.totalTokens || title.inputTokens + title.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_title', source: 'support_task_title' }, createdAt: this.now() });
+      }
       if (result.description?.length > 100000) fail('conversation_window_too_large', 422);
       const _id = existing[0]?._id || scopedId(scope, 'draft', ids[0]);
       await check();

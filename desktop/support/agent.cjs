@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.070 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.071 | Fecha: 2026-09-09
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -143,7 +143,13 @@ async function run(options = {}) {
     active.ev.on('connection.update', update => event(async () => {
       if (update.qr) await request('session', { state: 'qr', qr: update.qr });
       if (update.connection === 'open') {
-        await request('session', { state: 'connected' });
+        const connected = await request('session', { state: 'connected', number: active.user?.id || creds.me?.id || '' });
+        if (connected?.ok === false && connected.error === 'number_mismatch') {
+          try { await active.logout?.(); } catch {}
+          clearAuth(); stopSocket(); retryAt = Date.now() + 10000;
+          status({ state: 'number_mismatch', whatsapp: 'disconnected' });
+          return;
+        }
         const snapshot = store.read('contact-snapshot') || {};
         if (active.query && b.extractSyncdPatches && !snapshot.completed && (!snapshot.retryAt || Date.now() >= snapshot.retryAt)) {
           try {
@@ -168,7 +174,7 @@ async function run(options = {}) {
   while (!stopped) {
     try {
       const state = await request('heartbeat', { queuedMessages: (store.read('outbox-index') || []).length });
-      status({ state: 'active', whatsapp: state.desired });
+      status({ state: state.configurationRequired ? 'configuration_required' : 'active', whatsapp: state.desired });
       if (state.desired !== 'connected') {
         if (socket) { stopSocket(); await request('session', { state: 'disconnected' }); }
       } else if (!socket && Date.now() >= retryAt) connect();

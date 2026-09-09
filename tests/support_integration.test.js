@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.071 | Fecha: 2026-09-09
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -242,6 +242,14 @@ test('incomplete setup leaves the panel visible and operations blocked without c
     assert.deepEqual(directives.get('frame-ancestors'), ["'self'"]);
     assert.equal((await fetch(base + '/api/support/session', { method: 'POST' })).status, 503);
   } finally { await new Promise(resolve => server.close(resolve)); }
+});
+test('AI task title replaces chat fragments and records the dedicated token-control type', async () => {
+  service.titleAnalyzer = { run: async () => ({ subject: 'Corregir impresión de facturas', model: 'fixture-ai', inputTokens: 40, outputTokens: 8, totalTokens: 48 }) };
+  const [draft] = await processMessages([message('ai-title', 0, { text: 'Esto no aparece, así que lo vuelvo a generar.' })]);
+  assert.equal(draft.fields.subject, 'Corregir impresión de facturas');
+  const usage = await db.collection('ai_token_usage_log').findOne({ tenantId: scope.tenantId, channelType: 'whatsapp_tasks' });
+  assert.equal(usage.meta.usageType, 'whatsapp_task_title');
+  assert.equal(usage.totalTokens, 48);
 });
 
 test('discarded conversations have evidence, a separate scoped view, and populate fields when later history reveals a task', async () => {

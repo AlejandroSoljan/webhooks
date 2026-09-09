@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.067 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.071 | Fecha: 2026-09-09
 const { test, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -25,6 +25,7 @@ before(async () => {
 beforeEach(async () => {
   await db.dropDatabase(); await migrate(db);
   await db.collection('users').insertMany([a, b].map(s => ({ _id: new ObjectId(s.userId), tenantId: s.tenantId, role: 'user', allowedPages: ['support'] })));
+  await db.collection('tenant_config').insertMany([{ _id: 'a', numero: '5491111111111' }, { _id: 'b', numero: '5492222222222' }]);
 });
 after(async () => { await new Promise(resolve => server?.close(resolve)); await client?.close(); await mongo?.stop(); });
 async function call(route, body = {}, headers = {}) {
@@ -57,6 +58,8 @@ test('two PCs belonging to different users run concurrently with isolated leases
   const ha = await register('a'), hb = await register('b');
   assert.equal((await call('/heartbeat', {}, ha)).status, 200);
   assert.equal((await call('/heartbeat', {}, hb)).status, 200);
+  assert.deepEqual((await call('/session', { state: 'connected', number: '5491111111111:1@s.whatsapp.net' }, ha)).body, { ok: true });
+  assert.deepEqual((await call('/session', { state: 'connected', number: '5492222222222@s.whatsapp.net' }, hb)).body, { ok: true });
   assert.notEqual(deviceLeaseId(a), deviceLeaseId(b));
   assert.equal((await call('/heartbeat', {}, { ...ha, 'X-Asisto-Instance': randomUUID() })).status, 409);
   for (const [headers, id] of [[ha, 'a1'], [hb, 'b1']]) {
@@ -85,7 +88,7 @@ test('expired desktop lease allows recovery and fences the old process', async (
   await db.collection('support_leases').updateOne({ _id: deviceLeaseId(a) }, { $set: { until: new Date(0) } });
   assert.equal((await call('/heartbeat', {}, second)).status, 200);
   assert.equal((await call('/session', { state: 'connected' }, first)).status, 409);
-  assert.equal((await call('/session', { state: 'connected' }, second)).status, 200);
+  assert.equal((await call('/session', { state: 'connected', number: '5491111111111@s.whatsapp.net' }, second)).status, 200);
 });
 // Regression: HTTP retries must not launch concurrent billable jobs for one PC.
 test('work resumes missing-provider failures once for its owner and coalesces slow HTTP retries', async () => {
@@ -115,8 +118,21 @@ test('work resumes missing-provider failures once for its owner and coalesces sl
 });
 test('WhatsApp contact sync is owner-scoped and cannot replace a manual contact', async () => {
   const headers = await register('a'); await call('/heartbeat', {}, headers);
+  await call('/session', { state: 'connected', number: '5491111111111@s.whatsapp.net' }, headers);
   assert.equal((await call('/contacts', { contacts: [{ jid: '123@lid', name: 'Contacto', tenantId: b.tenantId, userId: b.userId }] }, headers)).status, 200);
   assert.equal(await service.col('contacts').countDocuments(a), 1);
   assert.equal(await service.col('contacts').countDocuments(b), 0);
   assert.equal((await call('/contacts', { contacts: [{ jid: '123@g.us', name: 'Grupo' }] }, headers)).status, 400);
+});
+test('desktop session is projected into the existing WhatsApp panel and rejects a different scanned number', async () => {
+  const headers = await register('a');
+  assert.deepEqual((await call('/heartbeat', {}, headers)).body, { desired: 'connected', configurationRequired: false });
+  assert.deepEqual((await call('/session', { state: 'qr', qr: 'fixture-qr' }, headers)).body, { ok: true });
+  const lock = await db.collection('wa_locks').findOne({ tenantId: 'a', source: 'support-desktop' });
+  assert.equal(lock.numero, '5491111111111');
+  assert.match(lock.lastQrDataUrl, /^data:image\/png;base64,/);
+  assert.deepEqual((await call('/session', { state: 'connected', number: '5499999999999@s.whatsapp.net' }, headers)).body, { ok: false, error: 'number_mismatch' });
+  assert.equal((await call('/messages', { messages: [] }, headers)).status, 409);
+  assert.deepEqual((await call('/session', { state: 'connected', number: '5491111111111:2@s.whatsapp.net' }, headers)).body, { ok: true });
+  assert.equal((await call('/messages', { messages: [] }, headers)).status, 200);
 });

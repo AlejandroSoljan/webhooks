@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.003 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.071 | Fecha: 2026-09-09
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -59,9 +59,11 @@ function tokenTypeMatches(item, types = []) {
   const botMode = String(item?.botMode || "").trim().toLowerCase();
   const channel = String(item?.channelType || "").trim().toLowerCase();
   return types.some((type) => {
+    if (type === "tareas_whatsapp") return channel === "whatsapp_tasks" || botMode === "tareas_whatsapp";
     if (type === "ayuda") return channel === "help_api" || botMode === "ayuda";
     if (type === "conversacional") return botMode === "conversacional" && channel !== "help_api";
-    return botMode !== "conversacional" && channel !== "help_api";
+    if (type === "pedidos") return botMode !== "conversacional" && botMode !== "tareas_whatsapp" && channel !== "help_api" && channel !== "whatsapp_tasks";
+    return false;
   });
 }
 
@@ -212,7 +214,7 @@ async function buildApiMessageWindowBilling({
 
   const noTypes = String(types || "").trim().toLowerCase() === "none";
   const noChannels = String(channels || "").trim().toLowerCase() === "none";
-  const safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional", "ayuda"]);
+  const safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional", "ayuda", "tareas_whatsapp"]);
   const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages", "help_api"]);
   const safeLimit = clampInt(limit, 1, 5000, 500);
 
@@ -362,7 +364,7 @@ async function buildTokenSummary({
   const { match, safeTenant } = buildUsageMatch({ tenantId, from, to });
   const noTypes = String(types || "").trim().toLowerCase() === "none";
   const noChannels = String(channels || "").trim().toLowerCase() === "none";
-  const safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional", "ayuda"]);
+  const safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional", "ayuda", "tareas_whatsapp"]);
   const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages", "help_api"]);
 
   if (noTypes || noChannels) {
@@ -668,7 +670,7 @@ async function buildTokenConversationSummary({
   const safeView = ["all", "completed", "conversational"].includes(rawView) ? rawView : "all";
   const noTypes = String(types || "").trim().toLowerCase() === "none";
   const noChannels = String(channels || "").trim().toLowerCase() === "none";
-  let safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional", "ayuda"]);
+  let safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional", "ayuda", "tareas_whatsapp"]);
   const safeChannels = noChannels ? [] : parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages", "help_api"]);
   if (!noTypes && !safeTypes.length && safeView === "conversational") safeTypes = ["conversacional"];
   const safeLimit = clampInt(limit, 1, 5000, 500);
@@ -1002,6 +1004,7 @@ async function buildTokenConversationSummary({
     const resolvedChannelType = String(row.channelType || conv?.channelType || "whatsapp").trim().toLowerCase();
     const botMode = resolvedChannelType === "help_api"
       ? "ayuda"
+      : resolvedChannelType === "whatsapp_tasks" ? "tareas_whatsapp"
       : String(conv?.botMode || "pedidos").trim().toLowerCase();
     let status = resolvedChannelType === "help_api" ? "HELP" : normalizeStatus(conv, order);
 
@@ -1251,6 +1254,7 @@ function renderTokenControlPage(user) {
             <label><input type="checkbox" name="tokenType" value="pedidos" checked/>Pedidos</label>
             <label><input type="checkbox" name="tokenType" value="conversacional" checked/>Conversacional</label>
             <label><input type="checkbox" name="tokenType" value="ayuda" checked/>Ayuda</label>
+            <label><input type="checkbox" name="tokenType" value="tareas_whatsapp" checked/>Tareas WhatsApp</label>
           </div>
         </details>
         <details class="multiFilter" id="channelFilter">
