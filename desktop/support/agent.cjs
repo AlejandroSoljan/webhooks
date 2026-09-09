@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.069 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.070 | Fecha: 2026-09-08
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');

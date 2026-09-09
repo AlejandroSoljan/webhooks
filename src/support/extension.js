@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.069 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.070 | Fecha: 2026-09-08
 const express = require('express');
 const crypto = require('node:crypto');
 const { scopeOf, scopedId, hash, text, fail, SupportError } = require('./core');
@@ -64,6 +64,19 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     if (!await s.col('messages').findOne({ ...scope, jid }, { projection: { _id: 1 } }) && !await s.col('drafts').findOne({ ...scope, jid }, { projection: { _id: 1 } })) return { saved: false };
     await s.col('contacts').updateOne({ _id: scopedId(scope, 'contact', jid), ...scope }, { $set: { jid, name, source: 'whatsapp-web', updatedAt: s.now() }, $addToSet: { aliases: jid } }, { upsert: true });
     return { saved: true };
+  }));
+  router.post('/contacts', route(async (req, s, scope) => {
+    if (!Array.isArray(req.body.contacts) || req.body.contacts.length > 50) fail('invalid_contacts');
+    const known = await s.col('drafts').find({ ...scope, state: { $ne: 'merged' } }, { projection: { jid: 1 } }).toArray(), knownJids = new Set(known.map(row => row.jid));
+    const writes = [];
+    for (const input of req.body.contacts) {
+      const jid = text(input.jid, 200), name = text(input.name, 200);
+      const aliases = Array.isArray(input.aliases) ? [...new Set(input.aliases.map(value => text(value, 200)).filter(value => /^\d+@(s\.whatsapp\.net|lid)$/.test(value)))] : [];
+      if (!/^\d+@(s\.whatsapp\.net|lid)$/.test(jid) || !name || aliases.length > 5 || !knownJids.has(jid)) continue;
+      writes.push({ updateOne: { filter: { _id: scopedId(scope, 'contact', jid), ...scope }, update: { $set: { jid, name, aliases: [...new Set([jid, ...aliases])], source: 'whatsapp-web', updatedAt: s.now() } }, upsert: true } });
+    }
+    if (writes.length) await s.col('contacts').bulkWrite(writes, { ordered: false });
+    return { saved: writes.length };
   }));
   router.get('/drafts/:id', route(async (req, s, scope) => {
     const row = await rowFor(s, scope, req.params.id), fields = s.vault.open(row.fields, row._id);

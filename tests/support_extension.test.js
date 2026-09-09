@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.069 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.070 | Fecha: 2026-09-08
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -58,6 +58,13 @@ test('visible WhatsApp contact names enrich existing owned chats but never creat
  assert.equal(await service.col('contacts').countDocuments(),1);
  const saved=await service.col('drafts').findOne({_id:id});assert.equal(vault.open(saved.fields,id).contact,'Contacto WhatsApp');
 });
+test('WhatsApp address-book batches add names only to the current users existing task chats',async()=>{
+ await service.col('drafts').insertOne({_id:'e'.repeat(64),...scope,jid:'456@s.whatsapp.net',revision:1,state:'pending',fields:vault.seal(fields,'e'.repeat(64)),source:vault.seal(fields,'e'.repeat(64)+':source')});
+ const result=await call('/contacts',{contacts:[{jid:'123@lid',name:'Vane',aliases:['123@lid','549123@s.whatsapp.net']},{jid:'456@s.whatsapp.net',name:'Gime',aliases:['456@s.whatsapp.net']},{jid:'999@lid',name:'Ajeno',aliases:['999@lid']}]});
+ assert.equal(result.status,200);assert.equal(result.data.saved,2);
+ const index=(await call('/index')).data.chats;assert.equal(index.find(row=>row.jid==='123@lid').name,'Vane');assert.equal(index.find(row=>row.jid==='456@s.whatsapp.net').name,'Gime');
+ assert.equal(await service.col('contacts').countDocuments({jid:'999@lid'}),0);
+});
 test('publish creates once and subsequent explicit saves update the same HubSpot ticket',async()=>{
  let result=await call('/drafts/'+id+'/publish',{revision:1,mapping});assert.equal(result.status,200);assert.equal(result.data.ticketId,'99');
  assert.equal((await call('/drafts/'+id+'/publish',{revision:1,mapping})).status,409);
@@ -93,9 +100,19 @@ test('contact matching handles aliases and refuses ambiguous equal names',()=>{
  assert.equal(matchContact(chats,{jid:'999@lid',name:'Juan'}),null);
  assert.equal(matchContact([{jid:'5493415551234@s.whatsapp.net',count:1}],{name:'+54 9 341 555-1234'}).count,1);
 });
+test('WhatsApp contact reader exports only names and normalized identifiers from its contact store',async()=>{
+ const vm=require('node:vm'),fs=require('node:fs');const messages=[];
+ const rows=[{id:'123@lid',phoneNumber:'549123@c.us',name:'Vane',privateField:'never-copy'},{id:'456@lid',shortName:'Gime'},{id:'group@g.us',name:'Grupo'}];let position=0;
+ const store={openCursor(){const request={};queueMicrotask(function next(){const value=rows[position++];request.result=value?{value,continue:()=>queueMicrotask(next)}:null;request.onsuccess();});return request;}};
+ const db={objectStoreNames:{contains:name=>name==='contact'},transaction:()=>({objectStore:()=>store}),close(){}};
+ const indexedDB={databases:async()=>[{name:'model-storage'}],open(){const request={result:db};queueMicrotask(()=>request.onsuccess());return request;}};
+ vm.runInNewContext(fs.readFileSync(require.resolve('../extensions/whatsapp-support/contacts-main.js'),'utf8'),{indexedDB,location:{origin:'https://web.whatsapp.com'},window:{postMessage:(value,target)=>messages.push({value,target})},queueMicrotask});
+ await new Promise(resolve=>setTimeout(resolve,20));const contacts=messages.flatMap(message=>message.value.contacts||[]);
+ assert.deepEqual(JSON.parse(JSON.stringify(contacts)),[{name:'Vane',aliases:['123@lid','549123@s.whatsapp.net']},{name:'Gime',aliases:['456@lid']}]);assert.ok(!JSON.stringify(messages).includes('never-copy'));assert.ok(messages.at(-1).value.complete);
+});
 test('background restricts WhatsApp messages to the index/open actions and keeps grants outside the page',async()=>{
  const vm=require('node:vm'),fs=require('node:fs');let listener,action;const calls=[],opened=[],selections=[];
- const chrome={runtime:{id:extensionId,getURL:p=>'chrome-extension://'+extensionId+'/'+p,onMessage:{addListener:fn=>listener=fn}},sidePanel:{open:args=>{opened.push(args);return Promise.resolve();}},storage:{session:{set:async value=>selections.push(value)}},action:{onClicked:{addListener:fn=>action=fn}}};
+ const chrome={runtime:{id:extensionId,getURL:p=>'chrome-extension://'+extensionId+'/'+p,onMessage:{addListener:fn=>listener=fn}},sidePanel:{setOptions:async()=>{},open:args=>{opened.push(args);return Promise.resolve();}},storage:{session:{set:async value=>selections.push(value)}},action:{onClicked:{addListener:fn=>action=fn}}};
  vm.runInNewContext(fs.readFileSync(require.resolve('../extensions/whatsapp-support/background.js'),'utf8'),{chrome,AbortSignal,fetch:async(url,options)=>{calls.push({url,options});return{ok:true,headers:{get:()=> 'application/json'},json:async()=>url.endsWith('/session')?{...scope,csrf:'private-grant'}:{chats:[]}};}});
  assert.equal(opened.length,0);const sender={id:extensionId,url:'https://web.whatsapp.com/',tab:{id:7}};
  assert.equal(listener({action:'PUBLISH',id},sender,()=>{}),false);assert.equal(calls.length,0);

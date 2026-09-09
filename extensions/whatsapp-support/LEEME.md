@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.069 | Fecha: 2026-09-08 -->
+<!-- Asisto | Version: 5.00.070 | Fecha: 2026-09-08 -->
 # Asisto · Tareas de WhatsApp
 
 1. Descomprimí el ZIP en una carpeta que vayas a conservar.
@@ -7,7 +7,7 @@
 4. Abrí o recargá [WhatsApp Web](https://web.whatsapp.com). Junto a los contactos con tareas aparecerá un icono con la cantidad. Al pulsarlo se abre el panel lateral con sus tareas. También podés abrirlo desde el botón de la extensión y elegir el contacto.
 5. Revisá y editá el resumen. **Guardar en Asisto** conserva los cambios. **Preparar HubSpot** permite revisar el destino, el estado y la clasificación. **Guardar en HubSpot** crea el ticket; los siguientes guardados de esa misma tarea actualizan el mismo ticket.
 
-La extensión no abre páginas automáticamente. Los iconos se actualizan cada 30 segundos y al desplazarte por la lista. Solo identifica contactos por su identificador visible o por un nombre exacto y único; si hay nombres repetidos, usá el selector del panel. WhatsApp puede cambiar su estructura visual: el selector sigue disponible si un cambio impide colocar el icono.
+La extensión no abre el panel ni páginas automáticamente. El panel se habilita en WhatsApp Web, pero aparece solamente al pulsar un icono de tarea o el botón de la extensión. Los iconos se actualizan cada 30 segundos y al desplazarte por la lista. Solo identifica contactos por su identificador visible o por un nombre exacto y único; si hay nombres repetidos, usá el selector del panel. WhatsApp puede cambiar su estructura visual: el selector sigue disponible si un cambio impide colocar el icono.
 
 Si tenés instalada **MSM Tickets desde WhatsApp**, desactivala: es un prototipo distinto que busca un servicio local en el puerto 3210. Esta extensión aparece como **Asisto · Tareas de WhatsApp** y utiliza la sesión de Asisto.
 

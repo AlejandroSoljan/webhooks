@@ -1,7 +1,8 @@
-// Asisto | Version: 5.00.069 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.070 | Fecha: 2026-09-08
 (() => {
   let chats = [], owner = '', timer, stopped = false;
   const remembered = new Map();
+  const addressBook = [];
   const extractJid = value => (value || '').match(/(?:^|_)([0-9]+@(?:s\.whatsapp\.net|lid))(?:_|$)/)?.[1] || '';
   function update() {
     if (stopped) return;
@@ -47,6 +48,27 @@
     try { const result = await chrome.runtime.sendMessage({ action: 'INDEX' }); if (owner !== result?.data?.owner) remembered.clear(); owner = result?.data?.owner || ''; chats = result?.data?.chats || []; }
     catch { chats = []; if (!chrome.runtime?.id) stopped = true; }
     update();
+    syncAddressBook();
   }
+  function syncAddressBook() {
+    if (!chats.length || !addressBook.length) return;
+    const found = new Map();
+    for (const contact of addressBook) for (const alias of contact.aliases || []) {
+      const chat = chats.find(item => item.jid === alias || item.aliases?.includes(alias));
+      if (chat && contact.name) found.set(chat.jid, { jid: chat.jid, name: contact.name, aliases: contact.aliases });
+    }
+    const pending = [...found.values()].filter(contact => remembered.get(contact.jid) !== contact.name);
+    if (!pending.length) return;
+    pending.forEach(contact => remembered.set(contact.jid, contact.name));
+    for (let offset = 0; offset < pending.length; offset += 50) chrome.runtime.sendMessage({ action: 'CONTACTS', contacts: pending.slice(offset, offset + 50) }).then(result => {
+      if (result?.error) pending.slice(offset, offset + 50).forEach(contact => remembered.delete(contact.jid));
+      else refresh();
+    }).catch(() => pending.slice(offset, offset + 50).forEach(contact => remembered.delete(contact.jid)));
+  }
+  window.addEventListener('message', event => {
+    if (event.source !== window || event.origin !== location.origin || event.data?.source !== 'asisto-whatsapp-contacts-v1' || !Array.isArray(event.data.contacts)) return;
+    for (const contact of event.data.contacts) if (typeof contact?.name === 'string' && Array.isArray(contact.aliases)) addressBook.push(contact);
+    syncAddressBook();
+  });
   refresh(); const interval = setInterval(() => { if (stopped) clearInterval(interval); else refresh(); }, 30000);
 })();

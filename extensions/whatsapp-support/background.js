@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.069 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.070 | Fecha: 2026-09-08
 const BASE = 'https://asistobot.com.ar/api/support/extension';
 async function request(path, body, grant) {
   const response = await fetch(BASE + path, { credentials: 'include', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(30000), headers: {
@@ -19,15 +19,19 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     Promise.all([opened, chrome.storage.session.set({ ['selection-' + sender.tab.id]: { jid: String(message.jid || ''), name: String(message.name || '') } })]).then(() => reply({ ok: true }), () => reply({ error: 'panel_open_failed' }));
     return true;
   }
-  if (fromWhatsApp && !['INDEX', 'CONTACT'].includes(message.action)) return false;
+  if (fromWhatsApp && !['INDEX', 'CONTACT', 'CONTACTS'].includes(message.action)) return false;
   (async () => {
     const session = await request('/session');
     if (message.action === 'SESSION') return { ...session, csrf: undefined };
-    if (message.action === 'INDEX') return { ...await request('/index'), owner: session.tenantId + ':' + session.userId };
+    if (message.action === 'INDEX') {
+      if (sender.tab?.id) chrome.sidePanel.setOptions?.({ tabId: sender.tab.id, path: 'panel.html', enabled: true }).catch(() => {});
+      return { ...await request('/index'), owner: session.tenantId + ':' + session.userId };
+    }
     if (message.owner && message.owner !== session.tenantId + ':' + session.userId) throw new Error('account_changed');
     const id = encodeURIComponent(String(message.id || ''));
     switch (message.action) {
       case 'CONTACT': return request('/contact', { jid: String(message.jid || ''), name: String(message.name || '') }, session.csrf);
+      case 'CONTACTS': return request('/contacts', { contacts: Array.isArray(message.contacts) ? message.contacts : [] }, session.csrf);
       case 'DRAFTS': return request('/drafts?jid=' + encodeURIComponent(String(message.jid || '')));
       case 'DETAIL': return request('/drafts/' + id);
       case 'SAVE': return request('/drafts/' + id + '/save', { revision: message.revision, fields: message.fields }, session.csrf);
@@ -39,4 +43,4 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   })().then(data => reply({ data }), error => reply({ error: error.message === 'Failed to fetch' ? 'connection_failed' : error.message }));
   return true;
 });
-chrome.action.onClicked.addListener(tab => { if (tab.id) chrome.sidePanel.open({ tabId: tab.id }).catch(() => {}); });
+chrome.action.onClicked.addListener(tab => { if (tab.id) { chrome.sidePanel.setOptions?.({ tabId: tab.id, path: 'panel.html', enabled: true }).catch(() => {}); chrome.sidePanel.open({ tabId: tab.id }).catch(() => {}); } });
