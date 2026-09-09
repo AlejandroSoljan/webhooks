@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.080 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.081 | Fecha: 2026-09-09
 (() => {
   const norm = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const visible = element => !!(element && element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
@@ -16,6 +16,13 @@
   const exactText = (labels, selector = 'button,[role="button"]') => {
     const wanted = labels.map(norm);
     return [...document.querySelectorAll(selector)].find(element => visible(element) && wanted.includes(norm(element.textContent || element.getAttribute('aria-label'))));
+  };
+  const matchingText = (labels, selector = 'button,[role="button"]') => {
+    const wanted = labels.map(norm);
+    return [...document.querySelectorAll(selector)].find(element => {
+      const value = norm(element.textContent || element.getAttribute('aria-label'));
+      return visible(element) && wanted.some(label => value === label || value.startsWith(label + ' '));
+    });
   };
   function control(labels) {
     const wanted = labels.map(norm);
@@ -47,10 +54,24 @@
     status('Asisto está preparando el ticket…');
     let subject = control(['Nombre del ticket','Nombre de ticket','Ticket name','Nombre']);
     if (!subject) {
-      let create = exactText(['Crear ticket','Crear un ticket','Create ticket']);
+      let create = matchingText(['Crear ticket','Crear un ticket','Crear nuevo ticket','Create ticket']);
+      if (!create) {
+        const add = matchingText(['Agregar tickets','Agregar ticket','Add tickets','Add ticket']);
+        if (add) {
+          add.click();
+          create = await waitFor(() => matchingText(['Crear ticket','Crear un ticket','Crear nuevo ticket','Create ticket','Nuevo ticket','New ticket'], '[role="menuitem"],button,a,[role="button"]'), 5000);
+        }
+      }
       if (!create) {
         const tickets = exactText(['Tickets'], 'a,button,[role="button"]');
-        if (tickets) { tickets.click(); create = await waitFor(() => exactText(['Crear ticket','Crear un ticket','Create ticket']), 15000); }
+        if (tickets) {
+          tickets.click();
+          create = await waitFor(() => matchingText(['Crear ticket','Crear un ticket','Crear nuevo ticket','Create ticket']), 15000);
+          if (!create) {
+            const add = matchingText(['Agregar tickets','Agregar ticket','Add tickets','Add ticket']);
+            if (add) { add.click(); create = await waitFor(() => matchingText(['Crear ticket','Crear un ticket','Crear nuevo ticket','Create ticket','Nuevo ticket','New ticket'], '[role="menuitem"],button,a,[role="button"]'), 5000); }
+          }
+        }
       }
       if (!create) throw new Error('Abrí la sección Tickets de HubSpot y volvé a pulsar Guardar para HubSpot.');
       create.click(); subject = await waitFor(() => control(['Nombre del ticket','Nombre de ticket','Ticket name','Nombre']), 15000);
