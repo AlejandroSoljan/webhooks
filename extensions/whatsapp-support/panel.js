@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.074 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.078 | Fecha: 2026-09-09
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0;
 const errors = {
@@ -36,7 +36,7 @@ function renderFields() {
     label.append(input); $('fields').append(label);
   }
   $('source').textContent = current.source?.description || '';
-  $('taskState').textContent = current.hubspot?.ticketId ? 'Ticket ' + current.hubspot.ticketId : 'Borrador';
+  $('taskState').textContent = current.hubspot?.ticketId ? 'Ticket ' + current.hubspot.ticketId : current.hubspot?.state === 'awaiting_configuration' ? 'Pendiente de HubSpot' : 'Borrador';
   $('reviewWarning').hidden = !current.sourceChanged && !current.reconciliationRequired;
   $('editor').hidden = false; $('hubspot').hidden = true;
 }
@@ -85,7 +85,13 @@ function selectField(container, id, title, options, value = '') {
 const norm = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
 async function prepareHubSpot() {
   connection = await api('HUBSPOT'); $('connect').hidden = connection.configured;
-  if (!connection.configured) { $('connectionForm').hidden = !session.canConfigure; notice('Conectá la aplicación privada existente de HubSpot para este dominio.'); return; }
+  if (!connection.configured) {
+    const queued = await api('QUEUE', { id: current.id, revision: current.revision });
+    current.revision = queued.revision; current.hubspot = { state: 'awaiting_configuration' };
+    $('taskState').textContent = 'Pendiente de HubSpot';
+    notice('Tarea guardada. Quedó pendiente hasta que HubSpot esté conectado para este dominio.');
+    return;
+  }
   metadata = connection.metadata;
   const key = 'mapping:' + session.tenantId + ':' + connection.portalId;
   const saved = (await chrome.storage.local.get(key))[key] || {};
@@ -128,7 +134,6 @@ $('dismiss').onclick = () => run(async () => {
   await refresh();
 });
 $('setup').onclick = () => run(async () => { await save(); await prepareHubSpot(); });
-$('connectionForm').onsubmit = event => { event.preventDefault(); run(async () => { const token = $('token').value; $('token').value = ''; await api('CONNECT', { token }); await prepareHubSpot(); }); };
 $('publish').onclick = () => run(async () => {
   const mapping = { pipelineId: $('pipeline').value, stageId: $('stage').value, fields: {} };
   for (const field of ['category','errorType','channel']) { const property = $('property-' + field).value, value = $('value-' + field)?.value; if (!property || !value) throw new Error('hubspot_mapping_required'); mapping.fields[field] = { property, value }; }

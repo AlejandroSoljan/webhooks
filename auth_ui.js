@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.072 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.078 | Fecha: 2026-09-09
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -38,7 +38,7 @@ function ensureBodyParsers(app) {
 
 // ===== Accesos por usuario (pantallas/endpoints) =====
 const ACCESS_PAGES = [
-  { key: "support", title: "Tickets desde WhatsApp" },
+  { key: "support", title: "Extensión de tareas WhatsApp" },
   { key: "admin", title: "Conversaciones" },
   { key: "followup", title: "Seguimiento" },
   { key: "bot_test", title: "Pruebas Bot" },
@@ -1315,7 +1315,6 @@ function getNavItemsForUser(user) {
   if (hasAccess(user, "followup")) items.push({ key: "followup", title: "Seguimiento", href: "/ui/followup" });
   if (hasAccess(user, "bot_test")) items.push({ key: "bot_test", title: "Pruebas Bot", href: "/ui/bot_test" });
   if (hasAccess(user, "inbox")) items.push({ key: "inbox", title: "WhatsApp", href: "/admin/inbox" });
-  if (hasAccess(user, "support")) items.push({ key: "support", title: "Tickets desde WhatsApp", href: "/ui/support" });
   if (hasAccess(user, "fleteros")) items.push({ key: "fleteros", title: "Viajes Fleteros", href: "/admin/fleteros/viajes" });
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
@@ -1934,7 +1933,7 @@ function usersAdminPage({ user, users, msg, err }) {
     <script>
     (function(){
       const ACCESS_PAGES = [
-        { key: "support", title: "Tickets desde WhatsApp" },
+        { key: "support", title: "Extensión de tareas WhatsApp" },
         { key: "admin", title: "Conversaciones" },
          { key: "followup", title: "Seguimiento" },
           { key: "bot_test", title: "Pruebas Bot" },
@@ -2019,7 +2018,6 @@ function usersAdminPage({ user, users, msg, err }) {
         if (allowedKeys.includes("admin")) items.push({ key: "admin", title: "Conversaciones", href: "/ui/admin" });
         if (allowedKeys.includes("followup")) items.push({ key: "followup", title: "Seguimiento", href: "/ui/followup" });
         if (allowedKeys.includes("bot_test")) items.push({ key: "bot_test", title: "Pruebas Bot", href: "/ui/bot_test" });
-        if (allowedKeys.includes("support")) items.push({ key: "support", title: "Tickets desde WhatsApp", href: "/ui/support" });
         if (allowedKeys.includes("fleteros")) items.push({ key: "fleteros", title: "Viajes Fleteros", href: "/admin/fleteros/viajes" });
         if (allowedKeys.includes("productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
         if (allowedKeys.includes("horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
@@ -3462,7 +3460,6 @@ function mountAuthRoutes(app) {
       { title: "Seguimiento", href: "/ui/followup", badge: "Operaciones", desc: "Clasificación y seguimiento de conversaciones conversacionales" },
       { title: "Pruebas Bot", href: "/ui/bot_test", badge: "Laboratorio", desc: "Probar el comportamiento del bot sin conectar un teléfono" },
       { title: "WhatsApp", href: "/admin/inbox", badge: "Admin UI", desc: "Bandeja WhatsApp " },
-      { title: "Tickets desde WhatsApp", href: "/ui/support", badge: "Soporte", desc: "Vincular mi WhatsApp y revisar borradores de tickets" },
       { title: "Viajes Fleteros", href: "/admin/fleteros/viajes", badge: "Panel", desc: "Carga móvil de viajes de fleteros" },
       { title: "Productos", href: "/ui/productos", badge: "UI", desc: "Catálogo del dominio" },
       { title: "Horarios", href: "/ui/horarios", badge: "UI", desc: "Configuración de horarios" },
@@ -3507,10 +3504,10 @@ function mountAuthRoutes(app) {
       const qs = original.includes("?") ? original.split("?").slice(1).join("?") : "";
       return res.redirect(302, "/admin/inbox" + (qs ? ("?" + qs) : ""));
     }
+    if (page === "support") return res.redirect(302, "/admin/wweb");
 
 
     const map = {
-      support: { title: "Tickets desde WhatsApp", desc: "Tu WhatsApp, exclusiones, historial y aprobación de borradores", badge: "Soporte", src: "/admin/support?embed=1", active: "support" },
       admin: { title: "Conversaciones", desc: "Panel de conversaciones y seguimiento", badge: "Admin UI", src: "/admin", active: "admin" },
       followup: { title: "Seguimiento", desc: "Clasificación, satisfacción, cotizaciones y contactos pendientes", badge: "Operaciones", src: "/admin/followup?embed=1", active: "followup" },
       bot_test: { title: "Pruebas Bot", desc: "Simulador del comportamiento del bot sin WhatsApp ni teléfono conectado", badge: "Laboratorio", src: "/admin/bot-test?embed=1", active: "bot_test" },
@@ -5905,6 +5902,10 @@ function mountAuthRoutes(app) {
 function protectRoutes(app) {
   app.use((req, res, next) => {
     const p = req.path || "";
+    // The extension router authenticates either the current Asisto session or
+    // the approved Baileys device token. Let it receive bearer requests before
+    // the browser-only login middleware can turn them into an HTML redirect.
+    if (p.startsWith('/api/support/extension/')) return next();
     // These desktop endpoints authenticate their own device token (start is
     // limited pairing). Browser approval/revocation still require login here.
     if (req.method === 'POST' && /^\/api\/support\/device\/(start|poll|heartbeat|session|messages|contacts|work)$/.test(p)) return next();

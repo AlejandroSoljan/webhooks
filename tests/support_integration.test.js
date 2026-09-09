@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.075 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.077 | Fecha: 2026-09-09
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -185,7 +185,7 @@ test('Asisto menu, shell and user editor expose support only under the intended 
   try {
     process.env.SUPPORT_ENABLED = 'true';
     const menu = await (await fetch(base + '/app')).text();
-    assert.match(menu, /href="\/ui\/support"/);
+    assert.doesNotMatch(menu, /href="\/ui\/support"/);
     assert.match(menu, /href="\/admin\/wweb"/);
     const sessions = await fetch(base + '/admin/wweb?device=ABCDEF123456');
     assert.equal(sessions.status, 200);
@@ -207,14 +207,14 @@ test('Asisto menu, shell and user editor expose support only under the intended 
     const invalidCode = await (await fetch(base + '/admin/wweb?device=%22%3E%3Cscript%3E')).text();
     assert.doesNotMatch(invalidCode, /view=connection&amp;device=/);
     const shell = await fetch(base + '/ui/support'); assert.equal(shell.status, 200);
-    assert.match(await shell.text(), /src="\/admin\/support\?embed=1"/);
+    assert.match(shell.url, /\/admin\/wweb$/); assert.doesNotMatch(await shell.text(), /Tickets desde WhatsApp/);
     const editor = await (await fetch(base + '/admin/users')).text();
-    assert.match(editor, /key: "support", title: "Tickets desde WhatsApp"/);
+    assert.match(editor, /key: "support", title: "Extensión de tareas WhatsApp"/);
     const denied = await fetch(base + '/ui/support', { headers: { 'test-denied': '1' } }); assert.equal(denied.status, 403);
     const restrictedMenu = await (await fetch(base + '/app', { headers: { 'test-denied': '1' } })).text();
     assert.doesNotMatch(restrictedMenu, /href="\/ui\/support"/);
     process.env.SUPPORT_ENABLED = 'false';
-    assert.match(await (await fetch(base + '/app')).text(), /href="\/ui\/support"/);
+    assert.doesNotMatch(await (await fetch(base + '/app')).text(), /href="\/ui\/support"/);
     assert.equal((await fetch(base + '/ui/support')).status, 200);
   } finally {
     if (previous === undefined) delete process.env.SUPPORT_ENABLED; else process.env.SUPPORT_ENABLED = previous;

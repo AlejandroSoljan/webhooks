@@ -1,12 +1,12 @@
 <!doctype html>
-<!-- Asisto | Version: 5.00.074 | Fecha: 2026-09-09 -->
+<!-- Asisto | Version: 5.00.078 | Fecha: 2026-09-09 -->
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tareas de Asisto</title><link rel="stylesheet" href="panel.css"></head>
 <body><header><div class="brand">Asisto <span>WHATSAPP</span></div><h1>Tareas del contacto</h1><p id="account">Conectando con tu sesión…</p></header>
 <main><p id="notice" role="status" aria-live="polite"></p><nav><span>Conectado mediante Baileys en esta PC</span><button id="refresh" class="secondary">Actualizar</button></nav>
 <label>Contacto con tareas<select id="contacts"><option value="">Elegí un contacto</option></select></label><div id="tasks" class="tasks"></div>
 <form id="editor" hidden><div class="section-heading"><h2>Resumen de la tarea</h2><span id="taskState"></span></div><p id="reviewWarning" class="warning" hidden>Hay mensajes nuevos o tareas que requieren conciliación. Revisalos en Asisto antes de enviarlos a HubSpot.</p><div id="fields"></div>
-<div class="actions"><button type="submit">Guardar en Asisto</button><button id="dismiss" type="button" class="secondary">Desestimar tarea</button><button id="setup" type="button" class="secondary">Preparar HubSpot</button></div>
+<div class="actions"><button type="submit">Guardar borrador</button><button id="setup" type="button">Guardar para HubSpot</button><button id="dismiss" type="button" class="secondary">Desestimar tarea</button></div>
 <section id="hubspot" hidden><h2>Guardar en HubSpot</h2><p>Revisá el destino y la clasificación. Cada tarea conserva su ticket para actualizarlo al volver a guardar.</p><div id="mapping"></div><button type="button" id="publish">Guardar en HubSpot</button><p id="ticket"></p></section>
 <details><summary>Conversación de origen</summary><pre id="source"></pre></details></form>
-<section id="connect" hidden><h2>Conexión de HubSpot</h2><p id="connectionHelp">Un administrador debe conectar HubSpot para este dominio de Asisto.</p><form id="connectionForm" hidden><label>Token de la aplicación privada existente<input id="token" type="password" autocomplete="off" required maxlength="1000"></label><p>Se guarda cifrado en Asisto y se comparte únicamente dentro de tu dominio. La extensión no conserva el token.</p><button>Conectar HubSpot</button></form></section>
+<section id="connect" hidden><h2>Conexión de HubSpot</h2><p id="connectionHelp">La tarea quedó guardada y pendiente. Cuando la conexión de este dominio esté disponible vas a poder enviarla desde esta extensión.</p></section>
 <footer>Las tareas y exclusiones son las de tu usuario de Asisto. Baileys continúa en tu PC.</footer></main><script src="panel.js"></script></body></html>

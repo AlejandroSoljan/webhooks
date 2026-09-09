@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.070 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.078 | Fecha: 2026-09-09
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -64,6 +64,13 @@ test('task indicator remains pending until HubSpot save or explicit dismissal',a
  assert.equal((await call('/index')).data.chats[0].count,1);
  assert.equal((await call('/drafts/'+id+'/dismiss',{revision:2})).status,200);
  assert.equal((await call('/index')).data.chats.length,0);
+});
+test('task can wait for the tenant HubSpot connection without losing its indicator',async()=>{
+ await service.col('integrations').deleteMany({tenantId:scope.tenantId});
+ assert.deepEqual((await call('/hubspot')).data,{configured:false});
+ const queued=await call('/drafts/'+id+'/queue',{revision:1});assert.equal(queued.status,200);assert.equal(queued.data.revision,2);
+ const row=await service.col('drafts').findOne({_id:id});assert.equal(row.hubspot.state,'awaiting_configuration');
+ assert.equal((await call('/index')).data.chats[0].count,1);
 });
 test('visible WhatsApp contact names enrich existing owned chats but never create foreign contacts',async()=>{
  assert.equal((await call('/contact',{jid:'123@lid',name:'Nombre de WhatsApp'})).data.saved,true);

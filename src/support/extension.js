@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.074 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.078 | Fecha: 2026-09-09
 const express = require('express');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -93,6 +93,17 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     return { id: row._id, jid: row.jid, revision: row.revision, fields, source: s.vault.open(row.source, row._id + ':source'), sourceChanged: !!row.sourceChanged, reconciliationRequired: !!row.reconciliationRequired, hubspot: row.hubspot || null, mode: row.mode };
   }));
   router.post('/drafts/:id/save', route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, req.body.fields)));
+  router.post('/drafts/:id/queue', route(async (req, s, scope) => {
+    const row = await rowFor(s, scope, req.params.id);
+    if (row.revision !== req.body.revision) fail('revision_conflict', 409);
+    const result = await s.col('drafts').updateOne(
+      { _id: row._id, ...scope, revision: row.revision, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $nin: ['sending', 'uncertain', 'saved'] } },
+      { $set: { state: 'pending', 'hubspot.state': 'awaiting_configuration', 'hubspot.queuedAt': s.now(), updatedAt: s.now() }, $inc: { revision: 1 }, $push: { events: { action: 'queued_for_hubspot', by: scope.userId, at: s.now() } } }
+    );
+    if (!result.matchedCount) fail('revision_conflict', 409);
+    await s.audit(scope, 'task_queued_for_hubspot', row._id);
+    return { queued: true, revision: row.revision + 1 };
+  }));
   router.post('/drafts/:id/dismiss', route(async (req, s, scope) => {
     const row = await rowFor(s, scope, req.params.id);
     if (row.revision !== req.body.revision) fail('revision_conflict', 409);

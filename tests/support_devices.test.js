@@ -9,6 +9,7 @@ const { migrate } = require('../src/support/migration');
 const { SupportService } = require('../src/support/service');
 const { createVault } = require('../src/support/crypto');
 const { createDeviceRouter, deviceLeaseId } = require('../src/support/devices');
+const { createExtensionRouter } = require('../src/support/extension');
 const { protectRoutes } = require('../auth_ui');
 let mongo, client, db, service, server, base;
 const a = { tenantId: 'a', userId: new ObjectId().toHexString() }, b = { tenantId: 'b', userId: new ObjectId().toHexString() };
@@ -19,6 +20,7 @@ before(async () => {
   app.use((req, res, next) => { const scope = req.headers['x-test-user'] === 'a' ? a : req.headers['x-test-user'] === 'b' ? b : null; if (scope) req.user = { uid: scope.userId, tenantId: scope.tenantId, role: 'user', allowedPages: ['support'] }; next(); });
   protectRoutes(app);
   app.use('/api/support/device', createDeviceRouter({ getService: async () => service, publicOrigin: 'https://asisto.example' }));
+  app.use('/api/support/extension', createExtensionRouter({ getService: async () => service }));
   server = await new Promise(resolve => { const running = app.listen(0, '127.0.0.1', () => resolve(running)); });
   base = 'http://127.0.0.1:' + server.address().port + '/api/support/device';
 });
@@ -53,6 +55,15 @@ test('PC pairing requires explicit authenticated approval and returns no global 
   assert.equal((await call('/approve', { code: start.body.code }, userHeaders('b'))).status, 404);
   const doc = await db.collection('support_devices').findOne({ code: start.body.code });
   assert.equal(JSON.stringify(doc).includes(start.body.token), false);
+});
+test('approved Baileys token reaches the extension API without opening a web login', async () => {
+  const headers = await register('a');
+  const response = await fetch('http://127.0.0.1:' + server.address().port + '/api/support/extension/session', {
+    redirect: 'manual',
+    headers: { Authorization: headers.Authorization, 'X-Asisto-Extension-Id': 'a'.repeat(32), Origin: 'chrome-extension://' + 'a'.repeat(32) },
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).tenantId, 'a');
 });
 test('two PCs belonging to different users run concurrently with isolated leases and jobs', async () => {
   const ha = await register('a'), hb = await register('b');
