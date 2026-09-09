@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.071 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.072 | Fecha: 2026-09-09
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -178,7 +178,7 @@ async function run(options = {}) {
       if (state.desired !== 'connected') {
         if (socket) { stopSocket(); await request('session', { state: 'disconnected' }); }
       } else if (!socket && Date.now() >= retryAt) connect();
-      const contactBatch = [...contactPending].slice(0, 50).map(jid => ({ jid, name: contactName(jid), aliases: contacts[jid]?.aliases || [] })).filter(contact => contact.name);
+      const contactBatch = state.validated ? [...contactPending].slice(0, 50).map(jid => ({ jid, name: contactName(jid), aliases: contacts[jid]?.aliases || [] })).filter(contact => contact.name) : [];
       if (contactBatch.length) {
         await request('contacts', { contacts: contactBatch });
         for (const contact of contactBatch) if (contactName(contact.jid) === contact.name) contactPending.delete(contact.jid);
@@ -194,11 +194,11 @@ async function run(options = {}) {
         if (message && Buffer.byteLength(JSON.stringify({ messages: [...messages, message] })) > 110000) break;
         ids.push(id); if (message) messages.push(message);
       }
-      if (messages.length) {
+      if (messages.length && state.validated) {
         try { await request('messages', { messages }); }
         catch (error) { uploadLimit = Math.max(1, Math.floor(uploadLimit / 2)); throw error; }
       }
-      if (ids.length) {
+      if (ids.length && state.validated) {
         const sent = new Set(ids);
         store.write('outbox-index', (store.read('outbox-index') || []).filter(value => !sent.has(value)));
         for (const id of ids) store.write('outbox:' + id, null);

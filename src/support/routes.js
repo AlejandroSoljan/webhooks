@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.071 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.072 | Fecha: 2026-09-09
 const express = require('express');
 const path = require('node:path');
 const QRCode = require('qrcode');

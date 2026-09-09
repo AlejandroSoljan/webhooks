@@ -99,7 +99,7 @@ test('a previously approved desktop automatically starts Baileys, sends QR/messa
         const route = url.split('/').at(-1), body = JSON.parse(options.body); calls.push({ route, body });
         const revoked = route === 'heartbeat' && ++heartbeats >= 24;
         const uploadFailed = route === 'messages' && calls.filter(call => call.route === 'messages').length === 1;
-        return { ok: !revoked && !uploadFailed, status: revoked ? 401 : uploadFailed ? 503 : 200, json: async () => route === 'heartbeat' ? { desired: 'connected' } : { ok: true } };
+        return { ok: !revoked && !uploadFailed, status: revoked ? 401 : uploadFailed ? 503 : 200, json: async () => route === 'heartbeat' ? { desired: 'connected', validated: true } : { ok: true } };
       },
     });
     assert.equal(connections, 1); assert.equal(ends, 1);

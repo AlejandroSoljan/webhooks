@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.071 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.072 | Fecha: 2026-09-09
 const express = require('express');
 const { randomBytes } = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -118,7 +118,7 @@ function createDeviceRouter({ getService, publicOrigin }) {
       await updatePanelSession(s, ctx, { state: 'configuration_required' }, { lastQrDataUrl: '', lastQrAt: '' });
       return { desired: 'disconnected', configurationRequired: true };
     }
-    return { desired: session?.desired || 'disconnected', configurationRequired: false };
+    return { desired: session?.desired || 'disconnected', configurationRequired: false, validated: session?.state === 'connected' && whatsappNumber(session.connectedNumber) === numero };
   }));
   router.post('/session', route(async (req, s) => {
     const ctx = await context(req, s); await assertLease(s, ctx);

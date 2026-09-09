@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.071 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.072 | Fecha: 2026-09-09
 const { test, before, beforeEach, after } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -126,7 +126,7 @@ test('WhatsApp contact sync is owner-scoped and cannot replace a manual contact'
 });
 test('desktop session is projected into the existing WhatsApp panel and rejects a different scanned number', async () => {
   const headers = await register('a');
-  assert.deepEqual((await call('/heartbeat', {}, headers)).body, { desired: 'connected', configurationRequired: false });
+  assert.deepEqual((await call('/heartbeat', {}, headers)).body, { desired: 'connected', configurationRequired: false, validated: false });
   assert.deepEqual((await call('/session', { state: 'qr', qr: 'fixture-qr' }, headers)).body, { ok: true });
   const lock = await db.collection('wa_locks').findOne({ tenantId: 'a', source: 'support-desktop' });
   assert.equal(lock.numero, '5491111111111');
