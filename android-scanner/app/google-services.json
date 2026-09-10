@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "940496657556",
+    "project_id": "asisto-34dbd",
+    "storage_bucket": "asisto-34dbd.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:940496657556:android:c56f807c352e799b22e881",
+        "android_client_info": {
+          "package_name": "ar.com.asistobot.scanner"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDqzDZYmyBjX3LO3lY16WMLkxXRURaGcoQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
