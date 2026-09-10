@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.085 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.086 | Fecha: 2026-09-10
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -270,7 +270,7 @@ async function buildApiMessageWindowBilling({
         last_at: { $max: { $ifNull: ["$lastMessageAt", "$windowStartedAt"] } }
       }
     }
-  ]).toArray();
+  ], { allowDiskUse: true }).toArray();
 
   // Cantidad real de mensajes enviados por WhatsApp. No es lo mismo que la
   // cantidad de ventanas facturables del API. Los registros históricos sin
@@ -304,7 +304,7 @@ async function buildApiMessageWindowBilling({
     } },
     { $group: { _id: '$__dedupeKey', tenantId: { $first: '$tenantId' }, at: { $max: '$at' } } },
     { $group: { _id: '$tenantId', messages: { $sum: 1 }, last_at: { $max: '$at' } } }
-  ]).toArray();
+  ], { allowDiskUse: true }).toArray();
   const realMessagesByTenant = new Map(realMessageRows.map(row => [String(row._id || ''), row]));
 
   const tenantIds = Array.from(new Set(
@@ -1644,7 +1644,7 @@ function renderTokenControlPage(user) {
         ? '<span class="small" style="color:#b45309">Tarifa comercial IA sin configurar</span>'
         : '';
       const apiInfo = num(it.real_messages)>0 || num(it.api_windows)>0
-        ? '<span class="small"><b>'+fmtInt(it.real_messages)+' mensajes reales</b> · '+fmtInt(it.api_windows)+' ventanas facturables · '+fmtInt(it.api_messages)+' mensajes API</span>'
+        ? '<span class="small"><b>'+fmtInt(it.real_messages)+' mensajes enviados</b> · '+fmtInt(it.api_windows)+' ventanas facturables</span>'
         : '';
       if (!isSuper) {
         return '<tr>' +

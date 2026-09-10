@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.085 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.086 | Fecha: 2026-09-10
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -5284,10 +5284,12 @@ function mountAuthRoutes(app) {
           contactsSet: { $addToSet: '$contact' },
           lastMessageAt: { $max: '$at' }
       } }
-    ]).toArray();
+    ], { allowDiskUse: true }).toArray();
 
     const allRows = await coll.aggregate([
-      ...wwebRealMessagePipeline({ ...baseFilter }),
+      // Para obtener solamente la ultima actividad no hace falta deduplicar el
+      // historial completo. Evita agrupar millones de mensajes al abrir Sesiones.
+      { $match: { ...baseFilter } },
       { $group: { _id: { tenantId: '$tenantId', numero: '$numero' }, lastMessageAt: { $max: '$at' } } }
     ]).toArray();
 
@@ -5748,7 +5750,7 @@ function mountAuthRoutes(app) {
               firstAt: { $min: '$at' },
               lastAt: { $max: '$at' }
           } }
-        ]).toArray(),
+        ], { allowDiskUse: true }).toArray(),
         coll.aggregate([
           ...wwebRealMessagePipeline(rangeMatch),
           { $group: {
@@ -5761,7 +5763,7 @@ function mountAuthRoutes(app) {
           } },
           { $sort: { total: -1, lastAt: -1 } },
           { $limit: 1000 }
-        ]).toArray(),
+        ], { allowDiskUse: true }).toArray(),
         coll.find(baseMatch).sort({ at: -1 }).limit(1).toArray(),
       ]);
 
