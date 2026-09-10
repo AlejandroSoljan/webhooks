@@ -121,6 +121,14 @@ test('a similar open company ticket is linked without creating a duplicate',asyn
  assert.equal((await call('/index')).data.chats.length,0);
  const row=await service.col('drafts').findOne({_id:id});assert.equal(row.hubspot.method,'matched_existing');
 });
+test('the extension incorporates newly analyzed messages before publishing',async()=>{
+ const latest={...fields,subject:'Configurar impresora con TSPrint',description:'Se debe configurar TSPrint como impresora predeterminada.'};
+ await service.col('drafts').updateOne({_id:id},{$set:{sourceChanged:true,reconciliationRequired:true,state:'needs_review',source:vault.seal(latest,id+':source')}});
+ let result=await call('/drafts/'+id+'/publish',{revision:1,mapping});assert.equal(result.data.error,'source_reconciliation_required');
+ result=await call('/drafts/'+id+'/reconcile',{revision:1,fields});
+ assert.equal(result.status,200);assert.equal(result.data.revision,3);assert.equal(result.data.fields.subject,latest.subject);
+ result=await call('/drafts/'+id+'/publish',{revision:3,mapping});assert.equal(result.status,200,JSON.stringify(result.data));assert.equal(writes[0].payload.properties.subject,latest.subject);assert.match(writes[0].payload.properties.content,/configurar TSPrint/);
+});
 test('in-flight delivery blocks duplicate publishing and editing; uncertain outcomes cannot create again',async()=>{
  let release, started;const entered=new Promise(resolve=>started=resolve);remote.save=async()=>{started();await new Promise(resolve=>release=resolve);throw Error('network_timeout');};
  const first=call('/drafts/'+id+'/publish',{revision:1,mapping});await entered;

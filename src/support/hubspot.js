@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.106 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.107 | Fecha: 2026-09-10
 const { fail, text, SupportError } = require('./core');
 const DUPLICATE_STOP_WORDS = new Set(['para','como','esta','este','esto','desde','hasta','sobre','tiene','tener','porque','pero','donde','cuando','ticket','whatsapp','contacto','empresa']);
 const duplicateWords = value => new Set(String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().match(/[a-z0-9]{4,}/g)?.filter(word => !DUPLICATE_STOP_WORDS.has(word)) || []);

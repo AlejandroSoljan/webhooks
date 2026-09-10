@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.106 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.107 | Fecha: 2026-09-10
 const BASE = 'https://asistobot.com.ar/api/support/extension';
 const LOCAL = 'http://127.0.0.1:17658/extension-session';
 let deviceToken = '';
@@ -48,6 +48,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       case 'DRAFTS': return request('/drafts?jid=' + encodeURIComponent(String(message.jid || '')));
       case 'DETAIL': return request('/drafts/' + id);
       case 'SAVE': return request('/drafts/' + id + '/save', { revision: message.revision, fields: message.fields }, session.csrf);
+      case 'RECONCILE': return request('/drafts/' + id + '/reconcile', { revision: message.revision, fields: message.fields }, session.csrf);
       case 'QUEUE': return request('/drafts/' + id + '/queue', { revision: message.revision }, session.csrf);
       case 'MANUAL_HUBSPOT': {
         const job = { id: message.id, revision: message.revision, fields: message.fields, owner: session.tenantId + ':' + session.userId, createdAt: Date.now() };

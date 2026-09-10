@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.106 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.107 | Fecha: 2026-09-10
 const express = require('express');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -105,6 +105,26 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     return { id: row._id, jid: row.jid, revision: row.revision, fields, source: s.vault.open(row.source, row._id + ':source'), sourceChanged: !!row.sourceChanged, reconciliationRequired: !!row.reconciliationRequired, hubspot: row.hubspot || null, mode: row.mode };
   }));
   router.post('/drafts/:id/save', route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, req.body.fields)));
+  router.post('/drafts/:id/reconcile', route(async (req, s, scope) => {
+    const row = await rowFor(s, scope, req.params.id);
+    if (row.revision !== req.body.revision) fail('revision_conflict', 409);
+    const source = s.vault.open(row.source, row._id + ':source');
+    const reviewed = { ...(req.body.fields || {}) };
+    // The latest analysis contains the new WhatsApp messages. Keep the user's
+    // CRM identity/classification choices, but publish the current task summary.
+    if (row.sourceChanged || row.reconciliationRequired) {
+      reviewed.subject = source.subject || reviewed.subject;
+      reviewed.description = source.description || reviewed.description;
+      reviewed.messageDate = source.messageDate || reviewed.messageDate;
+    }
+    const saved = await s.editDraft(scope, row._id, row.revision, reviewed);
+    const reconciled = await s.col('drafts').updateOne(
+      { _id: row._id, ...scope, revision: saved.revision, state: { $ne: 'merged' } },
+      { $set: { sourceChanged: false, reconciliationRequired: false, state: 'pending', updatedAt: s.now() }, $inc: { revision: 1 }, $push: { events: { action: 'source_reviewed_from_extension', by: scope.userId, at: s.now() } } }
+    );
+    if (!reconciled.matchedCount) fail('revision_conflict', 409);
+    return { revision: saved.revision + 1, fields: reviewed };
+  }));
   router.post('/drafts/:id/queue', route(async (req, s, scope) => {
     const row = await rowFor(s, scope, req.params.id);
     if (row.revision !== req.body.revision) fail('revision_conflict', 409);
