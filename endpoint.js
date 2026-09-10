@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.103 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.104 | Fecha: 2026-09-10
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -151,6 +151,8 @@ app.get("/favicon.ico", (_req, res) => res.set("Cache-Control", "no-cache").send
 app.use(express.urlencoded({ extended: true }));
 // Adjunta req.user desde cookie de sesión (si existe)
 app.use(auth.attachUser);
+// Se monta antes del router genérico /ui para que la pantalla no sea interceptada.
+mountCustomerNotifications(app, { auth });
 // Rutas: /login, /logout, /app, /admin/users...
 auth.mountAuthRoutes(app);
 // Asegura que el shell /ui quede protegido (aunque cambie protectRoutes)
@@ -167,7 +169,6 @@ mountConversationFollowupPanel(app, { auth });
 mountBotTestPanel(app, { auth });
 mountQrProductWeb(app);
 mountCustomerApp(app, { auth });
-mountCustomerNotifications(app);
 mountDemoCatalogApi(app);
 mountHelpTool(app);
 require('./src/support/routes').mountSupport(app);
