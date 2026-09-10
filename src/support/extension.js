@@ -1,10 +1,10 @@
-// Asisto | Version: 5.00.098 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.099 | Fecha: 2026-09-10
 const express = require('express');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
 const { scopeOf, scopedId, hash, text, fail, SupportError, TASK_CHOICES } = require('./core');
 const { HubSpotContract } = require('./hubspot');
-const { hubspotCredential } = require('./hubspot_config');
+const { hubspotCredential, tenantSuffix } = require('./hubspot_config');
 
 function createExtensionRouter({ getService, hubspotFactory = token => new HubSpotContract(token), env = process.env }) {
   const router = express.Router();
@@ -48,7 +48,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const config = await s.db.collection('tenant_config').findOne({ _id: scope.tenantId }, { projection: { hubspotOwnerId: 1, hubspot_owner_id: 1, hubspotOwnerTicketId: 1 } });
     const saved = text(config?.hubspotOwnerId || config?.hubspot_owner_id || '', 100);
     if (saved) return saved;
-    const referenceTicketId = text(config?.hubspotOwnerTicketId || '', 100);
+    const referenceTicketId = text(config?.hubspotOwnerTicketId || env[`HUBSPOT_OWNER_TICKET_ID_${tenantSuffix(scope.tenantId)}`] || '', 100);
     if (!referenceTicketId) return '';
     const ownerId = await client.ownerFromTicket(referenceTicketId);
     await s.db.collection('tenant_config').updateOne({ _id: scope.tenantId }, { $set: { hubspotOwnerId: ownerId, hubspotOwnerResolvedAt: s.now() } });
