@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.078 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.086 | Fecha: 2026-09-10
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -5248,10 +5248,35 @@ function mountAuthRoutes(app) {
     return parts.join(' ');
   }
 
+  function wwebRealMessagePipeline(match) {
+    return [
+      { $match: match },
+      { $set: {
+          __messageId: { $toString: { $ifNull: ['$messageId', ''] } },
+          __second: { $floor: { $divide: [{ $toLong: '$at' }, 1000] } }
+      } },
+      { $set: {
+          __dedupeKey: {
+            $cond: [
+              { $gt: [{ $strLenCP: '$__messageId' }, 0] },
+              { $concat: ['id:', '$tenantId', ':', '$numero', ':', '$direction', ':', '$__messageId'] },
+              { $concat: [
+                  'legacy:', '$tenantId', ':', '$numero', ':', '$direction', ':',
+                  { $ifNull: ['$contact', ''] }, ':', { $ifNull: ['$body', ''] }, ':',
+                  { $toString: '$__second' }
+              ] }
+            ]
+          }
+      } },
+      { $group: { _id: '$__dedupeKey', doc: { $first: '$$ROOT' } } },
+      { $replaceRoot: { newRoot: '$doc' } }
+    ];
+  }
+
   async function wwebBuildStatsMap(db, baseFilter, start, end) {
     const coll = db.collection('wa_wweb_message_log');
     const todayRows = await coll.aggregate([
-      { $match: { ...baseFilter, at: { $gte: start, $lt: end } } },
+      ...wwebRealMessagePipeline({ ...baseFilter, at: { $gte: start, $lt: end } }),
       { $group: {
           _id: { tenantId: '$tenantId', numero: '$numero' },
           incoming: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
@@ -5259,9 +5284,11 @@ function mountAuthRoutes(app) {
           contactsSet: { $addToSet: '$contact' },
           lastMessageAt: { $max: '$at' }
       } }
-    ]).toArray();
+    ], { allowDiskUse: true }).toArray();
 
     const allRows = await coll.aggregate([
+      // Para obtener solamente la ultima actividad no hace falta deduplicar el
+      // historial completo. Evita agrupar millones de mensajes al abrir Sesiones.
       { $match: { ...baseFilter } },
       { $group: { _id: { tenantId: '$tenantId', numero: '$numero' }, lastMessageAt: { $max: '$at' } } }
     ]).toArray();
@@ -5299,7 +5326,7 @@ function mountAuthRoutes(app) {
       } else {
         m.solicitados++;
         if (d.estado === 'aceptado') m.ok++;
-        if (d.exclusionMotivo === 'baja_cliente') m.baja++;
+        if (d.exclusionPermanente === true) m.baja++;
         if (d.motivoCancelacion === 'sin_respuesta_timeout' || (d.estado === 'pendiente' && new Date(d.pedidoAt || 0).getTime() <= Date.now() - 7200000)) m.ignorados++;
         if (String(d.motivoCancelacion || '').includes('error')) m.fallos++;
         if (d.exclusionPermanente === true) m.bloqueados++;
@@ -5713,7 +5740,7 @@ function mountAuthRoutes(app) {
 
       const [summaryRows, contactRows, overallLast] = await Promise.all([
         coll.aggregate([
-          { $match: rangeMatch },
+          ...wwebRealMessagePipeline(rangeMatch),
           { $group: {
               _id: null,
               incoming: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
@@ -5723,9 +5750,9 @@ function mountAuthRoutes(app) {
               firstAt: { $min: '$at' },
               lastAt: { $max: '$at' }
           } }
-        ]).toArray(),
+        ], { allowDiskUse: true }).toArray(),
         coll.aggregate([
-          { $match: rangeMatch },
+          ...wwebRealMessagePipeline(rangeMatch),
           { $group: {
               _id: '$contact',
               incoming: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
@@ -5736,7 +5763,7 @@ function mountAuthRoutes(app) {
           } },
           { $sort: { total: -1, lastAt: -1 } },
           { $limit: 1000 }
-        ]).toArray(),
+        ], { allowDiskUse: true }).toArray(),
         coll.find(baseMatch).sort({ at: -1 }).limit(1).toArray(),
       ]);
 
@@ -5757,7 +5784,7 @@ function mountAuthRoutes(app) {
         }
         permissionSummary.solicitados++;
         if (d.estado === 'aceptado') permissionSummary.ok++;
-        if (d.exclusionMotivo === 'baja_cliente') permissionSummary.baja++;
+        if (d.exclusionPermanente === true) permissionSummary.baja++;
         if (d.motivoCancelacion === 'sin_respuesta_timeout' || (d.estado === 'pendiente' && new Date(d.pedidoAt || 0).getTime() <= Date.now() - 7200000)) permissionSummary.ignorados++;
         if (String(d.motivoCancelacion || '').includes('error')) permissionSummary.fallos++;
         if (d.exclusionPermanente === true) permissionSummary.bloqueados++;

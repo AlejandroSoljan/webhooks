@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.085 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.089 | Fecha: 2026-09-10
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);

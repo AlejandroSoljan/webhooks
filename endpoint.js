@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.061 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.085 | Fecha: 2026-09-10
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -229,6 +229,14 @@ async function cleanupWwebMessageLog(reason = "interval") {
         await logs.createIndex(
           { tenantId: 1, at: 1 },
           { name: "tenantId_1_at_1_cleanup" }
+        );
+        await logs.createIndex(
+          { tenantId: 1, numero: 1, direction: 1, messageId: 1 },
+          {
+            name: "tenant_numero_direction_messageId_unique",
+            unique: true,
+            partialFilterExpression: { messageId: { $exists: true } }
+          }
         );
         wwebMessageLogCleanupIndexReady = true;
       } catch (e) {
