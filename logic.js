@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.078 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.079 | Fecha: 2026-09-10
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
 // Incluye logs completos de OpenAI (payload y response).
@@ -1199,7 +1199,7 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
       ? "Analizá esta imagen que probablemente sea un comprobante de pago o transferencia. Extraé los datos visibles."
       : "Describí brevemente la imagen y extraé cualquier texto visible.";
 
-    const routedApiKey = requireOpenAiApiKey(aiKeyKind || (String(channelType || '').toLowerCase() === 'qr_web' ? 'supermercado_digital' : 'pedidos'));
+    const routedApiKey = requireOpenAiApiKey(aiKeyKind || (String(channelType || '').toLowerCase() === 'qr_web' ? 'conversacional' : 'pedidos'));
     const client = getOpenAIClient(routedApiKey);
     if (!client) throw new Error("openai_not_configured");
 
@@ -2396,7 +2396,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
   }
 
   try {
-    const aiKeyKind = String(opts.aiKeyKind || (String(opts.channelType || '').toLowerCase() === 'qr_web' ? 'supermercado_digital' : botMode)).trim();
+    const aiKeyKind = String(opts.aiKeyKind || botMode).trim();
     const apiKey = requireOpenAiApiKey(aiKeyKind);
     const tenantAiCfg = await loadTenantAiConfigFromMongo(tenantId);
     const model = String(

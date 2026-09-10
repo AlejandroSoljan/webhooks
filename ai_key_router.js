@@ -1,8 +1,7 @@
-// Asisto | Version: 5.00.078 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.079 | Fecha: 2026-09-10
 // Selección centralizada de claves OpenAI por tipo de IA.
 
 const ENV_BY_KIND = Object.freeze({
-  supermercado_digital: 'OPENAI_API_KEY_SUPERMERCADO_DIGITAL',
   pedidos: 'OPENAI_API_KEY_PEDIDOS',
   conversacional: 'OPENAI_API_KEY_CONVERSACIONAL',
   ayuda: 'OPENAI_API_KEY_AYUDA',
@@ -11,7 +10,7 @@ const ENV_BY_KIND = Object.freeze({
 
 function normalizeAiKeyKind(value) {
   const kind = String(value || '').trim().toLowerCase();
-  if (kind === 'qr_web' || kind === 'supermercadodigital') return 'supermercado_digital';
+  if (kind === 'qr_web') return 'conversacional';
   if (kind === 'help_api' || kind === 'help') return 'ayuda';
   if (kind === 'whatsapp_tasks' || kind === 'tareas' || kind === 'support') return 'tareas_ws';
   if (kind === 'conversational') return 'conversacional';

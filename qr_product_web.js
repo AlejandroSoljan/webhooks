@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.078 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.079 | Fecha: 2026-09-10
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta el catálogo local y su API de respaldo: NO usa OpenAI.
@@ -502,7 +502,7 @@ async function resolveOpenAiKey(db, tenant) {
   const channel = channels.find(c => c?.isDefault === true && String(c?.openaiApiKey || '').trim())
     || channels.find(c => String(c?.openaiApiKey || '').trim())
     || null;
-  return resolveOpenAiApiKey('supermercado_digital');
+  return resolveOpenAiApiKey('conversacional');
 }
 
 function qrSessionFrom(sessionId, productCode) {
@@ -1529,7 +1529,7 @@ function mountQrProductWeb(app) {
       const raw = await getGPTReply(tenant, from, hiddenInstruction, {
         tenantId: tenant,
         openaiApiKey: apiKey,
-        aiKeyKind: 'supermercado_digital',
+        aiKeyKind: 'conversacional',
         chatModel: cfg.aiModel || undefined,
         chatMaxTokens: 700,
         waId,
