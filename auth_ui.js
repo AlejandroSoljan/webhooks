@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.078 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.085 | Fecha: 2026-09-10
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -5248,10 +5248,35 @@ function mountAuthRoutes(app) {
     return parts.join(' ');
   }
 
+  function wwebRealMessagePipeline(match) {
+    return [
+      { $match: match },
+      { $set: {
+          __messageId: { $toString: { $ifNull: ['$messageId', ''] } },
+          __second: { $floor: { $divide: [{ $toLong: '$at' }, 1000] } }
+      } },
+      { $set: {
+          __dedupeKey: {
+            $cond: [
+              { $gt: [{ $strLenCP: '$__messageId' }, 0] },
+              { $concat: ['id:', '$tenantId', ':', '$numero', ':', '$direction', ':', '$__messageId'] },
+              { $concat: [
+                  'legacy:', '$tenantId', ':', '$numero', ':', '$direction', ':',
+                  { $ifNull: ['$contact', ''] }, ':', { $ifNull: ['$body', ''] }, ':',
+                  { $toString: '$__second' }
+              ] }
+            ]
+          }
+      } },
+      { $group: { _id: '$__dedupeKey', doc: { $first: '$$ROOT' } } },
+      { $replaceRoot: { newRoot: '$doc' } }
+    ];
+  }
+
   async function wwebBuildStatsMap(db, baseFilter, start, end) {
     const coll = db.collection('wa_wweb_message_log');
     const todayRows = await coll.aggregate([
-      { $match: { ...baseFilter, at: { $gte: start, $lt: end } } },
+      ...wwebRealMessagePipeline({ ...baseFilter, at: { $gte: start, $lt: end } }),
       { $group: {
           _id: { tenantId: '$tenantId', numero: '$numero' },
           incoming: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
@@ -5262,7 +5287,7 @@ function mountAuthRoutes(app) {
     ]).toArray();
 
     const allRows = await coll.aggregate([
-      { $match: { ...baseFilter } },
+      ...wwebRealMessagePipeline({ ...baseFilter }),
       { $group: { _id: { tenantId: '$tenantId', numero: '$numero' }, lastMessageAt: { $max: '$at' } } }
     ]).toArray();
 
@@ -5299,7 +5324,7 @@ function mountAuthRoutes(app) {
       } else {
         m.solicitados++;
         if (d.estado === 'aceptado') m.ok++;
-        if (d.exclusionMotivo === 'baja_cliente') m.baja++;
+        if (d.exclusionPermanente === true) m.baja++;
         if (d.motivoCancelacion === 'sin_respuesta_timeout' || (d.estado === 'pendiente' && new Date(d.pedidoAt || 0).getTime() <= Date.now() - 7200000)) m.ignorados++;
         if (String(d.motivoCancelacion || '').includes('error')) m.fallos++;
         if (d.exclusionPermanente === true) m.bloqueados++;
@@ -5713,7 +5738,7 @@ function mountAuthRoutes(app) {
 
       const [summaryRows, contactRows, overallLast] = await Promise.all([
         coll.aggregate([
-          { $match: rangeMatch },
+          ...wwebRealMessagePipeline(rangeMatch),
           { $group: {
               _id: null,
               incoming: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
@@ -5725,7 +5750,7 @@ function mountAuthRoutes(app) {
           } }
         ]).toArray(),
         coll.aggregate([
-          { $match: rangeMatch },
+          ...wwebRealMessagePipeline(rangeMatch),
           { $group: {
               _id: '$contact',
               incoming: { $sum: { $cond: [{ $eq: ['$direction', 'in'] }, 1, 0] } },
@@ -5757,7 +5782,7 @@ function mountAuthRoutes(app) {
         }
         permissionSummary.solicitados++;
         if (d.estado === 'aceptado') permissionSummary.ok++;
-        if (d.exclusionMotivo === 'baja_cliente') permissionSummary.baja++;
+        if (d.exclusionPermanente === true) permissionSummary.baja++;
         if (d.motivoCancelacion === 'sin_respuesta_timeout' || (d.estado === 'pendiente' && new Date(d.pedidoAt || 0).getTime() <= Date.now() - 7200000)) permissionSummary.ignorados++;
         if (String(d.motivoCancelacion || '').includes('error')) permissionSummary.fallos++;
         if (d.exclusionPermanente === true) permissionSummary.bloqueados++;
