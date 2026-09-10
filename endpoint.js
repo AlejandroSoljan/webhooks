@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.101 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.103 | Fecha: 2026-09-10
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -117,6 +117,7 @@ const { mountBotTestPanel } = require("./bot_test_panel");
 const { mountQrProductWeb } = require("./qr_product_web");
 const { mountDemoCatalogApi } = require("./demo_catalog_api");
 const { mountCustomerApp } = require("./customer_app_web");
+const { mountCustomerNotifications } = require("./customer_notifications");
 const {
   mountHelpTool,
   loadHelpConfig,
@@ -166,6 +167,7 @@ mountConversationFollowupPanel(app, { auth });
 mountBotTestPanel(app, { auth });
 mountQrProductWeb(app);
 mountCustomerApp(app, { auth });
+mountCustomerNotifications(app);
 mountDemoCatalogApi(app);
 mountHelpTool(app);
 require('./src/support/routes').mountSupport(app);

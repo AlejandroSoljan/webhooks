@@ -1196,9 +1196,9 @@ function pageHtml({ tenant, code, branding = {} }) {
     <div class="chatBody" id="chatBody"></div>
     <div class="composer"><div class="composeRow"><textarea id="message" maxlength="2500" placeholder="Preguntá sobre uso, características, compatibilidad…"></textarea><button class="btn btnPrimary send" id="sendBtn" type="button">Enviar</button></div></div>
   </section>
- <div class="footer"><div>Información comercial obtenida del sistema del negocio. La información ampliada puede utilizar IA y fuentes públicas de Internet.</div><div class="powered">Powered by <img src="/static/asisto-logo-solo.png" alt="Asisto"/><strong>Asisto</strong> · <a href="https://www.asistobot.com.ar" target="_blank" rel="noopener">www.asistobot.com.ar</a></div></div>
+ <div class="footer"><div>Información comercial obtenida del sistema del negocio. La información ampliada puede utilizar IA y fuentes públicas de Internet.</div><div class="powered">Powered by <img src="/static/asisto-logo-transparent.png" alt="Asisto"/><strong>Asisto</strong> · <a href="https://www.asistobot.com.ar" target="_blank" rel="noopener">www.asistobot.com.ar</a></div></div>
 </div>
-<nav class="appNav" aria-label="Navegación principal"><a href="/customer-app/${encodeURIComponent(tenant)}"><span>⌂</span>Inicio</a><a class="active" href="/qr/${encodeURIComponent(tenant)}?scan=1"><span>▣</span>Escanear</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=turns"><span>🎟</span>Turnos</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=ticket"><span>🔔</span>Mi turno</a></nav>
+<nav class="appNav" aria-label="Navegación principal"><a href="/customer-app/${encodeURIComponent(tenant)}"><span>⌂</span>Inicio</a><a class="active" href="/qr/${encodeURIComponent(tenant)}?scan=1"><span>▣</span>Escanear</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=turns"><span>🎟</span>Turnos</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=ticket"><span>🔔</span>Mi turno</a><a href="https://wa.me/5493462610000?text=Hola%2C%20quiero%20contactar%20a%20un%20vendedor."><span>💬</span>Vendedor</a></nav>
 <script>
 const TENANT=${JSON.stringify(tenant)};
 const BRANDING=${JSON.stringify(branding)};

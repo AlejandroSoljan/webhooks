@@ -57,6 +57,7 @@ const ACCESS_PAGES = [
   { key: "order_config", title: "Reglas de Pedidos" },
   { key: "web_access", title: "Ingresos Web" },
   { key: "token_control", title: "Control de Tokens" },
+  { key: "notifications", title: "Notificaciones App" },
 ];
 
 function normalizeAllowedPages(value) {
@@ -97,6 +98,7 @@ function requiredAccessForPath(p) {
   if (path.startsWith("/admin/followup") || path.startsWith("/api/conversation-followup")) return ["followup"];
   // Simulador interno del bot
   if (path.startsWith("/admin/bot-test") || path.startsWith("/api/bot-test")) return ["bot_test"];
+  if (path.startsWith("/ui/notificaciones-app") || path.startsWith("/api/customer-notifications")) return ["notifications"];
   // Leads (contacto)
   if (path.startsWith("/admin/leads")) return ["leads"];
   // Reglas/validaciones de pedidos por dominio
@@ -1319,6 +1321,7 @@ function getNavItemsForUser(user) {
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
+  if (hasAccess(user, "notifications")) items.push({ key: "notifications", title: "Notificaciones App", href: "/ui/notificaciones-app" });
 
   if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
   if (hasAccess(user, "wweb", "support")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
@@ -3465,6 +3468,7 @@ function mountAuthRoutes(app) {
       { title: "Horarios", href: "/ui/horarios", badge: "UI", desc: "Configuración de horarios" },
       { title: "Comportamiento", href: "/ui/comportamiento", badge: "UI", desc: "Behavior prompt/config" },
       { title: "Control de Tokens", href: "/ui/token_control", badge: "Consumo", desc: "Consumo de IA e importe a cobrar por dominio" },
+      { title: "Notificaciones App", href: "/ui/notificaciones-app", badge: "App", desc: "Enviar avisos a los celulares del dominio" },
       // APIs solo para admin/superadmin:
       ...(isAdmin ? [
         { title: "Leads", href: "/admin/leads", badge: "Admin", desc: "Mensajes del formulario de contacto" },
