@@ -1183,6 +1183,7 @@ function pageHtml({ tenant, code, branding = {} }) {
  @media(max-width:520px){.page{padding:calc(18px + env(safe-area-inset-top,0px)) 8px calc(20px + env(safe-area-inset-bottom,0px))}.content{padding:15px}.title{font-size:21px}.facts{grid-template-columns:1fr}.chatBody{max-height:48vh}.composeRow{grid-template-columns:1fr}.send{height:42px}.bubble{max-width:94%}}
 .lookup{margin-bottom:14px}.lookupForm{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:12px}.lookupForm input{width:100%;min-width:0;border:1px solid var(--line);border-radius:11px;padding:12px;outline:none;font:inherit}.scanner{margin-top:12px}.scannerViewport{position:relative;overflow:hidden;border-radius:12px;background:#101828}.scanner video{display:block;width:100%;max-height:360px;object-fit:cover}.scanGuide{position:absolute;left:8%;right:8%;top:35%;height:30%;border:2px solid rgba(255,255,255,.92);border-radius:10px;box-shadow:0 0 0 999px rgba(0,0,0,.18);pointer-events:none}.scanStatus{font-size:12px;color:var(--muted);margin:8px 0}.scanControls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}.scanControls label{font-size:12px;font-weight:700}.scanControls input{width:150px}.scanControls .btn{padding:8px 11px}
 .photoAction{margin:9px 0 0 8px}.photoResult{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.4}
+.appNav{position:fixed;left:0;right:0;bottom:0;height:calc(70px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);display:flex;justify-content:space-around;background:#fff;box-shadow:0 -3px 16px rgba(16,36,61,.16);z-index:50}.appNav a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#52667b;text-decoration:none;font-size:12px;font-weight:700}.appNav a span{font-size:23px;line-height:1}.appNav a.active{color:var(--primary)}body{padding-bottom:calc(72px + env(safe-area-inset-bottom,0px))}
 </style>
 </head>
 <body>
@@ -1197,6 +1198,7 @@ function pageHtml({ tenant, code, branding = {} }) {
   </section>
  <div class="footer"><div>Información comercial obtenida del sistema del negocio. La información ampliada puede utilizar IA y fuentes públicas de Internet.</div><div class="powered">Powered by <img src="/static/asisto-logo-solo.png" alt="Asisto"/><strong>Asisto</strong> · <a href="https://www.asistobot.com.ar" target="_blank" rel="noopener">www.asistobot.com.ar</a></div></div>
 </div>
+<nav class="appNav" aria-label="Navegación principal"><a href="/customer-app/${encodeURIComponent(tenant)}"><span>⌂</span>Inicio</a><a class="active" href="/qr/${encodeURIComponent(tenant)}"><span>▣</span>Escanear</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=turns"><span>🎟</span>Turnos</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=ticket"><span>🔔</span>Mi turno</a></nav>
 <script>
 const TENANT=${JSON.stringify(tenant)};
 const BRANDING=${JSON.stringify(branding)};

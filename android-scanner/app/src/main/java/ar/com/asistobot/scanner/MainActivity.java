@@ -7,6 +7,7 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.MediaStore;
 import android.view.View;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
@@ -21,9 +22,11 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 
 import com.google.firebase.messaging.FirebaseMessaging;
 import org.json.JSONObject;
+import java.io.File;
 
 public class MainActivity extends AppCompatActivity {
     private static final String HOME_URL = "https://asistobot.com.ar/customer-app/DEMO_FERRETERIA";
@@ -32,6 +35,7 @@ public class MainActivity extends AppCompatActivity {
     private ProgressBar progress;
     private PermissionRequest pendingWebPermission;
     private ValueCallback<Uri[]> fileCallback;
+    private Uri capturedPhotoUri;
 
     private final ActivityResultLauncher<String> cameraPermission =
         registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
@@ -48,9 +52,15 @@ public class MainActivity extends AppCompatActivity {
     private final ActivityResultLauncher<Intent> filePicker =
         registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
             if (fileCallback == null) return;
-            fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(
-                result.getResultCode(), result.getData()));
+            Uri[] selected = null;
+            if (result.getResultCode() == RESULT_OK && capturedPhotoUri != null) {
+                selected = new Uri[]{capturedPhotoUri};
+            } else if (result.getResultCode() == RESULT_OK) {
+                selected = WebChromeClient.FileChooserParams.parseResult(result.getResultCode(), result.getData());
+            }
+            fileCallback.onReceiveValue(selected);
             fileCallback = null;
+            capturedPhotoUri = null;
         });
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -126,10 +136,18 @@ public class MainActivity extends AppCompatActivity {
                 if (fileCallback != null) fileCallback.onReceiveValue(null);
                 fileCallback = callback;
                 try {
-                    filePicker.launch(params.createIntent());
+                    File photo = File.createTempFile("asisto-product-", ".jpg", getCacheDir());
+                    capturedPhotoUri = FileProvider.getUriForFile(
+                        MainActivity.this, getPackageName() + ".files", photo);
+                    Intent camera = new Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                        .putExtra(MediaStore.EXTRA_OUTPUT, capturedPhotoUri)
+                        .addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    if (camera.resolveActivity(getPackageManager()) == null) throw new IllegalStateException("camera unavailable");
+                    filePicker.launch(camera);
                     return true;
                 } catch (Exception ex) {
                     fileCallback = null;
+                    capturedPhotoUri = null;
                     return false;
                 }
             }
