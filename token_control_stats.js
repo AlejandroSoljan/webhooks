@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.087 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.088 | Fecha: 2026-09-10
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -252,6 +252,7 @@ async function buildApiMessageWindowBilling({
      windowEndsAt: 1,
       lastMessageAt: 1,
       messageCount: 1,
+      messages: 1,
       unitValue: 1,
       amount: 1,
       currency: 1
@@ -272,71 +273,32 @@ async function buildApiMessageWindowBilling({
     }
   ], { allowDiskUse: true }).toArray();
 
-  // Cantidad real de mensajes enviados por WhatsApp. No es lo mismo que la
-  // cantidad de ventanas facturables del API. Los registros históricos sin
-  // messageId se deduplican por contacto, texto y segundo porque versiones
-  // anteriores podían registrar el mismo evento como "chat" y "text".
-  const realMatch = { direction: 'out' };
-  if (safeTenant) realMatch.tenantId = safeTenant;
-  const realAt = {};
-  const realFrom = parseDateStart(from);
-  const realTo = parseDateEnd(to);
-  if (realFrom) realAt.$gte = realFrom;
-  if (realTo) realAt.$lte = realTo;
-  if (Object.keys(realAt).length) realMatch.at = realAt;
-  const realMessageRows = await db.collection('wa_wweb_message_log').aggregate([
-    { $match: realMatch },
-    { $set: {
-        __messageId: { $toString: { $ifNull: ['$messageId', ''] } },
-        __second: { $floor: { $divide: [{ $toLong: '$at' }, 1000] } }
-    } },
-    { $set: {
-        __dedupeKey: {
-          $cond: [
-            { $gt: [{ $strLenCP: '$__messageId' }, 0] },
-            { $concat: ['id:', '$tenantId', ':', '$numero', ':', '$__messageId'] },
-            { $concat: [
-                'legacy:', '$tenantId', ':', { $ifNull: ['$contact', ''] }, ':',
-                { $ifNull: ['$body', ''] }, ':', { $toString: '$__second' }
-            ] }
-          ]
-        }
-    } },
-    { $group: { _id: '$__dedupeKey', tenantId: { $first: '$tenantId' }, at: { $max: '$at' } } },
-    { $group: { _id: '$tenantId', messages: { $sum: 1 }, last_at: { $max: '$at' } } }
-  ], { allowDiskUse: true }).toArray();
-  const realMessagesByTenant = new Map(realMessageRows.map(row => [String(row._id || ''), row]));
-  const realDocs = await db.collection('wa_wweb_message_log').find(realMatch, {
-    projection: {
-      tenantId: 1, numero: 1, contact: 1, direction: 1, messageId: 1,
-      messageType: 1, body: 1, hasMedia: 1, at: 1
-    }
-  }).sort({ at: -1 }).limit(Math.max(5000, safeLimit * 5)).toArray();
-  const realSeen = new Set();
+  // El Control de Consumos muestra únicamente envíos realizados por el script.
+  // La fuente canónica son las entradas guardadas dentro de cada ventana API;
+  // los mensajes manuales del teléfono/WhatsApp Web quedan fuera.
   const realItems = [];
-  for (const doc of realDocs) {
-    const messageId = String(doc?.messageId || '').trim();
-    const second = Math.floor(new Date(doc?.at || 0).getTime() / 1000);
-    const dedupeKey = messageId
-      ? ['id', doc?.tenantId || '', doc?.numero || '', messageId].join(':')
-      : ['legacy', doc?.tenantId || '', doc?.contact || '', doc?.body || '', Number.isFinite(second) ? second : ''].join(':');
-    if (realSeen.has(dedupeKey)) continue;
-    realSeen.add(dedupeKey);
-    realItems.push({
-      id: doc?._id ? String(doc._id) : '',
-      tenantId: String(doc?.tenantId || '').trim(),
-      numeroFrom: String(doc?.numero || '').trim(),
-      contact: String(doc?.contact || '').trim(),
-      messageType: String(doc?.messageType || (doc?.hasMedia ? 'media' : 'text')),
-      text: String(doc?.body || '').slice(0, 2000),
-      hasMedia: doc?.hasMedia === true,
-      at: doc?.at || null
-    });
-    if (realItems.length >= safeLimit) break;
+  for (const windowDoc of docs) {
+    const entries = Array.isArray(windowDoc?.messages) ? windowDoc.messages : [];
+    for (let index = entries.length - 1; index >= 0; index--) {
+      const entry = entries[index] || {};
+      const type = String(entry.type || 'text');
+      realItems.push({
+        id: String(windowDoc?._id || '') + ':' + String(index),
+        tenantId: String(windowDoc?.tenantId || '').trim(),
+        numeroFrom: String(windowDoc?.numeroFrom || '').trim(),
+        contact: String(windowDoc?.contact || '').trim(),
+        messageType: type,
+        text: String(entry.text || '').slice(0, 2000),
+        hasMedia: /^(?:media|document|image|video|audio)$/i.test(type),
+        at: entry.at || windowDoc?.lastMessageAt || windowDoc?.windowStartedAt || null
+      });
+    }
   }
+  realItems.sort((a, b) => Date.parse(b.at || 0) - Date.parse(a.at || 0));
+  if (realItems.length > safeLimit) realItems.length = safeLimit;
 
   const tenantIds = Array.from(new Set(
-    [...groupedRows.map(r => String(r?._id?.tenantId || '').trim()), ...realMessagesByTenant.keys()].filter(Boolean)
+    groupedRows.map(r => String(r?._id?.tenantId || '').trim()).filter(Boolean)
   ));
   const cfgByTenant = await loadTenantCosts(db, tenantIds);
 
@@ -361,30 +323,11 @@ async function buildApiMessageWindowBilling({
     }
     acc.windows += Number(row.windows || 0);
     acc.messages += Number(row.messages || 0);
+    acc.realMessages += Number(row.messages || 0);
     addCurrencyAmount(acc.byCurrency, row?._id?.currency || "ARS", row.amount || 0);
     if (!acc.last_at || Date.parse(row.last_at || 0) > Date.parse(acc.last_at || 0)) {
       acc.last_at = row.last_at || acc.last_at;
     }
-  }
-
-  for (const [tenantKey, realRow] of realMessagesByTenant.entries()) {
-    let acc = byTenantMap.get(tenantKey);
-    if (!acc) {
-      const cfg = cfgByTenant.get(tenantKey) || {};
-      acc = {
-        tenantId: tenantKey,
-        company: String(cfg.nom_emp || '').trim(),
-        number: String(cfg.numero || '').trim(),
-        windows: 0,
-        messages: 0,
-        realMessages: 0,
-        byCurrency: {},
-        last_at: null
-      };
-      byTenantMap.set(tenantKey, acc);
-    }
-    acc.realMessages = Number(realRow.messages || 0);
-    if (!acc.last_at || Date.parse(realRow.last_at || 0) > Date.parse(acc.last_at || 0)) acc.last_at = realRow.last_at || acc.last_at;
   }
 
   const byTenant = [...byTenantMap.values()]
@@ -1444,8 +1387,8 @@ function renderTokenControlPage(user) {
     <div class="card" id="apiMessagesCard">
       <div class="sectionTitle">
         <div>
-          <h2>Mensajes enviados reales</h2>
-          <div class="small">Detalle deduplicado de los mensajes efectivamente enviados por WhatsApp dentro del rango seleccionado.</div>
+          <h2>Mensajes enviados por el script</h2>
+          <div class="small">Incluye solicitudes de confirmación y documentos o textos enviados automáticamente. Excluye mensajes manuales del teléfono y WhatsApp Web.</div>
         </div>
       </div>
       <div class="apiSummary" id="apiMessageSummary">
@@ -1791,7 +1734,7 @@ function renderTokenControlPage(user) {
     const totals=j.totals||{};
     const amounts=amountMapText(totals.byCurrency||{});
     apiMessageSummary.innerHTML=
-      '<span class="chip"><b>'+fmtInt(totals.realMessages||0)+'</b> mensajes enviados</span>'+
+      '<span class="chip"><b>'+fmtInt(totals.realMessages||0)+'</b> mensajes del script</span>'+
       '<span class="chip"><b>'+fmtInt(totals.windows||0)+'</b> ventanas facturables</span>'+
       '<span class="chip">Importe: <b>'+esc(amounts)+'</b></span>';
 
