@@ -8802,6 +8802,10 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             document.getElementById('qrPageTitle').value = j.qr_page_title || 'Información del producto';
             document.getElementById('qrPageSubtitle').value = j.qr_page_subtitle || '';
             document.getElementById('qrCompanyName').value = j.qr_company_name || '';
+            document.getElementById('appBranchName').value = j.app_branch_name || '';
+            document.getElementById('appBranchAddress').value = j.app_branch_address || '';
+            document.getElementById('appBusinessHours').value = j.app_business_hours || '';
+            document.getElementById('appEstimatedWaitMinutes').value = j.app_estimated_wait_minutes == null ? 15 : j.app_estimated_wait_minutes;
             document.getElementById('qrCompanyLogoUrl').value = j.qr_company_logo_url || '';
             document.getElementById('qrButtonColor').value = j.qr_button_color || '#0f766e';
             document.getElementById('qrButtonTextColor').value = j.qr_button_text_color || '#ffffff';
@@ -8867,6 +8871,10 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             qr_page_title:document.getElementById('qrPageTitle').value||'',
             qr_page_subtitle:document.getElementById('qrPageSubtitle').value||'',
             qr_company_name:document.getElementById('qrCompanyName').value||'',
+            app_branch_name:document.getElementById('appBranchName').value||'',
+            app_branch_address:document.getElementById('appBranchAddress').value||'',
+            app_business_hours:document.getElementById('appBusinessHours').value||'',
+            app_estimated_wait_minutes:Number(document.getElementById('appEstimatedWaitMinutes').value||0),
             qr_company_logo_url:document.getElementById('qrCompanyLogoUrl').value||'',
             qr_button_color:document.getElementById('qrButtonColor').value||'#0f766e',
             qr_button_text_color:document.getElementById('qrButtonTextColor').value||'#ffffff',
@@ -9024,6 +9032,10 @@ app.get("/comportamiento", async (req, res) => {
         <div id="qrConfigFields" class="externalGrid" style="margin-top:12px">
           <label>Nombre de la empresa<input id="qrCompanyName" type="text" placeholder="FERROMAQ Industrial" /></label>
           <label>Moneda<input id="qrCurrency" type="text" value="ARS" maxlength="10" /></label>
+          <label>Nombre de la sucursal<input id="appBranchName" type="text" placeholder="Sucursal principal" /></label>
+          <label>Dirección de la sucursal<input id="appBranchAddress" type="text" placeholder="Dirección o referencia" /></label>
+          <label>Horario de atención<input id="appBusinessHours" type="text" placeholder="8:00 a 20:00" /></label>
+          <label>Demora estimada (minutos)<input id="appEstimatedWaitMinutes" type="number" min="0" max="240" value="15" /></label>
           <label style="grid-column:1/-1">URL del logo de la empresa<input id="qrCompanyLogoUrl" type="text" placeholder="https://empresa.com/logo.png" /><span class="hint">Debe ser una imagen pública accesible desde el celular. Si queda vacío se muestra la inicial de la empresa.</span></label>
           <label>Título de la página<input id="qrPageTitle" type="text" value="Información del producto" /></label>
           <label>Color de botones<input id="qrButtonColor" type="color" value="#0f766e" /></label>
@@ -9523,6 +9535,10 @@ app.get("/api/behavior", async (req, res) => {
       qr_page_title: cfg.qr_page_title || "Información del producto",
       qr_page_subtitle: cfg.qr_page_subtitle || "",
       qr_company_name: cfg.qr_company_name || "",
+      app_branch_name: cfg.app_branch_name || "",
+      app_branch_address: cfg.app_branch_address || "",
+      app_business_hours: cfg.app_business_hours || "",
+      app_estimated_wait_minutes: Number(cfg.app_estimated_wait_minutes ?? 15),
       qr_company_logo_url: cfg.qr_company_logo_url || "",
       qr_button_color: cfg.qr_button_color || "#0f766e",
       qr_button_text_color: cfg.qr_button_text_color || "#ffffff",
@@ -9629,6 +9645,10 @@ app.post("/api/behavior", async (req, res) => {
     const qr_page_title = String(req.body?.qr_page_title || "Información del producto").trim().slice(0, 120);
     const qr_page_subtitle = String(req.body?.qr_page_subtitle || "").trim().slice(0, 220);
     const qr_company_name = String(req.body?.qr_company_name || "").trim().slice(0, 140);
+    const app_branch_name = String(req.body?.app_branch_name || "").trim().slice(0, 140);
+    const app_branch_address = String(req.body?.app_branch_address || "").trim().slice(0, 220);
+    const app_business_hours = String(req.body?.app_business_hours || "").trim().slice(0, 120);
+    const app_estimated_wait_minutes = Math.max(0, Math.min(240, Number(req.body?.app_estimated_wait_minutes || 0) || 0));
     const qr_company_logo_url = String(req.body?.qr_company_logo_url || "").trim().replace(/[\r\n]/g, "").slice(0, 3000);
     const qrButtonColorRaw = String(req.body?.qr_button_color || "#0f766e").trim();
     const qr_button_color = /^#[0-9a-f]{6}$/i.test(qrButtonColorRaw) ? qrButtonColorRaw : "#0f766e";
@@ -9707,6 +9727,10 @@ app.post("/api/behavior", async (req, res) => {
       qr_page_title,
       qr_page_subtitle,
       qr_company_name,
+      app_branch_name,
+      app_branch_address,
+      app_business_hours,
+      app_estimated_wait_minutes,
       qr_company_logo_url,
       qr_button_color,
       qr_button_text_color,

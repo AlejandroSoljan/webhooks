@@ -271,6 +271,37 @@ function managerDirectLookupUrl(value, code) {
   return url.toString();
 }
 
+function managerCatalogSearchUrl(value, query) {
+  const url = new URL(String(value || ''));
+  url.searchParams.set('campo', 'OTRO');
+  url.searchParams.set('valor', clean(query, 120));
+  return url.toString();
+}
+
+function photoSearchTerms(identification) {
+  const values = [identification?.model, [identification?.brand, identification?.name].filter(Boolean).join(' '), identification?.name, identification?.brand];
+  return [...new Set(values.map(value => clean(value, 120).replace(/[^\p{L}\p{N} ._/-]/gu, ' ').replace(/\s+/g, ' ').trim()).filter(value => value.length >= 3))].slice(0, 3);
+}
+
+async function fetchPhotoCatalogSuggestions(cfg, identification) {
+  if (cfg.apiMethod !== 'GET' || !/\/api\/Api_Articulos\/Consulta/i.test(cfg.apiUrl)) return [];
+  const headers = { Accept: 'application/json' };
+  if (cfg.apiAuthHeader && cfg.apiAuthValue) headers[cfg.apiAuthHeader] = cfg.apiAuthValue;
+  const found = new Map();
+  for (const term of photoSearchTerms(identification)) {
+    const response = await axios({ method: 'GET', url: managerCatalogSearchUrl(cfg.apiUrl, term), headers, timeout: Math.min(cfg.apiTimeoutMs, 20000), validateStatus: () => true, maxContentLength: 2_000_000 });
+    if (response.status < 200 || response.status >= 300) continue;
+    for (const raw of externalProductRows(response.data).slice(0, 20)) {
+      try {
+        const product = normalizeQrProduct(raw, cfg);
+        if (!found.has(product.code.toUpperCase())) found.set(product.code.toUpperCase(), product);
+      } catch {}
+    }
+    if (found.size >= 4) break;
+  }
+  return [...found.values()].slice(0, 4);
+}
+
 async function loadQrConfig(db, tenant) {
   const doc = await db.collection('settings').findOne({ _id: `behavior:${tenant}` }) || {};
   const method = String(doc.qr_api_method || 'GET').trim().toUpperCase() === 'POST' ? 'POST' : 'GET';
@@ -1186,7 +1217,7 @@ function pageHtml({ tenant, code, branding = {} }) {
  .page{padding-top:calc(22px + env(safe-area-inset-top,0px));padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}
  @media(max-width:520px){.page{padding:calc(18px + env(safe-area-inset-top,0px)) 8px calc(20px + env(safe-area-inset-bottom,0px))}.content{padding:15px}.title{font-size:21px}.facts{grid-template-columns:1fr}.chatBody{max-height:48vh}.composeRow{grid-template-columns:1fr}.send{height:42px}.bubble{max-width:94%}}
 .lookup{margin-bottom:14px}.lookupForm{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:12px}.lookupForm input{width:100%;min-width:0;border:1px solid var(--line);border-radius:11px;padding:12px;outline:none;font:inherit}.scanner{margin-top:12px}.scannerViewport{position:relative;overflow:hidden;border-radius:12px;background:#101828}.scanner video{display:block;width:100%;max-height:360px;object-fit:cover}.scanGuide{position:absolute;left:8%;right:8%;top:35%;height:30%;border:2px solid rgba(255,255,255,.92);border-radius:10px;box-shadow:0 0 0 999px rgba(0,0,0,.18);pointer-events:none}.scanStatus{font-size:12px;color:var(--muted);margin:8px 0}.scanControls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}.scanControls label{font-size:12px;font-weight:700}.scanControls input{width:150px}.scanControls .btn{padding:8px 11px}
-.photoAction{margin:9px 0 0 8px}.photoResult{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.4}
+.photoAction{margin:9px 0 0 8px}.photoResult{font-size:13px;color:var(--muted);margin-top:10px;line-height:1.4}.scanner.photoMode .scannerViewport,.scanner.photoMode .scanStatus,.scanner.photoMode #zoomLabel,.scanner.photoMode #torchBtn{display:none!important}.photoChoices{display:grid;gap:8px;margin:10px 0}.photoChoice{width:100%;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--text);padding:11px;text-align:left}.photoChoice b,.photoChoice span{display:block}.photoChoice small{display:block;margin-top:3px}.photoChoice span{color:var(--primary);font-weight:850;margin-top:4px}
 .appNav{position:fixed;left:0;right:0;bottom:0;height:calc(70px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);display:flex;justify-content:space-around;background:#fff;box-shadow:0 -3px 16px rgba(16,36,61,.16);z-index:50}.appNav a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#52667b;text-decoration:none;font-size:12px;font-weight:700}.appNav a span{font-size:23px;line-height:1}.appNav a.active{color:var(--primary)}body{padding-bottom:calc(72px + env(safe-area-inset-bottom,0px))}
 </style>
 </head>
@@ -1207,7 +1238,7 @@ function pageHtml({ tenant, code, branding = {} }) {
 const TENANT=${JSON.stringify(tenant)};
 const BRANDING=${JSON.stringify(branding)};
 let CODE=${JSON.stringify(code)};
-let PRODUCT=null, AI_ENABLED=false, sending=false, started=false, conversationId='', pollTimer=null, unchangedPolls=0, lastMessagesSignature='', scanStream=null, scanTrack=null, scanFrame=0, scanCandidate='', scanHits=0, scanCandidateAt=0, torchOn=false;
+let PRODUCT=null, AI_ENABLED=false, sending=false, started=false, conversationId='', pollTimer=null, unchangedPolls=0, lastMessagesSignature='', scanStream=null, scanTrack=null, scanFrame=0, scanCandidate='', scanHits=0, scanCandidateAt=0, torchOn=false, scanOcrAttempted=false;
 const el=id=>document.getElementById(id);
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 function sessionId(){let s=sessionStorage.getItem('asistoQrSession');if(!s){try{s=crypto.randomUUID().replace(/-/g,'_')}catch(_){s='qr_'+Date.now()+'_'+Math.random().toString(36).slice(2)}sessionStorage.setItem('asistoQrSession',s)}return s}
@@ -1304,8 +1335,10 @@ async function loadProduct(){try{el('productCard').innerHTML='<div class="loadin
 async function startAi(){el('chat').classList.add('open');el('chat').scrollIntoView({behavior:'smooth',block:'start'});if(!started){const b=el('moreBtn');if(b)b.disabled=true;await callAi('',true);if(b)b.disabled=false}else{await syncChatMessages(true);startChatPolling();el('message').focus()}}
 async function send(){const box=el('message');const msg=String(box.value||'').trim();if(!msg||sending)return;box.value='';await callAi(msg,false);box.focus()}
 async function photoDataUrl(file){const img=await new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve(i);i.onerror=reject;i.src=URL.createObjectURL(file)});const scale=Math.min(1,1280/Math.max(img.width,img.height));const c=document.createElement('canvas');c.width=Math.max(1,Math.round(img.width*scale));c.height=Math.max(1,Math.round(img.height*scale));c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(img.src);return c.toDataURL('image/jpeg',.82)}
-async function identifyPhoto(file){if(!file)return;const out=el('photoResult'),btn=el('photoBtn');out.classList.remove('hidden');out.textContent='Analizando la foto…';btn.disabled=true;try{const image=await photoDataUrl(file);const j=await jsonFetch('/api/ext/qr/photo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenant:TENANT,image})});if(j.product?.code){out.textContent='Producto encontrado: '+j.product.description;setTimeout(()=>openCode(j.product.code),350);return}const i=j.identification||{};const label=[i.brand,i.name,i.model].filter(Boolean).join(' · ');out.textContent=label?'Identificación aproximada: '+label+'. No encontré una coincidencia exacta en el catálogo. Probá fotografiando el código de barras.':'No pude identificarlo con seguridad. Probá acercando la cámara al frente o al código de barras.'}catch(e){out.textContent='No pude analizar la foto: '+e.message}finally{btn.disabled=false;el('photoInput').value=''}}
-el('photoBtn').addEventListener('click',()=>{stopScanner(false);el('scanner').classList.remove('hidden');el('photoInput').click()});el('photoInput').addEventListener('change',e=>identifyPhoto(e.currentTarget.files&&e.currentTarget.files[0]));
+async function tryPrintedBarcode(){if(scanOcrAttempted||!scanStream)return;const video=el('scanVideo');if(!video.videoWidth||!video.videoHeight)return;scanOcrAttempted=true;const status=el('scanStatus'),c=document.createElement('canvas'),scale=Math.min(1,1280/Math.max(video.videoWidth,video.videoHeight));c.width=Math.round(video.videoWidth*scale);c.height=Math.round(video.videoHeight*scale);c.getContext('2d').drawImage(video,0,0,c.width,c.height);status.textContent='Intentando leer el número impreso debajo del código…';try{const j=await jsonFetch('/api/ext/qr/photo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenant:TENANT,image:c.toDataURL('image/jpeg',.86)})});const code=String(j.identification?.barcode||'').replace(/\D/g,'');if(/^\d{8,14}$/.test(code)){el('codeInput').value=code;stopScanner(false);video.classList.add('hidden');status.textContent='Número detectado: '+code+'. Buscando producto…';setTimeout(()=>openCode(code),250)}else if(scanStream)status.textContent='No pude leer el número. Acercá la cámara o ingresalo manualmente.'}catch(_){if(scanStream)status.textContent='Seguí enfocando el código o ingresá el número manualmente.'}}
+async function identifyPhoto(file){if(!file)return;const out=el('photoResult'),btn=el('photoBtn');out.classList.remove('hidden');out.textContent='Analizando la foto y buscando en el catálogo…';btn.disabled=true;try{const image=await photoDataUrl(file);const j=await jsonFetch('/api/ext/qr/photo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenant:TENANT,image})});if(j.product?.code){out.textContent='Producto encontrado: '+j.product.description;setTimeout(()=>openCode(j.product.code),350);return}const i=j.identification||{},label=[i.brand,i.name,i.model].filter(Boolean).join(' · '),choices=Array.isArray(j.suggestions)?j.suggestions:[];if(choices.length){out.innerHTML=(label?'<b>Identificación aproximada: '+esc(label)+'</b>':'<b>Encontré estas opciones similares:</b>')+'<div class="photoChoices">'+choices.map(p=>'<button class="photoChoice" type="button" data-photo-code="'+esc(p.code)+'"><b>'+esc(p.description)+'</b><small>SKU: '+esc(p.code)+'</small><span>'+esc(money(p.price,j.currency||'ARS'))+'</span></button>').join('')+'</div><small>Elegí una opción para ver su ficha.</small>';out.querySelectorAll('[data-photo-code]').forEach(x=>x.addEventListener('click',()=>openCode(x.dataset.photoCode)));return}out.textContent=label?'Identifiqué aproximadamente '+label+', pero no encontré alternativas confirmadas en el catálogo. Probá una foto donde se vea mejor la marca o el modelo.':'No pude identificarlo con seguridad. Probá acercando la cámara al frente o al código de barras.'}catch(e){out.textContent='No pude analizar la foto: '+e.message}finally{btn.disabled=false;el('photoInput').value=''}}
+el('photoBtn').addEventListener('click',()=>{stopScanner(false);el('scanner').classList.remove('hidden');el('scanner').classList.add('photoMode');el('photoResult').classList.add('hidden');el('photoInput').click()});el('photoInput').addEventListener('change',e=>identifyPhoto(e.currentTarget.files&&e.currentTarget.files[0]));
+el('scanBtn').addEventListener('click',()=>{el('scanner').classList.remove('photoMode');scanOcrAttempted=false;setTimeout(tryPrintedBarcode,5000)});
 el('sendBtn').addEventListener('click',send);el('message').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});el('closeChat').addEventListener('click',()=>el('chat').classList.remove('open'));el('scanBtn').addEventListener('click',startScanner);el('stopScanBtn').addEventListener('click',stopScanner);el('zoomControl').addEventListener('input',e=>setScannerZoom(e.currentTarget.value));el('torchBtn').addEventListener('click',toggleScannerTorch);el('lookupBtn').addEventListener('click',()=>openCode(el('codeInput').value));el('codeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openCode(e.currentTarget.value)}});window.addEventListener('pagehide',stopScanner);document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(pollTimer){clearTimeout(pollTimer);pollTimer=null}if(started)scheduleChatPoll(0)}});applyBranding(BRANDING);if(CODE){el('lookup').classList.add('hidden');loadProduct()}else{el('productCard').classList.add('hidden');if(!BRANDING.pageSubtitle)el('pageSubtitle').textContent='Escaneá un QR, un código de barras o ingresá el código manualmente.';if(new URLSearchParams(location.search).get('scan')==='1')setTimeout(startScanner,150)}
 </script>
 </body>
@@ -1377,8 +1410,13 @@ function mountQrProductWeb(app) {
         try { product = await fetchQrProduct(cfg, tenant, barcode); }
         catch (error) { if (error?.statusCode !== 404) throw error; }
       }
+      const safeIdentification = { barcode, brand: clean(identification.brand, 100), model: clean(identification.model, 120), name: clean(identification.name, 180), visibleText: clean(identification.visible_text, 500), confidence: Number(identification.confidence || 0) };
+      const suggestions = product ? [] : await fetchPhotoCatalogSuggestions(cfg, safeIdentification).catch(error => {
+        console.warn('[qr] photo catalog suggestions:', error?.message || error);
+        return [];
+      });
       res.setHeader('Cache-Control', 'no-store');
-      return res.json({ ok: true, product, identification: { barcode, brand: clean(identification.brand, 100), model: clean(identification.model, 120), name: clean(identification.name, 180), visibleText: clean(identification.visible_text, 500), confidence: Number(identification.confidence || 0) } });
+      return res.json({ ok: true, product, suggestions, identification: safeIdentification, currency: cfg.currency });
     } catch (e) {
       console.error('[qr] product photo:', e?.message || e);
       return res.status(500).json({ ok: false, error: 'product_photo_failed', detail: clean(e?.publicDetail || 'No se pudo analizar la foto en este momento.', 240) });
