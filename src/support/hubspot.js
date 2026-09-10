@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.068 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.085 | Fecha: 2026-09-10
 const { fail, text, SupportError } = require('./core');
 
 class HubSpotContract {
@@ -11,7 +11,8 @@ class HubSpotContract {
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
     if (!response.ok) {
-      const error = new SupportError(response.status === 429 ? 'hubspot_rate_limited' : 'hubspot_request_failed', 502);
+      const code = response.status === 401 ? 'hubspot_invalid_credentials' : response.status === 403 ? 'hubspot_insufficient_scopes' : response.status === 429 ? 'hubspot_rate_limited' : 'hubspot_request_failed';
+      const error = new SupportError(code, response.status === 401 || response.status === 403 ? 409 : 502);
       error.remoteStatus = response.status; throw error;
     }
     return response.json();
@@ -48,6 +49,18 @@ class HubSpotContract {
   async save(payload, ticketId) {
     if (ticketId) return this.request(`/crm/v3/objects/tickets/${encodeURIComponent(text(ticketId))}`, { properties: payload.properties }, 'PATCH');
     return this.request('/crm/v3/objects/tickets', payload);
+  }
+  async search(type, query = '', limit = 10) {
+    if (!['companies', 'contacts'].includes(type)) fail('invalid_hubspot_object');
+    const q = text(query, 200);
+    return this.request(`/crm/v3/objects/${type}/search`, { ...(q ? { query: q } : {}), limit: Math.min(25, Math.max(1, Number(limit) || 10)), properties: type === 'companies' ? ['name', 'domain'] : ['firstname', 'lastname', 'email', 'phone', 'company'] });
+  }
+  async preflight() {
+    const [account, metadata] = await Promise.all([this.request('/account-info/v3/details'), this.metadata()]);
+    await Promise.all([this.search('companies', '', 1), this.search('contacts', '', 1)]);
+    if (!Number.isSafeInteger(Number(account.portalId)) || Number(account.portalId) <= 0) fail('hubspot_account_unverified', 409);
+    if (!metadata.properties.some(property => property.name === 'subject') || !metadata.properties.some(property => property.name === 'hs_pipeline_stage') || !metadata.pipelines.some(pipeline => pipeline.stages?.length)) fail('hubspot_ticket_schema_incomplete', 409);
+    return { portalId: String(account.portalId), metadata };
   }
   prepare(fields, metadata, mapping) {
     const pipeline = metadata.pipelines.find(p => p.id === mapping.pipelineId);

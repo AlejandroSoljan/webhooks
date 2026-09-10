@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.084 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.085 | Fecha: 2026-09-10
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupTasks, analyze, ANALYZER_VERSION, text, range } = require('./core');
 
@@ -115,7 +115,12 @@ class SupportService {
     if (!row) return false;
     const fields = this.vault.open(row.fields, row._id), source = this.vault.open(row.source, row._id + ':source');
     const generatedOnly = row.events?.every(event => ['generated', 'source_changed', 'tasks_merged'].includes(event.action)) === true;
-    const copiedConversation = fields.description === source.description && /(?:^|\n)\d{4}-\d{2}-\d{2}T[^\n]*(?:Contacto|Operador|CLIENTE|OPERADOR):/m.test(fields.description || '');
+    // Older drafts can contain the raw transcript with small differences from
+    // source.description (for example a heading or a truncated final line).
+    // Detect the transcript itself instead of requiring byte-for-byte equality.
+    const description = String(fields.description || '');
+    const transcriptLines = description.split('\n').filter(line => /^\d{4}-\d{2}-\d{2}T\S+\s+(?:Contacto|Operador|CLIENTE|OPERADOR):/i.test(line.trim()));
+    const copiedConversation = transcriptLines.length >= 2 || (transcriptLines.length === 1 && transcriptLines[0].length >= description.trim().length * 0.75);
     if (!generatedOnly && !copiedConversation) {
       await this.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision }, { $set: { analyzerVersion: ANALYZER_VERSION, titleUpgradeSkipped: 'human_edited', updatedAt: this.now() } });
       return true;

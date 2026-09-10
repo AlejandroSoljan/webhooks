@@ -137,12 +137,10 @@ test('HTTP scope ignores caller tenant/user overrides, rejects CSRF and hides cr
     let response = await fetch(base + '/settings', { method: 'PUT', headers: { ...headers, Origin: 'https://evil.example' }, body: '{}' }); assert.equal(response.status, 403);
     response = await fetch(base + '/settings?tenantId=evil', { method: 'PUT', headers, body: JSON.stringify({ userId: other.userId, inactivityMs: 60000 }) }); assert.equal(response.status, 200);
     assert.equal((await service.col('settings').findOne(scope)).config.inactivityMs, 60000); assert.equal(await service.col('settings').findOne(other), null);
-    response = await fetch(base + '/hubspot', { method: 'PUT', headers, body: JSON.stringify({ token: 'fake-private-token' }) }); assert.equal(response.status, 403);
+    response = await fetch(base + '/hubspot', { method: 'PUT', headers, body: JSON.stringify({ token: 'fake-private-token' }) }); assert.equal(response.status, 410);
     response = await fetch(base + '/hubspot', { method: 'PUT', headers: { ...headers, 'test-role': 'admin' }, body: JSON.stringify({ token: 'fake-private-token' }) });
-    assert.equal(response.status, 200); assert.equal((await response.text()).includes('fake-private-token'), false);
-    const stored = await service.col('integrations').findOne({ tenantId: scope.tenantId });
-    assert.equal(JSON.stringify(stored).includes('fake-private-token'), false);
-    assert.equal(vault.open(stored.token, hash(scope.tenantId, 'hubspot')), 'fake-private-token');
+    assert.equal(response.status, 410); assert.equal((await response.text()).includes('fake-private-token'), false);
+    assert.equal(await service.col('integrations').findOne({ tenantId: scope.tenantId }), null);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
 
@@ -271,6 +269,9 @@ test('opening an edited legacy task summarizes only a description that still cop
   service.titleAnalyzer = { run: async () => ({ subject: 'Título de IA', description: summary, model: 'fixture-ai', inputTokens: 10, outputTokens: 5, totalTokens: 15 }) };
   let [draft] = await processMessages([message('legacy-description', 0, { text: 'Necesito revisar la configuración del servidor.' })]);
   await service.editDraft(scope, draft._id, draft.revision, { subject: 'Título definido por el usuario', description: draft.source.description, category: 'Soporte Servidor Virtual' });
+  [draft] = await service.listDrafts(scope);
+  const differentSource = { ...draft.source, description: 'Conversación de origen:\n' + draft.source.description };
+  await service.col('drafts').updateOne({ _id: draft._id }, { $set: { source: service.vault.seal(differentSource, draft._id + ':source') } });
   summary = 'El cliente solicita revisar la configuración del servidor. Queda pendiente realizar el diagnóstico.';
   assert.equal(await service.summarizeDraft(scope, draft._id), true);
   [draft] = await service.listDrafts(scope);

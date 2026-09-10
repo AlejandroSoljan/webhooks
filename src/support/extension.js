@@ -1,11 +1,12 @@
-// Asisto | Version: 5.00.084 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.085 | Fecha: 2026-09-10
 const express = require('express');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
 const { scopeOf, scopedId, hash, text, fail, SupportError, TASK_CHOICES } = require('./core');
 const { HubSpotContract } = require('./hubspot');
+const { hubspotCredential } = require('./hubspot_config');
 
-function createExtensionRouter({ getService, hubspotFactory = token => new HubSpotContract(token) }) {
+function createExtensionRouter({ getService, hubspotFactory = token => new HubSpotContract(token), env = process.env }) {
   const router = express.Router();
   router.use(express.json({ limit: '128kb' }));
   router.use(async (req, res, next) => {
@@ -39,9 +40,9 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     return row;
   };
   const clientFor = async (s, scope) => {
-    const connection = await s.col('integrations').findOne({ tenantId: scope.tenantId });
-    if (!connection?.token) fail('hubspot_not_configured', 409);
-    return { connection, client: hubspotFactory(s.vault.open(connection.token, hash(scope.tenantId, 'hubspot'))) };
+    const credential = await hubspotCredential(s, scope, env);
+    if (!credential) fail('hubspot_not_configured', 409);
+    return { connection: credential.connection, client: hubspotFactory(credential.token), source: credential.source };
   };
   router.get('/session', route(async (req, s, scope) => {
     const csrf = Buffer.from(JSON.stringify(s.vault.seal({ ...scope, origin: req.extensionOrigin, expires: Date.now() + 600000 }, 'extension-csrf'))).toString('base64url');
@@ -126,21 +127,18 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     return { dismissed: true, revision: row.revision + 1 };
   }));
   router.get('/hubspot', route(async (req, s, scope) => {
-    if (!await s.col('integrations').findOne({ tenantId: scope.tenantId })) return { configured: false };
-    const { client, connection } = await clientFor(s, scope);
-    return { configured: true, portalId: connection.portalId || null, metadata: await client.metadata() };
+    const credential = await hubspotCredential(s, scope, env);
+    if (!credential) return { configured: false };
+    const client = hubspotFactory(credential.token), checked = await client.preflight();
+    return { configured: true, portalId: checked.portalId, metadata: checked.metadata, credentialSource: credential.source };
   }));
   router.post('/hubspot/connect', route(async (req, s, scope) => {
-    if (!['admin', 'superadmin'].includes(req.user.role)) fail('admin_required', 403);
-    const token = text(req.body.token, 1000);
-    if (!token) fail('token_required');
-    const client = hubspotFactory(token);
-    await client.metadata();
-    const account = await client.request('/account-info/v3/details');
-    if (!Number.isSafeInteger(Number(account.portalId)) || Number(account.portalId) <= 0) fail('hubspot_account_unverified', 409);
-    await s.col('integrations').updateOne({ tenantId: scope.tenantId }, { $set: { token: s.vault.seal(token, hash(scope.tenantId, 'hubspot')), portalId: String(account.portalId), updatedAt: s.now() } }, { upsert: true });
-    await s.audit(scope, 'hubspot_connected', String(account.portalId));
-    return { configured: true, portalId: String(account.portalId) };
+    fail('hubspot_backend_managed', 410);
+  }));
+  router.get('/hubspot/search', route(async (req, s, scope) => {
+    const type = text(req.query.type, 20), query = text(req.query.q || '', 200);
+    const { client } = await clientFor(s, scope), result = await client.search(type, query, 15);
+    return { results: (result.results || []).map(row => ({ id: String(row.id), properties: row.properties || {} })) };
   }));
   router.post('/drafts/:id/publish', route(async (req, s, scope) => {
     const row = await rowFor(s, scope, req.params.id);
@@ -154,7 +152,9 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const { excluded } = require('./core');
     const contact = await s.col('contacts').findOne({ ...scope, jid: row.jid });
     if (excluded({ jid: row.jid, name: contact?.name || fields.contact }, config) || sources.some(message => excluded(message, config))) fail('conversation_excluded', 409);
-    const { client, connection } = await clientFor(s, scope);
+    const { client, connection } = await clientFor(s, scope), checked = await client.preflight();
+    connection.portalId = checked.portalId;
+    await s.audit(scope, 'hubspot_preflight_ok', checked.portalId);
     if (row.hubspot?.ticketId && row.hubspot.portalId !== (connection.portalId || null)) fail('hubspot_portal_changed', 409);
     if (fields.companyId || fields.contactId) {
       if (!fields.companyId) fail('company_required');
@@ -163,11 +163,12 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const mapping = req.body.mapping;
     if (!mapping?.fields || ['category', 'errorType', 'channel'].some(field => !mapping.fields[field]?.property)) fail('hubspot_mapping_required');
     if (new Set(['category', 'errorType', 'channel'].map(field => mapping.fields[field].property)).size !== 3) fail('hubspot_mapping_required');
-    const payload = client.prepare(fields, await client.metadata(), mapping);
+    const payload = client.prepare(fields, checked.metadata, mapping);
     // Keep the WhatsApp labels visible even when CRM associations have not been chosen.
     payload.properties.content = ['Contacto de WhatsApp: ' + (fields.contact || ''), 'Empresa: ' + (fields.company || ''), '', fields.description].join('\n');
     if (row.hubspot?.ticketId && (row.hubspot.companyId !== (fields.companyId || '') || row.hubspot.contactId !== (fields.contactId || ''))) fail('hubspot_associations_changed', 409);
     const operationId = crypto.randomUUID();
+    if (!row.hubspot?.ticketId) payload.objectWriteTraceId = operationId;
     const lock = await s.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision, sourceChanged: { $ne: true }, reconciliationRequired: { $ne: true }, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { hubspot: { ...row.hubspot, state: 'sending', operationId, startedAt: s.now() } } });
     if (!lock.matchedCount) fail('revision_conflict', 409);
     let remote;

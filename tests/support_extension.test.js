@@ -25,7 +25,7 @@ before(async()=>{
 after(async()=>{await new Promise(resolve=>server.close(resolve));await client.close();await mongo.stop();});
 beforeEach(async()=>{
  await db.dropDatabase();service=new SupportService(db,vault);writes=[];
- remote={metadata:async()=>metadata,request:async()=>({portalId:123}),prepare:(f,m,p)=>new HubSpotContract('unused').prepare(f,m,p),save:async(payload,ticketId)=>{writes.push({payload,ticketId});return{id:ticketId||'99'};}};
+ remote={metadata:async()=>metadata,preflight:async()=>({portalId:'123',metadata}),search:async()=>({results:[]}),request:async()=>({portalId:123}),prepare:(f,m,p)=>new HubSpotContract('unused').prepare(f,m,p),save:async(payload,ticketId)=>{writes.push({payload,ticketId});return{id:ticketId||'99'};}};
  await service.col('integrations').insertOne({tenantId:scope.tenantId,token:vault.seal('secret',hash(scope.tenantId,'hubspot')),portalId:'123'});
  await service.col('drafts').insertOne({_id:id,...scope,jid:'123@lid',revision:1,mode:'approval',state:'pending',messageIds:[],fields:vault.seal(fields,id),source:vault.seal(fields,id+':source')});
 });
@@ -115,13 +115,12 @@ test('in-flight delivery blocks duplicate publishing and editing; uncertain outc
  release();assert.equal((await first).data.error,'hubspot_delivery_unconfirmed');
  assert.equal((await call('/drafts/'+id+'/publish',{revision:1,mapping})).status,409);
 });
-test('confirmed rejection can retry and only admins can save encrypted connection tokens',async()=>{
+test('confirmed rejection can retry and connection secrets remain backend-managed',async()=>{
  remote.save=async()=>{const e=Error('rejected');e.remoteStatus=400;throw e;};
  assert.equal((await call('/drafts/'+id+'/publish',{revision:1,mapping})).data.error,'hubspot_request_failed');
  assert.equal((await service.col('drafts').findOne({_id:id})).hubspot.state,'failed');
- assert.equal((await call('/hubspot/connect',{token:'private-token'})).status,403);
- const result=await call('/hubspot/connect',{token:'private-token'},{'test-role':'admin'});assert.equal(result.status,200);assert.ok(!JSON.stringify(result).includes('private-token'));
- const integration=await service.col('integrations').findOne({tenantId:scope.tenantId});assert.equal(vault.open(integration.token,hash(scope.tenantId,'hubspot')),'private-token');
+ assert.equal((await call('/hubspot/connect',{token:'private-token'})).status,410);
+ const result=await call('/hubspot/connect',{token:'private-token'},{'test-role':'admin'});assert.equal(result.status,410);assert.ok(!JSON.stringify(result).includes('private-token'));
 });
 test('HubSpot transport uses POST for new tickets, PATCH for existing tickets and preserves rejection status',async()=>{
  const calls=[];const contract=new HubSpotContract('test',async(url,options)=>{calls.push({url,options});return{ok:true,json:async()=>({id:'99'})};});

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.066 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.085 | Fecha: 2026-09-10
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
@@ -161,7 +161,6 @@
     } catch (error) { $('historyResult').textContent = errors[error.message] || error.message; throw error; }
     finally { $('historySubmit').disabled = false; }
   });
-  $('tokenForm').onsubmit = action(async () => { try { await api('/hubspot', 'PUT', { token: $('token').value }); $('notice').textContent = 'HubSpot conectado.'; } finally { $('token').value = ''; } });
   $('memoryForm').onsubmit = action(async () => { await api('/memory', 'PUT', { jid: $('memoryJid').value, company: $('memoryCompany').value, contact: $('memoryContact').value }); $('notice').textContent = 'Contacto y empresa guardados en Asisto para próximos borradores.'; await memories(); });
   $('refresh').onclick = action(() => refresh()); $('more').onclick = action(() => refresh(true)); $('editor').onsubmit = action(save);
   $('draftView').onchange = action(async () => { await save(); selected = null; $('editor').hidden = true; $('discarded').hidden = true; $('selection').textContent = 'Seleccioná una conversación.'; renderedList = null; await refresh(); });

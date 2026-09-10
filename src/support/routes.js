@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.072 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.085 | Fecha: 2026-09-10
 const express = require('express');
 const path = require('node:path');
 const QRCode = require('qrcode');
@@ -9,10 +9,11 @@ const { SupportService } = require('./service');
 const { asistoTranscriber } = require('./transcriber');
 const { asistoTitleAnalyzer } = require('./title_analyzer');
 const { HubSpotContract } = require('./hubspot');
+const { hubspotCredential } = require('./hubspot_config');
 const { createDeviceRouter, deviceLeaseId } = require('./devices');
 const { createExtensionRouter } = require('./extension');
 
-function createRouter({ getService, hubspotFactory = token => new HubSpotContract(token), publicOrigin, hubspotEnabled = process.env.SUPPORT_HUBSPOT_ENABLED === 'true' }) {
+function createRouter({ getService, hubspotFactory = token => new HubSpotContract(token), publicOrigin, hubspotEnabled = process.env.SUPPORT_HUBSPOT_ENABLED === 'true', env = process.env }) {
   const router = express.Router();
   router.use((req, res, next) => {
     try {
@@ -35,9 +36,9 @@ function createRouter({ getService, hubspotFactory = token => new HubSpotContrac
   const requireHubSpot = () => { if (!hubspotEnabled) fail('hubspot_deferred', 409); };
   const client = async (s, scope) => {
     requireHubSpot();
-    const row = await s.col('integrations').findOne({ tenantId: scope.tenantId });
-    if (!row) fail('hubspot_not_configured', 409);
-    return hubspotFactory(s.vault.open(row.token, hash(scope.tenantId, 'hubspot')));
+    const credential = await hubspotCredential(s, scope, env);
+    if (!credential) fail('hubspot_not_configured', 409);
+    return hubspotFactory(credential.token);
   };
   router.get('/capabilities', (req, res) => res.json({ hubspotEnabled, ...req.supportScope }));
   router.get('/settings', route((req, s, scope) => s.config(scope)));
@@ -80,15 +81,7 @@ function createRouter({ getService, hubspotFactory = token => new HubSpotContrac
     await s.col('memory').updateOne({ ...scope, jid }, { $set: { ...identity, source: 'hubspot', verifiedAt: s.now() }, $push: { events: { action: 'identity_verified', by: scope.userId, at: s.now() } } }, { upsert: true });
     return identity;
   }));
-  router.put('/hubspot', route(async (req, s, scope) => {
-    admin(req);
-    requireHubSpot();
-    const token = text(req.body.token, 1000);
-    if (!token) fail('token_required');
-    await hubspotFactory(token).metadata();
-    await s.col('integrations').updateOne({ tenantId: scope.tenantId }, { $set: { token: s.vault.seal(token, hash(scope.tenantId, 'hubspot')), updatedAt: s.now() }, $push: { events: { action: 'token_replaced', by: scope.userId, at: s.now() } } }, { upsert: true });
-    return { configured: true };
-  }));
+  router.put('/hubspot', route(async () => { requireHubSpot(); fail('hubspot_backend_managed', 410); }));
   router.get('/hubspot/metadata', route(async (req, s, scope) => (await client(s, scope)).metadata()));
   router.get('/hubspot/companies/:id/tickets', route(async (req, s, scope) => (await client(s, scope)).companyTickets(req.params.id)));
   router.use((error, req, res, next) => {

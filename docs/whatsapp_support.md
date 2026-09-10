@@ -7,7 +7,7 @@
 
 El agente de Windows se instala una vez por perfil y se inicia automáticamente al ingresar a Windows, aunque el navegador esté cerrado. La PC debe permanecer encendida y con Internet. No se ejecuta Baileys dentro del navegador. Cada instalación tiene un perfil local y un proceso independiente; cuentas distintas pueden funcionar simultáneamente en PCs distintas. Una cuenta de Asisto autoriza una PC activa a la vez.
 
-HubSpot queda para la última etapa. No se pide su token, no se llama su API ni se publican tickets con la configuración actual. La aprobación de borradores se guarda en Asisto y no autoriza futuros envíos automáticamente.
+La extensión puede publicar tickets mediante la aplicación privada de HubSpot. El token vive sólo en el backend y nunca se carga en la extensión, el navegador ni el panel de Asisto.
 
 ## Instalación y autorización
 
@@ -42,6 +42,10 @@ Los adaptadores de `src/support/baileys.js` permanecen como utilidades de compat
 ## Configuración existente
 
 Se reutilizan `MONGODB_URI`, `MONGODB_DBNAME`, `PUBLIC_BASE_URL` y `AUTH_COOKIE_SECRET`. `SUPPORT_ENABLED=true` habilita la API y el panel operativo, sin iniciar un worker en Render. `PUBLIC_BASE_URL` debe coincidir con el origen real: `https://asistobot.com.ar`. Se mantiene el inicio de sesión existente de Asisto.
+
+Para HubSpot, en Render abrir el servicio **webhooks**, entrar en **Environment** y agregar `SUPPORT_HUBSPOT_ENABLED=true`, `HUBSPOT_TENANT_ID=ALSO` y `HUBSPOT_PRIVATE_APP_TOKEN` como valor secreto. En una instalación con varias cuentas se usa `HUBSPOT_PRIVATE_APP_TOKEN_<TENANT>`, por ejemplo `HUBSPOT_PRIVATE_APP_TOKEN_ALSO`; `HUBSPOT_PORTAL_ID_<TENANT>` es opcional. No guardar estos valores en Dominio Config. La aplicación privada requiere `tickets`, `crm.objects.companies.read` y `crm.objects.contacts.read`.
+
+Antes de cualquier escritura, Asisto valida la cuenta, propiedades internas del ticket, pipelines y etapas, búsquedas de empresas y contactos y tipos de asociación. Un 401 se informa como credencial inválida y un 403 como permisos insuficientes. La publicación conserva un bloqueo por borrador y registra el usuario, tenant y resultado en auditoría.
 
 El cifrado del servidor deriva una clave AES de 32 bytes con HKDF-SHA256, salt `asisto/support/v1` y contexto `session-and-content-encryption`. Selecciona el primer secreto existente de al menos 32 caracteres entre `AUTH_COOKIE_SECRET`, `WWEB_API_KEY` y `OPENAI_API_KEY`, con IDs `asisto-auth-v1`, `asisto-wweb-v1` y `asisto-openai-v1`. Todos los candidatos disponibles permanecen en el keyring para leer registros anteriores. Esta derivación es local: no llama a la API ni consume créditos.
 
@@ -94,7 +98,7 @@ Base `/api/support/device`:
 | `POST /messages` | Token + lease; entrega mensajes del propietario autenticado |
 | `POST /work` | Token + lease; procesa un trabajo de ese usuario |
 
-La API de revisión permanece en `/api/support`. `/status` informa el agente de la PC del usuario, no un worker global. HubSpot sigue bloqueado por defecto.
+La API de revisión permanece en `/api/support`. `/status` informa el agente de la PC del usuario, no un worker global. HubSpot se habilita únicamente cuando la variable del backend está activa y existe una credencial para el tenant.
 
 ## Compilación, pruebas y despliegue
 
@@ -104,7 +108,7 @@ Ejecutar `npm test`, `npm run support:migrate` y desplegar la web normalmente. L
 
 Se prueban emparejamiento/CSRF, usuarios simultáneos, reemplazo/revocación, recuperación de lease, aislamiento de mensajes/trabajos, DPAPI en Windows y los flujos previos. Las dependencias del instalador no reportaron vulnerabilidades en la validación. La vinculación y reconexión reales con WhatsApp requieren el teléfono del usuario.
 
-Rollback: desactivar `SUPPORT_ENABLED`, revocar la PC o deshabilitar su inicio de Windows. Conservar perfiles y colecciones cifradas hasta decidir su retención. No se modifican colecciones legacy ni se publican datos en HubSpot.
+Rollback: desactivar `SUPPORT_ENABLED`, revocar la PC o deshabilitar su inicio de Windows. Para detener sólo HubSpot, desactivar `SUPPORT_HUBSPOT_ENABLED` o retirar su variable secreta. Conservar perfiles y colecciones cifradas hasta decidir su retención.
 
 La bandeja muestra por defecto borradores para revisar. El selector Mostrar permite consultar los descartados y todas las conversaciones, con contacto y fecha. Un descarte anterior explica el cambio de criterio y permite consultar los mensajes de origen, incluso para registros anteriores; no abre un formulario vacío. La evidencia tardía actualiza campos generados automáticamente sólo si no hubo intervención humana.
 
