@@ -7,9 +7,9 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@drawable/ic_asisto"
+        android:icon="@drawable/asisto_launcher"
         android:label="Asisto Escáner"
-        android:roundIcon="@drawable/ic_asisto"
+        android:roundIcon="@drawable/asisto_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.AsistoScanner"
         android:usesCleartextTraffic="false">
