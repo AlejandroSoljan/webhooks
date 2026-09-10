@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.089 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.093 | Fecha: 2026-09-10
 const express = require('express');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -178,7 +178,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     } catch (error) {
       const rejected = error.remoteStatus >= 400 && error.remoteStatus < 500;
       await s.col('drafts').updateOne({ _id: row._id, ...scope, 'hubspot.operationId': operationId }, { $set: { 'hubspot.state': rejected ? 'failed' : 'uncertain' } });
-      fail(rejected ? 'hubspot_request_failed' : 'hubspot_delivery_unconfirmed', 502);
+      fail(rejected ? (error.code || 'hubspot_request_failed') : 'hubspot_delivery_unconfirmed', 502);
     }
     const hubspot = { state: 'saved', ticketId: String(remote.id), portalId: connection.portalId || null, companyId: fields.companyId || '', contactId: fields.contactId || '', savedAt: s.now() };
     await s.col('drafts').updateOne({ _id: row._id, ...scope, 'hubspot.operationId': operationId }, { $set: { hubspot, state: 'approved' }, $inc: { revision: 1 } });

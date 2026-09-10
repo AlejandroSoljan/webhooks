@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.092 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.093 | Fecha: 2026-09-10
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, companyTimer, companyGeneration = 0;
 const errors = {
@@ -14,6 +14,7 @@ const errors = {
   hubspot_portal_changed: 'La conexión ahora pertenece a otro portal de HubSpot. Revisá el ticket en su portal original.',
   conversation_excluded: 'Esta conversación está excluida en Asisto.', extension_session_expired: 'La sesión venció. Pulsá Actualizar.',
   hubspot_insufficient_scopes: 'La aplicación de HubSpot necesita permisos de tickets y lectura de empresas y contactos.', hubspot_invalid_credentials: 'HubSpot rechazó la credencial configurada.',
+  invalid_hubspot_owner: 'Elegí el usuario responsable del ticket en HubSpot.', hubspot_ticket_schema_incomplete: 'HubSpot no devolvió propietarios, pipelines o propiedades obligatorias del ticket.',
 };
 function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }
 async function api(action, values = {}) {
@@ -128,6 +129,8 @@ async function prepareHubSpot() {
   const key = 'mapping:' + session.tenantId + ':' + connection.portalId;
   const saved = (await chrome.storage.local.get(key))[key] || {};
   const container = $('mapping'); container.replaceChildren();
+  const ownerOptions = (metadata.owners || []).map(row => ({ value: String(row.id), label: ([row.firstName, row.lastName].filter(Boolean).join(' ') || row.email || ('Usuario ' + row.id)) + (row.email ? ' · ' + row.email : '') }));
+  selectField(container, 'hubspot-owner', 'Usuario responsable en HubSpot', ownerOptions, saved.ownerId || '');
   const pipeline = selectField(container, 'pipeline', 'Pipeline de HubSpot', metadata.pipelines.map(p => ({ value: p.id, label: p.label })), saved.pipelineId);
   const stage = selectField(container, 'stage', 'Estado del ticket en HubSpot', []);
   function stages() {
@@ -167,8 +170,9 @@ $('dismiss').onclick = () => run(async () => {
 });
 $('setup').onclick = () => run(async () => { await save(); await prepareHubSpot(); });
 $('publish').onclick = () => run(async () => {
-  const mapping = { pipelineId: $('pipeline').value, stageId: $('stage').value, fields: {} };
+  const mapping = { ownerId: $('hubspot-owner').value, pipelineId: $('pipeline').value, stageId: $('stage').value, fields: {} };
   for (const field of ['category','errorType','channel']) { const property = $('property-' + field).value, value = $('value-' + field)?.value; if (!property || !value) throw new Error('hubspot_mapping_required'); mapping.fields[field] = { property, value }; }
+  if (!mapping.ownerId) throw new Error('invalid_hubspot_owner');
   if (!mapping.pipelineId || !mapping.stageId) throw new Error('invalid_pipeline_stage');
   if (!$('field-companyId').value) throw new Error('hubspot_company_required');
   await save();

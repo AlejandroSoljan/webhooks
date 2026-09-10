@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.089 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.093 | Fecha: 2026-09-10
 const { fail, text, SupportError } = require('./core');
 
 class HubSpotContract {
@@ -18,11 +18,21 @@ class HubSpotContract {
     return response.json();
   }
   async metadata() {
-    const [properties, pipelines, companies, contacts] = await Promise.all([
+    const [properties, pipelines, companies, contacts, owners] = await Promise.all([
       this.request('/crm/v3/properties/tickets'), this.request('/crm/v3/pipelines/tickets'),
       this.request('/crm/v4/associations/tickets/companies/labels'), this.request('/crm/v4/associations/tickets/contacts/labels'),
+      this.owners(),
     ]);
-    return { properties: properties.results, pipelines: pipelines.results, associationTypes: { companies: companies.results, contacts: contacts.results } };
+    return { properties: properties.results, pipelines: pipelines.results, owners, associationTypes: { companies: companies.results, contacts: contacts.results } };
+  }
+  async owners() {
+    const results = []; let after;
+    do {
+      const page = await this.request(`/crm/v3/owners?limit=500&archived=false${after ? '&after=' + encodeURIComponent(after) : ''}`);
+      results.push(...(page.results || []).filter(owner => !owner.archived)); after = page.paging?.next?.after;
+      if (after && results.length >= 2000) fail('hubspot_owner_search_incomplete', 409);
+    } while (after);
+    return results;
   }
   async identity(companyId, contactId) {
     const company = await this.request(`/crm/v3/objects/companies/${encodeURIComponent(text(companyId))}?properties=name`);
@@ -59,7 +69,7 @@ class HubSpotContract {
     const [account, metadata] = await Promise.all([this.request('/account-info/v3/details'), this.metadata()]);
     await Promise.all([this.search('companies', '', 1), this.search('contacts', '', 1)]);
     if (!Number.isSafeInteger(Number(account.portalId)) || Number(account.portalId) <= 0) fail('hubspot_account_unverified', 409);
-    if (!metadata.properties.some(property => property.name === 'subject') || !metadata.properties.some(property => property.name === 'hs_pipeline_stage') || !metadata.pipelines.some(pipeline => pipeline.stages?.length)) fail('hubspot_ticket_schema_incomplete', 409);
+    if (!metadata.properties.some(property => property.name === 'subject') || !metadata.properties.some(property => property.name === 'hs_pipeline_stage') || !metadata.properties.some(property => property.name === 'hubspot_owner_id') || !metadata.pipelines.some(pipeline => pipeline.stages?.length) || !metadata.owners?.length) fail('hubspot_ticket_schema_incomplete', 409);
     return { portalId: String(account.portalId), metadata };
   }
   prepare(fields, metadata, mapping) {
@@ -75,6 +85,9 @@ class HubSpotContract {
     };
     put('subject', fields.subject); put('content', fields.description);
     put('hs_pipeline', pipeline.id); put('hs_pipeline_stage', stage.id);
+    const owner = metadata.owners?.find(row => String(row.id) === String(mapping.ownerId || ''));
+    if (!owner) fail('invalid_hubspot_owner');
+    put('hubspot_owner_id', String(owner.id));
     put('createdate', fields.messageDate, false);
     if (stage.metadata?.isClosed === 'true' || stage.metadata?.isClosed === true) {
       if (fields.closedDate) put('closed_date', fields.closedDate, false);

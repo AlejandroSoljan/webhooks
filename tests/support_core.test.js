@@ -114,13 +114,14 @@ test('HubSpot fetch paginates, pins origin and never exposes server error detail
   await assert.rejects(() => failed.metadata(), /hubspot_rate_limited/);
 });
 test('HubSpot payload uses discovered internal IDs and writable dates only', () => {
-  const metadata = { properties: ['subject', 'content', 'hs_pipeline', 'hs_pipeline_stage', 'createdate', 'closed_date'].map(name => ({ name, modificationMetadata: { readOnlyValue: name === 'createdate' } })), pipelines: [{ id: 'p', stages: [{ id: 'new', metadata: { isClosed: 'false' } }, { id: 'done', metadata: { isClosed: 'true' } }] }], associationTypes: { companies: [{ typeId: 123, category: 'HUBSPOT_DEFINED', label: null }], contacts: [] } };
+  const metadata = { properties: ['subject', 'content', 'hs_pipeline', 'hs_pipeline_stage', 'hubspot_owner_id', 'createdate', 'closed_date'].map(name => ({ name, modificationMetadata: { readOnlyValue: name === 'createdate' } })), pipelines: [{ id: 'p', stages: [{ id: 'new', metadata: { isClosed: 'false' } }, { id: 'done', metadata: { isClosed: 'true' } }] }], owners: [{ id: 'owner-1' }], associationTypes: { companies: [{ typeId: 123, category: 'HUBSPOT_DEFINED', label: null }], contacts: [] } };
   const client = new HubSpotContract('fake'), fields = { subject: 'Manager', description: 'Detalle', messageDate: '2026-01-01T00:00:00Z', closedDate: '2026-01-02T00:00:00Z', companyId: '1' };
-  const open = client.prepare(fields, metadata, { pipelineId: 'p', stageId: 'new' });
+  const open = client.prepare(fields, metadata, { ownerId: 'owner-1', pipelineId: 'p', stageId: 'new' });
   assert.equal(open.properties.createdate, undefined); assert.equal(open.properties.closed_date, undefined);
   assert.equal(open.associations[0].types[0].associationTypeId, 123);
-  assert.equal(client.prepare(fields, metadata, { pipelineId: 'p', stageId: 'done' }).properties.closed_date, fields.closedDate);
-  assert.throws(() => client.prepare(fields, metadata, { pipelineId: 'p', stageId: 'Nuevo' }), /invalid_pipeline_stage/);
+  assert.equal(open.properties.hubspot_owner_id, 'owner-1');
+  assert.equal(client.prepare(fields, metadata, { ownerId: 'owner-1', pipelineId: 'p', stageId: 'done' }).properties.closed_date, fields.closedDate);
+  assert.throws(() => client.prepare(fields, metadata, { ownerId: 'owner-1', pipelineId: 'p', stageId: 'Nuevo' }), /invalid_pipeline_stage/);
 });
 test('local audio gateway receives bounded bytes and download uses abort signal without sender URL', async () => {
   let downloads = 0;

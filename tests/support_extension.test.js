@@ -14,8 +14,8 @@ let mongo, client, db, service, server, base, remote, writes;
 const scope = { tenantId: 'tenant-a', userId: 'user-a' }, id = 'd'.repeat(64), extensionId = 'a'.repeat(32);
 const vault = createVault({ test: Buffer.alloc(32, 7).toString('base64') }, 'test');
 const fields = { subject:'Consulta de stock', description:'Solicitud y respuesta', company:'Empresa de prueba', contact:'Contacto WhatsApp', category:'Soporte Remoto', errorType:'Consulta', channel:'WhatsApp', messageDate:'2026-09-08T12:00:00Z', proposedAction:'review' };
-const metadata = { pipelines:[{id:'p',stages:[{id:'s'}]}], properties:['subject','content','hs_pipeline','hs_pipeline_stage','category','error','channel'].map(name=>({name,type:'string'})), associationTypes:{companies:[],contacts:[]} };
-const mapping = {pipelineId:'p',stageId:'s',fields:{category:{property:'category'},errorType:{property:'error'},channel:{property:'channel'}}};
+const metadata = { pipelines:[{id:'p',stages:[{id:'s'}]}], owners:[{id:'owner-1',firstName:'Alejandro',lastName:'Soljan',email:'alejandro@example.test'}], properties:['subject','content','hs_pipeline','hs_pipeline_stage','hubspot_owner_id','category','error','channel'].map(name=>({name,type:'string'})), associationTypes:{companies:[],contacts:[]} };
+const mapping = {ownerId:'owner-1',pipelineId:'p',stageId:'s',fields:{category:{property:'category'},errorType:{property:'error'},channel:{property:'channel'}}};
 before(async()=>{
  mongo=await MongoMemoryServer.create(); client=await new MongoClient(mongo.getUri()).connect(); db=client.db('extension');
  const app=express(); app.use((req,res,next)=>{req.user={uid:req.headers['test-user']||scope.userId,tenantId:req.headers['test-tenant']||scope.tenantId,role:req.headers['test-role']||'user',allowedPages:['support']};next();});

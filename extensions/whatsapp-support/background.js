@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.092 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.093 | Fecha: 2026-09-10
 const BASE = 'https://asistobot.com.ar/api/support/extension';
 const LOCAL = 'http://127.0.0.1:17658/extension-session';
 let deviceToken = '';
