@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.086 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.087 | Fecha: 2026-09-10
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -306,6 +306,34 @@ async function buildApiMessageWindowBilling({
     { $group: { _id: '$tenantId', messages: { $sum: 1 }, last_at: { $max: '$at' } } }
   ], { allowDiskUse: true }).toArray();
   const realMessagesByTenant = new Map(realMessageRows.map(row => [String(row._id || ''), row]));
+  const realDocs = await db.collection('wa_wweb_message_log').find(realMatch, {
+    projection: {
+      tenantId: 1, numero: 1, contact: 1, direction: 1, messageId: 1,
+      messageType: 1, body: 1, hasMedia: 1, at: 1
+    }
+  }).sort({ at: -1 }).limit(Math.max(5000, safeLimit * 5)).toArray();
+  const realSeen = new Set();
+  const realItems = [];
+  for (const doc of realDocs) {
+    const messageId = String(doc?.messageId || '').trim();
+    const second = Math.floor(new Date(doc?.at || 0).getTime() / 1000);
+    const dedupeKey = messageId
+      ? ['id', doc?.tenantId || '', doc?.numero || '', messageId].join(':')
+      : ['legacy', doc?.tenantId || '', doc?.contact || '', doc?.body || '', Number.isFinite(second) ? second : ''].join(':');
+    if (realSeen.has(dedupeKey)) continue;
+    realSeen.add(dedupeKey);
+    realItems.push({
+      id: doc?._id ? String(doc._id) : '',
+      tenantId: String(doc?.tenantId || '').trim(),
+      numeroFrom: String(doc?.numero || '').trim(),
+      contact: String(doc?.contact || '').trim(),
+      messageType: String(doc?.messageType || (doc?.hasMedia ? 'media' : 'text')),
+      text: String(doc?.body || '').slice(0, 2000),
+      hasMedia: doc?.hasMedia === true,
+      at: doc?.at || null
+    });
+    if (realItems.length >= safeLimit) break;
+  }
 
   const tenantIds = Array.from(new Set(
     [...groupedRows.map(r => String(r?._id?.tenantId || '').trim()), ...realMessagesByTenant.keys()].filter(Boolean)
@@ -402,6 +430,7 @@ async function buildApiMessageWindowBilling({
       limit: safeLimit
     },
     items,
+    realItems,
     byTenant,
     totals
   };
@@ -1415,18 +1444,25 @@ function renderTokenControlPage(user) {
     <div class="card" id="apiMessagesCard">
       <div class="sectionTitle">
         <div>
-          <h2>Mensajería API · ventanas valorizadas</h2>
-          <div class="small">Cada ventana agrupa los mensajes enviados al mismo número durante el período configurado en el dominio. El importe corresponde al valor histórico guardado al crear la ventana.</div>
+          <h2>Mensajes enviados reales</h2>
+          <div class="small">Detalle deduplicado de los mensajes efectivamente enviados por WhatsApp dentro del rango seleccionado.</div>
         </div>
       </div>
       <div class="apiSummary" id="apiMessageSummary">
         <span class="chip">Cargando…</span>
       </div>
+      <div class="tableWrap" style="margin-bottom:18px">
+        <table style="min-width:800px">
+          <thead><tr><th>Dominio</th><th>Destinatario</th><th>Fecha</th><th>Tipo</th><th>Mensaje</th></tr></thead>
+          <tbody id="realMessageRows"><tr><td colspan="5" class="small">Cargando…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="sectionTitle"><div><h2>Ventanas facturables</h2><div class="small">Una confirmación también abre una ventana. Los mensajes posteriores al mismo número se agrupan mientras esa ventana siga vigente.</div></div></div>
       <div class="tableWrap">
         <table style="min-width:900px">
           <thead>
             <tr>
-              <th>Dominio</th><th>Destinatario</th><th>Período</th><th>Ventana</th><th>Mensajes</th><th>Valor ventana</th><th>Importe</th><th>Estado</th>
+              <th>Dominio</th><th>Destinatario</th><th>Período</th><th>Ventana</th><th>Mensajes en ventana</th><th>Valor ventana</th><th>Importe</th><th>Estado</th>
             </tr>
           </thead>
           <tbody id="apiMessageRows">
@@ -1449,6 +1485,7 @@ function renderTokenControlPage(user) {
   const apiMessagesCard = document.getElementById('apiMessagesCard');
   const apiMessageSummary = document.getElementById('apiMessageSummary');
   const apiMessageRows = document.getElementById('apiMessageRows');
+  const realMessageRows = document.getElementById('realMessageRows');
   const msgEl = document.getElementById('msg');
   const kpiTokens = document.getElementById('kpiTokens');
   const kpiRealCost = document.getElementById('kpiRealCost');
@@ -1754,9 +1791,17 @@ function renderTokenControlPage(user) {
     const totals=j.totals||{};
     const amounts=amountMapText(totals.byCurrency||{});
     apiMessageSummary.innerHTML=
-      '<span class="chip"><b>'+fmtInt(totals.windows||0)+'</b> ventanas</span>'+
-      '<span class="chip"><b>'+fmtInt(totals.messages||0)+'</b> mensajes enviados</span>'+
+      '<span class="chip"><b>'+fmtInt(totals.realMessages||0)+'</b> mensajes enviados</span>'+
+      '<span class="chip"><b>'+fmtInt(totals.windows||0)+'</b> ventanas facturables</span>'+
       '<span class="chip">Importe: <b>'+esc(amounts)+'</b></span>';
+
+    const realItems=Array.isArray(j.realItems)?j.realItems:[];
+    realMessageRows.innerHTML=realItems.length?realItems.map(function(it){
+      const type=it.hasMedia?'Archivo / '+String(it.messageType||'media'):String(it.messageType||'texto');
+      return '<tr><td><span class="pill">'+esc(it.tenantId||'')+'</span></td>'+
+        '<td><div class="stack"><b>'+esc(it.contact||'-')+'</b>'+(it.numeroFrom?'<span class="small">Desde: '+esc(it.numeroFrom)+'</span>':'')+'</div></td>'+
+        '<td>'+esc(fmtDate(it.at))+'</td><td>'+esc(type)+'</td><td style="white-space:pre-wrap;max-width:460px">'+esc(it.text||'(sin texto)')+'</td></tr>';
+    }).join(''):'<tr><td colspan="5" class="small">No hay mensajes enviados para los filtros seleccionados.</td></tr>';
 
     if(!items.length){
       apiMessageRows.innerHTML='<tr><td colspan="8" class="small">No hay ventanas de API Mensajes para los filtros seleccionados.</td></tr>';
@@ -1787,6 +1832,7 @@ function renderTokenControlPage(user) {
     rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">Cargando…</td></tr>';
     detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '6') + '" class="small">Cargando…</td></tr>';
     if(apiMessageRows) apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Cargando…</td></tr>';
+    if(realMessageRows) realMessageRows.innerHTML='<tr><td colspan="5" class="small">Cargando…</td></tr>';
     if(apiMessageSummary) apiMessageSummary.innerHTML='<span class="chip">Cargando…</span>';
 
     try{
@@ -1806,6 +1852,7 @@ function renderTokenControlPage(user) {
       rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">Error cargando datos.</td></tr>';
       detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '6') + '" class="small">Error cargando detalle por conversación.</td></tr>';
       if(apiMessageRows) apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Error cargando ventanas API Mensajes.</td></tr>';
+      if(realMessageRows) realMessageRows.innerHTML='<tr><td colspan="5" class="small">Error cargando mensajes enviados.</td></tr>';
     }
   }
 
