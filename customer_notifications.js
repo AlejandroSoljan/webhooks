@@ -1,3 +1,5 @@
+// Asisto | Version: 5.00.105 | Fecha: 2026-09-10
+// customer_notifications.js
 const { google } = require("googleapis");
 const { getDb } = require("./db");
 
@@ -36,7 +38,19 @@ function panelPage(tenantId) {
 
 function mountCustomerNotifications(app, { auth } = {}) {
   const requireAuth = auth?.requireAuth || ((_req, _res, next) => next());
-  app.get("/ui/notificaciones-app", requireAuth, (req, res) => { const t=tenant(req.user?.tenantId || req.query.tenant || "DEMO_FERRETERIA"); res.type("html").send(panelPage(t)); });
+  app.get("/ui/notificaciones-app", requireAuth, (req, res) => {
+    const t = tenant(req.user?.tenantId || req.query.tenant || "DEMO_FERRETERIA");
+    if (String(req.query.embed || "") === "1" || typeof auth?.appShell !== "function") {
+      return res.type("html").send(panelPage(t));
+    }
+    const frameUrl = `/ui/notificaciones-app?embed=1&tenant=${encodeURIComponent(t)}`;
+    return res.type("html").send(auth.appShell({
+      title: "Notificaciones App · Asisto",
+      user: req.user,
+      active: "notifications",
+      main: `<iframe title="Notificaciones App" src="${frameUrl}" style="display:block;width:100%;height:calc(100vh - 110px);min-height:650px;border:0;border-radius:18px;background:#eef3f7"></iframe>`,
+    }));
+  });
   app.get("/api/customer-notifications/:tenant", requireAuth, async (req,res)=>{try{const t=tenant(req.params.tenant),history=await (await getDb()).collection("customer_app_notifications").find({tenantId:t}).sort({createdAt:-1}).limit(30).project({_id:0,title:1,body:1,status:1,createdAt:1}).toArray();res.json({configured:firebaseCredentials().configured,topic:topicFor(t),history})}catch(e){res.status(500).json({error:"No se pudo cargar el panel"})}});
   app.post("/api/customer-notifications/:tenant", requireAuth, async (req,res)=>{const t=tenant(req.params.tenant),title=clean(req.body?.title,80),body=clean(req.body?.body,500),url=clean(req.body?.url,800);if(!title||!body)return res.status(400).json({error:"Completá título y mensaje."});if(url&&!/^https:\/\/asistobot\.com\.ar\//i.test(url))return res.status(400).json({error:"El enlace debe pertenecer a asistobot.com.ar."});const db=await getDb(),record={tenantId:t,topic:topicFor(t),title,body,url,status:"sending",createdAt:new Date(),createdBy:clean(req.user?.username||req.user?.email||"",120)};const inserted=await db.collection("customer_app_notifications").insertOne(record);try{const messageId=await sendTopicNotification({tenantId:t,title,body,url});await db.collection("customer_app_notifications").updateOne({_id:inserted.insertedId},{$set:{status:"sent",messageId,sentAt:new Date()}});res.json({ok:true,messageId})}catch(e){const reason=e.message==="firebase_server_credentials_missing"?"Falta configurar la credencial Firebase del servidor.":"Firebase rechazó el envío.";await db.collection("customer_app_notifications").updateOne({_id:inserted.insertedId},{$set:{status:"failed",errorCode:clean(e.message,100),updatedAt:new Date()}});res.status(503).json({error:reason})}});
 }
