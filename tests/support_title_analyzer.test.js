@@ -5,7 +5,7 @@ const { asistoTitleAnalyzer } = require('../src/support/title_analyzer');
 
 test('tenant AI returns a concise title and summary in one metered request', async () => {
   let request;
-  const analyzer = asistoTitleAnalyzer({}, {
+  const analyzer = asistoTitleAnalyzer({ OPENAI_API_KEY_TAREAS_WS: 'fixture-key' }, {
     runtimeFor: async () => ({ openaiApiKey: 'fixture-key' }),
     configFor: async () => ({ CHAT_MODEL: 'fixture-model' }),
     clientFor: () => ({ chat: { completions: { create: async input => {

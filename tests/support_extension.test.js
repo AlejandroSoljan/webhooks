@@ -79,6 +79,11 @@ test('task can wait for the tenant HubSpot connection without losing its indicat
  const row=await service.col('drafts').findOne({_id:id});assert.equal(row.hubspot.state,'awaiting_configuration');
  assert.equal((await call('/index')).data.chats[0].count,1);
 });
+test('extension searches HubSpot companies without exposing the configured credential',async()=>{
+ remote.search=async(type,query,limit)=>({results:[{id:'company-1',properties:{name:'Empresa Uno',domain:'empresa.test'}}],type,query,limit});
+ const result=await call('/hubspot/search?type=companies&q=Empresa');
+ assert.equal(result.status,200);assert.equal(result.data.results[0].id,'company-1');assert.equal(result.data.results[0].properties.name,'Empresa Uno');assert.ok(!JSON.stringify(result).includes('secret'));
+});
 test('confirmed browser creation closes the indicator without requiring the HubSpot API',async()=>{
  await service.col('integrations').deleteMany({tenantId:scope.tenantId});
  let queued=await call('/drafts/'+id+'/queue',{revision:1});
