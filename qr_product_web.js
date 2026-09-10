@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.079 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.080 | Fecha: 2026-09-10
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta el catálogo local y su API de respaldo: NO usa OpenAI.
@@ -11,7 +11,6 @@ const { ObjectId } = require('mongodb');
 const { getDb } = require('./db');
 const { resolveOpenAiApiKey } = require('./ai_key_router');
 const { createProductCatalog, sourceKey } = require('./product_catalog');
-const { startManagerCatalogScheduler } = require('./product_catalog_sync');
 const {
   getGPTReply,
   syncSessionConversation,
@@ -257,6 +256,15 @@ function replaceTemplateValue(value, variables) {
   return typeof value === 'string' ? replaceTemplateString(value, variables) : value;
 }
 
+function managerDirectLookupUrl(value, code) {
+  const url = new URL(String(value || ''));
+  const codigo = digitsOrText(code, 180);
+  const isBarcode = /^\d{8,14}$/.test(codigo);
+  url.searchParams.set('campo', isBarcode ? 'OTRO' : 'ID');
+  url.searchParams.set('valor', isBarcode ? `%codbarra:${codigo}` : codigo);
+  return url.toString();
+}
+
 async function loadQrConfig(db, tenant) {
   const doc = await db.collection('settings').findOne({ _id: `behavior:${tenant}` }) || {};
   const method = String(doc.qr_api_method || 'GET').trim().toUpperCase() === 'POST' ? 'POST' : 'GET';
@@ -308,6 +316,8 @@ async function fetchQrProductDirect(cfg, tenant, code) {
 
   const variables = { codigo, tenant };
   let url = replaceTemplateString(cfg.apiUrl, variables);
+  const managerLookup = cfg.apiMethod === 'GET' && /\/api\/Api_Articulos\/Consulta/i.test(url);
+  if (managerLookup) url = managerDirectLookupUrl(url, codigo);
   const headers = { Accept: 'application/json' };
   if (cfg.apiAuthHeader && cfg.apiAuthValue) headers[cfg.apiAuthHeader] = cfg.apiAuthValue;
 
@@ -320,7 +330,7 @@ async function fetchQrProductDirect(cfg, tenant, code) {
  };
 
   if (cfg.apiMethod === 'GET') {
-    if (!/\{\{\s*codigo\s*\}\}/i.test(cfg.apiUrl) && cfg.apiCodeParam) {
+    if (!managerLookup && !/\{\{\s*codigo\s*\}\}/i.test(cfg.apiUrl) && cfg.apiCodeParam) {
       baseRequest.params = { [cfg.apiCodeParam]: codigo };
     }
   } else {
@@ -1290,7 +1300,6 @@ function mountQrProductWeb(app) {
   if (!app || app.__asistoQrProductWebMounted) return;
   app.__asistoQrProductWebMounted = true;
 
-  startManagerCatalogScheduler({ getDb, loadConfig: loadQrConfig, normalize: normalizeQrProduct });
 
   // Índices defensivos. No bloquean el arranque si Mongo todavía no está disponible.
   setImmediate(async () => {
@@ -1632,4 +1641,4 @@ function mountQrProductWeb(app) {
   });
 }
 
-module.exports = { mountQrProductWeb, loadQrConfig, normalizeQrProduct };
+module.exports = { mountQrProductWeb, loadQrConfig, normalizeQrProduct, managerDirectLookupUrl };

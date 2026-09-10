@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.043 | Fecha: 2026-09-05
+// Asisto | Version: 5.00.080 | Fecha: 2026-09-10
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -6,6 +6,19 @@ const vm = require('vm');
 const { createRequire } = require('module');
 const path = require('path');
 const { fixture } = require('./catalog_fixture');
+const { managerDirectLookupUrl } = require('../qr_product_web');
+
+test('Manager consulta directamente código de barras sin descargar el catálogo', () => {
+  const url = new URL(managerDirectLookupUrl('https://manager.example/v300/api/Api_Articulos/Consulta?key=x&campo=ID&valor=*', '236100016'));
+  assert.equal(url.searchParams.get('campo'), 'OTRO');
+  assert.equal(url.searchParams.get('valor'), '%codbarra:236100016');
+});
+
+test('Manager conserva consulta puntual por código interno', () => {
+  const url = new URL(managerDirectLookupUrl('https://manager.example/v300/api/Api_Articulos/Consulta?key=x', 'BP-MAR0475'));
+  assert.equal(url.searchParams.get('campo'), 'ID');
+  assert.equal(url.searchParams.get('valor'), 'BP-MAR0475');
+});
 function load(api) {
   const f = fixture(), routes = new Map();
   const config = { qr_enabled: true, qr_api_url: 'https://example.invalid/products', qr_api_method: 'POST' };
