@@ -266,6 +266,19 @@ test('old generated task titles are repaired without overwriting a human title',
   assert.equal(await service.repairTitle(scope), true);
   [draft] = await service.listDrafts(scope); assert.equal(draft.fields.subject, 'Título definido por la persona'); assert.equal(calls, 2);
 });
+test('opening an edited legacy task summarizes only a description that still copies its source conversation', async () => {
+  let summary = 'Resumen inicial.';
+  service.titleAnalyzer = { run: async () => ({ subject: 'Título de IA', description: summary, model: 'fixture-ai', inputTokens: 10, outputTokens: 5, totalTokens: 15 }) };
+  let [draft] = await processMessages([message('legacy-description', 0, { text: 'Necesito revisar la configuración del servidor.' })]);
+  await service.editDraft(scope, draft._id, draft.revision, { subject: 'Título definido por el usuario', description: draft.source.description, category: 'Soporte Servidor Virtual' });
+  summary = 'El cliente solicita revisar la configuración del servidor. Queda pendiente realizar el diagnóstico.';
+  assert.equal(await service.summarizeDraft(scope, draft._id), true);
+  [draft] = await service.listDrafts(scope);
+  assert.equal(draft.fields.subject, 'Título definido por el usuario');
+  assert.equal(draft.fields.category, 'Soporte Servidor Virtual');
+  assert.equal(draft.fields.description, summary);
+  assert.match(draft.source.description, /Necesito revisar/);
+});
 
 test('discarded conversations have evidence, a separate scoped view, and populate fields when later history reveals a task', async () => {
   const [generated] = await processMessages([message('greeting', 0, { text: 'Buen día' })]);

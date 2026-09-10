@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.080 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.084 | Fecha: 2026-09-09
 const express = require('express');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -88,6 +88,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     return { saved: writes.length };
   }));
   router.get('/drafts/:id', route(async (req, s, scope) => {
+    try { await s.summarizeDraft(scope, req.params.id); } catch {}
     const row = await rowFor(s, scope, req.params.id), fields = s.vault.open(row.fields, row._id);
     if (!fields.contact) fields.contact = (await s.col('contacts').findOne({ _id: scopedId(scope, 'contact', row.jid), ...scope }))?.name || '';
     return { id: row._id, jid: row.jid, revision: row.revision, fields, source: s.vault.open(row.source, row._id + ':source'), sourceChanged: !!row.sourceChanged, reconciliationRequired: !!row.reconciliationRequired, hubspot: row.hubspot || null, mode: row.mode };
