@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.077 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.094 | Fecha: 2026-09-10
 // wweb_phone_access.js
 // Acceso web simple para PowerBuilder WebControl.
 // Muestra QR si la sesión está en estado QR, o estado de sesión si ya está conectada.
@@ -357,6 +357,8 @@ function htmlPage({ lock, policy, numero, tenantId, admin, refreshSeconds, route
   const rawState = normalizeState(lock?.state);
   const state = effectiveSessionState(lock, policy);
   const isStarting = state === "iniciando";
+  const isDisabled = state === "disabled";
+  const isBlocked = state === "paused";
   const hasQr = !!String(lock?.lastQrDataUrl || "").trim();
   const showQr = rawState === "qr" && hasQr;
   const pc = lock?.host || lock?.hostname || lock?.pcName || "";
