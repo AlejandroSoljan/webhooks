@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.095 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.096 | Fecha: 2026-09-10
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, companyTimer, companyGeneration = 0;
 const errors = {
@@ -14,6 +14,14 @@ const errors = {
   hubspot_portal_changed: 'La conexión ahora pertenece a otro portal de HubSpot. Revisá el ticket en su portal original.',
   conversation_excluded: 'Esta conversación está excluida en Asisto.', extension_session_expired: 'La sesión venció. Pulsá Actualizar.',
   hubspot_insufficient_scopes: 'La aplicación de HubSpot necesita permisos de tickets y lectura de empresas y contactos.', hubspot_invalid_credentials: 'HubSpot rechazó la credencial configurada.',
+  hubspot_ticket_properties_forbidden: 'HubSpot rechazó la lectura de propiedades de tickets. Revisá el permiso tickets del token cargado en Render.',
+  hubspot_ticket_pipelines_forbidden: 'HubSpot rechazó la lectura de pipelines de tickets. Revisá el permiso tickets del token cargado en Render.',
+  hubspot_owners_forbidden: 'HubSpot rechazó la lista de responsables. Habilitá la lectura de propietarios/usuarios para la aplicación privada.',
+  hubspot_company_associations_forbidden: 'HubSpot rechazó la asociación de tickets con empresas.',
+  hubspot_contact_associations_forbidden: 'HubSpot rechazó la asociación de tickets con contactos.',
+  hubspot_companies_forbidden: 'HubSpot rechazó la lectura de empresas para el token cargado en Render.',
+  hubspot_contacts_forbidden: 'HubSpot rechazó la lectura de contactos para el token cargado en Render.',
+  hubspot_tickets_forbidden: 'HubSpot rechazó la creación del ticket para el token cargado en Render.',
   invalid_hubspot_owner: 'Elegí el usuario responsable del ticket en HubSpot.', hubspot_ticket_schema_incomplete: 'HubSpot no devolvió propietarios, pipelines o propiedades obligatorias del ticket.',
 };
 function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }

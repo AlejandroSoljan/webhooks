@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.095 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.096 | Fecha: 2026-09-10
 const { fail, text, SupportError } = require('./core');
 
 class HubSpotContract {
@@ -11,18 +11,29 @@ class HubSpotContract {
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
     if (!response.ok) {
-      const code = response.status === 401 ? 'hubspot_invalid_credentials' : response.status === 403 ? 'hubspot_insufficient_scopes' : response.status === 429 ? 'hubspot_rate_limited' : 'hubspot_request_failed';
+      const forbidden = [
+        [/^\/crm\/v3\/properties\/tickets/, 'hubspot_ticket_properties_forbidden'],
+        [/^\/crm\/v3\/pipelines\/tickets/, 'hubspot_ticket_pipelines_forbidden'],
+        [/^\/crm\/v3\/owners/, 'hubspot_owners_forbidden'],
+        [/^\/crm\/v4\/associations\/tickets\/companies/, 'hubspot_company_associations_forbidden'],
+        [/^\/crm\/v4\/associations\/tickets\/contacts/, 'hubspot_contact_associations_forbidden'],
+        [/^\/crm\/v3\/objects\/companies/, 'hubspot_companies_forbidden'],
+        [/^\/crm\/v3\/objects\/contacts/, 'hubspot_contacts_forbidden'],
+        [/^\/crm\/v3\/objects\/tickets/, 'hubspot_tickets_forbidden'],
+      ].find(([pattern]) => pattern.test(path))?.[1] || 'hubspot_insufficient_scopes';
+      const code = response.status === 401 ? 'hubspot_invalid_credentials' : response.status === 403 ? forbidden : response.status === 429 ? 'hubspot_rate_limited' : 'hubspot_request_failed';
       const error = new SupportError(code, response.status === 401 || response.status === 403 ? 409 : 502);
       error.remoteStatus = response.status; throw error;
     }
     return response.json();
   }
   async metadata() {
-    const [properties, pipelines, companies, contacts, owners] = await Promise.all([
-      this.request('/crm/v3/properties/tickets'), this.request('/crm/v3/pipelines/tickets'),
-      this.request('/crm/v4/associations/tickets/companies/labels'), this.request('/crm/v4/associations/tickets/contacts/labels'),
-      this.owners(),
-    ]);
+    // Keep this sequential so a rejected token reports the exact failing HubSpot capability.
+    const properties = await this.request('/crm/v3/properties/tickets');
+    const pipelines = await this.request('/crm/v3/pipelines/tickets');
+    const owners = await this.owners();
+    const companies = await this.request('/crm/v4/associations/tickets/companies/labels');
+    const contacts = await this.request('/crm/v4/associations/tickets/contacts/labels');
     return { properties: properties.results, pipelines: pipelines.results, owners, associationTypes: { companies: companies.results, contacts: contacts.results } };
   }
   async owners() {

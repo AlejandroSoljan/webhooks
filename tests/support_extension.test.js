@@ -133,7 +133,7 @@ test('HubSpot transport uses POST for new tickets, PATCH for existing tickets an
  const calls=[];const contract=new HubSpotContract('test',async(url,options)=>{calls.push({url,options});return{ok:true,json:async()=>({id:'99'})};});
  await contract.save({properties:{subject:'A'},associations:[]});await contract.save({properties:{subject:'B'},associations:[]},'99');
  assert.equal(calls[0].options.method,'POST');assert.equal(calls[1].options.method,'PATCH');assert.equal(calls[1].url,'https://api.hubapi.com/crm/v3/objects/tickets/99');assert.equal(JSON.parse(calls[1].options.body).associations,undefined);
- await assert.rejects(()=>new HubSpotContract('test',async()=>({ok:false,status:403})).save({properties:{}}),e=>e.remoteStatus===403);
+ await assert.rejects(()=>new HubSpotContract('test',async()=>({ok:false,status:403})).save({properties:{}}),e=>e.remoteStatus===403&&e.code==='hubspot_tickets_forbidden');
 });
 test('HubSpot preflight does not require account-info or an unused contact search',async()=>{
  const calls=[];
