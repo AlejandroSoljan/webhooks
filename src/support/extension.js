@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.100 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.106 | Fecha: 2026-09-10
 const express = require('express');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -179,6 +179,17 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     // Keep the WhatsApp labels visible even when CRM associations have not been chosen.
     payload.properties.content = ['Contacto de WhatsApp: ' + (fields.contact || ''), 'Empresa: ' + (fields.company || ''), '', fields.description].join('\n');
     if (row.hubspot?.ticketId && (row.hubspot.companyId !== (fields.companyId || '') || row.hubspot.contactId !== (fields.contactId || ''))) fail('hubspot_associations_changed', 409);
+    if (!row.hubspot?.ticketId) {
+      const existing = await client.findSimilarOpenTicket(fields, checked.metadata, fields.companyId);
+      if (existing?.id) {
+        const hubspot = { state: 'saved', method: 'matched_existing', matched: true, ticketId: String(existing.id), portalId: connection.portalId || null, companyId: fields.companyId || '', contactId: fields.contactId || '', savedAt: s.now() };
+        const linked = await s.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision, state: { $ne: 'merged' }, 'hubspot.ticketId': { $exists: false } }, { $set: { hubspot, state: 'approved', updatedAt: s.now() }, $inc: { revision: 1 }, $push: { events: { action: 'hubspot_existing_matched', by: scope.userId, at: s.now() } } });
+        if (!linked.matchedCount) fail('revision_conflict', 409);
+        await s.col('settings').updateOne(scope, { $set: { hubspotOwnerId: String(mapping.ownerId), updatedAt: s.now() } }, { upsert: true });
+        await s.audit(scope, 'hubspot_existing_matched', row._id);
+        return { ...hubspot, revision: row.revision + 1 };
+      }
+    }
     const operationId = crypto.randomUUID();
     if (!row.hubspot?.ticketId) payload.objectWriteTraceId = operationId;
     const lock = await s.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision, sourceChanged: { $ne: true }, reconciliationRequired: { $ne: true }, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { hubspot: { ...row.hubspot, state: 'sending', operationId, startedAt: s.now() } } });

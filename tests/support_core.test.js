@@ -123,6 +123,20 @@ test('HubSpot payload uses discovered internal IDs and writable dates only', () 
   assert.equal(client.prepare(fields, metadata, { ownerId: 'owner-1', pipelineId: 'p', stageId: 'done' }).properties.closed_date, fields.closedDate);
   assert.throws(() => client.prepare(fields, metadata, { ownerId: 'owner-1', pipelineId: 'p', stageId: 'Nuevo' }), /invalid_pipeline_stage/);
 });
+test('HubSpot duplicate detection matches only similar open tickets for the same company', async () => {
+ const client = new HubSpotContract('fake');
+ client.companyTickets = async companyId => {
+  assert.equal(companyId, 'company-1');
+  return [
+   { id: 'closed', properties: { subject: 'Actualizar versión de Windows del sistema', content: 'Verificar versión instalada', hs_pipeline_stage: 'done' } },
+   { id: 'different', properties: { subject: 'Configurar impresora fiscal', content: 'No imprime comprobantes', hs_pipeline_stage: 'open' } },
+   { id: 'similar', properties: { subject: 'Verificar versión de Windows para actualizar sistema', content: 'Confirmar la versión instalada y definir la actualización', hs_pipeline_stage: 'open' } },
+  ];
+ };
+ const metadata = { pipelines: [{ stages: [{ id: 'open', metadata: { isClosed: false } }, { id: 'done', metadata: { isClosed: true } }] }] };
+ const match = await client.findSimilarOpenTicket({ subject: 'Verificar versión de Windows para actualizar el sistema', description: 'Se debe confirmar la versión instalada antes de actualizar.' }, metadata, 'company-1');
+ assert.equal(match.id, 'similar');
+});
 test('local audio gateway receives bounded bytes and download uses abort signal without sender URL', async () => {
   let downloads = 0;
   const gateway = localTranscriber({ SUPPORT_TRANSCRIBER_URL: 'http://127.0.0.1:8090/transcribe', SUPPORT_TRANSCRIBER_MODEL: 'fixture' }, {

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.100 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.106 | Fecha: 2026-09-10
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, companyTimer, companyGeneration = 0;
 const errors = {
@@ -192,7 +192,7 @@ async function publishCurrent() {
   await save();
   const result = await api('PUBLISH', { id: current.id, revision: current.revision, mapping }); current.revision = result.revision; current.hubspot = result;
   await chrome.storage.local.set({ ['mapping:' + session.tenantId + ':' + session.userId + ':' + connection.portalId]: mapping });
-  notice('Ticket ' + result.ticketId + ' guardado en HubSpot.'); $('taskState').textContent = 'Ticket ' + result.ticketId;
+  notice(result.matched ? 'Ya existía un ticket abierto similar. Conversación vinculada al ticket ' + result.ticketId + '.' : 'Ticket ' + result.ticketId + ' guardado en HubSpot.'); $('taskState').textContent = 'Ticket ' + result.ticketId;
   $('ticket').replaceChildren(); if (result.portalId) { const link = document.createElement('a'); link.href = 'https://app.hubspot.com/contacts/' + encodeURIComponent(result.portalId) + '/record/0-5/' + encodeURIComponent(result.ticketId); link.textContent = 'Abrir ticket en HubSpot'; link.target = '_blank'; link.rel = 'noopener noreferrer'; $('ticket').append(link); }
   setTimeout(() => run(refresh), 800);
 }
