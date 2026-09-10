@@ -1,10 +1,11 @@
-// Asisto | Version: 5.00.064 | Fecha: 2026-09-04
+// Asisto | Version: 5.00.078 | Fecha: 2026-09-10
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
 // Incluye logs completos de OpenAI (payload y response).
 
 const axios = require("axios");
 const OpenAI = require("openai");
+const { requireOpenAiApiKey } = require("./ai_key_router");
 let toFile = null;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
@@ -1083,7 +1084,7 @@ async function downloadMediaBuffer(mediaUrl, opts = {}) {
 }
 
 // ================== STT (externo -> fallback OpenAI) ==================
-async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApiKey, tenantId, transcribeModel, conversationId, waId, channelType, usageTraceId, transcriptionTimeoutMs } = {}) {
+async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApiKey, aiKeyKind, tenantId, transcribeModel, conversationId, waId, channelType, usageTraceId, transcriptionTimeoutMs } = {}) {
   const prefer = TRANSCRIBE_API_URL;
   if (prefer && publicAudioUrl) {
     try {
@@ -1116,7 +1117,8 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
     }
   }
   try {
-    const client = getOpenAIClient(openaiApiKey);
+    const routedApiKey = requireOpenAiApiKey(aiKeyKind || (String(channelType || '').toLowerCase() === 'whatsapp_tasks' ? 'tareas_ws' : 'pedidos'));
+    const client = getOpenAIClient(routedApiKey);
     if (!client) return { text: "" };
     let buf = buffer, mt = mime;
     if (!buf && publicAudioUrl) {
@@ -1178,7 +1180,7 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
  * @param {string} params.purpose "payment-proof" | "generic"
  * @returns {{json: object|null, userText: string}}
  */
-async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic", openaiApiKey, tenantId, visionModel, visionMaxTokens } = {}) {
+async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic", openaiApiKey, aiKeyKind, tenantId, visionModel, visionMaxTokens, channelType } = {}) {
   
   try {
     if (!publicImageUrl) {
@@ -1197,7 +1199,8 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
       ? "Analizá esta imagen que probablemente sea un comprobante de pago o transferencia. Extraé los datos visibles."
       : "Describí brevemente la imagen y extraé cualquier texto visible.";
 
-    const client = getOpenAIClient(openaiApiKey);
+    const routedApiKey = requireOpenAiApiKey(aiKeyKind || (String(channelType || '').toLowerCase() === 'qr_web' ? 'supermercado_digital' : 'pedidos'));
+    const client = getOpenAIClient(routedApiKey);
     if (!client) throw new Error("openai_not_configured");
 
     const tenantAiCfg = await loadTenantAiConfigFromMongo(tenantId);
@@ -2393,7 +2396,8 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
   }
 
   try {
-    const apiKey = String(opts.openaiApiKey || OPENAI_API_KEY || "").trim();
+    const aiKeyKind = String(opts.aiKeyKind || (String(opts.channelType || '').toLowerCase() === 'qr_web' ? 'supermercado_digital' : botMode)).trim();
+    const apiKey = requireOpenAiApiKey(aiKeyKind);
     const tenantAiCfg = await loadTenantAiConfigFromMongo(tenantId);
     const model = String(
       opts.chatModel ||

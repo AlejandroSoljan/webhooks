@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.078 | Fecha: 2026-09-10
 // bot_test_panel.js
 // Simulador interno del bot Asisto.
 // - Permite probar conversaciones sin WhatsApp, QR ni teléfono conectado.
@@ -9,6 +9,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const { getDb } = require('./db');
+const { resolveOpenAiApiKey } = require('./ai_key_router');
 const {
   getGPTReply,
   loadBehaviorConfigFromMongo,
@@ -106,7 +107,7 @@ async function resolveTestRuntime(db, tenant) {
     || null;
 
   return {
-    apiKey: String(channel?.openaiApiKey || process.env.OPENAI_API_KEY || '').trim(),
+    apiKey: null,
   };
 }
 
@@ -263,15 +264,16 @@ function mountBotTestPanel(app, { auth } = {}) {
         loadBehaviorConfigFromMongo(tenant),
         resolveTestRuntime(db, tenant),
       ]);
-      if (!runtime.apiKey) {
-        return res.status(409).json({ ok: false, error: 'bot_not_available', detail: 'El bot no está disponible para realizar la prueba en este momento.' });
-      }
-
       const botMode = normalizeBotMode(behavior?.bot_mode || 'pedidos');
+      runtime.apiKey = resolveOpenAiApiKey(botMode);
+      if (!runtime.apiKey) {
+        return res.status(409).json({ ok: false, error: 'bot_not_available', detail: 'Falta configurar la clave OpenAI específica para este tipo de IA.' });
+      }
       const usageTraceId = `bot-test:${tenant}:${cleanString(req?.user?.uid || 'user', 80)}:${sessionId}:${Date.now()}`;
       const opts = {
         tenantId: tenant,
         openaiApiKey: runtime.apiKey,
+        aiKeyKind: botMode,
         waId: `BOT_TEST:${sessionId}`,
         channelType: 'bot_test',
         usageTraceId,

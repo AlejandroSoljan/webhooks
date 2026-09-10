@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.061 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.078 | Fecha: 2026-09-10
 // conversation_followup_panel.js
 // Seguimiento de conversaciones del bot en modo "conversacional".
 // - Vista principal simple en tabla.
@@ -10,6 +10,7 @@
 const { ObjectId } = require('mongodb');
 const OpenAI = require('openai');
 const { getDb } = require('./db');
+const { resolveOpenAiApiKey } = require('./ai_key_router');
 
 const DEFAULT_TENANT_ID = String(process.env.TENANT_ID || 'default').trim() || 'default';
 const SETTINGS_PREFIX = 'conversation_followup:';
@@ -354,7 +355,7 @@ async function resolveConversationAiRuntime(db, tenant, conv) {
   let channel = channels.find(ch => candidates.includes(String(ch?.phoneNumberId || '').trim()) || candidates.includes(String(ch?.displayPhoneNumber || '').trim()));
   if (!channel) channel = channels.find(ch => ch?.isDefault === true && String(ch?.openaiApiKey || '').trim());
   if (!channel) channel = channels.find(ch => String(ch?.openaiApiKey || '').trim());
-  const apiKey = String(channel?.openaiApiKey || process.env.OPENAI_API_KEY || '').trim();
+  const apiKey = resolveOpenAiApiKey('conversacional');
   return { apiKey, model: aiCfg.model, channel };
 }
 

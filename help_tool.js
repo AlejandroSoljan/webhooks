@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.020 | Fecha: 2026-09-03
+// Asisto | Version: 5.00.078 | Fecha: 2026-09-10
 // help_tool.js
 // Herramienta de Ayuda contextual de Asisto.
 // - Fuente: Google Sheets (privado con Service Account o CSV público/directo).
@@ -13,6 +13,7 @@ const OpenAI = require('openai');
 const { getDb } = require('./db');
 const { getRuntimeByTenantId } = require('./tenant_runtime');
 const { recordTokenUsage, parseTokenUsagePair } = require('./logic');
+const { resolveOpenAiApiKey } = require('./ai_key_router');
 
 const DEFAULT_AGENT = 'MANAGER';
 const DEFAULT_SOURCE_URL = 'https://docs.google.com/spreadsheets/d/1dXa_8JjpgonKzup5J2aYdgGPudxcdy7eY1ITTIl5-Z8/edit?gid=0#gid=0';
@@ -940,8 +941,7 @@ async function ensureIndexes(db) {
 }
 
 async function getOpenAiKey(domain) {
-  const runtime = await getRuntimeByTenantId(domain).catch(() => null);
-  return clean(runtime?.openaiApiKey || process.env.OPENAI_API_KEY || '', 5000);
+  return clean(resolveOpenAiApiKey('ayuda'), 5000);
 }
 
 function getOpenAiClient(apiKey) {

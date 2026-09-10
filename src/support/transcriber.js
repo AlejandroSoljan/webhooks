@@ -1,6 +1,7 @@
-// Asisto | Version: 5.00.064 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.078 | Fecha: 2026-09-10
 const { fail } = require('./core');
 const { downloadAudio, localTranscriber } = require('./baileys');
+const { resolveOpenAiApiKey } = require('../../ai_key_router');
 
 function asistoTranscriber(env = process.env, {
   download = downloadAudio,
@@ -11,12 +12,12 @@ function asistoTranscriber(env = process.env, {
   return { model: 'asisto-transcription', async run(raw, audio, context) {
     if (!context?.tenantId || !context.userId) fail('authentication_required', 401);
     const runtime = await runtimeFor(context.tenantId);
-    const openaiApiKey = runtime?.openaiApiKey || env.OPENAI_API_KEY;
+    const openaiApiKey = resolveOpenAiApiKey('tareas_ws', env);
     if (!openaiApiKey) fail('transcription_provider_required', 422);
     const buffer = await download(raw, audio);
     const result = await transcribe({ buffer, mime: audio.mimetype, tenantId: context.tenantId,
       openaiApiKey, conversationId: context.conversationId, waId: context.jid,
-      channelType: 'whatsapp', usageTraceId: context.messageId, transcriptionTimeoutMs: 60000 });
+      channelType: 'whatsapp_tasks', aiKeyKind: 'tareas_ws', usageTraceId: context.messageId, transcriptionTimeoutMs: 60000 });
     if (typeof result?.text !== 'string' || !result.text.trim()) fail('transcription_failed', 502);
     return { text: result.text, model: result.model || 'asisto-transcription', costUsd: null };
   } };

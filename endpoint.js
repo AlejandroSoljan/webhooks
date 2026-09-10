@@ -10434,7 +10434,8 @@ const channelOpts = {
 
 const aiOpts = {
   tenantId: tenant,
-  openaiApiKey: runtime?.openaiApiKey || null
+  openaiApiKey: runtime?.openaiApiKey || null,
+  aiKeyKind: effectiveBotMode
 };
 
     if (!msg) {
