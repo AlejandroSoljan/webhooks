@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.086 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.105 | Fecha: 2026-09-10
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -5997,6 +5997,7 @@ module.exports = {
   requireWwebAccess,
   mountAuthRoutes,
   protectRoutes,
+  appShell,
   resolveTenantId,
   hashPassword,
   verifyPassword,

@@ -1,5 +1,12 @@
-// Asisto | Version: 5.00.099 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.106 | Fecha: 2026-09-10
 const { fail, text, SupportError } = require('./core');
+const DUPLICATE_STOP_WORDS = new Set(['para','como','esta','este','esto','desde','hasta','sobre','tiene','tener','porque','pero','donde','cuando','ticket','whatsapp','contacto','empresa']);
+const duplicateWords = value => new Set(String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().match(/[a-z0-9]{4,}/g)?.filter(word => !DUPLICATE_STOP_WORDS.has(word)) || []);
+const containment = (left, right) => {
+  if (!left.size || !right.size) return { score: 0, common: 0 };
+  const common = [...left].filter(word => right.has(word)).length;
+  return { score: common / Math.min(left.size, right.size), common };
+};
 
 class HubSpotContract {
   constructor(token, fetchImpl = fetch) { this.token = token; this.fetch = fetchImpl; }
@@ -76,6 +83,18 @@ class HubSpotContract {
   async save(payload, ticketId) {
     if (ticketId) return this.request(`/crm/v3/objects/tickets/${encodeURIComponent(text(ticketId))}`, { properties: payload.properties }, 'PATCH');
     return this.request('/crm/v3/objects/tickets', payload);
+  }
+  async findSimilarOpenTicket(fields, metadata, companyId) {
+    if (!companyId) return null;
+    const closedStages = new Set(metadata.pipelines.flatMap(pipeline => pipeline.stages || []).filter(stage => stage.metadata?.isClosed === true || stage.metadata?.isClosed === 'true').map(stage => String(stage.id)));
+    const subject = duplicateWords(fields.subject), complete = duplicateWords(`${fields.subject || ''} ${fields.description || ''}`);
+    const tickets = await this.companyTickets(companyId);
+    const matches = tickets.filter(ticket => !ticket.properties?.closed_date && !closedStages.has(String(ticket.properties?.hs_pipeline_stage || ''))).map(ticket => {
+      const titleMatch = containment(subject, duplicateWords(ticket.properties?.subject));
+      const fullMatch = containment(complete, duplicateWords(`${ticket.properties?.subject || ''} ${ticket.properties?.content || ''}`));
+      return { ticket, titleMatch, fullMatch, score: Math.max(titleMatch.score, fullMatch.score) };
+    }).filter(row => (row.titleMatch.common >= 2 && row.titleMatch.score >= 0.6) || (row.fullMatch.common >= 4 && row.fullMatch.score >= 0.55)).sort((a, b) => b.score - a.score);
+    return matches[0]?.ticket || null;
   }
   async search(type, query = '', limit = 10) {
     if (!['companies', 'contacts'].includes(type)) fail('invalid_hubspot_object');

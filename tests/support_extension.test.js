@@ -25,7 +25,7 @@ before(async()=>{
 after(async()=>{await new Promise(resolve=>server.close(resolve));await client.close();await mongo.stop();});
 beforeEach(async()=>{
  await db.dropDatabase();service=new SupportService(db,vault);writes=[];
- remote={metadata:async()=>metadata,preflight:async()=>({portalId:'123',metadata}),search:async()=>({results:[]}),request:async()=>({portalId:123}),prepare:(f,m,p)=>new HubSpotContract('unused').prepare(f,m,p),save:async(payload,ticketId)=>{writes.push({payload,ticketId});return{id:ticketId||'99'};}};
+ remote={metadata:async()=>metadata,preflight:async()=>({portalId:'123',metadata}),search:async()=>({results:[]}),request:async()=>({portalId:123}),findSimilarOpenTicket:async()=>null,prepare:(f,m,p)=>new HubSpotContract('unused').prepare(f,m,p),save:async(payload,ticketId)=>{writes.push({payload,ticketId});return{id:ticketId||'99'};}};
  await service.col('integrations').insertOne({tenantId:scope.tenantId,token:vault.seal('secret',hash(scope.tenantId,'hubspot')),portalId:'123'});
  await service.col('drafts').insertOne({_id:id,...scope,jid:'123@lid',revision:1,mode:'approval',state:'pending',messageIds:[],fields:vault.seal(fields,id),source:vault.seal(fields,id+':source')});
 });
@@ -113,6 +113,13 @@ test('publish creates once and subsequent explicit saves update the same HubSpot
  assert.equal((await call('/drafts/'+id+'/publish',{revision:1,mapping})).status,409);
  result=await call('/drafts/'+id+'/save',{revision:2,fields:{description:'Ampliado'}});assert.equal(result.status,200);
  result=await call('/drafts/'+id+'/publish',{revision:3,mapping});assert.equal(result.status,200);assert.equal(writes.length,2);assert.equal(writes[0].ticketId,undefined);assert.equal(writes[1].ticketId,'99');assert.match(writes[1].payload.properties.content,/Ampliado/);assert.match(writes[1].payload.properties.content,/Contacto WhatsApp/);
+});
+test('a similar open company ticket is linked without creating a duplicate',async()=>{
+ remote.findSimilarOpenTicket=async()=>({id:'existing-42',properties:{subject:'Consulta de stock'}});
+ const result=await call('/drafts/'+id+'/publish',{revision:1,mapping});
+ assert.equal(result.status,200);assert.equal(result.data.ticketId,'existing-42');assert.equal(result.data.matched,true);assert.equal(writes.length,0);
+ assert.equal((await call('/index')).data.chats.length,0);
+ const row=await service.col('drafts').findOne({_id:id});assert.equal(row.hubspot.method,'matched_existing');
 });
 test('in-flight delivery blocks duplicate publishing and editing; uncertain outcomes cannot create again',async()=>{
  let release, started;const entered=new Promise(resolve=>started=resolve);remote.save=async()=>{started();await new Promise(resolve=>release=resolve);throw Error('network_timeout');};

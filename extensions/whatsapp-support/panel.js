@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.099 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.106 | Fecha: 2026-09-10
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, companyTimer, companyGeneration = 0;
 const errors = {
@@ -141,15 +141,17 @@ async function prepareHubSpot() {
   const saved = stored[key] || stored[legacyKey] || {};
   const container = $('mapping'); container.replaceChildren();
   const ownerOptions = (metadata.owners || []).map(row => ({ value: String(row.id), label: ([row.firstName, row.lastName].filter(Boolean).join(' ') || row.email || ('Usuario ' + row.id)) + (row.email ? ' · ' + row.email : '') }));
-  selectField(container, 'hubspot-owner', 'Usuario responsable en HubSpot', ownerOptions, connection.preferredOwnerId || saved.ownerId || '');
-  const pipeline = selectField(container, 'pipeline', 'Pipeline de HubSpot', metadata.pipelines.map(p => ({ value: p.id, label: p.label })), saved.pipelineId);
+  selectField(container, 'hubspot-owner', 'Usuario responsable en HubSpot', ownerOptions, connection.preferredOwnerId || saved.ownerId || (ownerOptions.length === 1 ? ownerOptions[0].value : ''));
+  const pipelineOptions = metadata.pipelines.map(p => ({ value: p.id, label: p.label }));
+  const assistance = pipelineOptions.filter(p => norm(p.label) === norm('Pipeline de asistencia'));
+  const pipeline = selectField(container, 'pipeline', 'Pipeline de HubSpot', pipelineOptions, saved.pipelineId || (assistance.length === 1 ? assistance[0].value : pipelineOptions.length === 1 ? pipelineOptions[0].value : ''));
   const stage = selectField(container, 'stage', 'Estado del ticket en HubSpot', []);
   function stages() {
     stage.replaceChildren(); option(stage, '', 'Seleccionar…');
     const options = metadata.pipelines.find(p => p.id === pipeline.value)?.stages || [];
     options.forEach(row => option(stage, row.id, row.label));
     const matches = options.filter(row => norm(row.label) === norm(current.fields.status));
-    stage.value = matches.length === 1 ? matches[0].id : '';
+    stage.value = options.some(row => row.id === saved.stageId) ? saved.stageId : matches.length === 1 ? matches[0].id : '';
   }
   pipeline.onchange = stages; stages();
   for (const [field, title] of [['category','Categoría'],['errorType','Error tipo'],['channel','Vía de contacto']]) {
@@ -169,7 +171,8 @@ async function prepareHubSpot() {
     }
     property.onchange = values; values();
   }
-  $('hubspot').hidden = false; $('ticket').replaceChildren(); notice('Revisá el pipeline, el estado y las categorías antes de guardar.');
+  $('hubspot').hidden = false; $('ticket').replaceChildren(); $('hubspot').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  notice('Completá cualquier selección pendiente y pulsá Crear ticket en HubSpot.');
 }
 $('refresh').onclick = () => run(refresh);
 $('contacts').onchange = () => run(() => selectContact($('contacts').value));
@@ -179,8 +182,8 @@ $('dismiss').onclick = () => run(async () => {
   notice('Tarea desestimada.');
   await refresh();
 });
-$('setup').onclick = () => run(async () => { await save(); await prepareHubSpot(); });
-$('publish').onclick = () => run(async () => {
+function mappingReady() { return ['hubspot-owner','pipeline','stage','property-category','value-category','property-errorType','value-errorType','property-channel','value-channel'].every(id => $(id)?.value); }
+async function publishCurrent() {
   const mapping = { ownerId: $('hubspot-owner').value, pipelineId: $('pipeline').value, stageId: $('stage').value, fields: {} };
   for (const field of ['category','errorType','channel']) { const property = $('property-' + field).value, value = $('value-' + field)?.value; if (!property || !value) throw new Error('hubspot_mapping_required'); mapping.fields[field] = { property, value }; }
   if (!mapping.ownerId) throw new Error('invalid_hubspot_owner');
@@ -189,10 +192,12 @@ $('publish').onclick = () => run(async () => {
   await save();
   const result = await api('PUBLISH', { id: current.id, revision: current.revision, mapping }); current.revision = result.revision; current.hubspot = result;
   await chrome.storage.local.set({ ['mapping:' + session.tenantId + ':' + session.userId + ':' + connection.portalId]: mapping });
-  notice('Ticket ' + result.ticketId + ' guardado en HubSpot.'); $('taskState').textContent = 'Ticket ' + result.ticketId;
+  notice(result.matched ? 'Ya existía un ticket abierto similar. Conversación vinculada al ticket ' + result.ticketId + '.' : 'Ticket ' + result.ticketId + ' guardado en HubSpot.'); $('taskState').textContent = 'Ticket ' + result.ticketId;
   $('ticket').replaceChildren(); if (result.portalId) { const link = document.createElement('a'); link.href = 'https://app.hubspot.com/contacts/' + encodeURIComponent(result.portalId) + '/record/0-5/' + encodeURIComponent(result.ticketId); link.textContent = 'Abrir ticket en HubSpot'; link.target = '_blank'; link.rel = 'noopener noreferrer'; $('ticket').append(link); }
   setTimeout(() => run(refresh), 800);
-});
+}
+$('setup').onclick = () => run(async () => { await save(); await prepareHubSpot(); if (connection?.configured && mappingReady()) await publishCurrent(); });
+$('publish').onclick = () => run(publishCurrent);
 chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'session' || !Object.keys(changes).some(key => key.startsWith('selection-'))) return;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); tabId = tab?.id;
