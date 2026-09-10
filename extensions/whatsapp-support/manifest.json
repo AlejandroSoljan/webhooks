@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Asisto · Tareas de WhatsApp",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqX5AJY/1+QjCcEZNF4BqnHst8h9VamkT/WUqaPOCQ12T3bu+Xrmk53g0tkWaDuzBRBkXWBRoQGC2uxSkAnRMJbJRacgnrLUxjs+nj+BsNQ7/exw807nt1lDZ8NkhZg3+Kjv96nQmN/RNQtr9ZBhvp6UbuaTLQ3jigTKeM31Ps11rYBY+WU/C+7j0NnAhRYnuRHWJex5eiEyJOeIc9ZxeCDCRvkOYxOXy8JXaUyW5+ELXBG0gpimkLXzwr03T/bDYPsa9tcSsYgRNkGjCceNOab1c6p8gKJY8EyWE35RonRJo4Ny0cDDdi1bYEoFRHrqSB6Fk46XZodDLikkCswr5zwIDAQAB",
   "minimum_chrome_version": "116",
   "description": "Revisá las tareas de Asisto junto a tus contactos de WhatsApp Web y guardalas en HubSpot.",

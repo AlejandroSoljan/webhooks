@@ -135,6 +135,22 @@ test('HubSpot transport uses POST for new tickets, PATCH for existing tickets an
  assert.equal(calls[0].options.method,'POST');assert.equal(calls[1].options.method,'PATCH');assert.equal(calls[1].url,'https://api.hubapi.com/crm/v3/objects/tickets/99');assert.equal(JSON.parse(calls[1].options.body).associations,undefined);
  await assert.rejects(()=>new HubSpotContract('test',async()=>({ok:false,status:403})).save({properties:{}}),e=>e.remoteStatus===403);
 });
+test('HubSpot preflight does not require account-info or an unused contact search',async()=>{
+ const calls=[];
+ const contract=new HubSpotContract('test',async(url,options)=>{
+  calls.push(url);
+  if(url.includes('/properties/tickets')) return {ok:true,json:async()=>({results:metadata.properties})};
+  if(url.includes('/pipelines/tickets')) return {ok:true,json:async()=>({results:metadata.pipelines})};
+  if(url.includes('/associations/tickets/companies/labels')) return {ok:true,json:async()=>({results:[]})};
+  if(url.includes('/associations/tickets/contacts/labels')) return {ok:true,json:async()=>({results:[]})};
+  if(url.includes('/owners')) return {ok:true,json:async()=>({results:metadata.owners})};
+  if(url.includes('/objects/companies/search')) return {ok:true,json:async()=>({results:[]})};
+  return {ok:false,status:403,json:async()=>({})};
+ });
+ const checked=await contract.preflight();assert.equal(checked.portalId,null);
+ assert.equal(calls.some(url=>url.includes('/account-info/')),false);
+ assert.equal(calls.some(url=>url.includes('/objects/contacts/search')),false);
+});
 test('contact matching handles aliases and refuses ambiguous equal names',()=>{
  const chats=[{jid:'1@lid',aliases:['5491@s.whatsapp.net'],name:'Juan',count:2},{jid:'2@lid',name:'Juan',count:1}];
  assert.equal(matchContact(chats,{name:'Juan'}),null);assert.equal(matchContact(chats,{jid:'5491@s.whatsapp.net',name:'Juan'}).count,2);

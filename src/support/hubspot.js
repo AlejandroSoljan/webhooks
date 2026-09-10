@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.093 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.095 | Fecha: 2026-09-10
 const { fail, text, SupportError } = require('./core');
 
 class HubSpotContract {
@@ -66,11 +66,10 @@ class HubSpotContract {
     return this.request(`/crm/v3/objects/${type}/search`, { ...(q ? { query: q } : {}), limit: Math.min(25, Math.max(1, Number(limit) || 10)), properties: type === 'companies' ? ['name', 'domain'] : ['firstname', 'lastname', 'email', 'phone', 'company'] });
   }
   async preflight() {
-    const [account, metadata] = await Promise.all([this.request('/account-info/v3/details'), this.metadata()]);
-    await Promise.all([this.search('companies', '', 1), this.search('contacts', '', 1)]);
-    if (!Number.isSafeInteger(Number(account.portalId)) || Number(account.portalId) <= 0) fail('hubspot_account_unverified', 409);
+    const metadata = await this.metadata();
+    await this.search('companies', '', 1);
     if (!metadata.properties.some(property => property.name === 'subject') || !metadata.properties.some(property => property.name === 'hs_pipeline_stage') || !metadata.properties.some(property => property.name === 'hubspot_owner_id') || !metadata.pipelines.some(pipeline => pipeline.stages?.length) || !metadata.owners?.length) fail('hubspot_ticket_schema_incomplete', 409);
-    return { portalId: String(account.portalId), metadata };
+    return { portalId: null, metadata };
   }
   prepare(fields, metadata, mapping) {
     const pipeline = metadata.pipelines.find(p => p.id === mapping.pipelineId);

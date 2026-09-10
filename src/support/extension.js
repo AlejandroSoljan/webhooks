@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.094 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.095 | Fecha: 2026-09-10
 const express = require('express');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -132,7 +132,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const client = hubspotFactory(credential.token), checked = await client.preflight();
     const preferences = await s.col('settings').findOne(scope, { projection: { hubspotOwnerId: 1 } });
     const preferredOwnerId = checked.metadata.owners.some(row => String(row.id) === String(preferences?.hubspotOwnerId || '')) ? String(preferences.hubspotOwnerId) : '';
-    return { configured: true, portalId: checked.portalId, metadata: checked.metadata, preferredOwnerId, credentialSource: credential.source };
+    return { configured: true, portalId: checked.portalId || credential.connection.portalId || null, metadata: checked.metadata, preferredOwnerId, credentialSource: credential.source };
   }));
   router.post('/hubspot/connect', route(async (req, s, scope) => {
     fail('hubspot_backend_managed', 410);
@@ -155,7 +155,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const contact = await s.col('contacts').findOne({ ...scope, jid: row.jid });
     if (excluded({ jid: row.jid, name: contact?.name || fields.contact }, config) || sources.some(message => excluded(message, config))) fail('conversation_excluded', 409);
     const { client, connection } = await clientFor(s, scope), checked = await client.preflight();
-    connection.portalId = checked.portalId;
+    connection.portalId = checked.portalId || connection.portalId || null;
     await s.audit(scope, 'hubspot_preflight_ok', checked.portalId);
     if (row.hubspot?.ticketId && row.hubspot.portalId !== (connection.portalId || null)) fail('hubspot_portal_changed', 409);
     if (fields.companyId || fields.contactId) {
