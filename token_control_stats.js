@@ -297,8 +297,43 @@ async function buildApiMessageWindowBilling({
   realItems.sort((a, b) => Date.parse(b.at || 0) - Date.parse(a.at || 0));
   if (realItems.length > safeLimit) realItems.length = safeLimit;
 
+  // Cantidad real de mensajes enviados por WhatsApp. No es lo mismo que la
+  // cantidad de ventanas facturables del API. Los registros históricos sin
+  // messageId se deduplican por contacto, texto y segundo porque versiones
+  // anteriores podían registrar el mismo evento como "chat" y "text".
+  const realMatch = { direction: 'out' };
+  if (safeTenant) realMatch.tenantId = safeTenant;
+  const realAt = {};
+  const realFrom = parseDateStart(from);
+  const realTo = parseDateEnd(to);
+  if (realFrom) realAt.$gte = realFrom;
+  if (realTo) realAt.$lte = realTo;
+  if (Object.keys(realAt).length) realMatch.at = realAt;
+  const realMessageRows = await db.collection('wa_wweb_message_log').aggregate([
+    { $match: realMatch },
+    { $set: {
+        __messageId: { $toString: { $ifNull: ['$messageId', ''] } },
+        __second: { $floor: { $divide: [{ $toLong: '$at' }, 1000] } }
+    } },
+    { $set: {
+        __dedupeKey: {
+          $cond: [
+            { $gt: [{ $strLenCP: '$__messageId' }, 0] },
+            { $concat: ['id:', '$tenantId', ':', '$numero', ':', '$__messageId'] },
+            { $concat: [
+                'legacy:', '$tenantId', ':', { $ifNull: ['$contact', ''] }, ':',
+                { $ifNull: ['$body', ''] }, ':', { $toString: '$__second' }
+            ] }
+          ]
+        }
+    } },
+    { $group: { _id: '$__dedupeKey', tenantId: { $first: '$tenantId' }, at: { $max: '$at' } } },
+    { $group: { _id: '$tenantId', messages: { $sum: 1 }, last_at: { $max: '$at' } } }
+  ]).toArray();
+  const realMessagesByTenant = new Map(realMessageRows.map(row => [String(row._id || ''), row]));
+
   const tenantIds = Array.from(new Set(
-    groupedRows.map(r => String(r?._id?.tenantId || '').trim()).filter(Boolean)
+    [...groupedRows.map(r => String(r?._id?.tenantId || '').trim()), ...realMessagesByTenant.keys()].filter(Boolean)
   ));
   const cfgByTenant = await loadTenantCosts(db, tenantIds);
 
@@ -328,6 +363,26 @@ async function buildApiMessageWindowBilling({
     if (!acc.last_at || Date.parse(row.last_at || 0) > Date.parse(acc.last_at || 0)) {
       acc.last_at = row.last_at || acc.last_at;
     }
+  }
+
+  for (const [tenantKey, realRow] of realMessagesByTenant.entries()) {
+    let acc = byTenantMap.get(tenantKey);
+    if (!acc) {
+      const cfg = cfgByTenant.get(tenantKey) || {};
+      acc = {
+        tenantId: tenantKey,
+        company: String(cfg.nom_emp || '').trim(),
+        number: String(cfg.numero || '').trim(),
+        windows: 0,
+        messages: 0,
+        realMessages: 0,
+        byCurrency: {},
+        last_at: null
+      };
+      byTenantMap.set(tenantKey, acc);
+    }
+    acc.realMessages = Number(realRow.messages || 0);
+    if (!acc.last_at || Date.parse(realRow.last_at || 0) > Date.parse(acc.last_at || 0)) acc.last_at = realRow.last_at || acc.last_at;
   }
 
   const byTenant = [...byTenantMap.values()]
@@ -1624,7 +1679,7 @@ function renderTokenControlPage(user) {
         ? '<span class="small" style="color:#b45309">Tarifa comercial IA sin configurar</span>'
         : '';
       const apiInfo = num(it.real_messages)>0 || num(it.api_windows)>0
-        ? '<span class="small"><b>'+fmtInt(it.real_messages)+' mensajes enviados</b> · '+fmtInt(it.api_windows)+' ventanas facturables</span>'
+        ? '<span class="small"><b>'+fmtInt(it.real_messages)+' mensajes enviados</b> · '+fmtInt(it.api_windows)+' ventanas facturables · '+fmtInt(it.api_messages)+' mensajes API</span>'
         : '';
       if (!isSuper) {
         return '<tr>' +
