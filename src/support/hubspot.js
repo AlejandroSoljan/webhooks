@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.097 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.098 | Fecha: 2026-09-10
 const { fail, text, SupportError } = require('./core');
 
 class HubSpotContract {
@@ -44,6 +44,12 @@ class HubSpotContract {
       if (after && results.length >= 2000) fail('hubspot_owner_search_incomplete', 409);
     } while (after);
     return results;
+  }
+  async ownerFromTicket(ticketId) {
+    const ticket = await this.request(`/crm/v3/objects/tickets/${encodeURIComponent(text(ticketId, 100))}?properties=hubspot_owner_id`);
+    const ownerId = text(ticket?.properties?.hubspot_owner_id || '', 100);
+    if (!ownerId) fail('hubspot_reference_ticket_has_no_owner', 409);
+    return ownerId;
   }
   async identity(companyId, contactId) {
     const company = await this.request(`/crm/v3/objects/companies/${encodeURIComponent(text(companyId))}?properties=name`);

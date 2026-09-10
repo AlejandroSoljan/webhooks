@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.097 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.098 | Fecha: 2026-09-10
 const express = require('express');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -44,9 +44,15 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     if (!credential) fail('hubspot_not_configured', 409);
     return { connection: credential.connection, client: hubspotFactory(credential.token), source: credential.source };
   };
-  const configuredOwner = async (s, scope) => {
-    const config = await s.db.collection('tenant_config').findOne({ _id: scope.tenantId }, { projection: { hubspotOwnerId: 1, hubspot_owner_id: 1 } });
-    return text(config?.hubspotOwnerId || config?.hubspot_owner_id || '', 100);
+  const configuredOwner = async (s, scope, client) => {
+    const config = await s.db.collection('tenant_config').findOne({ _id: scope.tenantId }, { projection: { hubspotOwnerId: 1, hubspot_owner_id: 1, hubspotOwnerTicketId: 1 } });
+    const saved = text(config?.hubspotOwnerId || config?.hubspot_owner_id || '', 100);
+    if (saved) return saved;
+    const referenceTicketId = text(config?.hubspotOwnerTicketId || '', 100);
+    if (!referenceTicketId) return '';
+    const ownerId = await client.ownerFromTicket(referenceTicketId);
+    await s.db.collection('tenant_config').updateOne({ _id: scope.tenantId }, { $set: { hubspotOwnerId: ownerId, hubspotOwnerResolvedAt: s.now() } });
+    return ownerId;
   };
   router.get('/session', route(async (req, s, scope) => {
     const csrf = Buffer.from(JSON.stringify(s.vault.seal({ ...scope, origin: req.extensionOrigin, expires: Date.now() + 600000 }, 'extension-csrf'))).toString('base64url');
@@ -133,8 +139,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
   router.get('/hubspot', route(async (req, s, scope) => {
     const credential = await hubspotCredential(s, scope, env);
     if (!credential) return { configured: false };
-    const fixedOwnerId = await configuredOwner(s, scope);
-    const client = hubspotFactory(credential.token), checked = await client.preflight(fixedOwnerId);
+    const client = hubspotFactory(credential.token), fixedOwnerId = await configuredOwner(s, scope, client), checked = await client.preflight(fixedOwnerId);
     const preferences = await s.col('settings').findOne(scope, { projection: { hubspotOwnerId: 1 } });
     const preferredOwnerId = checked.metadata.owners.some(row => String(row.id) === String(preferences?.hubspotOwnerId || '')) ? String(preferences.hubspotOwnerId) : '';
     return { configured: true, portalId: checked.portalId || credential.connection.portalId || null, metadata: checked.metadata, preferredOwnerId, credentialSource: credential.source };
@@ -159,7 +164,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const { excluded } = require('./core');
     const contact = await s.col('contacts').findOne({ ...scope, jid: row.jid });
     if (excluded({ jid: row.jid, name: contact?.name || fields.contact }, config) || sources.some(message => excluded(message, config))) fail('conversation_excluded', 409);
-    const { client, connection } = await clientFor(s, scope), fixedOwnerId = await configuredOwner(s, scope), checked = await client.preflight(fixedOwnerId);
+    const { client, connection } = await clientFor(s, scope), fixedOwnerId = await configuredOwner(s, scope, client), checked = await client.preflight(fixedOwnerId);
     connection.portalId = checked.portalId || connection.portalId || null;
     await s.audit(scope, 'hubspot_preflight_ok', checked.portalId);
     if (row.hubspot?.ticketId && row.hubspot.portalId !== (connection.portalId || null)) fail('hubspot_portal_changed', 409);

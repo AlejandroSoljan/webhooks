@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.097 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.098 | Fecha: 2026-09-10
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, companyTimer, companyGeneration = 0;
 const errors = {
@@ -22,6 +22,7 @@ const errors = {
   hubspot_companies_forbidden: 'HubSpot rechazó la lectura de empresas para el token cargado en Render.',
   hubspot_contacts_forbidden: 'HubSpot rechazó la lectura de contactos para el token cargado en Render.',
   hubspot_tickets_forbidden: 'HubSpot rechazó la creación del ticket para el token cargado en Render.',
+  hubspot_reference_ticket_has_no_owner: 'El ticket de referencia de HubSpot no tiene un propietario asignado.',
   invalid_hubspot_owner: 'Elegí el usuario responsable del ticket en HubSpot.', hubspot_ticket_schema_incomplete: 'HubSpot no devolvió propietarios, pipelines o propiedades obligatorias del ticket.',
 };
 function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }

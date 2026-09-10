@@ -165,6 +165,12 @@ test('a configured owner id avoids the owners API while retaining ticket ownersh
  assert.equal(checked.metadata.owners[0].id,'owner-fixed');
  assert.equal(calls.some(url=>url.includes('/owners')),false);
 });
+test('an owned reference ticket resolves the reusable HubSpot owner id',async()=>{
+ const calls=[];
+ const contract=new HubSpotContract('test',async(url)=>{calls.push(url);return {ok:true,json:async()=>({properties:{hubspot_owner_id:'owner-alejandro'}})};});
+ assert.equal(await contract.ownerFromTicket('48433472163'),'owner-alejandro');
+ assert.match(calls[0],/\/crm\/v3\/objects\/tickets\/48433472163\?properties=hubspot_owner_id$/);
+});
 test('contact matching handles aliases and refuses ambiguous equal names',()=>{
  const chats=[{jid:'1@lid',aliases:['5491@s.whatsapp.net'],name:'Juan',count:2},{jid:'2@lid',name:'Juan',count:1}];
  assert.equal(matchContact(chats,{name:'Juan'}),null);assert.equal(matchContact(chats,{jid:'5491@s.whatsapp.net',name:'Juan'}).count,2);
