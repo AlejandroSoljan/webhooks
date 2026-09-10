@@ -108,6 +108,8 @@ test('WhatsApp address-book batches add names only to the current users existing
 });
 test('publish creates once and subsequent explicit saves update the same HubSpot ticket',async()=>{
  let result=await call('/drafts/'+id+'/publish',{revision:1,mapping});assert.equal(result.status,200);assert.equal(result.data.ticketId,'99');
+ assert.equal((await service.col('settings').findOne(scope)).hubspotOwnerId,'owner-1');
+ assert.equal((await call('/hubspot')).data.preferredOwnerId,'owner-1');
  assert.equal((await call('/drafts/'+id+'/publish',{revision:1,mapping})).status,409);
  result=await call('/drafts/'+id+'/save',{revision:2,fields:{description:'Ampliado'}});assert.equal(result.status,200);
  result=await call('/drafts/'+id+'/publish',{revision:3,mapping});assert.equal(result.status,200);assert.equal(writes.length,2);assert.equal(writes[0].ticketId,undefined);assert.equal(writes[1].ticketId,'99');assert.match(writes[1].payload.properties.content,/Ampliado/);assert.match(writes[1].payload.properties.content,/Contacto WhatsApp/);

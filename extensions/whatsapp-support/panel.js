@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.093 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.094 | Fecha: 2026-09-10
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, companyTimer, companyGeneration = 0;
 const errors = {
@@ -126,11 +126,13 @@ async function prepareHubSpot() {
     return;
   }
   metadata = connection.metadata;
-  const key = 'mapping:' + session.tenantId + ':' + connection.portalId;
-  const saved = (await chrome.storage.local.get(key))[key] || {};
+  const key = 'mapping:' + session.tenantId + ':' + session.userId + ':' + connection.portalId;
+  const legacyKey = 'mapping:' + session.tenantId + ':' + connection.portalId;
+  const stored = await chrome.storage.local.get([key, legacyKey]);
+  const saved = stored[key] || stored[legacyKey] || {};
   const container = $('mapping'); container.replaceChildren();
   const ownerOptions = (metadata.owners || []).map(row => ({ value: String(row.id), label: ([row.firstName, row.lastName].filter(Boolean).join(' ') || row.email || ('Usuario ' + row.id)) + (row.email ? ' · ' + row.email : '') }));
-  selectField(container, 'hubspot-owner', 'Usuario responsable en HubSpot', ownerOptions, saved.ownerId || '');
+  selectField(container, 'hubspot-owner', 'Usuario responsable en HubSpot', ownerOptions, connection.preferredOwnerId || saved.ownerId || '');
   const pipeline = selectField(container, 'pipeline', 'Pipeline de HubSpot', metadata.pipelines.map(p => ({ value: p.id, label: p.label })), saved.pipelineId);
   const stage = selectField(container, 'stage', 'Estado del ticket en HubSpot', []);
   function stages() {
@@ -177,7 +179,7 @@ $('publish').onclick = () => run(async () => {
   if (!$('field-companyId').value) throw new Error('hubspot_company_required');
   await save();
   const result = await api('PUBLISH', { id: current.id, revision: current.revision, mapping }); current.revision = result.revision; current.hubspot = result;
-  await chrome.storage.local.set({ ['mapping:' + session.tenantId + ':' + connection.portalId]: mapping });
+  await chrome.storage.local.set({ ['mapping:' + session.tenantId + ':' + session.userId + ':' + connection.portalId]: mapping });
   notice('Ticket ' + result.ticketId + ' guardado en HubSpot.'); $('taskState').textContent = 'Ticket ' + result.ticketId;
   $('ticket').replaceChildren(); if (result.portalId) { const link = document.createElement('a'); link.href = 'https://app.hubspot.com/contacts/' + encodeURIComponent(result.portalId) + '/record/0-5/' + encodeURIComponent(result.ticketId); link.textContent = 'Abrir ticket en HubSpot'; link.target = '_blank'; link.rel = 'noopener noreferrer'; $('ticket').append(link); }
   setTimeout(() => run(refresh), 800);

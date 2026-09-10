@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.093 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.094 | Fecha: 2026-09-10
 const express = require('express');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -130,7 +130,9 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const credential = await hubspotCredential(s, scope, env);
     if (!credential) return { configured: false };
     const client = hubspotFactory(credential.token), checked = await client.preflight();
-    return { configured: true, portalId: checked.portalId, metadata: checked.metadata, credentialSource: credential.source };
+    const preferences = await s.col('settings').findOne(scope, { projection: { hubspotOwnerId: 1 } });
+    const preferredOwnerId = checked.metadata.owners.some(row => String(row.id) === String(preferences?.hubspotOwnerId || '')) ? String(preferences.hubspotOwnerId) : '';
+    return { configured: true, portalId: checked.portalId, metadata: checked.metadata, preferredOwnerId, credentialSource: credential.source };
   }));
   router.post('/hubspot/connect', route(async (req, s, scope) => {
     fail('hubspot_backend_managed', 410);
@@ -182,6 +184,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     }
     const hubspot = { state: 'saved', ticketId: String(remote.id), portalId: connection.portalId || null, companyId: fields.companyId || '', contactId: fields.contactId || '', savedAt: s.now() };
     await s.col('drafts').updateOne({ _id: row._id, ...scope, 'hubspot.operationId': operationId }, { $set: { hubspot, state: 'approved' }, $inc: { revision: 1 } });
+    await s.col('settings').updateOne(scope, { $set: { hubspotOwnerId: String(mapping.ownerId), updatedAt: s.now() } }, { upsert: true });
     await s.audit(scope, 'hubspot_saved', row._id);
     return { ...hubspot, revision: row.revision + 1 };
   }));
