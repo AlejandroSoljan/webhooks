@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.076 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.083 | Fecha: 2026-09-09
 const OpenAI = require('openai');
 const { fail, text } = require('./core');
 
@@ -12,15 +12,18 @@ function asistoTitleAnalyzer(env = process.env, { runtimeFor = tenantId => requi
     const response = await clientFor(apiKey).chat.completions.create({
       model,
       messages: [
-        { role: 'system', content: 'Generá el nombre breve de una tarea de soporte a partir de la conversación. Expresá el problema, pedido o acción concreta. Máximo 80 caracteres. No copies una frase textual, no incluyas nombres, saludos, fechas ni comillas. Respondé únicamente el título.' },
+        { role: 'system', content: 'Analizá una conversación de soporte y respondé únicamente JSON válido con {"subject":"...","description":"..."}. subject: nombre concreto de la tarea, máximo 80 caracteres; no copies una frase textual ni incluyas nombres, saludos o fechas. description: resumen operativo breve, sin copiar la conversación; explicá el problema o pedido, el contexto relevante, lo realizado y lo que queda pendiente. No inventes datos. Máximo 700 caracteres.' },
         { role: 'user', content: transcript },
       ],
-      max_completion_tokens: 60,
+      response_format: { type: 'json_object' },
+      max_completion_tokens: 300,
     });
-    const subject = text(String(response?.choices?.[0]?.message?.content || '').replace(/^["“”']+|["“”']+$/g, '').trim(), 80);
-    if (!subject) fail('task_title_failed', 502);
+    let parsed;
+    try { parsed = JSON.parse(String(response?.choices?.[0]?.message?.content || '')); } catch { fail('task_title_failed', 502); }
+    const subject = text(String(parsed?.subject || '').trim(), 80), description = text(String(parsed?.description || '').trim(), 700);
+    if (!subject || !description) fail('task_title_failed', 502);
     const usage = response?.usage || {};
-    return { subject, model, inputTokens: Number(usage.prompt_tokens ?? usage.input_tokens ?? 0) || 0, outputTokens: Number(usage.completion_tokens ?? usage.output_tokens ?? 0) || 0, totalTokens: Number(usage.total_tokens || 0) || 0 };
+    return { subject, description, model, inputTokens: Number(usage.prompt_tokens ?? usage.input_tokens ?? 0) || 0, outputTokens: Number(usage.completion_tokens ?? usage.output_tokens ?? 0) || 0, totalTokens: Number(usage.total_tokens || 0) || 0 };
   } };
 }
 module.exports = { asistoTitleAnalyzer };

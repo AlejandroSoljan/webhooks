@@ -243,21 +243,24 @@ test('incomplete setup leaves the panel visible and operations blocked without c
     assert.equal((await fetch(base + '/api/support/session', { method: 'POST' })).status, 503);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
-test('AI task title replaces chat fragments and records the dedicated token-control type', async () => {
-  service.titleAnalyzer = { run: async () => ({ subject: 'Corregir impresión de facturas', model: 'fixture-ai', inputTokens: 40, outputTokens: 8, totalTokens: 48 }) };
+test('AI task analysis creates a title and operational summary under the dedicated token-control type', async () => {
+  service.titleAnalyzer = { run: async () => ({ subject: 'Corregir impresión de facturas', description: 'El cliente informa que la factura no se imprime. Queda pendiente revisar la configuración de impresión.', model: 'fixture-ai', inputTokens: 40, outputTokens: 8, totalTokens: 48 }) };
   const [draft] = await processMessages([message('ai-title', 0, { text: 'Esto no aparece, así que lo vuelvo a generar.' })]);
   assert.equal(draft.fields.subject, 'Corregir impresión de facturas');
+  assert.match(draft.fields.description, /Queda pendiente/);
+  assert.match(draft.source.description, /Esto no aparece/);
+  assert.doesNotMatch(draft.fields.description, /Esto no aparece/);
   const usage = await db.collection('ai_token_usage_log').findOne({ tenantId: scope.tenantId, channelType: 'whatsapp_tasks' });
-  assert.equal(usage.meta.usageType, 'whatsapp_task_title');
+  assert.equal(usage.meta.usageType, 'whatsapp_task_summary');
   assert.equal(usage.totalTokens, 48);
 });
 test('old generated task titles are repaired without overwriting a human title', async () => {
   let calls = 0;
-  service.titleAnalyzer = { run: async () => { calls++; return { subject: 'Coordinar entrega de mercadería pendiente', model: 'fixture-ai', inputTokens: 20, outputTokens: 6, totalTokens: 26 }; } };
+  service.titleAnalyzer = { run: async () => { calls++; return { subject: 'Coordinar entrega de mercadería pendiente', description: 'Se debe coordinar la entrega de mercadería que continúa pendiente.', model: 'fixture-ai', inputTokens: 20, outputTokens: 6, totalTokens: 26 }; } };
   let [draft] = await processMessages([message('old-title', 0, { text: 'Después sigo teniendo el tema de la mercadería pendiente de entrega.' })]);
   await service.col('drafts').updateOne({ _id: draft._id }, { $set: { analyzerVersion: 'support-task-groups-v4' } });
   assert.equal(await service.repairTitle(scope), true);
-  [draft] = await service.listDrafts(scope); assert.equal(draft.fields.subject, 'Coordinar entrega de mercadería pendiente');
+  [draft] = await service.listDrafts(scope); assert.equal(draft.fields.subject, 'Coordinar entrega de mercadería pendiente'); assert.match(draft.fields.description, /coordinar la entrega/);
   await service.editDraft(scope, draft._id, draft.revision, { subject: 'Título definido por la persona' });
   await service.col('drafts').updateOne({ _id: draft._id }, { $set: { analyzerVersion: 'support-task-groups-v4' } });
   assert.equal(await service.repairTitle(scope), true);

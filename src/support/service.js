@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.075 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.083 | Fecha: 2026-09-09
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupTasks, analyze, ANALYZER_VERSION, text, range } = require('./core');
 
@@ -116,10 +116,10 @@ class SupportService {
     if (!decoded.length) return false;
     const title = await this.titleAnalyzer.run(decoded, { ...scope, jid: row.jid, draftId: row._id });
     const fields = this.vault.open(row.fields, row._id), source = this.vault.open(row.source, row._id + ':source');
-    fields.subject = title.subject; source.subject = title.subject;
+    fields.subject = title.subject; fields.description = title.description || fields.description; source.subject = title.subject;
     const updated = await this.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision, analyzerVersion: { $ne: ANALYZER_VERSION } }, { $set: { fields: this.vault.seal(fields, row._id), source: this.vault.seal(source, row._id + ':source'), analyzerVersion: ANALYZER_VERSION, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'title_regenerated_ai', at: this.now() } } });
     if (!updated.matchedCount) return false;
-    await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: row.jid, waId: row.jid, kind: 'message', provider: 'openai', model: title.model, inputTokens: title.inputTokens, outputTokens: title.outputTokens, totalTokens: title.totalTokens || title.inputTokens + title.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_title', source: 'support_task_title_repair' }, createdAt: this.now() });
+    await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: row.jid, waId: row.jid, kind: 'message', provider: 'openai', model: title.model, inputTokens: title.inputTokens, outputTokens: title.outputTokens, totalTokens: title.totalTokens || title.inputTokens + title.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'support_task_summary_repair' }, createdAt: this.now() });
     return true;
   }
   async runOne(assertOwner = async () => {}, owner = {}) {
@@ -197,11 +197,12 @@ class SupportService {
         continue;
       }
       if (edited.length === 1) existing.sort((a, b) => Number(b._id === edited[0]._id) - Number(a._id === edited[0]._id));
-      const started = Date.now(), result = analyze(group);
+      const started = Date.now(), result = analyze(group), evidenceDescription = result.description;
       if (result.result === 'draft' && this.titleAnalyzer) {
         const title = await this.titleAnalyzer.run(group, { ...scope, jid: job.jid, jobId: job._id });
         result.subject = title.subject;
-        await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: job.jid, waId: job.jid, kind: 'message', provider: 'openai', model: title.model, inputTokens: title.inputTokens, outputTokens: title.outputTokens, totalTokens: title.totalTokens || title.inputTokens + title.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_title', source: 'support_task_title' }, createdAt: this.now() });
+        result.description = title.description || result.description;
+        await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: job.jid, waId: job.jid, kind: 'message', provider: 'openai', model: title.model, inputTokens: title.inputTokens, outputTokens: title.outputTokens, totalTokens: title.totalTokens || title.inputTokens + title.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'support_task_summary' }, createdAt: this.now() });
       }
       if (result.description?.length > 100000) fail('conversation_window_too_large', 422);
       const _id = existing[0]?._id || scopedId(scope, 'draft', ids[0]);
@@ -209,9 +210,10 @@ class SupportService {
       await this.col('usage').insertOne({ ...scope, conversationId: job.jid, recordId: _id, fingerprint, model: ANALYZER_VERSION, kind: 'analysis', inputTokens: 0, outputTokens: 0, audioSeconds: 0, processingUnits: group.reduce((n, m) => n + m.text.length, 0), unit: 'characters', costUsd: 0, durationMs: Date.now() - started, result: result.result, at: this.now() });
       const memory = await this.col('memory').findOne({ ...scope, jid: job.jid });
       const draft = { ...result, messageDate: group[0].at.toISOString(), companyId: memory?.companyId || '', company: memory?.company || '', contactId: memory?.contactId || '', contact: memory?.contact || whatsappContact?.name || group.find(m => !m.fromMe && m.name)?.name || '', identitySource: memory?.source || (memory?.verifiedAt ? 'hubspot' : 'unassigned'), proposedAction: 'review' };
+      const sourceDraft = { ...draft, description: evidenceDescription };
       if (existing.length) {
         const generatedOnly = untouched(existing[0]);
-        const saved = await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { fingerprint, analyzerVersion: ANALYZER_VERSION, messageIds: ids, state: generatedOnly ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !generatedOnly, reconciliationRequired: false, ...(generatedOnly ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(draft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: existing.length > 1 ? 'tasks_merged' : 'source_changed', at: this.now() } } });
+        const saved = await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { fingerprint, analyzerVersion: ANALYZER_VERSION, messageIds: ids, state: generatedOnly ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !generatedOnly, reconciliationRequired: false, ...(generatedOnly ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(sourceDraft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: existing.length > 1 ? 'tasks_merged' : 'source_changed', at: this.now() } } });
         if (!saved.matchedCount) fail('revision_conflict', 409);
         for (const duplicate of existing.slice(1)) {
           const merged = await this.col('drafts').updateOne({ _id: duplicate._id, ...scope, revision: duplicate.revision, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { state: 'merged', mergedInto: _id, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'tasks_merged', into: _id, at: this.now() } } });
@@ -219,7 +221,7 @@ class SupportService {
           await this.col('drafts').updateOne({ _id, ...scope }, { $addToSet: { mergedDraftIds: duplicate._id } });
         }
       } else {
-        await this.col('drafts').updateOne({ _id, ...scope }, { $setOnInsert: { ...scope, jid: job.jid, messageIds: ids, fingerprint, analyzerVersion: ANALYZER_VERSION, state: result.result === 'ignored' ? 'ignored' : 'pending', revision: 1, fields: this.vault.seal(draft, _id), source: this.vault.seal(draft, _id + ':source'), mode: config.mode, createdAt: this.now(), updatedAt: this.now(), events: [{ action: 'generated', at: this.now() }] } }, { upsert: true });
+        await this.col('drafts').updateOne({ _id, ...scope }, { $setOnInsert: { ...scope, jid: job.jid, messageIds: ids, fingerprint, analyzerVersion: ANALYZER_VERSION, state: result.result === 'ignored' ? 'ignored' : 'pending', revision: 1, fields: this.vault.seal(draft, _id), source: this.vault.seal(sourceDraft, _id + ':source'), mode: config.mode, createdAt: this.now(), updatedAt: this.now(), events: [{ action: 'generated', at: this.now() }] } }, { upsert: true });
       }
     }
   }
