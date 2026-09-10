@@ -5951,6 +5951,8 @@ function protectRoutes(app) {
       p.startsWith("/webhook") ||
       p.startsWith("/cache/") ||
       p.startsWith("/qr/") ||
+      p.startsWith("/customer-app/") ||
+      p.startsWith("/api/customer-app/") ||
       p.startsWith("/api/ext/qr/") ||
       p.startsWith("/api/ext/wweb/") ||
       p.startsWith("/api/ext/domain-status") ||
