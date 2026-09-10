@@ -1,13 +1,13 @@
-// Asisto | Version: 5.00.091 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.092 | Fecha: 2026-09-10
 const $ = id => document.getElementById(id);
-let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0;
+let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, companyTimer, companyGeneration = 0;
 const errors = {
   authentication_required: 'No se encontró la autorización del agente de esta PC.', agent_not_authorized: 'Iniciá el agente Baileys autorizado en esta PC.', connection_failed: 'No se pudo conectar con el agente Baileys de esta PC.',
   account_changed: 'Cambió el usuario de Asisto. Pulsá Actualizar para cargar sus tareas.', forbidden: 'Tu usuario necesita acceso a Tickets desde WhatsApp en Asisto.',
   revision_conflict: 'La tarea cambió. Seleccionala nuevamente para cargar la última versión.', source_reconciliation_required: 'Revisá los mensajes nuevos o la agrupación de esta tarea en Asisto antes de enviarla.',
   hubspot_not_configured: 'Falta conectar HubSpot para este dominio.', hubspot_mapping_required: 'Completá la clasificación de HubSpot.',
   invalid_internal_option: 'Elegí una opción válida de HubSpot en cada clasificación.', invalid_pipeline_stage: 'Elegí el pipeline y el estado de HubSpot.',
-  approval_fields_required: 'Completá el nombre de la tarea y la empresa antes de guardar en HubSpot.',
+  approval_fields_required: 'Completá el nombre de la tarea y la empresa antes de guardar en HubSpot.', hubspot_company_required: 'Elegí una empresa de las sugerencias de HubSpot.',
   hubspot_delivery_unconfirmed: 'HubSpot no confirmó el resultado. No se volverá a crear el ticket automáticamente. Revisá en HubSpot antes de reintentar.',
   hubspot_request_failed: 'HubSpot rechazó la operación. Revisá los permisos de la conexión y los campos seleccionados.',
   hubspot_associations_changed: 'La empresa o el contacto asociado cambió. Ajustá la asociación del ticket existente desde HubSpot.',
@@ -37,12 +37,39 @@ function renderFields() {
     const input = document.createElement(values ? 'select' : key === 'description' ? 'textarea' : 'input'); input.id = 'field-' + key;
     if (values) { for (const value of values) option(input, value, value); }
     input.value = current.fields[key] || ''; input.maxLength = key === 'description' ? 100000 : 200;
+    if (key === 'company') {
+      input.setAttribute('list', 'hubspot-company-options'); input.placeholder = 'Escribí para buscar en HubSpot'; input.autocomplete = 'off';
+      const list = document.createElement('datalist'); list.id = 'hubspot-company-options'; label.append(input, list); $('fields').append(label);
+      input.onfocus = () => loadCompanySuggestions(input.value);
+      input.oninput = () => { $('field-companyId').value = ''; current.fields.companyId = ''; clearTimeout(companyTimer); companyTimer = setTimeout(() => loadCompanySuggestions(input.value), 300); };
+      input.onchange = () => selectSuggestedCompany(input.value);
+      continue;
+    }
     label.append(input); $('fields').append(label);
   }
   $('source').textContent = current.source?.description || '';
   $('taskState').textContent = current.hubspot?.ticketId ? 'Ticket ' + current.hubspot.ticketId : current.hubspot?.state === 'awaiting_configuration' ? 'Pendiente de HubSpot' : 'Borrador';
   $('reviewWarning').hidden = !current.sourceChanged && !current.reconciliationRequired;
   $('editor').hidden = false; $('hubspot').hidden = true;
+}
+const companySuggestions = new Map();
+async function loadCompanySuggestions(query) {
+  const generation = ++companyGeneration;
+  try {
+    connection ||= await api('HUBSPOT'); if (!connection.configured) return;
+    const result = await api('HUBSPOT_SEARCH', { type: 'companies', query: String(query || '').trim() }); if (generation !== companyGeneration) return;
+    const list = $('hubspot-company-options'); if (!list) return; list.replaceChildren(); companySuggestions.clear();
+    for (const row of result.results || []) {
+      const name = row.properties?.name || row.properties?.domain || ('Empresa ' + row.id), domain = row.properties?.domain || '';
+      companySuggestions.set(norm(name), { id: row.id, name }); if (domain) companySuggestions.set(norm(domain), { id: row.id, name });
+      const item = document.createElement('option'); item.value = name; item.label = domain; list.append(item);
+    }
+    selectSuggestedCompany($('field-company')?.value);
+  } catch (error) { notice(errors[error.message] || 'No se pudieron consultar las empresas de HubSpot.', true); }
+}
+function selectSuggestedCompany(value) {
+  const match = companySuggestions.get(norm(value)); if (!match) return;
+  $('field-company').value = match.name; $('field-companyId').value = match.id; current.fields.company = match.name; current.fields.companyId = match.id;
 }
 async function detail(id) {
   const generation = ++selectionGeneration;
@@ -101,26 +128,6 @@ async function prepareHubSpot() {
   const key = 'mapping:' + session.tenantId + ':' + connection.portalId;
   const saved = (await chrome.storage.local.get(key))[key] || {};
   const container = $('mapping'); container.replaceChildren();
-  const companyLabel = document.createElement('label'); companyLabel.textContent = 'Buscar empresa en HubSpot';
-  const companySearch = document.createElement('input'); companySearch.id = 'hubspot-company-search'; companySearch.value = current.fields.company || ''; companySearch.placeholder = 'Nombre o dominio'; companyLabel.append(companySearch); container.append(companyLabel);
-  const companySelect = selectField(container, 'hubspot-company', 'Empresa de HubSpot', [], current.fields.companyId || '');
-  const companyStatus = document.createElement('p'); companyStatus.className = 'hint'; container.append(companyStatus);
-  let companyGeneration = 0, companyTimer;
-  const companyName = row => row.properties?.name || row.properties?.domain || ('Empresa ' + row.id);
-  async function loadCompanies(query) {
-    const generation = ++companyGeneration; companyStatus.textContent = 'Consultando empresas…';
-    const result = await api('HUBSPOT_SEARCH', { type: 'companies', query }); if (generation !== companyGeneration) return;
-    companySelect.replaceChildren(); option(companySelect, '', 'Seleccionar empresa…');
-    for (const row of result.results || []) { option(companySelect, row.id, companyName(row) + (row.properties?.domain ? ' · ' + row.properties.domain : '')); companySelect.options[companySelect.options.length - 1].dataset.companyName = companyName(row); }
-    if (current.fields.companyId && ![...companySelect.options].some(item => item.value === current.fields.companyId)) option(companySelect, current.fields.companyId, current.fields.company || ('Empresa ' + current.fields.companyId));
-    companySelect.value = current.fields.companyId || ''; companyStatus.textContent = (result.results || []).length ? '' : 'No se encontraron empresas.';
-  }
-  companySearch.oninput = () => { clearTimeout(companyTimer); companyTimer = setTimeout(() => loadCompanies(companySearch.value).catch(error => notice(errors[error.message] || error.message, true)), 350); };
-  companySelect.onchange = () => {
-    const selected = companySelect.options[companySelect.selectedIndex]; current.fields.companyId = companySelect.value; current.fields.company = companySelect.value ? (selected.dataset.companyName || selected.textContent) : '';
-    $('field-companyId').value = current.fields.companyId; $('field-company').value = current.fields.company;
-  };
-  await loadCompanies(companySearch.value);
   const pipeline = selectField(container, 'pipeline', 'Pipeline de HubSpot', metadata.pipelines.map(p => ({ value: p.id, label: p.label })), saved.pipelineId);
   const stage = selectField(container, 'stage', 'Estado del ticket en HubSpot', []);
   function stages() {
@@ -163,6 +170,7 @@ $('publish').onclick = () => run(async () => {
   const mapping = { pipelineId: $('pipeline').value, stageId: $('stage').value, fields: {} };
   for (const field of ['category','errorType','channel']) { const property = $('property-' + field).value, value = $('value-' + field)?.value; if (!property || !value) throw new Error('hubspot_mapping_required'); mapping.fields[field] = { property, value }; }
   if (!mapping.pipelineId || !mapping.stageId) throw new Error('invalid_pipeline_stage');
+  if (!$('field-companyId').value) throw new Error('hubspot_company_required');
   await save();
   const result = await api('PUBLISH', { id: current.id, revision: current.revision, mapping }); current.revision = result.revision; current.hubspot = result;
   await chrome.storage.local.set({ ['mapping:' + session.tenantId + ':' + connection.portalId]: mapping });
