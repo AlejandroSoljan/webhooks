@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.096 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.097 | Fecha: 2026-09-10
 const { fail, text, SupportError } = require('./core');
 
 class HubSpotContract {
@@ -27,11 +27,11 @@ class HubSpotContract {
     }
     return response.json();
   }
-  async metadata() {
+  async metadata(fixedOwnerId = '') {
     // Keep this sequential so a rejected token reports the exact failing HubSpot capability.
     const properties = await this.request('/crm/v3/properties/tickets');
     const pipelines = await this.request('/crm/v3/pipelines/tickets');
-    const owners = await this.owners();
+    const owners = fixedOwnerId ? [{ id: String(fixedOwnerId), firstName: 'Responsable configurado', lastName: '' }] : await this.owners();
     const companies = await this.request('/crm/v4/associations/tickets/companies/labels');
     const contacts = await this.request('/crm/v4/associations/tickets/contacts/labels');
     return { properties: properties.results, pipelines: pipelines.results, owners, associationTypes: { companies: companies.results, contacts: contacts.results } };
@@ -76,8 +76,8 @@ class HubSpotContract {
     const q = text(query, 200);
     return this.request(`/crm/v3/objects/${type}/search`, { ...(q ? { query: q } : {}), limit: Math.min(25, Math.max(1, Number(limit) || 10)), properties: type === 'companies' ? ['name', 'domain'] : ['firstname', 'lastname', 'email', 'phone', 'company'] });
   }
-  async preflight() {
-    const metadata = await this.metadata();
+  async preflight(fixedOwnerId = '') {
+    const metadata = await this.metadata(fixedOwnerId);
     await this.search('companies', '', 1);
     if (!metadata.properties.some(property => property.name === 'subject') || !metadata.properties.some(property => property.name === 'hs_pipeline_stage') || !metadata.properties.some(property => property.name === 'hubspot_owner_id') || !metadata.pipelines.some(pipeline => pipeline.stages?.length) || !metadata.owners?.length) fail('hubspot_ticket_schema_incomplete', 409);
     return { portalId: null, metadata };

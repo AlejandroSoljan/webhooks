@@ -151,6 +151,20 @@ test('HubSpot preflight does not require account-info or an unused contact searc
  assert.equal(calls.some(url=>url.includes('/account-info/')),false);
  assert.equal(calls.some(url=>url.includes('/objects/contacts/search')),false);
 });
+test('a configured owner id avoids the owners API while retaining ticket ownership',async()=>{
+ const calls=[];
+ const contract=new HubSpotContract('test',async(url)=>{
+  calls.push(url);
+  if(url.includes('/properties/tickets')) return {ok:true,json:async()=>({results:metadata.properties})};
+  if(url.includes('/pipelines/tickets')) return {ok:true,json:async()=>({results:metadata.pipelines})};
+  if(url.includes('/associations/')) return {ok:true,json:async()=>({results:[]})};
+  if(url.includes('/objects/companies/search')) return {ok:true,json:async()=>({results:[]})};
+  return {ok:false,status:403,json:async()=>({})};
+ });
+ const checked=await contract.preflight('owner-fixed');
+ assert.equal(checked.metadata.owners[0].id,'owner-fixed');
+ assert.equal(calls.some(url=>url.includes('/owners')),false);
+});
 test('contact matching handles aliases and refuses ambiguous equal names',()=>{
  const chats=[{jid:'1@lid',aliases:['5491@s.whatsapp.net'],name:'Juan',count:2},{jid:'2@lid',name:'Juan',count:1}];
  assert.equal(matchContact(chats,{name:'Juan'}),null);assert.equal(matchContact(chats,{jid:'5491@s.whatsapp.net',name:'Juan'}).count,2);
