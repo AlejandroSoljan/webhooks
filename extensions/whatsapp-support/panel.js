@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.106 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.107 | Fecha: 2026-09-10
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, companyTimer, companyGeneration = 0;
 const errors = {
@@ -115,8 +115,11 @@ async function refresh() {
 }
 async function save() {
   const fields = Object.fromEntries(definitions.map(([key]) => [key, $('field-' + key).value]));
-  const saved = await api('SAVE', { id: current.id, revision: current.revision, fields });
-  current.revision = saved.revision; Object.assign(current.fields, fields); notice('Cambios guardados en Asisto.');
+  const action = current.sourceChanged || current.reconciliationRequired ? 'RECONCILE' : 'SAVE';
+  const saved = await api(action, { id: current.id, revision: current.revision, fields });
+  current.revision = saved.revision; Object.assign(current.fields, saved.fields || fields); current.sourceChanged = false; current.reconciliationRequired = false;
+  if (saved.fields) { $('field-subject').value = saved.fields.subject || ''; $('field-description').value = saved.fields.description || ''; }
+  $('reviewWarning').hidden = true; notice(action === 'RECONCILE' ? 'Mensajes nuevos incorporados al resumen.' : 'Cambios guardados en Asisto.');
 }
 function selectField(container, id, title, options, value = '') {
   const label = document.createElement('label'); label.textContent = title;
