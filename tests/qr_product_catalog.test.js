@@ -19,6 +19,12 @@ test('Manager conserva consulta puntual por código interno', () => {
   assert.equal(url.searchParams.get('campo'), 'ID');
   assert.equal(url.searchParams.get('valor'), 'BP-MAR0475');
 });
+
+test('Manager acepta SKU en minúsculas y lo consulta normalizado', () => {
+  const url = new URL(managerDirectLookupUrl('https://manager.example/v300/api/Api_Articulos/Consulta?key=x', 'bp-mar0475'));
+  assert.equal(url.searchParams.get('campo'), 'ID');
+  assert.equal(url.searchParams.get('valor'), 'BP-MAR0475');
+});
 function load(api) {
   const f = fixture(), routes = new Map();
   const config = { qr_enabled: true, qr_api_url: 'https://example.invalid/products', qr_api_method: 'POST' };

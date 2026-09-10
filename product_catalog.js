@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const COLLECTION = 'qr_product_catalog';
 const text = value => String(value ?? '').trim();
+const normalizedCode = value => text(value).toUpperCase();
 function sourceKey(cfg) {
   return crypto.createHash('sha256').update(JSON.stringify([
     cfg.apiUrl, cfg.apiMethod, cfg.apiCodeParam, cfg.apiBodyTemplate,
@@ -18,6 +19,7 @@ function createProductCatalog({ getDb, fetchExternal, normalize, now = Date.now,
     if (!indexes.has(db)) {
       const ready = col.createIndexes([
         { key: { tenantId: 1, source: 1, Codigo: 1 }, name: 'tenant_source_codigo', unique: true },
+        { key: { tenantId: 1, source: 1, CodigoNorm: 1 }, name: 'tenant_source_codigo_norm' },
         { key: { tenantId: 1, source: 1, Codbarra: 1 }, name: 'tenant_source_codbarra' },
       ], { timeoutMS: 5000 }).catch(error => { indexes.delete(db); throw error; });
       indexes.set(db, ready);
@@ -32,7 +34,7 @@ function createProductCatalog({ getDb, fetchExternal, normalize, now = Date.now,
     if (!Codigo) throw new Error('catalog_codigo_required');
     const filter = { ...scope(cfg, tenant), Codigo };
     const col = await collection();
-    const update = { $set: { raw, Codbarra: text(raw.Codbarra ?? raw.codbarra ?? raw.barcode), fetchedAt } };
+    const update = { $set: { raw, CodigoNorm: normalizedCode(Codigo), Codbarra: text(raw.Codbarra ?? raw.codbarra ?? raw.barcode), fetchedAt } };
     try { await col.updateOne(filter, update, { upsert: true, timeoutMS: 2000 }); }
     catch (error) {
       if (error.code !== 11000) throw error;
@@ -42,7 +44,8 @@ function createProductCatalog({ getDb, fetchExternal, normalize, now = Date.now,
   }
   async function lookup(cfg, tenant, code) {
     const col = await collection(), filter = scope(cfg, tenant);
-    const exact = await col.findOne({ ...filter, Codigo: code }, { timeoutMS: 1500 });
+    const exact = await col.findOne({ ...filter, CodigoNorm: normalizedCode(code) }, { timeoutMS: 1500 })
+      || await col.findOne({ ...filter, Codigo: code }, { timeoutMS: 1500 });
     if (exact) return exact;
     const rows = await col.find({ ...filter, Codbarra: code }, { timeoutMS: 1500 }).limit(2).toArray();
     if (rows.length > 1) throw Object.assign(new Error('catalog_ambiguous_barcode'), { statusCode: 409 });

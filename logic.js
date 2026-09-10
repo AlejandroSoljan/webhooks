@@ -1219,24 +1219,35 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
     const maxTokens = Number.isFinite(maxTokensNum) && maxTokensNum > 0 ? Math.trunc(maxTokensNum) : 500;
 
 
-        const payload = {
-      model,
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: system },
-        {
-          role: "user",
-          content: [
-            { type: "text", text: user },
-            { type: "image_url", image_url: { url: publicImageUrl } }
-          ]
-        }
-      ]
-    };
-    applyModelTokenLimit(payload, model, maxTokens);
-
-    const resp = await client.chat.completions.create(payload);
+    const fallbackModel = String(process.env.OPENAI_VISION_FALLBACK_MODEL || "gpt-4.1-mini").trim();
+    const models = [...new Set([model, fallbackModel].filter(Boolean))];
+    let resp = null;
+    let lastVisionError = null;
+    for (const selectedModel of models) {
+      const payload = {
+        model: selectedModel,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: system },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: user },
+              { type: "image_url", image_url: { url: publicImageUrl, detail: "high" } }
+            ]
+          }
+        ]
+      };
+      applyModelTokenLimit(payload, selectedModel, maxTokens);
+      try {
+        resp = await client.chat.completions.create(payload);
+        break;
+      } catch (error) {
+        lastVisionError = error;
+        console.warn(`[vision] model=${selectedModel} failed:`, error?.message || error);
+      }
+    }
+    if (!resp) throw lastVisionError || new Error("vision_model_failed");
 
     const content = resp?.choices?.[0]?.message?.content || "";
     let json = null;
@@ -1272,7 +1283,7 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
     return { json, userText };
   } catch (e) {
     console.warn("[vision] analyzeImageExternal error:", e?.message || e);
-    return { json: null, userText: "El usuario envió una imagen." };
+    return { json: null, userText: "El usuario envió una imagen.", error: String(e?.message || "vision_failed") };
   }
 }
 

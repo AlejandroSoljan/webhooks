@@ -74,7 +74,7 @@ const productCatalog = createProductCatalog({
 });
 async function fetchQrProduct(cfg, tenant, code) {
   if (!cfg.enabled) throw Object.assign(new Error('qr_disabled'), { statusCode: 404 });
-  const codigo = digitsOrText(code, 180);
+  const codigo = normalizedLookupCode(code, 180);
   if (!codigo) throw Object.assign(new Error('codigo_required'), { statusCode: 400 });
   return productCatalog.get(cfg, tenant, codigo);
 }
@@ -110,6 +110,10 @@ function clean(value, max = 500) {
 }
 function digitsOrText(value, max = 160) {
   return clean(value, max).replace(/[\r\n\t]/g, ' ');
+}
+function normalizedLookupCode(value, max = 180) {
+  const code = digitsOrText(value, max);
+  return /[a-z]/i.test(code) ? code.toUpperCase() : code;
 }
 function boolValue(value, fallback = false) {
   if (value === undefined || value === null || value === '') return !!fallback;
@@ -260,7 +264,7 @@ function replaceTemplateValue(value, variables) {
 
 function managerDirectLookupUrl(value, code) {
   const url = new URL(String(value || ''));
-  const codigo = digitsOrText(code, 180);
+  const codigo = normalizedLookupCode(code, 180);
   const isBarcode = /^\d{8,14}$/.test(codigo);
   url.searchParams.set('campo', isBarcode ? 'OTRO' : 'ID');
   url.searchParams.set('valor', isBarcode ? `%codbarra:${codigo}` : codigo);
@@ -313,7 +317,7 @@ async function loadQrConfig(db, tenant) {
 async function fetchQrProductDirect(cfg, tenant, code) {
   if (!cfg.enabled) throw Object.assign(new Error('qr_disabled'), { statusCode: 404 });
   if (!/^https?:\/\//i.test(cfg.apiUrl)) throw Object.assign(new Error('qr_api_not_configured'), { statusCode: 503 });
-  const codigo = digitsOrText(code, 180);
+  const codigo = normalizedLookupCode(code, 180);
   if (!codigo) throw Object.assign(new Error('codigo_required'), { statusCode: 400 });
 
   const variables = { codigo, tenant };
@@ -438,7 +442,7 @@ async function fetchQrProductDirect(cfg, tenant, code) {
 
   const rows = externalProductRows(resp.data);
   const exact = rows.find(item => item && String(firstDefined(item,
-    [cfg.fieldCode, 'Codigo', 'codigo', 'code', 'sku', 'SKU']) ?? '').trim() === codigo);
+    [cfg.fieldCode, 'Codigo', 'codigo', 'code', 'sku', 'SKU']) ?? '').trim().toUpperCase() === codigo.toUpperCase());
   const barcodes = exact ? [] : rows.filter(item => item && String(firstDefined(item,
     ['Codbarra', 'codbarra', 'barcode']) ?? '').trim() === codigo);
   if (barcodes.length > 1) throw Object.assign(new Error('catalog_ambiguous_barcode'), { statusCode: 409 });
@@ -1198,7 +1202,7 @@ function pageHtml({ tenant, code, branding = {} }) {
   </section>
  <div class="footer"><div>Información comercial obtenida del sistema del negocio. La información ampliada puede utilizar IA y fuentes públicas de Internet.</div><div class="powered">Powered by <img src="/static/asisto-logo-transparent.png" alt="Asisto"/><strong>Asisto</strong> · <a href="https://www.asistobot.com.ar" target="_blank" rel="noopener">www.asistobot.com.ar</a></div></div>
 </div>
-<nav class="appNav" aria-label="Navegación principal"><a href="/customer-app/${encodeURIComponent(tenant)}"><span>⌂</span>Inicio</a><a class="active" href="/qr/${encodeURIComponent(tenant)}?scan=1"><span>▣</span>Escanear</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=turns"><span>🎟</span>Turnos</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=ticket"><span>🔔</span>Mi turno</a><a href="https://wa.me/5493462610000?text=Hola%2C%20quiero%20contactar%20a%20un%20vendedor."><span>💬</span>Vendedor</a></nav>
+<nav class="appNav" aria-label="Navegación principal"><a href="/customer-app/${encodeURIComponent(tenant)}"><span>⌂</span>Inicio</a><a class="active" href="/qr/${encodeURIComponent(tenant)}?scan=1"><span>▣</span>Escanear</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=turns"><span>🎟</span>Turnos</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=ticket"><span>🔔</span>Mi turno</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=seller"><span>💬</span>Vendedor</a></nav>
 <script>
 const TENANT=${JSON.stringify(tenant)};
 const BRANDING=${JSON.stringify(branding)};
@@ -1364,7 +1368,8 @@ function mountQrProductWeb(app) {
       const db = await getDb();
       const cfg = await loadQrConfig(db, tenant);
       if (!cfg.enabled || !cfg.aiEnabled) return res.status(404).json({ ok: false, error: 'photo_lookup_disabled' });
-      const analysis = await analyzeImageExternal({ publicImageUrl: image, mime: 'image/jpeg', purpose: 'product-identification', tenantId: tenant, channelType: 'qr_web', aiKeyKind: 'conversacional', visionModel: cfg.aiModel || undefined, visionMaxTokens: 350 });
+      const analysis = await analyzeImageExternal({ publicImageUrl: image, mime: 'image/jpeg', purpose: 'product-identification', tenantId: tenant, channelType: 'qr_web', aiKeyKind: 'conversacional', visionMaxTokens: 450 });
+      if (analysis?.error) throw Object.assign(new Error(analysis.error), { publicDetail: 'El servicio de reconocimiento de imágenes no respondió. Probá nuevamente.' });
       const identification = analysis?.json && typeof analysis.json === 'object' ? analysis.json : {};
       const barcode = String(identification.barcode || '').replace(/\D/g, '');
       let product = null;
@@ -1376,7 +1381,7 @@ function mountQrProductWeb(app) {
       return res.json({ ok: true, product, identification: { barcode, brand: clean(identification.brand, 100), model: clean(identification.model, 120), name: clean(identification.name, 180), visibleText: clean(identification.visible_text, 500), confidence: Number(identification.confidence || 0) } });
     } catch (e) {
       console.error('[qr] product photo:', e?.message || e);
-      return res.status(500).json({ ok: false, error: 'product_photo_failed', detail: 'No se pudo analizar la foto en este momento.' });
+      return res.status(500).json({ ok: false, error: 'product_photo_failed', detail: clean(e?.publicDetail || 'No se pudo analizar la foto en este momento.', 240) });
     }
   });
 
