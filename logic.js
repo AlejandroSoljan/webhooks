@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.079 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.091 | Fecha: 2026-09-10
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
 // Incluye logs completos de OpenAI (payload y response).
@@ -1187,7 +1187,12 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
       return { json: null, userText: "[imagen]" };
     }
 
-    const system = [
+    const system = purpose === "product-identification" ? [
+      "Identificá el producto usando únicamente datos visibles en la foto.",
+      "Leé códigos EAN/UPC, marca, modelo, nombre y texto del envase.",
+      "No inventes códigos ni variantes; si no es legible, usá string vacío.",
+      'Respondé exclusivamente JSON: {"barcode":"","brand":"","model":"","name":"","visible_text":"","confidence":0}'
+    ].join("\n") : [
       "Sos un asistente que analiza imágenes y extrae texto/datos clave.",
       "Si la imagen parece un comprobante de pago/transferencia:",
       "- Extraé monto, moneda, fecha, referencia/operación, banco/app, emisor/recipiente si aparecen.",
@@ -1197,7 +1202,7 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
 
     const user = purpose === "payment-proof"
       ? "Analizá esta imagen que probablemente sea un comprobante de pago o transferencia. Extraé los datos visibles."
-      : "Describí brevemente la imagen y extraé cualquier texto visible.";
+      : (purpose === "product-identification" ? "Identificá este producto y transcribí cualquier código de barras visible." : "Describí brevemente la imagen y extraé cualquier texto visible.");
 
     const routedApiKey = requireOpenAiApiKey(aiKeyKind || (String(channelType || '').toLowerCase() === 'qr_web' ? 'conversacional' : 'pedidos'));
     const client = getOpenAIClient(routedApiKey);
