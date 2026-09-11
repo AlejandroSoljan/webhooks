@@ -13,6 +13,7 @@ import com.google.firebase.messaging.RemoteMessage;
 
 public class AsistoMessagingService extends FirebaseMessagingService {
     private static final String CHANNEL_ID = "asisto_updates";
+    private static final String TURN_CHANNEL_ID = "asisto_turns";
 
     @Override public void onNewToken(String token) {
         super.onNewToken(token);
@@ -36,15 +37,28 @@ public class AsistoMessagingService extends FirebaseMessagingService {
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
         NotificationManager manager = getSystemService(NotificationManager.class);
+        String channelId = message.getData().containsKey("channelId")
+            ? message.getData().get("channelId") : CHANNEL_ID;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(new NotificationChannel(
-                CHANNEL_ID, "Novedades de Asisto", NotificationManager.IMPORTANCE_DEFAULT));
+            if (TURN_CHANNEL_ID.equals(channelId)) {
+                NotificationChannel turnChannel = new NotificationChannel(
+                    TURN_CHANNEL_ID, "Avisos de turnos", NotificationManager.IMPORTANCE_HIGH);
+                turnChannel.enableVibration(true);
+                turnChannel.setVibrationPattern(new long[]{0, 450, 180, 450});
+                manager.createNotificationChannel(turnChannel);
+            } else {
+                manager.createNotificationChannel(new NotificationChannel(
+                    CHANNEL_ID, "Novedades de Asisto", NotificationManager.IMPORTANCE_DEFAULT));
+            }
         }
-        manager.notify((int) System.currentTimeMillis(), new NotificationCompat.Builder(this, CHANNEL_ID)
+        manager.notify((int) System.currentTimeMillis(), new NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.drawable.ic_asisto)
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_SOUND | NotificationCompat.DEFAULT_VIBRATE)
+            .setVibrate(new long[]{0, 450, 180, 450})
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
             .build());
