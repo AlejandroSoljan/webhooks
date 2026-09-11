@@ -14,6 +14,11 @@ import com.google.firebase.messaging.RemoteMessage;
 public class AsistoMessagingService extends FirebaseMessagingService {
     private static final String CHANNEL_ID = "asisto_updates";
 
+    @Override public void onNewToken(String token) {
+        super.onNewToken(token);
+        PushRegistration.register(this, token);
+    }
+
     @Override public void onMessageReceived(RemoteMessage message) {
         String title = "Asisto";
         String body = "Tenés una nueva notificación";

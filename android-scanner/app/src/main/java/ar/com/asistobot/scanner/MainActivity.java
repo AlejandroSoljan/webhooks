@@ -10,6 +10,7 @@ import android.os.Bundle;
 import android.provider.MediaStore;
 import android.view.View;
 import android.webkit.PermissionRequest;
+import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -110,6 +111,7 @@ public class MainActivity extends AppCompatActivity {
         webView.getSettings().setJavaScriptEnabled(true);
         webView.getSettings().setDomStorageEnabled(true);
         webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
+        webView.addJavascriptInterface(new NativeBridge(), "AsistoNative");
         webView.setWebChromeClient(new WebChromeClient() {
             @Override public void onProgressChanged(WebView view, int newProgress) {
                 progress.setProgress(newProgress);
@@ -155,6 +157,8 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebViewClient(new WebViewClient() {
             @Override public void onPageFinished(WebView view, String url) {
                 injectPushToken();
+                PushRegistration.ensure(MainActivity.this);
+                if (pushToken != null && !pushToken.isEmpty()) PushRegistration.register(MainActivity.this, pushToken);
             }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
@@ -163,6 +167,16 @@ public class MainActivity extends AppCompatActivity {
                 return true;
             }
         });
+    }
+
+    private final class NativeBridge {
+        @JavascriptInterface public String getInstallId() {
+            return PushRegistration.installId(MainActivity.this);
+        }
+
+        @JavascriptInterface public void adoptInstallId(String installId) {
+            PushRegistration.adoptInstallId(MainActivity.this, installId);
+        }
     }
 
     private void injectPushToken() {
