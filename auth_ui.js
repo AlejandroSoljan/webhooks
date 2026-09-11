@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.105 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.120 | Fecha: 2026-09-11
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -5277,6 +5277,9 @@ function mountAuthRoutes(app) {
     ];
   }
 
+  const wwebDashboardStatsCache = new Map();
+  const WWEB_DASHBOARD_STATS_CACHE_MS = 15000;
+
   async function wwebBuildStatsMap(db, baseFilter, start, end) {
     const coll = db.collection('wa_wweb_message_log');
     const todayRows = await coll.aggregate([
@@ -5290,13 +5293,6 @@ function mountAuthRoutes(app) {
       } }
     ], { allowDiskUse: true }).toArray();
 
-    const allRows = await coll.aggregate([
-      // Para obtener solamente la ultima actividad no hace falta deduplicar el
-      // historial completo. Evita agrupar millones de mensajes al abrir Sesiones.
-      { $match: { ...baseFilter } },
-      { $group: { _id: { tenantId: '$tenantId', numero: '$numero' }, lastMessageAt: { $max: '$at' } } }
-    ]).toArray();
-
     const map = new Map();
     for (const row of (todayRows || [])) {
       const key = `${row?._id?.tenantId || ''}::${row?._id?.numero || ''}`;
@@ -5307,13 +5303,19 @@ function mountAuthRoutes(app) {
         lastMessageAt: row?.lastMessageAt || null
       });
     }
-    for (const row of (allRows || [])) {
-      const key = `${row?._id?.tenantId || ''}::${row?._id?.numero || ''}`;
-      const prev = map.get(key) || { incoming: 0, outgoing: 0, contacts: 0, lastMessageAt: null };
-      if (!prev.lastMessageAt && row?.lastMessageAt) prev.lastMessageAt = row.lastMessageAt;
-      map.set(key, prev);
-    }
     return map;
+  }
+
+  async function wwebDashboardStats(db, filter, todayYmd, todayStart, todayEnd) {
+    const cacheKey = filter?.tenantId ? `tenant:${String(filter.tenantId)}` : 'superadmin:all';
+    const cached = wwebDashboardStatsCache.get(cacheKey);
+    if (cached && cached.day === todayYmd && Date.now() - cached.at < WWEB_DASHBOARD_STATS_CACHE_MS) return cached.value;
+    const value = await Promise.all([
+      wwebBuildStatsMap(db, filter, todayStart, todayEnd),
+      wwebPermissionStatsMap(db, filter, todayYmd, todayYmd)
+    ]);
+    wwebDashboardStatsCache.set(cacheKey, { day: todayYmd, at: Date.now(), value });
+    return value;
   }
 
   async function wwebPermissionStatsMap(db, tenantFilter, fromYmd, toYmd) {
@@ -5348,24 +5350,14 @@ function mountAuthRoutes(app) {
       const isSuper = role === "superadmin";
       const filter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
 
-      const locks = await db
-        .collection("wa_locks")
-        .find(filter)
-        .sort({ lastSeenAt: -1 })
-        .limit(500)
-        .toArray();
-
-      // Políticas por sesión (tenantId+numero)
-      const policies = await db
-        .collection("wa_wweb_policies")
-        .find(filter)
-        .limit(2000)
-        .toArray();
-
       const todayYmd = wwebArYmd(new Date());
       const { start: todayStart, end: todayEnd } = wwebArDateRange(todayYmd, todayYmd);
-      const statsMap = await wwebBuildStatsMap(db, filter, todayStart, todayEnd);
-      const permissionStatsMap = await wwebPermissionStatsMap(db, filter, todayYmd, todayYmd);
+      const [locks, policies, dashboardStats] = await Promise.all([
+        db.collection("wa_locks").find(filter).sort({ lastSeenAt: -1 }).limit(500).toArray(),
+        db.collection("wa_wweb_policies").find(filter).limit(2000).toArray(),
+        wwebDashboardStats(db, filter, todayYmd, todayStart, todayEnd)
+      ]);
+      const [statsMap, permissionStatsMap] = dashboardStats;
 
       const polMap = new Map();
       for (const p of (policies || [])) {
