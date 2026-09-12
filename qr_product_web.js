@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.117 | Fecha: 2026-09-11
+// Asisto | Version: 5.00.121 | Fecha: 2026-09-12
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta el catálogo local y su API de respaldo: NO usa OpenAI.
@@ -23,6 +23,8 @@ const qrJson = express.json({ limit: '512kb' });
 const qrPhotoJson = express.json({ limit: '8mb' });
 const rateState = new Map();
 let lastRateCleanupAt = 0;
+const qrPageConfigCache = new Map();
+const QR_CONFIG_CACHE_MS = Math.max(5000, Math.min(300000, Number(process.env.QR_CONFIG_CACHE_MS || 30000) || 30000));
 
 
 const QR_PRODUCT_API_MAX_CONCURRENT = Math.max(1, Math.min(50, Number(process.env.QR_PRODUCT_API_MAX_CONCURRENT || 10) || 10));
@@ -343,6 +345,23 @@ async function loadQrConfig(db, tenant) {
     aiWebSearchContextSize: ['low', 'medium', 'high'].includes(webContext) ? webContext : 'low',
     aiWebSearchTimeoutMs: intValue(doc.qr_ai_web_search_timeout_ms, 20000, 5000, 120000),
   };
+}
+
+async function loadQrPageConfig(db, tenant) {
+  const cacheKey = String(tenant || '').toUpperCase();
+  const cached = qrPageConfigCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < QR_CONFIG_CACHE_MS) return cached.value;
+  if (cached?.pending) return cached.pending;
+  const pending = loadQrConfig(db, tenant);
+  qrPageConfigCache.set(cacheKey, { at: Date.now(), pending });
+  try {
+    const value = await pending;
+    qrPageConfigCache.set(cacheKey, { at: Date.now(), value });
+    return value;
+  } catch (error) {
+    qrPageConfigCache.delete(cacheKey);
+    throw error;
+  }
 }
 
 async function fetchQrProductDirect(cfg, tenant, code) {
@@ -1367,27 +1386,35 @@ function mountQrProductWeb(app) {
   // Formato recomendado para imprimir: /qr/DOMINIO?codigo=SKU
   // También se mantiene /qr/DOMINIO/SKU para códigos simples.
   app.get('/qr/:tenant', async (req, res) => {
-    const tenant = safeTenant(req.params.tenant);
-    const code = digitsOrText(req.query?.codigo, 180);
-    if (!tenant) return res.status(404).send('Dominio inválido');
-    const db = await getDb();
-    const cfg = await loadQrConfig(db, tenant);
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-    return res.status(200).send(pageHtml({ tenant, code, branding: qrPublicBranding(cfg) }));
+    try {
+      const tenant = safeTenant(req.params.tenant);
+      const code = digitsOrText(req.query?.codigo, 180);
+      if (!tenant) return res.status(404).send('Dominio inválido');
+      const cfg = await loadQrPageConfig(await getDb(), tenant);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      return res.status(200).send(pageHtml({ tenant, code, branding: qrPublicBranding(cfg) }));
+    } catch (error) {
+      console.error('[qr] page:', error?.message || error);
+      return res.status(503).send('El servicio está ocupado. Reintentá en unos segundos.');
+    }
   });
 
   app.get('/qr/:tenant/:codigo', async (req, res) => {
-    const tenant = safeTenant(req.params.tenant);
-    const code = digitsOrText(req.params.codigo, 180);
-    if (!tenant || !code) return res.status(404).send('QR inválido');
-    const db = await getDb();
-    const cfg = await loadQrConfig(db, tenant);
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-    return res.status(200).send(pageHtml({ tenant, code, branding: qrPublicBranding(cfg) }));
+    try {
+      const tenant = safeTenant(req.params.tenant);
+      const code = digitsOrText(req.params.codigo, 180);
+      if (!tenant || !code) return res.status(404).send('QR inválido');
+      const cfg = await loadQrPageConfig(await getDb(), tenant);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      return res.status(200).send(pageHtml({ tenant, code, branding: qrPublicBranding(cfg) }));
+    } catch (error) {
+      console.error('[qr] page:', error?.message || error);
+      return res.status(503).send('El servicio está ocupado. Reintentá en unos segundos.');
+    }
   });
 
   app.post('/api/ext/qr/photo', qrPhotoJson, async (req, res) => {

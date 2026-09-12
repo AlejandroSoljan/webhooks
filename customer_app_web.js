@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.119 | Fecha: 2026-09-11
+// Asisto | Version: 5.00.121 | Fecha: 2026-09-12
 const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
@@ -17,6 +17,8 @@ const DEFAULT_BANNERS = [
   "https://acdn-us.mitiendanube.com/stores/006/162/992/themes/amazonas/2-slide-1786043506674-1649773286-25b60bcb6943aefb2090146894c9d01d1786043508-1024-1024.webp?4168203849057930746",
   "https://acdn-us.mitiendanube.com/stores/006/162/992/themes/amazonas/2-slide-1786033458293-4286066824-123e73ebea9fe0598db5eccf0ab902ba1786033459-1024-1024.webp?4168203849057930746",
 ];
+const customerConfigCache = new Map();
+const CUSTOMER_CONFIG_CACHE_MS = 30000;
 
 function clean(value, max = 80) { return String(value || "").trim().slice(0, max); }
 function tenant(value) { return clean(value, 60).toUpperCase().replace(/[^A-Z0-9_-]/g, ""); }
@@ -28,12 +30,12 @@ function ticketView(t, ahead, current) {
 }
 
 async function configFor(db, tenantId) {
-  const saved = await db.collection("customer_app_config").findOne({ tenantId });
-  const behavior = await db.collection("settings").findOne({ _id: `behavior:${tenantId}` }) || {};
+  const cached=customerConfigCache.get(tenantId);if(cached&&Date.now()-cached.at<CUSTOMER_CONFIG_CACHE_MS)return cached.value;if(cached?.pending)return cached.pending;
+  const pending=(async()=>{const [saved,behaviorDoc]=await Promise.all([db.collection("customer_app_config").findOne({tenantId}),db.collection("settings").findOne({_id:`behavior:${tenantId}`})]);const behavior=behaviorDoc||{};
   return { tenantId, businessName: saved?.businessName || behavior.qr_company_name || "Mecan", branchId: saved?.branchId || "CENTRAL", salesWhatsapp: saved?.salesWhatsapp || "5493462610000",
     branchName: saved?.branchName || behavior.app_branch_name || "Sucursal principal", branchAddress: saved?.branchAddress || behavior.app_branch_address || "Atención en el local", businessHours: saved?.businessHours || behavior.app_business_hours || "Horario comercial", estimatedWaitMinutes: Number(saved?.estimatedWaitMinutes ?? behavior.app_estimated_wait_minutes ?? 15),
     sectors: Array.isArray(saved?.sectors) && saved.sectors.length ? saved.sectors : DEFAULT_SECTORS,
-    banners: Array.isArray(saved?.banners) && saved.banners.length ? saved.banners : DEFAULT_BANNERS };
+    banners: Array.isArray(saved?.banners) && saved.banners.length ? saved.banners : DEFAULT_BANNERS };})();customerConfigCache.set(tenantId,{at:Date.now(),pending});try{const value=await pending;customerConfigCache.set(tenantId,{at:Date.now(),value});return value}catch(error){customerConfigCache.delete(tenantId);throw error}
 }
 
 function page(tenantId) {
