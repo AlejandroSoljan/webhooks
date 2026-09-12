@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.121 | Fecha: 2026-09-12
+// Asisto | Version: 5.00.122 | Fecha: 2026-09-12
 const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
@@ -30,7 +30,7 @@ function ticketView(t, ahead, current) {
 }
 
 async function configFor(db, tenantId) {
-  const cached=customerConfigCache.get(tenantId);if(cached&&Date.now()-cached.at<CUSTOMER_CONFIG_CACHE_MS)return cached.value;if(cached?.pending)return cached.pending;
+  const cached=customerConfigCache.get(tenantId);if(cached?.pending)return cached.pending;if(cached?.value&&Date.now()-cached.at<CUSTOMER_CONFIG_CACHE_MS)return cached.value;
   const pending=(async()=>{const [saved,behaviorDoc]=await Promise.all([db.collection("customer_app_config").findOne({tenantId}),db.collection("settings").findOne({_id:`behavior:${tenantId}`})]);const behavior=behaviorDoc||{};
   return { tenantId, businessName: saved?.businessName || behavior.qr_company_name || "Mecan", branchId: saved?.branchId || "CENTRAL", salesWhatsapp: saved?.salesWhatsapp || "5493462610000",
     branchName: saved?.branchName || behavior.app_branch_name || "Sucursal principal", branchAddress: saved?.branchAddress || behavior.app_branch_address || "Atención en el local", businessHours: saved?.businessHours || behavior.app_business_hours || "Horario comercial", estimatedWaitMinutes: Number(saved?.estimatedWaitMinutes ?? behavior.app_estimated_wait_minutes ?? 15),

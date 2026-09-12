@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.121 | Fecha: 2026-09-12
+// Asisto | Version: 5.00.122 | Fecha: 2026-09-12
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta el catálogo local y su API de respaldo: NO usa OpenAI.
@@ -350,8 +350,8 @@ async function loadQrConfig(db, tenant) {
 async function loadQrPageConfig(db, tenant) {
   const cacheKey = String(tenant || '').toUpperCase();
   const cached = qrPageConfigCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < QR_CONFIG_CACHE_MS) return cached.value;
   if (cached?.pending) return cached.pending;
+  if (cached?.value && Date.now() - cached.at < QR_CONFIG_CACHE_MS) return cached.value;
   const pending = loadQrConfig(db, tenant);
   qrPageConfigCache.set(cacheKey, { at: Date.now(), pending });
   try {
