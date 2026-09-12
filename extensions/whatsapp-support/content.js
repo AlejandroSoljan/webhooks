@@ -1,6 +1,6 @@
-// Asisto | Version: 5.00.129 | Fecha: 2026-09-12
+// Asisto | Version: 5.00.130 | Fecha: 2026-09-12
 (() => {
-  let chats = [], knownChats = [], owner = '', timer, stopped = false, currentJid = '', currentName = '', taskData = { tasks: [], messages: [] }, anchorId = '';
+  let chats = [], knownChats = [], owner = '', timer, stopped = false, currentJid = '', currentName = '', taskData = { tasks: [], messages: [] }, anchorId = '', selectionDirty = false;
   const remembered = new Map(), addressBook = [], selected = new Set();
   const extractJid = value => (value || '').match(/(?:^|_)([0-9]+@(?:s\.whatsapp\.net|lid))(?:_|$)/)?.[1] || '';
   const extractMessageId = value => {
@@ -34,19 +34,22 @@
   }
   function renderMessageControls() {
     const assignments = new Map((taskData.messages || []).map(row => [row.waId, row])), nodes = messageNodes(), retained = new Set();
+    const main = document.querySelector('#main'), mainRect = main?.getBoundingClientRect();
+    document.querySelectorAll('.asisto-message-control').forEach(holder => holder.remove());
     for (const node of nodes) {
-      const id = node.dataset.asistoMessageId, row = assignments.get(id), holder = node.querySelector(':scope > .asisto-message-control') || document.createElement('div');
+      const id = node.dataset.asistoMessageId, row = assignments.get(id), holder = document.createElement('div'), rect = node.getBoundingClientRect();
       holder.className = 'asisto-message-control'; holder.dataset.asistoOwned = '1'; holder.replaceChildren();
+      holder.style.top = Math.max(4, rect.top - (mainRect?.top || 0) + rect.height / 2 - 11) + 'px';
       const check = document.createElement('input'); check.type = 'checkbox'; check.checked = !!id && selected.has(id); check.disabled = !id; check.title = 'Seleccionar mensaje para una tarea';
       const rowAssignments = row?.assignments || []; check.title = rowAssignments.length ? rowAssignments.map(assignment => `${statusLabel(assignment.status)} · ${assignment.subject || assignment.shortId}`).join('\n') : 'Seleccionar este mensaje para una tarea';
       if (!id) check.title = 'Esperando que Baileys sincronice este mensaje';
-      check.setAttribute('aria-label', check.title); check.onchange = event => { event.stopPropagation(); anchorId = id; check.checked ? selected.add(id) : selected.delete(id); renderToolbar(); }; check.onclick = event => event.stopPropagation(); holder.append(check);
+      check.setAttribute('aria-label', check.title); check.onchange = event => { event.stopPropagation(); selectionDirty = true; anchorId = id; check.checked ? selected.add(id) : selected.delete(id); renderToolbar(); }; check.onclick = event => event.stopPropagation(); holder.append(check);
       for (const assignment of row?.assignments || []) {
         const badge = document.createElement('button'); badge.type = 'button'; badge.className = `asisto-message-assignment ${assignment.status}`;
         badge.textContent = `${statusLabel(assignment.status)} · ${assignment.subject || assignment.shortId}`; badge.title = `Tarea ${assignment.shortId}${assignment.ticketId ? ' · Ticket ' + assignment.ticketId : ''}`;
         badge.onclick = event => { event.preventDefault(); event.stopPropagation(); chrome.runtime.sendMessage({ action: 'OPEN', jid: currentJid, name: currentName }).catch(() => {}); }; holder.append(badge);
       }
-      if (!holder.parentElement) node.append(holder); retained.add(holder);
+      main?.append(holder); retained.add(holder);
     }
     document.querySelectorAll('.asisto-message-control').forEach(holder => { if (!retained.has(holder)) holder.remove(); }); renderToolbar(nodes);
   }
@@ -73,11 +76,18 @@
       const request = { action: 'ASSIGN_MESSAGES', jid: currentJid, messageIds: [...selected], destination: destination.value, existingAction: action.value };
       let response = await chrome.runtime.sendMessage(request);
       if (response?.error === 'message_already_assigned' && confirm('Uno o más mensajes ya pertenecen a otra tarea. ¿Querés reasignarlos?')) response = await chrome.runtime.sendMessage({ ...request, reassign: true });
-      if (response?.error) return alert('Asisto: ' + response.error); selected.clear(); await refreshTasks(); chrome.runtime.sendMessage({ action: 'OPEN', jid: currentJid, name: currentName }).catch(() => {});
+      if (response?.error) return alert('Asisto: ' + response.error); selectionDirty = false; await refreshTasks(); chrome.runtime.sendMessage({ action: 'OPEN', jid: currentJid, name: currentName }).catch(() => {});
     };
     bar.append(title, all, none, from, destination, action, assign);
   }
-  async function refreshTasks() { if (!currentJid) return; const response = await chrome.runtime.sendMessage({ action: 'MESSAGES', jid: currentJid }); if (response?.data) taskData = response.data; renderMessageControls(); }
+  async function refreshTasks() {
+    if (!currentJid) return; const response = await chrome.runtime.sendMessage({ action: 'MESSAGES', jid: currentJid }); if (!response?.data) return; taskData = response.data;
+    if (!selectionDirty) {
+      selected.clear(); const pending = (taskData.tasks || []).filter(task => task.status === 'pending');
+      if (pending.length === 1) for (const row of taskData.messages || []) if ((row.assignments || []).some(assignment => assignment.draftId === pending[0].id)) selected.add(row.waId);
+    }
+    renderMessageControls();
+  }
   function update() {
     if (stopped) return; observer.disconnect(); const targets = [...document.querySelectorAll('#pane-side [role="row"], #pane-side [role="listitem"], #main header')], retained = new Set();
     for (const target of targets) {
@@ -85,16 +95,18 @@
       const jid = extractJid(target.getAttribute('data-id') || target.querySelector('[data-id]')?.getAttribute('data-id')) || (target.matches('#main header') ? extractJid(document.querySelector('#main [data-id]')?.getAttribute('data-id')) : ''), name = label.getAttribute('title');
       if (jid && name && remembered.get(jid) !== name) { remembered.set(jid, name); chrome.runtime.sendMessage({ action: 'CONTACT', jid, name }).then(result => { if (result?.data?.saved) refresh(); else if (result?.error) remembered.delete(jid); }).catch(() => {}); }
       const match = AsistoMatch.matchContact(chats, { jid, name }), known = AsistoMatch.matchContact(knownChats, { jid, name }); let button = target.querySelector('.asisto-task-badge');
-      if (target.matches('#main header') && known && currentJid !== known.jid) { currentJid = known.jid; currentName = known.name || name; selected.clear(); anchorId = ''; refreshTasks().catch(() => {}); }
+      if (target.matches('#main header') && known && currentJid !== known.jid) { currentJid = known.jid; currentName = known.name || name; selected.clear(); selectionDirty = false; anchorId = ''; refreshTasks().catch(() => {}); }
       if (!match) { button?.remove(); continue; }
       if (!button) { button = document.createElement('button'); button.className = 'asisto-task-badge'; button.type = 'button'; button.dataset.asistoOwned = '1'; button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); if (event.isTrusted) chrome.runtime.sendMessage({ action: 'OPEN', jid: button.dataset.jid, name: button.dataset.name }).catch(() => {}); }); label.insertAdjacentElement('afterend', button); }
-      button.dataset.jid = match.jid; button.dataset.name = match.name; button.textContent = '✓ ' + match.count; button.title = `Asisto: ${match.count} tarea${match.count === 1 ? '' : 's'}. Revisar resumen`; button.setAttribute('aria-label', button.title); retained.add(button);
+      const currentCount = match.jid === currentJid ? (taskData.tasks || []).filter(task => task.status === 'pending').length : match.count;
+      button.dataset.jid = match.jid; button.dataset.name = match.name; button.textContent = '✓ ' + currentCount; button.title = `Asisto: ${currentCount} tarea${currentCount === 1 ? '' : 's'}. Revisar resumen`; button.setAttribute('aria-label', button.title); retained.add(button);
     }
     document.querySelectorAll('.asisto-task-badge').forEach(button => { if (!retained.has(button)) button.remove(); }); renderMessageControls(); observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['title', 'data-id'] });
   }
   const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(update, 180); });
-  async function refresh() { try { const [result, context] = await Promise.all([chrome.runtime.sendMessage({ action: 'INDEX' }), chrome.runtime.sendMessage({ action: 'ACTIVE_CONTEXT' })]); if (owner !== result?.data?.owner) remembered.clear(); owner = result?.data?.owner || ''; chats = result?.data?.chats || []; knownChats = result?.data?.knownChats || chats; if (context?.data?.jid && context.data.jid !== currentJid) { currentJid = context.data.jid; currentName = context.data.name || ''; selected.clear(); anchorId = ''; await refreshTasks(); } } catch { chats = []; knownChats = []; if (!chrome.runtime?.id) stopped = true; } update(); syncAddressBook(); }
+  async function refresh() { try { const [result, context] = await Promise.all([chrome.runtime.sendMessage({ action: 'INDEX' }), chrome.runtime.sendMessage({ action: 'ACTIVE_CONTEXT' })]); if (owner !== result?.data?.owner) remembered.clear(); owner = result?.data?.owner || ''; chats = result?.data?.chats || []; knownChats = result?.data?.knownChats || chats; if (context?.data?.jid && context.data.jid !== currentJid) { currentJid = context.data.jid; currentName = context.data.name || ''; selected.clear(); selectionDirty = false; anchorId = ''; await refreshTasks(); } } catch { chats = []; knownChats = []; if (!chrome.runtime?.id) stopped = true; } update(); syncAddressBook(); }
   function syncAddressBook() { if (!chats.length || !addressBook.length) return; const found = new Map(); for (const contact of addressBook) for (const alias of contact.aliases || []) { const chat = chats.find(item => item.jid === alias || item.aliases?.includes(alias)); if (chat && contact.name) found.set(chat.jid, { jid: chat.jid, name: contact.name, aliases: contact.aliases }); } const pending = [...found.values()].filter(contact => remembered.get(contact.jid) !== contact.name); if (!pending.length) return; pending.forEach(contact => remembered.set(contact.jid, contact.name)); for (let offset = 0; offset < pending.length; offset += 50) chrome.runtime.sendMessage({ action: 'CONTACTS', contacts: pending.slice(offset, offset + 50) }).then(result => { if (result?.error) pending.slice(offset, offset + 50).forEach(contact => remembered.delete(contact.jid)); else refresh(); }).catch(() => pending.slice(offset, offset + 50).forEach(contact => remembered.delete(contact.jid))); }
   window.addEventListener('message', event => { if (event.source !== window || event.origin !== location.origin || event.data?.source !== 'asisto-whatsapp-contacts-v1' || !Array.isArray(event.data.contacts)) return; for (const contact of event.data.contacts) if (typeof contact?.name === 'string' && Array.isArray(contact.aliases)) addressBook.push(contact); syncAddressBook(); });
+  document.addEventListener('scroll', () => { clearTimeout(timer); timer = setTimeout(renderMessageControls, 80); }, true);
   refresh(); const interval = setInterval(() => { if (stopped) clearInterval(interval); else { refresh(); refreshTasks().catch(() => {}); } }, 30000);
 })();
