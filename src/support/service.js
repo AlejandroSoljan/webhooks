@@ -263,6 +263,62 @@ class SupportService {
       return `${row.at.toISOString()} ${row.fromMe ? 'Operador' : 'Contacto'}: ${row.audio && !payload.transcribed ? '[Audio pendiente de transcripción]' : payload.text}`;
     }).join('\n').slice(0, 100000) };
   }
+  async assignMessages(scope, input) {
+    const jid = text(input.jid, 200);
+    const waIds = Array.isArray(input.messageIds) ? [...new Set(input.messageIds.map(id => text(id, 200)))] : [];
+    if (!waIds.length || waIds.length > 200) fail('invalid_message_selection');
+    const rows = await this.col('messages').find({ ...scope, jid, id: { $in: waIds } }).sort({ at: 1, _id: 1 }).toArray();
+    if (rows.length !== waIds.length) fail('message_selection_not_found', 404);
+    const destination = input.destination === 'new' ? 'new' : text(input.destination, 64);
+    let draft = destination === 'new' ? null : await this.col('drafts').findOne({ _id: destination, ...scope, jid, state: { $ne: 'merged' } });
+    if (destination !== 'new' && !draft) fail('draft_not_found', 404);
+    if (draft?.hubspot?.ticketId && !['followup', 'update'].includes(input.existingAction)) fail('saved_ticket_action_required', 409);
+    const conflicts = await this.col('drafts').find({ ...scope, jid, state: { $ne: 'merged' }, ...(draft ? { _id: { $ne: draft._id } } : {}), messageIds: { $in: rows.map(row => row._id) } }, { projection: { _id: 1 } }).toArray();
+    if (conflicts.length && input.reassign === true) {
+      for (const conflict of conflicts) await this.col('drafts').updateOne({ _id: conflict._id, ...scope, state: { $ne: 'merged' } }, { $pull: { messageIds: { $in: rows.map(row => row._id) } }, $inc: { revision: 1 }, $set: { sourceChanged: true, state: 'needs_review', updatedAt: this.now() }, $push: { events: { action: 'messages_reassigned_out', by: scope.userId, messageIds: rows.map(row => row._id), at: this.now() } } });
+    } else if (conflicts.length && input.duplicate !== true) fail('message_already_assigned', 409);
+    const selectedIds = rows.map(row => row._id), now = this.now();
+    if (!draft) {
+      const _id = scopedId(scope, 'manual-draft', ...selectedIds.sort());
+      draft = await this.col('drafts').findOne({ _id, ...scope });
+      if (!draft) {
+        const contact = await this.col('contacts').findOne({ ...scope, jid });
+        const memory = await this.col('memory').findOne({ ...scope, jid });
+        const decoded = rows.map(row => ({ ...row, text: this.vault.open(row.payload, row._id).text || '' }));
+        const result = analyze(decoded);
+        if (result.result === 'draft' && this.titleAnalyzer) {
+          const title = await this.titleAnalyzer.run(decoded, { ...scope, jid, draftId: _id });
+          result.subject = title.subject; result.description = title.description || result.description;
+          await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: jid, waId: jid, kind: 'message', provider: 'openai', model: title.model, inputTokens: title.inputTokens, outputTokens: title.outputTokens, totalTokens: title.totalTokens || title.inputTokens + title.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'extension_message_selection' }, createdAt: now });
+        }
+        const fields = { ...result, messageDate: rows[0].at.toISOString(), companyId: memory?.companyId || '', company: memory?.company || '', contactId: memory?.contactId || '', contact: memory?.contact || contact?.name || rows.find(row => !row.fromMe && row.name)?.name || '', identitySource: memory?.source || 'unassigned', proposedAction: 'review' };
+        await this.col('drafts').insertOne({ _id, ...scope, jid, messageIds: selectedIds, fingerprint: hash(selectedIds), analyzerVersion: ANALYZER_VERSION, state: 'pending', revision: 1, fields: this.vault.seal(fields, _id), source: this.vault.seal(fields, _id + ':source'), mode: (await this.config(scope)).mode, createdAt: now, updatedAt: now, events: [{ action: 'messages_assigned_new', by: scope.userId, messageIds: selectedIds, at: now }] });
+        await this.audit(scope, 'messages_assigned_new', _id);
+        return { draftId: _id, revision: 1, created: true, assigned: selectedIds.length };
+      }
+    }
+    const added = selectedIds.filter(id => !(draft.messageIds || []).includes(id));
+    if (!added.length) return { draftId: draft._id, revision: draft.revision, created: false, assigned: 0 };
+    const allIds = [...new Set([...(draft.messageIds || []), ...added])];
+    const allRows = await this.col('messages').find({ ...scope, _id: { $in: allIds } }).sort({ at: 1, _id: 1 }).toArray();
+    const decoded = allRows.map(row => ({ ...row, text: this.vault.open(row.payload, row._id).text || '' }));
+    const currentFields = this.vault.open(draft.fields, draft._id), source = { ...currentFields };
+    let summary = analyze(decoded);
+    if (summary.result === 'draft' && this.titleAnalyzer) {
+      const title = await this.titleAnalyzer.run(decoded, { ...scope, jid, draftId: draft._id });
+      summary.subject = title.subject; summary.description = title.description || summary.description;
+      await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: jid, waId: jid, kind: 'message', provider: 'openai', model: title.model, inputTokens: title.inputTokens, outputTokens: title.outputTokens, totalTokens: title.totalTokens || title.inputTokens + title.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'extension_message_append' }, createdAt: now });
+    }
+    source.subject = summary.subject || source.subject; source.description = summary.description || source.description;
+    const humanEdited = draft.events?.some(event => ['edited', 'source_reviewed_from_extension'].includes(event.action));
+    const fields = { ...currentFields };
+    if (!humanEdited) { fields.subject = source.subject; fields.description = source.description; }
+    else if (source.description && !fields.description.includes(source.description)) fields.description = `${fields.description}\n\nActualización: ${source.description}`.slice(0, 100000);
+    const update = await this.col('drafts').updateOne({ _id: draft._id, ...scope, revision: draft.revision, state: { $ne: 'merged' }, 'hubspot.state': { $nin: ['sending', 'uncertain'] } }, { $set: { messageIds: allIds, fingerprint: hash(allIds), fields: this.vault.seal(fields, draft._id), source: this.vault.seal(source, draft._id + ':source'), sourceChanged: true, state: draft.hubspot?.ticketId ? 'approved' : 'needs_review', updatedAt: now, ...(draft.hubspot?.ticketId ? { 'hubspot.pendingFollowup': true, 'hubspot.followupAction': input.existingAction } : {}) }, $inc: { revision: 1 }, $push: { events: { action: draft.hubspot?.ticketId ? 'messages_assigned_saved_ticket' : 'messages_assigned_existing', existingAction: input.existingAction || null, by: scope.userId, messageIds: added, at: now } } });
+    if (!update.matchedCount) fail('revision_conflict', 409);
+    await this.audit(scope, draft.hubspot?.ticketId ? 'messages_assigned_saved_ticket' : 'messages_assigned_existing', draft._id);
+    return { draftId: draft._id, revision: draft.revision + 1, created: false, assigned: added.length, savedTicket: !!draft.hubspot?.ticketId };
+  }
   async editDraft(scope, id, revision, input, approve = false) {
     if (!Number.isInteger(revision) || revision < 1) fail('revision_required', 409);
     const current = await this.col('drafts').findOne({ _id: text(id, 64), ...scope });

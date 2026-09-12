@@ -59,8 +59,9 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     return { ...scope, username: req.user.username || '', csrf, choices: TASK_CHOICES };
   }));
   router.get('/index', route(async (req, s, scope) => {
-    const chats = await s.col('drafts').aggregate([{ $match: { ...scope, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $ne: 'saved' } } }, { $group: { _id: '$jid', count: { $sum: 1 }, updatedAt: { $max: '$updatedAt' } } }, { $sort: { updatedAt: -1 } }, { $limit: 1001 }]).toArray();
-    const jids = chats.slice(0, 1000).map(row => row._id);
+    const chats = await s.col('drafts').aggregate([{ $match: { ...scope, state: { $nin: ['merged', 'ignored'] }, $or: [{ 'hubspot.state': { $ne: 'saved' } }, { 'hubspot.pendingFollowup': true }] } }, { $group: { _id: '$jid', count: { $sum: 1 }, updatedAt: { $max: '$updatedAt' } } }, { $sort: { updatedAt: -1 } }, { $limit: 1001 }]).toArray();
+    const known = await s.col('drafts').aggregate([{ $match: { ...scope, state: { $ne: 'merged' } } }, { $group: { _id: '$jid', count: { $sum: 1 }, updatedAt: { $max: '$updatedAt' } } }, { $sort: { updatedAt: -1 } }, { $limit: 1001 }]).toArray();
+    const jids = [...new Set([...chats.slice(0, 1000), ...known.slice(0, 1000)].map(row => row._id))];
     const contacts = await s.col('contacts').find({ ...scope, jid: { $in: jids } }).toArray();
     const names = new Map(contacts.map(row => [row.jid, row]));
     const missing = jids.filter(jid => !names.get(jid)?.name);
@@ -69,14 +70,31 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
       for (const row of recent) if (row.name) names.set(row._id, { name: row.name, aliases: [row._id] });
     }
     const config = await s.config(scope), { excluded } = require('./core');
-    return { chats: chats.slice(0, 1000).map(row => ({ jid: row._id, count: row.count, name: names.get(row._id)?.name || '', aliases: names.get(row._id)?.aliases || [row._id] })).filter(chat => !excluded(chat, config)), truncated: chats.length > 1000 };
+    const mapped = rows => rows.slice(0, 1000).map(row => ({ jid: row._id, count: row.count, name: names.get(row._id)?.name || '', aliases: names.get(row._id)?.aliases || [row._id] })).filter(chat => !excluded(chat, config));
+    return { chats: mapped(chats), knownChats: mapped(known), truncated: chats.length > 1000 || known.length > 1000 };
   }));
   router.get('/drafts', route(async (req, s, scope) => {
     const jid = text(req.query.jid, 200);
     const contact = await s.col('contacts').findOne({ _id: scopedId(scope, 'contact', jid), ...scope });
-    const rows = await s.col('drafts').find({ ...scope, jid: { $in: [...new Set([jid, ...(contact?.aliases || [])])] }, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $ne: 'saved' } }).sort({ updatedAt: -1 }).limit(100).toArray();
+    const rows = await s.col('drafts').find({ ...scope, jid: { $in: [...new Set([jid, ...(contact?.aliases || [])])] }, state: { $nin: ['merged', 'ignored'] }, $or: [{ 'hubspot.state': { $ne: 'saved' } }, { 'hubspot.pendingFollowup': true }] }).sort({ updatedAt: -1 }).limit(100).toArray();
     return rows.map(row => { const fields = s.vault.open(row.fields, row._id); return { id: row._id, subject: fields.subject || 'Tarea para revisar', contact: fields.contact || contact?.name || '', state: row.state, hubspot: row.hubspot || null }; });
   }));
+  router.get('/messages', route(async (req, s, scope) => {
+    const jid = text(req.query.jid, 200);
+    const rows = await s.col('messages').find({ ...scope, jid }).sort({ at: -1, _id: -1 }).limit(500).toArray();
+    const drafts = await s.col('drafts').find({ ...scope, jid, state: { $ne: 'merged' } }).sort({ updatedAt: -1 }).limit(100).toArray();
+    const tasks = drafts.map(row => {
+      const fields = s.vault.open(row.fields, row._id);
+      const status = row.state === 'ignored' ? 'discarded' : row.hubspot?.pendingFollowup ? 'pending' : row.hubspot?.ticketId ? 'saved' : 'pending';
+      return { id: row._id, shortId: row._id.slice(0, 6), subject: fields.subject || 'Tarea para revisar', status, ticketId: row.hubspot?.ticketId || null, messageIds: row.messageIds || [], updatedAt: row.updatedAt || row.createdAt };
+    });
+    const assignments = new Map();
+    for (const task of tasks) for (const messageId of task.messageIds) {
+      const list = assignments.get(messageId) || []; list.push({ draftId: task.id, shortId: task.shortId, subject: task.subject, status: task.status, ticketId: task.ticketId }); assignments.set(messageId, list);
+    }
+    return { jid, tasks: tasks.map(({ messageIds, ...task }) => task), messages: rows.map(row => ({ waId: row.id, at: row.at, fromMe: !!row.fromMe, assignments: assignments.get(row._id) || [] })) };
+  }));
+  router.post('/messages/assign', route((req, s, scope) => s.assignMessages(scope, req.body)));
   router.post('/contact', route(async (req, s, scope) => {
     const jid = text(req.body.jid, 200), name = text(req.body.name, 200);
     if (!/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(jid) || !name) fail('invalid_contact');
@@ -198,6 +216,10 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const payload = client.prepare(fields, checked.metadata, mapping);
     // Keep the WhatsApp labels visible even when CRM associations have not been chosen.
     payload.properties.content = ['Contacto de WhatsApp: ' + (fields.contact || ''), 'Empresa: ' + (fields.company || ''), '', fields.description].join('\n');
+    if (row.hubspot?.ticketId && row.hubspot?.followupAction === 'followup') {
+      const previous = await client.ticket(row.hubspot.ticketId);
+      if (previous?.properties?.content) payload.properties.content = `${previous.properties.content}\n\nSeguimiento desde WhatsApp:\n${payload.properties.content}`.slice(0, 65000);
+    }
     if (row.hubspot?.ticketId && (row.hubspot.companyId !== (fields.companyId || '') || row.hubspot.contactId !== (fields.contactId || ''))) fail('hubspot_associations_changed', 409);
     if (!row.hubspot?.ticketId) {
       const existing = await client.findSimilarOpenTicket(fields, checked.metadata, fields.companyId);

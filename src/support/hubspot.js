@@ -84,6 +84,9 @@ class HubSpotContract {
     if (ticketId) return this.request(`/crm/v3/objects/tickets/${encodeURIComponent(text(ticketId))}`, { properties: payload.properties }, 'PATCH');
     return this.request('/crm/v3/objects/tickets', payload);
   }
+  ticket(ticketId) {
+    return this.request(`/crm/v3/objects/tickets/${encodeURIComponent(text(ticketId, 100))}?properties=subject,content,hs_pipeline,hs_pipeline_stage,closed_date`);
+  }
   async findSimilarOpenTicket(fields, metadata, companyId) {
     if (!companyId) return null;
     const closedStages = new Set(metadata.pipelines.flatMap(pipeline => pipeline.stages || []).filter(stage => stage.metadata?.isClosed === true || stage.metadata?.isClosed === 'true').map(stage => String(stage.id)));

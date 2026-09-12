@@ -32,7 +32,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     Promise.all([opened, chrome.storage.session.set({ ['selection-' + sender.tab.id]: { jid: String(message.jid || ''), name: String(message.name || '') } })]).then(() => reply({ ok: true }), () => reply({ error: 'panel_open_failed' }));
     return true;
   }
-  if (fromWhatsApp && !['INDEX', 'CONTACT', 'CONTACTS'].includes(message.action)) return false;
+  if (fromWhatsApp && !['INDEX', 'CONTACT', 'CONTACTS', 'MESSAGES', 'ASSIGN_MESSAGES'].includes(message.action)) return false;
   (async () => {
     const session = await authenticatedSession();
     if (message.action === 'SESSION') return { ...session, csrf: undefined };
@@ -46,6 +46,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       case 'CONTACT': return request('/contact', { jid: String(message.jid || ''), name: String(message.name || '') }, session.csrf);
       case 'CONTACTS': return request('/contacts', { contacts: Array.isArray(message.contacts) ? message.contacts : [] }, session.csrf);
       case 'DRAFTS': return request('/drafts?jid=' + encodeURIComponent(String(message.jid || '')));
+      case 'MESSAGES': return request('/messages?jid=' + encodeURIComponent(String(message.jid || '')));
+      case 'ASSIGN_MESSAGES': return request('/messages/assign', { jid: String(message.jid || ''), messageIds: Array.isArray(message.messageIds) ? message.messageIds : [], destination: String(message.destination || ''), existingAction: String(message.existingAction || ''), reassign: message.reassign === true, duplicate: message.duplicate === true }, session.csrf);
       case 'DETAIL': return request('/drafts/' + id);
       case 'SAVE': return request('/drafts/' + id + '/save', { revision: message.revision, fields: message.fields }, session.csrf);
       case 'RECONCILE': return request('/drafts/' + id + '/reconcile', { revision: message.revision, fields: message.fields }, session.csrf);

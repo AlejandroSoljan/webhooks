@@ -25,7 +25,7 @@ before(async()=>{
 after(async()=>{await new Promise(resolve=>server.close(resolve));await client.close();await mongo.stop();});
 beforeEach(async()=>{
  await db.dropDatabase();service=new SupportService(db,vault);writes=[];
- remote={metadata:async()=>metadata,preflight:async()=>({portalId:'123',metadata}),search:async()=>({results:[]}),request:async()=>({portalId:123}),findSimilarOpenTicket:async()=>null,prepare:(f,m,p)=>new HubSpotContract('unused').prepare(f,m,p),save:async(payload,ticketId)=>{writes.push({payload,ticketId});return{id:ticketId||'99'};}};
+ remote={metadata:async()=>metadata,preflight:async()=>({portalId:'123',metadata}),search:async()=>({results:[]}),request:async()=>({portalId:123}),ticket:async()=>({properties:{content:'Descripción anterior'}}),findSimilarOpenTicket:async()=>null,prepare:(f,m,p)=>new HubSpotContract('unused').prepare(f,m,p),save:async(payload,ticketId)=>{writes.push({payload,ticketId});return{id:ticketId||'99'};}};
  await service.col('integrations').insertOne({tenantId:scope.tenantId,token:vault.seal('secret',hash(scope.tenantId,'hubspot')),portalId:'123'});
  await service.col('drafts').insertOne({_id:id,...scope,jid:'123@lid',revision:1,mode:'approval',state:'pending',messageIds:[],fields:vault.seal(fields,id),source:vault.seal(fields,id+':source')});
 });
@@ -105,6 +105,41 @@ test('WhatsApp address-book batches add names only to the current users existing
  assert.equal(result.status,200);assert.equal(result.data.saved,2);
  const index=(await call('/index')).data.chats;assert.equal(index.find(row=>row.jid==='123@lid').name,'Vane');assert.equal(index.find(row=>row.jid==='456@s.whatsapp.net').name,'Gime');
  assert.equal(await service.col('contacts').countDocuments({jid:'999@lid'}),0);
+});
+test('message selection creates a draft when the chat has no pending task and is idempotent',async()=>{
+ await service.col('drafts').deleteMany({});
+ await service.ingest(scope,{id:'wa-1',jid:'123@lid',fromMe:false,name:'Vane',at:new Date('2026-09-10T10:00:00Z'),text:'Necesito configurar una impresora'});
+ let result=await call('/messages/assign',{jid:'123@lid',messageIds:['wa-1'],destination:'new'});
+ assert.equal(result.status,200);assert.equal(result.data.created,true);const draftId=result.data.draftId;
+ result=await call('/messages/assign',{jid:'123@lid',messageIds:['wa-1'],destination:draftId});
+ assert.equal(result.status,200);assert.equal(result.data.assigned,0);assert.equal(await service.col('drafts').countDocuments({jid:'123@lid'}),1);
+ const overview=(await call('/messages?jid=123%40lid')).data;assert.equal(overview.messages[0].assignments[0].draftId,draftId);assert.equal(overview.messages[0].assignments[0].status,'pending');
+});
+test('message selection appends to one chosen task and preserves manual edits',async()=>{
+ await service.ingest(scope,{id:'wa-2',jid:'123@lid',fromMe:false,name:'Vane',at:new Date('2026-09-10T11:00:00Z'),text:'También debe imprimir por TSPrint'});
+ await service.col('drafts').updateOne({_id:id},{$set:{events:[{action:'edited'}],fields:vault.seal({...fields,subject:'Título escrito por el usuario',description:'Detalle manual'},id),messageIds:[]}});
+ const result=await call('/messages/assign',{jid:'123@lid',messageIds:['wa-2'],destination:id});assert.equal(result.status,200);assert.equal(result.data.assigned,1);
+ const row=await service.col('drafts').findOne({_id:id}),saved=vault.open(row.fields,id);assert.equal(saved.subject,'Título escrito por el usuario');assert.match(saved.description,/Detalle manual/);assert.match(saved.description,/Actualización:/);assert.equal(row.events.at(-1).action,'messages_assigned_existing');
+});
+test('multiple pending tasks require an explicit destination and reassignment is audited',async()=>{
+ const other='f'.repeat(64);await service.col('drafts').insertOne({_id:other,...scope,jid:'123@lid',revision:1,state:'pending',messageIds:[],fields:vault.seal({...fields,subject:'Segunda tarea'},other),source:vault.seal(fields,other+':source'),events:[{action:'generated'}]});
+ await service.ingest(scope,{id:'wa-3',jid:'123@lid',fromMe:false,name:'Vane',at:new Date('2026-09-10T12:00:00Z'),text:'Revisar el servidor'});
+ assert.equal((await call('/messages/assign',{jid:'123@lid',messageIds:['wa-3'],destination:''})).status,404);
+ let result=await call('/messages/assign',{jid:'123@lid',messageIds:['wa-3'],destination:id});assert.equal(result.status,200);
+ result=await call('/messages/assign',{jid:'123@lid',messageIds:['wa-3'],destination:other});assert.equal(result.data.error,'message_already_assigned');
+ result=await call('/messages/assign',{jid:'123@lid',messageIds:['wa-3'],destination:other,reassign:true});assert.equal(result.status,200);
+ assert.equal((await service.col('drafts').findOne({_id:id})).messageIds.includes((await service.col('messages').findOne({id:'wa-3'}))._id),false);
+ assert.equal((await service.col('drafts').findOne({_id:id})).events.at(-1).action,'messages_reassigned_out');
+});
+test('a saved HubSpot ticket requires an explicit follow-up action and stays visible in message status',async()=>{
+ await service.col('drafts').updateOne({_id:id},{$set:{hubspot:{state:'saved',ticketId:'hs-77',portalId:'123',companyId:'',contactId:''},state:'approved',messageIds:[]}});
+ await service.ingest(scope,{id:'wa-4',jid:'123@lid',fromMe:true,name:'',at:new Date('2026-09-10T13:00:00Z'),text:'Se realizó una nueva prueba'});
+ let result=await call('/messages/assign',{jid:'123@lid',messageIds:['wa-4'],destination:id});assert.equal(result.data.error,'saved_ticket_action_required');
+ result=await call('/messages/assign',{jid:'123@lid',messageIds:['wa-4'],destination:id,existingAction:'followup'});assert.equal(result.status,200);assert.equal(result.data.savedTicket,true);
+ const overview=(await call('/messages?jid=123%40lid')).data;assert.equal(overview.messages.find(row=>row.waId==='wa-4').assignments[0].status,'pending');assert.equal(overview.tasks.find(task=>task.id===id).ticketId,'hs-77');
+ const index=(await call('/index')).data;assert.equal(index.chats[0].jid,'123@lid');assert.equal(index.knownChats[0].jid,'123@lid');
+ result=await call('/drafts/'+id+'/reconcile',{revision:2,fields:vault.open((await service.col('drafts').findOne({_id:id})).fields,id)});assert.equal(result.status,200);
+ result=await call('/drafts/'+id+'/publish',{revision:4,mapping});assert.equal(result.status,200,JSON.stringify(result.data));assert.equal(writes[0].ticketId,'hs-77');assert.match(writes[0].payload.properties.content,/Descripción anterior/);assert.match(writes[0].payload.properties.content,/Seguimiento desde WhatsApp/);
 });
 test('publish creates once and subsequent explicit saves update the same HubSpot ticket',async()=>{
  let result=await call('/drafts/'+id+'/publish',{revision:1,mapping});assert.equal(result.status,200);assert.equal(result.data.ticketId,'99');
