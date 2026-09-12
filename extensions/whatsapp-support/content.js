@@ -1,14 +1,18 @@
-// Asisto | Version: 5.00.123 | Fecha: 2026-09-12
+// Asisto | Version: 5.00.124 | Fecha: 2026-09-12
 (() => {
   let chats = [], knownChats = [], owner = '', timer, stopped = false, currentJid = '', currentName = '', taskData = { tasks: [], messages: [] }, anchorId = '';
   const remembered = new Map(), addressBook = [], selected = new Set();
   const extractJid = value => (value || '').match(/(?:^|_)([0-9]+@(?:s\.whatsapp\.net|lid))(?:_|$)/)?.[1] || '';
-  const extractMessageId = value => String(value || '').match(/^(?:true|false)_[^_]+_(.+)$/)?.[1] || '';
+  const extractMessageId = value => {
+    const raw = String(value || '');
+    return raw.match(/^(?:true|false)_[^_]+_(.+)$/)?.[1] || raw.match(/(?:^|_)([A-Za-z0-9-]{10,})$/)?.[1] || '';
+  };
   const statusLabel = status => ({ pending: 'Pendiente', saved: 'HubSpot', discarded: 'Descartada' }[status] || 'Asignada');
   function messageNodes() {
     const seen = new Set();
-    return [...document.querySelectorAll('#main [data-id^="true_"], #main [data-id^="false_"]')].filter(node => {
-      const id = extractMessageId(node.getAttribute('data-id')); if (!id || seen.has(id)) return false; seen.add(id); node.dataset.asistoMessageId = id; return true;
+    return [...document.querySelectorAll('#main .message-in, #main .message-out, #main [data-id^="true_"], #main [data-id^="false_"]')].filter(node => {
+      const idNode = node.matches('[data-id]') ? node : node.querySelector('[data-id]');
+      const id = extractMessageId(idNode?.getAttribute('data-id')); if (!id || seen.has(id)) return false; seen.add(id); node.dataset.asistoMessageId = id; return true;
     });
   }
   function renderMessageControls() {

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.123 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.124 | Fecha: 2026-09-10
 const express = require('express');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
@@ -119,8 +119,10 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
   router.get('/drafts/:id', route(async (req, s, scope) => {
     try { await s.summarizeDraft(scope, req.params.id); } catch {}
     const row = await rowFor(s, scope, req.params.id), fields = s.vault.open(row.fields, row._id);
+    const source = s.vault.open(row.source, row._id + ':source');
+    if ((row.sourceChanged || row.reconciliationRequired) && source.subject) fields.subject = source.subject;
     if (!fields.contact) fields.contact = (await s.col('contacts').findOne({ _id: scopedId(scope, 'contact', row.jid), ...scope }))?.name || '';
-    return { id: row._id, jid: row.jid, revision: row.revision, fields, source: s.vault.open(row.source, row._id + ':source'), sourceChanged: !!row.sourceChanged, reconciliationRequired: !!row.reconciliationRequired, hubspot: row.hubspot || null, mode: row.mode };
+    return { id: row._id, jid: row.jid, revision: row.revision, fields, source, sourceChanged: !!row.sourceChanged, reconciliationRequired: !!row.reconciliationRequired, hubspot: row.hubspot || null, mode: row.mode };
   }));
   router.post('/drafts/:id/save', route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, req.body.fields)));
   router.post('/drafts/:id/reconcile', route(async (req, s, scope) => {
@@ -132,7 +134,8 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     // CRM identity/classification choices, but publish the current task summary.
     if (row.sourceChanged || row.reconciliationRequired) {
       reviewed.subject = source.subject || reviewed.subject;
-      reviewed.description = source.description || reviewed.description;
+      const proposedDescription = source.summaryDescription || source.description || '';
+      if (!/^\d{4}-\d{2}-\d{2}T\S+\s+(?:Contacto|Operador):/m.test(proposedDescription)) reviewed.description = proposedDescription || reviewed.description;
       reviewed.messageDate = source.messageDate || reviewed.messageDate;
     }
     const saved = await s.editDraft(scope, row._id, row.revision, reviewed);

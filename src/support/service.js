@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.123 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.124 | Fecha: 2026-09-10
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupTasks, analyze, ANALYZER_VERSION, text, range } = require('./core');
 
@@ -193,10 +193,11 @@ class SupportService {
       }
       decoded.push({ ...row, text: payload.text });
     }
-    for (const group of groupTasks(decoded)) {
+    for (const detectedGroup of groupTasks(decoded)) {
+      let group = detectedGroup;
       if (!job.dates && +group.at(-1).receivedAt + config.inactivityMs > +this.now()) continue;
       await check();
-      const ids = group.map(m => m._id), fingerprint = hash(ids);
+      let ids = group.map(m => m._id);
       if (group.some(m => m.contentTooLarge)) fail('message_too_large', 422);
       if (ids.length > 500 || group.reduce((n, m) => n + m.text.length, 0) > 100000) fail('conversation_window_too_large', 422);
       const existing = await this.col('drafts').find({ ...scope, jid: job.jid, state: { $ne: 'merged' }, messageIds: { $in: ids } }).sort({ createdAt: 1, _id: 1 }).toArray();
@@ -204,6 +205,15 @@ class SupportService {
       const untouched = row => !row.hubspot?.ticketId && row.events?.every(event => ['generated', 'source_changed', 'tasks_merged'].includes(event.action)) === true;
       // A narrower historical request must not shrink a consolidated task.
       if (existing.length === 1 && existing[0].analyzerVersion === ANALYZER_VERSION && ids.every(id => existing[0].messageIds.includes(id))) continue;
+      // A regrouped conversation can contain a new fragment while the existing
+      // draft still owns older context. Analyze the union instead of discarding
+      // that context or leaving a stale title in the extension.
+      if (existing.length === 1 && existing[0].messageIds.some(id => !ids.includes(id))) {
+        ids = [...new Set([...existing[0].messageIds, ...ids])];
+        const wanted = new Set(ids); group = decoded.filter(message => wanted.has(message._id));
+      }
+      if (ids.length > 500 || group.reduce((n, m) => n + m.text.length, 0) > 100000) fail('conversation_window_too_large', 422);
+      const fingerprint = hash(ids);
       const edited = existing.filter(row => !untouched(row));
       if (edited.length > 1 || existing.some(row => row.messageIds.some(id => !ids.includes(id)))) {
         const flagged = await this.col('drafts').updateMany({ ...scope, _id: { $in: existing.map(d => d._id) }, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { state: 'needs_review', sourceChanged: true, reconciliationRequired: true, updatedAt: this.now() } });
@@ -224,7 +234,7 @@ class SupportService {
       await this.col('usage').insertOne({ ...scope, conversationId: job.jid, recordId: _id, fingerprint, model: ANALYZER_VERSION, kind: 'analysis', inputTokens: 0, outputTokens: 0, audioSeconds: 0, processingUnits: group.reduce((n, m) => n + m.text.length, 0), unit: 'characters', costUsd: 0, durationMs: Date.now() - started, result: result.result, at: this.now() });
       const memory = await this.col('memory').findOne({ ...scope, jid: job.jid });
       const draft = { ...result, messageDate: group[0].at.toISOString(), companyId: memory?.companyId || '', company: memory?.company || '', contactId: memory?.contactId || '', contact: memory?.contact || whatsappContact?.name || group.find(m => !m.fromMe && m.name)?.name || '', identitySource: memory?.source || (memory?.verifiedAt ? 'hubspot' : 'unassigned'), proposedAction: 'review' };
-      const sourceDraft = { ...draft, description: evidenceDescription };
+      const sourceDraft = { ...draft, description: evidenceDescription, summaryDescription: result.description };
       if (existing.length) {
         const generatedOnly = untouched(existing[0]);
         const saved = await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { fingerprint, analyzerVersion: ANALYZER_VERSION, messageIds: ids, state: generatedOnly ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !generatedOnly, reconciliationRequired: false, ...(generatedOnly ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(sourceDraft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: existing.length > 1 ? 'tasks_merged' : 'source_changed', at: this.now() } } });

@@ -164,6 +164,11 @@ test('the extension incorporates newly analyzed messages before publishing',asyn
  assert.equal(result.status,200);assert.equal(result.data.revision,3);assert.equal(result.data.fields.subject,latest.subject);
  result=await call('/drafts/'+id+'/publish',{revision:3,mapping});assert.equal(result.status,200,JSON.stringify(result.data));assert.equal(writes[0].payload.properties.subject,latest.subject);assert.match(writes[0].payload.properties.content,/configurar TSPrint/);
 });
+test('a changed source displays its current task title instead of the stale draft title',async()=>{
+ const latest={...fields,subject:'Configurar impresión de comandas',description:'Conversación original',summaryDescription:'Se debe corregir la impresión de comandas.'};
+ await service.col('drafts').updateOne({_id:id},{$set:{sourceChanged:true,source:vault.seal(latest,id+':source')}});
+ const detail=(await call('/drafts/'+id)).data;assert.equal(detail.fields.subject,latest.subject);assert.equal(detail.source.summaryDescription,latest.summaryDescription);
+});
 test('in-flight delivery blocks duplicate publishing and editing; uncertain outcomes cannot create again',async()=>{
  let release, started;const entered=new Promise(resolve=>started=resolve);remote.save=async()=>{started();await new Promise(resolve=>release=resolve);throw Error('network_timeout');};
  const first=call('/drafts/'+id+'/publish',{revision:1,mapping});await entered;
