@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.126 | Fecha: 2026-09-12
+// Asisto | Version: 5.00.127 | Fecha: 2026-09-12
 (() => {
   let chats = [], knownChats = [], owner = '', timer, stopped = false, currentJid = '', currentName = '', taskData = { tasks: [], messages: [] }, anchorId = '';
   const remembered = new Map(), addressBook = [], selected = new Set();
@@ -38,7 +38,8 @@
       const id = node.dataset.asistoMessageId, row = assignments.get(id), holder = node.querySelector(':scope > .asisto-message-control') || document.createElement('div');
       holder.className = 'asisto-message-control'; holder.dataset.asistoOwned = '1'; holder.replaceChildren();
       const check = document.createElement('input'); check.type = 'checkbox'; check.checked = selected.has(id); check.title = 'Seleccionar mensaje para una tarea';
-      check.onchange = event => { event.stopPropagation(); anchorId = id; check.checked ? selected.add(id) : selected.delete(id); renderToolbar(); }; check.onclick = event => event.stopPropagation(); holder.append(check);
+      const rowAssignments = row?.assignments || []; check.title = rowAssignments.length ? rowAssignments.map(assignment => `${statusLabel(assignment.status)} · ${assignment.subject || assignment.shortId}`).join('\n') : 'Seleccionar este mensaje para una tarea';
+      check.setAttribute('aria-label', check.title); check.onchange = event => { event.stopPropagation(); anchorId = id; check.checked ? selected.add(id) : selected.delete(id); renderToolbar(); }; check.onclick = event => event.stopPropagation(); holder.append(check);
       for (const assignment of row?.assignments || []) {
         const badge = document.createElement('button'); badge.type = 'button'; badge.className = `asisto-message-assignment ${assignment.status}`;
         badge.textContent = `${statusLabel(assignment.status)} · ${assignment.subject || assignment.shortId}`; badge.title = `Tarea ${assignment.shortId}${assignment.ticketId ? ' · Ticket ' + assignment.ticketId : ''}`;
