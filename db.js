@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.121 | Fecha: 2026-09-12
 // db.js
 const os = require("os");
 const { MongoClient, ServerApiVersion } = require("mongodb");
@@ -102,7 +102,7 @@ function resolveDbNameFromUriOrEnv() {
 }
 
 function createMongoClient(uri) {
-  const maxPoolSize = readIntEnv("MONGODB_MAX_POOL_SIZE", 5, 1, 20);
+  const maxPoolSize = readIntEnv("MONGODB_MAX_POOL_SIZE", 20, 1, 100);
   return new MongoClient(uri, {
    serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true },
     appName: buildMongoAppName(),
@@ -110,9 +110,9 @@ function createMongoClient(uri) {
     // Atlas M0 tiene un límite global bajo. Este proceso comparte un solo pool.
     maxPoolSize,
    minPoolSize: 0,
-    maxConnecting: readIntEnv("MONGODB_MAX_CONNECTING", 2, 1, Math.min(10, maxPoolSize)),
+    maxConnecting: readIntEnv("MONGODB_MAX_CONNECTING", 5, 1, Math.min(20, maxPoolSize)),
     maxIdleTimeMS: readIntEnv("MONGODB_MAX_IDLE_TIME_MS", 60000, 1000, 3600000),
-    waitQueueTimeoutMS: readIntEnv("MONGODB_WAIT_QUEUE_TIMEOUT_MS", 10000, 1000, 120000),
+    waitQueueTimeoutMS: readIntEnv("MONGODB_WAIT_QUEUE_TIMEOUT_MS", 20000, 1000, 120000),
 
     // Evita que el server quede colgado intentando conectar.
     serverSelectionTimeoutMS: readIntEnv("MONGODB_SERVER_SELECTION_TIMEOUT_MS", 8000, 1000, 120000),
@@ -151,7 +151,7 @@ async function getDb() {
      _db = db;
      touchDbActivity();
       console.log(
-           `✅ Conectado a MongoDB | db="${dbName}" | appName="${buildMongoAppName()}" | maxPoolSize=${readIntEnv("MONGODB_MAX_POOL_SIZE", 5, 1, 20)} | fullIdleDisconnectMs=${readIdleDisconnectMs()}`
+           `✅ Conectado a MongoDB | db="${dbName}" | appName="${buildMongoAppName()}" | maxPoolSize=${readIntEnv("MONGODB_MAX_POOL_SIZE", 20, 1, 100)} | fullIdleDisconnectMs=${readIdleDisconnectMs()}`
      );
       return _db;
     } catch (e) {

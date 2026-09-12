@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.096 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.122 | Fecha: 2026-09-12
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta el catálogo local y su API de respaldo: NO usa OpenAI.
@@ -23,6 +23,8 @@ const qrJson = express.json({ limit: '512kb' });
 const qrPhotoJson = express.json({ limit: '8mb' });
 const rateState = new Map();
 let lastRateCleanupAt = 0;
+const qrPageConfigCache = new Map();
+const QR_CONFIG_CACHE_MS = Math.max(5000, Math.min(300000, Number(process.env.QR_CONFIG_CACHE_MS || 30000) || 30000));
 
 
 const QR_PRODUCT_API_MAX_CONCURRENT = Math.max(1, Math.min(50, Number(process.env.QR_PRODUCT_API_MAX_CONCURRENT || 10) || 10));
@@ -74,7 +76,7 @@ const productCatalog = createProductCatalog({
 });
 async function fetchQrProduct(cfg, tenant, code) {
   if (!cfg.enabled) throw Object.assign(new Error('qr_disabled'), { statusCode: 404 });
-  const codigo = digitsOrText(code, 180);
+  const codigo = normalizedLookupCode(code, 180);
   if (!codigo) throw Object.assign(new Error('codigo_required'), { statusCode: 400 });
   return productCatalog.get(cfg, tenant, codigo);
 }
@@ -110,6 +112,10 @@ function clean(value, max = 500) {
 }
 function digitsOrText(value, max = 160) {
   return clean(value, max).replace(/[\r\n\t]/g, ' ');
+}
+function normalizedLookupCode(value, max = 180) {
+  const code = digitsOrText(value, max);
+  return /[a-z]/i.test(code) ? code.toUpperCase() : code;
 }
 function boolValue(value, fallback = false) {
   if (value === undefined || value === null || value === '') return !!fallback;
@@ -260,11 +266,42 @@ function replaceTemplateValue(value, variables) {
 
 function managerDirectLookupUrl(value, code) {
   const url = new URL(String(value || ''));
-  const codigo = digitsOrText(code, 180);
+  const codigo = normalizedLookupCode(code, 180);
   const isBarcode = /^\d{8,14}$/.test(codigo);
   url.searchParams.set('campo', isBarcode ? 'OTRO' : 'ID');
   url.searchParams.set('valor', isBarcode ? `%codbarra:${codigo}` : codigo);
   return url.toString();
+}
+
+function managerCatalogSearchUrl(value, query) {
+  const url = new URL(String(value || ''));
+  url.searchParams.set('campo', 'OTRO');
+  url.searchParams.set('valor', clean(query, 120));
+  return url.toString();
+}
+
+function photoSearchTerms(identification) {
+  const values = [identification?.model, [identification?.brand, identification?.name].filter(Boolean).join(' '), identification?.name, identification?.brand];
+  return [...new Set(values.map(value => clean(value, 120).replace(/[^\p{L}\p{N} ._/-]/gu, ' ').replace(/\s+/g, ' ').trim()).filter(value => value.length >= 3))].slice(0, 3);
+}
+
+async function fetchPhotoCatalogSuggestions(cfg, identification) {
+  if (cfg.apiMethod !== 'GET' || !/\/api\/Api_Articulos\/Consulta/i.test(cfg.apiUrl)) return [];
+  const headers = { Accept: 'application/json' };
+  if (cfg.apiAuthHeader && cfg.apiAuthValue) headers[cfg.apiAuthHeader] = cfg.apiAuthValue;
+  const found = new Map();
+  for (const term of photoSearchTerms(identification)) {
+    const response = await axios({ method: 'GET', url: managerCatalogSearchUrl(cfg.apiUrl, term), headers, timeout: Math.min(cfg.apiTimeoutMs, 20000), validateStatus: () => true, maxContentLength: 2_000_000 });
+    if (response.status < 200 || response.status >= 300) continue;
+    for (const raw of externalProductRows(response.data).slice(0, 20)) {
+      try {
+        const product = normalizeQrProduct(raw, cfg);
+        if (!found.has(product.code.toUpperCase())) found.set(product.code.toUpperCase(), product);
+      } catch {}
+    }
+    if (found.size >= 4) break;
+  }
+  return [...found.values()].slice(0, 4);
 }
 
 async function loadQrConfig(db, tenant) {
@@ -310,10 +347,27 @@ async function loadQrConfig(db, tenant) {
   };
 }
 
+async function loadQrPageConfig(db, tenant) {
+  const cacheKey = String(tenant || '').toUpperCase();
+  const cached = qrPageConfigCache.get(cacheKey);
+  if (cached?.pending) return cached.pending;
+  if (cached?.value && Date.now() - cached.at < QR_CONFIG_CACHE_MS) return cached.value;
+  const pending = loadQrConfig(db, tenant);
+  qrPageConfigCache.set(cacheKey, { at: Date.now(), pending });
+  try {
+    const value = await pending;
+    qrPageConfigCache.set(cacheKey, { at: Date.now(), value });
+    return value;
+  } catch (error) {
+    qrPageConfigCache.delete(cacheKey);
+    throw error;
+  }
+}
+
 async function fetchQrProductDirect(cfg, tenant, code) {
   if (!cfg.enabled) throw Object.assign(new Error('qr_disabled'), { statusCode: 404 });
   if (!/^https?:\/\//i.test(cfg.apiUrl)) throw Object.assign(new Error('qr_api_not_configured'), { statusCode: 503 });
-  const codigo = digitsOrText(code, 180);
+  const codigo = normalizedLookupCode(code, 180);
   if (!codigo) throw Object.assign(new Error('codigo_required'), { statusCode: 400 });
 
   const variables = { codigo, tenant };
@@ -438,7 +492,7 @@ async function fetchQrProductDirect(cfg, tenant, code) {
 
   const rows = externalProductRows(resp.data);
   const exact = rows.find(item => item && String(firstDefined(item,
-    [cfg.fieldCode, 'Codigo', 'codigo', 'code', 'sku', 'SKU']) ?? '').trim() === codigo);
+    [cfg.fieldCode, 'Codigo', 'codigo', 'code', 'sku', 'SKU']) ?? '').trim().toUpperCase() === codigo.toUpperCase());
   const barcodes = exact ? [] : rows.filter(item => item && String(firstDefined(item,
     ['Codbarra', 'codbarra', 'barcode']) ?? '').trim() === codigo);
   if (barcodes.length > 1) throw Object.assign(new Error('catalog_ambiguous_barcode'), { statusCode: 409 });
@@ -1182,8 +1236,8 @@ function pageHtml({ tenant, code, branding = {} }) {
  .page{padding-top:calc(22px + env(safe-area-inset-top,0px));padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))}
  @media(max-width:520px){.page{padding:calc(18px + env(safe-area-inset-top,0px)) 8px calc(20px + env(safe-area-inset-bottom,0px))}.content{padding:15px}.title{font-size:21px}.facts{grid-template-columns:1fr}.chatBody{max-height:48vh}.composeRow{grid-template-columns:1fr}.send{height:42px}.bubble{max-width:94%}}
 .lookup{margin-bottom:14px}.lookupForm{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:12px}.lookupForm input{width:100%;min-width:0;border:1px solid var(--line);border-radius:11px;padding:12px;outline:none;font:inherit}.scanner{margin-top:12px}.scannerViewport{position:relative;overflow:hidden;border-radius:12px;background:#101828}.scanner video{display:block;width:100%;max-height:360px;object-fit:cover}.scanGuide{position:absolute;left:8%;right:8%;top:35%;height:30%;border:2px solid rgba(255,255,255,.92);border-radius:10px;box-shadow:0 0 0 999px rgba(0,0,0,.18);pointer-events:none}.scanStatus{font-size:12px;color:var(--muted);margin:8px 0}.scanControls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}.scanControls label{font-size:12px;font-weight:700}.scanControls input{width:150px}.scanControls .btn{padding:8px 11px}
-.photoAction{margin:9px 0 0 8px}.photoResult{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.4}
-.appNav{position:fixed;left:0;right:0;bottom:0;height:calc(70px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);display:flex;justify-content:space-around;background:#fff;box-shadow:0 -3px 16px rgba(16,36,61,.16);z-index:50}.appNav a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;color:#52667b;text-decoration:none;font-size:12px;font-weight:700}.appNav a span{font-size:23px;line-height:1}.appNav a.active{color:var(--primary)}body{padding-bottom:calc(72px + env(safe-area-inset-bottom,0px))}
+.photoAction{margin:9px 0 0 8px}.photoResult{font-size:13px;color:var(--muted);margin-top:10px;line-height:1.4}.scanner.photoMode .scannerViewport,.scanner.photoMode .scanStatus,.scanner.photoMode #zoomLabel,.scanner.photoMode #torchBtn{display:none!important}.photoChoices{display:grid;gap:8px;margin:10px 0}.photoChoice{width:100%;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--text);padding:11px;text-align:left}.photoChoice b,.photoChoice span{display:block}.photoChoice small{display:block;margin-top:3px}.photoChoice span{color:var(--primary);font-weight:850;margin-top:4px}
+.appNav{position:fixed;left:0;right:0;bottom:0;height:calc(76px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);display:flex;justify-content:space-around;background:#fff;box-shadow:0 -3px 18px rgba(16,36,61,.16);z-index:50}.appNav a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#52617c;text-decoration:none;font-size:11px;font-weight:650}.appNav svg{width:22px;height:22px;display:block;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.appNav a.active{color:#e71932}body{padding-bottom:calc(78px + env(safe-area-inset-bottom,0px))}
 </style>
 </head>
 <body>
@@ -1198,12 +1252,12 @@ function pageHtml({ tenant, code, branding = {} }) {
   </section>
  <div class="footer"><div>Información comercial obtenida del sistema del negocio. La información ampliada puede utilizar IA y fuentes públicas de Internet.</div><div class="powered">Powered by <img src="/static/asisto-logo-transparent.png" alt="Asisto"/><strong>Asisto</strong> · <a href="https://www.asistobot.com.ar" target="_blank" rel="noopener">www.asistobot.com.ar</a></div></div>
 </div>
-<nav class="appNav" aria-label="Navegación principal"><a href="/customer-app/${encodeURIComponent(tenant)}"><span>⌂</span>Inicio</a><a class="active" href="/qr/${encodeURIComponent(tenant)}?scan=1"><span>▣</span>Escanear</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=turns"><span>🎟</span>Turnos</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=ticket"><span>🔔</span>Mi turno</a><a href="https://wa.me/5493462610000?text=Hola%2C%20quiero%20contactar%20a%20un%20vendedor."><span>💬</span>Vendedor</a></nav>
+<nav class="appNav" aria-label="Navegación principal"><a href="/customer-app/${encodeURIComponent(tenant)}"><svg viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg>Inicio</a><a class="active" href="/qr/${encodeURIComponent(tenant)}?scan=1"><svg viewBox="0 0 24 24"><path d="M4 7V4h3M17 4h3v3M20 17v3h-3M7 20H4v-3M8 8v8M11 8v8M15 8v8"/></svg>Escanear</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=turns"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/></svg>Turnos</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=ticket"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6h5"/></svg>Mi turno</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=seller"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>Vendedor</a></nav>
 <script>
 const TENANT=${JSON.stringify(tenant)};
 const BRANDING=${JSON.stringify(branding)};
 let CODE=${JSON.stringify(code)};
-let PRODUCT=null, AI_ENABLED=false, sending=false, started=false, conversationId='', pollTimer=null, unchangedPolls=0, lastMessagesSignature='', scanStream=null, scanTrack=null, scanFrame=0, scanCandidate='', scanHits=0, scanCandidateAt=0, torchOn=false;
+let PRODUCT=null, AI_ENABLED=false, sending=false, started=false, conversationId='', pollTimer=null, unchangedPolls=0, lastMessagesSignature='', scanStream=null, scanTrack=null, scanFrame=0, scanCandidate='', scanHits=0, scanCandidateAt=0, torchOn=false, scanOcrAttempted=false;
 const el=id=>document.getElementById(id);
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
 function sessionId(){let s=sessionStorage.getItem('asistoQrSession');if(!s){try{s=crypto.randomUUID().replace(/-/g,'_')}catch(_){s='qr_'+Date.now()+'_'+Math.random().toString(36).slice(2)}sessionStorage.setItem('asistoQrSession',s)}return s}
@@ -1294,14 +1348,16 @@ function stopScanner(hide=true){if(scanFrame)cancelAnimationFrame(scanFrame);sca
 async function setScannerZoom(value){if(!scanTrack)return;try{await scanTrack.applyConstraints({advanced:[{zoom:Number(value)}]})}catch(_){}}
 async function toggleScannerTorch(){if(!scanTrack)return;torchOn=!torchOn;try{await scanTrack.applyConstraints({advanced:[{torch:torchOn}]});el('torchBtn').textContent=torchOn?'Apagar luz':'Encender luz'}catch(_){torchOn=false}}
 async function configureScannerTrack(){if(!scanTrack)return;const caps=scanTrack.getCapabilities?scanTrack.getCapabilities():{};const advanced=[];if(Array.isArray(caps.focusMode)&&caps.focusMode.includes('continuous'))advanced.push({focusMode:'continuous'});if(caps.zoom){const zoom=el('zoomControl'),initial=Math.min(Number(caps.zoom.max),Math.max(Number(caps.zoom.min),Math.max(1.5,Number(caps.zoom.min))));zoom.min=caps.zoom.min;zoom.max=caps.zoom.max;zoom.step=caps.zoom.step||0.1;zoom.value=initial;el('zoomLabel').classList.remove('hidden');advanced.push({zoom:initial})}if(caps.torch)el('torchBtn').classList.remove('hidden');if(advanced.length)try{await scanTrack.applyConstraints({advanced})}catch(_){}}
-async function startScanner(){stopScanner(false);el('scanBtn').classList.add('hidden');const status=el('scanStatus'),video=el('scanVideo');el('scanner').classList.remove('hidden');video.classList.remove('hidden');scanCandidate='';scanHits=0;scanCandidateAt=0;status.textContent='Alineá el código dentro del recuadro.';if(!navigator.mediaDevices?.getUserMedia){status.textContent='La cámara no está disponible en este navegador. Ingresá el código manualmente.';el('scanBtn').classList.remove('hidden');return}if(!('BarcodeDetector' in window)){status.textContent='Este navegador no admite lectura automática. Ingresá el código manualmente.';el('scanBtn').classList.remove('hidden');return}try{const supported=await BarcodeDetector.getSupportedFormats();const wanted=['qr_code','ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf','codabar'].filter(x=>supported.includes(x));const detector=new BarcodeDetector({formats:wanted});scanStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});scanTrack=scanStream.getVideoTracks()[0]||null;await configureScannerTrack();video.srcObject=scanStream;await video.play();const detect=async()=>{if(!scanStream)return;try{const found=await detector.detect(video);const code=normalizedCode(found[0]?.rawValue);if(code){if(code===scanCandidate){scanHits+=1}else{scanCandidate=code;scanHits=1;scanCandidateAt=Date.now()}status.textContent='Leyendo: '+code;if(scanHits>=3&&Date.now()-scanCandidateAt>=250){el('codeInput').value=code;stopScanner(false);video.classList.add('hidden');status.textContent='Código detectado: '+code+'. Buscando producto…';setTimeout(()=>openCode(code),300);return}}else{scanCandidate='';scanHits=0}}catch(_){}scanFrame=requestAnimationFrame(detect)};detect()}catch(_){stopScanner(false);video.classList.add('hidden');status.textContent='No se pudo abrir la cámara. Podés ingresar el código manualmente.'}}
+async function startScanner(){stopScanner(false);el('scanner').classList.remove('photoMode');el('scanBtn').classList.add('hidden');const status=el('scanStatus'),video=el('scanVideo');el('scanner').classList.remove('hidden');video.classList.remove('hidden');scanCandidate='';scanHits=0;scanCandidateAt=0;scanOcrAttempted=false;status.textContent='Alineá el código dentro del recuadro.';if(!navigator.mediaDevices?.getUserMedia){status.textContent='La cámara no está disponible en este navegador. Ingresá el código manualmente.';el('scanBtn').classList.remove('hidden');return}if(!('BarcodeDetector' in window)){status.textContent='Este navegador no admite lectura automática. Ingresá el código manualmente.';el('scanBtn').classList.remove('hidden');return}try{const supported=await BarcodeDetector.getSupportedFormats();const wanted=['qr_code','ean_13','ean_8','upc_a','upc_e','code_128','code_39','itf','codabar'].filter(x=>supported.includes(x));const detector=new BarcodeDetector({formats:wanted});scanStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:false});scanTrack=scanStream.getVideoTracks()[0]||null;await configureScannerTrack();video.srcObject=scanStream;await video.play();setTimeout(tryPrintedBarcode,5000);const detect=async()=>{if(!scanStream)return;try{const found=await detector.detect(video);const code=normalizedCode(found[0]?.rawValue);if(code){if(code===scanCandidate){scanHits+=1}else{scanCandidate=code;scanHits=1;scanCandidateAt=Date.now()}status.textContent='Leyendo: '+code;if(scanHits>=2&&Date.now()-scanCandidateAt>=80){el('codeInput').value=code;stopScanner(false);video.classList.add('hidden');status.textContent='Código detectado: '+code+'. Buscando producto…';setTimeout(()=>openCode(code),200);return}}else{scanCandidate='';scanHits=0}}catch(_){}scanFrame=requestAnimationFrame(detect)};detect()}catch(_){stopScanner(false);video.classList.add('hidden');status.textContent='No se pudo abrir la cámara. Podés ingresar el código manualmente.'}}
 async function loadProduct(){try{el('productCard').innerHTML='<div class="loading">Consultando producto...</div>';const u=new URL('/api/ext/qr/product',location.origin);u.searchParams.set('tenant',TENANT);u.searchParams.set('codigo',CODE);renderProduct(await jsonFetch(u.toString()))}catch(e){el('productCard').innerHTML='<div class="error"><b>No pudimos cargar este producto.</b><br/><span>Código consultado: '+esc(CODE)+'</span><br/><span>'+esc(e.message)+'</span><div class="actions"><button class="btn btnPrimary" id="rescanProductBtn" type="button">Escanear o ingresar otro código</button></div></div>';const sb=el('rescanProductBtn');if(sb)sb.addEventListener('click',openScannerPanel)}}
  async function callAi(message,initial=false){if(sending)return;sending=true;const btn=el('sendBtn');if(btn)btn.disabled=true;if(message&&!initial)addMsg('user',message);addMsg('bot','',true);try{const j=await jsonFetch('/api/ext/qr/chat',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({tenant:TENANT,codigo:(PRODUCT&&PRODUCT.code)||CODE,sessionId:sessionId(),message:message||'',initial})});removeTyping();if(j.conversationId)conversationId=j.conversationId;started=true;await syncChatMessages(true);startChatPolling()}catch(e){removeTyping();addMsg('bot','No pude obtener información adicional en este momento. '+e.message)}finally{sending=false;if(btn)btn.disabled=false}}
 async function startAi(){el('chat').classList.add('open');el('chat').scrollIntoView({behavior:'smooth',block:'start'});if(!started){const b=el('moreBtn');if(b)b.disabled=true;await callAi('',true);if(b)b.disabled=false}else{await syncChatMessages(true);startChatPolling();el('message').focus()}}
 async function send(){const box=el('message');const msg=String(box.value||'').trim();if(!msg||sending)return;box.value='';await callAi(msg,false);box.focus()}
 async function photoDataUrl(file){const img=await new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve(i);i.onerror=reject;i.src=URL.createObjectURL(file)});const scale=Math.min(1,1280/Math.max(img.width,img.height));const c=document.createElement('canvas');c.width=Math.max(1,Math.round(img.width*scale));c.height=Math.max(1,Math.round(img.height*scale));c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(img.src);return c.toDataURL('image/jpeg',.82)}
-async function identifyPhoto(file){if(!file)return;const out=el('photoResult'),btn=el('photoBtn');out.classList.remove('hidden');out.textContent='Analizando la foto…';btn.disabled=true;try{const image=await photoDataUrl(file);const j=await jsonFetch('/api/ext/qr/photo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenant:TENANT,image})});if(j.product?.code){out.textContent='Producto encontrado: '+j.product.description;setTimeout(()=>openCode(j.product.code),350);return}const i=j.identification||{};const label=[i.brand,i.name,i.model].filter(Boolean).join(' · ');out.textContent=label?'Identificación aproximada: '+label+'. No encontré una coincidencia exacta en el catálogo. Probá fotografiando el código de barras.':'No pude identificarlo con seguridad. Probá acercando la cámara al frente o al código de barras.'}catch(e){out.textContent='No pude analizar la foto: '+e.message}finally{btn.disabled=false;el('photoInput').value=''}}
-el('photoBtn').addEventListener('click',()=>{stopScanner(false);el('scanner').classList.remove('hidden');el('photoInput').click()});el('photoInput').addEventListener('change',e=>identifyPhoto(e.currentTarget.files&&e.currentTarget.files[0]));
+async function tryPrintedBarcode(){if(scanOcrAttempted||!scanStream)return;const video=el('scanVideo');if(!video.videoWidth||!video.videoHeight)return;scanOcrAttempted=true;const status=el('scanStatus'),c=document.createElement('canvas'),scale=Math.min(1,1280/Math.max(video.videoWidth,video.videoHeight));c.width=Math.round(video.videoWidth*scale);c.height=Math.round(video.videoHeight*scale);c.getContext('2d').drawImage(video,0,0,c.width,c.height);status.textContent='Intentando leer el número impreso debajo del código…';try{const j=await jsonFetch('/api/ext/qr/photo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenant:TENANT,image:c.toDataURL('image/jpeg',.86)})});const code=String(j.identification?.barcode||'').replace(/\D/g,'');if(/^\d{8,14}$/.test(code)){el('codeInput').value=code;stopScanner(false);video.classList.add('hidden');status.textContent='Número detectado: '+code+'. Buscando producto…';setTimeout(()=>openCode(code),250)}else if(scanStream)status.textContent='No pude leer el número. Acercá la cámara o ingresalo manualmente.'}catch(_){if(scanStream)status.textContent='Seguí enfocando el código o ingresá el número manualmente.'}}
+async function identifyPhoto(file){if(!file)return;const out=el('photoResult'),btn=el('photoBtn');out.classList.remove('hidden');out.textContent='Analizando la foto y buscando en el catálogo…';btn.disabled=true;try{const image=await photoDataUrl(file);const j=await jsonFetch('/api/ext/qr/photo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenant:TENANT,image})});if(j.product?.code){out.textContent='Producto encontrado: '+j.product.description;setTimeout(()=>openCode(j.product.code),350);return}const i=j.identification||{},label=[i.brand,i.name,i.model].filter(Boolean).join(' · '),choices=Array.isArray(j.suggestions)?j.suggestions:[];if(choices.length){out.innerHTML=(label?'<b>Identificación aproximada: '+esc(label)+'</b>':'<b>Encontré estas opciones similares:</b>')+'<div class="photoChoices">'+choices.map(p=>'<button class="photoChoice" type="button" data-photo-code="'+esc(p.code)+'"><b>'+esc(p.description)+'</b><small>SKU: '+esc(p.code)+'</small><span>'+esc(money(p.price,j.currency||'ARS'))+'</span></button>').join('')+'</div><small>Elegí una opción para ver su ficha.</small>';out.querySelectorAll('[data-photo-code]').forEach(x=>x.addEventListener('click',()=>openCode(x.dataset.photoCode)));return}out.textContent=label?'Identifiqué aproximadamente '+label+', pero no encontré alternativas confirmadas en el catálogo. Probá una foto donde se vea mejor la marca o el modelo.':'No pude identificarlo con seguridad. Probá acercando la cámara al frente o al código de barras.'}catch(e){out.textContent='No pude analizar la foto: '+e.message}finally{btn.disabled=false;el('photoInput').value=''}}
+el('photoBtn').addEventListener('click',()=>{stopScanner(false);el('scanner').classList.remove('hidden');el('scanner').classList.add('photoMode');el('photoResult').classList.add('hidden');el('photoInput').click()});el('photoInput').addEventListener('change',e=>identifyPhoto(e.currentTarget.files&&e.currentTarget.files[0]));
+el('scanBtn').addEventListener('click',()=>{el('scanner').classList.remove('photoMode')});
 el('sendBtn').addEventListener('click',send);el('message').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});el('closeChat').addEventListener('click',()=>el('chat').classList.remove('open'));el('scanBtn').addEventListener('click',startScanner);el('stopScanBtn').addEventListener('click',stopScanner);el('zoomControl').addEventListener('input',e=>setScannerZoom(e.currentTarget.value));el('torchBtn').addEventListener('click',toggleScannerTorch);el('lookupBtn').addEventListener('click',()=>openCode(el('codeInput').value));el('codeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openCode(e.currentTarget.value)}});window.addEventListener('pagehide',stopScanner);document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(pollTimer){clearTimeout(pollTimer);pollTimer=null}if(started)scheduleChatPoll(0)}});applyBranding(BRANDING);if(CODE){el('lookup').classList.add('hidden');loadProduct()}else{el('productCard').classList.add('hidden');if(!BRANDING.pageSubtitle)el('pageSubtitle').textContent='Escaneá un QR, un código de barras o ingresá el código manualmente.';if(new URLSearchParams(location.search).get('scan')==='1')setTimeout(startScanner,150)}
 </script>
 </body>
@@ -1330,27 +1386,35 @@ function mountQrProductWeb(app) {
   // Formato recomendado para imprimir: /qr/DOMINIO?codigo=SKU
   // También se mantiene /qr/DOMINIO/SKU para códigos simples.
   app.get('/qr/:tenant', async (req, res) => {
-    const tenant = safeTenant(req.params.tenant);
-    const code = digitsOrText(req.query?.codigo, 180);
-    if (!tenant) return res.status(404).send('Dominio inválido');
-    const db = await getDb();
-    const cfg = await loadQrConfig(db, tenant);
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-    return res.status(200).send(pageHtml({ tenant, code, branding: qrPublicBranding(cfg) }));
+    try {
+      const tenant = safeTenant(req.params.tenant);
+      const code = digitsOrText(req.query?.codigo, 180);
+      if (!tenant) return res.status(404).send('Dominio inválido');
+      const cfg = await loadQrPageConfig(await getDb(), tenant);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      return res.status(200).send(pageHtml({ tenant, code, branding: qrPublicBranding(cfg) }));
+    } catch (error) {
+      console.error('[qr] page:', error?.message || error);
+      return res.status(503).send('El servicio está ocupado. Reintentá en unos segundos.');
+    }
   });
 
   app.get('/qr/:tenant/:codigo', async (req, res) => {
-    const tenant = safeTenant(req.params.tenant);
-    const code = digitsOrText(req.params.codigo, 180);
-    if (!tenant || !code) return res.status(404).send('QR inválido');
-    const db = await getDb();
-    const cfg = await loadQrConfig(db, tenant);
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-    return res.status(200).send(pageHtml({ tenant, code, branding: qrPublicBranding(cfg) }));
+    try {
+      const tenant = safeTenant(req.params.tenant);
+      const code = digitsOrText(req.params.codigo, 180);
+      if (!tenant || !code) return res.status(404).send('QR inválido');
+      const cfg = await loadQrPageConfig(await getDb(), tenant);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      return res.status(200).send(pageHtml({ tenant, code, branding: qrPublicBranding(cfg) }));
+    } catch (error) {
+      console.error('[qr] page:', error?.message || error);
+      return res.status(503).send('El servicio está ocupado. Reintentá en unos segundos.');
+    }
   });
 
   app.post('/api/ext/qr/photo', qrPhotoJson, async (req, res) => {
@@ -1364,7 +1428,8 @@ function mountQrProductWeb(app) {
       const db = await getDb();
       const cfg = await loadQrConfig(db, tenant);
       if (!cfg.enabled || !cfg.aiEnabled) return res.status(404).json({ ok: false, error: 'photo_lookup_disabled' });
-      const analysis = await analyzeImageExternal({ publicImageUrl: image, mime: 'image/jpeg', purpose: 'product-identification', tenantId: tenant, channelType: 'qr_web', aiKeyKind: 'conversacional', visionModel: cfg.aiModel || undefined, visionMaxTokens: 350 });
+      const analysis = await analyzeImageExternal({ publicImageUrl: image, mime: 'image/jpeg', purpose: 'product-identification', tenantId: tenant, channelType: 'qr_web', aiKeyKind: 'conversacional', visionMaxTokens: 450 });
+      if (analysis?.error) throw Object.assign(new Error(analysis.error), { publicDetail: 'El servicio de reconocimiento de imágenes no respondió. Probá nuevamente.' });
       const identification = analysis?.json && typeof analysis.json === 'object' ? analysis.json : {};
       const barcode = String(identification.barcode || '').replace(/\D/g, '');
       let product = null;
@@ -1372,11 +1437,16 @@ function mountQrProductWeb(app) {
         try { product = await fetchQrProduct(cfg, tenant, barcode); }
         catch (error) { if (error?.statusCode !== 404) throw error; }
       }
+      const safeIdentification = { barcode, brand: clean(identification.brand, 100), model: clean(identification.model, 120), name: clean(identification.name, 180), visibleText: clean(identification.visible_text, 500), confidence: Number(identification.confidence || 0) };
+      const suggestions = product ? [] : await fetchPhotoCatalogSuggestions(cfg, safeIdentification).catch(error => {
+        console.warn('[qr] photo catalog suggestions:', error?.message || error);
+        return [];
+      });
       res.setHeader('Cache-Control', 'no-store');
-      return res.json({ ok: true, product, identification: { barcode, brand: clean(identification.brand, 100), model: clean(identification.model, 120), name: clean(identification.name, 180), visibleText: clean(identification.visible_text, 500), confidence: Number(identification.confidence || 0) } });
+      return res.json({ ok: true, product, suggestions, identification: safeIdentification, currency: cfg.currency });
     } catch (e) {
       console.error('[qr] product photo:', e?.message || e);
-      return res.status(500).json({ ok: false, error: 'product_photo_failed', detail: 'No se pudo analizar la foto en este momento.' });
+      return res.status(500).json({ ok: false, error: 'product_photo_failed', detail: clean(e?.publicDetail || 'No se pudo analizar la foto en este momento.', 240) });
     }
   });
 
