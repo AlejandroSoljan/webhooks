@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.125 | Fecha: 2026-09-12
+// Asisto | Version: 5.00.126 | Fecha: 2026-09-12
 (() => {
   let chats = [], knownChats = [], owner = '', timer, stopped = false, currentJid = '', currentName = '', taskData = { tasks: [], messages: [] }, anchorId = '';
   const remembered = new Map(), addressBook = [], selected = new Set();
@@ -14,19 +14,21 @@
   }
   const statusLabel = status => ({ pending: 'Pendiente', saved: 'HubSpot', discarded: 'Descartada' }[status] || 'Asignada');
   function messageNodes() {
-    const seen = new Set(), usedRows = new Set(), result = [];
-    const candidates = [...document.querySelectorAll('#main .message-in, #main .message-out, #main [data-pre-plain-text], #main [data-id^="true_"], #main [data-id^="false_"]')];
+    const seenNodes = new Set(), seenIds = new Set(), usedRows = new Set(), result = [];
+    const candidates = [...document.querySelectorAll('#main [data-id^="true_"], #main [data-id^="false_"], #main .message-in, #main .message-out, #main [data-pre-plain-text]')];
     for (const candidate of candidates) {
-      const node = candidate.closest('.message-in, .message-out, [role="row"]') || candidate;
-      if (seen.has(node)) continue;
-      const idNode = node.closest('[data-id]') || node.querySelector('[data-id]'), pre = node.querySelector('[data-pre-plain-text]') || (node.matches('[data-pre-plain-text]') ? node : null);
+      const ownId = extractMessageId(candidate.getAttribute?.('data-id'));
+      const message = candidate.closest('.message-in, .message-out') || (candidate.matches('.message-in, .message-out') ? candidate : null);
+      const node = message || (ownId ? candidate : candidate.matches('[data-pre-plain-text]') ? candidate : candidate.querySelector('[data-pre-plain-text]') || candidate);
+      if (seenNodes.has(node)) continue;
+      const idNode = ownId ? candidate : candidate.closest('[data-id]') || candidate.querySelector('[data-id]'), pre = candidate.matches('[data-pre-plain-text]') ? candidate : candidate.querySelector('[data-pre-plain-text]');
       let id = extractMessageId(idNode?.getAttribute('data-id'));
       if (!id) {
-        const at = messageAt(pre?.getAttribute('data-pre-plain-text')), fromMe = node.classList.contains('message-out');
+        const at = messageAt(pre?.getAttribute('data-pre-plain-text')), fromMe = node.classList.contains('message-out') || !!node.closest('.message-out');
         const match = (taskData.messages || []).find(row => !usedRows.has(row.waId) && row.fromMe === fromMe && Math.abs(+new Date(row.at) - at) < 60000);
         id = match?.waId || '';
       }
-      if (!id || seen.has(id)) continue; seen.add(node); seen.add(id); usedRows.add(id); node.dataset.asistoMessageId = id; result.push(node);
+      if (!id || seenIds.has(id)) continue; seenNodes.add(node); seenIds.add(id); usedRows.add(id); node.dataset.asistoMessageId = id; node.classList.add('asisto-message-anchor'); result.push(node);
     }
     return result;
   }
@@ -42,7 +44,7 @@
         badge.textContent = `${statusLabel(assignment.status)} · ${assignment.subject || assignment.shortId}`; badge.title = `Tarea ${assignment.shortId}${assignment.ticketId ? ' · Ticket ' + assignment.ticketId : ''}`;
         badge.onclick = event => { event.preventDefault(); event.stopPropagation(); chrome.runtime.sendMessage({ action: 'OPEN', jid: currentJid, name: currentName }).catch(() => {}); }; holder.append(badge);
       }
-      if (!holder.parentElement) node.prepend(holder); retained.add(holder);
+      if (!holder.parentElement) node.append(holder); retained.add(holder);
     }
     document.querySelectorAll('.asisto-message-control').forEach(holder => { if (!retained.has(holder)) holder.remove(); }); renderToolbar(nodes);
   }
@@ -63,7 +65,7 @@
     const destination = document.createElement('select'); destinationOptions(destination);
     const action = document.createElement('select'); [['','Acción sobre ticket'],['followup','Agregar seguimiento'],['update','Actualizar ticket existente']].forEach(([value,label]) => { const item=document.createElement('option'); item.value=value; item.textContent=label; action.append(item); });
     destination.onchange = () => { action.hidden = !(taskData.tasks || []).find(task => task.id === destination.value)?.ticketId; }; destination.onchange();
-    const assign = document.createElement('button'); assign.className = 'primary'; assign.textContent = 'Asignar a tarea'; assign.onclick = async () => {
+    const assign = document.createElement('button'); assign.className = 'primary'; assign.textContent = destination.value === 'new' ? 'Crear tarea con seleccionados' : 'Actualizar tarea con seleccionados'; destination.onchange = () => { action.hidden = !(taskData.tasks || []).find(task => task.id === destination.value)?.ticketId; assign.textContent = destination.value === 'new' ? 'Crear tarea con seleccionados' : 'Actualizar tarea con seleccionados'; }; destination.onchange(); assign.onclick = async () => {
       if (!selected.size) return alert('Seleccioná al menos un mensaje.'); if (!destination.value) return alert('Elegí la tarea de destino.');
       const saved = (taskData.tasks || []).find(task => task.id === destination.value)?.ticketId; if (saved && !action.value) return alert('Elegí si querés agregar un seguimiento o actualizar el ticket existente.');
       const request = { action: 'ASSIGN_MESSAGES', jid: currentJid, messageIds: [...selected], destination: destination.value, existingAction: action.value };
@@ -89,7 +91,7 @@
     document.querySelectorAll('.asisto-task-badge').forEach(button => { if (!retained.has(button)) button.remove(); }); renderMessageControls(); observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['title', 'data-id'] });
   }
   const observer = new MutationObserver(() => { clearTimeout(timer); timer = setTimeout(update, 180); });
-  async function refresh() { try { const result = await chrome.runtime.sendMessage({ action: 'INDEX' }); if (owner !== result?.data?.owner) remembered.clear(); owner = result?.data?.owner || ''; chats = result?.data?.chats || []; knownChats = result?.data?.knownChats || chats; } catch { chats = []; knownChats = []; if (!chrome.runtime?.id) stopped = true; } update(); syncAddressBook(); }
+  async function refresh() { try { const [result, context] = await Promise.all([chrome.runtime.sendMessage({ action: 'INDEX' }), chrome.runtime.sendMessage({ action: 'ACTIVE_CONTEXT' })]); if (owner !== result?.data?.owner) remembered.clear(); owner = result?.data?.owner || ''; chats = result?.data?.chats || []; knownChats = result?.data?.knownChats || chats; if (context?.data?.jid && context.data.jid !== currentJid) { currentJid = context.data.jid; currentName = context.data.name || ''; selected.clear(); anchorId = ''; await refreshTasks(); } } catch { chats = []; knownChats = []; if (!chrome.runtime?.id) stopped = true; } update(); syncAddressBook(); }
   function syncAddressBook() { if (!chats.length || !addressBook.length) return; const found = new Map(); for (const contact of addressBook) for (const alias of contact.aliases || []) { const chat = chats.find(item => item.jid === alias || item.aliases?.includes(alias)); if (chat && contact.name) found.set(chat.jid, { jid: chat.jid, name: contact.name, aliases: contact.aliases }); } const pending = [...found.values()].filter(contact => remembered.get(contact.jid) !== contact.name); if (!pending.length) return; pending.forEach(contact => remembered.set(contact.jid, contact.name)); for (let offset = 0; offset < pending.length; offset += 50) chrome.runtime.sendMessage({ action: 'CONTACTS', contacts: pending.slice(offset, offset + 50) }).then(result => { if (result?.error) pending.slice(offset, offset + 50).forEach(contact => remembered.delete(contact.jid)); else refresh(); }).catch(() => pending.slice(offset, offset + 50).forEach(contact => remembered.delete(contact.jid))); }
   window.addEventListener('message', event => { if (event.source !== window || event.origin !== location.origin || event.data?.source !== 'asisto-whatsapp-contacts-v1' || !Array.isArray(event.data.contacts)) return; for (const contact of event.data.contacts) if (typeof contact?.name === 'string' && Array.isArray(contact.aliases)) addressBook.push(contact); syncAddressBook(); });
   refresh(); const interval = setInterval(() => { if (stopped) clearInterval(interval); else { refresh(); refreshTasks().catch(() => {}); } }, 30000);

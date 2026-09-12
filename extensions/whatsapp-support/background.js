@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.125 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.126 | Fecha: 2026-09-10
 const BASE = 'https://asistobot.com.ar/api/support/extension';
 const LOCAL = 'http://127.0.0.1:17658/extension-session';
 let deviceToken = '';
@@ -29,16 +29,20 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (message.action === 'OPEN' && fromWhatsApp) {
     // Called immediately inside the click message to preserve Chrome's user gesture.
     const opened = chrome.sidePanel.open({ tabId: sender.tab.id });
-    Promise.all([opened, chrome.storage.session.set({ ['selection-' + sender.tab.id]: { jid: String(message.jid || ''), name: String(message.name || '') } })]).then(() => reply({ ok: true }), () => reply({ error: 'panel_open_failed' }));
+    Promise.all([opened, chrome.storage.session.set({ ['selection-' + sender.tab.id]: { jid: String(message.jid || ''), name: String(message.name || ''), refreshAt: Date.now() } })]).then(() => reply({ ok: true }), () => reply({ error: 'panel_open_failed' }));
     return true;
   }
-  if (fromWhatsApp && !['INDEX', 'CONTACT', 'CONTACTS', 'MESSAGES', 'ASSIGN_MESSAGES'].includes(message.action)) return false;
+  if (fromWhatsApp && !['INDEX', 'CONTACT', 'CONTACTS', 'MESSAGES', 'ASSIGN_MESSAGES', 'ACTIVE_CONTEXT'].includes(message.action)) return false;
   (async () => {
     const session = await authenticatedSession();
     if (message.action === 'SESSION') return { ...session, csrf: undefined };
     if (message.action === 'INDEX') {
       if (sender.tab?.id) chrome.sidePanel.setOptions?.({ tabId: sender.tab.id, path: 'panel.html', enabled: true }).catch(() => {});
       return { ...await request('/index'), owner: session.tenantId + ':' + session.userId };
+    }
+    if (message.action === 'ACTIVE_CONTEXT' && sender.tab?.id) {
+      const key = 'selection-' + sender.tab.id, stored = await chrome.storage.session.get(key);
+      return stored[key] || null;
     }
     if (message.owner && message.owner !== session.tenantId + ':' + session.userId) throw new Error('account_changed');
     const id = encodeURIComponent(String(message.id || ''));
