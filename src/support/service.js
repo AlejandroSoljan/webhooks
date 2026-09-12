@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.124 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.125 | Fecha: 2026-09-10
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupTasks, analyze, ANALYZER_VERSION, text, range } = require('./core');
 
@@ -134,6 +134,22 @@ class SupportService {
     const updated = await this.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision }, { $set: { fields: this.vault.seal(fields, row._id), source: this.vault.seal(source, row._id + ':source'), analyzerVersion: ANALYZER_VERSION, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: copiedConversation ? 'description_summarized_ai' : 'title_regenerated_ai', at: this.now() } } });
     if (!updated.matchedCount) return false;
     await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: row.jid, waId: row.jid, kind: 'message', provider: 'openai', model: title.model, inputTokens: title.inputTokens, outputTokens: title.outputTokens, totalTokens: title.totalTokens || title.inputTokens + title.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'support_task_summary_repair' }, createdAt: this.now() });
+    return true;
+  }
+  async refreshChangedDraft(scope, id) {
+    if (!this.titleAnalyzer) return false;
+    const row = await this.col('drafts').findOne({ _id: text(id, 64), ...scope, state: { $nin: ['merged', 'ignored'] }, $or: [{ sourceChanged: true }, { reconciliationRequired: true }] });
+    if (!row?.messageIds?.length) return false;
+    const messageHash = hash(row.messageIds);
+    if (row.sourceSuggestionMessageHash === messageHash) return false;
+    const messages = await this.col('messages').find({ ...scope, _id: { $in: row.messageIds } }).sort({ at: 1, _id: 1 }).limit(500).toArray();
+    const decoded = messages.map(message => ({ ...message, text: this.vault.open(message.payload, message._id).text || '' })).filter(message => message.text.trim());
+    if (!decoded.length) return false;
+    const title = await this.titleAnalyzer.run(decoded, { ...scope, jid: row.jid, draftId: row._id });
+    const source = this.vault.open(row.source, row._id + ':source'); source.subject = title.subject; source.summaryDescription = title.description;
+    const updated = await this.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision }, { $set: { source: this.vault.seal(source, row._id + ':source'), sourceSuggestionMessageHash: messageHash, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'changed_source_summarized_ai', at: this.now() } } });
+    if (!updated.matchedCount) return false;
+    await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: row.jid, waId: row.jid, kind: 'message', provider: 'openai', model: title.model, inputTokens: title.inputTokens, outputTokens: title.outputTokens, totalTokens: title.totalTokens || title.inputTokens + title.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'extension_changed_source' }, createdAt: this.now() });
     return true;
   }
   async runOne(assertOwner = async () => {}, owner = {}) {

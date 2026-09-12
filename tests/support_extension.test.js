@@ -169,6 +169,13 @@ test('a changed source displays its current task title instead of the stale draf
  await service.col('drafts').updateOne({_id:id},{$set:{sourceChanged:true,source:vault.seal(latest,id+':source')}});
  const detail=(await call('/drafts/'+id)).data;assert.equal(detail.fields.subject,latest.subject);assert.equal(detail.source.summaryDescription,latest.summaryDescription);
 });
+test('opening a changed draft regenerates a stale source title from its assigned messages',async()=>{
+ service.titleAnalyzer={run:async()=>({subject:'Corregir importes cobrados con tarjeta',description:'La clienta consulta diferencias en importes y recargos de pagos con tarjeta.',model:'fixture',inputTokens:12,outputTokens:7,totalTokens:19})};
+ const ingested=await service.ingest(scope,{id:'wa-title',jid:'123@lid',fromMe:false,name:'Esther',at:new Date('2026-09-10T14:00:00Z'),text:'Me sigue apareciendo una diferencia en centavos con tarjeta'});
+ await service.col('drafts').updateOne({_id:id},{$set:{messageIds:[ingested.id],sourceChanged:true,source:vault.seal({...fields,subject:'Título viejo de notebook'},id+':source')}});
+ const detail=(await call('/drafts/'+id)).data;assert.equal(detail.fields.subject,'Corregir importes cobrados con tarjeta');assert.equal(detail.source.summaryDescription,'La clienta consulta diferencias en importes y recargos de pagos con tarjeta.');
+ assert.equal(await db.collection('ai_token_usage_log').countDocuments({'meta.source':'extension_changed_source'}),1);
+});
 test('in-flight delivery blocks duplicate publishing and editing; uncertain outcomes cannot create again',async()=>{
  let release, started;const entered=new Promise(resolve=>started=resolve);remote.save=async()=>{started();await new Promise(resolve=>release=resolve);throw Error('network_timeout');};
  const first=call('/drafts/'+id+'/publish',{revision:1,mapping});await entered;

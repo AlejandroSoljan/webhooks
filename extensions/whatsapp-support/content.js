@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.124 | Fecha: 2026-09-12
+// Asisto | Version: 5.00.125 | Fecha: 2026-09-12
 (() => {
   let chats = [], knownChats = [], owner = '', timer, stopped = false, currentJid = '', currentName = '', taskData = { tasks: [], messages: [] }, anchorId = '';
   const remembered = new Map(), addressBook = [], selected = new Set();
@@ -7,13 +7,28 @@
     const raw = String(value || '');
     return raw.match(/^(?:true|false)_[^_]+_(.+)$/)?.[1] || raw.match(/(?:^|_)([A-Za-z0-9-]{10,})$/)?.[1] || '';
   };
+  function messageAt(value) {
+    const match = String(value || '').match(/\[(\d{1,2}):(\d{2}),\s*(\d{1,2})\/(\d{1,2})\/(\d{2,4})\]/); if (!match) return NaN;
+    const year = Number(match[5]) < 100 ? 2000 + Number(match[5]) : Number(match[5]);
+    return +new Date(year, Number(match[4]) - 1, Number(match[3]), Number(match[1]), Number(match[2]));
+  }
   const statusLabel = status => ({ pending: 'Pendiente', saved: 'HubSpot', discarded: 'Descartada' }[status] || 'Asignada');
   function messageNodes() {
-    const seen = new Set();
-    return [...document.querySelectorAll('#main .message-in, #main .message-out, #main [data-id^="true_"], #main [data-id^="false_"]')].filter(node => {
-      const idNode = node.matches('[data-id]') ? node : node.querySelector('[data-id]');
-      const id = extractMessageId(idNode?.getAttribute('data-id')); if (!id || seen.has(id)) return false; seen.add(id); node.dataset.asistoMessageId = id; return true;
-    });
+    const seen = new Set(), usedRows = new Set(), result = [];
+    const candidates = [...document.querySelectorAll('#main .message-in, #main .message-out, #main [data-pre-plain-text], #main [data-id^="true_"], #main [data-id^="false_"]')];
+    for (const candidate of candidates) {
+      const node = candidate.closest('.message-in, .message-out, [role="row"]') || candidate;
+      if (seen.has(node)) continue;
+      const idNode = node.closest('[data-id]') || node.querySelector('[data-id]'), pre = node.querySelector('[data-pre-plain-text]') || (node.matches('[data-pre-plain-text]') ? node : null);
+      let id = extractMessageId(idNode?.getAttribute('data-id'));
+      if (!id) {
+        const at = messageAt(pre?.getAttribute('data-pre-plain-text')), fromMe = node.classList.contains('message-out');
+        const match = (taskData.messages || []).find(row => !usedRows.has(row.waId) && row.fromMe === fromMe && Math.abs(+new Date(row.at) - at) < 60000);
+        id = match?.waId || '';
+      }
+      if (!id || seen.has(id)) continue; seen.add(node); seen.add(id); usedRows.add(id); node.dataset.asistoMessageId = id; result.push(node);
+    }
+    return result;
   }
   function renderMessageControls() {
     const assignments = new Map((taskData.messages || []).map(row => [row.waId, row])), nodes = messageNodes(), retained = new Set();
