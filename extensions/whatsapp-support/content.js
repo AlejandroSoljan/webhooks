@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.107 | Fecha: 2026-09-12
+// Asisto | Version: 5.00.123 | Fecha: 2026-09-12
 (() => {
   let chats = [], knownChats = [], owner = '', timer, stopped = false, currentJid = '', currentName = '', taskData = { tasks: [], messages: [] }, anchorId = '';
   const remembered = new Map(), addressBook = [], selected = new Set();

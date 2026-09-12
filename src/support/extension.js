@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.107 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.123 | Fecha: 2026-09-10
 const express = require('express');
 const crypto = require('node:crypto');
 const { ObjectId } = require('mongodb');
