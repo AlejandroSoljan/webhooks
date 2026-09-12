@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.127 | Fecha: 2026-09-12
+// Asisto | Version: 5.00.128 | Fecha: 2026-09-12
 (() => {
   let chats = [], knownChats = [], owner = '', timer, stopped = false, currentJid = '', currentName = '', taskData = { tasks: [], messages: [] }, anchorId = '';
   const remembered = new Map(), addressBook = [], selected = new Set();
@@ -15,20 +15,21 @@
   const statusLabel = status => ({ pending: 'Pendiente', saved: 'HubSpot', discarded: 'Descartada' }[status] || 'Asignada');
   function messageNodes() {
     const seenNodes = new Set(), seenIds = new Set(), usedRows = new Set(), result = [];
-    const candidates = [...document.querySelectorAll('#main [data-id^="true_"], #main [data-id^="false_"], #main .message-in, #main .message-out, #main [data-pre-plain-text]')];
+    const bubbles = [...document.querySelectorAll('#main .message-in, #main .message-out')];
+    const candidates = bubbles.length ? bubbles : [...document.querySelectorAll('#main [data-id^="true_"], #main [data-id^="false_"], #main [data-pre-plain-text]')];
     for (const candidate of candidates) {
       const ownId = extractMessageId(candidate.getAttribute?.('data-id'));
       const message = candidate.closest('.message-in, .message-out') || (candidate.matches('.message-in, .message-out') ? candidate : null);
       const node = message || (ownId ? candidate : candidate.matches('[data-pre-plain-text]') ? candidate : candidate.querySelector('[data-pre-plain-text]') || candidate);
       if (seenNodes.has(node)) continue;
-      const idNode = ownId ? candidate : candidate.closest('[data-id]') || candidate.querySelector('[data-id]'), pre = candidate.matches('[data-pre-plain-text]') ? candidate : candidate.querySelector('[data-pre-plain-text]');
+      const idNode = ownId ? candidate : candidate.querySelector('[data-id]') || candidate.closest('[data-id]'), pre = candidate.matches('[data-pre-plain-text]') ? candidate : candidate.querySelector('[data-pre-plain-text]');
       let id = extractMessageId(idNode?.getAttribute('data-id'));
       if (!id) {
         const at = messageAt(pre?.getAttribute('data-pre-plain-text')), fromMe = node.classList.contains('message-out') || !!node.closest('.message-out');
         const match = (taskData.messages || []).find(row => !usedRows.has(row.waId) && row.fromMe === fromMe && Math.abs(+new Date(row.at) - at) < 60000);
         id = match?.waId || '';
       }
-      if (!id || seenIds.has(id)) continue; seenNodes.add(node); seenIds.add(id); usedRows.add(id); node.dataset.asistoMessageId = id; node.classList.add('asisto-message-anchor'); result.push(node);
+      if (id && seenIds.has(id)) continue; seenNodes.add(node); if (id) { seenIds.add(id); usedRows.add(id); } node.dataset.asistoMessageId = id; node.classList.add('asisto-message-anchor'); result.push(node);
     }
     return result;
   }
@@ -37,8 +38,9 @@
     for (const node of nodes) {
       const id = node.dataset.asistoMessageId, row = assignments.get(id), holder = node.querySelector(':scope > .asisto-message-control') || document.createElement('div');
       holder.className = 'asisto-message-control'; holder.dataset.asistoOwned = '1'; holder.replaceChildren();
-      const check = document.createElement('input'); check.type = 'checkbox'; check.checked = selected.has(id); check.title = 'Seleccionar mensaje para una tarea';
+      const check = document.createElement('input'); check.type = 'checkbox'; check.checked = !!id && selected.has(id); check.disabled = !id; check.title = 'Seleccionar mensaje para una tarea';
       const rowAssignments = row?.assignments || []; check.title = rowAssignments.length ? rowAssignments.map(assignment => `${statusLabel(assignment.status)} · ${assignment.subject || assignment.shortId}`).join('\n') : 'Seleccionar este mensaje para una tarea';
+      if (!id) check.title = 'Esperando que Baileys sincronice este mensaje';
       check.setAttribute('aria-label', check.title); check.onchange = event => { event.stopPropagation(); anchorId = id; check.checked ? selected.add(id) : selected.delete(id); renderToolbar(); }; check.onclick = event => event.stopPropagation(); holder.append(check);
       for (const assignment of row?.assignments || []) {
         const badge = document.createElement('button'); badge.type = 'button'; badge.className = `asisto-message-assignment ${assignment.status}`;
@@ -58,11 +60,11 @@
   }
   function renderToolbar(nodes = messageNodes()) {
     let bar = document.querySelector('.asisto-message-toolbar'); if (!currentJid || !nodes.length) { bar?.remove(); return; }
-    if (!bar) { bar = document.createElement('div'); bar.className = 'asisto-message-toolbar'; bar.dataset.asistoOwned = '1'; document.querySelector('#main')?.append(bar); }
+    if (!bar) { bar = document.createElement('div'); bar.className = 'asisto-message-toolbar'; bar.dataset.asistoOwned = '1'; const main = document.querySelector('#main'), footer = main?.querySelector('footer'); if (main) main.insertBefore(bar, footer || null); }
     bar.replaceChildren(); const title = document.createElement('strong'); title.textContent = `Asisto · ${selected.size} seleccionados`;
-    const all = document.createElement('button'); all.textContent = 'Todos'; all.onclick = () => { nodes.forEach(node => selected.add(node.dataset.asistoMessageId)); renderMessageControls(); };
+    const all = document.createElement('button'); all.textContent = 'Todos'; all.onclick = () => { nodes.forEach(node => { if (node.dataset.asistoMessageId) selected.add(node.dataset.asistoMessageId); }); renderMessageControls(); };
     const none = document.createElement('button'); none.textContent = 'Ninguno'; none.onclick = () => { selected.clear(); renderMessageControls(); };
-    const from = document.createElement('button'); from.textContent = 'Desde aquí'; from.disabled = !anchorId; from.onclick = () => { const index = nodes.findIndex(node => node.dataset.asistoMessageId === anchorId); if (index >= 0) nodes.slice(index).forEach(node => selected.add(node.dataset.asistoMessageId)); renderMessageControls(); };
+    const from = document.createElement('button'); from.textContent = 'Desde aquí'; from.disabled = !anchorId; from.onclick = () => { const index = nodes.findIndex(node => node.dataset.asistoMessageId === anchorId); if (index >= 0) nodes.slice(index).forEach(node => { if (node.dataset.asistoMessageId) selected.add(node.dataset.asistoMessageId); }); renderMessageControls(); };
     const destination = document.createElement('select'); destinationOptions(destination);
     const action = document.createElement('select'); [['','Acción sobre ticket'],['followup','Agregar seguimiento'],['update','Actualizar ticket existente']].forEach(([value,label]) => { const item=document.createElement('option'); item.value=value; item.textContent=label; action.append(item); });
     destination.onchange = () => { action.hidden = !(taskData.tasks || []).find(task => task.id === destination.value)?.ticketId; }; destination.onchange();
