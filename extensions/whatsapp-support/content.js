@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.128 | Fecha: 2026-09-12
+// Asisto | Version: 5.00.129 | Fecha: 2026-09-12
 (() => {
   let chats = [], knownChats = [], owner = '', timer, stopped = false, currentJid = '', currentName = '', taskData = { tasks: [], messages: [] }, anchorId = '';
   const remembered = new Map(), addressBook = [], selected = new Set();
@@ -15,8 +15,7 @@
   const statusLabel = status => ({ pending: 'Pendiente', saved: 'HubSpot', discarded: 'Descartada' }[status] || 'Asignada');
   function messageNodes() {
     const seenNodes = new Set(), seenIds = new Set(), usedRows = new Set(), result = [];
-    const bubbles = [...document.querySelectorAll('#main .message-in, #main .message-out')];
-    const candidates = bubbles.length ? bubbles : [...document.querySelectorAll('#main [data-id^="true_"], #main [data-id^="false_"], #main [data-pre-plain-text]')];
+    const candidates = [...document.querySelectorAll('#main .message-in, #main .message-out, #main [data-id^="true_"], #main [data-id^="false_"], #main [data-pre-plain-text]')];
     for (const candidate of candidates) {
       const ownId = extractMessageId(candidate.getAttribute?.('data-id'));
       const message = candidate.closest('.message-in, .message-out') || (candidate.matches('.message-in, .message-out') ? candidate : null);
@@ -59,7 +58,7 @@
     select.value = pending.length === 1 ? pending[0].id : pending.length === 0 ? 'new' : '';
   }
   function renderToolbar(nodes = messageNodes()) {
-    let bar = document.querySelector('.asisto-message-toolbar'); if (!currentJid || !nodes.length) { bar?.remove(); return; }
+    let bar = document.querySelector('.asisto-message-toolbar'); if (!currentJid || !nodes.length || !selected.size) { bar?.remove(); return; }
     if (!bar) { bar = document.createElement('div'); bar.className = 'asisto-message-toolbar'; bar.dataset.asistoOwned = '1'; const main = document.querySelector('#main'), footer = main?.querySelector('footer'); if (main) main.insertBefore(bar, footer || null); }
     bar.replaceChildren(); const title = document.createElement('strong'); title.textContent = `Asisto · ${selected.size} seleccionados`;
     const all = document.createElement('button'); all.textContent = 'Todos'; all.onclick = () => { nodes.forEach(node => { if (node.dataset.asistoMessageId) selected.add(node.dataset.asistoMessageId); }); renderMessageControls(); };
