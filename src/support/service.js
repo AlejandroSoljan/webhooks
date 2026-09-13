@@ -1,6 +1,6 @@
-// Asisto | Version: 5.00.130 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.131 | Fecha: 2026-09-10
 const crypto = require('node:crypto');
-const { fail, scopedId, hash, settings, excluded, groupTasks, analyze, ANALYZER_VERSION, text, range } = require('./core');
+const { fail, scopedId, hash, settings, excluded, groupTasks, analyze, ANALYZER_VERSION, GROUPING_VERSION, text, range } = require('./core');
 
 class SupportService {
   constructor(db, vault, { transcribe = null, titleAnalyzer = null, now = () => new Date() } = {}) {
@@ -101,6 +101,12 @@ class SupportService {
       await this.enqueueMessage(scope, row, (await this.config(scope)).inactivityMs);
       await this.col('messages').updateOne({ _id: row._id, ...scope }, { $set: { queued: true } });
     }
+  }
+  async repairGrouping(scope) {
+    const draft = await this.col('drafts').findOne({ ...scope, groupingVersion: { $ne: GROUPING_VERSION }, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $nin: ['saved', 'sending', 'uncertain'] } }, { sort: { updatedAt: 1 }, projection: { jid: 1 } });
+    if (!draft) return false;
+    await this.enqueue(scope, draft.jid, 0);
+    return true;
   }
   async repairTitle(scope) {
     if (!this.titleAnalyzer) return false;
@@ -209,7 +215,7 @@ class SupportService {
       }
       decoded.push({ ...row, text: payload.text });
     }
-    for (const detectedGroup of groupTasks(decoded)) {
+    for (const detectedGroup of groupTasks(decoded, config.inactivityMs)) {
       let group = detectedGroup;
       if (!job.dates && +group.at(-1).receivedAt + config.inactivityMs > +this.now()) continue;
       await check();
@@ -219,19 +225,20 @@ class SupportService {
       const existing = await this.col('drafts').find({ ...scope, jid: job.jid, state: { $ne: 'merged' }, messageIds: { $in: ids } }).sort({ createdAt: 1, _id: 1 }).toArray();
       if (existing.some(row => ['sending', 'uncertain'].includes(row.hubspot?.state))) fail('hubspot_delivery_in_progress', 409);
       const untouched = row => !row.hubspot?.ticketId && row.events?.every(event => ['generated', 'source_changed', 'tasks_merged'].includes(event.action)) === true;
+      const splittingLegacy = existing.length === 1 && existing[0].groupingVersion !== GROUPING_VERSION && untouched(existing[0]) && existing[0].messageIds.some(id => !ids.includes(id));
       // A narrower historical request must not shrink a consolidated task.
-      if (existing.length === 1 && existing[0].analyzerVersion === ANALYZER_VERSION && ids.every(id => existing[0].messageIds.includes(id))) continue;
+      if (!splittingLegacy && existing.length === 1 && existing[0].analyzerVersion === ANALYZER_VERSION && ids.every(id => existing[0].messageIds.includes(id))) continue;
       // A regrouped conversation can contain a new fragment while the existing
       // draft still owns older context. Analyze the union instead of discarding
       // that context or leaving a stale title in the extension.
-      if (existing.length === 1 && existing[0].messageIds.some(id => !ids.includes(id))) {
+      if (!splittingLegacy && existing.length === 1 && existing[0].messageIds.some(id => !ids.includes(id))) {
         ids = [...new Set([...existing[0].messageIds, ...ids])];
         const wanted = new Set(ids); group = decoded.filter(message => wanted.has(message._id));
       }
       if (ids.length > 500 || group.reduce((n, m) => n + m.text.length, 0) > 100000) fail('conversation_window_too_large', 422);
       const fingerprint = hash(ids);
       const edited = existing.filter(row => !untouched(row));
-      if (edited.length > 1 || existing.some(row => row.messageIds.some(id => !ids.includes(id)))) {
+      if (edited.length > 1 || (!splittingLegacy && existing.some(row => row.messageIds.some(id => !ids.includes(id))))) {
         const flagged = await this.col('drafts').updateMany({ ...scope, _id: { $in: existing.map(d => d._id) }, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { state: 'needs_review', sourceChanged: true, reconciliationRequired: true, updatedAt: this.now() } });
         if (flagged.matchedCount !== existing.length) fail('revision_conflict', 409);
         continue;
@@ -253,7 +260,7 @@ class SupportService {
       const sourceDraft = { ...draft, description: evidenceDescription, summaryDescription: result.description };
       if (existing.length) {
         const generatedOnly = untouched(existing[0]);
-        const saved = await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { fingerprint, analyzerVersion: ANALYZER_VERSION, messageIds: ids, state: generatedOnly ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !generatedOnly, reconciliationRequired: false, ...(generatedOnly ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(sourceDraft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: existing.length > 1 ? 'tasks_merged' : 'source_changed', at: this.now() } } });
+        const saved = await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { fingerprint, analyzerVersion: ANALYZER_VERSION, groupingVersion: GROUPING_VERSION, messageIds: ids, state: generatedOnly ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !generatedOnly, reconciliationRequired: false, ...(generatedOnly ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(sourceDraft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: existing.length > 1 ? 'tasks_merged' : 'source_changed', at: this.now() } } });
         if (!saved.matchedCount) fail('revision_conflict', 409);
         for (const duplicate of existing.slice(1)) {
           const merged = await this.col('drafts').updateOne({ _id: duplicate._id, ...scope, revision: duplicate.revision, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { state: 'merged', mergedInto: _id, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'tasks_merged', into: _id, at: this.now() } } });
@@ -261,7 +268,7 @@ class SupportService {
           await this.col('drafts').updateOne({ _id, ...scope }, { $addToSet: { mergedDraftIds: duplicate._id } });
         }
       } else {
-        await this.col('drafts').updateOne({ _id, ...scope }, { $setOnInsert: { ...scope, jid: job.jid, messageIds: ids, fingerprint, analyzerVersion: ANALYZER_VERSION, state: result.result === 'ignored' ? 'ignored' : 'pending', revision: 1, fields: this.vault.seal(draft, _id), source: this.vault.seal(sourceDraft, _id + ':source'), mode: config.mode, createdAt: this.now(), updatedAt: this.now(), events: [{ action: 'generated', at: this.now() }] } }, { upsert: true });
+        await this.col('drafts').updateOne({ _id, ...scope }, { $setOnInsert: { ...scope, jid: job.jid, messageIds: ids, fingerprint, analyzerVersion: ANALYZER_VERSION, groupingVersion: GROUPING_VERSION, state: result.result === 'ignored' ? 'ignored' : 'pending', revision: 1, fields: this.vault.seal(draft, _id), source: this.vault.seal(sourceDraft, _id + ':source'), mode: config.mode, createdAt: this.now(), updatedAt: this.now(), events: [{ action: 'generated', at: this.now() }] } }, { upsert: true });
       }
     }
   }
@@ -293,13 +300,15 @@ class SupportService {
     const jid = text(input.jid, 200);
     const waIds = Array.isArray(input.messageIds) ? [...new Set(input.messageIds.map(id => text(id, 200)))] : [];
     if (!waIds.length || waIds.length > 200) fail('invalid_message_selection');
-    const rows = await this.col('messages').find({ ...scope, jid, id: { $in: waIds } }).sort({ at: 1, _id: 1 }).toArray();
+    const contact = await this.col('contacts').findOne({ ...scope, $or: [{ _id: scopedId(scope, 'contact', jid) }, { jid }, { aliases: jid }] });
+    const jids = [...new Set([jid, ...(contact?.aliases || [])])];
+    const rows = await this.col('messages').find({ ...scope, jid: { $in: jids }, id: { $in: waIds } }).sort({ at: 1, _id: 1 }).toArray();
     if (rows.length !== waIds.length) fail('message_selection_not_found', 404);
     const destination = input.destination === 'new' ? 'new' : text(input.destination, 64);
-    let draft = destination === 'new' ? null : await this.col('drafts').findOne({ _id: destination, ...scope, jid, state: { $ne: 'merged' } });
+    let draft = destination === 'new' ? null : await this.col('drafts').findOne({ _id: destination, ...scope, jid: { $in: jids }, state: { $ne: 'merged' } });
     if (destination !== 'new' && !draft) fail('draft_not_found', 404);
     if (draft?.hubspot?.ticketId && !['followup', 'update'].includes(input.existingAction)) fail('saved_ticket_action_required', 409);
-    const conflicts = await this.col('drafts').find({ ...scope, jid, state: { $ne: 'merged' }, ...(draft ? { _id: { $ne: draft._id } } : {}), messageIds: { $in: rows.map(row => row._id) } }, { projection: { _id: 1 } }).toArray();
+    const conflicts = await this.col('drafts').find({ ...scope, jid: { $in: jids }, state: { $ne: 'merged' }, ...(draft ? { _id: { $ne: draft._id } } : {}), messageIds: { $in: rows.map(row => row._id) } }, { projection: { _id: 1 } }).toArray();
     if (conflicts.length && input.reassign === true) {
       for (const conflict of conflicts) await this.col('drafts').updateOne({ _id: conflict._id, ...scope, state: { $ne: 'merged' } }, { $pull: { messageIds: { $in: rows.map(row => row._id) } }, $inc: { revision: 1 }, $set: { sourceChanged: true, state: 'needs_review', updatedAt: this.now() }, $push: { events: { action: 'messages_reassigned_out', by: scope.userId, messageIds: rows.map(row => row._id), at: this.now() } } });
     } else if (conflicts.length && input.duplicate !== true) fail('message_already_assigned', 409);
@@ -318,7 +327,7 @@ class SupportService {
           await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: jid, waId: jid, kind: 'message', provider: 'openai', model: title.model, inputTokens: title.inputTokens, outputTokens: title.outputTokens, totalTokens: title.totalTokens || title.inputTokens + title.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'extension_message_selection' }, createdAt: now });
         }
         const fields = { ...result, messageDate: rows[0].at.toISOString(), companyId: memory?.companyId || '', company: memory?.company || '', contactId: memory?.contactId || '', contact: memory?.contact || contact?.name || rows.find(row => !row.fromMe && row.name)?.name || '', identitySource: memory?.source || 'unassigned', proposedAction: 'review' };
-        await this.col('drafts').insertOne({ _id, ...scope, jid, messageIds: selectedIds, fingerprint: hash(selectedIds), analyzerVersion: ANALYZER_VERSION, state: 'pending', revision: 1, fields: this.vault.seal(fields, _id), source: this.vault.seal(fields, _id + ':source'), mode: (await this.config(scope)).mode, createdAt: now, updatedAt: now, events: [{ action: 'messages_assigned_new', by: scope.userId, messageIds: selectedIds, at: now }] });
+        await this.col('drafts').insertOne({ _id, ...scope, jid, messageIds: selectedIds, fingerprint: hash(selectedIds), analyzerVersion: ANALYZER_VERSION, groupingVersion: GROUPING_VERSION, state: 'pending', revision: 1, fields: this.vault.seal(fields, _id), source: this.vault.seal(fields, _id + ':source'), mode: (await this.config(scope)).mode, createdAt: now, updatedAt: now, events: [{ action: 'messages_assigned_new', by: scope.userId, messageIds: selectedIds, at: now }] });
         await this.audit(scope, 'messages_assigned_new', _id);
         return { draftId: _id, revision: 1, created: true, assigned: selectedIds.length };
       }

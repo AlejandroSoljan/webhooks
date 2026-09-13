@@ -181,6 +181,7 @@ function createDeviceRouter({ getService, publicOrigin }) {
         $set: { state: 'pending', attempts: 0, dueAt: s.now(), transcriptionRecoveryV1: true }, $unset: { error: '' },
       });
       await s.repairQueue(ctx.scope);
+      await s.repairGrouping(ctx.scope);
       await s.repairTitle(ctx.scope);
       return { processed: await s.runOne(() => assertLease(s, ctx), ctx.scope) };
     })();

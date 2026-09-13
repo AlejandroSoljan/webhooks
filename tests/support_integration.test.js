@@ -56,6 +56,18 @@ test('debounce, outgoing context, replay and overlapping history produce one dra
   assert.equal((await service.listDrafts(scope)).length, 1);
   assert.equal(await service.col('usage').countDocuments({ kind: 'analysis' }), 1);
 });
+test('a later same-topic conversation creates a separate draft after configured inactivity', async () => {
+  const first = await processMessages([message('first', 0, { text: 'Necesito configurar el acceso al sistema' })]);
+  assert.equal(first.length, 1);
+  await service.ingest(scope, message('second', 600, { text: 'Buenas tardes, necesito configurar otro acceso al sistema' }));
+  const second = await service.col('messages').findOne({ ...scope, id: 'second' });
+  await service.col('drafts').updateOne({ _id: first[0]._id }, { $addToSet: { messageIds: second._id }, $set: { groupingVersion: 'legacy-grouping' } });
+  await service.col('jobs').deleteMany(scope); assert.equal(await service.repairGrouping(scope), true);
+  now = new Date(+now + 180001); await service.runOne();
+  const drafts = await service.listDrafts(scope);
+  assert.equal(drafts.length, 2);
+  assert.deepEqual(new Set(drafts.map(draft => draft.messageIds.length)), new Set([1]));
+});
 test('late evidence preserves edits, invalidates approval and checks optimistic revision', async () => {
   const [draft] = await processMessages([message('one')]);
   await service.editDraft(scope, draft._id, 1, { subject: 'Título humano', companyId: '123', proposedAction: 'create' });

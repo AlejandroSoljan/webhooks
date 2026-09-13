@@ -75,14 +75,16 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
   }));
   router.get('/drafts', route(async (req, s, scope) => {
     const jid = text(req.query.jid, 200);
-    const contact = await s.col('contacts').findOne({ _id: scopedId(scope, 'contact', jid), ...scope });
+    const contact = await s.col('contacts').findOne({ ...scope, $or: [{ _id: scopedId(scope, 'contact', jid) }, { jid }, { aliases: jid }] });
     const rows = await s.col('drafts').find({ ...scope, jid: { $in: [...new Set([jid, ...(contact?.aliases || [])])] }, state: { $nin: ['merged', 'ignored'] }, $or: [{ 'hubspot.state': { $ne: 'saved' } }, { 'hubspot.pendingFollowup': true }] }).sort({ updatedAt: -1 }).limit(100).toArray();
     return rows.map(row => { const fields = s.vault.open(row.fields, row._id); return { id: row._id, subject: fields.subject || 'Tarea para revisar', contact: fields.contact || contact?.name || '', state: row.state, hubspot: row.hubspot || null }; });
   }));
   router.get('/messages', route(async (req, s, scope) => {
     const jid = text(req.query.jid, 200);
-    const rows = await s.col('messages').find({ ...scope, jid }).sort({ at: -1, _id: -1 }).limit(500).toArray();
-    const drafts = await s.col('drafts').find({ ...scope, jid, state: { $ne: 'merged' } }).sort({ updatedAt: -1 }).limit(100).toArray();
+    const contact = await s.col('contacts').findOne({ ...scope, $or: [{ _id: scopedId(scope, 'contact', jid) }, { jid }, { aliases: jid }] });
+    const jids = [...new Set([jid, ...(contact?.aliases || [])])];
+    const rows = await s.col('messages').find({ ...scope, jid: { $in: jids } }).sort({ at: -1, _id: -1 }).limit(500).toArray();
+    const drafts = await s.col('drafts').find({ ...scope, jid: { $in: jids }, state: { $ne: 'merged' } }).sort({ updatedAt: -1 }).limit(100).toArray();
     const tasks = drafts.map(row => {
       const fields = s.vault.open(row.fields, row._id);
       const status = row.state === 'ignored' ? 'discarded' : row.hubspot?.pendingFollowup ? 'pending' : row.hubspot?.ticketId ? 'saved' : 'pending';

@@ -217,3 +217,13 @@ test('task grouping keeps delayed acknowledgements with the request and splits a
   assert.deepEqual(groups.map(group => group.map(message => message._id)), [['stock', 'reply', 'ack'], ['update']]);
   assert.equal(analyze(groups[0]).subject, 'Consulta sobre stock y carga de ventas');
 });
+test('a new incoming conversation after inactivity creates another task even for the same topic', () => {
+  const { groupTasks } = require('../src/support/core');
+  const row = (id, minutes, text, fromMe = false) => ({ _id: id, at: new Date(1700000000000 + minutes * 60000), text, fromMe });
+  const groups = groupTasks([
+    row('first', 0, 'Necesito configurar el acceso al sistema'),
+    row('answer', 1, 'Dale, lo configuramos', true),
+    row('second', 8, 'Buenas tardes, necesito configurar otro acceso al sistema'),
+  ], 180000);
+  assert.deepEqual(groups.map(group => group.map(message => message._id)), [['first', 'answer'], ['second']]);
+});

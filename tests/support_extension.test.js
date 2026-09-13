@@ -115,6 +115,16 @@ test('message selection creates a draft when the chat has no pending task and is
  assert.equal(result.status,200);assert.equal(result.data.assigned,0);assert.equal(await service.col('drafts').countDocuments({jid:'123@lid'}),1);
  const overview=(await call('/messages?jid=123%40lid')).data;assert.equal(overview.messages[0].assignments[0].draftId,draftId);assert.equal(overview.messages[0].assignments[0].status,'pending');
 });
+test('message assignments are visible and selectable through either WhatsApp contact alias',async()=>{
+ await service.col('contacts').insertOne({_id:scopedId(scope,'contact','123@lid'),...scope,jid:'123@lid',name:'Vane',aliases:['123@lid','549123@s.whatsapp.net']});
+ await service.ingest(scope,{id:'alias-message',jid:'549123@s.whatsapp.net',fromMe:false,name:'Vane',at:new Date('2026-09-10T10:00:00Z'),text:'Necesito configurar una impresora'});
+ const stored=await service.col('messages').findOne({...scope,id:'alias-message'});
+ await service.col('drafts').updateOne({_id:id},{$set:{messageIds:[stored._id]}});
+ const overview=(await call('/messages?jid=549123%40s.whatsapp.net')).data;
+ assert.equal(overview.tasks.length,1);assert.equal(overview.messages[0].assignments[0].draftId,id);
+ const result=await call('/messages/assign',{jid:'549123@s.whatsapp.net',messageIds:['alias-message'],destination:id});
+ assert.equal(result.status,200);assert.equal(result.data.assigned,0);
+});
 test('message selection appends to one chosen task and preserves manual edits',async()=>{
  await service.ingest(scope,{id:'wa-2',jid:'123@lid',fromMe:false,name:'Vane',at:new Date('2026-09-10T11:00:00Z'),text:'También debe imprimir por TSPrint'});
  await service.col('drafts').updateOne({_id:id},{$set:{events:[{action:'edited'}],fields:vault.seal({...fields,subject:'Título escrito por el usuario',description:'Detalle manual'},id),messageIds:[]}});

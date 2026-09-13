@@ -63,7 +63,7 @@ function taskTopics(value) {
     ['update', /actualiz|nueva version/], ['server', /servidor|vps/], ['license', /licencia|abono/],
   ].filter(([, pattern]) => pattern.test(input)).map(([topic]) => topic);
 }
-function groupTasks(messages) {
+function groupTasks(messages, inactivityMs = 180000) {
   const groups = [];
   for (const message of [...messages].sort((a, b) => +a.at - +b.at || a._id.localeCompare(b._id))) {
     const last = groups.at(-1), input = normalize(message.text);
@@ -73,14 +73,17 @@ function groupTasks(messages) {
     const explicitChange = /otro tema|otra (cosa|consulta|tarea)|por otro lado|ademas|tambien/.test(input) && request;
     const differentRequest = last && message.at - last.at(-1).at > 180000 && request && topics.length > 0 && priorTopics.size > 0 && topics.every(topic => !priorTopics.has(topic));
     const continuation = /^(dale|ok|perfecto|listo|gracias|si[, .]|ya te|te paso|ahi|eso|seguimos|sigue|todavia)/.test(input);
-    const longGap = last && message.at - last.at(-1).at > 86400000 && !continuation;
+    // Once the configured conversation window has closed, a new incoming
+    // request starts another task even when it concerns the same module.
+    const longGap = last && message.at - last.at(-1).at > inactivityMs && !continuation;
     if (!last || (!message.fromMe && (explicitChange || differentRequest || longGap))) groups.push([message]);
     else last.push(message);
   }
   return groups;
 }
 // Every non-excluded exchange is documented. Categories are reviewable HubSpot labels.
-const ANALYZER_VERSION = 'support-task-groups-v6-ai-summary';
+const ANALYZER_VERSION = 'support-task-groups-v7-inactivity-boundary';
+const GROUPING_VERSION = 'support-task-inactivity-v1';
 function analyze(messages) {
   const transcript = messages.map(m => `${m.at.toISOString()} ${m.fromMe ? 'Operador' : 'Contacto'}: ${m.text}`).join('\n');
   const incoming = normalize(messages.filter(m => !m.fromMe).map(m => m.text).join(' '));
@@ -124,4 +127,4 @@ function analyze(messages) {
   const subject = totals ? 'Totalizador' + (/gasto/.test(incoming) ? ' de gastos' : '') + ' por cuenta' + (period ? ' y período' : '') : /stock|inventario|cereal/.test(incoming) ? (/venta/.test(incoming) ? 'Consulta sobre stock y carga de ventas' : 'Consulta sobre stock') : accounting ? 'Consulta sobre reportes contables' : messages.find(m => !m.fromMe && /manager/i.test(m.text))?.text.slice(0, 120) || messages.find(m => !m.fromMe && m.text.trim())?.text.slice(0, 120) || 'Consulta de soporte';
   return { result: 'draft', subject, description, category, errorType, status: guidance || promisedVideo ? 'En Proceso' : 'Nuevo', channel: 'WhatsApp', confidence: 'needs_review' };
 }
-module.exports = { SupportError, fail, scopeOf, hash, scopedId, text, range, normalize, settings, excluded, groupMessages, groupTasks, analyze, ANALYZER_VERSION, TASK_CHOICES };
+module.exports = { SupportError, fail, scopeOf, hash, scopedId, text, range, normalize, settings, excluded, groupMessages, groupTasks, analyze, ANALYZER_VERSION, GROUPING_VERSION, TASK_CHOICES };
