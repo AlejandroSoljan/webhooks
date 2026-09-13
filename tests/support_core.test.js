@@ -217,7 +217,7 @@ test('task grouping keeps delayed acknowledgements with the request and splits a
   assert.deepEqual(groups.map(group => group.map(message => message._id)), [['stock', 'reply', 'ack'], ['update']]);
   assert.equal(analyze(groups[0]).subject, 'Consulta sobre stock y carga de ventas');
 });
-test('a new incoming conversation after inactivity creates another task even for the same topic', () => {
+test('a later conversation stays in the same task when the topic is unchanged', () => {
   const { groupTasks } = require('../src/support/core');
   const row = (id, minutes, text, fromMe = false) => ({ _id: id, at: new Date(1700000000000 + minutes * 60000), text, fromMe });
   const groups = groupTasks([
@@ -225,5 +225,15 @@ test('a new incoming conversation after inactivity creates another task even for
     row('answer', 1, 'Dale, lo configuramos', true),
     row('second', 8, 'Buenas tardes, necesito configurar otro acceso al sistema'),
   ], 180000);
-  assert.deepEqual(groups.map(group => group.map(message => message._id)), [['first', 'answer'], ['second']]);
+  assert.deepEqual(groups.map(group => group.map(message => message._id)), [['first', 'answer', 'second']]);
+});
+test('either participant can start another task when the topic really changes', () => {
+  const { groupTasks } = require('../src/support/core');
+  const row = (id, minutes, text, fromMe = false) => ({ _id: id, at: new Date(1700000000000 + minutes * 60000), text, fromMe });
+  const groups = groupTasks([
+    row('accounting', 0, 'Necesito configurar bancos y el cierre contable'),
+    row('answer', 1, 'Dale, revisamos contabilidad', true),
+    row('access', 8, 'Ya tengo listo para instalar el acceso al sistema', true),
+  ], 180000);
+  assert.deepEqual(groups.map(group => group.map(message => message._id)), [['accounting', 'answer'], ['access']]);
 });

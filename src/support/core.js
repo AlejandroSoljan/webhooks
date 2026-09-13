@@ -69,21 +69,21 @@ function groupTasks(messages, inactivityMs = 180000) {
     const last = groups.at(-1), input = normalize(message.text);
     const topics = taskTopics(input);
     const priorTopics = last ? new Set(last.filter(m => !m.fromMe).flatMap(m => taskTopics(m.text))) : new Set();
-    const request = /necesit|podrias|podes|podemos|quisiera|consulta|problema|error|no (funciona|puedo|abre|imprime)|coordin|actualiz|configur/.test(input);
+    const request = /necesit|podrias|podes|podemos|quisiera|consulta|problema|error|no (funciona|puedo|abre|imprime)|coordin|actualiz|configur|instal/.test(input);
     const explicitChange = /otro tema|otra (cosa|consulta|tarea)|por otro lado|ademas|tambien/.test(input) && request;
     const differentRequest = last && message.at - last.at(-1).at > 180000 && request && topics.length > 0 && priorTopics.size > 0 && topics.every(topic => !priorTopics.has(topic));
-    const continuation = /^(dale|ok|perfecto|listo|gracias|si[, .]|ya te|te paso|ahi|eso|seguimos|sigue|todavia)/.test(input);
-    // Once the configured conversation window has closed, a new incoming
-    // request starts another task even when it concerns the same module.
-    const longGap = last && message.at - last.at(-1).at > inactivityMs && !continuation;
-    if (!last || (!message.fromMe && (explicitChange || differentRequest || longGap))) groups.push([message]);
+    const continuation = /^(?:dale|ok|perfecto|listo|gracias|si|ya te|te paso|ahi|eso|seguimos|sigue|todavia)(?:[,.! ]|$)/.test(input);
+    // Time alone never starts another task. It only helps confirm that a
+    // different request belongs to a new exchange. Either participant can
+    // introduce that new topic.
+    if (!last || (!continuation && (explicitChange || differentRequest))) groups.push([message]);
     else last.push(message);
   }
   return groups;
 }
 // Every non-excluded exchange is documented. Categories are reviewable HubSpot labels.
-const ANALYZER_VERSION = 'support-task-groups-v7-inactivity-boundary';
-const GROUPING_VERSION = 'support-task-inactivity-v1';
+const ANALYZER_VERSION = 'support-task-groups-v8-semantic';
+const GROUPING_VERSION = 'support-task-semantic-v2';
 function analyze(messages) {
   const transcript = messages.map(m => `${m.at.toISOString()} ${m.fromMe ? 'Operador' : 'Contacto'}: ${m.text}`).join('\n');
   const incoming = normalize(messages.filter(m => !m.fromMe).map(m => m.text).join(' '));

@@ -227,7 +227,7 @@ class SupportService {
       const untouched = row => !row.hubspot?.ticketId && row.events?.every(event => ['generated', 'source_changed', 'tasks_merged'].includes(event.action)) === true;
       const splittingLegacy = existing.length === 1 && existing[0].groupingVersion !== GROUPING_VERSION && untouched(existing[0]) && existing[0].messageIds.some(id => !ids.includes(id));
       // A narrower historical request must not shrink a consolidated task.
-      if (!splittingLegacy && existing.length === 1 && existing[0].analyzerVersion === ANALYZER_VERSION && ids.every(id => existing[0].messageIds.includes(id))) continue;
+      if (!splittingLegacy && existing.length === 1 && existing[0].analyzerVersion === ANALYZER_VERSION && existing[0].groupingVersion === GROUPING_VERSION && ids.every(id => existing[0].messageIds.includes(id))) continue;
       // A regrouped conversation can contain a new fragment while the existing
       // draft still owns older context. Analyze the union instead of discarding
       // that context or leaving a stale title in the extension.
