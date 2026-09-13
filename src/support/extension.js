@@ -76,12 +76,14 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
   router.get('/drafts', route(async (req, s, scope) => {
     const jid = text(req.query.jid, 200);
     const contact = await s.col('contacts').findOne({ ...scope, $or: [{ _id: scopedId(scope, 'contact', jid) }, { jid }, { aliases: jid }] });
+    if (require('./core').excluded({ jid, name: contact?.name }, await s.config(scope))) return [];
     const rows = await s.col('drafts').find({ ...scope, jid: { $in: [...new Set([jid, ...(contact?.aliases || [])])] }, state: { $nin: ['merged', 'ignored'] }, $or: [{ 'hubspot.state': { $ne: 'saved' } }, { 'hubspot.pendingFollowup': true }, { sourceChanged: true }, { reconciliationRequired: true }] }).sort({ updatedAt: -1 }).limit(100).toArray();
     return rows.map(row => { const fields = s.vault.open(row.fields, row._id); return { id: row._id, subject: fields.subject || 'Tarea para revisar', contact: fields.contact || contact?.name || '', state: row.state, status: row.state === 'ignored' ? 'discarded' : (row.hubspot?.pendingFollowup || row.sourceChanged || row.reconciliationRequired) ? 'pending' : row.hubspot?.ticketId ? 'saved' : 'pending', hubspot: row.hubspot || null }; });
   }));
   router.get('/messages', route(async (req, s, scope) => {
     const jid = text(req.query.jid, 200);
     const contact = await s.col('contacts').findOne({ ...scope, $or: [{ _id: scopedId(scope, 'contact', jid) }, { jid }, { aliases: jid }] });
+    if (require('./core').excluded({ jid, name: contact?.name }, await s.config(scope))) return { jid, excluded: true, tasks: [], messages: [] };
     const jids = [...new Set([jid, ...(contact?.aliases || [])])];
     const rows = await s.col('messages').find({ ...scope, jid: { $in: jids } }).sort({ at: -1, _id: -1 }).limit(500).toArray();
     const drafts = await s.col('drafts').find({ ...scope, jid: { $in: jids }, state: { $ne: 'merged' } }).sort({ updatedAt: -1 }).limit(100).toArray();
@@ -97,6 +99,26 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     return { jid, tasks: tasks.map(({ messageIds, ...task }) => task), messages: rows.map(row => ({ waId: row.id, at: row.at, fromMe: !!row.fromMe, assignments: assignments.get(row._id) || [] })) };
   }));
   router.post('/messages/assign', route((req, s, scope) => s.assignMessages(scope, req.body)));
+  router.get('/contact-control', route(async (req, s, scope) => {
+    const q = text(req.query.q || '', 200);
+    const config = await s.config(scope), tenant = await s.col('settings').findOne({ tenantId: scope.tenantId, userId: '*' });
+    const pattern = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rows = await s.col('contacts').find({ ...scope, ...(q ? { $or: [{ name: { $regex: pattern, $options: 'i' } }, { jid: { $regex: pattern } }] } : {}) }).sort({ name: 1 }).limit(100).toArray();
+    const { excluded, settings } = require('./core');
+    return rows.map(row => { const aliases = [...new Set([row.jid, ...(row.aliases || [])])]; return { jid: row.jid, name: row.name || row.jid, excluded: aliases.some(jid => excluded({ jid, name: row.name }, config)), locked: aliases.some(jid => excluded({ jid, name: row.name }, settings(tenant?.config))) }; });
+  }));
+  router.post('/contact-control', route(async (req, s, scope) => {
+    const jid = text(req.body.jid, 200);
+    if (typeof req.body.excluded !== 'boolean') fail('invalid_exclusions');
+    const contact = await s.col('contacts').findOne({ ...scope, $or: [{ jid }, { aliases: jid }] });
+    if (!contact) fail('not_found', 404);
+    const aliases = [...new Set([contact.jid, ...(contact.aliases || [])])];
+    await s.col('settings').updateOne(scope, req.body.excluded
+      ? { $addToSet: { 'config.excludedJids': { $each: aliases } }, $set: { updatedAt: s.now() } }
+      : { $pull: { 'config.excludedJids': { $in: aliases }, 'config.excludedNames': contact.name || '' }, $set: { updatedAt: s.now() } }, { upsert: true });
+    await s.audit(scope, req.body.excluded ? 'contact_task_control_disabled' : 'contact_task_control_enabled', contact.jid);
+    return { saved: true };
+  }));
   router.post('/contact', route(async (req, s, scope) => {
     const jid = text(req.body.jid, 200), name = text(req.body.name, 200);
     if (!/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(jid) || !name) fail('invalid_contact');

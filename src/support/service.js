@@ -134,6 +134,7 @@ class SupportService {
       ? await this.col('drafts').findOne({ _id: text(selected, 64), ...scope, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $ne: 'saved' } })
       : selected;
     if (!row) return false;
+    if (excluded({ jid: row.jid }, await this.config(scope))) return false;
     const fields = this.vault.open(row.fields, row._id), source = this.vault.open(row.source, row._id + ':source');
     const generatedOnly = row.events?.every(event => ['generated', 'source_changed', 'tasks_merged'].includes(event.action)) === true;
     // Older drafts can contain the raw transcript with small differences from
@@ -164,6 +165,7 @@ class SupportService {
     if (!this.titleAnalyzer) return false;
     const row = await this.col('drafts').findOne({ _id: text(id, 64), ...scope, state: { $nin: ['merged', 'ignored'] }, $or: [{ sourceChanged: true }, { reconciliationRequired: true }] });
     if (!row?.messageIds?.length) return false;
+    if (excluded({ jid: row.jid }, await this.config(scope))) return false;
     const messageHash = hash(row.messageIds);
     if (row.sourceSuggestionMessageHash === messageHash) return false;
     const messages = await this.col('messages').find({ ...scope, _id: { $in: row.messageIds } }).sort({ at: 1, _id: 1 }).limit(500).toArray();
@@ -319,6 +321,7 @@ class SupportService {
     const waIds = Array.isArray(input.messageIds) ? [...new Set(input.messageIds.map(id => text(id, 200)))] : [];
     if (!waIds.length || waIds.length > 200) fail('invalid_message_selection');
     const contact = await this.col('contacts').findOne({ ...scope, $or: [{ _id: scopedId(scope, 'contact', jid) }, { jid }, { aliases: jid }] });
+    if (excluded({ jid, name: contact?.name }, await this.config(scope))) fail('conversation_excluded', 409);
     const jids = [...new Set([jid, ...(contact?.aliases || [])])];
     const rows = await this.col('messages').find({ ...scope, jid: { $in: jids }, id: { $in: waIds } }).sort({ at: 1, _id: 1 }).toArray();
     if (rows.length !== waIds.length) fail('message_selection_not_found', 404);

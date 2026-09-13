@@ -36,6 +36,7 @@
     const assignments = new Map((taskData.messages || []).map(row => [row.waId, row])), nodes = messageNodes(), retained = new Set();
     const main = document.querySelector('#main'), mainRect = main?.getBoundingClientRect();
     document.querySelectorAll('.asisto-message-control').forEach(holder => holder.remove());
+    if (taskData.excluded) { selected.clear(); document.querySelector('.asisto-message-toolbar')?.remove(); return; }
     for (const node of nodes) {
       const id = node.dataset.asistoMessageId, row = assignments.get(id), holder = document.createElement('div'), rect = node.getBoundingClientRect();
       holder.className = 'asisto-message-control'; holder.dataset.asistoOwned = '1'; holder.replaceChildren();
@@ -109,4 +110,5 @@
   window.addEventListener('message', event => { if (event.source !== window || event.origin !== location.origin || event.data?.source !== 'asisto-whatsapp-contacts-v1' || !Array.isArray(event.data.contacts)) return; for (const contact of event.data.contacts) if (typeof contact?.name === 'string' && Array.isArray(contact.aliases)) addressBook.push(contact); syncAddressBook(); });
   document.addEventListener('scroll', () => { clearTimeout(timer); timer = setTimeout(renderMessageControls, 80); }, true);
   refresh(); const interval = setInterval(() => { if (stopped) clearInterval(interval); else { refresh(); refreshTasks().catch(() => {}); } }, 30000);
+  chrome.storage.onChanged.addListener((changes, area) => { if (area === 'session' && changes.contactControlUpdated) { refresh(); refreshTasks().catch(() => {}); } });
 })();

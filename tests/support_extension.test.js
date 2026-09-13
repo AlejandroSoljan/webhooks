@@ -59,6 +59,25 @@ test('extension session exposes the existing Asisto classifications as dropdown 
  assert.ok(result.data.choices.errorType.includes('Consulta / Capacitacion'));
  assert.deepEqual(result.data.choices.channel,['Telefono','Email','WhatsApp','Reunion','Interno']);
 });
+test('contact control excludes aliases for this user and restores monitoring without deleting tickets',async()=>{
+ await service.col('contacts').insertOne({...scope,jid:'123@lid',name:'Esther (local)',aliases:['123@lid','549123@s.whatsapp.net']});
+ let rows=(await call('/contact-control?q=%28local%29')).data;assert.equal(rows.length,1);assert.equal(rows[0].excluded,false);
+ assert.equal((await call('/contact-control',{jid:'123@lid',excluded:true},{'test-user':'other'})).status,404);
+ assert.equal((await call('/contact-control',{jid:'123@lid',excluded:true})).status,200);
+ assert.equal((await call('/index')).data.chats.length,0);
+ assert.equal((await call('/drafts?jid=123%40lid')).data.length,0);
+ assert.equal((await call('/messages?jid=549123%40s.whatsapp.net')).data.excluded,true);
+ assert.equal((await call('/messages/assign',{jid:'123@lid',messageIds:['test'],destination:'new'})).data.error,'conversation_excluded');
+ assert.deepEqual(await service.ingest(scope,{id:'excluded',jid:'549123@s.whatsapp.net',at:new Date(),text:'Necesito ayuda'}),{ignored:true});
+ assert.equal(await service.col('drafts').countDocuments(scope),1);
+ assert.equal((await call('/contact-control',{jid:'549123@s.whatsapp.net',excluded:false})).status,200);
+ assert.equal((await call('/index')).data.chats[0].count,1);
+ assert.equal((await call('/contact-control')).data[0].excluded,false);
+ await service.saveConfig({...scope,userId:'*'},{excludedJids:['123@lid']});
+ assert.equal((await call('/contact-control')).data[0].locked,true);
+ await call('/contact-control',{jid:'123@lid',excluded:false});
+ assert.equal((await call('/contact-control')).data[0].excluded,true);
+});
 test('index contains contact labels and counts, respects exclusions and omits private task contents',async()=>{
  await service.col('contacts').insertOne({_id:scopedId(scope,'contact','123@lid'),...scope,jid:'123@lid',name:'Juan',aliases:['123@lid','549111@s.whatsapp.net']});
  const result=await call('/index');assert.equal(result.data.chats[0].name,'Juan');assert.equal(result.data.chats[0].count,1);assert.ok(!JSON.stringify(result).includes(fields.description));

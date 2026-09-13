@@ -47,6 +47,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (message.owner && message.owner !== session.tenantId + ':' + session.userId) throw new Error('account_changed');
     const id = encodeURIComponent(String(message.id || ''));
     switch (message.action) {
+      case 'CONTACT_CONTROL': return request('/contact-control?q=' + encodeURIComponent(String(message.query || '')));
+      case 'SET_CONTACT_CONTROL': return request('/contact-control', { jid: String(message.jid || ''), excluded: message.excluded === true }, session.csrf);
       case 'CONTACT': return request('/contact', { jid: String(message.jid || ''), name: String(message.name || '') }, session.csrf);
       case 'CONTACTS': return request('/contacts', { contacts: Array.isArray(message.contacts) ? message.contacts : [] }, session.csrf);
       case 'DRAFTS': return request('/drafts?jid=' + encodeURIComponent(String(message.jid || '')));

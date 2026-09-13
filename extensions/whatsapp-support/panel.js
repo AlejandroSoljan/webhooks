@@ -2,6 +2,25 @@
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, companyTimer, companyGeneration = 0;
 let consumedOpenAt = null;
+let controlTimer, controlGeneration = 0;
+async function loadContactControl() {
+  const generation = ++controlGeneration;
+  const rows = await api('CONTACT_CONTROL', { query: $('controlSearch').value });
+  if (generation !== controlGeneration) return;
+  $('controlResults').replaceChildren();
+  if (!rows.length) $('controlResults').textContent = 'No se encontraron contactos sincronizados.';
+  for (const row of rows) {
+    const label = document.createElement('label'), check = document.createElement('input'), name = document.createElement('span');
+    label.className = 'contact-control-row'; check.type = 'checkbox'; check.checked = !row.excluded; check.disabled = row.locked;
+    name.textContent = row.name + (row.locked ? ' · Excluido por el dominio' : row.excluded ? ' · Sin control de tareas' : '');
+    check.onchange = () => run(async () => {
+      check.disabled = true;
+      try { await api('SET_CONTACT_CONTROL', { jid: row.jid, excluded: !check.checked }); await chrome.storage.session.set({ contactControlUpdated: Date.now() }); await refresh(); await loadContactControl(); notice(check.checked ? 'Control de tareas activado para ' + row.name + '.' : 'No se analizarán tareas de ' + row.name + '.'); }
+      catch (error) { check.checked = !row.excluded; check.disabled = row.locked; throw error; }
+    });
+    label.append(check, name); $('controlResults').append(label);
+  }
+}
 const errors = {
   authentication_required: 'No se encontró la autorización del agente de esta PC.', agent_not_authorized: 'Iniciá el agente Baileys autorizado en esta PC.', connection_failed: 'No se pudo conectar con el agente Baileys de esta PC.',
   account_changed: 'Cambió el usuario de Asisto. Pulsá Actualizar para cargar sus tareas.', forbidden: 'Tu usuario necesita acceso a Tickets desde WhatsApp en Asisto.',
@@ -190,6 +209,8 @@ async function prepareHubSpot() {
   notice('Completá cualquier selección pendiente y pulsá Crear ticket en HubSpot.');
 }
 $('refresh').onclick = () => run(refresh);
+$('contactControl').ontoggle = () => { if ($('contactControl').open) run(loadContactControl); };
+$('controlSearch').oninput = () => { clearTimeout(controlTimer); controlTimer = setTimeout(() => loadContactControl().catch(error => notice('No se pudieron cargar los contactos.', true)), 300); };
 $('contacts').onchange = () => run(() => selectContact($('contacts').value));
 $('editor').onsubmit = event => { event.preventDefault(); run(save); };
 $('dismiss').onclick = () => run(async () => {
