@@ -201,6 +201,14 @@ test('opening a changed draft regenerates a stale source title from its assigned
  await service.col('drafts').updateOne({_id:id},{$set:{messageIds:[ingested.id],sourceChanged:true,source:vault.seal({...fields,subject:'Título viejo de notebook'},id+':source')}});
  const detail=(await call('/drafts/'+id)).data;assert.equal(detail.fields.subject,'Corregir importes cobrados con tarjeta');assert.equal(detail.source.summaryDescription,'La clienta consulta diferencias en importes y recargos de pagos con tarjeta.');
  assert.equal(await db.collection('ai_token_usage_log').countDocuments({'meta.source':'extension_changed_source'}),1);
+ await call('/drafts/'+id);
+ assert.equal(await db.collection('ai_token_usage_log').countDocuments(),1);
+});
+test('opening a current generated summary never calls AI or changes its revision',async()=>{
+ let calls=0;service.titleAnalyzer={run:async()=>{calls++;throw Error('unexpected AI call');}};
+ await service.col('drafts').updateOne({_id:id},{$set:{analyzerVersion:require('../src/support/core').ANALYZER_VERSION,events:[{action:'generated'}]}});
+ const first=await call('/drafts/'+id),second=await call('/drafts/'+id);
+ assert.equal(first.data.revision,1);assert.equal(second.data.revision,1);assert.equal(calls,0);
 });
 test('in-flight delivery blocks duplicate publishing and editing; uncertain outcomes cannot create again',async()=>{
  let release, started;const entered=new Promise(resolve=>started=resolve);remote.save=async()=>{started();await new Promise(resolve=>release=resolve);throw Error('network_timeout');};

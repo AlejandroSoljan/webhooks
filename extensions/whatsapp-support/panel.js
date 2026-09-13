@@ -198,21 +198,21 @@ $('dismiss').onclick = () => run(async () => {
   await refresh();
 });
 function mappingReady() { return ['hubspot-owner','pipeline','stage','property-category','value-category','property-errorType','value-errorType','property-channel','value-channel'].every(id => $(id)?.value); }
-async function publishCurrent() {
+async function publishCurrent(alreadySaved = false) {
   const mapping = { ownerId: $('hubspot-owner').value, pipelineId: $('pipeline').value, stageId: $('stage').value, fields: {} };
   for (const field of ['category','errorType','channel']) { const property = $('property-' + field).value, value = $('value-' + field)?.value; if (!property || !value) throw new Error('hubspot_mapping_required'); mapping.fields[field] = { property, value }; }
   if (!mapping.ownerId) throw new Error('invalid_hubspot_owner');
   if (!mapping.pipelineId || !mapping.stageId) throw new Error('invalid_pipeline_stage');
   if (!$('field-companyId').value) throw new Error('hubspot_company_required');
-  await save();
+  if (!alreadySaved) await save();
   const result = await api('PUBLISH', { id: current.id, revision: current.revision, mapping }); current.revision = result.revision; current.hubspot = result;
   await chrome.storage.local.set({ ['mapping:' + session.tenantId + ':' + session.userId + ':' + connection.portalId]: mapping });
   notice(result.matched ? 'Ya existía un ticket abierto similar. Conversación vinculada al ticket ' + result.ticketId + '.' : 'Ticket ' + result.ticketId + ' guardado en HubSpot.'); $('taskState').textContent = 'Ticket ' + result.ticketId;
   $('ticket').replaceChildren(); if (result.portalId) { const link = document.createElement('a'); link.href = 'https://app.hubspot.com/contacts/' + encodeURIComponent(result.portalId) + '/record/0-5/' + encodeURIComponent(result.ticketId); link.textContent = 'Abrir ticket en HubSpot'; link.target = '_blank'; link.rel = 'noopener noreferrer'; $('ticket').append(link); }
   setTimeout(() => run(refresh), 800);
 }
-$('setup').onclick = () => run(async () => { await save(); await prepareHubSpot(); if (connection?.configured && mappingReady()) await publishCurrent(); });
-$('publish').onclick = () => run(publishCurrent);
+$('setup').onclick = () => run(async () => { await save(); await prepareHubSpot(); if (connection?.configured && mappingReady()) await publishCurrent(true); });
+$('publish').onclick = () => run(() => publishCurrent());
 chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'session' || !Object.keys(changes).some(key => key.startsWith('selection-'))) return;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); tabId = tab?.id;

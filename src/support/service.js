@@ -142,6 +142,9 @@ class SupportService {
     const description = String(fields.description || '');
     const transcriptLines = description.split('\n').filter(line => /^\d{4}-\d{2}-\d{2}T\S+\s+(?:Contacto|Operador|CLIENTE|OPERADOR):/i.test(line.trim()));
     const copiedConversation = transcriptLines.length >= 2 || (transcriptLines.length === 1 && transcriptLines[0].length >= description.trim().length * 0.75);
+    // Opening a current summary is a read, not another billable AI analysis.
+    // Changed sources are summarized by refreshChangedDraft with their own hash.
+    if (!copiedConversation && (row.analyzerVersion === ANALYZER_VERSION || row.sourceSuggestionMessageHash === hash(row.messageIds || []))) return false;
     if (!generatedOnly && !copiedConversation) {
       await this.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision }, { $set: { analyzerVersion: ANALYZER_VERSION, titleUpgradeSkipped: 'human_edited', updatedAt: this.now() } });
       return true;
