@@ -261,6 +261,24 @@ test('incomplete setup leaves the panel visible and operations blocked without c
     assert.equal((await fetch(base + '/api/support/session', { method: 'POST' })).status, 503);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
+test('unassigned live messages recover once without resetting failed jobs or importing unrequested history', async () => {
+  await service.ingest(scope, message('live'));
+  await service.ingest(other, message('foreign'));
+  await service.ingest(scope, message('history', 30), { historical: true });
+  await service.col('jobs').deleteMany({});
+  assert.equal(await service.repairUnassigned(scope), false);
+  now = new Date(+now + 180001);
+  assert.equal(await service.repairUnassigned(scope), true);
+  assert.equal(await service.col('jobs').countDocuments(other), 0);
+  await service.runOne();
+  const [draft] = await service.listDrafts(scope);
+  assert.equal(draft.messageIds.length, 1);
+  assert.equal(await service.repairUnassigned(scope), false);
+  await service.col('drafts').deleteMany(scope);
+  await service.col('jobs').updateMany(scope, { $set: { state: 'failed', attempts: 3 } });
+  assert.equal(await service.repairUnassigned(scope), false);
+  assert.equal((await service.col('jobs').findOne(scope)).attempts, 3);
+});
 test('AI task analysis creates a title and operational summary under the dedicated token-control type', async () => {
   service.titleAnalyzer = { run: async () => ({ subject: 'Corregir impresión de facturas', description: 'El cliente informa que la factura no se imprime. Queda pendiente revisar la configuración de impresión.', model: 'fixture-ai', inputTokens: 40, outputTokens: 8, totalTokens: 48 }) };
   const [draft] = await processMessages([message('ai-title', 0, { text: 'Esto no aparece, así que lo vuelvo a generar.' })]);

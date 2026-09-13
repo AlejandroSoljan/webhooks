@@ -29,7 +29,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (message.action === 'OPEN' && fromWhatsApp) {
     // Called immediately inside the click message to preserve Chrome's user gesture.
     const opened = chrome.sidePanel.open({ tabId: sender.tab.id });
-    Promise.all([opened, chrome.storage.session.set({ ['selection-' + sender.tab.id]: { jid: String(message.jid || ''), name: String(message.name || ''), refreshAt: Date.now() } })]).then(() => reply({ ok: true }), () => reply({ error: 'panel_open_failed' }));
+    Promise.all([opened, chrome.storage.session.set({ ['selection-' + sender.tab.id]: { jid: String(message.jid || ''), name: String(message.name || ''), draftId: String(message.draftId || ''), refreshAt: Date.now() } })]).then(() => reply({ ok: true }), () => reply({ error: 'panel_open_failed' }));
     return true;
   }
   if (fromWhatsApp && !['INDEX', 'CONTACT', 'CONTACTS', 'MESSAGES', 'ASSIGN_MESSAGES', 'ACTIVE_CONTEXT'].includes(message.action)) return false;

@@ -59,7 +59,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     return { ...scope, username: req.user.username || '', csrf, choices: TASK_CHOICES };
   }));
   router.get('/index', route(async (req, s, scope) => {
-    const chats = await s.col('drafts').aggregate([{ $match: { ...scope, state: { $nin: ['merged', 'ignored'] }, $or: [{ 'hubspot.state': { $ne: 'saved' } }, { 'hubspot.pendingFollowup': true }] } }, { $group: { _id: '$jid', count: { $sum: 1 }, updatedAt: { $max: '$updatedAt' } } }, { $sort: { updatedAt: -1 } }, { $limit: 1001 }]).toArray();
+    const chats = await s.col('drafts').aggregate([{ $match: { ...scope, state: { $nin: ['merged', 'ignored'] }, $or: [{ 'hubspot.state': { $ne: 'saved' } }, { 'hubspot.pendingFollowup': true }, { sourceChanged: true }, { reconciliationRequired: true }] } }, { $group: { _id: '$jid', count: { $sum: 1 }, updatedAt: { $max: '$updatedAt' } } }, { $sort: { updatedAt: -1 } }, { $limit: 1001 }]).toArray();
     const known = await s.col('drafts').aggregate([{ $match: { ...scope, state: { $ne: 'merged' } } }, { $group: { _id: '$jid', count: { $sum: 1 }, updatedAt: { $max: '$updatedAt' } } }, { $sort: { updatedAt: -1 } }, { $limit: 1001 }]).toArray();
     const jids = [...new Set([...chats.slice(0, 1000), ...known.slice(0, 1000)].map(row => row._id))];
     const contacts = await s.col('contacts').find({ ...scope, jid: { $in: jids } }).toArray();
@@ -76,8 +76,8 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
   router.get('/drafts', route(async (req, s, scope) => {
     const jid = text(req.query.jid, 200);
     const contact = await s.col('contacts').findOne({ ...scope, $or: [{ _id: scopedId(scope, 'contact', jid) }, { jid }, { aliases: jid }] });
-    const rows = await s.col('drafts').find({ ...scope, jid: { $in: [...new Set([jid, ...(contact?.aliases || [])])] }, state: { $nin: ['merged', 'ignored'] }, $or: [{ 'hubspot.state': { $ne: 'saved' } }, { 'hubspot.pendingFollowup': true }] }).sort({ updatedAt: -1 }).limit(100).toArray();
-    return rows.map(row => { const fields = s.vault.open(row.fields, row._id); return { id: row._id, subject: fields.subject || 'Tarea para revisar', contact: fields.contact || contact?.name || '', state: row.state, hubspot: row.hubspot || null }; });
+    const rows = await s.col('drafts').find({ ...scope, jid: { $in: [...new Set([jid, ...(contact?.aliases || [])])] }, state: { $ne: 'merged' } }).sort({ updatedAt: -1 }).limit(100).toArray();
+    return rows.map(row => { const fields = s.vault.open(row.fields, row._id); return { id: row._id, subject: fields.subject || 'Tarea para revisar', contact: fields.contact || contact?.name || '', state: row.state, status: row.state === 'ignored' ? 'discarded' : (row.hubspot?.pendingFollowup || row.sourceChanged || row.reconciliationRequired) ? 'pending' : row.hubspot?.ticketId ? 'saved' : 'pending', hubspot: row.hubspot || null }; });
   }));
   router.get('/messages', route(async (req, s, scope) => {
     const jid = text(req.query.jid, 200);
@@ -87,7 +87,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const drafts = await s.col('drafts').find({ ...scope, jid: { $in: jids }, state: { $ne: 'merged' } }).sort({ updatedAt: -1 }).limit(100).toArray();
     const tasks = drafts.map(row => {
       const fields = s.vault.open(row.fields, row._id);
-      const status = row.state === 'ignored' ? 'discarded' : row.hubspot?.pendingFollowup ? 'pending' : row.hubspot?.ticketId ? 'saved' : 'pending';
+      const status = row.state === 'ignored' ? 'discarded' : (row.hubspot?.pendingFollowup || row.sourceChanged || row.reconciliationRequired) ? 'pending' : row.hubspot?.ticketId ? 'saved' : 'pending';
       return { id: row._id, shortId: row._id.slice(0, 6), subject: fields.subject || 'Tarea para revisar', status, ticketId: row.hubspot?.ticketId || null, messageIds: row.messageIds || [], updatedAt: row.updatedAt || row.createdAt };
     });
     const assignments = new Map();
@@ -125,7 +125,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const source = s.vault.open(row.source, row._id + ':source');
     if ((row.sourceChanged || row.reconciliationRequired) && source.subject) fields.subject = source.subject;
     if (!fields.contact) fields.contact = (await s.col('contacts').findOne({ _id: scopedId(scope, 'contact', row.jid), ...scope }))?.name || '';
-    return { id: row._id, jid: row.jid, revision: row.revision, fields, source, sourceChanged: !!row.sourceChanged, reconciliationRequired: !!row.reconciliationRequired, hubspot: row.hubspot || null, mode: row.mode };
+    return { id: row._id, jid: row.jid, state: row.state, revision: row.revision, fields, source, sourceChanged: !!row.sourceChanged, reconciliationRequired: !!row.reconciliationRequired, hubspot: row.hubspot || null, mode: row.mode };
   }));
   router.post('/drafts/:id/save', route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, req.body.fields)));
   router.post('/drafts/:id/reconcile', route(async (req, s, scope) => {

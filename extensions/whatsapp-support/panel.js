@@ -58,7 +58,12 @@ function renderFields() {
     label.append(input); $('fields').append(label);
   }
   $('source').textContent = current.source?.description || '';
-  $('taskState').textContent = current.hubspot?.ticketId ? 'Ticket ' + current.hubspot.ticketId : current.hubspot?.state === 'awaiting_configuration' ? 'Pendiente de HubSpot' : 'Borrador';
+  $('taskState').textContent = current.state === 'ignored' ? 'Desestimada' : current.hubspot?.ticketId ? 'Ticket ' + current.hubspot.ticketId : current.hubspot?.state === 'awaiting_configuration' ? 'Pendiente de HubSpot' : 'Borrador';
+  if (/^\d+$/.test(String(current.hubspot?.portalId || '')) && /^\d+$/.test(String(current.hubspot?.ticketId || ''))) {
+    const link = document.createElement('a'); link.href = `https://app.hubspot.com/contacts/${current.hubspot.portalId}/record/0-5/${current.hubspot.ticketId}/`; link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Abrir ticket ' + current.hubspot.ticketId; $('taskState').replaceChildren(link);
+  }
+  $('setup').textContent = current.hubspot?.ticketId ? 'Actualizar ticket en HubSpot' : 'Crear ticket en HubSpot';
+  $('dismiss').hidden = !!current.hubspot?.ticketId || current.state === 'ignored';
   $('reviewWarning').hidden = !current.sourceChanged && !current.reconciliationRequired;
   $('editor').hidden = false; $('hubspot').hidden = true;
 }
@@ -87,16 +92,17 @@ async function detail(id) {
   current = next; renderFields(); notice('');
   document.querySelectorAll('#tasks button').forEach(button => button.classList.toggle('selected', button.dataset.id === id));
 }
-async function selectContact(jid) {
+async function selectContact(jid, draftId = '') {
   current = null; ++selectionGeneration; $('editor').hidden = true; $('tasks').replaceChildren();
   if (!jid) return;
   const generation = selectionGeneration, tasks = await api('DRAFTS', { jid });
   if (generation !== selectionGeneration) return;
   for (const task of tasks) {
-    const button = document.createElement('button'); button.textContent = task.subject; button.dataset.id = task.id;
+    const button = document.createElement('button'); button.textContent = task.subject + ' · ' + ({ pending: 'Pendiente', saved: 'HubSpot', discarded: 'Desestimada' }[task.status] || task.status); button.dataset.id = task.id;
     button.onclick = () => run(() => detail(task.id)); $('tasks').append(button);
   }
-  if (tasks.length) await detail(tasks[0].id); else notice('Este contacto no tiene tareas para revisar.');
+  const preferred = tasks.find(task => task.id === draftId) || tasks.find(task => task.status === 'pending') || tasks[0];
+  if (preferred) await detail(preferred.id); else notice('Este contacto todavía no tiene tareas.');
 }
 async function refresh() {
   const previous = $('contacts').value;
@@ -110,7 +116,8 @@ async function refresh() {
   for (const chat of index.chats) { if (seen.has(chat.jid)) continue; seen.add(chat.jid); option($('contacts'), chat.jid, (chat.name || chat.jid) + ' · ' + chat.count); }
   const selected = tabId ? (await chrome.storage.session.get('selection-' + tabId))['selection-' + tabId] : null;
   const jid = selected?.jid || previous;
-  if (seen.has(jid)) { $('contacts').value = jid; await selectContact(jid); }
+  if (jid && !seen.has(jid)) { const known = (index.knownChats || []).find(chat => chat.jid === jid || chat.aliases?.includes(jid)); option($('contacts'), jid, known?.name || selected?.name || jid); seen.add(jid); }
+  if (seen.has(jid)) { $('contacts').value = jid; await selectContact(jid, selected?.draftId); }
   else notice(index.chats.length ? 'Elegí un contacto o pulsá su icono en WhatsApp Web.' : 'Todavía no hay tareas detectadas. Procesá las conversaciones desde Asisto.');
 }
 async function save() {

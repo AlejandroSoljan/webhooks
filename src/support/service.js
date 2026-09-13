@@ -108,6 +108,21 @@ class SupportService {
     await this.enqueue(scope, draft.jid, 0);
     return true;
   }
+  async repairUnassigned(scope) {
+    const drafts = await this.col('drafts').find({ ...scope, state: { $ne: 'merged' } }, { projection: { messageIds: 1 } }).toArray();
+    const assigned = [...new Set(drafts.flatMap(row => row.messageIds || []))];
+    const candidates = await this.col('messages').find({ ...scope, historical: false, assignmentRecoveryV1: { $ne: true }, receivedAt: { $lte: new Date(+this.now() - (await this.config(scope)).inactivityMs) }, ...(assigned.length ? { _id: { $nin: assigned } } : {}) }).sort({ at: -1 }).limit(100).toArray();
+    const config = await this.config(scope);
+    const row = candidates.find(message => !excluded(message, config));
+    if (!row) return false;
+    const start = new Date(row.at); start.setUTCHours(0, 0, 0, 0);
+    const end = new Date(+start + 86400000);
+    await this.enqueue(scope, row.jid, 0);
+    // Schedule each orphan only once. Failed jobs retain their bounded retry
+    // policy rather than being reset on every desktop heartbeat.
+    await this.col('messages').updateMany({ ...scope, jid: row.jid, at: { $gte: start, $lt: end } }, { $set: { assignmentRecoveryV1: true } });
+    return true;
+  }
   async repairTitle(scope) {
     if (!this.titleAnalyzer) return false;
     const row = await this.col('drafts').findOne({ ...scope, analyzerVersion: { $ne: ANALYZER_VERSION }, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $ne: 'saved' } }, { sort: { updatedAt: 1 } });

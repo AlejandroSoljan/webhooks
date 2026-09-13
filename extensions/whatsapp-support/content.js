@@ -40,14 +40,16 @@
       const id = node.dataset.asistoMessageId, row = assignments.get(id), holder = document.createElement('div'), rect = node.getBoundingClientRect();
       holder.className = 'asisto-message-control'; holder.dataset.asistoOwned = '1'; holder.replaceChildren();
       holder.style.top = Math.max(4, rect.top - (mainRect?.top || 0) + rect.height / 2 - 11) + 'px';
-      const check = document.createElement('input'); check.type = 'checkbox'; check.checked = !!id && selected.has(id); check.disabled = !id; check.title = 'Seleccionar mensaje para una tarea';
-      const rowAssignments = row?.assignments || []; check.title = rowAssignments.length ? rowAssignments.map(assignment => `${statusLabel(assignment.status)} · ${assignment.subject || assignment.shortId}`).join('\n') : 'Seleccionar este mensaje para una tarea';
+      const rowAssignments = row?.assignments || [];
+      const check = document.createElement('input'); check.type = 'checkbox'; check.checked = !!id && (selected.has(id) || rowAssignments.length > 0); check.disabled = !id || (rowAssignments.length > 0 && !selected.has(id)); check.title = 'Seleccionar mensaje para una tarea';
+      check.classList.toggle('assigned', rowAssignments.length > 0);
+      check.title = rowAssignments.length ? rowAssignments.map(assignment => `${statusLabel(assignment.status)} · ${assignment.subject || assignment.shortId}`).join('\n') : 'Seleccionar este mensaje para una tarea';
       if (!id) check.title = 'Esperando que Baileys sincronice este mensaje';
       check.setAttribute('aria-label', check.title); check.onchange = event => { event.stopPropagation(); selectionDirty = true; anchorId = id; check.checked ? selected.add(id) : selected.delete(id); renderToolbar(); }; check.onclick = event => event.stopPropagation(); holder.append(check);
       for (const assignment of row?.assignments || []) {
         const badge = document.createElement('button'); badge.type = 'button'; badge.className = `asisto-message-assignment ${assignment.status}`;
         badge.textContent = `${statusLabel(assignment.status)} · ${assignment.subject || assignment.shortId}`; badge.title = `Tarea ${assignment.shortId}${assignment.ticketId ? ' · Ticket ' + assignment.ticketId : ''}`;
-        badge.onclick = event => { event.preventDefault(); event.stopPropagation(); chrome.runtime.sendMessage({ action: 'OPEN', jid: currentJid, name: currentName }).catch(() => {}); }; holder.append(badge);
+        badge.onclick = event => { event.preventDefault(); event.stopPropagation(); chrome.runtime.sendMessage({ action: 'OPEN', jid: currentJid, name: currentName, draftId: assignment.draftId }).catch(() => {}); }; holder.append(badge);
       }
       main?.append(holder); retained.add(holder);
     }
@@ -82,10 +84,7 @@
   }
   async function refreshTasks() {
     if (!currentJid) return; const response = await chrome.runtime.sendMessage({ action: 'MESSAGES', jid: currentJid }); if (!response?.data) return; taskData = response.data;
-    if (!selectionDirty) {
-      selected.clear(); const pending = (taskData.tasks || []).filter(task => task.status === 'pending');
-      if (pending.length === 1) for (const row of taskData.messages || []) if ((row.assignments || []).some(assignment => assignment.draftId === pending[0].id)) selected.add(row.waId);
-    }
+    if (!selectionDirty) selected.clear();
     renderMessageControls();
   }
   function update() {
@@ -95,7 +94,8 @@
       const jid = extractJid(target.getAttribute('data-id') || target.querySelector('[data-id]')?.getAttribute('data-id')) || (target.matches('#main header') ? extractJid(document.querySelector('#main [data-id]')?.getAttribute('data-id')) : ''), name = label.getAttribute('title');
       if (jid && name && remembered.get(jid) !== name) { remembered.set(jid, name); chrome.runtime.sendMessage({ action: 'CONTACT', jid, name }).then(result => { if (result?.data?.saved) refresh(); else if (result?.error) remembered.delete(jid); }).catch(() => {}); }
       const match = AsistoMatch.matchContact(chats, { jid, name }), known = AsistoMatch.matchContact(knownChats, { jid, name }); let button = target.querySelector('.asisto-task-badge');
-      if (target.matches('#main header') && known && currentJid !== known.jid) { currentJid = known.jid; currentName = known.name || name; selected.clear(); selectionDirty = false; anchorId = ''; refreshTasks().catch(() => {}); }
+      const activeJid = target.matches('#main header') ? (jid || known?.jid) : '';
+      if (activeJid && currentJid !== activeJid) { currentJid = activeJid; currentName = known?.name || name; selected.clear(); selectionDirty = false; anchorId = ''; refreshTasks().catch(() => {}); }
       if (!match) { button?.remove(); continue; }
       if (!button) { button = document.createElement('button'); button.className = 'asisto-task-badge'; button.type = 'button'; button.dataset.asistoOwned = '1'; button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); if (event.isTrusted) chrome.runtime.sendMessage({ action: 'OPEN', jid: button.dataset.jid, name: button.dataset.name }).catch(() => {}); }); label.insertAdjacentElement('afterend', button); }
       const currentCount = match.jid === currentJid ? (taskData.tasks || []).filter(task => task.status === 'pending').length : match.count;
