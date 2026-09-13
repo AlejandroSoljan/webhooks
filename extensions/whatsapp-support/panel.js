@@ -1,6 +1,7 @@
 // Asisto | Version: 5.00.130 | Fecha: 2026-09-10
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, companyTimer, companyGeneration = 0;
+let consumedOpenAt = null;
 const errors = {
   authentication_required: 'No se encontró la autorización del agente de esta PC.', agent_not_authorized: 'Iniciá el agente Baileys autorizado en esta PC.', connection_failed: 'No se pudo conectar con el agente Baileys de esta PC.',
   account_changed: 'Cambió el usuario de Asisto. Pulsá Actualizar para cargar sus tareas.', forbidden: 'Tu usuario necesita acceso a Tickets desde WhatsApp en Asisto.',
@@ -97,12 +98,14 @@ async function selectContact(jid, draftId = '') {
   if (!jid) return;
   const generation = selectionGeneration, tasks = await api('DRAFTS', { jid });
   if (generation !== selectionGeneration) return;
-  for (const task of tasks) {
+  const pending = tasks.filter(task => task.status === 'pending');
+  for (const task of pending) {
     const button = document.createElement('button'); button.textContent = task.subject + ' · ' + ({ pending: 'Pendiente', saved: 'HubSpot', discarded: 'Desestimada' }[task.status] || task.status); button.dataset.id = task.id;
     button.onclick = () => run(() => detail(task.id)); $('tasks').append(button);
   }
-  const preferred = tasks.find(task => task.id === draftId) || tasks.find(task => task.status === 'pending') || tasks[0];
-  if (preferred) await detail(preferred.id); else notice('Este contacto todavía no tiene tareas.');
+  if (draftId) await detail(draftId);
+  else if (pending.length) await detail(pending[0].id);
+  else notice('Este contacto no tiene tareas pendientes.');
 }
 async function refresh() {
   const previous = $('contacts').value;
@@ -117,7 +120,9 @@ async function refresh() {
   const selected = tabId ? (await chrome.storage.session.get('selection-' + tabId))['selection-' + tabId] : null;
   const jid = selected?.jid || previous;
   if (jid && !seen.has(jid)) { const known = (index.knownChats || []).find(chat => chat.jid === jid || chat.aliases?.includes(jid)); option($('contacts'), jid, known?.name || selected?.name || jid); seen.add(jid); }
-  if (seen.has(jid)) { $('contacts').value = jid; await selectContact(jid, selected?.draftId); }
+  const requestedDraft = selected?.refreshAt !== consumedOpenAt ? selected?.draftId : '';
+  consumedOpenAt = selected?.refreshAt;
+  if (seen.has(jid)) { $('contacts').value = jid; await selectContact(jid, requestedDraft); }
   else notice(index.chats.length ? 'Elegí un contacto o pulsá su icono en WhatsApp Web.' : 'Todavía no hay tareas detectadas. Procesá las conversaciones desde Asisto.');
 }
 async function save() {

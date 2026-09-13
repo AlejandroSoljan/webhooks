@@ -75,13 +75,18 @@ test('task indicator remains pending until HubSpot save or explicit dismissal',a
 test('saved tasks stay available and new source messages restore their pending indicator without duplicating tickets',async()=>{
  await service.col('drafts').updateOne({_id:id},{$set:{hubspot:{state:'saved',ticketId:'48435078214'},sourceChanged:false}});
  let tasks=(await call('/drafts?jid=123%40lid')).data;
- assert.equal(tasks.length,1);assert.equal(tasks[0].status,'saved');
+ assert.equal(tasks.length,0);
+ assert.equal((await call('/drafts/'+id)).data.hubspot.ticketId,'48435078214');
  assert.equal((await call('/index')).data.chats.length,0);
  await service.col('drafts').updateOne({_id:id},{$set:{sourceChanged:true,reconciliationRequired:true}});
  tasks=(await call('/drafts?jid=123%40lid')).data;
  assert.equal(tasks[0].status,'pending');assert.equal(tasks[0].hubspot.ticketId,'48435078214');
  assert.equal((await call('/index')).data.chats[0].count,1);
  assert.equal(await service.col('drafts').countDocuments(scope),1);
+ await service.col('drafts').updateOne({_id:id},{$set:{state:'ignored'}});
+ assert.equal((await call('/drafts?jid=123%40lid')).data.length,0);
+ assert.equal((await call('/index')).data.chats.length,0);
+ assert.equal((await call('/messages?jid=123%40lid')).data.tasks[0].status,'discarded');
 });
 test('task can wait for the tenant HubSpot connection without losing its indicator',async()=>{
  await service.col('integrations').deleteMany({tenantId:scope.tenantId});
