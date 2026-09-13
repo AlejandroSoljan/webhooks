@@ -13,7 +13,7 @@ const whatsappNumber = value => {
   return /^\d{7,15}$/.test(digits) ? digits : '';
 };
 function createDeviceRouter({ getService, publicOrigin }) {
-  const router = express.Router(), starts = new Map(), activeWork = new Map();
+  const router = express.Router(), starts = new Map(), activeWork = new Map(), maintenanceAt = new Map();
   router.use(express.json({ limit: '128kb' }));
   router.use((req, res, next) => {
     res.set('Cache-Control', 'no-store');
@@ -181,9 +181,16 @@ function createDeviceRouter({ getService, publicOrigin }) {
         $set: { state: 'pending', attempts: 0, dueAt: s.now(), transcriptionRecoveryV1: true }, $unset: { error: '' },
       });
       await s.repairQueue(ctx.scope);
-      await s.repairUnassigned(ctx.scope);
-      await s.repairGrouping(ctx.scope);
-      await s.repairTitle(ctx.scope);
+      if (await s.runOne(() => assertLease(s, ctx), ctx.scope)) return { processed: true };
+      if ((maintenanceAt.get(ctx.id) || 0) > +s.now() - 60000) return { processed: false };
+      maintenanceAt.set(ctx.id, +s.now());
+      try {
+        await s.repairUnassigned(ctx.scope);
+        await s.repairGrouping(ctx.scope);
+        await s.repairTitle(ctx.scope);
+      } finally {
+        for (const [id, at] of maintenanceAt) if (at < +s.now() - 3600000) maintenanceAt.delete(id);
+      }
       return { processed: await s.runOne(() => assertLease(s, ctx), ctx.scope) };
     })();
     activeWork.set(ctx.id, work);

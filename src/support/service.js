@@ -109,11 +109,15 @@ class SupportService {
     return true;
   }
   async repairUnassigned(scope) {
-    const drafts = await this.col('drafts').find({ ...scope, state: { $ne: 'merged' } }, { projection: { messageIds: 1 } }).toArray();
-    const assigned = [...new Set(drafts.flatMap(row => row.messageIds || []))];
-    const candidates = await this.col('messages').find({ ...scope, historical: false, assignmentRecoveryV1: { $ne: true }, receivedAt: { $lte: new Date(+this.now() - (await this.config(scope)).inactivityMs) }, ...(assigned.length ? { _id: { $nin: assigned } } : {}) }).sort({ at: -1 }).limit(100).toArray();
     const config = await this.config(scope);
-    const row = candidates.find(message => !excluded(message, config));
+    const candidates = await this.col('messages').find({ ...scope, historical: false, assignmentRecoveryV1: { $ne: true }, receivedAt: { $lte: new Date(+this.now() - config.inactivityMs) } }, { projection: { jid: 1, name: 1, at: 1 } }).sort({ at: -1 }).limit(100).toArray();
+    if (!candidates.length) return false;
+    const candidateIds = candidates.map(row => row._id);
+    const drafts = await this.col('drafts').find({ ...scope, state: { $ne: 'merged' }, messageIds: { $in: candidateIds } }, { projection: { messageIds: 1 } }).toArray();
+    const assigned = new Set(drafts.flatMap(row => row.messageIds || []));
+    const checked = candidates.filter(message => assigned.has(message._id) || excluded(message, config)).map(row => row._id);
+    if (checked.length) await this.col('messages').updateMany({ ...scope, _id: { $in: checked } }, { $set: { assignmentRecoveryV1: true } });
+    const row = candidates.find(message => !assigned.has(message._id) && !excluded(message, config));
     if (!row) return false;
     const start = new Date(row.at); start.setUTCHours(0, 0, 0, 0);
     const end = new Date(+start + 86400000);

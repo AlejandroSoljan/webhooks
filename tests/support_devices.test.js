@@ -135,6 +135,21 @@ test('WhatsApp contact sync is owner-scoped and cannot replace a manual contact'
   assert.equal(await service.col('contacts').countDocuments(b), 0);
   assert.equal((await call('/contacts', { contacts: [{ jid: '123@g.us', name: 'Grupo' }] }, headers)).status, 400);
 });
+test('maintenance is throttled while newly queued work still runs immediately', async () => {
+  const headers = await register('a'); await call('/heartbeat', {}, headers);
+  const originals = Object.fromEntries(['runOne','repairUnassigned','repairGrouping','repairTitle'].map(key => [key, service[key]]));
+  let maintenance = 0, ready = false, work = 0;
+  service.runOne = async () => { work++; return ready; };
+  service.repairUnassigned = async () => { maintenance++; };
+  service.repairGrouping = service.repairTitle = async () => {};
+  try {
+    await call('/work', {}, headers); await call('/work', {}, headers);
+    assert.equal(maintenance, 1); assert.equal(work, 3);
+    ready = true;
+    assert.equal((await call('/work', {}, headers)).body.processed, true);
+    assert.equal(maintenance, 1);
+  } finally { Object.assign(service, originals); }
+});
 test('desktop session is projected into the existing WhatsApp panel and rejects a different scanned number', async () => {
   const headers = await register('a');
   assert.deepEqual((await call('/heartbeat', {}, headers)).body, { desired: 'connected', configurationRequired: false, validated: false });
