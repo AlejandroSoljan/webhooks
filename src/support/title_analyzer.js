@@ -21,7 +21,16 @@ function asistoTitleAnalyzer(env = process.env, { runtimeFor = tenantId => requi
     });
     let parsed;
     try { parsed = JSON.parse(String(response?.choices?.[0]?.message?.content || '')); } catch { fail('task_title_failed', 502); }
-    const subject = text(String(parsed?.subject || '').trim(), 80), description = text(String(parsed?.description || '').trim(), 700);
+    // Model length instructions are advisory. Bound generated text here so a
+    // slightly long summary cannot abort all later messages in the contact.
+    const bounded = (value, max) => {
+      const raw = String(value || '').trim();
+      if (raw.length <= max) return raw;
+      const prefix = raw.slice(0, max - 1);
+      const end = prefix.lastIndexOf(' ');
+      return prefix.slice(0, end > max / 2 ? end : prefix.length).trimEnd() + '…';
+    };
+    const subject = text(bounded(parsed?.subject, 80), 80), description = text(bounded(parsed?.description, 700), 700);
     if (!subject || !description) fail('task_title_failed', 502);
     const usage = response?.usage || {};
     return { subject, description, model, inputTokens: Number(usage.prompt_tokens ?? usage.input_tokens ?? 0) || 0, outputTokens: Number(usage.completion_tokens ?? usage.output_tokens ?? 0) || 0, totalTokens: Number(usage.total_tokens || 0) || 0 };
