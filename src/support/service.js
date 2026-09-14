@@ -239,14 +239,31 @@ class SupportService {
       }
       decoded.push({ ...row, text: payload.text });
     }
-    for (const detectedGroup of groupTasks(decoded, config.inactivityMs)) {
-      let group = detectedGroup;
+    // Human dismissals remain authoritative across regrouping and analyzer
+    // upgrades. Keep their evidence owned so recovery cannot create it again.
+    const dismissed = await this.col('drafts').find({ ...scope, jid: job.jid, state: { $ne: 'merged' }, 'events.action': 'dismissed_from_extension' }).toArray();
+    for (const row of dismissed) {
+      if (row.state === 'ignored' || row.hubspot?.ticketId) continue;
+      const lastDismissal = row.events.findLastIndex(event => event.action === 'dismissed_from_extension');
+      if (row.events.slice(lastDismissal + 1).some(event => event.by)) continue;
+      await this.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision, 'hubspot.state': { $nin: ['sending', 'uncertain', 'saved'] } }, { $set: { state: 'ignored', sourceChanged: false, reconciliationRequired: false, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'dismissal_restored', at: this.now() } } });
+    }
+    const dismissedIds = new Set(dismissed.filter(row => !row.hubspot?.ticketId && !row.events.slice(row.events.findLastIndex(event => event.action === 'dismissed_from_extension') + 1).some(event => event.by)).flatMap(row => row.messageIds || []));
+    for (const detectedGroup of groupTasks(decoded.filter(message => !dismissedIds.has(message._id)), config.inactivityMs)) {
+      let group = detectedGroup.filter(message => !dismissedIds.has(message._id));
+      if (!group.length) continue;
       if (!job.dates && +group.at(-1).receivedAt + config.inactivityMs > +this.now()) continue;
       await check();
       let ids = group.map(m => m._id);
       if (group.some(m => m.contentTooLarge)) fail('message_too_large', 422);
       if (ids.length > 500 || group.reduce((n, m) => n + m.text.length, 0) > 100000) fail('conversation_window_too_large', 422);
-      const existing = await this.col('drafts').find({ ...scope, jid: job.jid, state: { $ne: 'merged' }, messageIds: { $in: ids } }).sort({ createdAt: 1, _id: 1 }).toArray();
+      let existing = await this.col('drafts').find({ ...scope, jid: job.jid, state: { $ne: 'merged' }, messageIds: { $in: ids } }).sort({ createdAt: 1, _id: 1 }).toArray();
+      // Replaying already saved evidence is not a new follow-up, even if
+      // grouping now spans several tickets or an analyzer version changed.
+      const savedIds = new Set(existing.filter(row => row.hubspot?.state === 'saved').flatMap(row => row.messageIds || []));
+      if (ids.every(id => savedIds.has(id))) continue;
+      const ownedIds = new Set(existing.flatMap(row => row.messageIds || []));
+      if (savedIds.size && ids.every(id => ownedIds.has(id))) continue;
       if (existing.some(row => ['sending', 'uncertain'].includes(row.hubspot?.state))) fail('hubspot_delivery_in_progress', 409);
       const untouched = row => !row.hubspot?.ticketId && row.events?.every(event => ['generated', 'source_changed', 'tasks_merged'].includes(event.action)) === true;
       const splittingLegacy = existing.length === 1 && existing[0].groupingVersion !== GROUPING_VERSION && untouched(existing[0]) && existing[0].messageIds.some(id => !ids.includes(id));
@@ -261,11 +278,17 @@ class SupportService {
       }
       if (ids.length > 500 || group.reduce((n, m) => n + m.text.length, 0) > 100000) fail('conversation_window_too_large', 422);
       const fingerprint = hash(ids);
-      const edited = existing.filter(row => !untouched(row));
+      let edited = existing.filter(row => !untouched(row));
+      let candidateDraftIds = [];
       if (edited.length > 1 || (!splittingLegacy && existing.some(row => row.messageIds.some(id => !ids.includes(id))))) {
-        const flagged = await this.col('drafts').updateMany({ ...scope, _id: { $in: existing.map(d => d._id) }, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { state: 'needs_review', sourceChanged: true, reconciliationRequired: true, updatedAt: this.now() } });
-        if (flagged.matchedCount !== existing.length) fail('revision_conflict', 409);
-        continue;
+        // Ambiguous old ownership must not reopen every task or swallow new
+        // evidence. Surface only unassigned messages for review, retaining
+        // candidate links and blocking publication until reconciliation.
+        const newMessages = group.filter(message => !ownedIds.has(message._id));
+        if (!newMessages.length) continue;
+        candidateDraftIds = existing.map(row => row._id);
+        group = newMessages; ids = group.map(message => message._id);
+        existing = []; edited = [];
       }
       if (edited.length === 1) existing.sort((a, b) => Number(b._id === edited[0]._id) - Number(a._id === edited[0]._id));
       const started = Date.now(), result = analyze(group), evidenceDescription = result.description;
@@ -292,7 +315,7 @@ class SupportService {
           await this.col('drafts').updateOne({ _id, ...scope }, { $addToSet: { mergedDraftIds: duplicate._id } });
         }
       } else {
-        await this.col('drafts').updateOne({ _id, ...scope }, { $setOnInsert: { ...scope, jid: job.jid, messageIds: ids, fingerprint, analyzerVersion: ANALYZER_VERSION, groupingVersion: GROUPING_VERSION, state: result.result === 'ignored' ? 'ignored' : 'pending', revision: 1, fields: this.vault.seal(draft, _id), source: this.vault.seal(sourceDraft, _id + ':source'), mode: config.mode, createdAt: this.now(), updatedAt: this.now(), events: [{ action: 'generated', at: this.now() }] } }, { upsert: true });
+        await this.col('drafts').updateOne({ _id, ...scope }, { $setOnInsert: { ...scope, jid: job.jid, messageIds: ids, fingerprint: hash(ids), ...(candidateDraftIds.length ? { candidateDraftIds, reconciliationRequired: true } : {}), analyzerVersion: ANALYZER_VERSION, groupingVersion: GROUPING_VERSION, state: result.result === 'ignored' ? 'ignored' : 'pending', revision: 1, fields: this.vault.seal(draft, _id), source: this.vault.seal(sourceDraft, _id + ':source'), mode: config.mode, createdAt: this.now(), updatedAt: this.now(), events: [{ action: 'generated', at: this.now() }] } }, { upsert: true });
       }
     }
   }

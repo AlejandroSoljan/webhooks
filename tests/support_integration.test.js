@@ -32,6 +32,31 @@ async function processMessages(messages, owner = scope) {
   for (let i = 0; i < 10 && await service.runOne(); i++) { /* drain due work */ }
   return service.listDrafts(owner);
 }
+
+test('regrouping preserves human dismissals and repairs automatic resurrection', async () => {
+  const [draft] = await processMessages([message('dismissed')]);
+  await service.col('drafts').updateOne({ _id: draft._id }, { $set: { state: 'needs_review', sourceChanged: true, groupingVersion: 'old' }, $push: { events: { action: 'dismissed_from_extension', by: scope.userId, at: now } } });
+  await service.history(scope, '2026-09-01T10:00:00Z', '2026-09-01T12:00:00Z');
+  await service.runOne();
+  const row = await service.col('drafts').findOne({ _id: draft._id });
+  assert.equal(row.state, 'ignored');
+  assert.equal(row.sourceChanged, false);
+  assert.equal(await service.col('drafts').countDocuments(scope), 1);
+});
+
+test('analyzer upgrades cannot reopen saved evidence but new messages still produce follow-up', async () => {
+  const [draft] = await processMessages([message('saved')]);
+  await service.col('drafts').updateOne({ _id: draft._id }, { $set: { state: 'approved', hubspot: { state: 'saved', ticketId: '123' }, groupingVersion: 'old', analyzerVersion: 'old' } });
+  await service.history(scope, '2026-09-01T10:00:00Z', '2026-09-01T12:00:00Z');
+  await service.runOne();
+  const unchanged = await service.col('drafts').findOne({ _id: draft._id });
+  assert.equal(unchanged.state, 'approved');
+  assert.equal(unchanged.revision, draft.revision);
+  await processMessages([message('new', 30)]);
+  const changed = await service.col('drafts').findOne({ _id: draft._id });
+  assert.equal(changed.hubspot.ticketId, '123');
+  assert.equal(changed.sourceChanged, true);
+});
 test('migration is repeatable and unique message identity isolates both users and tenants', async () => {
   await migrate(db);
   await Promise.all([service.ingest(scope, message('one')), service.ingest(other, message('one')), service.ingest(foreign, message('one'))]);
@@ -55,6 +80,25 @@ test('debounce, outgoing context, replay and overlapping history produce one dra
   await service.history(scope, '2026-09-01T10:00:00Z', '2026-09-01T12:00:00Z'); await service.runOne();
   assert.equal((await service.listDrafts(scope)).length, 1);
   assert.equal(await service.col('usage').countDocuments({ kind: 'analysis' }), 1);
+});
+
+test('ambiguous saved ownership surfaces new evidence without reopening old tickets', async () => {
+  const [first] = await processMessages([message('old-a')]);
+  await service.ingest(scope, message('old-b', 10));
+  const secondMessage = await service.col('messages').findOne({ ...scope, id: 'old-b' });
+  const secondId = scopedId(scope, 'draft', secondMessage._id);
+  const stored = await service.col('drafts').findOne({ _id: first._id });
+  await service.col('drafts').insertOne({ ...stored, _id: secondId, messageIds: [secondMessage._id], fields: vault.seal(first.fields, secondId), source: vault.seal(first.source, secondId + ':source'), state: 'approved', hubspot: { state: 'saved', ticketId: 'second' } });
+  await service.col('drafts').updateOne({ _id: first._id }, { $set: { state: 'approved', hubspot: { state: 'saved', ticketId: 'first' } } });
+  await processMessages([message('fresh', 20)]);
+  const fresh = await service.col('messages').findOne({ ...scope, id: 'fresh' });
+  const review = await service.col('drafts').findOne({ ...scope, messageIds: fresh._id });
+  assert.ok(review);
+  assert.deepEqual(review.messageIds, [fresh._id]);
+  assert.equal(review.reconciliationRequired, true);
+  assert.equal(review.candidateDraftIds.length, 2);
+  assert.equal((await service.col('drafts').findOne({ _id: first._id })).state, 'approved');
+  assert.equal((await service.col('drafts').findOne({ _id: secondId })).state, 'approved');
 });
 test('a later same-topic conversation remains one draft after configured inactivity', async () => {
   const first = await processMessages([message('first', 0, { text: 'Necesito configurar el acceso al sistema' })]);
