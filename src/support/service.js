@@ -262,6 +262,7 @@ class SupportService {
       // grouping now spans several tickets or an analyzer version changed.
       const savedIds = new Set(existing.filter(row => row.hubspot?.state === 'saved').flatMap(row => row.messageIds || []));
       if (ids.every(id => savedIds.has(id))) continue;
+      if (existing.length === 1 && existing[0].hubspot?.state === 'saved' && existing[0].hubspot.savedAt && !group.some(message => !savedIds.has(message._id) && +new Date(message.receivedAt) > +new Date(existing[0].hubspot.savedAt))) continue;
       const ownedIds = new Set(existing.flatMap(row => row.messageIds || []));
       if (savedIds.size && ids.every(id => ownedIds.has(id))) continue;
       if (existing.some(row => ['sending', 'uncertain'].includes(row.hubspot?.state))) fail('hubspot_delivery_in_progress', 409);
