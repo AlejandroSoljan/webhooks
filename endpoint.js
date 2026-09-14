@@ -715,8 +715,19 @@ function wwebAgentEncode(value) {
 }
 
 function wwebAgentAnd(query, scope) {
-  const q = query && typeof query === 'object' ? query : {};
-  return { $and: [q, scope] };
+  const q = query && typeof query === 'object' && !Array.isArray(query) ? { ...query } : {};
+  const enforced = scope && typeof scope === 'object' && !Array.isArray(scope) ? scope : {};
+
+  // El agente suele incluir tenantId/numero en su filtro y el servidor vuelve a
+  // imponerlos para aislar la sesión. En un upsert, repetir la misma igualdad en
+  // dos ramas de $and impide que MongoDB infiera el documento a insertar
+  // ("path 'numero' is matched twice"). Quitamos solamente las claves directas
+  // que el servidor controla y conservamos todos los demás criterios del agente.
+  for (const key of Object.keys(enforced)) {
+    if (!key.startsWith('$')) delete q[key];
+  }
+
+  return Object.keys(q).length ? { $and: [q, enforced] } : enforced;
 }
 
 function wwebAgentScopeQuery(collection, query, tenantId, numero) {
