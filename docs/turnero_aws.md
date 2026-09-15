@@ -1,6 +1,6 @@
 # Turnero de Mecan en AWS
 
-Actualizado el 14/09/2026 a las 23:00 de Argentina. Servicio publicado en AWS; la app principal sigue en 5.00.139 con la actualización corregida del menú y notificaciones. Turnero: `/opt/asisto/turnero/releases/20260914-7`. Android: **Asisto 1.1.7**.
+Actualizado el 14/09/2026 a las 23:00 de Argentina. Servicio publicado en AWS; la app principal sigue en 5.00.139 con la actualización corregida del menú y notificaciones. Turnero: `/opt/asisto/turnero/releases/20260914-8`. Android: **Asisto 1.1.7**.
 
 ## Accesos reales
 
@@ -29,6 +29,8 @@ Con **Asisto 1.1.7** instalado, el QR HTTPS puede abrir directamente la app medi
 La app abre el enlace `asisto://turno` validando que el destino pertenezca a Asisto. Referencia: [enlaces profundos de Android](https://developer.android.com/training/app-links/create-deeplinks). El traspaso navegador-app conserva consulta desde ambos, y dirige los avisos a la instalación de Android. El permiso de notificaciones debe estar habilitado. El navegador por sí solo muestra el llamado mientras la página está abierta; no registra push web en segundo plano.
 
 Los códigos de vinculación viajan en el fragmento del enlace, se validan en servidor y vencen. Un segundo celular no puede reclamar un QR tomado. Los reintentos recuperan el mismo turno. Firebase avisa al quedar 2 turnos por delante, 1 y al llamar. La posición incluye el turno en atención. No envía a reservas sin activar. Los hitos exitosos quedan guardados en queue_tickets.queueNotifications, por visita a sección; los traslados reinician esa secuencia. Repetir llamado es una acción explícita y genera otro aviso. Reintentos de operaciones y barridos no repiten hitos exitosos. Si el cliente vincula tarde la app se envía solo el aviso de su posición actual, no los anteriores.
+
+En `Mi turno`, el cliente puede cancelar un turno en espera o ya llamado. El servidor verifica que el celular sea el dueño, registra `customer_cancelled` y libera la cola. Si intenta sacar otro turno mientras conserva uno activo, la app muestra el número y la sección actuales y le permite conservarlo o cancelarlo para emitir el nuevo. Durante la espera se ofrece un acceso directo para recorrer el local, escanear productos y consultar información con IA. La pantalla del QR también explica esos beneficios y mantiene la impresión como alternativa.
 
 ## Atención
 

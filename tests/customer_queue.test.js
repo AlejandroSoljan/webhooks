@@ -50,6 +50,8 @@ test('statistics reconstruct transfers and do not reset service time on recalls'
   assert.deepEqual(ticketVisits(doc).map(v => [v.sectorId, v.waitSeconds, v.serviceSeconds]), [['ferreteria', 60, 60], ['caja', 120, 180]]);
   const x = summarize([doc], cfg.sectors); assert.equal(x.summary.transfers, 1); assert.equal(x.summary.issued, 1); assert.equal(x.summary.averageWaitSeconds, 90); assert.equal(x.summary.averageServiceSeconds, 120);
   assert.deepEqual(ticketVisits({ status: 'CANCELLED', history: [] }), []);
+  const cancelled = { _id: 'cancelled', displayNumber: 'F002', dayKey: '2026-09-14', status: 'CANCELLED', source: 'mobile', sectorId: 'ferreteria', createdAt: at(0), history: [{ action: 'created', sectorId: 'ferreteria', at: at(0) }, { action: 'customer_cancelled', sectorId: 'ferreteria', at: at(30) }] };
+  const cancellationStats = summarize([cancelled], cfg.sectors); assert.equal(cancellationStats.summary.customerCancelled, 1); assert.equal(cancellationStats.summary.expired, 0); assert.equal(ticketVisits(cancelled)[0].outcome, 'customer_cancelled');
   new vm.Script(statsPage('TEST', '2026-09-14').match(/<script>([\s\S]*)<\/script>/)[1]);
 });
 test('queue statistics use the Asisto shell and superadmin can select a tenant', async () => {
@@ -95,10 +97,10 @@ test('QR expires, rejects tampering and cannot be used by a different commerce',
 test('pages contain syntactically valid scripts and escape tenant names', () => {
   for (const mode of ['kiosk', 'display', 'admin']) { const html = queuePage('TEST', mode); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); if (mode === 'kiosk') assert.match(html, /id="dismissTicket"[^>]+aria-label="Cerrar y cancelar esta reserva"/); }
 });
-test('existing Android page still renders with a valid embedded script', async () => {
+test('existing Android page renders cancellation and product discovery with a valid script', async () => {
   const app = express(); require('../customer_app_web').mountCustomerApp(app);
   const temp = app.listen(0, '127.0.0.1'); await new Promise(r => temp.once('listening', r));
-  try { const html = await (await fetch('http://127.0.0.1:' + temp.address().port + '/customer-app/TEST')).text(); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); }
+  try { const html = await (await fetch('http://127.0.0.1:' + temp.address().port + '/customer-app/TEST')).text(); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); assert.match(html, /Cancelar mi turno/); assert.match(html, /consultar con IA/); assert.match(html, /activeTicketDialog/); }
   finally { await new Promise(r => temp.close(r)); }
 });
 test('two kiosks allocate unique numbers; same device retries return the same ticket', async () => {
@@ -106,6 +108,18 @@ test('two kiosks allocate unique numbers; same device retries return the same ti
   assert.ok(results.every(r => r.status === 200)); assert.equal(new Set(results.map(r => r.body.displayNumber)).size, 12);
   const repeated = await Promise.all(Array.from({ length: 4 }, () => req(api + '/tickets', { sectorId: 'ferreteria', installId: 'device-0' })));
   assert.ok(repeated.every(r => r.body.id === results[0].body.id)); assert.equal(sent, 0);
+});
+test('a phone can cancel only its own active ticket and then request a new one', async () => {
+  const created = await req(api + '/tickets', { sectorId: 'caja', installId: 'cancel-owner' });
+  assert.equal(created.status, 200);
+  assert.equal((await req(api + '/tickets/' + created.body.id + '/cancel', { installId: 'somebody-else' })).status, 404);
+  const cancelled = await req(api + '/tickets/' + created.body.id + '/cancel', { installId: 'cancel-owner' });
+  assert.equal(cancelled.status, 200); assert.equal(cancelled.body.status, 'CANCELLED'); assert.equal(cancelled.body.cancelled, true);
+  const repeated = await req(api + '/tickets/' + created.body.id + '/cancel', { installId: 'cancel-owner' }); assert.equal(repeated.status, 200);
+  const replacement = await req(api + '/tickets', { sectorId: 'ferreteria', installId: 'cancel-owner' });
+  assert.equal(replacement.status, 200); assert.notEqual(replacement.body.id, created.body.id);
+  const doc = await db.collection('queue_tickets').findOne({ _id: new (require('mongodb').ObjectId)(created.body.id) });
+  assert.deepEqual(doc.history.map(h => h.action), ['created', 'customer_cancelled']);
 });
 test('unauthorized callers cannot operate another tenant or spoof kiosk access', async () => {
   assert.equal((await req(admin + '/sectors/ferreteria/next', { expectedTicketId: null })).status, 401);

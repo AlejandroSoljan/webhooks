@@ -232,6 +232,21 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     if (!doc) fail(404, 'Turno inexistente');
     res.json(await view(db, doc));
   }));
+  app.post('/api/customer-app/:tenant/tickets/:id/cancel', wrap(async (req, res) => {
+    const { t, db, base } = await scope(req), installId = clean(req.body?.installId);
+    if (!installId || !ObjectId.isValid(req.params.id)) fail(400, 'Cancelación inválida.');
+    const doc = await serial(t, async () => {
+      const tickets = db.collection('queue_tickets');
+      const current = await tickets.findOne({ ...base, _id: new ObjectId(req.params.id) });
+      if (!current || !owns(current, installId)) fail(404, 'Turno inexistente');
+      if (current.status === 'CANCELLED' && current.history?.some(h => h.action === 'customer_cancelled')) return current;
+      if (!active.includes(current.status)) fail(409, 'Este turno ya finalizó y no se puede cancelar.');
+      const now = new Date();
+      return tickets.findOneAndUpdate({ _id: current._id, status: { $in: active } }, { $set: { status: 'CANCELLED', updatedAt: now }, $push: { history: { action: 'customer_cancelled', at: now, sectorId: current.sectorId } } }, { returnDocument: 'after' });
+    });
+    await reconcileBase(db, base);
+    res.json({ ...await view(db, doc), cancelled: true });
+  }));
   app.post('/api/customer-app-admin/:tenant/sectors/:sector/:action', wrap(async (req, res) => {
     const { t, db, cfg, base } = await scope(req); guard(req, t); await prepare(db);
     const sectorId = clean(req.params.sector, 40), action = req.params.action;
