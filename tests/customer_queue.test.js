@@ -61,6 +61,13 @@ test('notification history filters preserve legacy manual records and separate q
   const html = panelPage({ tenantId: 'TEST', tenants: ['TEST'], isSuper: false });
   assert.match(html, /Automáticas por turnos/); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]);
 });
+test('Asisto navigation builds the queue statistics link without breaking login users', () => {
+  const { getNavItemsForUser } = require('../auth_ui');
+  const regular = getNavItemsForUser({ role: 'admin', tenantId: 'demo_ferreteria', allowedPages: ['notifications'] });
+  assert.ok(regular.some(item => item.title === 'Estadísticas Turnero' && item.href === '/ui/turnero/DEMO_FERRETERIA/estadisticas'));
+  assert.doesNotThrow(() => getNavItemsForUser({ role: 'admin', tenantId: null }));
+  assert.ok(!getNavItemsForUser({ role: 'admin', tenantId: 'TEST', allowedPages: [] }).some(item => item.key === 'queue_stats'));
+});
 test('temporary open tenant can operate without a session but statistics stay tenant-authorized', async () => {
   cfg.queuePresence = 'open';
   for (const route of ['/customer-app/OPEN/kiosk', '/ui/turnero/OPEN']) assert.equal((await fetch(url + route, { redirect: 'manual' })).status, 200);
