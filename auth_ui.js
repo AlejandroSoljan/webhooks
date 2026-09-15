@@ -5254,24 +5254,20 @@ function mountAuthRoutes(app) {
 
   function wwebRealMessagePipeline(match) {
     return [
-      { $match: match },
-      { $set: {
-          __messageId: { $toString: { $ifNull: ['$messageId', ''] } },
-          __second: { $floor: { $divide: [{ $toLong: '$at' }, 1000] } }
-      } },
-      { $set: {
-          __dedupeKey: {
-            $cond: [
-              { $gt: [{ $strLenCP: '$__messageId' }, 0] },
-              { $concat: ['id:', '$tenantId', ':', '$numero', ':', '$direction', ':', '$__messageId'] },
-              { $concat: [
-                  'legacy:', '$tenantId', ':', '$numero', ':', '$direction', ':',
-                  { $ifNull: ['$contact', ''] }, ':', { $ifNull: ['$body', ''] }, ':',
-                  { $toString: '$__second' }
-              ] }
-            ]
-          }
-      } },
+        { $match: match },
+        { $set: {
+            __second: { $floor: { $divide: [{ $toLong: '$at' }, 1000] } }
+        } },
+        { $set: {
+            // Un envío puede estar registrado una vez por el agente (con
+            // messageId) y otra por el wrapper legado (sin messageId). Esta
+            // identidad común evita contarlo dos veces en Sesiones.
+            __dedupeKey: { $concat: [
+              'message:', '$tenantId', ':', '$numero', ':', '$direction', ':',
+              { $ifNull: ['$contact', ''] }, ':', { $ifNull: ['$body', ''] }, ':',
+              { $toString: '$__second' }
+            ] }
+        } },
       { $group: { _id: '$__dedupeKey', doc: { $first: '$$ROOT' } } },
       { $replaceRoot: { newRoot: '$doc' } }
     ];
