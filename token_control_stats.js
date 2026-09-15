@@ -273,6 +273,31 @@ async function buildApiMessageWindowBilling({
     }
   ], { allowDiskUse: true }).toArray();
 
+  // messageCount puede contener la misma escritura repetida por agentes de
+  // distintas generaciones. Se cuenta el contenido único dentro de 10 s para
+  // que "mensajes API" sea comparable con el registro real de WhatsApp.
+  const uniqueApiMessageRows = await coll.aggregate([
+    { $match: match },
+    { $unwind: '$messages' },
+    { $set: {
+        __entryAt: { $ifNull: ['$messages.at', { $ifNull: ['$lastMessageAt', '$windowStartedAt'] }] },
+        __entryKey: { $concat: [
+          '$tenantId', ':', { $ifNull: ['$numeroFrom', ''] }, ':',
+          { $ifNull: ['$contact', ''] }, ':', { $ifNull: ['$messages.text', ''] }
+        ] }
+    } },
+    { $setWindowFields: {
+        partitionBy: '$__entryKey', sortBy: { __entryAt: 1 },
+        output: { __previousAt: { $shift: { output: '$__entryAt', by: -1, default: null } } }
+    } },
+    { $match: { $expr: { $or: [
+      { $eq: ['$__previousAt', null] },
+      { $gt: [{ $subtract: [{ $toLong: '$__entryAt' }, { $toLong: '$__previousAt' }] }, 10000] }
+    ] } } },
+    { $group: { _id: '$tenantId', messages: { $sum: 1 } } }
+  ], { allowDiskUse: true }).toArray();
+  const uniqueApiMessagesByTenant = new Map(uniqueApiMessageRows.map(row => [String(row._id || ''), Number(row.messages || 0)]));
+
   // Entradas valorizadas como API Mensajes. Más abajo se cruzan contra el
   // registro canónico de WhatsApp para mostrar también los envíos que no
   // quedaron asociados a una ventana facturable.
@@ -294,7 +319,15 @@ async function buildApiMessageWindowBilling({
       });
     }
   }
-  apiEntries.sort((a, b) => Date.parse(b.at || 0) - Date.parse(a.at || 0));
+  apiEntries.sort((a, b) => Date.parse(a.at || 0) - Date.parse(b.at || 0));
+  const lastApiAtByKey = new Map();
+  const uniqueApiEntries = apiEntries.filter(entry => {
+    const atMs = Date.parse(entry.at || 0);
+    const key = [entry.tenantId, entry.numeroFrom, entry.contact, String(entry.text || '').replace(/\s+/g, ' ').trim().toLowerCase()].join(':');
+    const previous = lastApiAtByKey.get(key);
+    if (Number.isFinite(atMs)) lastApiAtByKey.set(key, atMs);
+    return !Number.isFinite(previous) || !Number.isFinite(atMs) || atMs - previous > 10000;
+  }).sort((a, b) => Date.parse(b.at || 0) - Date.parse(a.at || 0));
 
   // Cantidad real de mensajes enviados por WhatsApp. No es lo mismo que la
   // cantidad de ventanas facturables del API. Versiones anteriores podían
@@ -354,9 +387,9 @@ async function buildApiMessageWindowBilling({
     const atMs = Date.parse(at || 0);
     let bestIndex = -1;
     let bestDistance = Infinity;
-    for (let index = 0; index < apiEntries.length; index++) {
+    for (let index = 0; index < uniqueApiEntries.length; index++) {
       if (usedApiEntries.has(index)) continue;
-      const api = apiEntries[index];
+      const api = uniqueApiEntries[index];
       if (api.tenantId !== tenantId || api.numeroFrom !== numeroFrom || api.contact !== contact) continue;
       const idMatches = messageId && api.waMessageId && messageId === api.waMessageId;
       const textMatches = comparableText(text) === comparableText(api.text);
@@ -371,7 +404,7 @@ async function buildApiMessageWindowBilling({
       }
     }
     if (bestIndex >= 0) usedApiEntries.add(bestIndex);
-    const apiEntry = bestIndex >= 0 ? apiEntries[bestIndex] : null;
+    const apiEntry = bestIndex >= 0 ? uniqueApiEntries[bestIndex] : null;
     const messageType = String(doc?.messageType || apiEntry?.messageType || 'text');
     return {
       id: messageId || String(doc?._id || realIndex), tenantId, numeroFrom, contact,
@@ -406,7 +439,7 @@ async function buildApiMessageWindowBilling({
       byTenantMap.set(tenantKey, acc);
     }
     acc.windows += Number(row.windows || 0);
-    acc.messages += Number(row.messages || 0);
+    acc.messages = uniqueApiMessagesByTenant.get(tenantKey) || 0;
     acc.realMessages += Number(row.messages || 0);
     addCurrencyAmount(acc.byCurrency, row?._id?.currency || "ARS", row.amount || 0);
     if (!acc.last_at || Date.parse(row.last_at || 0) > Date.parse(acc.last_at || 0)) {
@@ -459,7 +492,16 @@ async function buildApiMessageWindowBilling({
     windowStartedAt: doc?.windowStartedAt || null,
     windowEndsAt: doc?.windowEndsAt || null,
     lastMessageAt: doc?.lastMessageAt || null,
-    messageCount: Number(doc?.messageCount || 0),
+    messageCount: (() => {
+      const seen = new Map();
+      return (Array.isArray(doc?.messages) ? doc.messages : []).filter(entry => {
+        const atMs = Date.parse(entry?.at || doc?.lastMessageAt || doc?.windowStartedAt || 0);
+        const key = String(entry?.text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const previous = seen.get(key);
+        if (Number.isFinite(atMs)) seen.set(key, atMs);
+        return !Number.isFinite(previous) || !Number.isFinite(atMs) || atMs - previous > 10000;
+      }).length;
+    })(),
     unitValue: Number(doc?.unitValue || 0),
     amount: Number(doc?.amount || 0),
     currency: normalizeBillingCurrency(doc?.currency || "ARS")
