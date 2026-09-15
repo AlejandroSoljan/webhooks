@@ -94,6 +94,11 @@ public class MainActivity extends AppCompatActivity {
     private String urlFromIntent(Intent intent) {
         String candidate = intent == null ? null : intent.getStringExtra("url");
         Uri incoming = intent == null ? null : intent.getData();
+        if (incoming != null && "https".equalsIgnoreCase(incoming.getScheme()) &&
+            "asistobot.com.ar".equalsIgnoreCase(incoming.getHost()) &&
+            "/customer-app/DEMO_FERRETERIA".equals(incoming.getPath())) {
+            return incoming.buildUpon().authority("asistobot.com.ar").build().toString();
+        }
         if (incoming != null && "asisto".equalsIgnoreCase(incoming.getScheme()) && "turno".equalsIgnoreCase(incoming.getHost())) {
             candidate = incoming.getQueryParameter("url");
             if (candidate != null) {

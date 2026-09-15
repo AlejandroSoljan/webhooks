@@ -1,6 +1,6 @@
 # Turnero de Mecan en AWS
 
-Actualizado el 14/09/2026 a las 22:11 de Argentina. Servicio publicado en AWS; la app principal sigue en 5.00.139 y no se reinició. Turnero: `/opt/asisto/turnero/releases/20260914-2`. Android: **Asisto 1.1.6**.
+Actualizado el 14/09/2026 a las 22:30 de Argentina. Servicio publicado en AWS; la app principal sigue en 5.00.139 y no se reinició. Turnero: `/opt/asisto/turnero/releases/20260914-4`. Android: **Asisto 1.1.7**.
 
 ## Accesos reales
 
@@ -10,7 +10,7 @@ Actualizado el 14/09/2026 a las 22:11 de Argentina. Servicio publicado en AWS; l
 - Celular: https://asistobot.com.ar/customer-app/DEMO_FERRETERIA?view=turns
 - APK: https://asistobot.com.ar/customer-app/download/android
 
-El equipo emisor y los empleados inician sesión con un usuario del comercio. El celular no necesita esa sesión ni conectarse al Wi-Fi: los QR publicados usan el origen **https://asistobot.com.ar**, comprobado en la configuración productiva. `scripts/preview_queue.cjs` sirve exclusivamente una maqueta local; sus QR ficticios de localhost no sirven para teléfonos con datos móviles.
+El equipo emisor y los empleados ingresan temporalmente sin login en Mecan; el panel de estadísticas usa la sesión Asisto del comercio. El celular no necesita esa sesión ni conectarse al Wi-Fi: los QR publicados usan el origen **https://asistobot.com.ar**, comprobado en la configuración productiva. `scripts/preview_queue.cjs` sirve exclusivamente una maqueta local; sus QR ficticios de localhost no sirven para teléfonos con datos móviles.
 
 ## Selección → QR o impresión
 
@@ -18,17 +18,17 @@ El equipo emisor y los empleados inician sesión con un usuario del comercio. El
 2. La pantalla destaca el QR exclusivo de esa reserva, con animación suave. Solo el primer celular puede asociarlo. El QR no emite otro turno.
 3. Al vincularlo, el turno entra en espera y el número aparece en el celular. El emisor detecta la vinculación y vuelve al inicio.
 4. Como alternativa secundaria, «Prefiero imprimir mi ticket» confirma la misma reserva y abre la impresión del navegador. El número aparece en el comprobante, no en la pantalla normal del turnero.
-5. Una reserva no tomada vence y no ocupa la cola de atención. Su número no se reutiliza. La posición conserva el instante de la reserva.
+5. Una reserva no tomada vence y no ocupa la cola de atención. Su número no se reutiliza. La posición empieza al activar el turno (escanear o solicitar impresión).
 
 La comandera prevista se conecta **por USB al equipo del turnero**. Debe instalarse su controlador y seleccionar su formato de papel en el navegador. El diseño se adapta al ancho de impresión, hasta 68 mm útiles. El navegador no confirma la salida física: si se cancela o falta papel, el usuario puede volver a imprimir **el mismo turno**. No hay impresión silenciosa ni integración ESC/POS directa en esta entrega. La prueba física queda pendiente de disponer de la impresora.
 
 ## Celular y avisos
 
-Al escanear el QR se guarda el turno en el navegador. Para avisos en segundo plano, el cliente puede abrir ese mismo turno en **Asisto 1.1.6**, mediante un enlace temporal de un solo uso; la app conserva el número y recibe las notificaciones Firebase del dispositivo registrado. La firma del APK coincide con la versión 1.1.5, por lo que puede actualizarla conservando sus datos.
+Con **Asisto 1.1.7** instalado, el QR HTTPS puede abrir directamente la app mediante Android App Links. Si la app no está instalada o Android no permite abrir enlaces compatibles, abre el navegador y ofrece pasar el turno a Asisto mediante un enlace temporal de un solo uso; la app conserva el número y recibe las notificaciones Firebase del dispositivo registrado. La firma del APK coincide con la versión 1.1.5, por lo que puede actualizarla conservando sus datos.
 
 La app abre el enlace `asisto://turno` validando que el destino pertenezca a Asisto. Referencia: [enlaces profundos de Android](https://developer.android.com/training/app-links/create-deeplinks). El traspaso navegador-app conserva consulta desde ambos, y dirige los avisos a la instalación de Android. El permiso de notificaciones debe estar habilitado. El navegador por sí solo muestra el llamado mientras la página está abierta; no registra push web en segundo plano.
 
-Los códigos de vinculación viajan en el fragmento del enlace, se validan en servidor y vencen. Un segundo celular no puede reclamar un QR tomado. Los reintentos recuperan el mismo turno. Firebase se intenta al llamar o repetir, nunca al reservar.
+Los códigos de vinculación viajan en el fragmento del enlace, se validan en servidor y vencen. Un segundo celular no puede reclamar un QR tomado. Los reintentos recuperan el mismo turno. Firebase avisa al quedar 2 turnos por delante, 1 y al llamar. La posición incluye el turno en atención. No envía a reservas sin activar. Los hitos exitosos quedan guardados en queue_tickets.queueNotifications, por visita a sección; los traslados reinician esa secuencia. Repetir llamado es una acción explícita y genera otro aviso. Reintentos de operaciones y barridos no repiten hitos exitosos. Si el cliente vincula tarde la app se envía solo el aviso de su posición actual, no los anteriores.
 
 ## Atención
 
@@ -52,12 +52,26 @@ Los archivos auxiliares de autenticación y Firebase se copiaron de la release v
 
 ## Verificación
 
-- 13 pruebas con Mongo temporal separado: concurrencia, recuperación, permisos, traslados, orden, consulta privada, firma y vencimiento de QR, reserva no atendible, primer reclamante, traspaso a Android, impresión idempotente y vencimiento de abandonados.
+- 17 pruebas con Mongo temporal separado: concurrencia, recuperación, permisos, traslados, orden, consulta privada, firma y vencimiento de QR, reserva no atendible, primer reclamante, traspaso a Android, impresión idempotente y vencimiento de abandonados.
 - Scripts incrustados del kiosco, atención, pantallas y app de clientes validan sintaxis.
-- Android compiló con éxito y se verificaron la firma y su coincidencia con 1.1.5. SHA-256 APK: `c51fc17a19b5d3b41b51a1b8b444085ff980c4a632cbc30232e4646031962ca4`.
+- Android compiló con éxito y se verificaron la firma y su coincidencia con 1.1.5. SHA-256 APK: `f3155cb64aa7bdd8f434217bc49cda95bc6bebedf6a9d0119932dcb277c63df4`.
 - Revisión visual del QR sin número, opción secundaria de impresión y logos. Endpoints públicos de app, pantalla, logos y APK responden 200. Escáner confirma logo, color y pie de Asisto.
 - No se enviaron notificaciones reales ni se imprimió en hardware durante las pruebas. Falta comprobar esos dos recorridos con un teléfono y comandera reales.
 
 ## Migración local futura
 
 Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un único escritor. Esta versión funciona completa en AWS y necesita internet. La instalación local sin internet sigue siendo una etapa posterior.
+
+## Avisos, acceso temporal y estadísticas (1.1.7)
+
+- Release AWS actual: /opt/asisto/turnero/releases/20260914-4, puerto 3102. Se recargó Nginx y se reinició únicamente asisto-turnero. La release 4 corrige el barrido para Mongo API estricta con aggregate + group (distinct no está admitido en ese servidor).
+- QUEUE_OPEN_TENANTS=DEMO_FERRETERIA en /etc/asisto/turnero.env habilita emisión y operación sin login solo en ese comercio, a pedido del usuario. Retirar ese valor y reiniciar el servicio restablece el login. Los eventos anónimos guardan operador-sin-login y puesto; no identifican una persona.
+- Panel: https://asistobot.com.ar/ui/turnero/DEMO_FERRETERIA/estadisticas. Enlace desde atención. Requiere sesión Asisto del mismo comercio o superadmin. API /api/customer-app-admin/:tenant/stats?from=AAAA-MM-DD&to=AAAA-MM-DD.
+- Mongo queue_tickets conserva fechas, estado, entrega e historial (creación, activación, primer llamado, repeticiones, cierre, ausencia, traslado y puesto). El panel reconstruye todas las visitas a secciones, incluidas las anteriores a esta actualización. Promedios excluyen etapas incompletas, P90 espera, conteos por día/sección/hora, datos de móvil/impresión y CSV de recorridos sin identificadores de dispositivos ni códigos QR. No hay borrado automático de históricos.
+- Filtros por día de emisión, zona America/Argentina/Buenos_Aires, hasta 93 días y 50.000 turnos por consulta. Si se supera el límite pide acortar el rango y nunca entrega totales truncados.
+- La espera empieza en activación o traslado y termina en el primer llamado. Atención significa tiempo desde ese llamado hasta finalizar, ausente o trasladar. Repetir llamado no reinicia la medición. El CSV expresa instantes ISO UTC y duraciones en segundos.
+- Barrido de notificaciones cada 15 segundos; también después de mutaciones y registro del celular. Reintenta fallos después de 30 segundos mientras el hito siga vigente. El envío es aceptación por Firebase, no garantía de visualización: requiere token y permiso Android. Una caída entre aceptación FCM y registro Mongo puede repetir un envío (FCM no ofrece transacción con Mongo).
+- Android App Links: host asistobot.com.ar, ruta exacta /customer-app/DEMO_FERRETERIA (incluye query/fragment). /.well-known/assetlinks.json se publica JSON por HTTPS, sin redirecciones, con la huella del APK verificada. El esquema asisto://turno continúa como alternativa desde el navegador. No se modifica la firma de la app.
+- Firma 1.1.7: 45:A5:2D:AB:8C:88:F8:B9:52:A8:35:CB:C3:37:41:FB:68:C8:81:AE:B1:98:D2:7E:48:F1:7F:9F:84:09:D4:90. Paquete ar.com.asistobot.scanner.
+- Todos los pies del turnero, modal, celular, estadísticas y comprobante muestran Powered by Asisto + www.asistobot.com.ar. El escáner de productos ya incluía esa web.
+- Verificación: 17 pruebas pasaron, build Android y firma OK; endpoints públicos 200, ingreso kiosco/atención sin redirección, APK 1.1.7 y assetlinks JSON correctos. Panel revisado visualmente con datos ficticios aislados. Pendiente verificar apertura automática y recepción real con un teléfono instalado y permiso concedido, y comandera USB física.

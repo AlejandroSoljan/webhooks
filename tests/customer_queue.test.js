@@ -11,7 +11,8 @@ const express = require('express');
 const { mountQueue, presenceToken, validPresence } = require('../customer_queue');
 const { queuePage } = require('../queue_pages');
 const vm = require('node:vm');
-let mongo, dir, client, db, server, url, sent = 0;
+let mongo, dir, client, db, server, url, queue, sent = 0;
+const notifications = []; let rejectPush = false;
 const cfg = { businessName: 'Mecan', branchId: 'CENTRAL', queuePresence: 'open', sectors: [{ id: 'ferreteria', name: 'Ferretería', prefix: 'F' }, { id: 'caja', name: 'Caja', prefix: 'C' }] };
 before(async () => {
   const socket = net.createServer(); await new Promise(r => socket.listen(0, '127.0.0.1', r)); const port = socket.address().port; await new Promise(r => socket.close(r));
@@ -27,7 +28,7 @@ before(async () => {
   db = client.db('queue_isolated_test');
   const app = express(); app.use(express.json());
   app.use((req, _res, next) => { if (req.get('x-test-user')) req.user = { uid: 'test', tenantId: req.get('x-test-user'), username: 'Tester', role: 'admin' }; next(); });
-  mountQueue(app, { getDb: async () => db, configFor: async () => cfg, dayKey: () => '2026-09-14', secret: 'test-secret', firebaseSender: async () => async () => { sent++; } });
+  queue = mountQueue(app, { openTenants: ['OPEN'], getDb: async () => db, configFor: async () => cfg, dayKey: () => '2026-09-14', secret: 'test-secret', firebaseSender: async () => async (token, message) => { if (rejectPush) throw Error('mock_failure'); sent++; notifications.push({ token, ...message }); } });
   app.get('/api/customer-app/:tenant/config', (_req, res) => res.json(cfg));
   server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r)); url = 'http://127.0.0.1:' + server.address().port;
 });
@@ -38,6 +39,29 @@ after(async () => {
 });
 async function req(route, body, user = '') { const r = await fetch(url + route, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', ...(user ? { 'x-test-user': user } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) }); return { status: r.status, body: await r.json() }; }
 const api = '/api/customer-app/TEST', admin = '/api/customer-app-admin/TEST';
+test('statistics reconstruct transfers and do not reset service time on recalls', () => {
+  const { summarize, ticketVisits, statsPage } = require('../queue_stats');
+  const at = seconds => new Date(Date.UTC(2026, 8, 14, 12, 0, seconds));
+  const doc = { _id: 'stats', displayNumber: 'F001', dayKey: '2026-09-14', status: 'DONE', createdAt: at(0), history: [
+    { action: 'created', sectorId: 'ferreteria', at: at(0) }, { action: 'claimed', at: at(30) },
+    { action: 'next', at: at(90) }, { action: 'recall', at: at(100) },
+    { action: 'transfer', destination: 'caja', at: at(150) }, { action: 'next', at: at(270) }, { action: 'finish', at: at(450) },
+  ] };
+  assert.deepEqual(ticketVisits(doc).map(v => [v.sectorId, v.waitSeconds, v.serviceSeconds]), [['ferreteria', 60, 60], ['caja', 120, 180]]);
+  const x = summarize([doc], cfg.sectors); assert.equal(x.summary.transfers, 1); assert.equal(x.summary.issued, 1); assert.equal(x.summary.averageWaitSeconds, 90); assert.equal(x.summary.averageServiceSeconds, 120);
+  assert.deepEqual(ticketVisits({ status: 'CANCELLED', history: [] }), []);
+  new vm.Script(statsPage('TEST', '2026-09-14').match(/<script>([\s\S]*)<\/script>/)[1]);
+});
+test('temporary open tenant can operate without a session but statistics stay tenant-authorized', async () => {
+  cfg.queuePresence = 'open';
+  for (const route of ['/customer-app/OPEN/kiosk', '/ui/turnero/OPEN']) assert.equal((await fetch(url + route, { redirect: 'manual' })).status, 200);
+  const x = await req('/api/customer-app/OPEN/tickets', { sectorId: 'caja', installId: 'open-kiosk', source: 'kiosk' }); assert.equal(x.status, 200);
+  assert.equal((await req('/api/customer-app-admin/OPEN/sectors/caja/next', { expectedTicketId: null, desk: 'Caja abierta' })).status, 200);
+  assert.equal((await req('/api/customer-app-admin/OPEN/stats')).status, 401);
+  assert.equal((await req('/api/customer-app-admin/OPEN/stats', undefined, 'TEST')).status, 403);
+  assert.equal((await req('/api/customer-app-admin/OPEN/stats', undefined, 'OPEN')).status, 200);
+  assert.equal((await req('/api/customer-app-admin/OPEN/stats?from=2026-02-30', undefined, 'OPEN')).status, 400);
+});
 test('QR expires, rejects tampering and cannot be used by a different commerce', () => {
   const token = presenceToken('TEST', 'secret', 1000);
   assert.equal(validPresence(token, 'TEST', 'secret', 2000), true);
@@ -139,4 +163,46 @@ test('abandoned reservations expire and never enter the waiting queue', async ()
   await db.collection('queue_tickets').updateOne({ kioskRequestId: 'abandoned' }, { $set: { reservationExpiresAt: new Date(Date.now() - 1) } });
   const state = await req(admin + '/tickets/' + x.id + '/delivery', undefined, 'TEST'); assert.equal(state.body.status, 'CANCELLED');
   assert.equal((await req(admin + '/tickets/' + x.id + '/print', {}, 'TEST')).status, 410);
+});
+
+test('push milestones 2, 1 and called are durable, current position includes the called ticket, and transfer starts a fresh visit', async () => {
+  cfg.queuePresence = 'open';
+  const t = 'NOTIFY', a = '/api/customer-app/' + t, op = '/api/customer-app-admin/' + t;
+  const make = (id, sectorId = 'ferreteria') => req(a + '/tickets', { sectorId, installId: id });
+  const first = (await make('n1')).body, second = (await make('n2')).body, target = (await make('n3')).body;
+  await db.collection('customer_app_devices').insertOne({ tenantId: t, installId: 'n3', pushToken: 'n3-token' });
+  await Promise.all([queue.reconcileTenant(t), queue.reconcileTenant(t)]);
+  const mine = () => notifications.filter(n => n.token === 'n3-token');
+  assert.deepEqual(mine().map(n => n.title), ['Faltan 2 turnos para el tuyo']);
+  const action = (verb, expectedTicketId, sector = 'ferreteria', destination) => req(op + '/sectors/' + sector + '/' + verb, { expectedTicketId, destination }, t);
+  await action('next', null);
+  assert.equal((await req(a + '/tickets/' + target.id + '?installId=n3')).body.peopleAhead, 2);
+  assert.equal(mine().length, 1);
+  await action('finish', first.id);
+  assert.equal(mine().at(-1).title, 'Falta 1 turno para el tuyo');
+  await action('next', null); await action('skip', second.id); await action('next', null);
+  assert.deepEqual(mine().map(n => n.title), ['Faltan 2 turnos para el tuyo', 'Falta 1 turno para el tuyo', '¡Es tu turno!']);
+  await queue.reconcileTenant(t); assert.equal(mine().length, 3);
+  await make('cash-a', 'caja'); await make('cash-b', 'caja');
+  await action('transfer', target.id, 'ferreteria', 'caja');
+  assert.equal(mine().at(-1).title, 'Faltan 2 turnos para el tuyo'); assert.equal(mine().length, 4);
+  const saved = await db.collection('queue_tickets').findOne({ installId: 'n3' });
+  assert.equal(Object.values(saved.queueNotifications).filter(n => n.status === 'sent').length, 4);
+  // A new reconciler (process restart) sees the same persisted milestones.
+  const { createQueueNotifications } = require('../queue_notifications');
+  await createQueueNotifications({ firebaseSender: async () => async () => { throw Error('duplicate'); }, publicBase: 'https://asistobot.com.ar' }).reconcile(db, { tenantId: t, branchId: 'CENTRAL', dayKey: '2026-09-14' });
+  const stats = await req(op + '/stats', undefined, t); assert.equal(stats.body.summary.transfers, 1);
+  assert.ok(!JSON.stringify(stats.body).includes('n3-token'));
+});
+test('late device registration sends only the current milestone; failed delivery retries without replaying success', async () => {
+  const t='RETRY', a='/api/customer-app/'+t;
+  await req(a+'/tickets', { installId:'r1', sectorId:'caja' });
+  await req(a+'/tickets', { installId:'r2', sectorId:'caja' });
+  await db.collection('customer_app_devices').insertOne({ tenantId:t, installId:'r2', pushToken:'retry-token' });
+  rejectPush=true; await queue.reconcileTenant(t); rejectPush=false;
+  const doc=await db.collection('queue_tickets').findOne({ tenantId:t, installId:'r2' });
+  assert.equal(doc.queueNotifications.v0_ahead_1.status, 'failed');
+  await db.collection('queue_tickets').updateOne({ _id:doc._id }, { $set:{ 'queueNotifications.v0_ahead_1.attemptedAt':new Date(0) } });
+  await queue.reconcileTenant(t); await queue.reconcileTenant(t);
+  assert.deepEqual(notifications.filter(n=>n.token==='retry-token').map(n=>n.title), ['Falta 1 turno para el tuyo']);
 });

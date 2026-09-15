@@ -20,7 +20,7 @@ function setupTicketNotices() {
   const box = document.createElement('div'); box.id = 'ticketNotices'; box.style.cssText = 'padding:18px;margin-top:18px;border-radius:14px;background:#eef7f2';
   const message = document.createElement('p'); message.style.cssText = 'font-size:15px';
   if (window.AsistoNative) {
-    message.textContent = 'Tu turno está vinculado a Asisto. Permití las notificaciones de la app para recibir el llamado.'; box.append(message);
+    message.textContent = 'Tu turno está vinculado a Asisto. Permití las notificaciones de la app: te avisamos cuando faltan 2 turnos, 1 y cuando te llamen.'; box.append(message);
   } else {
     message.textContent = 'Tu turno ya está guardado. Mantené esta pantalla abierta para ver el llamado, o abrilo en la app Asisto para recibir avisos.';
     const button = document.createElement('button'); button.className = 'action'; button.textContent = 'Abrir mi turno en Asisto';

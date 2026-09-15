@@ -3,6 +3,8 @@ const { ObjectId } = require('mongodb');
 const { createHmac, timingSafeEqual, randomBytes, createHash } = require('node:crypto');
 const QRCode = require('qrcode');
 const { queuePage } = require('./queue_pages');
+const { createQueueNotifications } = require('./queue_notifications');
+const { mountQueueStats } = require('./queue_stats');
 const clean = (s, n = 120) => String(s || '').trim().slice(0, n);
 const tenant = s => clean(s, 60).toUpperCase().replace(/[^A-Z0-9_-]/g, '');
 const active = ['WAITING', 'CALLED'];
@@ -38,7 +40,7 @@ function publicTicket(doc) {
   return { id: String(doc._id), displayNumber: doc.displayNumber, status: doc.status,
     sectorId: doc.sectorId, sectorName: doc.sectorName, desk: doc.desk || '', calledAt: doc.calledAt || null, claimed: !!doc.claimedAt };
 }
-function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey, firebaseSender, secret = process.env.QUEUE_PRESENCE_SECRET || '', publicBase = process.env.PUBLIC_BASE_URL || 'https://asistobot.com.ar' }) {
+function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey, firebaseSender, secret = process.env.QUEUE_PRESENCE_SECRET || '', publicBase = process.env.PUBLIC_BASE_URL || 'https://asistobot.com.ar', openTenants = (process.env.QUEUE_OPEN_TENANTS || '').split(',').map(tenant).filter(Boolean) }) {
   const wrap = fn => async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try { await fn(req, res); } catch (e) { if (!e.status) console.error('[queue]', e.message); res.status(e.status || 500).json({ error: e.status ? e.message : 'No se pudo completar la operación. Reintentá.' }); }
@@ -49,7 +51,12 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     const db = await getDb(), cfg = await configFor(db, t);
     return { t, db, cfg, base: { tenantId: t, branchId: cfg.branchId, dayKey: dayKey() } };
   };
-  const guard = (req, t) => { if (!allowed(req, t)) fail(req.user?.uid ? 403 : 401, 'Iniciá sesión con un usuario del comercio.'); };
+  const isOpen = t => openTenants.includes(t);
+  const guard = (req, t) => { if (!isOpen(t) && !allowed(req, t)) fail(req.user?.uid ? 403 : 401, 'Iniciá sesión con un usuario del comercio.'); };
+  const { reconcile } = createQueueNotifications({ firebaseSender, publicBase });
+  const reconcileBase = (db, base) => serial(base.tenantId, () => reconcile(db, base));
+  const reconcileTenant = async t => { const db = await getDb(), cfg = await configFor(db, t); return reconcileBase(db, { tenantId: t, branchId: cfg.branchId, dayKey: dayKey() }); };
+  mountQueueStats(app, { scope, wrap, allowed, dayKey });
   let indexPromise;
   async function prepare(db) {
     if (!indexPromise) indexPromise = (async () => {
@@ -72,25 +79,15 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
   }
   async function view(db, doc) {
     const ahead = doc.status === 'WAITING' ? await db.collection('queue_tickets').countDocuments({
-      tenantId: doc.tenantId, branchId: doc.branchId, dayKey: doc.dayKey, sectorId: doc.sectorId, status: 'WAITING',
-      $or: [{ queuedAt: { $lt: doc.queuedAt } }, { queuedAt: doc.queuedAt, _id: { $lt: doc._id } }],
+      tenantId: doc.tenantId, branchId: doc.branchId, dayKey: doc.dayKey, sectorId: doc.sectorId, status: { $in: active },
+      $or: [{ status: 'CALLED' }, { queuedAt: { $lt: doc.queuedAt } }, { queuedAt: doc.queuedAt, _id: { $lt: doc._id } }],
     }) : 0;
     const current = await db.collection('queue_tickets').findOne({ tenantId: doc.tenantId, branchId: doc.branchId, dayKey: doc.dayKey, sectorId: doc.sectorId, status: 'CALLED' });
     return { ...publicTicket(doc), peopleAhead: ahead, estimatedMinutes: ahead * 5, currentDisplay: current?.displayNumber || '—', createdAt: doc.createdAt };
   }
-  async function notify(db, doc) {
-    if (!doc) return 'not_required';
-    const device = await db.collection('customer_app_devices').findOne({ tenantId: doc.tenantId, installId: doc.installId, disabled: { $ne: true }, pushToken: { $type: 'string' } });
-    if (!device) return 'no_device';
-    try {
-      const send = await firebaseSender();
-      await send(device.pushToken, { title: '¡Es tu turno!', body: `${doc.displayNumber} · ${doc.sectorName}${doc.desk ? ' · ' + doc.desk : ''}`, url: publicBase.replace(/\/$/, '') + '/customer-app/' + encodeURIComponent(doc.tenantId) + '?view=ticket', channelId: 'asisto_turns' });
-      return 'sent';
-    } catch (e) { console.error('[queue] notification failed', e.message); return 'failed'; }
-  }
   for (const mode of ['kiosk', 'display']) app.get('/customer-app/:tenant/' + mode, wrap(async (req, res) => {
     const t = tenant(req.params.tenant);
-    if (mode === 'kiosk' && !allowed(req, t)) return res.redirect('/login?to=' + encodeURIComponent(req.originalUrl));
+    if (mode === 'kiosk' && !isOpen(t) && !allowed(req, t)) return res.redirect('/login?to=' + encodeURIComponent(req.originalUrl));
     res.type('html').send(queuePage(t, mode));
   }));
   app.get('/ui/turnero/:tenant', wrap(async (req, res) => { const t = tenant(req.params.tenant); guard(req, t); res.type('html').send(queuePage(t, 'admin')); }));
@@ -104,7 +101,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
   }));
   app.post('/api/customer-app-admin/:tenant/settings', wrap(async (req, res) => {
     const { t, db } = await scope(req); guard(req, t);
-    if (!['admin', 'superadmin'].includes(req.user.role)) fail(403, 'Solo un administrador puede cambiar la configuración.');
+    if (!isOpen(t) && !['admin', 'superadmin'].includes(req.user?.role)) fail(403, 'Solo un administrador puede cambiar la configuración.');
     if (!['open', 'qr'].includes(req.body?.queuePresence)) fail(400, 'Modo de acceso inválido.');
     if (req.body.queuePresence === 'qr' && !secret) fail(503, 'Falta configurar la validación presencial.');
     await db.collection('customer_app_config').updateOne({ tenantId: t }, { $set: { queuePresence: req.body.queuePresence, queuePromotion: clean(req.body.queuePromotion, 240) } }, { upsert: true });
@@ -154,6 +151,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
       doc._id = (await tickets.insertOne(doc)).insertedId;
       return doc;
     });
+    await reconcileBase(db, base);
     res.json({ ...await view(db, doc), ...(reserve && doc.status === 'RESERVED' ? await delivery(doc) : {}) });
   }));
   app.get('/api/customer-app-admin/:tenant/tickets/:id/delivery', wrap(async (req, res) => {
@@ -173,8 +171,9 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
       if (doc.status === 'CANCELLED') fail(410, 'La reserva venció. Elegí nuevamente la sección.');
       if (doc.deliveryMode === 'print') return doc;
       if (doc.status !== 'RESERVED' || doc.claimedAt) fail(409, 'Este turno ya fue entregado al celular.');
-      return tickets.findOneAndUpdate({ _id: doc._id, status: 'RESERVED' }, { $set: { status: 'WAITING', deliveryMode: 'print', updatedAt: new Date() }, $push: { history: { action: 'print_requested', at: new Date() } } }, { returnDocument: 'after' });
+      return tickets.findOneAndUpdate({ _id: doc._id, status: 'RESERVED' }, { $set: { status: 'WAITING', queuedAt: new Date(), deliveryMode: 'print', updatedAt: new Date() }, $push: { history: { action: 'print_requested', at: new Date() } } }, { returnDocument: 'after' });
     });
+    await reconcileBase(db, base);
     res.json({ ...publicTicket(doc), businessName: cfg.businessName, createdAt: doc.createdAt });
   }));
   app.post('/api/customer-app/:tenant/tickets/:id/claim', wrap(async (req, res) => {
@@ -192,10 +191,11 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
       if (doc.claimedAt && !handoff) fail(409, 'Este turno ya está asociado a otro celular.');
       if (!handoff && +doc.reservationExpiresAt <= Date.now()) fail(410, 'El QR venció. Volvé al turnero.');
       if (!['RESERVED', 'WAITING', 'CALLED'].includes(doc.status)) fail(410, 'El turno ya no está disponible.');
-      const updated = { installId, claimedAt: doc.claimedAt || new Date(), deliveryMode: 'mobile', updatedAt: new Date(), ...(doc.status === 'RESERVED' ? { status: 'WAITING' } : {}) };
+      const updated = { installId, claimedAt: doc.claimedAt || new Date(), deliveryMode: 'mobile', updatedAt: new Date(), ...(doc.status === 'RESERVED' ? { status: 'WAITING', queuedAt: new Date() } : {}) };
       if (handoff) Object.assign(updated, { usedHandoffHash: doc.handoffHash, usedHandoffInstallId: installId, usedHandoffExpiresAt: doc.handoffExpiresAt });
       return tickets.findOneAndUpdate({ _id: doc._id }, { $set: updated, $unset: { handoffHash: '', handoffExpiresAt: '' }, ...(handoff ? { $addToSet: { linkedInstallIds: doc.installId } } : {}), $push: { history: { action: handoff ? 'linked_app' : 'claimed', at: new Date() } } }, { returnDocument: 'after' });
     });
+    await reconcileBase(db, base);
     res.json(await view(db, doc));
   }));
   app.post('/api/customer-app/:tenant/tickets/:id/handoff', wrap(async (req, res) => {
@@ -228,10 +228,10 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     const result = await serial(t, async () => {
       const tickets = db.collection('queue_tickets'), filter = { ...base, sectorId }, current = await tickets.findOne({ ...filter, status: 'CALLED' });
       if (req.body?.expectedTicketId !== (current ? String(current._id) : null)) fail(409, 'La atención cambió desde otra pantalla. Revisá el turno y reintentá.');
-      const now = new Date(), who = clean(req.user.username || req.user.uid);
+      const now = new Date(), who = clean(req.user?.username || req.user?.uid || 'operador-sin-login');
       if (action === 'next') {
         if (current) fail(409, 'Finalizá o trasladá el turno actual antes de llamar al siguiente.');
-        const doc = await tickets.findOneAndUpdate({ ...filter, status: 'WAITING' }, { $set: { status: 'CALLED', desk: clean(req.body?.desk, 40), calledAt: now, updatedAt: now }, $push: { history: { action, at: now, who, sectorId } } }, { sort: order, returnDocument: 'after' });
+        const doc = await tickets.findOneAndUpdate({ ...filter, status: 'WAITING' }, { $set: { status: 'CALLED', desk: clean(req.body?.desk, 40), calledAt: now, updatedAt: now }, $push: { history: { action, at: now, who, sectorId, desk: clean(req.body?.desk, 40) } } }, { sort: order, returnDocument: 'after' });
         return { doc, notification: !!doc };
       }
       if (!current) fail(409, 'No hay un turno en atención.');
@@ -239,11 +239,12 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
       if (action === 'recall') values.calledAt = now;
       if (action === 'finish' || action === 'skip') values.status = action === 'finish' ? 'DONE' : 'SKIPPED';
       if (action === 'transfer') Object.assign(values, { status: 'WAITING', sectorId: destination.id, sectorName: destination.name, desk: '', calledAt: null, queuedAt: now });
-      const doc = await tickets.findOneAndUpdate({ _id: current._id, status: 'CALLED' }, { $set: values, $push: { history: { action, at: now, who, sectorId, ...(destination ? { destination: destination.id } : {}) } } }, { returnDocument: 'after' });
+      const doc = await tickets.findOneAndUpdate({ _id: current._id, status: 'CALLED' }, { $set: values, $push: { history: { action, at: now, who, sectorId, desk: current.desk || '', ...(destination ? { destination: destination.id } : {}) } } }, { returnDocument: 'after' });
       return { doc, notification: action === 'recall' };
     });
-    const notification = result.notification ? await notify(db, result.doc) : 'not_required';
+    const notification = await reconcileBase(db, base) ? 'sent' : 'not_required';
     res.json({ ok: true, ticket: result.doc ? publicTicket(result.doc) : null, notification });
   }));
+  return { reconcileTenant };
 }
 module.exports = { mountQueue, presenceToken, validPresence, serial };

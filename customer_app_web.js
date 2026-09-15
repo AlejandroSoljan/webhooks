@@ -62,10 +62,12 @@ function mountCustomerApp(app) {
   app.use("/api/customer-app", express.json({ limit: "32kb" }));
   app.use("/api/customer-app-admin", express.json({ limit: "32kb" }));
   app.use('/customer-app/assets', express.static(require('path').join(__dirname, 'static', 'turnero')));
-  mountQueue(app, { getDb, configFor, invalidateConfig: t => customerConfigCache.delete(t), dayKey, firebaseSender });
-  app.get('/customer-app/download/android', (_req, res) => res.download(require('path').join(__dirname, 'Asisto-1.1.6.apk'), 'Asisto-1.1.6.apk'));
+  const queue = mountQueue(app, { getDb, configFor, invalidateConfig: t => customerConfigCache.delete(t), dayKey, firebaseSender });
+  app.get('/.well-known/assetlinks.json', (_req, res) => res.sendFile(require('path').join(__dirname, 'static/turnero/assetlinks.json')));
+  app.get('/customer-app/download/android', (_req, res) => res.download(require('path').join(__dirname, 'Asisto-1.1.7.apk'), 'Asisto-1.1.7.apk'));
   app.get("/customer-app/:tenant", (req, res) => { const t = tenant(req.params.tenant); if (!t) return res.status(400).send("Dominio inválido"); res.type("html").send(page(t)); });
   app.get("/api/customer-app/:tenant/config", async (req, res) => { try { const t=tenant(req.params.tenant); res.json(await configFor(await getDb(), t)); } catch(e){ res.status(500).json({error:"No se pudo cargar la aplicación"}); } });
-  app.post("/api/customer-app/:tenant/devices", async (req,res)=>{ try{const t=tenant(req.params.tenant),installId=clean(req.body.installId,120),pushToken=clean(req.body.pushToken,500),now=new Date(),userAgent=clean(req.get('user-agent'),300),platform=/android/i.test(userAgent)?'Android':(/iphone|ipad/i.test(userAgent)?'iOS':'Web'),deviceName=clean(req.body.deviceName||req.get('x-asisto-device-name'),100);if(!installId||!pushToken)return res.status(400).json({error:"Datos incompletos"});await (await getDb()).collection("customer_app_devices").updateOne({tenantId:t,installId},{$set:{pushToken,userAgent,platform,...(deviceName?{deviceName}:{}),updatedAt:now,lastSeenAt:now},$setOnInsert:{createdAt:now}},{upsert:true});res.json({ok:true})}catch(e){res.status(500).json({error:"No se pudo registrar el dispositivo"})} });
+  app.post("/api/customer-app/:tenant/devices", async (req,res)=>{ try{const t=tenant(req.params.tenant),installId=clean(req.body.installId,120),pushToken=clean(req.body.pushToken,500),now=new Date(),userAgent=clean(req.get('user-agent'),300),platform=/android/i.test(userAgent)?'Android':(/iphone|ipad/i.test(userAgent)?'iOS':'Web'),deviceName=clean(req.body.deviceName||req.get('x-asisto-device-name'),100);if(!installId||!pushToken)return res.status(400).json({error:"Datos incompletos"});await (await getDb()).collection("customer_app_devices").updateOne({tenantId:t,installId},{$set:{pushToken,userAgent,platform,...(deviceName?{deviceName}:{}),updatedAt:now,lastSeenAt:now},$setOnInsert:{createdAt:now}},{upsert:true});await queue.reconcileTenant(t);res.json({ok:true})}catch(e){res.status(500).json({error:"No se pudo registrar el dispositivo"})} });
+  return queue;
 }
 module.exports = { mountCustomerApp, DEFAULT_SECTORS, dayKey };

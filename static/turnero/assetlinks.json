@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "ar.com.asistobot.scanner",
+      "sha256_cert_fingerprints": [
+        "45:A5:2D:AB:8C:88:F8:B9:52:A8:35:CB:C3:37:41:FB:68:C8:81:AE:B1:98:D2:7E:48:F1:7F:9F:84:09:D4:90"
+      ]
+    }
+  }
+]
