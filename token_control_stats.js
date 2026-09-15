@@ -297,9 +297,9 @@ async function buildApiMessageWindowBilling({
   apiEntries.sort((a, b) => Date.parse(b.at || 0) - Date.parse(a.at || 0));
 
   // Cantidad real de mensajes enviados por WhatsApp. No es lo mismo que la
-  // cantidad de ventanas facturables del API. Los registros históricos sin
-  // messageId se deduplican por contacto, texto y segundo porque versiones
-  // anteriores podían registrar el mismo evento como "chat" y "text".
+  // cantidad de ventanas facturables del API. Versiones anteriores podían
+  // registrar el mismo evento como "chat" y "text" con algunos segundos de
+  // diferencia, por eso se deduplica por contenido dentro de 10 segundos.
   const realMatch = { direction: 'out' };
   if (safeTenant) realMatch.tenantId = safeTenant;
   const realAt = {};
@@ -311,21 +311,23 @@ async function buildApiMessageWindowBilling({
   const realPipeline = [
     { $match: realMatch },
     { $set: {
-        __second: { $floor: { $divide: [{ $toLong: '$at' }, 1000] } }
-    } },
-    { $set: {
         // Un mismo envío puede existir como registro moderno (con messageId)
         // y como registro legado (sin messageId). Contacto + cuerpo + segundo
         // es la identidad común disponible en las dos versiones.
         __dedupeKey: { $concat: [
           'sent:', '$tenantId', ':', '$numero', ':',
-          { $ifNull: ['$contact', ''] }, ':', { $ifNull: ['$body', ''] }, ':',
-          { $toString: '$__second' }
+          { $ifNull: ['$contact', ''] }, ':', { $ifNull: ['$body', ''] }
         ] }
     } },
-    { $group: { _id: '$__dedupeKey', doc: { $first: '$$ROOT' }, at: { $max: '$at' } } },
-    { $set: { 'doc.at': '$at' } },
-    { $replaceRoot: { newRoot: '$doc' } }
+    { $setWindowFields: {
+        partitionBy: '$__dedupeKey',
+        sortBy: { at: 1 },
+        output: { __previousAt: { $shift: { output: '$at', by: -1, default: null } } }
+    } },
+    { $match: { $expr: { $or: [
+      { $eq: ['$__previousAt', null] },
+      { $gt: [{ $subtract: [{ $toLong: '$at' }, { $toLong: '$__previousAt' }] }, 10000] }
+    ] } } }
   ];
   const [realMessageRows, realDocs] = await Promise.all([
     db.collection('wa_wweb_message_log').aggregate([
@@ -1726,7 +1728,7 @@ function renderTokenControlPage(user) {
         ? '<span class="small" style="color:#b45309">Tarifa comercial IA sin configurar</span>'
         : '';
       const apiInfo = num(it.real_messages)>0 || num(it.api_windows)>0
-        ? '<span class="small"><b>'+fmtInt(it.real_messages)+' mensajes enviados</b> · '+fmtInt(it.api_windows)+' ventanas facturables · '+fmtInt(it.api_messages)+' mensajes API</span>'
+        ? '<span class="small"><b>'+fmtInt(it.real_messages)+' WhatsApp totales</b>: '+fmtInt(it.api_messages)+' API + '+fmtInt(Math.max(0,num(it.real_messages)-num(it.api_messages)))+' otros · '+fmtInt(it.api_windows)+' ventanas facturables</span>'
         : '';
       if (!isSuper) {
         return '<tr>' +

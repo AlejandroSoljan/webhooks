@@ -5255,21 +5255,24 @@ function mountAuthRoutes(app) {
   function wwebRealMessagePipeline(match) {
     return [
         { $match: match },
-        { $set: {
-            __second: { $floor: { $divide: [{ $toLong: '$at' }, 1000] } }
-        } },
-        { $set: {
+      { $set: {
             // Un envío puede estar registrado una vez por el agente (con
             // messageId) y otra por el wrapper legado (sin messageId). Esta
             // identidad común evita contarlo dos veces en Sesiones.
             __dedupeKey: { $concat: [
               'message:', '$tenantId', ':', '$numero', ':', '$direction', ':',
-              { $ifNull: ['$contact', ''] }, ':', { $ifNull: ['$body', ''] }, ':',
-              { $toString: '$__second' }
+              { $ifNull: ['$contact', ''] }, ':', { $ifNull: ['$body', ''] }
             ] }
-        } },
-      { $group: { _id: '$__dedupeKey', doc: { $first: '$$ROOT' } } },
-      { $replaceRoot: { newRoot: '$doc' } }
+      } },
+      { $setWindowFields: {
+          partitionBy: '$__dedupeKey',
+          sortBy: { at: 1 },
+          output: { __previousAt: { $shift: { output: '$at', by: -1, default: null } } }
+      } },
+      { $match: { $expr: { $or: [
+        { $eq: ['$__previousAt', null] },
+        { $gt: [{ $subtract: [{ $toLong: '$at' }, { $toLong: '$__previousAt' }] }, 10000] }
+      ] } } }
     ];
   }
 
