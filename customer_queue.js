@@ -1,6 +1,6 @@
 // Asisto | Turnero AWS | Fecha: 2026-09-14
 const { ObjectId } = require('mongodb');
-const { createHmac, timingSafeEqual } = require('node:crypto');
+const { createHmac, timingSafeEqual, randomBytes, createHash } = require('node:crypto');
 const QRCode = require('qrcode');
 const { queuePage } = require('./queue_pages');
 const clean = (s, n = 120) => String(s || '').trim().slice(0, n);
@@ -36,7 +36,7 @@ function validPresence(token, t, secret, now = Date.now()) {
 }
 function publicTicket(doc) {
   return { id: String(doc._id), displayNumber: doc.displayNumber, status: doc.status,
-    sectorId: doc.sectorId, sectorName: doc.sectorName, desk: doc.desk || '', calledAt: doc.calledAt || null };
+    sectorId: doc.sectorId, sectorName: doc.sectorName, desk: doc.desk || '', calledAt: doc.calledAt || null, claimed: !!doc.claimedAt };
 }
 function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey, firebaseSender, secret = process.env.QUEUE_PRESENCE_SECRET || '', publicBase = process.env.PUBLIC_BASE_URL || 'https://asistobot.com.ar' }) {
   const wrap = fn => async (req, res) => {
@@ -60,6 +60,16 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     return indexPromise;
   }
   const order = { queuedAt: 1, _id: 1 };
+  const claimCode = doc => createHmac('sha256', secret).update(['ticket', doc.tenantId, String(doc._id), +doc.reservationExpiresAt].join(':')).digest('base64url');
+  const hash = value => createHash('sha256').update(String(value || '')).digest('hex');
+  const owns = (doc, id) => !!id && (doc.installId === id || (doc.linkedInstallIds || []).includes(id));
+  const validCode = (a, b) => typeof a === 'string' && Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  async function expire(db, base) { await db.collection('queue_tickets').updateMany({ ...base, status: 'RESERVED', reservationExpiresAt: { $lte: new Date() } }, { $set: { status: 'CANCELLED', updatedAt: new Date() } }); }
+  async function delivery(doc) {
+    const url = new URL('/customer-app/' + encodeURIComponent(doc.tenantId), publicBase);
+    url.searchParams.set('claim', String(doc._id)); url.hash = 'code=' + claimCode(doc);
+    return { claimUrl: url.href, claimQr: await QRCode.toDataURL(url.href, { width: 440, margin: 4, errorCorrectionLevel: 'M' }), reservationExpiresAt: doc.reservationExpiresAt };
+  }
   async function view(db, doc) {
     const ahead = doc.status === 'WAITING' ? await db.collection('queue_tickets').countDocuments({
       tenantId: doc.tenantId, branchId: doc.branchId, dayKey: doc.dayKey, sectorId: doc.sectorId, status: 'WAITING',
@@ -105,6 +115,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     const { t, db, cfg, base } = await scope(req);
     if (req.path.startsWith('/api/customer-app-admin/')) guard(req, t);
     await prepare(db);
+    await expire(db, base);
     const tickets = db.collection('queue_tickets');
     const sectors = await Promise.all(cfg.sectors.map(async s => {
       const filter = { ...base, sectorId: s.id };
@@ -124,25 +135,87 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     if (!installId || !sector) fail(400, 'Seleccioná una sección válida.');
     const kiosk = req.body?.source === 'kiosk';
     if (kiosk) guard(req, t);
+    const reserve = kiosk && req.body?.delivery === 'qr_or_print';
+    if (reserve && !secret) fail(503, 'Falta configurar la vinculación del turno.');
     await prepare(db);
+    await expire(db, base);
     const doc = await serial(t, async () => {
       const tickets = db.collection('queue_tickets');
       // Retries can retrieve the same ticket even after its QR has expired.
-      const existing = await tickets.findOne({ ...base, installId, ...(kiosk ? {} : { status: { $in: active } }) });
+      const existing = await tickets.findOne({ ...base, ...(kiosk ? { kioskRequestId: installId } : { $or: [{ installId }, { linkedInstallIds: installId }], status: { $in: active } }) });
+      const legacy = kiosk && !existing ? await tickets.findOne({ ...base, installId, source: 'kiosk' }) : null;
       if (existing) return existing;
+      if (legacy) return legacy;
       if (!kiosk && cfg.queuePresence === 'qr' && !validPresence(req.body?.presence, t, secret)) fail(403, 'Escaneá el QR de la pantalla del local para sacar tu turno.');
       const counter = await db.collection('queue_counters').findOneAndUpdate({ _id: [t, base.dayKey, base.branchId, sectorId].join(':') }, { $inc: { sequence: 1 } }, { upsert: true, returnDocument: 'after' });
       const now = new Date(), doc = { ...base, sectorId, sectorName: sector.name, prefix: sector.prefix, number: counter.sequence, displayNumber: sector.prefix + String(counter.sequence).padStart(3, '0'), installId, status: 'WAITING', createdAt: now, queuedAt: now, updatedAt: now, source: kiosk ? 'kiosk' : 'mobile', history: [{ action: 'created', sectorId, at: now }] };
+      if (kiosk) doc.kioskRequestId = installId;
+      if (reserve) Object.assign(doc, { status: 'RESERVED', reservationExpiresAt: new Date(+now + 180000), deliveryMode: 'pending' });
       doc._id = (await tickets.insertOne(doc)).insertedId;
       return doc;
     });
+    res.json({ ...await view(db, doc), ...(reserve && doc.status === 'RESERVED' ? await delivery(doc) : {}) });
+  }));
+  app.get('/api/customer-app-admin/:tenant/tickets/:id/delivery', wrap(async (req, res) => {
+    const { t, db, base } = await scope(req); guard(req, t); await expire(db, base);
+    if (!ObjectId.isValid(req.params.id)) fail(404, 'Turno inexistente');
+    const doc = await db.collection('queue_tickets').findOne({ ...base, _id: new ObjectId(req.params.id) });
+    if (!doc) fail(404, 'Turno inexistente');
+    res.json({ status: doc.status, claimed: !!doc.claimedAt, deliveryMode: doc.deliveryMode || '' });
+  }));
+  app.post('/api/customer-app-admin/:tenant/tickets/:id/print', wrap(async (req, res) => {
+    const { t, db, cfg, base } = await scope(req); guard(req, t);
+    if (!ObjectId.isValid(req.params.id)) fail(404, 'Turno inexistente');
+    const doc = await serial(t, async () => {
+      await expire(db, base);
+      const tickets = db.collection('queue_tickets'), doc = await tickets.findOne({ ...base, _id: new ObjectId(req.params.id) });
+      if (!doc) fail(404, 'Turno inexistente');
+      if (doc.status === 'CANCELLED') fail(410, 'La reserva venció. Elegí nuevamente la sección.');
+      if (doc.deliveryMode === 'print') return doc;
+      if (doc.status !== 'RESERVED' || doc.claimedAt) fail(409, 'Este turno ya fue entregado al celular.');
+      return tickets.findOneAndUpdate({ _id: doc._id, status: 'RESERVED' }, { $set: { status: 'WAITING', deliveryMode: 'print', updatedAt: new Date() }, $push: { history: { action: 'print_requested', at: new Date() } } }, { returnDocument: 'after' });
+    });
+    res.json({ ...publicTicket(doc), businessName: cfg.businessName, createdAt: doc.createdAt });
+  }));
+  app.post('/api/customer-app/:tenant/tickets/:id/claim', wrap(async (req, res) => {
+    const { t, db, base } = await scope(req), installId = clean(req.body?.installId), code = clean(req.body?.code, 200);
+    if (!installId || !ObjectId.isValid(req.params.id)) fail(400, 'Vinculación inválida.');
+    const doc = await serial(t, async () => {
+      await expire(db, base);
+      const tickets = db.collection('queue_tickets'), doc = await tickets.findOne({ ...base, _id: new ObjectId(req.params.id) });
+      if (!doc?.reservationExpiresAt) fail(404, 'Turno inexistente');
+      const original = secret && validCode(code, claimCode(doc));
+      const handoff = !!doc.handoffHash && hash(code) === doc.handoffHash && +doc.handoffExpiresAt > Date.now();
+      if (doc.usedHandoffHash === hash(code) && doc.usedHandoffInstallId === installId && +doc.usedHandoffExpiresAt > Date.now()) return doc;
+      if (!original && !handoff) fail(403, 'El QR no es válido.');
+      if (doc.claimedAt && owns(doc, installId)) return doc;
+      if (doc.claimedAt && !handoff) fail(409, 'Este turno ya está asociado a otro celular.');
+      if (!handoff && +doc.reservationExpiresAt <= Date.now()) fail(410, 'El QR venció. Volvé al turnero.');
+      if (!['RESERVED', 'WAITING', 'CALLED'].includes(doc.status)) fail(410, 'El turno ya no está disponible.');
+      const updated = { installId, claimedAt: doc.claimedAt || new Date(), deliveryMode: 'mobile', updatedAt: new Date(), ...(doc.status === 'RESERVED' ? { status: 'WAITING' } : {}) };
+      if (handoff) Object.assign(updated, { usedHandoffHash: doc.handoffHash, usedHandoffInstallId: installId, usedHandoffExpiresAt: doc.handoffExpiresAt });
+      return tickets.findOneAndUpdate({ _id: doc._id }, { $set: updated, $unset: { handoffHash: '', handoffExpiresAt: '' }, ...(handoff ? { $addToSet: { linkedInstallIds: doc.installId } } : {}), $push: { history: { action: handoff ? 'linked_app' : 'claimed', at: new Date() } } }, { returnDocument: 'after' });
+    });
     res.json(await view(db, doc));
+  }));
+  app.post('/api/customer-app/:tenant/tickets/:id/handoff', wrap(async (req, res) => {
+    const { t, db, base } = await scope(req), installId = clean(req.body?.installId);
+    if (!ObjectId.isValid(req.params.id)) fail(404, 'Turno inexistente');
+    const code = randomBytes(32).toString('base64url');
+    await serial(t, async () => {
+      const tickets = db.collection('queue_tickets'), doc = await tickets.findOne({ ...base, _id: new ObjectId(req.params.id) });
+      if (!doc?.claimedAt || !owns(doc, installId)) fail(403, 'No autorizado para este turno.');
+      if (!active.includes(doc.status)) fail(410, 'El turno finalizó.');
+      await tickets.updateOne({ _id: doc._id }, { $set: { handoffHash: hash(code), handoffExpiresAt: new Date(Date.now() + 180000) } });
+    });
+    res.json({ code });
   }));
   app.get('/api/customer-app/:tenant/tickets/:id', wrap(async (req, res) => {
     const { t, db } = await scope(req);
     if (!ObjectId.isValid(req.params.id)) fail(404, 'Turno inexistente');
     await prepare(db);
-    const doc = await db.collection('queue_tickets').findOne({ _id: new ObjectId(req.params.id), tenantId: t, installId: clean(req.query.installId) });
+    const installId = clean(req.query.installId);
+    const doc = installId && await db.collection('queue_tickets').findOne({ _id: new ObjectId(req.params.id), tenantId: t, $or: [{ installId }, { linkedInstallIds: installId }] });
     if (!doc) fail(404, 'Turno inexistente');
     res.json(await view(db, doc));
   }));

@@ -93,6 +93,20 @@ public class MainActivity extends AppCompatActivity {
 
     private String urlFromIntent(Intent intent) {
         String candidate = intent == null ? null : intent.getStringExtra("url");
+        Uri incoming = intent == null ? null : intent.getData();
+        if (incoming != null && "asisto".equalsIgnoreCase(incoming.getScheme()) && "turno".equalsIgnoreCase(incoming.getHost())) {
+            candidate = incoming.getQueryParameter("url");
+            if (candidate != null) {
+                Uri ticket = Uri.parse(candidate);
+                String host = ticket.getHost();
+                if ("https".equalsIgnoreCase(ticket.getScheme()) &&
+                    ("asistobot.com.ar".equalsIgnoreCase(host) || "www.asistobot.com.ar".equalsIgnoreCase(host)) &&
+                    ticket.getPath() != null && ticket.getPath().startsWith("/customer-app/")) {
+                    return ticket.buildUpon().authority("asistobot.com.ar").build().toString();
+                }
+            }
+            return HOME_URL;
+        }
         if (candidate != null) {
             Uri uri = Uri.parse(candidate);
             if ("https".equalsIgnoreCase(uri.getScheme()) && "asistobot.com.ar".equalsIgnoreCase(uri.getHost())) return candidate;

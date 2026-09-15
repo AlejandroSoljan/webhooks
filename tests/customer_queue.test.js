@@ -96,3 +96,47 @@ test('finish and skip clear the section, and a late kiosk retry cannot issue a s
   const another = await req(admin + '/sectors/ferreteria/next', { expectedTicketId: null }, 'TEST');
   const skipped = await req(admin + '/sectors/ferreteria/skip', { expectedTicketId: another.body.ticket.id }, 'TEST'); assert.equal(skipped.body.ticket.status, 'SKIPPED');
 });
+let reserved, claim;
+test('QR-first issuance reserves without joining the callable queue; a retry keeps its QR', async () => {
+  const payload = { sectorId: 'caja', installId: 'kiosk-reservation', source: 'kiosk', delivery: 'qr_or_print' };
+  const r = await req(api + '/tickets', payload, 'TEST'); assert.equal(r.status, 200); reserved = r.body;
+  assert.equal(reserved.status, 'RESERVED'); assert.match(reserved.claimQr, /^data:image\/png/);
+  claim = new URLSearchParams(new URL(reserved.claimUrl).hash.slice(1)).get('code');
+  const retry = await req(api + '/tickets', payload, 'TEST'); assert.equal(retry.body.claimUrl, reserved.claimUrl);
+  const state = await req(api + '/queue'); assert.ok(!state.body.sectors[1].next.some(t => t.displayNumber === reserved.displayNumber));
+});
+test('only the first phone can claim the QR, preserving the assigned number', async () => {
+  assert.equal((await req(api + '/tickets/' + reserved.id + '/claim', { installId: 'phone-a', code: 'é'.repeat(43) })).status, 403);
+  assert.equal((await req('/api/customer-app/OTHER/tickets/' + reserved.id + '/claim', { installId: 'phone-a', code: claim })).status, 404);
+  const claims = await Promise.all(['phone-a', 'phone-b'].map(installId => req(api + '/tickets/' + reserved.id + '/claim', { installId, code: claim })));
+  assert.deepEqual(claims.map(x => x.status).sort(), [200, 409]);
+  const winner = claims.find(x => x.status === 200).body; assert.equal(winner.displayNumber, reserved.displayNumber); assert.equal(winner.status, 'WAITING');
+  const dbTicket = await db.collection('queue_tickets').findOne({ kioskRequestId: 'kiosk-reservation' }); reserved.owner = dbTicket.installId;
+  assert.equal((await req(api + '/tickets/' + reserved.id + '/claim', { installId: reserved.owner, code: claim })).status, 200);
+  const state = await req(admin + '/tickets/' + reserved.id + '/delivery', undefined, 'TEST'); assert.equal(state.body.claimed, true);
+  assert.equal((await req(admin + '/tickets/' + reserved.id + '/print', {}, 'TEST')).status, 409);
+});
+test('browser-to-app handoff transfers notification ownership, is retryable, and rejects replay by a stranger', async () => {
+  assert.equal((await req(api + '/tickets/' + reserved.id + '/handoff', { installId: 'stranger' })).status, 403);
+  const handoff = await req(api + '/tickets/' + reserved.id + '/handoff', { installId: reserved.owner }); assert.equal(handoff.status, 200);
+  const payload = { installId: 'native-phone', code: handoff.body.code };
+  assert.equal((await req(api + '/tickets/' + reserved.id + '/claim', payload)).status, 200);
+  assert.equal((await req(api + '/tickets/' + reserved.id + '/claim', payload)).status, 200);
+  assert.equal((await req(api + '/tickets/' + reserved.id + '/claim', { ...payload, installId: 'stranger' })).status, 403);
+  const doc = await db.collection('queue_tickets').findOne({ kioskRequestId: 'kiosk-reservation' }); assert.equal(doc.installId, 'native-phone');
+  assert.equal((await req(api + '/tickets/' + reserved.id + '?installId=' + reserved.owner)).status, 200);
+  assert.equal((await req(api + '/tickets', { sectorId: 'caja', installId: reserved.owner })).body.id, reserved.id);
+});
+test('printing activates the same reservation and retries never create a second ticket', async () => {
+  const x = (await req(api + '/tickets', { sectorId: 'caja', installId: 'paper', source: 'kiosk', delivery: 'qr_or_print' }, 'TEST')).body;
+  assert.equal((await req(admin + '/tickets/' + x.id + '/print', {})).status, 401);
+  const printed = await req(admin + '/tickets/' + x.id + '/print', {}, 'TEST'); assert.equal(printed.body.displayNumber, x.displayNumber); assert.equal(printed.body.status, 'WAITING');
+  const repeated = await req(admin + '/tickets/' + x.id + '/print', {}, 'TEST'); assert.equal(repeated.body.id, x.id);
+  const doc = await db.collection('queue_tickets').findOne({ kioskRequestId: 'paper' }); assert.equal(doc.history.filter(h => h.action === 'print_requested').length, 1);
+});
+test('abandoned reservations expire and never enter the waiting queue', async () => {
+  const x = (await req(api + '/tickets', { sectorId: 'caja', installId: 'abandoned', source: 'kiosk', delivery: 'qr_or_print' }, 'TEST')).body;
+  await db.collection('queue_tickets').updateOne({ kioskRequestId: 'abandoned' }, { $set: { reservationExpiresAt: new Date(Date.now() - 1) } });
+  const state = await req(admin + '/tickets/' + x.id + '/delivery', undefined, 'TEST'); assert.equal(state.body.status, 'CANCELLED');
+  assert.equal((await req(admin + '/tickets/' + x.id + '/print', {}, 'TEST')).status, 410);
+});
