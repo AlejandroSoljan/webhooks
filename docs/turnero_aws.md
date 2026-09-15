@@ -1,6 +1,6 @@
 # Turnero de Mecan en AWS
 
-Actualizado el 14/09/2026 a las 22:55 de Argentina. Servicio publicado en AWS; la app principal sigue en 5.00.139 con la actualización corregida del menú y notificaciones. Turnero: `/opt/asisto/turnero/releases/20260914-6`. Android: **Asisto 1.1.7**.
+Actualizado el 14/09/2026 a las 23:00 de Argentina. Servicio publicado en AWS; la app principal sigue en 5.00.139 con la actualización corregida del menú y notificaciones. Turnero: `/opt/asisto/turnero/releases/20260914-7`. Android: **Asisto 1.1.7**.
 
 ## Accesos reales
 
@@ -64,7 +64,7 @@ Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un únic
 
 ## Avisos, acceso temporal y estadísticas (1.1.7)
 
-- Release AWS actual: `/opt/asisto/turnero/releases/20260914-6`, puerto 3102. App principal: `/opt/asisto/releases/5cf94e5354a5-turnero-notifications-fixed`. La release 4 corrigió el barrido para Mongo API estricta con aggregate + group; la 5 incorporó el historial automático y el filtro; la 6 integró estadísticas al shell y el selector superadmin. Ambos servicios mantienen sus releases anteriores para rollback.
+- Release AWS actual: `/opt/asisto/turnero/releases/20260914-7`, puerto 3102. App principal: `/opt/asisto/releases/5cf94e5354a5-turnero-notifications-fixed`. La release 4 corrigió el barrido para Mongo API estricta con aggregate + group; la 5 incorporó el historial automático y el filtro; la 6 integró estadísticas al shell y el selector superadmin; la 7 agregó el cierre/cancelación del QR. Ambos servicios mantienen sus releases anteriores para rollback.
 - QUEUE_OPEN_TENANTS=DEMO_FERRETERIA en /etc/asisto/turnero.env habilita emisión y operación sin login solo en ese comercio, a pedido del usuario. Retirar ese valor y reiniciar el servicio restablece el login. Los eventos anónimos guardan operador-sin-login y puesto; no identifican una persona.
 - Panel: https://asistobot.com.ar/ui/turnero/DEMO_FERRETERIA/estadisticas. Enlace desde atención. Requiere sesión Asisto del mismo comercio o superadmin. API /api/customer-app-admin/:tenant/stats?from=AAAA-MM-DD&to=AAAA-MM-DD.
 - Mongo queue_tickets conserva fechas, estado, entrega e historial (creación, activación, primer llamado, repeticiones, cierre, ausencia, traslado y puesto). El panel reconstruye todas las visitas a secciones, incluidas las anteriores a esta actualización. Promedios excluyen etapas incompletas, P90 espera, conteos por día/sección/hora, datos de móvil/impresión y CSV de recorridos sin identificadores de dispositivos ni códigos QR. No hay borrado automático de históricos.
@@ -79,4 +79,5 @@ Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un únic
 - Se importaron de forma idempotente los avisos automáticos anteriores que todavía estaban registrados dentro de los tickets. Resultado inicial: 2 avisos automáticos de 1 ticket; el historial manual existente quedó intacto.
 - Incidente 14/09 22:41 Argentina: el primer enlace de menú llamó a un helper inexistente (`tenant`) durante la construcción del shell y provocó “Error interno de login”. Se revirtió de inmediato la app principal a `5cf94e5354a5`; el turnero siguió activo. La corrección usa normalización local y agrega una prueba de ejecución real de `getNavItemsForUser` para usuarios con tenant, sin tenant y sin permiso.
 - La pantalla de Estadísticas Turnero se sirve dentro de `auth.appShell`, con el menú lateral de Asisto visible y el contenido en un iframe interno de ancho completo. El usuario común queda fijo en su tenant; superadmin recibe un desplegable armado desde dominios configurados, usuarios y tickets, y puede cambiar de tenant sin perder el shell. Una prueba de integración valida shell, iframe, permiso y desplegable.
+- El modal del QR incluye una X visible y accesible en la esquina superior derecha. Al cerrar una reserva todavía no reclamada, `POST /api/customer-app-admin/:tenant/tickets/:id/cancel` la pasa inmediatamente a CANCELLED con `deliveryMode=dismissed` e historial `kiosk_closed`, evitando que permanezca pendiente. Escape usa el mismo flujo. Si ya fue reclamada o impresa, cerrar no cancela el turno entregado.
 - Verificación: 17 pruebas pasaron, build Android y firma OK; endpoints públicos 200, ingreso kiosco/atención sin redirección, APK 1.1.7 y assetlinks JSON correctos. Panel revisado visualmente con datos ficticios aislados. Pendiente verificar apertura automática y recepción real con un teléfono instalado y permiso concedido, y comandera USB física.

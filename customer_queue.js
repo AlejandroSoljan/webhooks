@@ -161,6 +161,19 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     if (!doc) fail(404, 'Turno inexistente');
     res.json({ status: doc.status, claimed: !!doc.claimedAt, deliveryMode: doc.deliveryMode || '' });
   }));
+  app.post('/api/customer-app-admin/:tenant/tickets/:id/cancel', wrap(async (req, res) => {
+    const { t, db, base } = await scope(req); guard(req, t);
+    if (!ObjectId.isValid(req.params.id)) fail(404, 'Turno inexistente');
+    const doc = await serial(t, async () => {
+      await expire(db, base);
+      const tickets = db.collection('queue_tickets'), current = await tickets.findOne({ ...base, _id: new ObjectId(req.params.id) });
+      if (!current) fail(404, 'Turno inexistente');
+      if (current.status !== 'RESERVED') return current;
+      const now = new Date();
+      return tickets.findOneAndUpdate({ _id: current._id, status: 'RESERVED' }, { $set: { status: 'CANCELLED', deliveryMode: 'dismissed', updatedAt: now }, $push: { history: { action: 'kiosk_closed', at: now } } }, { returnDocument: 'after' });
+    });
+    res.json({ ok: true, cancelled: doc.status === 'CANCELLED' && doc.deliveryMode === 'dismissed', status: doc.status });
+  }));
   app.post('/api/customer-app-admin/:tenant/tickets/:id/print', wrap(async (req, res) => {
     const { t, db, cfg, base } = await scope(req); guard(req, t);
     if (!ObjectId.isValid(req.params.id)) fail(404, 'Turno inexistente');

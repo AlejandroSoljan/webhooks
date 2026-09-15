@@ -93,7 +93,7 @@ test('QR expires, rejects tampering and cannot be used by a different commerce',
   assert.equal(validPresence(token + 'x', 'TEST', 'secret', 2000), false);
 });
 test('pages contain syntactically valid scripts and escape tenant names', () => {
-  for (const mode of ['kiosk', 'display', 'admin']) { const html = queuePage('TEST', mode); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); }
+  for (const mode of ['kiosk', 'display', 'admin']) { const html = queuePage('TEST', mode); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); if (mode === 'kiosk') assert.match(html, /id="dismissTicket"[^>]+aria-label="Cerrar y cancelar esta reserva"/); }
 });
 test('existing Android page still renders with a valid embedded script', async () => {
   const app = express(); require('../customer_app_web').mountCustomerApp(app);
@@ -151,6 +151,15 @@ test('QR-first issuance reserves without joining the callable queue; a retry kee
   claim = new URLSearchParams(new URL(reserved.claimUrl).hash.slice(1)).get('code');
   const retry = await req(api + '/tickets', payload, 'TEST'); assert.equal(retry.body.claimUrl, reserved.claimUrl);
   const state = await req(api + '/queue'); assert.ok(!state.body.sectors[1].next.some(t => t.displayNumber === reserved.displayNumber));
+});
+test('closing the QR dialog cancels only an unclaimed reservation', async () => {
+  const x = (await req(api + '/tickets', { sectorId: 'caja', installId: 'dismiss-me', source: 'kiosk', delivery: 'qr_or_print' }, 'TEST')).body;
+  const closed = await req(admin + '/tickets/' + x.id + '/cancel', {}, 'TEST');
+  assert.equal(closed.status, 200); assert.equal(closed.body.cancelled, true); assert.equal(closed.body.status, 'CANCELLED');
+  const again = await req(admin + '/tickets/' + x.id + '/cancel', {}, 'TEST'); assert.equal(again.status, 200); assert.equal(again.body.cancelled, true);
+  const doc = await db.collection('queue_tickets').findOne({ _id: new (require('mongodb').ObjectId)(x.id) });
+  assert.deepEqual(doc.history.map(h => h.action), ['created', 'kiosk_closed']);
+  const state = await req(api + '/queue'); assert.ok(!state.body.sectors.find(s => s.id === 'caja').next.some(n => n.displayNumber === x.displayNumber));
 });
 test('only the first phone can claim the QR, preserving the assigned number', async () => {
   assert.equal((await req(api + '/tickets/' + reserved.id + '/claim', { installId: 'phone-a', code: 'é'.repeat(43) })).status, 403);

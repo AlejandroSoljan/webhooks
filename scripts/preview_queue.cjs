@@ -9,6 +9,7 @@ app.get('/api/customer-app/DEMO_FERRETERIA/config', (q, r) => r.json({ businessN
 let printed = false;
 app.post('/api/customer-app/DEMO_FERRETERIA/tickets', async (q, r) => { printed = false; r.json({ id: 'preview', displayNumber: 'F042', sectorName: sectors.find(s => s.id === q.body.sectorId)?.name, status: 'RESERVED', claimQr: await QRCode.toDataURL('http://127.0.0.1:3188/preview/claim-demo'), reservationExpiresAt: new Date(Date.now() + 180000) }); });
 app.get('/api/customer-app-admin/DEMO_FERRETERIA/tickets/preview/delivery', (q, r) => r.json({ status: printed ? 'WAITING' : 'RESERVED', claimed: false, deliveryMode: printed ? 'print' : 'pending' }));
+app.post('/api/customer-app-admin/DEMO_FERRETERIA/tickets/preview/cancel', (q, r) => r.json({ ok: true, cancelled: !printed, status: printed ? 'WAITING' : 'CANCELLED' }));
 app.post('/api/customer-app-admin/DEMO_FERRETERIA/tickets/preview/print', (q, r) => { printed = true; r.json({ displayNumber: 'F042', sectorName: 'Ferretería', businessName: 'Mecan', createdAt: new Date() }); });
 app.get('/api/customer-app/DEMO_FERRETERIA/queue', (q, r) => r.json({ sectors: [{ id: 'ferreteria', name: 'Ferretería', current: { id: 'demo', displayNumber: 'F023', desk: 'Mostrador 1' }, waiting: 3, next: [{ displayNumber: 'F024' }, { displayNumber: 'F025' }] }, { id: 'caja', name: 'Caja', current: null, waiting: 0, next: [] }] }));
 app.listen(3188, '127.0.0.1', () => console.log('Preview http://127.0.0.1:3188/preview/kiosk'));

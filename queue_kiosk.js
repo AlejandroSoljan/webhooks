@@ -65,8 +65,17 @@ function kiosk() {
     } catch (e) { $('deliveryError').textContent = e.message; }
     finally { printing = false; $('printTicket').disabled = false; }
   }
+  async function dismiss() {
+    if (!reserved || busy) { close(); return; }
+    setBusy(true); $('dismissTicket').disabled = false;
+    try {
+      await request(ADMIN + '/tickets/' + reserved.id + '/cancel', { method: 'POST', body: '{}' });
+      close();
+    } catch (e) { $('deliveryError').textContent = 'No se pudo cerrar la reserva. Reintentá con la X.'; }
+    finally { setBusy(false); }
+  }
   function close() { clearInterval(poll); clearTimeout(closeTimer); reserved = null; dialog.close(); $('receipt').replaceChildren(); }
-  dialog.addEventListener('cancel', e => e.preventDefault());
-  $('printTicket').onclick = printTicket; $('closeTicket').onclick = close;
+  dialog.addEventListener('cancel', e => { e.preventDefault(); dismiss(); });
+  $('printTicket').onclick = printTicket; $('closeTicket').onclick = close; $('dismissTicket').onclick = dismiss;
 }
 module.exports = { kiosk };
