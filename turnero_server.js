@@ -8,7 +8,7 @@ const app = express();
 app.disable('x-powered-by');
 app.use((_req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); res.set('Referrer-Policy', 'same-origin'); next(); });
 app.use(auth.attachUser);
-const queue = mountCustomerApp(app);
+const queue = mountCustomerApp(app, { auth });
 let reconciling = false;
 const notifications = setInterval(async () => {
   if (reconciling) return;

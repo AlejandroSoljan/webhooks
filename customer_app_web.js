@@ -58,11 +58,11 @@ async function refreshTicket(){if(claimPending)return;let id=localStorage.asisto
 function registerPush(){el('branchName').textContent=cfg.branchName||'Sucursal principal';el('branchAddress').textContent=cfg.branchAddress||'Atención en el local';el('businessHours').textContent=cfg.businessHours||'Horario comercial';el('estimatedWait').textContent=Number(cfg.estimatedWaitMinutes||0)+' minutos';function save(token){if(!token)return;localStorage.asistoPushToken=token;fetch(API+'/devices',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({installId,pushToken:token})}).catch(()=>{})}window.addEventListener('asisto-push-token',e=>save(e.detail));if(window.AsistoNativePushToken)save(window.AsistoNativePushToken)}init().catch(()=>toast('No se pudo cargar la aplicación'));timer=setInterval(()=>{if(!document.getElementById('my').classList.contains('hide'))refreshTicket()},10000)</script></body></html>`;
 }
 
-function mountCustomerApp(app) {
+function mountCustomerApp(app, { auth } = {}) {
   app.use("/api/customer-app", express.json({ limit: "32kb" }));
   app.use("/api/customer-app-admin", express.json({ limit: "32kb" }));
   app.use('/customer-app/assets', express.static(require('path').join(__dirname, 'static', 'turnero')));
-  const queue = mountQueue(app, { getDb, configFor, invalidateConfig: t => customerConfigCache.delete(t), dayKey, firebaseSender });
+  const queue = mountQueue(app, { getDb, configFor, invalidateConfig: t => customerConfigCache.delete(t), dayKey, firebaseSender, auth });
   app.get('/.well-known/assetlinks.json', (_req, res) => res.sendFile(require('path').join(__dirname, 'static/turnero/assetlinks.json')));
   app.get('/customer-app/download/android', (_req, res) => res.download(require('path').join(__dirname, 'Asisto-1.1.7.apk'), 'Asisto-1.1.7.apk'));
   app.get("/customer-app/:tenant", (req, res) => { const t = tenant(req.params.tenant); if (!t) return res.status(400).send("Dominio inválido"); res.type("html").send(page(t)); });

@@ -27,8 +27,8 @@ before(async () => {
   }
   db = client.db('queue_isolated_test');
   const app = express(); app.use(express.json());
-  app.use((req, _res, next) => { if (req.get('x-test-user')) req.user = { uid: 'test', tenantId: req.get('x-test-user'), username: 'Tester', role: 'admin' }; next(); });
-  queue = mountQueue(app, { openTenants: ['OPEN'], getDb: async () => db, configFor: async () => cfg, dayKey: () => '2026-09-14', secret: 'test-secret', firebaseSender: async () => async (token, message) => { if (rejectPush) throw Error('mock_failure'); sent++; notifications.push({ token, ...message }); } });
+  app.use((req, _res, next) => { if (req.get('x-test-user')) req.user = { uid: 'test', tenantId: req.get('x-test-user'), username: 'Tester', role: req.get('x-test-role') || 'admin' }; next(); });
+  queue = mountQueue(app, { openTenants: ['OPEN'], getDb: async () => db, configFor: async () => cfg, dayKey: () => '2026-09-14', secret: 'test-secret', auth: { appShell: ({ active, main }) => `<nav data-active="${active}">Menú Asisto</nav>${main}` }, firebaseSender: async () => async (token, message) => { if (rejectPush) throw Error('mock_failure'); sent++; notifications.push({ token, ...message }); } });
   app.get('/api/customer-app/:tenant/config', (_req, res) => res.json(cfg));
   server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r)); url = 'http://127.0.0.1:' + server.address().port;
 });
@@ -51,6 +51,13 @@ test('statistics reconstruct transfers and do not reset service time on recalls'
   const x = summarize([doc], cfg.sectors); assert.equal(x.summary.transfers, 1); assert.equal(x.summary.issued, 1); assert.equal(x.summary.averageWaitSeconds, 90); assert.equal(x.summary.averageServiceSeconds, 120);
   assert.deepEqual(ticketVisits({ status: 'CANCELLED', history: [] }), []);
   new vm.Script(statsPage('TEST', '2026-09-14').match(/<script>([\s\S]*)<\/script>/)[1]);
+});
+test('queue statistics use the Asisto shell and superadmin can select a tenant', async () => {
+  await db.collection('tenant_config').insertMany([{ _id: 'ALFA' }, { _id: 'BETA' }]);
+  const shell = await fetch(url + '/ui/turnero/TEST/estadisticas', { headers: { 'x-test-user': 'TEST' } });
+  const shellHtml = await shell.text(); assert.equal(shell.status, 200); assert.match(shellHtml, /Menú Asisto/); assert.match(shellHtml, /data-active="queue_stats"/); assert.match(shellHtml, /<iframe[^>]+embed=1/); assert.doesNotMatch(shellHtml, /id="statsTenant"/);
+  const embedded = await fetch(url + '/ui/turnero/TEST/estadisticas?embed=1', { headers: { 'x-test-user': 'TEST', 'x-test-role': 'superadmin' } });
+  const embeddedHtml = await embedded.text(); assert.equal(embedded.status, 200); assert.match(embeddedHtml, /id="statsTenant"/); assert.match(embeddedHtml, />ALFA</); assert.match(embeddedHtml, />BETA</); new vm.Script(embeddedHtml.match(/<script>([\s\S]*)<\/script>/)[1]);
 });
 test('notification history filters preserve legacy manual records and separate queue automation', () => {
   const { notificationHistoryFilter, panelPage } = require('../customer_notifications');
