@@ -22,6 +22,18 @@ function createQueueNotifications({ firebaseSender, publicBase }) {
         if (!device) continue;
         const record = { milestone, sectorId: doc.sectorId, visit, attemptedAt: new Date(), status: 'sending' };
         await tickets.updateOne({ _id: doc._id }, { $set: { ['queueNotifications.' + key]: record } });
+        const notificationKey = `queue:${doc._id}:v${visit}:${milestone}`;
+        const logBase = {
+          tenantId: doc.tenantId, notificationKey, notificationType: 'automatic_queue', sourceLabel: 'Turnero automático',
+          ticketId: String(doc._id), ticketNumber: doc.displayNumber, sectorId: doc.sectorId, sectorName: doc.sectorName,
+          milestone, visit, status: 'sending', targetCount: 1, requestedCount: 1, successCount: 0, failureCount: 0,
+          updatedAt: new Date(),
+        };
+        await db.collection('customer_app_notifications').updateOne(
+          { tenantId: doc.tenantId, notificationKey },
+          { $set: logBase, $setOnInsert: { createdAt: new Date(), firstAttemptAt: new Date() }, $inc: { attemptCount: 1 } },
+          { upsert: true },
+        );
         try {
           const send = await firebaseSender();
           const title = doc.status === 'CALLED' ? '¡Es tu turno!' : ahead === 1 ? 'Falta 1 turno para el tuyo' : 'Faltan 2 turnos para el tuyo';
@@ -30,6 +42,15 @@ function createQueueNotifications({ firebaseSender, publicBase }) {
           record.status = 'sent'; record.sentAt = new Date(); delivered++;
         } catch (e) { record.status = 'failed'; record.error = 'push_delivery_failed'; console.error('[queue] push failed:', e.message); }
         await tickets.updateOne({ _id: doc._id }, { $set: { ['queueNotifications.' + key]: record } });
+        await db.collection('customer_app_notifications').updateOne(
+          { tenantId: doc.tenantId, notificationKey },
+          { $set: {
+            title: doc.status === 'CALLED' ? '¡Es tu turno!' : ahead === 1 ? 'Falta 1 turno para el tuyo' : 'Faltan 2 turnos para el tuyo',
+            body: `${doc.displayNumber} · ${doc.sectorName}${doc.status === 'CALLED' && doc.desk ? ' · ' + doc.desk : ''}${ahead ? ' · Acercate al sector.' : ''}`,
+            status: record.status, successCount: record.status === 'sent' ? 1 : 0, failureCount: record.status === 'sent' ? 0 : 1,
+            updatedAt: new Date(), ...(record.sentAt ? { sentAt: record.sentAt } : {}),
+          } },
+        );
       }
     }
     return delivered;

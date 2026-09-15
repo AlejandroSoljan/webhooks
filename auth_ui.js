@@ -1322,6 +1322,8 @@ function getNavItemsForUser(user) {
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
   if (hasAccess(user, "notifications")) items.push({ key: "notifications", title: "Notificaciones App", href: "/ui/notificaciones-app" });
+  const queueTenant = tenant(user?.tenantId);
+  if (queueTenant && hasAccess(user, "notifications")) items.push({ key: "queue_stats", title: "Estadísticas Turnero", href: `/ui/turnero/${encodeURIComponent(queueTenant)}/estadisticas` });
 
   if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
   if (hasAccess(user, "wweb", "support")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });

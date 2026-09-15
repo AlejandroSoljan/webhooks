@@ -1,6 +1,6 @@
 # Turnero de Mecan en AWS
 
-Actualizado el 14/09/2026 a las 22:30 de Argentina. Servicio publicado en AWS; la app principal sigue en 5.00.139 y no se reinició. Turnero: `/opt/asisto/turnero/releases/20260914-4`. Android: **Asisto 1.1.7**.
+Actualizado el 14/09/2026 a las 22:42 de Argentina. Servicio publicado en AWS; la app principal sigue en 5.00.139 con la actualización del menú y notificaciones. Turnero: `/opt/asisto/turnero/releases/20260914-5`. Android: **Asisto 1.1.7**.
 
 ## Accesos reales
 
@@ -64,7 +64,7 @@ Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un únic
 
 ## Avisos, acceso temporal y estadísticas (1.1.7)
 
-- Release AWS actual: /opt/asisto/turnero/releases/20260914-4, puerto 3102. Se recargó Nginx y se reinició únicamente asisto-turnero. La release 4 corrige el barrido para Mongo API estricta con aggregate + group (distinct no está admitido en ese servidor).
+- Release AWS actual: `/opt/asisto/turnero/releases/20260914-5`, puerto 3102. App principal: `/opt/asisto/releases/5cf94e5354a5-turnero-notifications`. La release 4 corrigió el barrido para Mongo API estricta con aggregate + group; la 5 incorporó el historial automático y el filtro. Ambos servicios mantienen sus releases anteriores para rollback.
 - QUEUE_OPEN_TENANTS=DEMO_FERRETERIA en /etc/asisto/turnero.env habilita emisión y operación sin login solo en ese comercio, a pedido del usuario. Retirar ese valor y reiniciar el servicio restablece el login. Los eventos anónimos guardan operador-sin-login y puesto; no identifican una persona.
 - Panel: https://asistobot.com.ar/ui/turnero/DEMO_FERRETERIA/estadisticas. Enlace desde atención. Requiere sesión Asisto del mismo comercio o superadmin. API /api/customer-app-admin/:tenant/stats?from=AAAA-MM-DD&to=AAAA-MM-DD.
 - Mongo queue_tickets conserva fechas, estado, entrega e historial (creación, activación, primer llamado, repeticiones, cierre, ausencia, traslado y puesto). El panel reconstruye todas las visitas a secciones, incluidas las anteriores a esta actualización. Promedios excluyen etapas incompletas, P90 espera, conteos por día/sección/hora, datos de móvil/impresión y CSV de recorridos sin identificadores de dispositivos ni códigos QR. No hay borrado automático de históricos.
@@ -74,4 +74,7 @@ Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un únic
 - Android App Links: host asistobot.com.ar, ruta exacta /customer-app/DEMO_FERRETERIA (incluye query/fragment). /.well-known/assetlinks.json se publica JSON por HTTPS, sin redirecciones, con la huella del APK verificada. El esquema asisto://turno continúa como alternativa desde el navegador. No se modifica la firma de la app.
 - Firma 1.1.7: 45:A5:2D:AB:8C:88:F8:B9:52:A8:35:CB:C3:37:41:FB:68:C8:81:AE:B1:98:D2:7E:48:F1:7F:9F:84:09:D4:90. Paquete ar.com.asistobot.scanner.
 - Todos los pies del turnero, modal, celular, estadísticas y comprobante muestran Powered by Asisto + www.asistobot.com.ar. El escáner de productos ya incluía esa web.
+- El Centro de notificaciones registra `notificationType=manual` para envíos humanos y `notificationType=automatic_queue` para los hitos del turnero. Los registros manuales anteriores, que no tienen este campo, se consideran manuales. El panel permite filtrar Todas, Manuales y Automáticas por turnos; muestra número y sección en estas últimas. El total de envíos correctos responde al filtro visible.
+- El menú principal de Asisto muestra “Estadísticas Turnero” a usuarios del comercio con acceso a Notificaciones App. El destino se arma con el tenant de la sesión y mantiene la autorización del panel estadístico.
+- Se importaron de forma idempotente los avisos automáticos anteriores que todavía estaban registrados dentro de los tickets. Resultado inicial: 2 avisos automáticos de 1 ticket; el historial manual existente quedó intacto.
 - Verificación: 17 pruebas pasaron, build Android y firma OK; endpoints públicos 200, ingreso kiosco/atención sin redirección, APK 1.1.7 y assetlinks JSON correctos. Panel revisado visualmente con datos ficticios aislados. Pendiente verificar apertura automática y recepción real con un teléfono instalado y permiso concedido, y comandera USB física.

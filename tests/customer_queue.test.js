@@ -52,6 +52,15 @@ test('statistics reconstruct transfers and do not reset service time on recalls'
   assert.deepEqual(ticketVisits({ status: 'CANCELLED', history: [] }), []);
   new vm.Script(statsPage('TEST', '2026-09-14').match(/<script>([\s\S]*)<\/script>/)[1]);
 });
+test('notification history filters preserve legacy manual records and separate queue automation', () => {
+  const { notificationHistoryFilter, panelPage } = require('../customer_notifications');
+  assert.deepEqual(notificationHistoryFilter('test', 'automatic_queue'), { tenantId: 'TEST', notificationType: 'automatic_queue' });
+  assert.deepEqual(notificationHistoryFilter('test', 'manual'), { tenantId: 'TEST', $or: [{ notificationType: 'manual' }, { notificationType: { $exists: false } }] });
+  assert.deepEqual(notificationHistoryFilter('test', 'all'), { tenantId: 'TEST' });
+  assert.equal(notificationHistoryFilter('test', 'wrong'), null);
+  const html = panelPage({ tenantId: 'TEST', tenants: ['TEST'], isSuper: false });
+  assert.match(html, /Automáticas por turnos/); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]);
+});
 test('temporary open tenant can operate without a session but statistics stay tenant-authorized', async () => {
   cfg.queuePresence = 'open';
   for (const route of ['/customer-app/OPEN/kiosk', '/ui/turnero/OPEN']) assert.equal((await fetch(url + route, { redirect: 'manual' })).status, 200);
@@ -188,6 +197,8 @@ test('push milestones 2, 1 and called are durable, current position includes the
   assert.equal(mine().at(-1).title, 'Faltan 2 turnos para el tuyo'); assert.equal(mine().length, 4);
   const saved = await db.collection('queue_tickets').findOne({ installId: 'n3' });
   assert.equal(Object.values(saved.queueNotifications).filter(n => n.status === 'sent').length, 4);
+  const automatic = await db.collection('customer_app_notifications').find({ tenantId: t, notificationType: 'automatic_queue' }).toArray();
+  assert.equal(automatic.length, 4); assert.ok(automatic.every(n => n.successCount === 1 && n.ticketNumber));
   // A new reconciler (process restart) sees the same persisted milestones.
   const { createQueueNotifications } = require('../queue_notifications');
   await createQueueNotifications({ firebaseSender: async () => async () => { throw Error('duplicate'); }, publicBase: 'https://asistobot.com.ar' }).reconcile(db, { tenantId: t, branchId: 'CENTRAL', dayKey: '2026-09-14' });
