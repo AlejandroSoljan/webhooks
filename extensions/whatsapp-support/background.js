@@ -54,7 +54,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       case 'CONTACTS': return request('/contacts', { contacts: Array.isArray(message.contacts) ? message.contacts : [] }, session.csrf);
       case 'DRAFTS': return request('/drafts?jid=' + encodeURIComponent(String(message.jid || '')));
       case 'MESSAGES': return request('/messages?jid=' + encodeURIComponent(String(message.jid || '')));
-      case 'ASSIGN_MESSAGES': return request('/messages/assign', { jid: String(message.jid || ''), messageIds: Array.isArray(message.messageIds) ? message.messageIds : [], destination: String(message.destination || ''), existingAction: String(message.existingAction || ''), reassign: message.reassign === true, duplicate: message.duplicate === true }, session.csrf);
+      case 'ASSIGN_MESSAGES': return request('/messages/assign', { jid: String(message.jid || ''), messageIds: Array.isArray(message.messageIds) ? message.messageIds : [], selectedMessages: Array.isArray(message.selectedMessages) ? message.selectedMessages : [], destination: String(message.destination || ''), existingAction: String(message.existingAction || ''), reassign: message.reassign === true, duplicate: message.duplicate === true }, session.csrf);
       case 'DETAIL': return request('/drafts/' + id);
       case 'SAVE': return request('/drafts/' + id + '/save', { revision: message.revision, fields: message.fields }, session.csrf);
       case 'RECONCILE': return request('/drafts/' + id + '/reconcile', { revision: message.revision, fields: message.fields }, session.csrf);

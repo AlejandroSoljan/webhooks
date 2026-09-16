@@ -76,15 +76,21 @@
     const assign = document.createElement('button'); assign.className = 'primary'; assign.textContent = destination.value === 'new' ? 'Crear tarea con seleccionados' : 'Actualizar tarea con seleccionados'; destination.onchange = () => { action.hidden = !(taskData.tasks || []).find(task => task.id === destination.value)?.ticketId; assign.textContent = destination.value === 'new' ? 'Crear tarea con seleccionados' : 'Actualizar tarea con seleccionados'; }; destination.onchange(); assign.onclick = async () => {
       if (!selected.size) return alert('Seleccioná al menos un mensaje.'); if (!destination.value) return alert('Elegí la tarea de destino.');
       const saved = (taskData.tasks || []).find(task => task.id === destination.value)?.ticketId; if (saved && !action.value) return alert('Elegí si querés agregar un seguimiento o actualizar el ticket existente.');
-      const request = { action: 'ASSIGN_MESSAGES', jid: currentJid, messageIds: [...selected], destination: destination.value, existingAction: action.value };
+      const selectedMessages = messageNodes().filter(node => selected.has(node.dataset.asistoMessageId)).map(node => {
+        const pre = node.matches('[data-pre-plain-text]') ? node : node.querySelector('[data-pre-plain-text]');
+        const at = messageAt(pre?.getAttribute('data-pre-plain-text'));
+        const parts = [...node.querySelectorAll('.selectable-text')].filter(element => !element.parentElement?.closest('.selectable-text')).map(element => element.innerText || element.textContent || '');
+        return { id: node.dataset.asistoMessageId, jid: currentJid, at: Number.isFinite(at) ? new Date(at).toISOString() : '', fromMe: node.classList.contains('message-out'), text: parts.join('\n').trim() };
+      });
+      const request = { action: 'ASSIGN_MESSAGES', jid: currentJid, messageIds: [...selected], selectedMessages, destination: destination.value, existingAction: action.value };
       let response = await chrome.runtime.sendMessage(request);
       if (response?.error === 'message_already_assigned' && confirm('Uno o más mensajes ya pertenecen a otra tarea. ¿Querés reasignarlos?')) response = await chrome.runtime.sendMessage({ ...request, reassign: true });
-      if (response?.error) return alert('Asisto: ' + response.error); selectionDirty = false; await refreshTasks(); chrome.runtime.sendMessage({ action: 'OPEN', jid: currentJid, name: currentName }).catch(() => {});
+      if (response?.error) return alert(response.error === 'message_selection_not_found' ? 'Falta sincronizar algún mensaje seleccionado y no se pudo recuperar su texto o fecha. Mantené esos mensajes visibles y volvé a intentar. Para audios sin transcripción, esperá a que Baileys los procese.' : 'Asisto: ' + response.error); selectionDirty = false; await refreshTasks(); chrome.runtime.sendMessage({ action: 'OPEN', jid: currentJid, name: currentName }).catch(() => {});
     };
     bar.append(title, all, none, from, destination, action, assign);
   }
   async function refreshTasks() {
-    if (!currentJid) return; const response = await chrome.runtime.sendMessage({ action: 'MESSAGES', jid: currentJid }); if (!response?.data) return; taskData = response.data;
+    if (!currentJid) return; const requestedJid = currentJid; const response = await chrome.runtime.sendMessage({ action: 'MESSAGES', jid: requestedJid }); if (!response?.data || currentJid !== requestedJid) return; taskData = response.data;
     if (!selectionDirty) selected.clear();
     renderMessageControls();
   }

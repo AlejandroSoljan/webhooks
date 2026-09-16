@@ -303,6 +303,31 @@ test('WhatsApp contact reader exports only names and normalized identifiers from
  await new Promise(resolve=>setTimeout(resolve,20));const contacts=messages.flatMap(message=>message.value.contacts||[]);
  assert.deepEqual(JSON.parse(JSON.stringify(contacts)),[{name:'Vane',aliases:['123@lid','549123@s.whatsapp.net']},{name:'Gime',aliases:['456@lid']}]);assert.ok(!JSON.stringify(messages).includes('never-copy'));assert.ok(messages.at(-1).value.complete);
 });
+test('explicit selection imports missing readable messages once and preserves stored evidence', async () => {
+ const jid = '123@s.whatsapp.net';
+ const input = { jid, destination: 'new', messageIds: ['selected-text', 'selected-caption'], selectedMessages: [
+   { id: 'selected-text', jid, at: '2026-09-14T14:31:00Z', fromMe: false, text: 'Hola Alejandro, buen día' },
+   { id: 'selected-caption', jid, at: '2026-09-14T14:33:00Z', fromMe: false, text: 'Esta factura figura en julio pero el período difiere en ingreso de comprobantes' },
+ ] };
+ const first = await service.assignMessages(scope, input);
+ const row = await service.col('drafts').findOne({ _id: first.draftId });
+ assert.equal(row.messageIds.length, 2);
+ assert.match(vault.open(row.fields, row._id).description, /factura/);
+ assert.equal(await service.col('messages').countDocuments({ ...scope, historical: true }), 2);
+ const again = await service.assignMessages(scope, { ...input, destination: first.draftId, selectedMessages: input.selectedMessages.map(m => ({ ...m, text: 'incorrect replacement' })) });
+ assert.equal(again.assigned, 0);
+ const stored = await service.col('messages').findOne({ ...scope, id: 'selected-caption' });
+ assert.match(vault.open(stored.payload, stored._id).text, /factura/);
+ assert.equal(await service.col('drafts').countDocuments({ _id: first.draftId }), 1);
+});
+
+test('missing selection cannot import another contact or silently omit unreadable messages', async () => {
+ const input = { jid: '123@s.whatsapp.net', destination: 'new', messageIds: ['missing'], selectedMessages: [{ id: 'missing', jid: '999@s.whatsapp.net', at: '2026-09-14T14:31:00Z', text: 'Private other contact' }] };
+ await assert.rejects(service.assignMessages(scope, input), /message_selection_not_found/);
+ await assert.rejects(service.assignMessages(scope, { ...input, selectedMessages: [{ ...input.selectedMessages[0], jid: input.jid, text: '' }] }), /message_selection_not_found/);
+ assert.equal(await service.col('messages').countDocuments(scope), 0);
+});
+
 test('extension always selects the local agent account and never falls back to a browser login', async () => {
  const vm = require('node:vm'), fs = require('node:fs');
  const listeners = [], calls = []; let available = true;

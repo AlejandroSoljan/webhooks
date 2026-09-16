@@ -351,7 +351,18 @@ class SupportService {
     const contact = await this.col('contacts').findOne({ ...scope, $or: [{ _id: scopedId(scope, 'contact', jid) }, { jid }, { aliases: jid }] });
     if (excluded({ jid, name: contact?.name }, await this.config(scope))) fail('conversation_excluded', 409);
     const jids = [...new Set([jid, ...(contact?.aliases || [])])];
-    const rows = await this.col('messages').find({ ...scope, jid: { $in: jids }, id: { $in: waIds } }).sort({ at: 1, _id: 1 }).toArray();
+    let rows = await this.col('messages').find({ ...scope, jid: { $in: jids }, id: { $in: waIds } }).sort({ at: 1, _id: 1 }).toArray();
+    if (rows.length !== waIds.length && Array.isArray(input.selectedMessages)) {
+      const found = new Set(rows.map(row => row.id));
+      const missing = waIds.filter(id => !found.has(id));
+      // Explicit message selection may include history not delivered by Baileys.
+      // Import only selected, readable evidence; never replace stored content.
+      const imports = missing.map(id => input.selectedMessages.find(row => row?.id === id));
+      if (imports.some(row => !row || !jids.includes(row.jid) || typeof row.text !== 'string' || !row.text.trim() || row.text.length > 20000 || !Number.isFinite(+new Date(row.at)) || !row.at)) fail('message_selection_not_found', 404);
+      for (const row of imports) await this.ingest(scope, { id: row.id, jid, at: new Date(row.at), text: row.text, fromMe: row.fromMe === true, name: contact?.name || '' }, { historical: true });
+      rows = await this.col('messages').find({ ...scope, jid: { $in: jids }, id: { $in: waIds } }).sort({ at: 1, _id: 1 }).toArray();
+      await this.audit(scope, 'selected_messages_imported', jid);
+    }
     if (rows.length !== waIds.length) fail('message_selection_not_found', 404);
     const destination = input.destination === 'new' ? 'new' : text(input.destination, 64);
     let draft = destination === 'new' ? null : await this.col('drafts').findOne({ _id: destination, ...scope, jid: { $in: jids }, state: { $ne: 'merged' } });
