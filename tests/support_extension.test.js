@@ -344,6 +344,25 @@ test('extension always selects the local agent account and never falls back to a
  assert.equal((await send()).error, 'agent_not_authorized');
  assert.equal(calls.length, 1, 'no remote browser-account fallback');
 });
+test('simultaneous panel requests retain their own agent token while one local login waits', async () => {
+ const vm = require('node:vm'), fs = require('node:fs');
+ const listeners = [], calls = [], held = []; let localCalls = 0;
+ const chrome = { runtime: { id: extensionId, getURL: p => 'chrome-extension://' + extensionId + '/' + p, onMessage: { addListener: fn => listeners.push(fn) } }, action: { onClicked: { addListener() {} } }, sidePanel: { setOptions: async () => {} } };
+ const json = value => ({ ok: true, headers: { get: () => 'application/json' }, json: async () => value });
+ vm.runInNewContext(fs.readFileSync(require.resolve('../extensions/whatsapp-support/background.js'), 'utf8'), { chrome, AbortSignal, fetch: (url, options) => {
+   if (url.includes('127.0.0.1')) { localCalls++; return localCalls === 2 ? new Promise(resolve => held.push(() => resolve(json({ token: 'B'.repeat(43) })))) : Promise.resolve(json({ token: 'A'.repeat(43) })); }
+   calls.push({ url, options }); return Promise.resolve(json(url.endsWith('/session') ? { ...scope, csrf: 'private-grant' } : { chats: [] }));
+ } });
+ const sender = { id: extensionId, url: chrome.runtime.getURL('panel.html') };
+ const send = action => new Promise(resolve => listeners[0]({ action }, sender, resolve));
+ const first = send('INDEX');
+ while (!calls.some(call => call.url.endsWith('/session'))) await new Promise(resolve => setImmediate(resolve));
+ const second = send('SESSION');
+ while (localCalls < 2) await new Promise(resolve => setImmediate(resolve));
+ assert.ok((await first).data);
+ assert.equal(calls.find(call => call.url.endsWith('/index')).options.headers.Authorization, 'Bearer ' + 'A'.repeat(43));
+ held[0](); assert.ok((await second).data);
+});
 
 test('background restricts WhatsApp messages, exposes the active chat and forces panel refreshes',async()=>{
  const vm=require('node:vm'),fs=require('node:fs');const listeners=[];let action;const calls=[],opened=[],selections=[],sessionStore={};let now=100;
