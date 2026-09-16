@@ -29,6 +29,11 @@ test('local discovery is loopback-only and exposes device authorization only to 
     assert.equal((await fetch(base + '/extension-session', { headers: { ...headers, Origin: 'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } })).status, 403);
     const extensionHeaders = { ...headers, Origin: 'chrome-extension://mhdkipfdcoobcghfoklghmpfgkcbbaop' };
     assert.deepEqual(await (await fetch(base + '/extension-session', { headers: extensionHeaders })).json(), { token: 'A'.repeat(43) });
+    const workerHeaders = { 'X-Asisto-Local': '1', 'X-Asisto-Extension-Id': 'mhdkipfdcoobcghfoklghmpfgkcbbaop' };
+    assert.deepEqual(await (await fetch(base + '/extension-session', { headers: workerHeaders })).json(), { token: 'A'.repeat(43) });
+    assert.equal((await fetch(base + '/extension-session', { headers: { ...workerHeaders, Origin: 'https://other.example' } })).status, 403);
+    assert.equal((await fetch(base + '/extension-session', { headers: { 'X-Asisto-Local': '1' } })).status, 403);
+    assert.equal((await fetch(base + '/extension-session', { headers: { ...workerHeaders, 'X-Asisto-Extension-Id': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } })).status, 403);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
 

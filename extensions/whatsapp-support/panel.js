@@ -22,6 +22,7 @@ async function loadContactControl() {
   }
 }
 const errors = {
+  agent_access_denied: 'El agente local rechazó el acceso de la extensión. Actualizá el agente y recargá la extensión.',
   authentication_required: 'No se encontró la autorización del agente de esta PC.', agent_not_authorized: 'Iniciá el agente Baileys autorizado en esta PC.', connection_failed: 'No se pudo conectar con el agente Baileys de esta PC.',
   account_changed: 'Cambió el usuario de Asisto. Pulsá Actualizar para cargar sus tareas.', forbidden: 'Tu usuario necesita acceso a Tickets desde WhatsApp en Asisto.',
   revision_conflict: 'La tarea cambió. Seleccionala nuevamente para cargar la última versión.', source_reconciliation_required: 'Revisá los mensajes nuevos o la agrupación de esta tarea en Asisto antes de enviarla.',
@@ -128,8 +129,12 @@ async function selectContact(jid, draftId = '') {
 }
 async function refresh() {
   const previous = $('contacts').value;
+  $('connectionState').textContent = 'Comprobando conexión…';
   owner = ''; current = null; $('editor').hidden = true; $('connect').hidden = true; $('tasks').replaceChildren(); $('contacts').replaceChildren(); $('account').textContent = 'Consultando sesión…';
-  session = await api('SESSION'); owner = session.tenantId + ':' + session.userId;
+  try { session = await api('SESSION'); }
+  catch (error) { $('connectionState').textContent = 'Sin conexión con Asisto'; $('account').textContent = 'Sesión no disponible'; throw error; }
+  owner = session.tenantId + ':' + session.userId;
+  $('connectionState').textContent = 'Conectado a Asisto';
   $('account').textContent = session.tenantId + ' · ' + session.username;
   const index = await api('INDEX');
   if (index.owner !== owner) throw new Error('account_changed');

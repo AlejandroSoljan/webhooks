@@ -14,7 +14,8 @@ async function request(path, body, grant) {
 async function authenticatedSession() {
   try { return await request('/session'); }
   catch {
-    const local = await fetch(LOCAL, { cache: 'no-store', signal: AbortSignal.timeout(3000), headers: { 'X-Asisto-Local': '1' } });
+    const local = await fetch(LOCAL, { cache: 'no-store', signal: AbortSignal.timeout(5000), headers: { 'X-Asisto-Local': '1', 'X-Asisto-Extension-Id': chrome.runtime.id } });
+    if (local.status === 403) throw new Error('agent_access_denied');
     if (!local.ok || !local.headers.get('content-type')?.includes('application/json')) throw new Error('agent_not_authorized');
     const result = await local.json();
     if (!/^[A-Za-z0-9_-]{43}$/.test(result.token || '')) throw new Error('agent_not_authorized');
