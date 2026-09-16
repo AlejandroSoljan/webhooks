@@ -16,6 +16,7 @@ const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
 const { recordWebAccessLogin } = require("./web_access_stats");
+const { queueLeadWhatsAppAlert } = require("./lead_notification");
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://www.asistobot.com.ar"; // ej: https://tudominio.com
 
 
@@ -1536,7 +1537,7 @@ function loginPage({ error, msg, to, baseUrl }) {
 
           <section class="lpSection" id="contacto">
             <h2>Contacto</h2>
-            <p class="lpLeadSmall">Contanos tu negocio y te contactaremos.</p>
+            <p class="lpLeadSmall">Contanos qué querés mejorar en la gestión de tu empresa. Te ayudamos a encontrar la solución adecuada.</p>
             <div class="lpContact">
               <form class="lpForm" method="POST" action="/contact">
                 <div class="lpRow">
@@ -1571,7 +1572,7 @@ function loginPage({ error, msg, to, baseUrl }) {
 
                 <div class="lpMessageField">
                   <span class="lpInputIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h16v13H9l-5 4V4Z"/><path d="M8 9h8M8 13h5"/></svg></span>
-                  <textarea name="message" rows="4" placeholder="Quiero automatizar pedidos por WhatsApp, tengo X sucursales, etc." aria-label="Mensaje" required></textarea>
+                  <textarea name="message" rows="4" placeholder="Quiero simplificar la atención, automatizar procesos y tener más control de mi empresa..." aria-label="Mensaje" required></textarea>
                 </div>
                 <button class="btn" type="submit">✈&nbsp;&nbsp; Enviar</button>
               </form>
@@ -3274,13 +3275,21 @@ function mountAuthRoutes(app) {
       }
 
       const db = await getDb();
-      await db.collection("leads").insertOne({
+      const lead = {
         name, email, company, phone, message,
         createdAt: new Date(),
         ip: req.headers["x-forwarded-for"] || req.socket?.remoteAddress || null,
         ua: req.headers["user-agent"] || null,
         page: "/login"
-      });
+      };
+      const result = await db.collection("leads").insertOne(lead);
+      try {
+        const notification = await queueLeadWhatsAppAlert(db, { ...lead, _id: result.insertedId });
+        await db.collection("leads").updateOne({ _id: result.insertedId }, { $set: { whatsappAlertStatus: notification.status } });
+      } catch (notifyError) {
+        console.error("[contact] lead guardado, aviso WhatsApp pendiente:", notifyError?.message || notifyError);
+        await db.collection("leads").updateOne({ _id: result.insertedId }, { $set: { whatsappAlertStatus: "error" } }).catch(() => {});
+      }
       return res.redirect("/login?msg=" + encodeURIComponent("¡Gracias! Te vamos a contactar a la brevedad.") + "#contacto");
     } catch (e) {
       console.error("[contact] error:", e);
@@ -5001,6 +5010,7 @@ function mountAuthRoutes(app) {
     const page = htmlEscape(String(lead?.page || ""));
     const tenantId = htmlEscape(String(lead?.tenantId || ""));
     const source = htmlEscape(String(lead?.source || (lead?.page ? "formulario" : "")));
+    const whatsappAlertStatus = htmlEscape(String(lead?.whatsappAlertStatus || ""));
     const leadType = htmlEscape(String(lead?.leadType || ""));
     const channelType = htmlEscape(String(lead?.channelType || ""));
     const quoteReady = lead?.quoteReady === true;
@@ -5035,6 +5045,7 @@ function mountAuthRoutes(app) {
           <div style="font-weight:600">${tenantId || "-"}</div>
           <div class="small">${leadType || "contacto"}${channelType ? ` · ${channelType}` : ""}</div>
           <div class="small">${source || "-"}</div>
+          ${whatsappAlertStatus ? `<div class="small">Aviso WhatsApp: ${whatsappAlertStatus}</div>` : ``}
           ${leadType === "cotizacion" ? `<div class="small" style="margin-top:4px;font-weight:700">${quoteReady ? "Datos suficientes" : "Recolectando datos"}</div>` : ``}
         </td>
         <td style="white-space:nowrap">${createdLabel}</td>
