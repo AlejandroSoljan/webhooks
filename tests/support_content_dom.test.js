@@ -54,6 +54,18 @@ test('changing the visible chat clears the previous selection and publishes its 
     assert.equal(calls.some(call => call.action === 'ACTIVE_CONTEXT'), false);
   } finally { dom.window.close(); }
 });
+test('a new header appearing before its messages does not retain the former contact', async () => {
+  const { dom, w, calls } = await mount();
+  try {
+    w.document.querySelector('header span').textContent = 'CONFORMA SRL Romina';
+    await pause();
+    assert.equal(calls.filter(call => call.action === 'SET_CONTEXT').at(-1).jid, '');
+    assert.equal(calls.filter(call => call.action === 'SET_CONTEXT').at(-1).name, 'CONFORMA SRL Romina');
+    w.document.querySelector('#messages').innerHTML = '<div data-id="false_456@lid_OTHER000001" class="message-in">Nueva conversación</div>';
+    await pause();
+    assert.equal(calls.filter(call => call.action === 'SET_CONTEXT').at(-1).jid, '456@lid');
+  } finally { dom.window.close(); }
+});
 test('a visible message without a WhatsApp DOM id is selectable and sends readable evidence', async () => {
   const { dom, w, calls } = await mount();
   try {

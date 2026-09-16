@@ -2,6 +2,7 @@
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, companyTimer, companyGeneration = 0;
 let consumedOpenAt = null;
+let pendingContextRefresh = false;
 let controlTimer, controlGeneration = 0;
 async function loadContactControl() {
   const generation = ++controlGeneration;
@@ -56,7 +57,7 @@ async function run(fn) {
   if (busy) return; busy = true;
   document.querySelectorAll('button').forEach(button => button.disabled = true);
   try { await fn(); } catch (error) { notice(errors[error.message] || 'No se pudo completar la operación (' + error.message + ').', true); }
-  finally { busy = false; document.querySelectorAll('button').forEach(button => button.disabled = false); }
+  finally { busy = false; document.querySelectorAll('button').forEach(button => button.disabled = false); if (pendingContextRefresh) { pendingContextRefresh = false; queueMicrotask(() => run(refresh)); } }
 }
 function option(select, value, label) { const item = document.createElement('option'); item.value = value; item.textContent = label; select.append(item); }
 const definitions = [ ['subject','Nombre breve'], ['contact','Contacto de WhatsApp'], ['company','Empresa'], ['status','Estado en Asisto'], ['category','Categoría'], ['errorType','Error tipo'], ['channel','Vía de contacto'], ['description','Descripción'], ['companyId','ID de empresa en HubSpot (opcional)'], ['contactId','ID de contacto en HubSpot (opcional)'] ];
@@ -128,26 +129,30 @@ async function selectContact(jid, draftId = '') {
   else notice('Este contacto no tiene tareas pendientes.');
 }
 async function refresh() {
+  const generation = selectionGeneration;
   const previous = $('contacts').value;
   $('connectionState').textContent = 'Comprobando conexión…';
   owner = ''; current = null; $('editor').hidden = true; $('connect').hidden = true; $('tasks').replaceChildren(); $('contacts').replaceChildren(); $('account').textContent = 'Consultando sesión…';
   try { session = await api('SESSION'); }
   catch (error) { $('connectionState').textContent = 'Sin conexión con Asisto'; $('account').textContent = 'Sesión no disponible'; throw error; }
+  if (generation !== selectionGeneration) return;
   owner = session.tenantId + ':' + session.userId;
   $('connectionState').textContent = 'Conectado a Asisto';
   $('account').textContent = session.tenantId + ' · ' + session.username;
   const index = await api('INDEX');
+  if (generation !== selectionGeneration) return;
   if (index.owner !== owner) throw new Error('account_changed');
   option($('contacts'), '', 'Elegí un contacto');
   const seen = new Set();
   for (const chat of index.chats) { if (seen.has(chat.jid)) continue; seen.add(chat.jid); option($('contacts'), chat.jid, (chat.name || chat.jid) + ' · ' + chat.count); }
   const selected = tabId ? (await chrome.storage.session.get('selection-' + tabId))['selection-' + tabId] : null;
-  const jid = selected?.jid || previous;
+  if (generation !== selectionGeneration) return;
+  const jid = selected ? selected.jid : previous;
   if (jid && !seen.has(jid)) { const known = (index.knownChats || []).find(chat => chat.jid === jid || chat.aliases?.includes(jid)); option($('contacts'), jid, known?.name || selected?.name || jid); seen.add(jid); }
   const requestedDraft = selected?.refreshAt !== consumedOpenAt ? selected?.draftId : '';
   consumedOpenAt = selected?.refreshAt;
   if (seen.has(jid)) { $('contacts').value = jid; await selectContact(jid, requestedDraft); }
-  else notice(index.chats.length ? 'Elegí un contacto o pulsá su icono en WhatsApp Web.' : 'Todavía no hay tareas detectadas. Procesá las conversaciones desde Asisto.');
+  else notice(selected?.name ? 'Conversación actual: ' + selected.name + '. Todavía no se pudo vincular este contacto con sus tareas.' : index.chats.length ? 'Elegí un contacto o pulsá su icono en WhatsApp Web.' : 'Todavía no hay tareas detectadas. Procesá las conversaciones desde Asisto.');
 }
 async function save() {
   const fields = Object.fromEntries(definitions.map(([key]) => [key, $('field-' + key).value]));
@@ -242,6 +247,11 @@ $('publish').onclick = () => run(() => publishCurrent());
 chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'session' || !Object.keys(changes).some(key => key.startsWith('selection-'))) return;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); tabId = tab?.id;
-  if (changes['selection-' + tabId] && !busy) run(refresh);
+  if (!changes['selection-' + tabId]) return;
+  ++selectionGeneration;
+  current = null; $('contacts').value = ''; $('tasks').replaceChildren(); $('editor').hidden = true; $('hubspot').hidden = true;
+  notice(changes['selection-' + tabId].newValue?.name ? 'Cargando ' + changes['selection-' + tabId].newValue.name + '…' : 'Identificando conversación…');
+  if (busy) pendingContextRefresh = true;
+  else run(refresh);
 });
 (async () => { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); tabId = tab?.id; await run(refresh); })();

@@ -174,9 +174,14 @@
       if (jid && name && remembered.get(jid) !== name) { remembered.set(jid, name); chrome.runtime.sendMessage({ action: 'CONTACT', jid, name }).then(result => { if (result?.data?.saved) refresh(); else if (result?.error) remembered.delete(jid); }).catch(() => {}); }
       const match = AsistoMatch.matchContact(chats, { jid, name }), known = AsistoMatch.matchContact(knownChats, { jid, name }); let button = target.querySelector('.asisto-task-badge');
       const localContact = AsistoMatch.matchContact(addressBook.map(contact => ({ jid: contact.aliases[0], aliases: contact.aliases, name: contact.name, count: 0 })), { jid, name });
-      const activeJid = target.matches('#main header') ? (jid || known?.jid || localContact?.jid || '') : '';
-      if (target.matches('#main header') && (activeJid ? currentJid !== activeJid : !!currentName && currentName !== name)) { currentJid = activeJid; currentName = name; taskData = { tasks: [], messages: [] }; selected.clear(); anchorId = ''; chrome.runtime.sendMessage({ action: 'SET_CONTEXT', jid: currentJid, name: currentName }).catch(() => {}); if (currentJid) refreshTasks().catch(() => {}); }
-      else if (target.matches('#main header')) currentName = name;
+      const header = target.matches('#main header');
+      const changedName = header && !!name && currentName !== name;
+      const namedContact = changedName ? AsistoMatch.matchContact(knownChats, { name }) || AsistoMatch.matchContact(addressBook.map(contact => ({ jid: contact.aliases[0], aliases: contact.aliases, name: contact.name })), { name }) : null;
+      // During a chat switch WhatsApp can show the new header while the old
+      // messages are still mounted. Do not publish the former chat's ID.
+      const activeJid = header ? (changedName && jid === currentJid ? namedContact?.jid || '' : jid || known?.jid || localContact?.jid || '') : '';
+      if (header && (currentJid !== activeJid || changedName)) { currentJid = activeJid; currentName = name; taskData = { tasks: [], messages: [] }; selected.clear(); anchorId = ''; chrome.runtime.sendMessage({ action: 'SET_CONTEXT', jid: currentJid, name: currentName }).catch(() => {}); if (currentJid) refreshTasks().catch(() => {}); }
+      else if (header) currentName = name;
       if (!match) { button?.remove(); continue; }
       if (!button) { button = document.createElement('button'); button.className = 'asisto-task-badge'; button.type = 'button'; button.dataset.asistoOwned = '1'; button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); if (event.isTrusted) chrome.runtime.sendMessage({ action: 'OPEN', jid: button.dataset.jid, name: button.dataset.name }).catch(() => {}); }); label.insertAdjacentElement('afterend', button); }
       const currentCount = match.jid === currentJid ? (taskData.tasks || []).filter(task => task.status === 'pending').length : match.count;
@@ -188,6 +193,7 @@
   async function refresh() { try { const result = await chrome.runtime.sendMessage({ action: 'INDEX' }); if (owner !== result?.data?.owner) remembered.clear(); owner = result?.data?.owner || ''; chats = result?.data?.chats || []; knownChats = result?.data?.knownChats || chats; } catch { chats = []; knownChats = []; if (!chrome.runtime?.id) stopped = true; } update(); syncAddressBook(); }
   function syncAddressBook() { if (!chats.length || !addressBook.length) return; const found = new Map(); for (const contact of addressBook) for (const alias of contact.aliases || []) { const chat = chats.find(item => item.jid === alias || item.aliases?.includes(alias)); if (chat && contact.name) found.set(chat.jid, { jid: chat.jid, name: contact.name, aliases: contact.aliases }); } const pending = [...found.values()].filter(contact => remembered.get(contact.jid) !== contact.name); if (!pending.length) return; pending.forEach(contact => remembered.set(contact.jid, contact.name)); for (let offset = 0; offset < pending.length; offset += 50) chrome.runtime.sendMessage({ action: 'CONTACTS', contacts: pending.slice(offset, offset + 50) }).then(result => { if (result?.error) pending.slice(offset, offset + 50).forEach(contact => remembered.delete(contact.jid)); else refresh(); }).catch(() => pending.slice(offset, offset + 50).forEach(contact => remembered.delete(contact.jid))); }
   window.addEventListener('message', event => { if (event.source !== window || event.origin !== location.origin || event.data?.source !== 'asisto-whatsapp-contacts-v1' || !Array.isArray(event.data.contacts)) return; for (const contact of event.data.contacts) if (typeof contact?.name === 'string' && Array.isArray(contact.aliases)) addressBook.push(contact); update(); syncAddressBook(); });
+  window.postMessage({ source: 'asisto-whatsapp-contacts-v1', request: true }, location.origin);
   let scrollFrame = 0;
   document.addEventListener('scroll', () => {
     if (!scrollFrame) scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; positionControls(); });

@@ -442,6 +442,14 @@ class SupportService {
       $push: { events: { action: approve ? 'approved' : 'edited', by: scope.userId, revision: revision + 1, at: this.now() } },
     });
     if (!result.matchedCount) fail('revision_conflict', 409);
+    if (Object.hasOwn(input || {}, 'company') && fields.company && current.jid) {
+      // Reuse the company selected in the extension for subsequent tasks of this chat.
+      // A typed label is not a verified HubSpot identity.
+      await this.col('memory').updateOne({ ...scope, jid: current.jid }, {
+        $set: { company: fields.company, companyId: fields.companyId || '', source: 'extension', updatedAt: this.now() },
+        $unset: { verifiedAt: '' },
+      }, { upsert: true });
+    }
     return { id, revision: revision + 1, state, remoteWrite: false };
   }
 }

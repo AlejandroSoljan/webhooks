@@ -59,6 +59,17 @@ test('extension session exposes the existing Asisto classifications as dropdown 
  assert.ok(result.data.choices.errorType.includes('Consulta / Capacitacion'));
  assert.deepEqual(result.data.choices.channel,['Telefono','Email','WhatsApp','Reunion','Interno']);
 });
+test('saving a company remembers it for another task of the same WhatsApp contact',async()=>{
+ const saved=await call('/drafts/'+id+'/save',{revision:1,fields:{company:'CONFORMA SRL',companyId:'3096337608'}});
+ assert.equal(saved.status,200);
+ const second='b'.repeat(64);
+ await service.col('drafts').insertOne({_id:second,...scope,jid:'123@lid',revision:1,state:'pending',fields:vault.seal({...fields,company:'',companyId:''},second),source:vault.seal(fields,second+':source')});
+ const detail=(await call('/drafts/'+second)).data;
+ assert.equal(detail.fields.company,'CONFORMA SRL');assert.equal(detail.fields.companyId,'3096337608');
+ const other='c'.repeat(64);
+ await service.col('drafts').insertOne({_id:other,...scope,jid:'456@lid',revision:1,state:'pending',fields:vault.seal({...fields,company:'',companyId:''},other),source:vault.seal(fields,other+':source')});
+ assert.equal((await call('/drafts/'+other)).data.fields.company,'');
+});
 test('contact control excludes aliases for this user and restores monitoring without deleting tickets',async()=>{
  await service.col('contacts').insertOne({...scope,jid:'123@lid',name:'Esther (local)',aliases:['123@lid','549123@s.whatsapp.net']});
  let rows=(await call('/contact-control?q=%28local%29')).data;assert.equal(rows.length,1);assert.equal(rows[0].excluded,false);
@@ -299,9 +310,12 @@ test('WhatsApp contact reader exports only names and normalized identifiers from
  const store={openCursor(){const request={};queueMicrotask(function next(){const value=rows[position++];request.result=value?{value,continue:()=>queueMicrotask(next)}:null;request.onsuccess();});return request;}};
  const db={objectStoreNames:{contains:name=>name==='contact'},transaction:()=>({objectStore:()=>store}),close(){}};
  const indexedDB={databases:async()=>[{name:'model-storage'}],open(){const request={result:db};queueMicrotask(()=>request.onsuccess());return request;}};
- vm.runInNewContext(fs.readFileSync(require.resolve('../extensions/whatsapp-support/contacts-main.js'),'utf8'),{indexedDB,location:{origin:'https://web.whatsapp.com'},window:{postMessage:(value,target)=>messages.push({value,target})},queueMicrotask});
+ let listener; const page={postMessage:(value,target)=>messages.push({value,target}),addEventListener:(_type,callback)=>{listener=callback;}};
+ vm.runInNewContext(fs.readFileSync(require.resolve('../extensions/whatsapp-support/contacts-main.js'),'utf8'),{indexedDB,location:{origin:'https://web.whatsapp.com'},window:page,queueMicrotask});
  await new Promise(resolve=>setTimeout(resolve,20));const contacts=messages.flatMap(message=>message.value.contacts||[]);
  assert.deepEqual(JSON.parse(JSON.stringify(contacts)),[{name:'Vane',aliases:['123@lid','549123@s.whatsapp.net']},{name:'Gime',aliases:['456@lid']}]);assert.ok(!JSON.stringify(messages).includes('never-copy'));assert.ok(messages.at(-1).value.complete);
+ messages.length=0; listener({source:page,origin:'https://web.whatsapp.com',data:{source:'asisto-whatsapp-contacts-v1',request:true}});
+ assert.equal(messages[0].value.contacts[0].name,'Vane');
 });
 test('explicit selection imports missing readable messages once and preserves stored evidence', async () => {
  const jid = '123@s.whatsapp.net';
