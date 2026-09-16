@@ -3,7 +3,7 @@ const BASE = 'https://asistobot.com.ar/api/support/extension';
 const LOCAL = 'http://127.0.0.1:17658/extension-session';
 let deviceToken = '';
 async function request(path, body, grant) {
-  const response = await fetch(BASE + path, { credentials: 'include', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(30000), headers: {
+  const response = await fetch(BASE + path, { credentials: 'omit', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(30000), headers: {
     'X-Asisto-Extension-Id': chrome.runtime.id, ...(deviceToken ? { Authorization: 'Bearer ' + deviceToken } : {}), ...(body ? { 'Content-Type': 'application/json', 'X-Asisto-Extension': grant } : {}),
   }, ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}) });
   if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('authentication_required');
@@ -12,8 +12,9 @@ async function request(path, body, grant) {
   return result;
 }
 async function authenticatedSession() {
-  try { return await request('/session'); }
-  catch {
+  // The local WhatsApp agent owns this workflow. A browser cookie may belong
+  // to another tenant and must never select the extension's account.
+  deviceToken = '';
     const local = await fetch(LOCAL, { cache: 'no-store', signal: AbortSignal.timeout(5000), headers: { 'X-Asisto-Local': '1', 'X-Asisto-Extension-Id': chrome.runtime.id } });
     if (local.status === 403) throw new Error('agent_access_denied');
     if (!local.ok || !local.headers.get('content-type')?.includes('application/json')) throw new Error('agent_not_authorized');
@@ -21,7 +22,6 @@ async function authenticatedSession() {
     if (!/^[A-Za-z0-9_-]{43}$/.test(result.token || '')) throw new Error('agent_not_authorized');
     deviceToken = result.token;
     return request('/session');
-  }
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   const fromWhatsApp = sender.tab && sender.url?.startsWith('https://web.whatsapp.com/');

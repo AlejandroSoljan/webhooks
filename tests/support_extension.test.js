@@ -303,10 +303,27 @@ test('WhatsApp contact reader exports only names and normalized identifiers from
  await new Promise(resolve=>setTimeout(resolve,20));const contacts=messages.flatMap(message=>message.value.contacts||[]);
  assert.deepEqual(JSON.parse(JSON.stringify(contacts)),[{name:'Vane',aliases:['123@lid','549123@s.whatsapp.net']},{name:'Gime',aliases:['456@lid']}]);assert.ok(!JSON.stringify(messages).includes('never-copy'));assert.ok(messages.at(-1).value.complete);
 });
+test('extension always selects the local agent account and never falls back to a browser login', async () => {
+ const vm = require('node:vm'), fs = require('node:fs');
+ const listeners = [], calls = []; let available = true;
+ const chrome = { runtime: { id: extensionId, getURL: p => 'chrome-extension://' + extensionId + '/' + p, onMessage: { addListener: fn => listeners.push(fn) } }, action: { onClicked: { addListener() {} } } };
+ vm.runInNewContext(fs.readFileSync(require.resolve('../extensions/whatsapp-support/background.js'), 'utf8'), { chrome, AbortSignal, fetch: async (url, options) => {
+   calls.push({ url, options });
+   if (url.includes('127.0.0.1')) return { ok: available, status: available ? 200 : 401, headers: { get: () => 'application/json' }, json: async () => ({ token: 'A'.repeat(43) }) };
+   return { ok: true, headers: { get: () => 'application/json' }, json: async () => options.credentials === 'omit' && options.headers.Authorization ? { tenantId: 'ALSO', userId: 'agent-user' } : { tenantId: 'CARICO', userId: 'browser-user' } };
+ } });
+ const send = () => new Promise(resolve => listeners[0]({ action: 'SESSION' }, { id: extensionId, url: chrome.runtime.getURL('panel.html') }, resolve));
+ assert.equal((await send()).data.tenantId, 'ALSO');
+ assert.match(calls[0].url, /127\.0\.0\.1/);
+ calls.length = 0; available = false;
+ assert.equal((await send()).error, 'agent_not_authorized');
+ assert.equal(calls.length, 1, 'no remote browser-account fallback');
+});
+
 test('background restricts WhatsApp messages, exposes the active chat and forces panel refreshes',async()=>{
  const vm=require('node:vm'),fs=require('node:fs');const listeners=[];let action;const calls=[],opened=[],selections=[],sessionStore={};let now=100;
  const chrome={runtime:{id:extensionId,getURL:p=>'chrome-extension://'+extensionId+'/'+p,onMessage:{addListener:fn=>listeners.push(fn)}},sidePanel:{setOptions:async()=>{},open:args=>{opened.push(args);return Promise.resolve();}},storage:{session:{set:async value=>{selections.push(value);Object.assign(sessionStore,value);},get:async key=>({[key]:sessionStore[key]})}},action:{onClicked:{addListener:fn=>action=fn}}};
- vm.runInNewContext(fs.readFileSync(require.resolve('../extensions/whatsapp-support/background.js'),'utf8'),{chrome,AbortSignal,Date:{now:()=>++now},fetch:async(url,options)=>{calls.push({url,options});return{ok:true,headers:{get:()=> 'application/json'},json:async()=>url.endsWith('/session')?{...scope,csrf:'private-grant'}:{chats:[]}};}});
+ vm.runInNewContext(fs.readFileSync(require.resolve('../extensions/whatsapp-support/background.js'),'utf8'),{chrome,AbortSignal,Date:{now:()=>++now},fetch:async(url,options)=>{calls.push({url,options});return{ok:true,headers:{get:()=> 'application/json'},json:async()=>url.includes('127.0.0.1')?{token:'A'.repeat(43)}:url.endsWith('/session')?{...scope,csrf:'private-grant'}:{chats:[]}};}});
  const listener=(message,sender,reply)=>{for(const candidate of listeners){const handled=candidate(message,sender,reply);if(handled)return handled;}return false;};
  assert.equal(opened.length,0);const sender={id:extensionId,url:'https://web.whatsapp.com/',tab:{id:7}};
  assert.equal(listener({action:'PUBLISH',id},sender,()=>{}),false);assert.equal(calls.length,0);
@@ -315,6 +332,6 @@ test('background restricts WhatsApp messages, exposes the active chat and forces
  const active=await new Promise(resolve=>listener({action:'ACTIVE_CONTEXT'},sender,resolve));assert.equal(active.data.jid,'123@lid');
  await new Promise(resolve=>listener({action:'OPEN',jid:'123@lid',name:'Juan'},sender,resolve));assert.equal(selections[1]['selection-7'].refreshAt,102);
  await new Promise(resolve=>listener({action:'SAVE',id,revision:1,fields:{}},{id:extensionId,url:chrome.runtime.getURL('panel.html')},resolve));
- const save=calls.at(-1);assert.equal(save.options.headers['X-Asisto-Extension'],'private-grant');assert.equal(save.options.credentials,'include');assert.match(save.url,/^https:\/\/asistobot\.com\.ar\/api\/support\/extension\//);
+ const save=calls.at(-1);assert.equal(save.options.headers['X-Asisto-Extension'],'private-grant');assert.equal(save.options.credentials,'omit');assert.equal(save.options.headers.Authorization,'Bearer '+'A'.repeat(43));assert.match(save.url,/^https:\/\/asistobot\.com\.ar\/api\/support\/extension\//);
  assert.equal(typeof action,'function');
 });
