@@ -54,3 +54,20 @@ test('changing the visible chat clears the previous selection and publishes its 
     assert.equal(calls.some(call => call.action === 'ACTIVE_CONTEXT'), false);
   } finally { dom.window.close(); }
 });
+test('a visible message without a WhatsApp DOM id is selectable and sends readable evidence', async () => {
+  const { dom, w, calls } = await mount();
+  try {
+    const row = w.document.querySelector('[data-id="false_123@lid_TEXT0000001"]');
+    row.removeAttribute('data-id');
+    await pause();
+    const controls = [...w.document.querySelectorAll('.asisto-message-control input')];
+    assert.equal(controls.length, 3);
+    assert.equal(controls[2].disabled, false);
+    controls[2].click();
+    w.document.querySelector('.asisto-message-toolbar .primary').click(); await pause();
+    const request = calls.find(call => call.action === 'ASSIGN_MESSAGES');
+    assert.match(request.messageIds[0], /^asisto-local-/);
+    assert.equal(request.selectedMessages[0].text, 'Ahora sí');
+    assert.equal(request.selectedMessages[0].at, '2026-09-14T18:33:00.000Z');
+  } finally { dom.window.close(); }
+});

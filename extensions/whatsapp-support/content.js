@@ -12,22 +12,47 @@
     const year = Number(match[5]) < 100 ? 2000 + Number(match[5]) : Number(match[5]);
     return +new Date(year, Number(match[4]) - 1, Number(match[3]), Number(match[1]), Number(match[2]));
   }
+  const messageText = node => [...node.querySelectorAll('.selectable-text')].filter(element => !element.parentElement?.closest('.selectable-text')).map(element => element.innerText || element.textContent || '').join('\n').trim();
+  const localId = value => { let hash = 2166136261; for (const char of value) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619); return 'asisto-local-' + (hash >>> 0).toString(36); };
+  function visibleMessageAt(node, pre) {
+    const exact = messageAt(pre?.getAttribute('data-pre-plain-text'));
+    if (Number.isFinite(exact)) return exact;
+    const clock = (node.querySelector('[data-testid="msg-meta"], .copyable-text [data-pre-plain-text]')?.textContent || node.textContent || '').match(/\b(\d{1,2}):(\d{2})\b(?![\s\S]*\b\d{1,2}:\d{2}\b)/);
+    if (!clock) return NaN;
+    const day = new Date(); day.setHours(Number(clock[1]), Number(clock[2]), 0, 0);
+    // Date separators may be siblings of the row or its containing wrapper.
+    let cursor = node;
+    for (let depth = 0; depth < 4 && cursor?.id !== 'main'; depth++, cursor = cursor.parentElement) {
+      let prior = cursor.previousElementSibling;
+      while (prior) {
+        const label = prior.textContent?.trim().toLocaleLowerCase('es') || '';
+        const date = label.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+        if (date) { day.setFullYear(Number(date[3]) < 100 ? 2000 + Number(date[3]) : Number(date[3]), Number(date[2]) - 1, Number(date[1])); return +day; }
+        if (label === 'hoy') return +day;
+        if (label === 'ayer') { day.setDate(day.getDate() - 1); return +day; }
+        const weekday = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'].indexOf(label);
+        if (weekday >= 0) { day.setDate(day.getDate() - ((day.getDay() - weekday + 7) % 7 || 7)); return +day; }
+        prior = prior.previousElementSibling;
+      }
+    }
+    return NaN;
+  }
   const statusLabel = status => ({ pending: 'Pendiente', saved: 'HubSpot', discarded: 'Descartada' }[status] || 'Asignada');
   function messageNodes() {
     const seenNodes = new Set(), seenIds = new Set(), usedRows = new Set(), result = [];
     const candidates = [...document.querySelectorAll('#main .message-in, #main .message-out, #main [data-id^="true_"], #main [data-id^="false_"], #main [data-pre-plain-text], #main [role="row"]')].filter(node => !node.closest('[data-asisto-owned]') && (!node.matches('[role="row"]') || node.querySelector('[data-pre-plain-text], audio, [data-icon*="audio"], [data-testid*="audio"], [data-icon="ptt-status"]')));
     for (const candidate of candidates) {
-      
       const message = candidate.closest('.message-in, .message-out') || (candidate.matches('.message-in, .message-out') ? candidate : null);
-      const node = candidate.closest('[data-id^="true_"], [data-id^="false_"]') || message || candidate.closest('[role="row"]') || candidate;
+      const node = candidate.closest('[data-id^="true_"], [data-id^="false_"]') || candidate.closest('[role="row"]') || message || candidate;
       if (seenNodes.has(node)) continue;
       const idNode = node.matches('[data-id^="true_"], [data-id^="false_"]') ? node : node.querySelector('[data-id^="true_"], [data-id^="false_"]'), pre = node.matches('[data-pre-plain-text]') ? node : node.querySelector('[data-pre-plain-text]');
       let id = extractMessageId(idNode?.getAttribute('data-id'));
+      const at = visibleMessageAt(node, pre), fromMe = node.classList.contains('message-out') || !!node.closest('.message-out') || !!node.querySelector('.message-out');
       if (!id) {
-        const at = messageAt(pre?.getAttribute('data-pre-plain-text')), fromMe = node.classList.contains('message-out') || !!node.closest('.message-out') || !!node.querySelector('.message-out');
         const match = (taskData.messages || []).find(row => !usedRows.has(row.waId) && row.fromMe === fromMe && Math.abs(+new Date(row.at) - at) < 60000);
         id = match?.waId || '';
       }
+      if (!id) id = localId([currentJid, Number.isFinite(at) ? at : '', fromMe, messageText(node) || node.textContent?.trim().slice(0, 120), result.length].join('|'));
       if (id && seenIds.has(id)) continue; seenNodes.add(node); if (id) { seenIds.add(id); usedRows.add(id); } node.dataset.asistoMessageId = id; node.classList.add('asisto-message-anchor'); result.push(node);
     }
     return result;
@@ -42,11 +67,10 @@
       holder.className = 'asisto-message-control'; holder.dataset.asistoOwned = '1'; holder.replaceChildren();
       holder.style.top = Math.max(4, rect.top - (mainRect?.top || 0) + rect.height / 2 - 11) + 'px';
       const rowAssignments = row?.assignments || [];
-      const check = document.createElement('input'); check.type = 'checkbox'; check.checked = !!id && (selected.has(id) || rowAssignments.length > 0); check.disabled = !id || (rowAssignments.length > 0 && !selected.has(id)); check.title = 'Seleccionar mensaje para una tarea';
+      const check = document.createElement('input'); check.type = 'checkbox'; check.checked = selected.has(id) || rowAssignments.length > 0; check.title = 'Seleccionar mensaje para una tarea';
       check.classList.toggle('assigned', rowAssignments.length > 0);
       check.title = rowAssignments.length ? rowAssignments.map(assignment => `${statusLabel(assignment.status)} · ${assignment.subject || assignment.shortId}`).join('\n') : 'Seleccionar este mensaje para una tarea';
-      if (!id) check.title = 'Esperando que Baileys sincronice este mensaje';
-      check.setAttribute('aria-label', check.title); check.onchange = event => { event.stopPropagation(); selectionDirty = true; anchorId = id; check.checked ? selected.add(id) : selected.delete(id); renderToolbar(); }; check.onclick = event => event.stopPropagation(); holder.append(check);
+      check.setAttribute('aria-label', check.title); check.onchange = event => { event.stopPropagation(); selectionDirty = true; anchorId = id; check.checked ? selected.add(id) : selected.delete(id); renderToolbar(); }; check.onclick = event => { event.stopPropagation(); if (rowAssignments.length && !selected.has(id)) { event.preventDefault(); selectionDirty = true; anchorId = id; selected.add(id); renderMessageControls(); } }; holder.append(check);
       for (const assignment of row?.assignments || []) {
         const badge = document.createElement('button'); badge.type = 'button'; badge.className = `asisto-message-assignment ${assignment.status}`;
         badge.textContent = `${statusLabel(assignment.status)} · ${assignment.subject || assignment.shortId}`; badge.title = `Tarea ${assignment.shortId}${assignment.ticketId ? ' · Ticket ' + assignment.ticketId : ''}`;
@@ -81,9 +105,8 @@
       const saved = (taskData.tasks || []).find(task => task.id === destination.value)?.ticketId; if (saved && !action.value) return alert('Elegí si querés agregar un seguimiento o actualizar el ticket existente.');
       const selectedMessages = messageNodes().filter(node => selected.has(node.dataset.asistoMessageId)).map(node => {
         const pre = node.matches('[data-pre-plain-text]') ? node : node.querySelector('[data-pre-plain-text]');
-        const at = messageAt(pre?.getAttribute('data-pre-plain-text'));
-        const parts = [...node.querySelectorAll('.selectable-text')].filter(element => !element.parentElement?.closest('.selectable-text')).map(element => element.innerText || element.textContent || '');
-        return { id: node.dataset.asistoMessageId, jid: currentJid, at: Number.isFinite(at) ? new Date(at).toISOString() : '', fromMe: node.classList.contains('message-out') || !!node.querySelector('.message-out') || node.getAttribute('data-id')?.startsWith('true_') === true, text: parts.join('\n').trim() };
+        const at = visibleMessageAt(node, pre);
+        return { id: node.dataset.asistoMessageId, jid: currentJid, at: Number.isFinite(at) ? new Date(at).toISOString() : '', fromMe: node.classList.contains('message-out') || !!node.querySelector('.message-out') || node.getAttribute('data-id')?.startsWith('true_') === true, text: messageText(node) };
       });
       const request = { action: 'ASSIGN_MESSAGES', jid: currentJid, messageIds: [...selected], selectedMessages, destination: destination.value, existingAction: action.value };
       chrome.runtime.sendMessage({ action: 'OPEN', jid: currentJid, name: currentName }).catch(() => {});
