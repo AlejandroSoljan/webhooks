@@ -15,6 +15,7 @@ const crypto = require("crypto");
 const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
+const { normalizeTenantAliases } = require("./tenant_aliases");
 const { recordWebAccessLogin } = require("./web_access_stats");
 const { queueLeadWhatsAppAlert } = require("./lead_notification");
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://www.asistobot.com.ar"; // ej: https://tudominio.com
@@ -3972,6 +3973,7 @@ function mountAuthRoutes(app) {
  function tenantConfigIsSuperadminOnlyField(fieldName, superadminOnlyFields) {
     const key = normalizeTenantConfigFieldName(fieldName);
     if (!key) return false;
+    if (key === 'api_aliases') return true;
     return new Set(Array.isArray(superadminOnlyFields) ? superadminOnlyFields.map(normalizeTenantConfigFieldName) : []).has(key);
   }
 
@@ -4065,6 +4067,7 @@ function mountAuthRoutes(app) {
             <thead>
               <tr>
                 <th>Dominio</th>
+                <th>Dominios secundarios</th>
                 <th>Empresa</th>
                 <th>Número</th>
                 <th>TAG deseado</th>
@@ -4073,7 +4076,7 @@ function mountAuthRoutes(app) {
               </tr>
             </thead>
             <tbody id="tc_list">
-              <tr><td colspan="6" class="small">Cargando...</td></tr>
+              <tr><td colspan="7" class="small">Cargando...</td></tr>
             </tbody>
           </table>
         </div>
@@ -4092,6 +4095,9 @@ function mountAuthRoutes(app) {
             <form id="tc_form">
               <label class="small">Dominio</label>
               <input class="inp" id="tc_tenant" name="tenantId" value="${htmlEscape(tenantId)}" ${isSuper ? "" : "readonly"} placeholder="default"/>
+              <label class="small" for="tc_aliases" style="display:block;margin-top:10px">Dominios secundarios</label>
+              <input class="inp" id="tc_aliases" name="apiAliases" ${isSuper ? "" : "readonly"} placeholder="Ej.: NEA1, NEA2" autocomplete="off"/>
+              <div class="small" style="margin-top:5px">Se separan con comas. Consultar cualquiera de estos dominios devuelve la información del dominio principal. Sólo el superadmin puede cambiarlos.</div>
               ${isSuper ? `
               <div id="tc_copyWrap" style="margin-top:10px">
                 <label class="small">Copiar configuración desde</label>
@@ -4159,6 +4165,7 @@ function mountAuthRoutes(app) {
         const msgEl = document.getElementById('tc_msg');
         const form = document.getElementById('tc_form');
         const tenantEl = document.getElementById('tc_tenant');
+        const aliasesEl = document.getElementById('tc_aliases');
         const fieldsEl = document.getElementById('tc_fields');
         const listEl = document.getElementById('tc_list');
         const metaEl = document.getElementById('tc_meta');
@@ -4400,7 +4407,8 @@ function mountAuthRoutes(app) {
 
         function setFieldsFromDoc(doc){
           fieldsEl.innerHTML = '';
-          const entries = Object.entries(doc || {});
+          aliasesEl.value = Array.isArray(doc?.api_aliases) ? doc.api_aliases.join(', ') : '';
+          const entries = Object.entries(doc || {}).filter(([key]) => key !== 'api_aliases');
           if (!entries.length) addRow('', '');
           for (const [k,v] of entries) addRow(k, normalizeValueForInput(v));
           refreshProtectedRows();
@@ -4428,6 +4436,7 @@ function mountAuthRoutes(app) {
           const doc = j && j.item ? j.item : null;
           if (!doc) throw new Error('No existe configuración para el dominio origen.');
           setFieldsFromDoc(doc.data || {});
+          aliasesEl.value = '';
           renderMeta({ createdAt: doc.createdAt, updatedAt: doc.updatedAt });
           return doc;
         }
@@ -4470,6 +4479,13 @@ function mountAuthRoutes(app) {
               if (typeof parsed !== 'number' || parsed < 0 || parsed > 1) throw new Error('api_mensajes_circuit_sin_respuesta_ratio debe estar entre 0 y 1.');
             }
             doc[k] = parsed;
+          }
+          if (isSuper) {
+            const aliases = [...new Set(String(aliasesEl.value || '').split(/[\\s,;]+/).map(v => v.trim().toUpperCase()).filter(Boolean))];
+            if (aliases.length > 50 || aliases.some(v => !/^[A-Z0-9_-]{2,80}$/.test(v) || v === String(tenantEl.value || '').trim().toUpperCase())) {
+              throw new Error('Revisá los dominios secundarios: deben ser únicos, válidos y distintos del dominio principal.');
+            }
+            doc.api_aliases = aliases;
           }
           return doc;
         }
@@ -4582,12 +4598,13 @@ function mountAuthRoutes(app) {
             tenantListCache = Array.isArray(items) ? items.slice() : [];
             renderCopyOptions(tenantListCache);
             if (!items.length) {
-              listEl.innerHTML = '<tr><td colspan="6" class="small">No hay registros.</td></tr>';
+              listEl.innerHTML = '<tr><td colspan="7" class="small">No hay registros.</td></tr>';
               return;
             }
             listEl.innerHTML = items.map(it => {
               return '<tr>'+
                 '<td><span class="pill">'+esc(it._id||'')+'</span></td>'+
+                '<td>'+esc(Array.isArray(it.api_aliases) ? it.api_aliases.join(', ') : '')+'</td>'+
                 '<td>'+esc(it.nom_emp||'')+'</td>'+
                 '<td>'+esc(it.numero||'')+'</td>'+
                 '<td><span class="pill">'+esc(it.release_tag || it.version_tag || it.target_tag || '-')+'</span></td>'+
@@ -4606,7 +4623,7 @@ function mountAuthRoutes(app) {
             });
           } catch (e) {
             console.error('[tenant_config] list error:', e);
-            listEl.innerHTML = '<tr><td colspan="6" class="small">Error: '+esc(e?.message||String(e))+'</td></tr>';
+            listEl.innerHTML = '<tr><td colspan="7" class="small">Error: '+esc(e?.message||String(e))+'</td></tr>';
           }
         }
 
@@ -4902,7 +4919,7 @@ function mountAuthRoutes(app) {
 
       // listado (superadmin)
       const items = await col
-        .find({}, { projection: { _id: 1, nom_emp: 1, numero: 1, release_tag: 1, version_tag: 1, target_tag: 1, createdAt: 1, updatedAt: 1 } })
+        .find({}, { projection: { _id: 1, api_aliases: 1, nom_emp: 1, numero: 1, release_tag: 1, version_tag: 1, target_tag: 1, createdAt: 1, updatedAt: 1 } })
         .sort({ _id: 1 })
         .limit(500)
         .toArray();
@@ -4938,6 +4955,10 @@ function mountAuthRoutes(app) {
       }
 
       const existing = await col.findOne({ _id: tenantId });
+      if (!existing) {
+        const claimedId = await col.findOne({ api_aliases: tenantId.toUpperCase() }, { projection: { _id: 1 } });
+        if (claimedId) return res.status(409).json({ ok:false, error:`domain_is_alias:${claimedId._id}` });
+      }
       const existingData = stripTenantConfigDoc(existing);
       const safeData = isSuper
         ? data
@@ -4948,6 +4969,27 @@ function mountAuthRoutes(app) {
       const finalData = isSuper
         ? safeData
         : { ...protectedExistingData, ...safeData };
+
+      // Los alias son sólo de consulta: no crean otro tenant ni otra sesión.
+      // Evitamos colisiones con dominios reales y con otros propietarios.
+      if (isSuper && Object.prototype.hasOwnProperty.call(finalData, 'api_aliases')) {
+        try {
+          finalData.api_aliases = normalizeTenantAliases(finalData.api_aliases, tenantId);
+        } catch (error) {
+          return res.status(400).json({ ok:false, error:error.message });
+        }
+        if (finalData.api_aliases.length) {
+          const [realDomain, otherOwner] = await Promise.all([
+            col.findOne({ _id: { $in: finalData.api_aliases } }, { projection: { _id: 1 } }),
+            col.findOne({ _id: { $ne: tenantId }, api_aliases: { $in: finalData.api_aliases } }, { projection: { _id: 1 } }),
+          ]);
+          if (realDomain) return res.status(409).json({ ok:false, error:`alias_is_domain:${realDomain._id}` });
+          if (otherOwner) return res.status(409).json({ ok:false, error:`alias_already_used:${otherOwner._id}` });
+        }
+      } else if (isSuper && existing?.api_aliases) {
+        // Clientes antiguos del panel no deben borrar alias al guardar otros campos.
+        finalData.api_aliases = existing.api_aliases;
+      }
  
 
       const replacement = {

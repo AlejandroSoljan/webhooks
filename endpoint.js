@@ -20,6 +20,7 @@ const DOMAIN_STATUS_API_KEY = String(
 // ⬇️ Para catálogo en Mongo
 const { ObjectId } = require("mongodb");
 const { getDb, closeDb } = require("./db");
+const { resolveCanonicalTenantId, resolveCanonicalLockId } = require("./tenant_aliases");
 const {
   getRuntimeByPhoneNumberId,
   getRuntimeByInstagramAccountId,
@@ -1289,8 +1290,8 @@ async function wwebLog(db, entry) {
 // GET /api/wweb/sessions  -> lista estado (locks + policies) para el panel
 app.get("/api/wweb/sessions", async (req, res) => {
   try {
-    const tenantId = resolveTenantId(req);
     const db = await getDb();
+    const tenantId = await resolveCanonicalTenantId(db, resolveTenantId(req));
     const { locks, policies } = await wwebCollections(db);
 
     const [lockDocs, policyDocs] = await Promise.all([
@@ -1354,8 +1355,8 @@ app.get("/api/ext/wweb/status", requireWwebExternalAccess, async (req, res) => {
   try {
     const db = await getDb();
     const { locks, policies } = await wwebCollections(db);
-    const lockId = wwebResolveLockIdFromReq(req);
-    const tenantId = String(req.query?.tenantId || "").trim();
+    const lockId = await resolveCanonicalLockId(db, wwebResolveLockIdFromReq(req));
+    const tenantId = await resolveCanonicalTenantId(db, req.query?.tenantId);
 
     if (lockId) {
       const [lockDoc, policyDoc] = await Promise.all([
@@ -1401,12 +1402,13 @@ app.get("/api/ext/wweb/status", requireWwebExternalAccess, async (req, res) => {
 // GET /api/ext/domain-status?dominio=SDG
 app.get("/api/ext/domain-status", requireDomainStatusAccess, async (req, res) => {
   try {
-    const tenantId = String(req.query?.dominio || "").trim().toUpperCase();
-    if (!tenantId) {
+    const requestedTenantId = String(req.query?.dominio || "").trim().toUpperCase();
+    if (!requestedTenantId) {
       return res.status(400).json({ ok: false, error: "dominio_required" });
     }
 
     const db = await getDb();
+    const tenantId = await resolveCanonicalTenantId(db, requestedTenantId);
     const tenantRegex = new RegExp(
       "^" + tenantId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ":",
       "i"
@@ -1488,12 +1490,12 @@ app.get("/api/ext/domain-status", requireDomainStatusAccess, async (req, res) =>
 // GET /api/ext/wweb/qr
 app.get("/api/ext/wweb/qr", requireWwebExternalAccess, async (req, res) => {
   try {
-    const lockId = wwebResolveLockIdFromReq(req);
+    const db = await getDb();
+    const lockId = await resolveCanonicalLockId(db, wwebResolveLockIdFromReq(req));
     if (!lockId) {
       return res.status(400).json({ ok: false, error: "lockId_or_tenant_numero_required" });
     }
 
-    const db = await getDb();
     const lock = await db.collection("wa_locks").findOne(
       { _id: lockId },
       {
@@ -1546,12 +1548,12 @@ app.get("/api/ext/wweb/qr", requireWwebExternalAccess, async (req, res) => {
 // JSON por defecto. Binario solo con ?raw=1
 app.get("/api/ext/wweb/qr-image", requireWwebExternalAccess, async (req, res) => {
   try {
-    const lockId = wwebResolveLockIdFromReq(req);
+    const db = await getDb();
+    const lockId = await resolveCanonicalLockId(db, wwebResolveLockIdFromReq(req));
     if (!lockId) {
       return res.status(400).json({ ok: false, error: "lockId_or_tenant_numero_required" });
     }
 
-    const db = await getDb();
     const lock = await db.collection("wa_locks").findOne(
       { _id: lockId },
       {

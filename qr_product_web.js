@@ -9,6 +9,7 @@ const express = require('express');
 const axios = require('axios');
 const { ObjectId } = require('mongodb');
 const { getDb } = require('./db');
+const { resolveCanonicalTenantId } = require('./tenant_aliases');
 const { resolveOpenAiApiKey } = require('./ai_key_router');
 const { createProductCatalog, sourceKey } = require('./product_catalog');
 const {
@@ -129,6 +130,9 @@ function intValue(value, fallback, min, max) {
 }
 function safeTenant(value) {
   return clean(value, 100).replace(/[^a-zA-Z0-9_.-]/g, '').toUpperCase();
+}
+async function canonicalQrTenant(db, value) {
+  return resolveCanonicalTenantId(db, safeTenant(value));
 }
 function safeSessionId(value) {
   const raw = clean(value, 96);
@@ -1387,10 +1391,11 @@ function mountQrProductWeb(app) {
   // También se mantiene /qr/DOMINIO/SKU para códigos simples.
   app.get('/qr/:tenant', async (req, res) => {
     try {
-      const tenant = safeTenant(req.params.tenant);
+      const db = await getDb();
+      const tenant = await canonicalQrTenant(db, req.params.tenant);
       const code = digitsOrText(req.query?.codigo, 180);
       if (!tenant) return res.status(404).send('Dominio inválido');
-      const cfg = await loadQrPageConfig(await getDb(), tenant);
+      const cfg = await loadQrPageConfig(db, tenant);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Robots-Tag', 'noindex, nofollow');
@@ -1403,10 +1408,11 @@ function mountQrProductWeb(app) {
 
   app.get('/qr/:tenant/:codigo', async (req, res) => {
     try {
-      const tenant = safeTenant(req.params.tenant);
+      const db = await getDb();
+      const tenant = await canonicalQrTenant(db, req.params.tenant);
       const code = digitsOrText(req.params.codigo, 180);
       if (!tenant || !code) return res.status(404).send('QR inválido');
-      const cfg = await loadQrPageConfig(await getDb(), tenant);
+      const cfg = await loadQrPageConfig(db, tenant);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Robots-Tag', 'noindex, nofollow');
@@ -1419,13 +1425,14 @@ function mountQrProductWeb(app) {
 
   app.post('/api/ext/qr/photo', qrPhotoJson, async (req, res) => {
     try {
-      const tenant = safeTenant(req.body?.tenant);
+      const requestedTenant = safeTenant(req.body?.tenant);
       const image = String(req.body?.image || '').trim();
-      if (!tenant || !/^data:image\/(?:jpeg|png|webp);base64,/i.test(image) || image.length > 7_500_000) {
+      if (!requestedTenant || !/^data:image\/(?:jpeg|png|webp);base64,/i.test(image) || image.length > 7_500_000) {
         return res.status(400).json({ ok: false, error: 'invalid_product_photo', detail: 'La foto no es válida o es demasiado grande.' });
       }
-      if (!allowAiRequest(req, `photo_lookup_${tenant}`)) return res.status(429).json({ ok: false, error: 'rate_limited' });
       const db = await getDb();
+      const tenant = await canonicalQrTenant(db, requestedTenant);
+      if (!allowAiRequest(req, `photo_lookup_${tenant}`)) return res.status(429).json({ ok: false, error: 'rate_limited' });
       const cfg = await loadQrConfig(db, tenant);
       if (!cfg.enabled || !cfg.aiEnabled) return res.status(404).json({ ok: false, error: 'photo_lookup_disabled' });
       const analysis = await analyzeImageExternal({ publicImageUrl: image, mime: 'image/jpeg', purpose: 'product-identification', tenantId: tenant, channelType: 'qr_web', aiKeyKind: 'conversacional', visionMaxTokens: 450 });
@@ -1452,10 +1459,11 @@ function mountQrProductWeb(app) {
 
   app.get('/api/ext/qr/product', async (req, res) => {
     try {
-      const tenant = safeTenant(req.query?.tenant);
+      const requestedTenant = safeTenant(req.query?.tenant);
       const code = digitsOrText(req.query?.codigo, 180);
-      if (!tenant || !code) return res.status(400).json({ ok: false, error: 'tenant_codigo_required' });
+      if (!requestedTenant || !code) return res.status(400).json({ ok: false, error: 'tenant_codigo_required' });
       const db = await getDb();
+      const tenant = await canonicalQrTenant(db, requestedTenant);
       const cfg = await loadQrConfig(db, tenant);
       const product = await fetchQrProduct(cfg, tenant, code);
       res.setHeader('Cache-Control', 'no-store');
@@ -1486,11 +1494,12 @@ function mountQrProductWeb(app) {
 
   app.get('/api/ext/qr/chat/messages', async (req, res) => {
     try {
-      const tenant = safeTenant(req.query?.tenant);
+      const requestedTenant = safeTenant(req.query?.tenant);
       const code = digitsOrText(req.query?.codigo, 180);
       const sid = safeSessionId(req.query?.sessionId);
-      if (!tenant || !code || !sid) return res.status(400).json({ ok: false, error: 'tenant_codigo_session_required' });
+      if (!requestedTenant || !code || !sid) return res.status(400).json({ ok: false, error: 'tenant_codigo_session_required' });
       const db = await getDb();
+      const tenant = await canonicalQrTenant(db, requestedTenant);
       let conv = await db.collection('conversations').findOne(
         { tenantId: tenant, qrSessionId: sid, qrProductCode: code, channelType: 'qr_web', botMode: 'conversacional' },
         { sort: { updatedAt: -1, openedAt: -1 } }
@@ -1536,16 +1545,17 @@ function mountQrProductWeb(app) {
   app.post('/api/ext/qr/chat', qrJson, async (req, res) => {
     const startedAt = Date.now();
     try {
-      const tenant = safeTenant(req.body?.tenant);
+      const requestedTenant = safeTenant(req.body?.tenant);
       const code = digitsOrText(req.body?.codigo, 180);
       const sessionId = safeSessionId(req.body?.sessionId);
       const initial = req.body?.initial === true;
       const message = clean(req.body?.message, 2500);
-      if (!tenant || !code) return res.status(400).json({ ok: false, error: 'tenant_codigo_required' });
+      if (!requestedTenant || !code) return res.status(400).json({ ok: false, error: 'tenant_codigo_required' });
       if (!initial && !message) return res.status(400).json({ ok: false, error: 'message_required' });
       if (!allowAiRequest(req, sessionId)) return res.status(429).json({ ok: false, error: 'rate_limit' });
 
       const db = await getDb();
+      const tenant = await canonicalQrTenant(db, requestedTenant);
       const cfg = await loadQrConfig(db, tenant);
       if (!cfg.enabled || !cfg.aiEnabled) return res.status(404).json({ ok: false, error: 'qr_ai_disabled' });
       const [product, apiKey] = await Promise.all([
