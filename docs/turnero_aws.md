@@ -1,6 +1,6 @@
 # Turnero de Mecan en AWS
 
-Actualizado el 14/09/2026 a las 23:00 de Argentina. Servicio publicado en AWS; la app principal sigue en 5.00.139 con la actualización corregida del menú y notificaciones. Turnero: `/opt/asisto/turnero/releases/20260914-8`. Android: **Asisto 1.1.7**.
+Actualizado el 16/09/2026. Servicio publicado en AWS; la app principal sigue en 5.00.139 con la actualización corregida del menú y notificaciones. Turnero: `/opt/asisto/turnero/releases/20260916-9`. Android: **Asisto 1.1.7**.
 
 ## Accesos reales
 
@@ -66,7 +66,7 @@ Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un únic
 
 ## Avisos, acceso temporal y estadísticas (1.1.7)
 
-- Release AWS actual: `/opt/asisto/turnero/releases/20260914-7`, puerto 3102. App principal: `/opt/asisto/releases/5cf94e5354a5-turnero-notifications-fixed`. La release 4 corrigió el barrido para Mongo API estricta con aggregate + group; la 5 incorporó el historial automático y el filtro; la 6 integró estadísticas al shell y el selector superadmin; la 7 agregó el cierre/cancelación del QR. Ambos servicios mantienen sus releases anteriores para rollback.
+- Release AWS base previa: `/opt/asisto/turnero/releases/20260914-7`, puerto 3102. App principal: `/opt/asisto/releases/5cf94e5354a5-turnero-notifications-fixed`. La release 4 corrigió el barrido para Mongo API estricta con aggregate + group; la 5 incorporó el historial automático y el filtro; la 6 integró estadísticas al shell y el selector superadmin; la 7 agregó el cierre/cancelación del QR. Ambos servicios mantienen sus releases anteriores para rollback.
 - QUEUE_OPEN_TENANTS=DEMO_FERRETERIA en /etc/asisto/turnero.env habilita emisión y operación sin login solo en ese comercio, a pedido del usuario. Retirar ese valor y reiniciar el servicio restablece el login. Los eventos anónimos guardan operador-sin-login y puesto; no identifican una persona.
 - Panel: https://asistobot.com.ar/ui/turnero/DEMO_FERRETERIA/estadisticas. Enlace desde atención. Requiere sesión Asisto del mismo comercio o superadmin. API /api/customer-app-admin/:tenant/stats?from=AAAA-MM-DD&to=AAAA-MM-DD.
 - Mongo queue_tickets conserva fechas, estado, entrega e historial (creación, activación, primer llamado, repeticiones, cierre, ausencia, traslado y puesto). El panel reconstruye todas las visitas a secciones, incluidas las anteriores a esta actualización. Promedios excluyen etapas incompletas, P90 espera, conteos por día/sección/hora, datos de móvil/impresión y CSV de recorridos sin identificadores de dispositivos ni códigos QR. No hay borrado automático de históricos.
@@ -84,10 +84,10 @@ Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un únic
 - El modal del QR incluye una X visible y accesible en la esquina superior derecha. Al cerrar una reserva todavía no reclamada, `POST /api/customer-app-admin/:tenant/tickets/:id/cancel` la pasa inmediatamente a CANCELLED con `deliveryMode=dismissed` e historial `kiosk_closed`, evitando que permanezca pendiente. Escape usa el mismo flujo. Si ya fue reclamada o impresa, cerrar no cancela el turno entregado.
 - Verificación: 17 pruebas pasaron, build Android y firma OK; endpoints públicos 200, ingreso kiosco/atención sin redirección, APK 1.1.7 y assetlinks JSON correctos. Panel revisado visualmente con datos ficticios aislados. Pendiente verificar apertura automática y recepción real con un teléfono instalado y permiso concedido, y comandera USB física.
 
-## Cambios preparados el 16/09/2026 (pendientes de publicar)
+## Cambios publicados el 16/09/2026
 
 - Kiosco: "Recibí el llamado en tu celular".
 - Atención: "Llamar siguiente" finaliza el llamado actual y llama al siguiente en una operación serializada; si no hay espera, conserva el actual.
 - Pantallas de atención y llamados: intentan habilitar sonido al abrir y lo activan en la primera interacción si el navegador bloquea audio automático.
 - Traslado: selector y botón agrupados con etiqueta y espacio; botón "Trasladar a la sección elegida".
-- Pruebas locales: 23/23. Despliegue preparado en "deploy/turnero/update-next-sound-layout.sh". AWS continúa en release 8: SSH a 18.228.233.189:22 agotó el tiempo de conexión; el sitio HTTPS responde 200 y aún muestra el texto anterior.
+- Pruebas locales: 23/23. Despliegue reversible con `deploy/turnero/update-next-sound-layout.sh`. AWS quedó en `/opt/asisto/turnero/releases/20260916-9`; ambos servicios activos y `/healthz` correcto. La web pública muestra el texto nuevo, el avance habilitado, el bloque de traslado y la activación de sonido.
