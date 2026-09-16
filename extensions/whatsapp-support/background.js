@@ -33,6 +33,10 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     Promise.all([opened, chrome.storage.session.set({ ['selection-' + sender.tab.id]: { jid: String(message.jid || ''), name: String(message.name || ''), draftId: String(message.draftId || ''), refreshAt: Date.now() } })]).then(() => reply({ ok: true }), () => reply({ error: 'panel_open_failed' }));
     return true;
   }
+  if (message.action === 'SET_CONTEXT' && fromWhatsApp) {
+    chrome.storage.session.set({ ['selection-' + sender.tab.id]: { jid: String(message.jid || ''), name: String(message.name || ''), refreshAt: Date.now() } }).then(() => reply({ ok: true }), () => reply({ error: 'context_failed' }));
+    return true;
+  }
   if (fromWhatsApp && !['INDEX', 'CONTACT', 'CONTACTS', 'MESSAGES', 'ASSIGN_MESSAGES', 'ACTIVE_CONTEXT'].includes(message.action)) return false;
   (async () => {
     const session = await authenticatedSession();
