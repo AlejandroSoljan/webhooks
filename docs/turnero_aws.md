@@ -83,3 +83,11 @@ Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un únic
 - La pantalla de Estadísticas Turnero se sirve dentro de `auth.appShell`, con el menú lateral de Asisto visible y el contenido en un iframe interno de ancho completo. El usuario común queda fijo en su tenant; superadmin recibe un desplegable armado desde dominios configurados, usuarios y tickets, y puede cambiar de tenant sin perder el shell. Una prueba de integración valida shell, iframe, permiso y desplegable.
 - El modal del QR incluye una X visible y accesible en la esquina superior derecha. Al cerrar una reserva todavía no reclamada, `POST /api/customer-app-admin/:tenant/tickets/:id/cancel` la pasa inmediatamente a CANCELLED con `deliveryMode=dismissed` e historial `kiosk_closed`, evitando que permanezca pendiente. Escape usa el mismo flujo. Si ya fue reclamada o impresa, cerrar no cancela el turno entregado.
 - Verificación: 17 pruebas pasaron, build Android y firma OK; endpoints públicos 200, ingreso kiosco/atención sin redirección, APK 1.1.7 y assetlinks JSON correctos. Panel revisado visualmente con datos ficticios aislados. Pendiente verificar apertura automática y recepción real con un teléfono instalado y permiso concedido, y comandera USB física.
+
+## Cambios preparados el 16/09/2026 (pendientes de publicar)
+
+- Kiosco: "Recibí el llamado en tu celular".
+- Atención: "Llamar siguiente" finaliza el llamado actual y llama al siguiente en una operación serializada; si no hay espera, conserva el actual.
+- Pantallas de atención y llamados: intentan habilitar sonido al abrir y lo activan en la primera interacción si el navegador bloquea audio automático.
+- Traslado: selector y botón agrupados con etiqueta y espacio; botón "Trasladar a la sección elegida".
+- Pruebas locales: 23/23. Despliegue preparado en "deploy/turnero/update-next-sound-layout.sh". AWS continúa en release 8: SSH a 18.228.233.189:22 agotó el tiempo de conexión; el sitio HTTPS responde 200 y aún muestra el texto anterior.

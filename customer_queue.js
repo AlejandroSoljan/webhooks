@@ -258,8 +258,12 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
       if (req.body?.expectedTicketId !== (current ? String(current._id) : null)) fail(409, 'La atención cambió desde otra pantalla. Revisá el turno y reintentá.');
       const now = new Date(), who = clean(req.user?.username || req.user?.uid || 'operador-sin-login');
       if (action === 'next') {
-        if (current) fail(409, 'Finalizá o trasladá el turno actual antes de llamar al siguiente.');
-        const doc = await tickets.findOneAndUpdate({ ...filter, status: 'WAITING' }, { $set: { status: 'CALLED', desk: clean(req.body?.desk, 40), calledAt: now, updatedAt: now }, $push: { history: { action, at: now, who, sectorId, desk: clean(req.body?.desk, 40) } } }, { sort: order, returnDocument: 'after' });
+        const waiting = await tickets.findOne({ ...filter, status: 'WAITING' }, { sort: order });
+        if (!waiting) fail(409, 'No hay turnos en espera para llamar.');
+        if (current) {
+          await tickets.updateOne({ _id: current._id, status: 'CALLED' }, { $set: { status: 'DONE', updatedAt: now }, $push: { history: { action: 'finish', at: now, who, sectorId, desk: current.desk || '', reason: 'next' } } });
+        }
+        const doc = await tickets.findOneAndUpdate({ ...filter, _id: waiting._id, status: 'WAITING' }, { $set: { status: 'CALLED', desk: clean(req.body?.desk, 40), calledAt: now, updatedAt: now }, $push: { history: { action, at: now, who, sectorId, desk: clean(req.body?.desk, 40) } } }, { returnDocument: 'after' });
         return { doc, notification: !!doc };
       }
       if (!current) fail(409, 'No hay un turno en atención.');

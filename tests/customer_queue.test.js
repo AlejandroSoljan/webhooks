@@ -95,7 +95,8 @@ test('QR expires, rejects tampering and cannot be used by a different commerce',
   assert.equal(validPresence(token + 'x', 'TEST', 'secret', 2000), false);
 });
 test('pages contain syntactically valid scripts and escape tenant names', () => {
-  for (const mode of ['kiosk', 'display', 'admin']) { const html = queuePage('TEST', mode); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); if (mode === 'kiosk') assert.match(html, /id="dismissTicket"[^>]+aria-label="Cerrar y cancelar esta reserva"/); }
+  for (const mode of ['kiosk', 'display', 'admin']) { const html = queuePage('TEST', mode); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); if (mode === 'kiosk') assert.match(html, /id="dismissTicket"[^>]+aria-label="Cerrar y cancelar esta reserva"/); else { assert.match(html, /enableCallSound/); assert.match(html, /transferControls/); } }
+  assert.match(queuePage('TEST', 'kiosk'), /Recibí el llamado en tu celular/);
 });
 test('existing Android page renders cancellation and product discovery with a valid script', async () => {
   const app = express(); require('../customer_app_web').mountCustomerApp(app);
@@ -156,6 +157,25 @@ test('finish and skip clear the section, and a late kiosk retry cannot issue a s
   const retry = await req(api + '/tickets', { sectorId: 'ferreteria', installId: doc.installId, source: 'kiosk' }, 'TEST'); assert.equal(retry.body.id, next.body.ticket.id); assert.equal(retry.body.status, 'DONE');
   const another = await req(admin + '/sectors/ferreteria/next', { expectedTicketId: null }, 'TEST');
   const skipped = await req(admin + '/sectors/ferreteria/skip', { expectedTicketId: another.body.ticket.id }, 'TEST'); assert.equal(skipped.body.ticket.status, 'SKIPPED');
+});
+test('calling next finishes the current ticket and advances in one action', async () => {
+  const a = await req('/api/customer-app/ADVANCE/tickets', { sectorId: 'ferreteria', installId: 'advance-a', presence: presenceToken('ADVANCE', 'test-secret') });
+  const b = await req('/api/customer-app/ADVANCE/tickets', { sectorId: 'ferreteria', installId: 'advance-b', presence: presenceToken('ADVANCE', 'test-secret') });
+  assert.equal(a.status, 200); assert.equal(b.status, 200);
+  const op = '/api/customer-app-admin/ADVANCE/sectors/ferreteria/next';
+  const first = await req(op, { expectedTicketId: null, desk: 'Mostrador 1' }, 'ADVANCE');
+  assert.equal(first.status, 200); assert.equal(first.body.ticket.id, a.body.id);
+  const stale = await req(op, { expectedTicketId: null, desk: 'Mostrador 2' }, 'ADVANCE');
+  assert.equal(stale.status, 409);
+  const second = await req(op, { expectedTicketId: a.body.id, desk: 'Mostrador 1' }, 'ADVANCE');
+  assert.equal(second.status, 200); assert.equal(second.body.ticket.id, b.body.id);
+  const old = await db.collection('queue_tickets').findOne({ _id: new (require('mongodb').ObjectId)(a.body.id) });
+  assert.equal(old.status, 'DONE'); assert.equal(old.history.at(-1).action, 'finish'); assert.equal(old.history.at(-1).reason, 'next');
+  const state = await req('/api/customer-app/ADVANCE/queue');
+  assert.equal(state.body.sectors[0].current.id, b.body.id);
+  assert.equal((await req(op, { expectedTicketId: b.body.id }, 'ADVANCE')).status, 409);
+  const stillCurrent = await req('/api/customer-app/ADVANCE/tickets/' + b.body.id + '?installId=advance-b');
+  assert.equal(stillCurrent.body.status, 'CALLED');
 });
 let reserved, claim;
 test('QR-first issuance reserves without joining the callable queue; a retry keeps its QR', async () => {
