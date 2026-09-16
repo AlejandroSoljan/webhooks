@@ -358,8 +358,8 @@ class SupportService {
       // Explicit message selection may include history not delivered by Baileys.
       // Import only selected, readable evidence; never replace stored content.
       const imports = missing.map(id => input.selectedMessages.find(row => row?.id === id));
-      if (imports.some(row => !row || !jids.includes(row.jid) || typeof row.text !== 'string' || !row.text.trim() || row.text.length > 20000 || !Number.isFinite(+new Date(row.at)) || !row.at)) fail('message_selection_not_found', 404);
-      for (const row of imports) await this.ingest(scope, { id: row.id, jid, at: new Date(row.at), text: row.text, fromMe: row.fromMe === true, name: contact?.name || '' }, { historical: true });
+      if (imports.some(row => !row || !jids.includes(row.jid) || typeof row.text !== 'string' || !row.text.trim() || row.text.length > 20000 || (row.observedAt !== true && (!Number.isFinite(+new Date(row.at)) || !row.at)))) fail('message_selection_not_found', 404);
+      for (const row of imports) await this.ingest(scope, { id: row.id, jid, at: row.observedAt === true ? this.now() : new Date(row.at), text: row.text, fromMe: row.fromMe === true, name: contact?.name || '' }, { historical: true });
       rows = await this.col('messages').find({ ...scope, jid: { $in: jids }, id: { $in: waIds } }).sort({ at: 1, _id: 1 }).toArray();
       await this.audit(scope, 'selected_messages_imported', jid);
     }

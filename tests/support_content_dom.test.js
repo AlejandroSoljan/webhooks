@@ -11,7 +11,7 @@ async function mount() {
     <div role="row" data-id="false_123@lid_AUDIO000001"><div class="message-in"><span data-icon="audio-play"></span></div></div>
     <div role="row" data-id="true_123@lid_AUDIO000002"><div class="message-out"><span data-icon="audio-play"></span></div></div>
     <div role="row" data-id="false_123@lid_TEXT0000001"><div class="message-in"><div data-pre-plain-text="[15:33, 14/9/2026] Magali: "><span class="selectable-text">Ahora sí</span></div></div></div>
-    </section><div id="composer"><footer><input></footer></div></div>`, { url: 'https://web.whatsapp.com/', runScripts: 'outside-only' });
+    </section><div id="composer"><footer><input></footer></div></div>`, { url: 'https://web.whatsapp.com/', runScripts: 'outside-only', pretendToBeVisual: true });
   const calls = [], w = dom.window;
   w.chrome = { runtime: { id: 'test', sendMessage: async message => {
     calls.push(message);
@@ -69,5 +69,62 @@ test('a visible message without a WhatsApp DOM id is selectable and sends readab
     assert.match(request.messageIds[0], /^asisto-local-/);
     assert.equal(request.selectedMessages[0].text, 'Ahora sí');
     assert.equal(request.selectedMessages[0].at, '2026-09-14T18:33:00.000Z');
+  } finally { dom.window.close(); }
+});
+test('selection and its evidence survive scrolling, remounting and refreshes', async () => {
+  const { dom, w, calls } = await mount();
+  try {
+    const section = w.document.querySelector('#messages');
+    const row = section.lastElementChild;
+    row.removeAttribute('data-id'); await pause();
+    let check = [...w.document.querySelectorAll('.asisto-message-control input')].at(-1);
+    check.click(); const id = section.lastElementChild.dataset.asistoMessageId;
+    const sameCheck = [...w.document.querySelectorAll('.asisto-message-control input')].at(-1);
+    w.document.dispatchEvent(new w.Event('scroll', { bubbles: true })); await pause();
+    assert.equal([...w.document.querySelectorAll('.asisto-message-control input')].at(-1), sameCheck);
+    assert.equal(sameCheck.checked, true);
+    section.lastElementChild.remove(); await pause();
+    assert.match(w.document.querySelector('.asisto-message-toolbar strong').textContent, /1 seleccionados/);
+    section.append(row); await pause();
+    check = [...w.document.querySelectorAll('.asisto-message-control input')].at(-1);
+    assert.equal(section.lastElementChild.dataset.asistoMessageId, id);
+    assert.equal(check.checked, true);
+    section.lastElementChild.remove(); await pause();
+    w.document.querySelector('.asisto-message-toolbar .primary').click(); await pause();
+    const request = calls.find(call => call.action === 'ASSIGN_MESSAGES');
+    assert.deepEqual([...request.messageIds], [id]);
+    assert.equal(request.selectedMessages[0].text, 'Ahora sí');
+  } finally { dom.window.close(); }
+});
+test('selecting media without text or an exposed date includes honest evidence without waiting for Baileys', async () => {
+  const { dom, w, calls } = await mount();
+  try {
+    const row = w.document.querySelector('[data-id="false_123@lid_AUDIO000001"]');
+    row.removeAttribute('data-id'); await pause();
+    w.document.querySelector('.asisto-message-control input').click();
+    w.document.querySelector('.asisto-message-toolbar .primary').click(); await pause();
+    const request = calls.find(call => call.action === 'ASSIGN_MESSAGES');
+    assert.match(request.selectedMessages[0].text, /Fecha original no visible/);
+    assert.match(request.selectedMessages[0].text, /Audio seleccionado sin texto visible/);
+    assert.ok(Number.isFinite(Date.parse(request.selectedMessages[0].at)));
+  } finally { dom.window.close(); }
+});
+test('an audio stays selected when its transcription appears after the click', async () => {
+  const { dom, w, calls } = await mount();
+  try {
+    const section = w.document.querySelector('#messages'), row = section.firstElementChild;
+    row.removeAttribute('data-id'); row.querySelector('.message-in').append(w.document.createTextNode(' 0:34 15:29'));
+    await pause();
+    w.document.querySelector(`.asisto-message-control[data-asisto-message-id="${row.dataset.asistoMessageId}"] input`).click();
+    const id = row.dataset.asistoMessageId;
+    const transcript = w.document.createElement('span'); transcript.className = 'selectable-text'; transcript.textContent = 'Falta agregar el período contable';
+    row.querySelector('.message-in').append(transcript); await pause();
+    assert.equal(row.dataset.asistoMessageId, id);
+    assert.equal(w.document.querySelector(`.asisto-message-control[data-asisto-message-id="${id}"] input`).checked, true);
+    row.remove(); await pause(); section.insertBefore(row, section.firstElementChild); await pause();
+    assert.equal(row.dataset.asistoMessageId, id);
+    assert.equal(w.document.querySelector(`.asisto-message-control[data-asisto-message-id="${id}"] input`).checked, true);
+    w.document.querySelector('.asisto-message-toolbar .primary').click(); await pause();
+    assert.match(calls.find(call => call.action === 'ASSIGN_MESSAGES').selectedMessages[0].text, /período contable/);
   } finally { dom.window.close(); }
 });

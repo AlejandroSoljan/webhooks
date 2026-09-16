@@ -327,6 +327,15 @@ test('missing selection cannot import another contact or silently omit unreadabl
  await assert.rejects(service.assignMessages(scope, { ...input, selectedMessages: [{ ...input.selectedMessages[0], jid: input.jid, text: '' }] }), /message_selection_not_found/);
  assert.equal(await service.col('messages').countDocuments(scope), 0);
 });
+test('explicitly selected media without a visible date imports at server receipt without Baileys history', async () => {
+ const jid = '123@lid', id = 'asisto-local-audio';
+ const result = await service.assignMessages(scope, { jid, destination: 'new', messageIds: [id], selectedMessages: [{ id, jid, observedAt: true, at: '2099-01-01T00:00:00Z', fromMe: false, text: '[Fecha original no visible en WhatsApp] [Audio seleccionado sin texto visible]' }] });
+ assert.ok(result.draftId);
+ const row = await service.col('messages').findOne({ ...scope, id });
+ assert.ok(row);
+ assert.ok(row.at < new Date('2099-01-01T00:00:00Z'));
+ assert.match(vault.open(row.payload, row._id).text, /Fecha original no visible/);
+});
 
 test('extension always selects the local agent account and never falls back to a browser login', async () => {
  const vm = require('node:vm'), fs = require('node:fs');
