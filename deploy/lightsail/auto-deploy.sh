@@ -40,8 +40,9 @@ if git -C "$source_dir" cat-file -e "$sha:data/articulos_rodaven.txt" 2>/dev/nul
 fi
 git -C "$source_dir" archive "$sha" -- "${paths[@]}" | tar -xf - -C "$candidate"
 chown -R asisto:asisto "$candidate"
-if ! runuser -u asisto -- npm --prefix "$candidate" ci --no-audit --no-fund \
-  || ! runuser -u asisto -- npm --prefix "$candidate" test; then
+install -d -o asisto -g asisto -m 0750 /var/lib/asisto/npm-cache
+if ! runuser -u asisto -- npm --cache /var/lib/asisto/npm-cache --prefix "$candidate" ci --no-audit --no-fund \
+  || ! runuser -u asisto -- npm --cache /var/lib/asisto/npm-cache --prefix "$candidate" test; then
   printf '%s\n' "$sha" > "$failed_sha_file"
   echo "Build or tests failed; production unchanged" >&2
   exit 1
