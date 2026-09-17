@@ -1,0 +1,76 @@
+ASISTO - BACKEND WEB/API
+Historial de cambios (reconstruido de Git el 17/09/2026)
+
+Repositorio: AlejandroSoljan/webhooks
+Versión declarada en ASISTO_VERSION.json: 5.00.148 (16/09/2026).
+El último tag de la serie 5.00 disponible en Git es v5.00.094. Hay commits
+posteriores sin tag; por eso se citan también sus identificadores. No confundir
+este historial con HISTORIAL_CAMBIOS_4.04.txt del agente WhatsApp para Windows.
+
+HISTÓRICO RESUMIDO (anteriores a este archivo)
+
+v5.00.000 a v5.00.011 - Base de la serie 5.00, control de consumos, ajustes
+  de identidad visual y documentación/API de ayuda. El historial temprano no
+  tiene una descripción funcional verificable para cada número intermedio.
+
+v5.00.012 a v5.00.018 - Métricas de seguridad/permisos de sesiones WhatsApp,
+  correcciones de _id inmutable y del parser numérico de configuración;
+  controles de prioridades de confirmación y ayudas en el panel de dominios.
+
+v5.00.019 a v5.00.044 - Respuestas de ayuda con transcripciones y videos,
+  selección de modelos IA por dominio, mejoras de rendimiento y consistencia
+  de consultas QR, y búsqueda de productos por QR/código de barras. Se agregó
+  catálogo por dominio y se protegieron las consultas bajo carga concurrente.
+
+v5.00.045 a v5.00.054 - Sincronización paginada del catálogo Manager a Mongo,
+  reintentos de páginas vacías, soporte de producto por código de barras y
+  panel de atención WhatsApp con agentes personales y revisión previa a HubSpot.
+
+v5.00.055 a v5.00.090 - Evolución del panel de sesiones/soporte WhatsApp,
+  extensión de navegador para tareas y tickets HubSpot, métricas de mensajes
+  realmente enviados y separación de claves OpenAI por tipo de IA. En esta
+  etapa se incorporó la consulta directa a Manager por código de barras.
+
+v5.00.093 a v5.00.112 - Búsqueda de productos por foto, mejoras del escáner,
+  App Clientes con turnos multisector, interfaz móvil, navegación, ofertas,
+  lectura difícil de códigos y opciones similares del catálogo.
+
+v5.00.113 a v5.00.119 - Centro de notificaciones dirigido por dominio y
+  dispositivo, correcciones del formulario móvil, registro obligatorio de
+  Firebase y vibración cuando se acerca un turno.
+
+v5.00.120 a v5.00.122 - Rendimiento del panel de sesiones, endurecimiento
+  del tráfico QR y del pool de Mongo, y espera correcta de la configuración QR.
+
+CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
+
+12-16/09/2026 - Panel/extensión de tareas WhatsApp: selección de mensajes,
+  agrupación por tema, exclusiones por contacto, conservación de evidencias,
+  borradores y autenticación asociada al agente local. Commits representativos:
+  238448f, cd1279a, 5e010f3, ff180e3, f936d07.
+
+13/09/2026 - Corrección de campos duplicados en upserts de sesiones del agente
+  en Mongo (a703718). Evita el error de ruta "numero" coincidente dos veces.
+
+14-15/09/2026 - Conteos de WhatsApp/API Mensajes: distinguir mensajes reales,
+  sesiones y registros de facturación; deduplicar métricas. Commits 82f8596,
+  72f5d2a, 955b4a8 y 50df0bb.
+
+16/09/2026 - Avisos de leads públicos por la sesión WhatsApp configurada
+  (6bca651). Configuración de dominios secundarios para resolver consultas
+  externas con el dominio principal (4a32bdc).
+
+17/09/2026 - Despliegue automático del backend desde GitHub main hacia AWS
+  Lightsail: instalación, pruebas, health check y reversión si falla. Commits
+  ab8d8cb y 9464886. Verificado en AWS con /healthz correcto.
+
+REGLA PARA CAMBIOS FUTUROS
+
+Antes de publicar una próxima versión del backend, agregar una entrada con:
+fecha, versión declarada, cambio funcional, efectos operativos/migraciones,
+pruebas realizadas y commit/tag. Si una versión anterior resultó incorrecta,
+marcarla como reemplazada y explicar qué versión la corrigió. Actualizar el
+TXT en el mismo cambio de código siempre que sea posible.
+
+No afirmar que un commit de GitHub ya está en producción sólo porque fue
+publicado: verificar el despliegue de AWS y la respuesta de /healthz.
