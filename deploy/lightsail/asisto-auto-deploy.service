@@ -1,0 +1,9 @@
+[Unit]
+Description=Asisto automatic deployment from GitHub main
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/asisto-auto-deploy
+TimeoutStartSec=15min

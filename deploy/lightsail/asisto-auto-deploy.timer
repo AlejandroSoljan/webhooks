@@ -1,0 +1,11 @@
+[Unit]
+Description=Check GitHub for Asisto updates every two minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Persistent=true
+Unit=asisto-auto-deploy.service
+
+[Install]
+WantedBy=timers.target
