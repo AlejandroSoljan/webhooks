@@ -80,16 +80,23 @@ CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
   npm test, para evitar el falso resultado de 0 pruebas. El backfill acepta
   DOTENV_CONFIG_PATH al ejecutarse manualmente en AWS. Impacto operativo:
   release con rollback automático si fallan pruebas o /healthz. Pruebas:
-  suite local 159/159, suite del release en AWS y /healthz tras el despliegue.
-  Reemplaza la validación incompleta de v5.00.149.
+  suite local 159/159 y /healthz tras el despliegue. La ejecución del suite
+  en AWS quedó pendiente porque el temporizador usó el script anterior.
 
 17/09/2026 - v5.00.151 (tag v5.00.151) - Reintento del release con el
   script de despliegue actualizado ya instalado en AWS. No cambia datos ni
   lógica funcional respecto de v5.00.150. Impacto operativo: fuerza la
   construcción de un release que incluya tests/ y ejecute el suite real;
-  conserva el rollback automático. Pruebas: 159/159 locales y verificación
-  de release activo y /healthz en AWS. Reemplaza la validación que corrió
-  prematuramente para v5.00.150.
+  conserva el rollback automático. Pruebas: 159/159 locales; el release en
+  AWS se rechazó por caché de Mongo de prueba sin permisos. Producción
+  permaneció en v5.00.150.
+
+17/09/2026 - v5.00.152 (tag v5.00.152) - El despliegue reserva una caché
+  escribible para MongoDB de prueba y ejecuta el suite con la zona horaria
+  Argentina, usada por la captura de mensajes WhatsApp. Impacto operativo:
+  el release vuelve a validar pruebas reales antes de activar producción.
+  Pruebas: suite en AWS 158 aprobadas, 1 omitida; verificar release activo
+  y /healthz luego del despliegue. Reemplaza el intento fallido v5.00.151.
 
 REGLA PARA CAMBIOS FUTUROS
 
