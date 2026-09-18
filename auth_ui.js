@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.154 | Fecha: 2026-09-17
+// Asisto | Version: 5.00.159 | Fecha: 2026-09-18
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -1995,6 +1995,7 @@ function usersAdminPage({ user, users, msg, err }) {
         { key: "inbox", title: "WhatsApp" },
          { key: "fleteros", title: "Viajes Fleteros" },
         { key: "productos", title: "Productos" },
+        { key: "resto", title: "Restaurante" },
         { key: "horarios", title: "Horarios" },
         { key: "comportamiento", title: "Comportamiento" },
         { key: "leads", title: "Leads" },

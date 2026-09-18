@@ -1,8 +1,9 @@
-// Asisto | Version: 5.00.158 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.159 | Fecha: 2026-09-18
 (() => {
   const el = id => document.getElementById(id);
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   let tenant = '', firstLoad = true, seen = new Set(), loading = false;
+  const tableNotificationDrafts = new Map();
   const query = () => '?tenant=' + encodeURIComponent(tenant);
   const request = async (url, options) => {
     const response = await fetch(url, { credentials: 'same-origin', ...options });
@@ -39,7 +40,7 @@
   function renderTables(tables) {
     el('tableCount').textContent = tables.filter(x => x.active).length;
     el('tables').classList.toggle('empty', !tables.length);
-    el('tables').innerHTML = tables.length ? tables.map(x => `<article class="table"><h3>Mesa ${escape(x.label)}</h3><img src="/api/resto/tables/${encodeURIComponent(x.id)}/qr${query()}" alt="QR de mesa ${escape(x.label)}"><a href="${escape(x.url)}" target="_blank" rel="noopener">Abrir carta de esta mesa</a></article>`).join('') : 'Todavía no hay mesas. Agregá una para generar su QR.';
+    el('tables').innerHTML = tables.length ? tables.map(x => `<article class="table"><h3>Mesa ${escape(x.label)}</h3><img src="/api/resto/tables/${encodeURIComponent(x.id)}/qr${query()}" alt="QR de mesa ${escape(x.label)}"><a href="${escape(x.url)}" target="_blank" rel="noopener">Abrir carta de esta mesa</a><p>${Number(x.visitors || 0)} cliente(s) con la carta abierta</p><label>Mensaje para esta mesa<textarea data-message="${escape(x.id)}" maxlength="300" placeholder="Ej.: Tu pedido está listo">${escape(tableNotificationDrafts.get(x.id) || '')}</textarea></label><button data-notify="${escape(x.id)}" type="button" ${x.visitors ? '' : 'disabled'}>Enviar aviso</button></article>`).join('') : 'Todavía no hay mesas. Agregá una para generar su QR.';
   }
   async function load() {
     if (!tenant || loading) return;
@@ -51,6 +52,7 @@
         request('/api/resto/tables' + query()),
       ]);
       el('menuCount').textContent = summary.menuCount;
+      el('ordersEnabled').checked = summary.ordersEnabled !== false;
       if (document.activeElement !== el('logoUrl')) el('logoUrl').value = summary.logoUrl || '';
       el('logoPreview').src = summary.logoUrl || '/static/restaurant_logo_example.svg';
       el('setup').classList.toggle('hidden', summary.enabled);
@@ -84,12 +86,15 @@
       select.value = tenant;
       reflectTenant();
       await load();
-      select.onchange = () => { tenant = select.value; firstLoad = true; seen = new Set(); reflectTenant(); load(); };
+      select.onchange = () => { tenant = select.value; firstLoad = true; seen = new Set(); tableNotificationDrafts.clear(); reflectTenant(); load(); };
       el('refresh').onclick = load;
       el('enable').onclick = async () => { try { await request('/api/resto/config' + query(), { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ enabled:true }) }); await load(); } catch (e) { message(e.message); } };
       el('addTable').onclick = async () => { const label = el('tableLabel').value.trim(); if (!label) return message('Escribí el nombre de la mesa.'); try { await request('/api/resto/tables' + query(), { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ label }) }); el('tableLabel').value = ''; await load(); } catch (e) { message(e.message); } };
       el('saveLogo').onclick = async () => { try { await request('/api/resto/branding' + query(), { method:'PUT', headers:{'content-type':'application/json'}, body:JSON.stringify({ logoUrl:el('logoUrl').value.trim() }) }); await load(); message('Logo guardado para el dominio ' + tenant + '.'); } catch (e) { message('No se pudo guardar el logo: ' + e.message); } };
+      el('saveOrders').onclick = async () => { try { await request('/api/resto/orders-config' + query(), { method:'PUT', headers:{'content-type':'application/json'}, body:JSON.stringify({ enabled:el('ordersEnabled').checked }) }); await load(); message('Configuración de pedidos guardada para ' + tenant + '.'); } catch (e) { message('No se pudo guardar la configuración: ' + e.message); } };
       el('events').onclick = async e => { const id = e.target.closest('[data-done]')?.dataset.done; if (!id) return; try { await request('/api/resto/events/' + encodeURIComponent(id) + query(), { method:'PATCH', headers:{'content-type':'application/json'}, body:JSON.stringify({ status:'done' }) }); await load(); } catch (error) { message(error.message); } };
+      el('tables').oninput = e => { const id = e.target.dataset.message; if (id) tableNotificationDrafts.set(id, e.target.value); };
+      el('tables').onclick = async e => { const id = e.target.closest('[data-notify]')?.dataset.notify; if (!id) return; const body = (tableNotificationDrafts.get(id) || '').trim(); if (!body) return message('Escribí el mensaje para la mesa.'); try { const result = await request('/api/resto/tables/' + encodeURIComponent(id) + '/notifications' + query(), { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ title:'Mensaje del restaurante', body }) }); tableNotificationDrafts.delete(id); await load(); message('Aviso enviado a ' + result.recipients + ' cliente(s) de la mesa.'); } catch (error) { message('No se pudo enviar el aviso: ' + error.message); } };
       el('alerts').onclick = async () => { if (!('Notification' in window)) return message('Este navegador no admite avisos. Mantené el panel abierto para ver las solicitudes.'); const permission = await Notification.requestPermission(); if (permission === 'granted') { localStorage.setItem('asistoRestaurantAlerts','yes'); el('alerts').textContent = 'Avisos activados'; message('Los avisos llegarán mientras el panel esté abierto.'); } else message('El navegador no autorizó los avisos.'); };
       if (localStorage.getItem('asistoRestaurantAlerts') === 'yes' && 'Notification' in window && Notification.permission === 'granted') el('alerts').textContent = 'Avisos activados';
       setInterval(() => { if (!document.hidden) load(); }, 5000);

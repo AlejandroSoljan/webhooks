@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.104 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.159 | Fecha: 2026-09-18
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -7491,6 +7491,8 @@ app.get("/admin/ticket/:convId", async (req, res) => {
 
 
 // GET /api/products  → lista (activos por defecto; status=all|active|inactive)
+const { validProductImageUrl, mountProductImageRoutes } = require('./restaurant_image');
+mountProductImageRoutes(app, { getDb, resolveTenantId, express });
 app.get("/api/products/domains", async (req, res) => {
   if (String(req.user?.role || '').toLowerCase() !== 'superadmin') return res.status(403).json({ error: 'forbidden' });
   try {
@@ -7522,10 +7524,12 @@ app.get("/api/products", async (req, res) => {
 app.post("/api/products", async (req, res) => {
   try {
     const db = await getDb();
-    let { descripcion, tag, importe, cantidad, observacion, active } = req.body || {};
+    let { descripcion, tag, importe, cantidad, observacion, imagen, active } = req.body || {};
     descripcion = String(descripcion || "").trim();
     tag = String(tag || "").trim();
     observacion = String(observacion || "").trim();
+    imagen = String(imagen || "").trim();
+    if (!validProductImageUrl(imagen)) return res.status(400).json({ error: 'imagen_invalida' });
     if (typeof active !== "boolean") active = !!active;
     let imp = null;
     if (typeof importe === "number") imp = importe;
@@ -7551,7 +7555,7 @@ app.post("/api/products", async (req, res) => {
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
     const now = new Date();
     const tenant = resolveTenantId(req);
-    const doc = { tenantId: (tenant || TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
+    const doc = { tenantId: (tenant || TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, imagen, active, createdAt: now, updatedAt: now };
     if (tag) doc.tag = tag;
     if (qty !== null) doc.cantidad = qty;
     if (imp !== null) doc.importe = imp;
@@ -7569,11 +7573,15 @@ app.put("/api/products/:id", async (req, res) => {
     const db = await getDb();
     const { id } = req.params;
     const upd = {};
-    ["descripcion","tag","observacion","active","importe","cantidad"].forEach(k => {
+    ["descripcion","tag","observacion","imagen","active","importe","cantidad"].forEach(k => {
       if (req.body[k] !== undefined) upd[k] = req.body[k];
     });
     if (upd.tag !== undefined) {
       upd.tag = String(upd.tag || "").trim();
+    }
+    if (upd.imagen !== undefined) {
+      upd.imagen = String(upd.imagen || '').trim();
+      if (!validProductImageUrl(upd.imagen)) return res.status(400).json({ error: 'imagen_invalida' });
     }
     if (upd.importe !== undefined && typeof upd.importe === "string") {
       const n = Number(upd.importe.replace(/[^\d.,-]/g, "").replace(",", "."));
@@ -7630,6 +7638,8 @@ app.post("/api/products/bulk-save", async (req, res) => {
       let descripcion = String(raw.descripcion || "").trim();
       const tag = String(raw.tag || "").trim();
       const observacion = String(raw.observacion || "").trim();
+      const imagen = String(raw.imagen || '').trim();
+      if (!validProductImageUrl(imagen)) return res.status(400).json({ error: 'imagen_invalida' });
       let active = raw.active;
       if (typeof active !== "boolean") active = !!active;
 
@@ -7638,7 +7648,8 @@ app.post("/api/products/bulk-save", async (req, res) => {
         && !tag
         && !String(raw.importe ?? "").trim()
         && !String(raw.cantidad ?? "").trim()
-        && !observacion;
+        && !observacion
+        && !imagen;
       if (emptyDraft) { skipped++; continue; }
 
       if (!descripcion) {
@@ -7663,7 +7674,7 @@ app.post("/api/products/bulk-save", async (req, res) => {
         }
       }
 
-      const doc = { tenantId: tenantValue, descripcion, observacion, active, updatedAt: now };
+      const doc = { tenantId: tenantValue, descripcion, observacion, imagen, active, updatedAt: now };
       if (tag) doc.tag = tag; else doc.tag = "";
       if (qty !== null) doc.cantidad = qty; else doc.cantidad = null;
       if (imp !== null) doc.importe = imp; else doc.importe = null;
@@ -7778,6 +7789,7 @@ app.get("/productos", async (req, res) => {
         <td class="col-price"><input class="importe" type="number" step="0.01" value="${escAttr(p.importe ?? "")}" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" value="${escAttr(p.cantidad ?? "")}" placeholder="0" /></td>
         <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación...">${escText(p.observacion || "")}</textarea></td>
+        <td class="col-image"><input class="imagen" type="text" value="${escAttr(validProductImageUrl(p.imagen || '') ? (p.imagen || '') : '')}" placeholder="URL HTTPS de imagen"><input class="image-file" type="file" accept="image/jpeg,image/png,image/webp"><img class="image-preview" src="${escAttr(validProductImageUrl(p.imagen || '') ? (p.imagen || '') : '')}" alt="Vista previa" ${p.imagen && validProductImageUrl(p.imagen) ? '' : 'hidden'}></td>
         <td class="col-active">
           <label class="active-check" title="Activo">
             <input class="active" type="checkbox" ${p.active !== false ? "checked" : ""} />
@@ -7887,7 +7899,11 @@ app.get("/productos", async (req, res) => {
         .col-tag{width:14%}
         .col-price{width:12%}
         .col-qty{width:11%}
-        .col-obs{width:24%}
+        .col-obs{width:20%}
+        .col-image{width:18%}
+        .image-file{max-width:100%;font-size:11px;margin-top:5px}
+        .image-preview{display:block;width:70px;height:58px;object-fit:cover;border-radius:8px;margin-top:6px}
+        .image-preview[hidden]{display:none}
         .col-active{width:8%;text-align:center}
         .col-actions{width:10%}
         input[type=text],input[type=number],textarea{
@@ -7915,7 +7931,8 @@ app.get("/productos", async (req, res) => {
           .col-tag{width:12%}
           .col-price{width:10%}
           .col-qty{width:9%}
-          .col-obs{width:20%}
+          .col-obs{width:18%}
+          .col-image{width:18%}
           .col-active{width:8%}
           .col-actions{width:10%}
         }
@@ -7926,7 +7943,7 @@ app.get("/productos", async (req, res) => {
           .toolbar-actions .btn{flex:1 1 148px}
           .table-card{border-radius:20px}
           .table-wrap{overflow:auto}
-          table{min-width:1080px}
+          table{min-width:1250px}
           
         }
       </style></head><body>
@@ -7983,11 +8000,12 @@ app.get("/productos", async (req, res) => {
                 <th class="col-price">Importe</th>
                 <th class="col-qty">Cantidad máx.</th>
                 <th class="col-obs">Observación</th>
+                <th class="col-image">Imagen</th>
                 <th class="col-active">Activo</th>
                 <th class="col-actions">Acciones</th>
               </tr>
               </thead>
-               <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="7">No hay productos para mostrar.</td></tr>`}</tbody>
+               <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="8">No hay productos para mostrar.</td></tr>`}</tbody>
             </table>
           </div>
         </section>
@@ -7999,6 +8017,7 @@ app.get("/productos", async (req, res) => {
         <td class="col-price"><input class="importe" type="number" step="0.01" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" placeholder="0" /></td>
         <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación..."></textarea></td>
+        <td class="col-image"><input class="imagen" type="text" placeholder="URL HTTPS de imagen"><input class="image-file" type="file" accept="image/jpeg,image/png,image/webp"><img class="image-preview" alt="Vista previa" hidden></td>
         <td class="col-active">
           <label class="active-check" title="Activo">
             <input class="active" type="checkbox" checked />
@@ -8060,6 +8079,8 @@ app.get("/productos", async (req, res) => {
           q('.importe',tr).value=(it && (typeof it.importe==='number' || it.importe)) ? it.importe : '';
           q('.cantidad',tr).value=(it && (typeof it.cantidad==='number' || it.cantidad)) ? it.cantidad : '';
           q('.observacion',tr).value=it && it.observacion ? it.observacion : '';
+          q('.imagen',tr).value=it && it.imagen ? it.imagen : '';
+          showImagePreview(tr);
           q('.active',tr).checked=!(it && it.active===false);
           
         }
@@ -8129,6 +8150,28 @@ app.get("/productos", async (req, res) => {
             el.addEventListener(evt,()=>markDirty(tr));
             if(el.type==='checkbox') el.addEventListener('change',()=>markDirty(tr));
           });
+          q('.imagen',tr).addEventListener('input',()=>showImagePreview(tr));
+          q('.image-file',tr).addEventListener('change',async e=>{
+            const file=e.target.files?.[0];
+            if(!file) return;
+            if(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>2*1024*1024){setFlash('err','Usá JPG, PNG o WebP de hasta 2 MB.');return}
+            try{
+              const response=await fetch(scoped('/api/products/images'),{method:'POST',headers:{'Content-Type':file.type},body:file});
+              const data=await response.json();
+              if(!response.ok) throw Error(data.error||'No se pudo cargar la imagen.');
+              q('.imagen',tr).value=data.url;
+              showImagePreview(tr);
+              markDirty(tr);
+              setFlash('ok','Imagen cargada. Guardá los cambios del catálogo para asignarla al artículo.');
+            }catch(error){setFlash('err',error.message)}
+          });
+        }
+
+        function showImagePreview(tr){
+          const url=q('.imagen',tr).value.trim(),preview=q('.image-preview',tr);
+          const valid=url.startsWith('https://')||url.startsWith('/resto/image/')||url.startsWith('/static/restaurant_demo/');
+          preview.hidden=!valid;
+          if(valid) preview.src=url; else preview.removeAttribute('src');
         }
 
         function showEmptyIfNeeded(){
@@ -8139,7 +8182,7 @@ app.get("/productos", async (req, res) => {
             if(!currentEmpty){
               const tr=document.createElement('tr');
               tr.className='empty-row';
-              tr.innerHTML='<td colspan="7">No hay productos para mostrar.</td>';
+              tr.innerHTML='<td colspan="8">No hay productos para mostrar.</td>';
               tb.appendChild(tr);
             }
           }else if(currentEmpty){
@@ -8155,6 +8198,7 @@ app.get("/productos", async (req, res) => {
             importe:q('.importe',tr).value.trim(),
             cantidad:q('.cantidad',tr).value.trim(),
             observacion:q('.observacion',tr).value.trim(),
+            imagen:q('.imagen',tr).value.trim(),
             active:q('.active',tr).checked
           };
         }
@@ -8165,7 +8209,8 @@ app.get("/productos", async (req, res) => {
             && !payload.tag
             && !String(payload.importe || '').trim()
             && !String(payload.cantidad || '').trim()
-            && !payload.observacion;
+            && !payload.observacion
+            && !payload.imagen;
         }
 
         async function reload(){

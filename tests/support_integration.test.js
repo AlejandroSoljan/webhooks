@@ -272,6 +272,7 @@ test('Asisto menu, shell and user editor expose support only under the intended 
     assert.match(shell.url, /\/admin\/wweb$/); assert.doesNotMatch(await shell.text(), /Tickets desde WhatsApp/);
     const editor = await (await fetch(base + '/admin/users')).text();
     assert.match(editor, /key: "support", title: "Extensión de tareas WhatsApp"/);
+    assert.match(editor, /key: "resto", title: "Restaurante"/);
     const denied = await fetch(base + '/ui/support', { headers: { 'test-denied': '1' } }); assert.equal(denied.status, 403);
     const restrictedMenu = await (await fetch(base + '/app', { headers: { 'test-denied': '1' } })).text();
     assert.doesNotMatch(restrictedMenu, /href="\/ui\/support"/);

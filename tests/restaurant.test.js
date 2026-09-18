@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.158 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.159 | Fecha: 2026-09-18
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -14,7 +14,7 @@ test('mesa QR carga la carta y registra un pedido con precio del servidor', asyn
   await db.collection('tenant_config').insertOne({ _id: 'RES', restaurant_enabled: true, nom_emp: 'Prueba' });
   await db.collection('tenant_config').insertOne({ _id: 'OTRO', restaurant_enabled: false, nom_emp: 'Otro' });
   await db.collection('restaurant_tables').insertOne({ tenantId: 'RES', label: '1', token, active: true });
-  const inserted = await db.collection('products').insertOne({ tenantId: 'RES', descripcion: 'Pasta', tag: 'Principal', importe: 1200, observacion: 'Trigo y tomate', active: true });
+  const inserted = await db.collection('products').insertOne({ tenantId: 'RES', descripcion: 'Pasta', tag: 'Principal', importe: 1200, observacion: 'Trigo y tomate', imagen: '/static/restaurant_demo/pasta.webp', active: true });
   const app = express();
   let role = 'superadmin';
   app.use((req, _res, next) => { req.user = { uid: 'operador', role, tenantId: 'RES' }; next(); });
@@ -28,6 +28,7 @@ test('mesa QR carga la carta y registra un pedido con precio del servidor', asyn
     const listing = await fetch(`${base}/api/public/resto/RES/${token}/menu`).then(r => r.json());
     assert.equal(listing.items.length, 1);
     assert.equal(listing.items[0].observacion, 'Trigo y tomate');
+    assert.equal(listing.items[0].imagen, '/static/restaurant_demo/pasta.webp');
     const domains = await fetch(`${base}/api/resto/domains`).then(r => r.json());
     assert.deepEqual(domains.domains.map(x => x.id), ['OTRO', 'RES']);
     assert.equal((await fetch(`${base}/api/resto/summary?tenant=RES`).then(r => r.json())).menuCount, 1);
@@ -39,15 +40,30 @@ test('mesa QR carga la carta y registra un pedido con precio del servidor', asyn
     assert.deepEqual((await fetch(`${base}/api/resto/domains`).then(r => r.json())).domains.map(x => x.id), ['RES']);
     assert.equal((await fetch(`${base}/api/resto/summary?tenant=OTRO`).then(r => r.json())).tenant, 'RES');
     role = 'superadmin';
-    const response = await fetch(`${base}/api/public/resto/RES/${token}/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'order', items: [{ id: String(inserted.insertedId), quantity: 2, unitPrice: 1 }] }) });
+    const visitorId = '12345678-1234-4123-8123-123456789abc';
+    const response = await fetch(`${base}/api/public/resto/RES/${token}/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'order', visitorId, items: [{ id: String(inserted.insertedId), quantity: 2, unitPrice: 1 }] }) });
     assert.equal(response.status, 201);
     assert.equal((await response.json()).total, 2400);
+    assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/visitors`, { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ visitorId, browserNotifications:true }) })).status, 200);
+    const firstTable = (await fetch(`${base}/api/resto/tables?tenant=RES`).then(r => r.json())).tables[0];
+    assert.equal(firstTable.visitors, 1);
+    const notice = await fetch(`${base}/api/resto/tables/${firstTable.id}/notifications?tenant=RES`, { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ title:'Tu pedido', body:'Está listo' }) });
+    assert.equal(notice.status, 201);
+    assert.equal((await notice.json()).recipients, 1);
+    const guestMessages = await fetch(`${base}/api/public/resto/RES/${token}/notifications?visitorId=${visitorId}`).then(r => r.json());
+    assert.equal(guestMessages.notifications[0].body, 'Está listo');
+    assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/notifications?visitorId=${visitorId}&after=${guestMessages.notifications[0].id}`).then(r => r.json())).notifications.length, 0);
+    assert.equal((await fetch(`${base}/api/resto/orders-config?tenant=RES`, { method:'PUT', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ enabled:false }) })).status, 200);
+    assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/menu`).then(r => r.json())).ordersEnabled, false);
+    assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/events`, { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ type:'order', items:[{ id:String(inserted.insertedId), quantity:1 }] }) })).status, 403);
     const events = await fetch(`${base}/api/resto/events`).then(r => r.json());
     assert.equal(events.events[0].tableLabel, '1');
     assert.equal(events.events[0].items[0].unitPrice, 1200);
     const done = await fetch(`${base}/api/resto/events/${events.events[0]._id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'done' }) });
     assert.equal(done.status, 200);
+    assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/notifications?visitorId=${visitorId}&after=${guestMessages.notifications[0].id}`).then(r => r.json())).notifications[0].title, 'Actualización de tu mesa');
     assert.equal((await fetch(`${base}/api/resto/events`).then(r => r.json())).events.length, 0);
+    assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/events`, { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ type:'call' }) })).status, 201);
     const table = await fetch(`${base}/api/resto/tables?tenant=RES`, { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ label:'2' }) });
     assert.equal(table.status, 201);
     assert.equal((await fetch(`${base}/api/resto/tables?tenant=RES`).then(r => r.json())).tables.length, 2);

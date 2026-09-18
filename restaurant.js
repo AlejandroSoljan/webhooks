@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.158 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.159 | Fecha: 2026-09-18
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
@@ -10,11 +10,13 @@ const { getDb } = require('./db');
 const { resolveOpenAiApiKey } = require('./ai_key_router');
 const { firebaseSender } = require('./customer_notifications');
 const { renderRestaurantPage } = require('./restaurant_public_page');
+const { validProductImageUrl } = require('./restaurant_image');
 
 const json = express.json({ limit: '64kb' });
 const clean = (v, max = 500) => String(v ?? '').trim().slice(0, max);
 const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 const validTenant = v => /^[A-Z0-9_-]{2,40}$/.test(v);
+const validVisitorId = v => /^[a-f0-9-]{36}$/.test(v);
 const requestBuckets = new Map();
 const adminTenant = (req, auth) => clean(auth.resolveTenantId(req, { envTenantId: process.env.TENANT_ID }), 40).toUpperCase();
 
@@ -48,8 +50,8 @@ async function tableContext(tenant, token) {
 
 async function menu(db, tenant) {
   const rows = await db.collection('products').find({ tenantId: tenant, active: { $ne: false } })
-    .project({ descripcion: 1, observacion: 1, importe: 1, tag: 1, cantidad: 1 }).sort({ tag: 1, descripcion: 1 }).limit(300).toArray();
-  return rows.map(x => ({ id: String(x._id), nombre: x.descripcion, categoria: x.tag || 'Carta', precio: Number(x.importe) || 0, observacion: x.observacion || '', disponible: x.cantidad !== 0 }));
+    .project({ descripcion: 1, observacion: 1, importe: 1, tag: 1, cantidad: 1, imagen: 1 }).sort({ tag: 1, descripcion: 1 }).limit(300).toArray();
+  return rows.map(x => ({ id: String(x._id), nombre: x.descripcion, categoria: x.tag || 'Carta', precio: Number(x.importe) || 0, observacion: x.observacion || '', imagen: validProductImageUrl(x.imagen || '') ? (x.imagen || '') : '', disponible: x.cantidad !== 0 }));
 }
 
 function mountRestaurant(app, auth) {
@@ -74,7 +76,7 @@ function mountRestaurant(app, auth) {
       db.collection('products').countDocuments({ tenantId: tenant, active: { $ne: false } }),
       db.collection('restaurant_tables').countDocuments({ tenantId: tenant, active: true }),
     ]);
-    res.json({ tenant, enabled: config.restaurant_enabled === true, menuCount, tableCount, logoUrl: config.restaurant_logo_url || '' });
+    res.json({ tenant, enabled: config.restaurant_enabled === true, ordersEnabled: config.restaurant_orders_enabled !== false, menuCount, tableCount, logoUrl: config.restaurant_logo_url || '' });
   });
   app.post('/api/resto/config', json, async (req, res) => {
     const tenant = adminTenant(req, auth);
@@ -91,6 +93,13 @@ function mountRestaurant(app, auth) {
     const result = await db.collection('tenant_config').updateOne({ _id: tenant, restaurant_enabled: true }, { $set: { restaurant_logo_url: logoUrl, updatedAt: new Date() } });
     res.status(result.matchedCount ? 200 : 404).json({ ok: !!result.matchedCount, logoUrl });
   });
+  app.put('/api/resto/orders-config', json, async (req, res) => {
+    const tenant = adminTenant(req, auth);
+    if (!validTenant(tenant) || typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'solicitud_invalida' });
+    const db = await getDb();
+    const result = await db.collection('tenant_config').updateOne({ _id: tenant, restaurant_enabled: true }, { $set: { restaurant_orders_enabled: req.body.enabled, updatedAt: new Date() } });
+    res.status(result.matchedCount ? 200 : 404).json({ ok: !!result.matchedCount, ordersEnabled: req.body.enabled });
+  });
   app.get('/resto/:tenant/:token', async (req, res) => {
     const tenant = clean(req.params.tenant, 40).toUpperCase(), token = clean(req.params.token, 32);
     const ctx = await tableContext(tenant, token).catch(() => null);
@@ -101,7 +110,28 @@ function mountRestaurant(app, auth) {
   app.get('/api/public/resto/:tenant/:token/menu', async (req, res) => {
     const ctx = await tableContext(clean(req.params.tenant, 40).toUpperCase(), clean(req.params.token, 32));
     if (!ctx) return res.status(404).json({ error: 'mesa_no_disponible' });
-    res.set('Cache-Control', 'no-store').json({ items: await menu(ctx.db, ctx.table.tenantId) });
+    res.set('Cache-Control', 'no-store').json({ items: await menu(ctx.db, ctx.table.tenantId), ordersEnabled: ctx.config.restaurant_orders_enabled !== false });
+  });
+
+  app.post('/api/public/resto/:tenant/:token/visitors', json, async (req, res) => {
+    const ctx = await tableContext(clean(req.params.tenant, 40).toUpperCase(), clean(req.params.token, 32));
+    if (!ctx) return res.status(404).json({ error: 'mesa_no_disponible' });
+    const visitorId = clean(req.body?.visitorId, 36);
+    if (!validVisitorId(visitorId) || !allowRequest(`visitor:${ctx.table.token}`, 180)) return res.status(400).json({ error: 'sesion_invalida' });
+    const now = new Date();
+    await ctx.db.collection('restaurant_visitors').updateOne({ tenantId: ctx.table.tenantId, tableId: ctx.table._id, visitorId }, { $set: { lastSeenAt: now, browserNotifications: req.body?.browserNotifications === true }, $setOnInsert: { createdAt: now } }, { upsert: true });
+    res.json({ ok: true });
+  });
+  app.get('/api/public/resto/:tenant/:token/notifications', async (req, res) => {
+    const ctx = await tableContext(clean(req.params.tenant, 40).toUpperCase(), clean(req.params.token, 32));
+    if (!ctx) return res.status(404).json({ error: 'mesa_no_disponible' });
+    const visitorId = clean(req.query.visitorId, 36), after = clean(req.query.after, 24);
+    if (!validVisitorId(visitorId) || (after && !ObjectId.isValid(after))) return res.status(400).json({ error: 'sesion_invalida' });
+    const visitor = await ctx.db.collection('restaurant_visitors').findOne({ tenantId: ctx.table.tenantId, tableId: ctx.table._id, visitorId });
+    if (!visitor) return res.status(404).json({ error: 'sesion_no_registrada' });
+    const filter = { tenantId: ctx.table.tenantId, tableId: ctx.table._id, visitorId, ...(after ? { _id: { $gt: new ObjectId(after) } } : {}) };
+    const rows = await ctx.db.collection('restaurant_guest_notifications').find(filter).sort({ _id: 1 }).limit(20).toArray();
+    res.set('Cache-Control', 'no-store').json({ notifications: rows.map(x => ({ id: String(x._id), title: x.title, body: x.body, createdAt: x.createdAt })) });
   });
 
   app.post('/api/public/resto/:tenant/:token/events', json, async (req, res) => {
@@ -111,6 +141,7 @@ function mountRestaurant(app, auth) {
       if (!allowRequest(`event:${ctx.table.token}`, 15)) return res.status(429).json({ error: 'demasiadas_solicitudes' });
       const type = clean(req.body?.type, 20);
       if (!['call','bill','order'].includes(type)) return res.status(400).json({ error: 'tipo_invalido' });
+      if (type === 'order' && ctx.config.restaurant_orders_enabled === false) return res.status(403).json({ error: 'pedidos_deshabilitados' });
       const now = new Date();
       const recent = await ctx.db.collection('restaurant_events').findOne({ tenantId: ctx.table.tenantId, tableId: ctx.table._id, type, status: 'pending', createdAt: { $gte: new Date(now - 30000) } });
       if (recent && type !== 'order') return res.json({ ok: true, id: String(recent._id) });
@@ -127,7 +158,8 @@ function mountRestaurant(app, auth) {
           total += product.precio * quantity;
         }
       }
-      const event = { tenantId: ctx.table.tenantId, tableId: ctx.table._id, tableLabel: ctx.table.label, type, status: 'pending', items, total, note: clean(req.body?.note, 500), createdAt: now, updatedAt: now };
+      const visitorId = validVisitorId(clean(req.body?.visitorId, 36)) ? clean(req.body.visitorId, 36) : '';
+      const event = { tenantId: ctx.table.tenantId, tableId: ctx.table._id, tableLabel: ctx.table.label, visitorId, type, status: 'pending', items, total, note: clean(req.body?.note, 500), createdAt: now, updatedAt: now };
       const result = await ctx.db.collection('restaurant_events').insertOne(event);
       void notifyOperatorDevices(ctx.db, { ...event, _id: result.insertedId }).catch(e => console.error('restaurant push', e.message));
       res.status(201).json({ ok: true, id: String(result.insertedId), total });
@@ -158,7 +190,22 @@ function mountRestaurant(app, auth) {
     const db = await getDb();
     const rows = await db.collection('restaurant_tables').find({ tenantId: tenant }).sort({ label: 1 }).toArray();
     const origin = process.env.PUBLIC_BASE_URL || 'https://www.asistobot.com.ar';
-    res.json({ tables: rows.map(x => ({ id: String(x._id), label: x.label, active: x.active, url: `${origin}/resto/${encodeURIComponent(tenant)}/${x.token}` })) });
+    const visitors = await db.collection('restaurant_visitors').find({ tenantId: tenant, lastSeenAt: { $gte: new Date(Date.now() - 90000) } }).project({ tableId: 1 }).limit(500).toArray();
+    const counts = new Map();
+    for (const visitor of visitors) counts.set(String(visitor.tableId), (counts.get(String(visitor.tableId)) || 0) + 1);
+    res.json({ tables: rows.map(x => ({ id: String(x._id), label: x.label, active: x.active, visitors: counts.get(String(x._id)) || 0, url: `${origin}/resto/${encodeURIComponent(tenant)}/${x.token}` })) });
+  });
+  app.post('/api/resto/tables/:id/notifications', json, async (req, res) => {
+    const tenant = adminTenant(req, auth), title = clean(req.body?.title, 80), body = clean(req.body?.body, 300);
+    if (!validTenant(tenant) || !ObjectId.isValid(req.params.id) || !title || !body) return res.status(400).json({ error: 'solicitud_invalida' });
+    const db = await getDb(), tableId = new ObjectId(req.params.id);
+    const table = await db.collection('restaurant_tables').findOne({ _id: tableId, tenantId: tenant, active: true });
+    if (!table) return res.status(404).json({ error: 'mesa_no_disponible' });
+    const visitors = await db.collection('restaurant_visitors').find({ tenantId: tenant, tableId, lastSeenAt: { $gte: new Date(Date.now() - 90000) } }).project({ visitorId: 1 }).limit(50).toArray();
+    if (!visitors.length) return res.status(409).json({ error: 'sin_clientes_conectados' });
+    const now = new Date();
+    await db.collection('restaurant_guest_notifications').insertMany(visitors.map(visitor => ({ tenantId: tenant, tableId, visitorId: visitor.visitorId, title, body, createdAt: now, sentBy: clean(req.user?.uid || req.user?.username, 100) })));
+    res.status(201).json({ ok: true, recipients: visitors.length });
   });
   app.post('/api/resto/tables', json, async (req, res) => {
     try {
@@ -197,6 +244,7 @@ function mountRestaurant(app, auth) {
       const tenant = auth.resolveTenantId(req, { envTenantId: process.env.TENANT_ID });
       const db = await getDb();
       const tables = await db.collection('restaurant_tables').find({ tenantId: tenant, active: true }).sort({ label: 1 }).limit(100).toArray();
+      const config = await db.collection('tenant_config').findOne({ _id: tenant }, { projection: { restaurant_orders_enabled: 1 } });
       if (!tables.length) return res.status(404).json({ error: 'mesas_no_disponibles' });
       const origin = process.env.PUBLIC_BASE_URL || 'https://www.asistobot.com.ar';
       const pdf = new PDFDocument({ size: 'A4', margin: 32 });
@@ -213,7 +261,7 @@ function mountRestaurant(app, auth) {
         pdf.roundedRect(x, y, 255, 177, 9).stroke('#bcc9c0');
         pdf.fontSize(17).fillColor('#214438').text(`Mesa ${table.label}`, x + 14, y + 12, { width: 220 });
         pdf.image(png, x + 60, y + 38, { width: 112, height: 112 });
-        pdf.fontSize(9).fillColor('#3c4d43').text('Escaneá para ver la carta y pedir', x + 14, y + 153, { width: 225, align: 'center' });
+        pdf.fontSize(9).fillColor('#3c4d43').text(config?.restaurant_orders_enabled === false ? 'Escaneá para ver la carta' : 'Escaneá para ver la carta y pedir', x + 14, y + 153, { width: 225, align: 'center' });
       }
       pdf.end();
     } catch (e) { console.error('restaurant qr pdf', e); if (!res.headersSent) res.status(500).json({ error: 'error_interno' }); else res.destroy(e); }
@@ -228,8 +276,13 @@ function mountRestaurant(app, auth) {
     const tenant = auth.resolveTenantId(req, { envTenantId: process.env.TENANT_ID });
     if (!ObjectId.isValid(req.params.id) || !['done','cancelled'].includes(req.body?.status)) return res.status(400).json({ error: 'solicitud_invalida' });
     const db = await getDb();
-    const result = await db.collection('restaurant_events').updateOne({ _id: new ObjectId(req.params.id), tenantId: tenant, status: 'pending' }, { $set: { status: req.body.status, updatedAt: new Date() } });
-    res.status(result.matchedCount ? 200 : 404).json({ ok: !!result.matchedCount });
+    const event = await db.collection('restaurant_events').findOneAndUpdate({ _id: new ObjectId(req.params.id), tenantId: tenant, status: 'pending' }, { $set: { status: req.body.status, updatedAt: new Date() } }, { returnDocument: 'after' });
+    if (!event) return res.status(404).json({ ok: false });
+    if (validVisitorId(event.visitorId || '')) {
+      const body = req.body.status === 'cancelled' ? 'Tu solicitud fue cancelada. Consultá al personal si necesitás ayuda.' : ({ order: 'Tu pedido fue atendido por el restaurante.', call: 'El mozo está en camino.', bill: 'La cuenta está en camino.' }[event.type] || 'Tu solicitud fue atendida.');
+      await db.collection('restaurant_guest_notifications').insertOne({ tenantId: tenant, tableId: event.tableId, visitorId: event.visitorId, title: 'Actualización de tu mesa', body, createdAt: new Date(), eventId: event._id });
+    }
+    res.json({ ok: true });
   });
   app.get('/admin/resto', (_req, res) => res.sendFile(path.join(__dirname, 'static', 'restaurant_panel.html')));
 }

@@ -171,6 +171,17 @@ CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
   Pruebas: carta y pedido con MongoDB aislado; interacción de categorías y
   confirmación con DOM; suite completa y verificación de release/healthz en AWS.
 
+18/09/2026 - v5.00.159 (commit pendiente) - Imágenes por artículo en la carta
+  y alta de productos (URL o archivo), fotos generadas para los artículos de
+  RES, control de pedidos por dominio y avisos a clientes con la carta abierta
+  por sesión anónima de mesa. El panel envía mensajes y la atención de una
+  solicitud produce un aviso. Se incorpora Restaurante al selector visible de
+  permisos de usuarios. Datos nuevos: product_images, restaurant_visitors y
+  restaurant_guest_notifications; se completan imágenes faltantes solo en RES.
+  Los avisos del navegador requieren permiso y página abierta. Sin cambios en
+  dominios ajenos a RES. Pruebas: suite completa, producto/imagen, carta,
+  pedidos deshabilitados, avisos y permisos; release/healthz en AWS.
+
 REGLA PARA CAMBIOS FUTUROS
 
 Antes de publicar una próxima versión del backend, agregar una entrada con:
