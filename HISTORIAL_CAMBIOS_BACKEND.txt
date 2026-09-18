@@ -83,6 +83,14 @@ CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
   suite local 159/159, suite del release en AWS y /healthz tras el despliegue.
   Reemplaza la validación incompleta de v5.00.149.
 
+17/09/2026 - v5.00.151 (tag v5.00.151) - Reintento del release con el
+  script de despliegue actualizado ya instalado en AWS. No cambia datos ni
+  lógica funcional respecto de v5.00.150. Impacto operativo: fuerza la
+  construcción de un release que incluya tests/ y ejecute el suite real;
+  conserva el rollback automático. Pruebas: 159/159 locales y verificación
+  de release activo y /healthz en AWS. Reemplaza la validación que corrió
+  prematuramente para v5.00.150.
+
 REGLA PARA CAMBIOS FUTUROS
 
 Antes de publicar una próxima versión del backend, agregar una entrada con:
