@@ -144,6 +144,13 @@ CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
   activo, /healthz y flujo público tras el despliegue. No reemplaza una versión
   previa.
 
+18/09/2026 - v5.00.156 (commit/tag pendiente) - Descarga de PDF A4
+  imprimible con los QR obtenidos de las mesas activas del MongoDB productivo.
+  Acceso autenticado y limitado al permiso resto; evita reutilizar los QR
+  generados previamente desde una copia antigua de la base. Sin cambios de
+  datos ni migración. Pruebas: PDF generado en Mongo de prueba aislado,
+  validación de cabecera y suite completa; verificar en AWS y /healthz.
+
 REGLA PARA CAMBIOS FUTUROS
 
 Antes de publicar una próxima versión del backend, agregar una entrada con:

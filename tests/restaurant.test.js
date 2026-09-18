@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.155 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.156 | Fecha: 2026-09-18
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -33,6 +33,10 @@ test('mesa QR carga la carta y registra un pedido con precio del servidor', asyn
     const done = await fetch(`${base}/api/resto/events/${events.events[0]._id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'done' }) });
     assert.equal(done.status, 200);
     assert.equal((await fetch(`${base}/api/resto/events`).then(r => r.json())).events.length, 0);
+    const pdf = await fetch(`${base}/api/resto/qr-pdf`);
+    assert.equal(pdf.status, 200);
+    assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+    assert.equal(Buffer.from(await pdf.arrayBuffer()).subarray(0, 4).toString(), '%PDF');
     assert.equal((await fetch(`${base}/api/public/resto/RES/${'b'.repeat(32)}/menu`)).status, 404);
   } finally {
     await new Promise(resolve => server.close(resolve));

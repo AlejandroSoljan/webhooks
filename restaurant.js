@@ -1,7 +1,8 @@
-// Asisto | Version: 5.00.155 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.156 | Fecha: 2026-09-18
 const express = require('express');
 const OpenAI = require('openai');
 const QRCode = require('qrcode');
+const PDFDocument = require('pdfkit');
 const { ObjectId } = require('mongodb');
 const { getDb } = require('./db');
 const { resolveOpenAiApiKey } = require('./ai_key_router');
@@ -112,6 +113,32 @@ function mountRestaurant(app, auth) {
     if (!table) return res.status(404).end();
     const origin = process.env.PUBLIC_BASE_URL || 'https://www.asistobot.com.ar';
     res.type('png').send(await QRCode.toBuffer(`${origin}/resto/${encodeURIComponent(tenant)}/${table.token}`, { width: 360, margin: 2 }));
+  });
+  app.get('/api/resto/qr-pdf', async (req, res) => {
+    try {
+      const tenant = auth.resolveTenantId(req, { envTenantId: process.env.TENANT_ID });
+      const db = await getDb();
+      const tables = await db.collection('restaurant_tables').find({ tenantId: tenant, active: true }).sort({ label: 1 }).limit(100).toArray();
+      if (!tables.length) return res.status(404).json({ error: 'mesas_no_disponibles' });
+      const origin = process.env.PUBLIC_BASE_URL || 'https://www.asistobot.com.ar';
+      const pdf = new PDFDocument({ size: 'A4', margin: 32 });
+      res.set('Content-Disposition', `attachment; filename="qr-mesas-${tenant}.pdf"`);
+      res.type('pdf');
+      pdf.pipe(res);
+      for (let i = 0; i < tables.length; i++) {
+        if (i && i % 8 === 0) pdf.addPage();
+        const table = tables[i];
+        const col = i % 2, row = Math.floor((i % 8) / 2);
+        const x = 35 + col * 280, y = 45 + row * 195;
+        const url = `${origin}/resto/${encodeURIComponent(tenant)}/${table.token}`;
+        const png = await QRCode.toBuffer(url, { width: 500, margin: 2, errorCorrectionLevel: 'H' });
+        pdf.roundedRect(x, y, 255, 177, 9).stroke('#bcc9c0');
+        pdf.fontSize(17).fillColor('#214438').text(`Mesa ${table.label}`, x + 14, y + 12, { width: 220 });
+        pdf.image(png, x + 60, y + 38, { width: 112, height: 112 });
+        pdf.fontSize(9).fillColor('#3c4d43').text('Escaneá para ver la carta y pedir', x + 14, y + 153, { width: 225, align: 'center' });
+      }
+      pdf.end();
+    } catch (e) { console.error('restaurant qr pdf', e); if (!res.headersSent) res.status(500).json({ error: 'error_interno' }); else res.destroy(e); }
   });
   app.get('/api/resto/events', async (req, res) => {
     const tenant = auth.resolveTenantId(req, { envTenantId: process.env.TENANT_ID });
