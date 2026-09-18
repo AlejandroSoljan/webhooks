@@ -75,6 +75,14 @@ CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
   release activo posterior al despliegue. Reemplaza el cálculo anterior que
   omitía el costo de las transcripciones.
 
+17/09/2026 - v5.00.150 (tag v5.00.150) - Corrección de verificación del
+  despliegue automático: el release ahora incluye tests/ antes de ejecutar
+  npm test, para evitar el falso resultado de 0 pruebas. El backfill acepta
+  DOTENV_CONFIG_PATH al ejecutarse manualmente en AWS. Impacto operativo:
+  release con rollback automático si fallan pruebas o /healthz. Pruebas:
+  suite local 159/159, suite del release en AWS y /healthz tras el despliegue.
+  Reemplaza la validación incompleta de v5.00.149.
+
 REGLA PARA CAMBIOS FUTUROS
 
 Antes de publicar una próxima versión del backend, agregar una entrada con:

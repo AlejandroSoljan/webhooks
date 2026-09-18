@@ -32,7 +32,7 @@ candidate=$(mktemp -d "$releases_dir/$short-auto-XXXXXXXX")
 echo "Preparing $sha in $candidate"
 mapfile -t paths < <(git -C "$source_dir" ls-tree --name-only "$sha" | while IFS= read -r name; do
   case "$name" in
-    *.js|*.png|*.jpg|*.ico|package.json|package-lock.json|ASISTO_VERSION.json|version.json|configuracion_errores.json|src|static|desktop|scripts|extensions) printf '%s\n' "$name" ;;
+    *.js|*.png|*.jpg|*.ico|package.json|package-lock.json|ASISTO_VERSION.json|version.json|configuracion_errores.json|src|static|desktop|scripts|extensions|tests) printf '%s\n' "$name" ;;
   esac
 done)
 if git -C "$source_dir" cat-file -e "$sha:data/articulos_rodaven.txt" 2>/dev/null; then

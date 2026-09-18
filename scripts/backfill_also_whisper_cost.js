@@ -1,7 +1,7 @@
-// Asisto | Version: 5.00.149 | Fecha: 2026-09-17
+// Asisto | Version: 5.00.150 | Fecha: 2026-09-17
 // Backfill seguro: solo transcripciones exitosas de ALSO con duración conocida.
 // Sin --apply muestra el plan; con --apply guarda duración y costo estimado.
-require('dotenv').config();
+require('dotenv').config({ path: process.env.DOTENV_CONFIG_PATH || '.env' });
 const { getDb } = require('../db');
 
 async function main() {
