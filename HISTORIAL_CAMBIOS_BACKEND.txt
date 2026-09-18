@@ -163,6 +163,14 @@ CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
   Pruebas: suite completa 176/176, panel superadmin con cambio de dominio, carta y
   pedido con MongoDB aislado; comprobar release activo y /healthz en AWS.
 
+18/09/2026 - v5.00.158 (commit pendiente) - Carta pública por categorías
+  desplegables; confirmación visible, contador y resumen al agregar artículos;
+  consultas de IA más desarrolladas con sugerencias de opciones y combinaciones
+  disponibles de la carta. Diseño móvil renovado con logo de ejemplo y URL de
+  logo configurable por dominio desde el panel. Sin migración de datos.
+  Pruebas: carta y pedido con MongoDB aislado; interacción de categorías y
+  confirmación con DOM; suite completa y verificación de release/healthz en AWS.
+
 REGLA PARA CAMBIOS FUTUROS
 
 Antes de publicar una próxima versión del backend, agregar una entrada con:

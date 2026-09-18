@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.157 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.158 | Fecha: 2026-09-18
 (() => {
   const el = id => document.getElementById(id);
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
@@ -51,6 +51,8 @@
         request('/api/resto/tables' + query()),
       ]);
       el('menuCount').textContent = summary.menuCount;
+      if (document.activeElement !== el('logoUrl')) el('logoUrl').value = summary.logoUrl || '';
+      el('logoPreview').src = summary.logoUrl || '/static/restaurant_logo_example.svg';
       el('setup').classList.toggle('hidden', summary.enabled);
       el('addTable').disabled = !summary.enabled;
       el('pdf').classList.toggle('disabled', !tables.tables.length);
@@ -86,6 +88,7 @@
       el('refresh').onclick = load;
       el('enable').onclick = async () => { try { await request('/api/resto/config' + query(), { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ enabled:true }) }); await load(); } catch (e) { message(e.message); } };
       el('addTable').onclick = async () => { const label = el('tableLabel').value.trim(); if (!label) return message('Escribí el nombre de la mesa.'); try { await request('/api/resto/tables' + query(), { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ label }) }); el('tableLabel').value = ''; await load(); } catch (e) { message(e.message); } };
+      el('saveLogo').onclick = async () => { try { await request('/api/resto/branding' + query(), { method:'PUT', headers:{'content-type':'application/json'}, body:JSON.stringify({ logoUrl:el('logoUrl').value.trim() }) }); await load(); message('Logo guardado para el dominio ' + tenant + '.'); } catch (e) { message('No se pudo guardar el logo: ' + e.message); } };
       el('events').onclick = async e => { const id = e.target.closest('[data-done]')?.dataset.done; if (!id) return; try { await request('/api/resto/events/' + encodeURIComponent(id) + query(), { method:'PATCH', headers:{'content-type':'application/json'}, body:JSON.stringify({ status:'done' }) }); await load(); } catch (error) { message(error.message); } };
       el('alerts').onclick = async () => { if (!('Notification' in window)) return message('Este navegador no admite avisos. Mantené el panel abierto para ver las solicitudes.'); const permission = await Notification.requestPermission(); if (permission === 'granted') { localStorage.setItem('asistoRestaurantAlerts','yes'); el('alerts').textContent = 'Avisos activados'; message('Los avisos llegarán mientras el panel esté abierto.'); } else message('El navegador no autorizó los avisos.'); };
       if (localStorage.getItem('asistoRestaurantAlerts') === 'yes' && 'Notification' in window && Notification.permission === 'granted') el('alerts').textContent = 'Avisos activados';

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.157 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.158 | Fecha: 2026-09-18
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -24,12 +24,16 @@ test('mesa QR carga la carta y registra un pedido con precio del servidor', asyn
   try {
     const page = await fetch(`${base}/resto/RES/${token}`);
     assert.equal(page.status, 200);
+    assert.match(await page.text(), /restaurant_menu.js/);
     const listing = await fetch(`${base}/api/public/resto/RES/${token}/menu`).then(r => r.json());
     assert.equal(listing.items.length, 1);
     assert.equal(listing.items[0].observacion, 'Trigo y tomate');
     const domains = await fetch(`${base}/api/resto/domains`).then(r => r.json());
     assert.deepEqual(domains.domains.map(x => x.id), ['OTRO', 'RES']);
     assert.equal((await fetch(`${base}/api/resto/summary?tenant=RES`).then(r => r.json())).menuCount, 1);
+    assert.equal((await fetch(`${base}/api/resto/branding?tenant=RES`, { method:'PUT', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ logoUrl:'https://example.org/logo.png' }) })).status, 200);
+    assert.match(await fetch(`${base}/resto/RES/${token}`).then(r => r.text()), /https:\/\/example.org\/logo.png/);
+    assert.equal((await fetch(`${base}/api/resto/branding?tenant=RES`, { method:'PUT', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ logoUrl:'javascript:alert(1)' }) })).status, 400);
     assert.equal((await fetch(`${base}/api/resto/summary?tenant=OTRO`).then(r => r.json())).enabled, false);
     role = 'user';
     assert.deepEqual((await fetch(`${base}/api/resto/domains`).then(r => r.json())).domains.map(x => x.id), ['RES']);
