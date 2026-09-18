@@ -1,17 +1,32 @@
-// Asisto | Version: 5.00.156 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.157 | Fecha: 2026-09-18
 const express = require('express');
+const crypto = require('crypto');
+const path = require('path');
 const OpenAI = require('openai');
 const QRCode = require('qrcode');
 const PDFDocument = require('pdfkit');
 const { ObjectId } = require('mongodb');
 const { getDb } = require('./db');
 const { resolveOpenAiApiKey } = require('./ai_key_router');
+const { firebaseSender } = require('./customer_notifications');
 
 const json = express.json({ limit: '64kb' });
 const clean = (v, max = 500) => String(v ?? '').trim().slice(0, max);
 const escapeHtml = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 const validTenant = v => /^[A-Z0-9_-]{2,40}$/.test(v);
 const requestBuckets = new Map();
+const adminTenant = (req, auth) => clean(auth.resolveTenantId(req, { envTenantId: process.env.TENANT_ID }), 40).toUpperCase();
+
+async function notifyOperatorDevices(db, event) {
+  const devices = await db.collection('restaurant_operator_devices').find({ tenantId: event.tenantId, active: { $ne: false }, pushToken: { $type: 'string' } }).project({ pushToken: 1, deviceId: 1 }).limit(50).toArray();
+  if (!devices.length) return;
+  const send = await firebaseSender();
+  const description = event.type === 'order' ? 'Nuevo pedido' : event.type === 'bill' ? 'Piden la cuenta' : 'Llaman al mozo';
+  const url = `${process.env.PUBLIC_BASE_URL || 'https://asistobot.com.ar'}/ui/resto?tenant=${encodeURIComponent(event.tenantId)}`;
+  const results = await Promise.allSettled(devices.map(d => send(d.pushToken, { title: `${description} · Mesa ${event.tableLabel}`, body: event.type === 'order' ? `${event.items.length} artículo(s) por $ ${event.total}` : description, url, channelId: 'asisto_restaurante' })));
+  const sent = results.filter(x => x.status === 'fulfilled').length;
+  await db.collection('restaurant_events').updateOne({ _id: event._id, tenantId: event.tenantId }, { $set: { pushSent: sent, pushFailed: results.length - sent, pushAttemptedAt: new Date() } });
+}
 function allowRequest(key, max, periodMs = 60000) {
   const now = Date.now();
   if (requestBuckets.size > 5000) for (const [k, v] of requestBuckets) if (v.until <= now) requestBuckets.delete(k);
@@ -37,6 +52,36 @@ async function menu(db, tenant) {
 }
 
 function mountRestaurant(app, auth) {
+  app.get('/api/resto/domains', async (req, res) => {
+    try {
+      const db = await getDb();
+      const isSuper = String(req.user?.role || '').toLowerCase() === 'superadmin';
+      const own = adminTenant(req, auth);
+      const rows = isSuper
+        ? await db.collection('tenant_config').find({}, { projection: { _id: 1, nom_emp: 1, restaurant_enabled: 1 } }).sort({ _id: 1 }).limit(1000).toArray()
+        : await db.collection('tenant_config').find({ _id: own }, { projection: { _id: 1, nom_emp: 1, restaurant_enabled: 1 } }).toArray();
+      res.json({ isSuper, domains: rows.map(x => ({ id: String(x._id), name: String(x.nom_emp || ''), enabled: x.restaurant_enabled === true })) });
+    } catch (e) { res.status(503).json({ error: 'domains_unavailable' }); }
+  });
+  app.get('/api/resto/summary', async (req, res) => {
+    const tenant = adminTenant(req, auth);
+    if (!validTenant(tenant)) return res.status(400).json({ error: 'dominio_requerido' });
+    const db = await getDb();
+    const config = await db.collection('tenant_config').findOne({ _id: tenant }, { projection: { restaurant_enabled: 1 } });
+    if (!config) return res.status(404).json({ error: 'dominio_no_existe' });
+    const [menuCount, tableCount] = await Promise.all([
+      db.collection('products').countDocuments({ tenantId: tenant, active: { $ne: false } }),
+      db.collection('restaurant_tables').countDocuments({ tenantId: tenant, active: true }),
+    ]);
+    res.json({ tenant, enabled: config.restaurant_enabled === true, menuCount, tableCount });
+  });
+  app.post('/api/resto/config', json, async (req, res) => {
+    const tenant = adminTenant(req, auth);
+    if (!validTenant(tenant) || req.body?.enabled !== true) return res.status(400).json({ error: 'solicitud_invalida' });
+    const db = await getDb();
+    const result = await db.collection('tenant_config').updateOne({ _id: tenant }, { $set: { restaurant_enabled: true, updatedAt: new Date() } });
+    res.status(result.matchedCount ? 200 : 404).json({ ok: !!result.matchedCount });
+  });
   app.get('/resto/:tenant/:token', async (req, res) => {
     const tenant = clean(req.params.tenant, 40).toUpperCase(), token = clean(req.params.token, 32);
     const ctx = await tableContext(tenant, token).catch(() => null);
@@ -75,6 +120,7 @@ function mountRestaurant(app, auth) {
       }
       const event = { tenantId: ctx.table.tenantId, tableId: ctx.table._id, tableLabel: ctx.table.label, type, status: 'pending', items, total, note: clean(req.body?.note, 500), createdAt: now, updatedAt: now };
       const result = await ctx.db.collection('restaurant_events').insertOne(event);
+      void notifyOperatorDevices(ctx.db, { ...event, _id: result.insertedId }).catch(e => console.error('restaurant push', e.message));
       res.status(201).json({ ok: true, id: String(result.insertedId), total });
     } catch (e) { console.error('restaurant event', e); res.status(500).json({ error: 'error_interno' }); }
   });
@@ -99,11 +145,34 @@ function mountRestaurant(app, auth) {
   });
 
   app.get('/api/resto/tables', async (req, res) => {
-    const tenant = auth.resolveTenantId(req, { envTenantId: process.env.TENANT_ID });
+    const tenant = adminTenant(req, auth);
     const db = await getDb();
     const rows = await db.collection('restaurant_tables').find({ tenantId: tenant }).sort({ label: 1 }).toArray();
     const origin = process.env.PUBLIC_BASE_URL || 'https://www.asistobot.com.ar';
     res.json({ tables: rows.map(x => ({ id: String(x._id), label: x.label, active: x.active, url: `${origin}/resto/${encodeURIComponent(tenant)}/${x.token}` })) });
+  });
+  app.post('/api/resto/tables', json, async (req, res) => {
+    try {
+      const tenant = adminTenant(req, auth), label = clean(req.body?.label, 20);
+      if (!validTenant(tenant) || !/^[\p{L}\p{N} ._-]{1,20}$/u.test(label)) return res.status(400).json({ error: 'mesa_invalida' });
+      const db = await getDb();
+      if (!await db.collection('tenant_config').findOne({ _id: tenant, restaurant_enabled: true })) return res.status(409).json({ error: 'restaurante_no_habilitado' });
+      const existing = await db.collection('restaurant_tables').findOne({ tenantId: tenant, label });
+      if (existing) return res.status(409).json({ error: 'mesa_duplicada' });
+      const now = new Date(), token = crypto.randomBytes(16).toString('hex');
+      const result = await db.collection('restaurant_tables').insertOne({ tenantId: tenant, label, token, active: true, createdAt: now, updatedAt: now });
+      res.status(201).json({ ok: true, id: String(result.insertedId) });
+    } catch (e) { res.status(500).json({ error: 'error_interno' }); }
+  });
+  app.post('/api/resto/devices', json, async (req, res) => {
+    const tenant = adminTenant(req, auth);
+    const deviceId = clean(req.body?.deviceId, 120), pushToken = clean(req.body?.pushToken, 2000);
+    const platform = clean(req.body?.platform, 20).toLowerCase();
+    const ownerId = clean(req.user?.uid || req.user?._id || req.user?.username, 120);
+    if (!validTenant(tenant) || !ownerId || !deviceId || pushToken.length < 20 || !['android','ios'].includes(platform)) return res.status(400).json({ error: 'dispositivo_invalido' });
+    const db = await getDb();
+    await db.collection('restaurant_operator_devices').updateOne({ tenantId: tenant, ownerId, deviceId }, { $set: { pushToken, platform, active: true, updatedAt: new Date() }, $setOnInsert: { createdAt: new Date() } }, { upsert: true });
+    res.json({ ok: true });
   });
   app.get('/api/resto/tables/:id/qr', async (req, res) => {
     const tenant = auth.resolveTenantId(req, { envTenantId: process.env.TENANT_ID });
@@ -153,7 +222,7 @@ function mountRestaurant(app, auth) {
     const result = await db.collection('restaurant_events').updateOne({ _id: new ObjectId(req.params.id), tenantId: tenant, status: 'pending' }, { $set: { status: req.body.status, updatedAt: new Date() } });
     res.status(result.matchedCount ? 200 : 404).json({ ok: !!result.matchedCount });
   });
-  app.get('/admin/resto', (req, res) => res.type('html').send(`<!doctype html><html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Restaurante</title><style>body{font:16px system-ui;background:#f6f6f3;margin:20px;color:#25362d}main{max-width:1000px;margin:auto}article{background:white;border-radius:12px;padding:16px;margin:10px 0;border-left:5px solid #2f7656}button{padding:8px;border:0;border-radius:7px;background:#2f7656;color:white;cursor:pointer}a{color:#225c45}small{color:#555}img{width:140px;display:block}</style><main><h1>Restaurante · Operaciones</h1><p>Solicitudes pendientes por mesa. Actualización cada 5 segundos.</p><h2>Pendientes</h2><div id="events"></div><h2>QR de mesas</h2><div id="tables"></div><p><a href="/productos">Administrar carta</a></p></main><script>const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));const tenant=new URLSearchParams(location.search).get('tenant')||'';const suffix=tenant?'?tenant='+encodeURIComponent(tenant):'';async function load(){try{const [a,b]=await Promise.all([fetch('/api/resto/events'+suffix).then(r=>r.json()),fetch('/api/resto/tables'+suffix).then(r=>r.json())]);document.getElementById('events').innerHTML=(a.events||[]).map(x=>'<article><strong>Mesa '+esc(x.tableLabel)+' · '+({call:'Llama al mozo',bill:'Pide la cuenta',order:'Pedido'}[x.type]||esc(x.type))+'</strong><p>'+new Date(x.createdAt).toLocaleString('es-AR')+'</p>'+(x.items||[]).map(i=>'<div>'+i.quantity+' × '+esc(i.nombre)+'</div>').join('')+(x.type==='order'?'<p>Total: $ '+Number(x.total).toLocaleString('es-AR')+'</p>':'')+(x.note?'<p>Nota: '+esc(x.note)+'</p>':'')+'<button data-id="'+x._id+'">Atendido</button></article>').join('')||'Sin solicitudes pendientes.';document.getElementById('tables').innerHTML=(b.tables||[]).map(x=>'<article>Mesa '+esc(x.label)+' · <a target="_blank" href="'+encodeURI(x.url)+'">Abrir carta</a><img src="/api/resto/tables/'+x.id+'/qr'+suffix+'" alt="QR mesa '+esc(x.label)+'"><small>'+esc(x.url)+'</small></article>').join('')}catch(e){document.getElementById('events').textContent='No se pudo actualizar el panel.'}}document.addEventListener('click',async e=>{const id=e.target.dataset.id;if(!id)return;await fetch('/api/resto/events/'+id+suffix,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({status:'done'})});load()});load();setInterval(load,5000)</script></html>`));
+  app.get('/admin/resto', (_req, res) => res.sendFile(path.join(__dirname, 'static', 'restaurant_panel.html')));
 }
 
 module.exports = { mountRestaurant, menu, tableContext };

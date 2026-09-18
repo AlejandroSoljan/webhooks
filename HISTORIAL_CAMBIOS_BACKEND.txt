@@ -151,6 +151,18 @@ CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
   datos ni migración. Pruebas: PDF generado en Mongo de prueba aislado,
   validación de cabecera y suite completa; verificar en AWS y /healthz.
 
+18/09/2026 - v5.00.157 (commit/tag pendiente) - Corrección de selección
+  de dominio para superadmin en Restaurante y Productos. Restaurante elige
+  un dominio habilitado al abrir, muestra mesas, carta y pendientes, y permite
+  activar otros dominios existentes y agregar mesas. El alta de artículos
+  transmite el dominio elegido también en guardados y borrados; no mezcla
+  artículos de dominios. Avisos del navegador mientras el panel está abierto
+  y registro de tokens FCM de operadores para la futura app Android/iPhone;
+  los eventos intentan enviar push sólo a dispositivos del mismo dominio.
+  No migra datos existentes ni envía a clientes de la app de turnos.
+  Pruebas: suite completa 176/176, panel superadmin con cambio de dominio, carta y
+  pedido con MongoDB aislado; comprobar release activo y /healthz en AWS.
+
 REGLA PARA CAMBIOS FUTUROS
 
 Antes de publicar una próxima versión del backend, agregar una entrada con:

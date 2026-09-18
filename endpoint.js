@@ -7491,6 +7491,15 @@ app.get("/admin/ticket/:convId", async (req, res) => {
 
 
 // GET /api/products  → lista (activos por defecto; status=all|active|inactive)
+app.get("/api/products/domains", async (req, res) => {
+  if (String(req.user?.role || '').toLowerCase() !== 'superadmin') return res.status(403).json({ error: 'forbidden' });
+  try {
+    const db = await getDb();
+    const rows = await db.collection('tenant_config').find({}, { projection: { _id: 1, nom_emp: 1, restaurant_enabled: 1 } }).sort({ _id: 1 }).limit(1000).toArray();
+    res.json({ domains: rows.map(x => ({ id: String(x._id), name: String(x.nom_emp || ''), restaurantEnabled: x.restaurant_enabled === true })) });
+  } catch (e) { res.status(503).json({ error: 'domains_unavailable' }); }
+});
+
 app.get("/api/products", async (req, res) => {
   try {
     const db = await getDb();
@@ -7754,10 +7763,12 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
 app.get("/productos", async (req, res) => {
   try {
     const db = await getDb();
-    const tenant = resolveTenantId(req);
+    const isSuper = String(req.user?.role || '').toLowerCase() === 'superadmin';
+    const selectedTenant = String(req.query?.tenant || '').trim().toUpperCase();
+    const tenant = isSuper && !selectedTenant ? '' : resolveTenantId(req);
     const filtro = {};
-    if (tenant) filtro.tenantId = tenant; else if (TENANT_ID) filtro.tenantId = TENANT_ID;
-    const productos = await db.collection("products").find(filtro).sort({ active: -1, descripcion: 1, createdAt: -1 }).toArray();
+    if (tenant) filtro.tenantId = tenant; else if (TENANT_ID && !isSuper) filtro.tenantId = TENANT_ID;
+    const productos = isSuper && !tenant ? [] : await db.collection("products").find(filtro).sort({ active: -1, descripcion: 1, createdAt: -1 }).toArray();
 
     const escAttr = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
     const escText = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -7939,6 +7950,7 @@ app.get("/productos", async (req, res) => {
             </label>
           </div>
           <div class="toolbar-bottom">
+            ${isSuper ? '<div class="filterBox"><label for="domainFilter">Dominio</label><select id="domainFilter" class="filter-select"><option value="">Seleccioná un dominio</option></select></div>' : ''}
             <div class="filterBox">
               <label for="statusFilter">Filtro</label>
               <select id="statusFilter" class="filter-select">
@@ -8000,6 +8012,15 @@ app.get("/productos", async (req, res) => {
       </tr></template>
 
       <script>
+        const isSuper=${isSuper ? 'true' : 'false'};
+        let selectedTenant=${JSON.stringify(selectedTenant)};
+        function scoped(url){
+          if(!isSuper) return url;
+          if(!selectedTenant) throw new Error('Seleccioná un dominio.');
+          const u=new URL(url,location.origin);
+          u.searchParams.set('tenant',selectedTenant);
+          return u.pathname+u.search;
+        }
         function q(s,c){return (c||document).querySelector(s)}
         function all(s,c){return Array.from((c||document).querySelectorAll(s))}
         async function j(url,opts){
@@ -8148,7 +8169,7 @@ app.get("/productos", async (req, res) => {
         }
 
         async function reload(){
-           const data=await j('/api/products?status=all');
+           const data=await j(scoped('/api/products?status=all'));
           const tb=q('#productRows');
           tb.innerHTML='';
           if(Array.isArray(data) && data.length){
@@ -8186,7 +8207,7 @@ app.get("/productos", async (req, res) => {
           btn.disabled=true;
           btn.textContent='Guardando...';
           try{
-            await j('/api/products/bulk-save',{
+            await j(scoped('/api/products/bulk-save'),{
               method:'POST',
               headers:{'Content-Type':'application/json'},
               body:JSON.stringify({ items: payloads })
@@ -8211,7 +8232,7 @@ app.get("/productos", async (req, res) => {
             return;
           }
           if(!confirm('¿Eliminar definitivamente este producto?')) return;
-          await j('/api/products/'+encodeURIComponent(id),{method:'DELETE'});
+          await j(scoped('/api/products/'+encodeURIComponent(id)),{method:'DELETE'});
           tr.remove();
           showEmptyIfNeeded();
           updateMeta();
@@ -8231,6 +8252,50 @@ app.get("/productos", async (req, res) => {
           q('.descripcion',tr).focus();
         });
         q('#statusFilter').addEventListener('change',updateMeta);
+
+        if(isSuper){
+          const selector=q('#domainFilter');
+          const setDomain=async tenant=>{
+            selectedTenant=tenant;
+            sessionStorage.setItem('asistoSelectedTenant',tenant);
+            const u=new URL(location.href);
+            if(tenant) u.searchParams.set('tenant',tenant); else u.searchParams.delete('tenant');
+            history.replaceState(null,'',u.pathname+u.search);
+            try{
+              if(parent!==window && parent.location.pathname==='/ui/productos'){
+                parent.history.replaceState(null,'','/ui/productos'+(tenant?'?tenant='+encodeURIComponent(tenant):''));
+              }
+            }catch(_){}
+            q('#btnAdd').disabled=!tenant;
+            q('#btnSaveAll').disabled=!tenant;
+            q('#productRows').innerHTML='';
+            showEmptyIfNeeded();
+            updateMeta();
+            if(tenant) await reload();
+          };
+          selector.addEventListener('change',()=>{
+            if(dataRows().some(tr=>tr.dataset.dirty==='1') && !confirm('Hay cambios sin guardar. ¿Cambiar de dominio?')){
+              selector.value=selectedTenant;
+              return;
+            }
+            setDomain(selector.value).catch(e=>setFlash('err',e.message||String(e)));
+          });
+          q('#btnAdd').disabled=true;
+          q('#btnSaveAll').disabled=true;
+          j('/api/products/domains').then(data=>{
+            const domains=Array.isArray(data.domains)?data.domains:[];
+            domains.forEach(d=>{
+              const option=document.createElement('option');
+              option.value=d.id;
+              option.textContent=d.id+(d.name?' · '+d.name:'');
+              selector.appendChild(option);
+            });
+            const saved=sessionStorage.getItem('asistoSelectedTenant')||'';
+            const chosen=[selectedTenant,saved,domains.find(d=>d.restaurantEnabled)?.id,domains[0]?.id].find(id=>domains.some(d=>d.id===id))||'';
+            selector.value=chosen;
+            return setDomain(chosen);
+          }).catch(e=>setFlash('err','No se pudieron cargar los dominios: '+(e.message||String(e))));
+        }
 
         all('#productRows tr').forEach(tr=>{
           if(!tr.classList.contains('empty-row')) bindRow(tr);
