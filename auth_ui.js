@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.120 | Fecha: 2026-09-11
+// Asisto | Version: 5.00.153 | Fecha: 2026-09-17
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -18,6 +18,7 @@ const { getDb } = require("./db");
 const { normalizeTenantAliases } = require("./tenant_aliases");
 const { recordWebAccessLogin } = require("./web_access_stats");
 const { queueLeadWhatsAppAlert } = require("./lead_notification");
+const { CONFIG_SECTIONS, configurationState, navigationGroups, icon: menuIcon } = require("./admin_navigation");
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://www.asistobot.com.ar"; // ej: https://tudominio.com
 
 
@@ -708,6 +709,38 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
       flex:0 0 auto;
     }
     .navItem.active .navDot{background: rgba(0,210,160,.75); border-color: rgba(0,210,160,.65);}
+    .sidebar.sidebar--drawer{background:#102e4a;width:100%;position:static;height:calc(100dvh - 28px);max-height:calc(100dvh - 28px)}
+    .nav > .navItem{font-size:13px;font-weight:650}
+    .topbar .pill > span:last-child{min-width:0;overflow-wrap:anywhere}
+    .topbarRight{flex-shrink:0}
+    .menuIcon{width:20px;height:20px;flex:0 0 20px;vertical-align:middle}
+    .navGroup{border-bottom:1px solid rgba(255,255,255,.08);padding-bottom:4px}
+    .navGroup summary{cursor:pointer;list-style:none;font-size:13px;font-weight:650}
+    .navGroup summary::-webkit-details-marker{display:none}
+    .navGroup summary:after{content:'›';margin-left:auto;transition:transform .15s}
+    .navGroup[open] summary:after{transform:rotate(90deg)}
+    .navChildren{padding:2px 0 5px 20px}
+    .navChildren .navItem{font-size:13px;padding:8px 10px;border-left:2px solid rgba(255,255,255,.12);border-radius:0 8px 8px 0}
+    .navChildren .navItem.active{border-left-color:#00d2a0}
+    .navItem:focus-visible,.configTab:focus-visible,.workspaceCard a:focus-visible{outline:2px solid #00bb96;outline-offset:3px}
+    .workspaceHead{padding:24px;background:#fff;border-radius:18px;color:#102c49;margin-bottom:18px}
+    .workspaceHead h1{font-size:28px;margin:8px 0}
+    .workspaceHead p{color:#64748b;margin:6px 0;line-height:1.5}
+    .workspaceGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+    .workspaceCard{background:#fff;border:1px solid #dce7ed;border-radius:18px;padding:20px;color:#102c49;min-width:0}
+    .workspaceCard h2{font-size:17px;display:flex;gap:10px;align-items:center;margin:0 0 10px}
+    .workspaceCard h2 .menuIcon{color:#008e7b}
+    .workspaceCard p{font-size:13px;color:#64748b;line-height:1.5;margin:0 0 14px}
+    .workspaceCard a{display:flex;align-items:center;justify-content:space-between;text-decoration:none;color:#123c60;padding:10px 0;border-top:1px solid #eef2f6;font-size:14px}
+    .workspaceCard a:hover{color:#008675}
+    .workspaceTools{margin-top:18px;background:#fff;border-radius:14px;padding:16px;color:#102c49}
+    .workspaceTools summary{cursor:pointer;font-weight:600}
+    .workspaceTools a{display:inline-block;margin:12px 20px 0 0;color:#14587a}
+    .configTabs{display:flex;flex-wrap:wrap;gap:7px;padding:12px 18px;background:#fff;border-bottom:1px solid #dce7ed}
+    .configTab{padding:9px 12px;text-decoration:none;border-radius:9px;background:#f1f5f9;color:#334b62;font-size:13px}
+    .configTab.active{background:#0c675e;color:#fff;font-weight:650}
+    .configFrame{height:calc(100vh - 266px);min-height:460px}
+    @media(max-width:600px){.workspaceHead{padding:18px}.workspaceHead h1{font-size:23px}.workspaceGrid{grid-template-columns:1fr}.configTabs{padding:10px;gap:6px}.configTab{padding:9px;font-size:12px}.configFrame{height:calc(100dvh - 300px)}}
     .main{flex:1; min-width:0;}
     .frameWrap{
       background: rgba(255,255,255,.94);
@@ -1375,14 +1408,15 @@ function defaultPageOptionsHtml(userLike, selectedHref) {
 }
 
 function sidebarHtml(user, activeKey) {
-  const items = getNavItemsForUser(user)
-    .map((it) => {
-      const active = it.key === activeKey ? "active" : "";
-      return `<a class="navItem ${active}" href="${htmlEscape(it.href)}"><span class="navDot"></span><span>${htmlEscape(
-        it.title
-      )}</span></a>`;
-    })
-    .join("");
+  const groups = navigationGroups(getNavItemsForUser(user));
+  const link = (item, icon = '') => `<a class="navItem ${item.key === activeKey ? 'active' : ''}" ${item.key === activeKey ? 'aria-current="page"' : ''} href="${htmlEscape(item.href)}">${icon}<span>${htmlEscape(item.title)}</span></a>`;
+  const items = link({ key: 'home', title: 'Inicio', href: '/app' }, menuIcon('home')) + groups.map(group => {
+    const active = group.items.some(item => item.key === activeKey);
+    if (group.key === 'configuration') {
+      return `<a class="navItem ${active ? 'active' : ''}" ${active ? 'aria-current="location"' : ''} href="${htmlEscape(group.items[0].href)}">${menuIcon(group.icon)}<span>${htmlEscape(group.title)}</span></a>`;
+    }
+    return `<details class="navGroup" ${active ? 'open' : ''}><summary class="navItem">${menuIcon(group.icon)}<span>${htmlEscape(group.title)}</span></summary><div class="navChildren">${group.items.map(item => link(item)).join('')}</div></details>`;
+  }).join('');
 
   return `
     <aside class="sidebar">
@@ -1393,7 +1427,7 @@ function sidebarHtml(user, activeKey) {
           <div class="sideSub">${htmlEscape(user.tenantId)} · ${htmlEscape(user.role)}</div>
         </div>
       </div>
-      <nav class="nav">${items}</nav>
+      <nav class="nav" aria-label="Menú principal">${items}</nav>
     </aside>
   `;
 }
@@ -1592,43 +1626,42 @@ function loginPage({ error, msg, to, baseUrl }) {
 }
 
 function appMenuPage({ user, routes }) {
-  const enabledRoutes = Array.isArray(routes) ? routes.filter((r) => r && r.href && r.href !== "/app") : [];
-  const accessBadges = enabledRoutes
-    .slice(0, 8)
-    .map((r) => `<span class="badge">${htmlEscape(r.title)}</span>`)
-    .join("");
-  const extraCount = Math.max(0, enabledRoutes.length - 8);
+  const groups = navigationGroups(getNavItemsForUser(user));
+  const advanced = (routes || []).filter(route => route.href?.startsWith('/api/'));
 
   return appShell({
     title: "Inicio · Asisto",
     user,
     active: "home",
     main: `
-    <div class="homeShell">
-      <section class="homeCard">
-        <div class="homeLogoWrap">
-          <div class="homeLogoHalo">
-            <img class="homeLogo" src="/static/logo-asisto-transparent.png?v=5.00.010" alt="Asisto"/>
-          </div>
-        </div>
-
-        <div class="homeEyebrow">Panel principal</div>
-        <h1 class="homeTitle">Bienvenido, ${htmlEscape(user.username)}</h1>
-       
-
-        ${accessBadges ? `
-        <div class="homeAccess">
-          ${accessBadges}
-          ${extraCount > 0 ? `<span class="badge">+${extraCount} más</span>` : ""}
-        </div>` : ""}
-
-        <div class="homeMeta">
-          <span class="homeMetaItem">Dominio: ${htmlEscape(user.tenantId)}</span>
-          <span class="homeMetaItem">Rol: ${htmlEscape(user.role)}</span>
-        </div>
-      </section>
-    </div>
+    <section class="workspaceHead">
+      <div class="homeEyebrow">Tu espacio de trabajo</div>
+      <h1>Hola, ${htmlEscape(user.username)}</h1>
+      <p>Atención, operación y configuración de tu negocio, en un solo lugar.</p>
+      <p>Dominio de tu usuario: <strong>${htmlEscape(user.tenantId)}</strong> · ${htmlEscape(user.role)}</p>
+    </section>
+    <div class="workspaceGrid">${groups.map(group => `<section class="workspaceCard">
+      <h2>${menuIcon(group.icon)}${htmlEscape(group.title)}</h2>
+      <p>${htmlEscape(group.description)}</p>
+      ${group.items.map(item => `<a href="${htmlEscape(item.href)}"><span>${htmlEscape(item.title)}</span><span aria-hidden="true">›</span></a>`).join('')}
+    </section>`).join('')}</div>
+    ${!groups.length ? '<section class="workspaceCard"><p>No tenés herramientas habilitadas. Consultá con tu administrador.</p></section>' : ''}
+    ${advanced.length ? `<details class="workspaceTools"><summary>Herramientas avanzadas · API</summary>${advanced.map(route => `<a href="${htmlEscape(route.href)}">${htmlEscape(route.title)}</a>`).join('')}</details>` : ''}
     `,
+  });
+}
+
+function configurationPage({ user, requestedSection, rawQuery }) {
+  const state = configurationState(getNavItemsForUser(user), user, requestedSection, rawQuery);
+  if (!state) return null;
+  const { section, sections, src, query } = state;
+  return appShell({
+    title: section.title + ' · Configuración · Asisto', user, active: section.key,
+    main: `<div class="frameWrap">
+      <div class="frameHead"><div><h2>Configuración del negocio</h2><p>${htmlEscape(section.description)}</p></div></div>
+      <nav class="configTabs" aria-label="Secciones de configuración">${sections.map(item => `<a class="configTab ${item.key === section.key ? 'active' : ''}" ${item.key === section.key ? 'aria-current="page"' : ''} href="${htmlEscape('/ui/configuracion?seccion=' + item.key + (query ? '&' + query : ''))}">${htmlEscape(item.title)}</a>`).join('')}</nav>
+      <iframe class="frame configFrame" title="${htmlEscape(section.title)}" src="${htmlEscape(src)}"></iframe>
+    </div>`,
   });
 }
 
@@ -3506,6 +3539,14 @@ function mountAuthRoutes(app) {
     return res.status(200).send(appMenuPage({ user: req.user, routes: filtered }));
   });
 
+  // One configuration entry; permissions remain those of the original screens.
+  app.get('/ui/configuracion', requireAuth, (req, res) => {
+    const rawQuery = String(req.originalUrl || '').split('?').slice(1).join('?');
+    const html = configurationPage({ user: req.user, requestedSection: req.query?.seccion, rawQuery });
+    if (!html) return res.status(403).send('403 - No autorizado');
+    return res.status(200).send(html);
+  });
+
   // wrappers UI con menú lateral (mantienen el layout al navegar endpoints)
   app.get("/ui/:page", requireAuth, (req, res) => {
     const page = String(req.params.page || "").trim();
@@ -3519,6 +3560,15 @@ function mountAuthRoutes(app) {
       return res.redirect(302, "/admin/inbox" + (qs ? ("?" + qs) : ""));
     }
     if (page === "support") return res.redirect(302, "/admin/wweb");
+
+    // Keep bookmarks and configured landing pages, with the new tabs around
+    // the exact same forms. Their API endpoints and save behavior are untouched.
+    if (Object.hasOwn(CONFIG_SECTIONS, page)) {
+      const rawQuery = String(req.originalUrl || '').split('?').slice(1).join('?');
+      const html = configurationPage({ user: req.user, requestedSection: page, rawQuery });
+      if (!html) return res.status(403).send('403 - No autorizado');
+      return res.status(200).send(html);
+    }
 
 
     const map = {

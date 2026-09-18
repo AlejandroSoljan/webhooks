@@ -98,6 +98,21 @@ CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
   Pruebas: suite en AWS 158 aprobadas, 1 omitida; verificar release activo
   y /healthz luego del despliegue. Reemplaza el intento fallido v5.00.151.
 
+17/09/2026 - v5.00.153 (tag v5.00.153) - Reorganización del panel Asisto.
+  Menú agrupado en Atención al cliente, Mensajes y conexiones, Ventas y
+  operaciones, App del comercio, Consumos y facturación, Configuración del
+  negocio y Administración. Inicio con accesos directos por área. Nueva
+  entrada de configuración con pestañas de Dominio, Canales, Asistente IA,
+  Horarios, Reglas de pedidos y Clientes habilitados; reutiliza los mismos
+  formularios y APIs. Conserva enlaces anteriores, páginas predeterminadas
+  y permisos. Las herramientas API continúan disponibles en Inicio.
+  Menú móvil con fondo opaco y sección activa expandida. Sin migraciones,
+  escrituras a Mongo, cambios de parámetros, lógica de IA ni envíos WhatsApp.
+  Pruebas: 167/167 locales, incluidas 8 nuevas de navegación, permisos,
+  enlaces anteriores, aislamiento de dominio, autenticación y escape HTML;
+  revisión visual desktop y móvil. Publicación por GitHub y despliegue
+  automático AWS; verificar release activo y /healthz antes de darlo por listo.
+
 REGLA PARA CAMBIOS FUTUROS
 
 Antes de publicar una próxima versión del backend, agregar una entrada con:
