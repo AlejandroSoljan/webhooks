@@ -7,7 +7,7 @@ function photoFor(name, category) {
   const value = `${name} ${category}`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const choices = [
     [/agua mineral/, 'agua'], [/cafe|espresso/, 'cafe'], [/gaseosa/, 'gaseosa'], [/limonada/, 'limonada'],
-    [/cesar/, 'cesar'], [/quinoa/, 'quinoa'], [/empanada/, 'empanadas'], [/papas bravas/, 'papas'],
+    [/cesar/, 'cesar'], [/quinoa/, 'quinoa'], [/empanada/, 'empanadas'], [/papas bravas/, 'papas'], [/provoleta/, 'provoleta'],
     [/rucula/, 'rucula'], [/pizza/, 'pizza'], [/brownie/, 'brownie'], [/flan/, 'flan'], [/fruta/, 'fruta'],
     [/hamburguesa/, 'hamburguesa'], [/milanesa/, 'milanesa'], [/pasta|fideos|noquis|ravioles/, 'pasta'],
     [/pollo/, 'pollo'], [/risotto/, 'risotto'],
