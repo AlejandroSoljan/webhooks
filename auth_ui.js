@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.153 | Fecha: 2026-09-17
+// Asisto | Version: 5.00.154 | Fecha: 2026-09-17
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -19,6 +19,7 @@ const { normalizeTenantAliases } = require("./tenant_aliases");
 const { recordWebAccessLogin } = require("./web_access_stats");
 const { queueLeadWhatsAppAlert } = require("./lead_notification");
 const { CONFIG_SECTIONS, configurationState, navigationGroups, icon: menuIcon } = require("./admin_navigation");
+const { dashboardHtml, mountOperationsDashboard } = require('./operations_dashboard');
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://www.asistobot.com.ar"; // ej: https://tudominio.com
 
 
@@ -736,6 +737,17 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
     .workspaceTools{margin-top:18px;background:#fff;border-radius:14px;padding:16px;color:#102c49}
     .workspaceTools summary{cursor:pointer;font-weight:600}
     .workspaceTools a{display:inline-block;margin:12px 20px 0 0;color:#14587a}
+    .opsPanel{padding:22px;border-radius:18px;background:#f4f8fa;color:#102c49;margin-bottom:22px}
+    .opsHeading{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+    .opsHeading h2{margin:0 0 7px;font-size:24px}.opsHeading p,#opsStatus{font-size:13px;color:#52677b;margin:6px 0 16px}
+    .opsControls{display:flex;align-items:end;gap:10px;flex-wrap:wrap}.opsControls label{font-size:12px;display:grid;gap:5px}.opsControls select{max-width:320px;width:100%;padding:9px;border:1px solid #b9cbd7;border-radius:9px;background:white;color:#102c49}.opsControls button{background:#0c675e;color:white}
+    .opsMetrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+    .opsMetric{display:flex;flex-direction:column;gap:9px;background:white;border:1px solid #dce7ed;border-radius:14px;padding:17px;text-decoration:none;color:#102c49;font-size:14px}
+    .opsMetric:hover{border-color:#119a87}.opsMetric strong{font-size:30px}.opsMetric small{font-size:11px;line-height:1.5;color:#52677b}.opsMissing strong{font-size:18px;color:#a13c21}
+    .opsAlert{padding:12px 14px;background:#fff4dc;border-left:3px solid #ce9427;border-radius:8px;font-size:13px;line-height:1.5}.opsAlerts:empty{display:none}
+    .opsTableWrap{overflow-x:auto;border:1px solid #dce7ed;border-radius:12px;background:white}.opsTable{border-collapse:collapse;width:100%;font-size:12px}.opsTable th,.opsTable td{text-align:left;padding:12px;border-bottom:1px solid #edf1f4;white-space:nowrap}.opsTable th{background:#eaf2f5;color:#254763}
+    .opsState{display:inline-block;background:#fff0d5;color:#784d05;border-radius:20px;padding:5px 9px}.opsOnline{background:#ddf6ec;color:#056a52}.opsFootnote{font-size:12px;color:#52677b}
+    @media(max-width:600px){.opsPanel{padding:15px}.opsMetrics{grid-template-columns:1fr}.opsControls{width:100%}.opsControls label{flex:1;min-width:0}.opsHeading h2{font-size:21px}.topbar .pill > span{display:none}.topbar{gap:8px;padding:14px}.topbarLeft{gap:8px}.workspaceHead{padding:16px}.workspaceHead .homeEyebrow{margin-bottom:4px}}
     .configTabs{display:flex;flex-wrap:wrap;gap:7px;padding:12px 18px;background:#fff;border-bottom:1px solid #dce7ed}
     .configTab{padding:9px 12px;text-decoration:none;border-radius:9px;background:#f1f5f9;color:#334b62;font-size:13px}
     .configTab.active{background:#0c675e;color:#fff;font-weight:650}
@@ -1640,6 +1652,8 @@ function appMenuPage({ user, routes }) {
       <p>Atención, operación y configuración de tu negocio, en un solo lugar.</p>
       <p>Dominio de tu usuario: <strong>${htmlEscape(user.tenantId)}</strong> · ${htmlEscape(user.role)}</p>
     </section>
+    ${dashboardHtml(user)}
+    <h2 style="font-size:19px;margin:8px 0 16px">Accesos rápidos</h2>
     <div class="workspaceGrid">${groups.map(group => `<section class="workspaceCard">
       <h2>${menuIcon(group.icon)}${htmlEscape(group.title)}</h2>
       <p>${htmlEscape(group.description)}</p>
@@ -3278,6 +3292,8 @@ document.addEventListener('click', function(e){
   });
 }
 function mountAuthRoutes(app) {
+  mountOperationsDashboard(app, { requireAuth, getDb, messagePipeline: wwebRealMessagePipeline,
+    getAccess: user => [...getNavItemsForUser(user).map(item => item.key), ...(hasAccess(user, 'support') ? ['support'] : [])] });
   // login
   ensureBodyParsers(app);
   app.get("/login", (req, res) => {
