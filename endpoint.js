@@ -116,6 +116,7 @@ const { mountClientPhoneAccess, isClientPhoneAllowed } = require("./client_phone
 const { mountConversationFollowupPanel } = require("./conversation_followup_panel");
 const { mountBotTestPanel } = require("./bot_test_panel");
 const { mountQrProductWeb } = require("./qr_product_web");
+const { mountRestaurant } = require("./restaurant");
 const { mountDemoCatalogApi } = require("./demo_catalog_api");
 const { mountCustomerApp } = require("./customer_app_web");
 const { mountCustomerNotifications } = require("./customer_notifications");
@@ -170,6 +171,7 @@ mountConversationFollowupPanel(app, { auth });
 mountBotTestPanel(app, { auth });
 mountQrProductWeb(app);
 mountCustomerApp(app, { auth });
+mountRestaurant(app, auth);
 mountDemoCatalogApi(app);
 mountHelpTool(app);
 require('./src/support/routes').mountSupport(app);

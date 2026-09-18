@@ -12,7 +12,7 @@ const CONFIG_SECTIONS = Object.freeze({
 const GROUPS = [
   { key: 'attention', title: 'Atención al cliente', description: 'Conversaciones, seguimiento y oportunidades.', icon: 'chat', keys: ['inbox', 'admin', 'followup', 'leads'] },
   { key: 'connections', title: 'Mensajes y conexiones', description: 'Estado y gestión de las sesiones conectadas.', icon: 'connection', keys: ['wweb', 'telegram'] },
-  { key: 'operations', title: 'Ventas y operaciones', description: 'Catálogo de productos y viajes.', icon: 'box', keys: ['productos', 'fleteros'] },
+  { key: 'operations', title: 'Ventas y operaciones', description: 'Catálogo, restaurante y viajes.', icon: 'box', keys: ['productos', 'resto', 'fleteros'] },
   { key: 'app', title: 'App del comercio', description: 'Notificaciones a los clientes con la app.', icon: 'phone', keys: ['notifications'] },
   { key: 'costs', title: 'Consumos y facturación', description: 'Uso de IA, mensajes e importes a cobrar.', icon: 'chart', keys: ['token_control'] },
   { key: 'configuration', title: 'Configuración del negocio', description: 'Dominio, canales, asistente, horarios y reglas.', icon: 'settings', keys: Object.keys(CONFIG_SECTIONS) },

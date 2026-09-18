@@ -131,6 +131,19 @@ CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
   caché y DOM. Revisión visual escritorio/celular con datos de prueba.
   Publicación GitHub -> AWS automático, con verificación de release y salud.
 
+18/09/2026 - v5.00.155 (commit/tag pendiente) - Módulo restaurante:
+  carta pública por QR de mesa, consultas de IA fundamentadas en los artículos,
+  llamados al mozo, solicitudes de cuenta y pedidos guardados como eventos.
+  Panel privado para el operario con eventos pendientes, QR y estado atendido.
+  Reutiliza products y requiere permiso resto para el panel. Nuevas colecciones
+  restaurant_tables y restaurant_events, con índices creados por el sembrado.
+  Carga RES: 19 artículos y 10 mesas mediante script ejecutado únicamente en
+  AWS con MongoDB productivo verificado; la carga en la copia anterior no es
+  productiva. Precios y recetas de demostración sujetos a revisión comercial.
+  Pruebas: npm test 175/175 y prueba HTTP aislada de carta, pedido y panel; verificar release
+  activo, /healthz y flujo público tras el despliegue. No reemplaza una versión
+  previa.
+
 REGLA PARA CAMBIOS FUTUROS
 
 Antes de publicar una próxima versión del backend, agregar una entrada con:

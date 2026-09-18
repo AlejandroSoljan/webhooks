@@ -49,6 +49,7 @@ const ACCESS_PAGES = [
   { key: "inbox", title: "WhatsApp" },
   { key: "fleteros", title: "Viajes Fleteros" },
   { key: "productos", title: "Productos" },
+  { key: "resto", title: "Restaurante" },
   { key: "horarios", title: "Horarios" },
   { key: "comportamiento", title: "Comportamiento" },
   { key: "leads", title: "Leads" },
@@ -92,6 +93,7 @@ function hasAccess(user, ...keys) {
 function requiredAccessForPath(p) {
   const path = String(p || "");
   if (path.startsWith("/admin/support") || path.startsWith("/api/support")) return ["support"];
+  if (path.startsWith("/admin/resto") || path.startsWith("/api/resto")) return ["resto"];
   if (path === "/app") return [];
 
   // Admin de usuarios
@@ -127,7 +129,7 @@ function requiredAccessForPath(p) {
   // UI wrapper
   if (path.startsWith("/ui/")) {
     const seg = path.split("/")[2] || "";
-    if (["support", "admin", "followup", "bot_test", "inbox", "productos", "horarios", "comportamiento", "tenant_config", "order_config", "canales", "client_access", "telegram", "web_access", "token_control"].includes(seg)) return [seg];
+    if (["support", "admin", "followup", "bot_test", "inbox", "productos", "resto", "horarios", "comportamiento", "tenant_config", "order_config", "canales", "client_access", "telegram", "web_access", "token_control"].includes(seg)) return [seg];
   }
 
   // Pantallas directas
@@ -1366,6 +1368,7 @@ function getNavItemsForUser(user) {
   if (hasAccess(user, "inbox")) items.push({ key: "inbox", title: "WhatsApp", href: "/admin/inbox" });
   if (hasAccess(user, "fleteros")) items.push({ key: "fleteros", title: "Viajes Fleteros", href: "/admin/fleteros/viajes" });
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
+  if (hasAccess(user, "resto")) items.push({ key: "resto", title: "Restaurante", href: "/ui/resto" });
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
   if (hasAccess(user, "notifications")) items.push({ key: "notifications", title: "Notificaciones App", href: "/ui/notificaciones-app" });
@@ -2072,6 +2075,7 @@ function usersAdminPage({ user, users, msg, err }) {
         if (allowedKeys.includes("bot_test")) items.push({ key: "bot_test", title: "Pruebas Bot", href: "/ui/bot_test" });
         if (allowedKeys.includes("fleteros")) items.push({ key: "fleteros", title: "Viajes Fleteros", href: "/admin/fleteros/viajes" });
         if (allowedKeys.includes("productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
+        if (allowedKeys.includes("resto")) items.push({ key: "resto", title: "Restaurante", href: "/ui/resto" });
         if (allowedKeys.includes("horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
         if (allowedKeys.includes("comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
         if (allowedKeys.includes("leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
@@ -3593,6 +3597,7 @@ function mountAuthRoutes(app) {
       bot_test: { title: "Pruebas Bot", desc: "Simulador del comportamiento del bot sin WhatsApp ni teléfono conectado", badge: "Laboratorio", src: "/admin/bot-test?embed=1", active: "bot_test" },
       inbox: { title: "WhatsApp", desc: "Bandeja WhatsApp para responder clientes y pausar el bot por conversación", badge: "Admin UI", src: "/admin/inbox", active: "inbox" },
       productos: { title: "Productos", desc: "Catálogo y mantenimiento del dominio", badge: "UI", src: "/productos", active: "productos" },
+      resto: { title: "Restaurante", desc: "Mesas, pedidos y llamados", badge: "Operaciones", src: "/admin/resto", active: "resto" },
       horarios: { title: "Horarios", desc: "Configuración de disponibilidad", badge: "UI", src: "/horarios", active: "horarios" },
       comportamiento: { title: "Comportamiento", desc: "Prompt, reglas y configuración del asistente", badge: "UI", src: "/comportamiento", active: "comportamiento" },
       canales: { title: "Canales", desc: "Transporte API Meta / WhatsApp Web y credenciales por dominio", badge: "Admin", src: "/canales?embed=1", active: "canales" },
@@ -6067,6 +6072,8 @@ function protectRoutes(app) {
       p.startsWith("/qr/") ||
       p.startsWith("/customer-app/") ||
       p.startsWith("/api/customer-app/") ||
+      p.startsWith("/resto/") ||
+      p.startsWith("/api/public/resto/") ||
       p.startsWith("/api/ext/qr/") ||
       p.startsWith("/api/ext/wweb/") ||
       p.startsWith("/api/ext/domain-status") ||
