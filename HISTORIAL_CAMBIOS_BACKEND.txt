@@ -62,7 +62,18 @@ CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
 
 17/09/2026 - Despliegue automático del backend desde GitHub main hacia AWS
   Lightsail: instalación, pruebas, health check y reversión si falla. Commits
-  ab8d8cb y 9464886. Verificado en AWS con /healthz correcto.
+ ab8d8cb y 9464886. Verificado en AWS con /healthz correcto.
+
+17/09/2026 - v5.00.149 (tag v5.00.149) - Costos de IA para tickets
+  WhatsApp de ALSO por modelo y duración de audio whisper-1. Se guardan
+  segundos y costo estimado por transcripción; el panel suma el costo real
+  histórico sin alterar tarifas comerciales. Se incluyen cambios locales
+  pendientes de diagnóstico operativo, límite de respuesta de catálogo y
+  exclusión de .env. Migración: backfill idempotente de audios ALSO con
+  duración y transcripción exitosa en la base productiva AWS. Pruebas:
+  sintaxis Node, pruebas unitarias y npm test; verificación de /healthz y
+  release activo posterior al despliegue. Reemplaza el cálculo anterior que
+  omitía el costo de las transcripciones.
 
 REGLA PARA CAMBIOS FUTUROS
 

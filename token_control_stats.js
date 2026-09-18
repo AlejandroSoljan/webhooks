@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.088 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.149 | Fecha: 2026-09-17
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -11,6 +11,13 @@ const { getDb } = require("./db");
 // Se pueden sobreescribir por dominio con token_cost_help_*_per_1k.
 const DEFAULT_HELP_COST_INPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_HELP_INPUT_PER_1K) || 0.0002;
 const DEFAULT_HELP_COST_OUTPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_HELP_OUTPUT_PER_1K) || 0.0012;
+// Internal USD costs for ALSO's WhatsApp ticket analysis, per 1K tokens.
+const TASKS_WS_COST_MODEL = String(process.env.TOKEN_COST_TASKS_WS_MODEL || 'gpt-5.4').trim().toLowerCase();
+const TASKS_WS_MODEL_PATTERN = new RegExp(`^${TASKS_WS_COST_MODEL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:-\\d{4}|$)`);
+const TASKS_WS_COST_INPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_TASKS_WS_INPUT_PER_1K) || 0.0025;
+const TASKS_WS_COST_OUTPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_TASKS_WS_OUTPUT_PER_1K) || 0.015;
+const TASKS_WS_LUNA_INPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_TASKS_WS_LUNA_INPUT_PER_1K) || 0.0002;
+const TASKS_WS_LUNA_OUTPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_TASKS_WS_LUNA_OUTPUT_PER_1K) || 0.0012;
 
 
 function esc(s) {
@@ -37,6 +44,21 @@ function parseDateEnd(raw) {
 function toPositiveNumber(v) {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function taskTokenSum(modelPattern, tokenField, channelField) {
+  return { $sum: { $cond: [{ $and: [
+    { $eq: ["$kind", "message"] },
+    { $eq: [channelField, "whatsapp_tasks"] },
+    { $regexMatch: { input: { $ifNull: ["$model", ""] }, regex: modelPattern } }
+  ] }, { $ifNull: [tokenField, 0] }, 0] } };
+}
+
+function audioCostSum() {
+  return { $sum: { $cond: [
+    { $and: [{ $eq: ["$kind", "audio"] }, { $eq: ["$provider", "openai"] }] },
+    { $ifNull: ["$costUsd", 0] }, 0
+  ] } };
 }
 
 function clampInt(v, min, max, fallback = min) {
@@ -122,16 +144,21 @@ async function loadTenantCosts(db, tenantIds = []) {
 }
 
 function calculateCostWithRates(row, tenantDoc = {}, mode = "real") {
+  const charge = String(mode || "").toLowerCase() === "charge";
   const messageInput = Number(row.message_input_tokens || 0);
   const messageOutput = Number(row.message_output_tokens || 0);
   const helpInput = Math.max(0, Math.min(messageInput, Number(row.help_input_tokens || 0)));
   const helpOutput = Math.max(0, Math.min(messageOutput, Number(row.help_output_tokens || 0)));
-  const regularMessageInput = Math.max(0, messageInput - helpInput);
-  const regularMessageOutput = Math.max(0, messageOutput - helpOutput);
+  const tasksInput = charge ? 0 : Math.max(0, Math.min(messageInput - helpInput, Number(row.tasks_ws_input_tokens || 0)));
+  const tasksOutput = charge ? 0 : Math.max(0, Math.min(messageOutput - helpOutput, Number(row.tasks_ws_output_tokens || 0)));
+  const lunaInput = charge ? 0 : Math.max(0, Math.min(messageInput - helpInput - tasksInput, Number(row.tasks_ws_luna_input_tokens || 0)));
+  const lunaOutput = charge ? 0 : Math.max(0, Math.min(messageOutput - helpOutput - tasksOutput, Number(row.tasks_ws_luna_output_tokens || 0)));
+  const regularMessageInput = Math.max(0, messageInput - helpInput - tasksInput - lunaInput);
+  const regularMessageOutput = Math.max(0, messageOutput - helpOutput - tasksOutput - lunaOutput);
   const audioInput = Number(row.audio_input_tokens || 0);
   const audioOutput = Number(row.audio_output_tokens || 0);
+  const audioCost = charge ? 0 : Number(row.audio_cost_usd || 0);
 
-  const charge = String(mode || "").toLowerCase() === "charge";
   const prefix = charge ? "token_charge_" : "token_cost_";
   const chatInput = toPositiveNumber(tenantDoc[prefix + "chat_input_per_1k"]);
   const chatOutput = toPositiveNumber(tenantDoc[prefix + "chat_output_per_1k"]);
@@ -143,14 +170,24 @@ function calculateCostWithRates(row, tenantDoc = {}, mode = "real") {
     (charge ? chatInput : DEFAULT_HELP_COST_INPUT_PER_1K);
   const helpOutputRate = toPositiveNumber(tenantDoc[prefix + "help_output_per_1k"]) ||
     (charge ? chatOutput : DEFAULT_HELP_COST_OUTPUT_PER_1K);
+  const isAlso = String(tenantDoc._id || '').toUpperCase() === 'ALSO';
+  const tasksInputRate = isAlso ? TASKS_WS_COST_INPUT_PER_1K : chatInput;
+  const tasksOutputRate = isAlso ? TASKS_WS_COST_OUTPUT_PER_1K : chatOutput;
+  const lunaInputRate = isAlso ? TASKS_WS_LUNA_INPUT_PER_1K : chatInput;
+  const lunaOutputRate = isAlso ? TASKS_WS_LUNA_OUTPUT_PER_1K : chatOutput;
 
   return Number((
     (regularMessageInput / 1000) * chatInput +
     (regularMessageOutput / 1000) * chatOutput +
     (helpInput / 1000) * helpInputRate +
     (helpOutput / 1000) * helpOutputRate +
+    (tasksInput / 1000) * tasksInputRate +
+    (tasksOutput / 1000) * tasksOutputRate +
+    (lunaInput / 1000) * lunaInputRate +
+    (lunaOutput / 1000) * lunaOutputRate +
     (audioInput / 1000) * audioInputRate +
-    (audioOutput / 1000) * audioOutputRate
+    (audioOutput / 1000) * audioOutputRate +
+    audioCost
   ).toFixed(6));
 }
 
@@ -696,6 +733,10 @@ async function buildTokenSummary({
             ]
           }
         },
+        tasks_ws_input_tokens: taskTokenSum(TASKS_WS_MODEL_PATTERN, "$inputTokens", { $ifNull: ["$channelType", "$meta.channelType"] }),
+        tasks_ws_output_tokens: taskTokenSum(TASKS_WS_MODEL_PATTERN, "$outputTokens", { $ifNull: ["$channelType", "$meta.channelType"] }),
+        tasks_ws_luna_input_tokens: taskTokenSum(/^gpt-5\.6-luna(?:-|$)/, "$inputTokens", { $ifNull: ["$channelType", "$meta.channelType"] }),
+        tasks_ws_luna_output_tokens: taskTokenSum(/^gpt-5\.6-luna(?:-|$)/, "$outputTokens", { $ifNull: ["$channelType", "$meta.channelType"] }),
         audio_input_tokens: {
           $sum: {
             $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$inputTokens", 0] }, 0]
@@ -706,6 +747,7 @@ async function buildTokenSummary({
             $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$outputTokens", 0] }, 0]
           }
         },
+        audio_cost_usd: audioCostSum(),
         total_tokens: { $sum: { $ifNull: ["$totalTokens", 0] } },
         events: { $sum: 1 },
         last_at: { $max: "$createdAt" }
@@ -908,6 +950,10 @@ async function buildTokenConversationSummary({
                   $cond: [{ $eq: ["$_channelType", "help_api"] }, { $ifNull: ["$outputTokens", 0] }, 0]
                 }
               },
+              tasks_ws_input_tokens: taskTokenSum(TASKS_WS_MODEL_PATTERN, "$inputTokens", "$_channelType"),
+              tasks_ws_output_tokens: taskTokenSum(TASKS_WS_MODEL_PATTERN, "$outputTokens", "$_channelType"),
+              tasks_ws_luna_input_tokens: taskTokenSum(/^gpt-5\.6-luna(?:-|$)/, "$inputTokens", "$_channelType"),
+              tasks_ws_luna_output_tokens: taskTokenSum(/^gpt-5\.6-luna(?:-|$)/, "$outputTokens", "$_channelType"),
               audio_input_tokens: {
                 $sum: {
                   $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$inputTokens", 0] }, 0]
@@ -918,6 +964,7 @@ async function buildTokenConversationSummary({
                   $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$outputTokens", 0] }, 0]
                 }
               },
+              audio_cost_usd: audioCostSum(),
               total_tokens: { $sum: { $ifNull: ["$totalTokens", 0] } },
               events: { $sum: 1 },
               first_at: { $min: "$createdAt" },
@@ -1059,6 +1106,8 @@ async function buildTokenConversationSummary({
           inputTokens: 1,
           outputTokens: 1,
           totalTokens: 1,
+          costUsd: 1,
+          provider: 1,
           model: 1,
           createdAt: 1
         }
@@ -1084,6 +1133,7 @@ async function buildTokenConversationSummary({
       help_output_tokens: 0,
       audio_input_tokens: 0,
       audio_output_tokens: 0,
+      audio_cost_usd: 0,
       total_tokens: 0,
       events: 0,
       first_at: null,
@@ -1105,6 +1155,7 @@ async function buildTokenConversationSummary({
       } else if (kind === "audio") {
         out.audio_input_tokens += input;
        out.audio_output_tokens += output;
+        if (String(ev.provider || 'openai').toLowerCase() === 'openai') out.audio_cost_usd += Number(ev.costUsd || 0);
       }
       out.total_tokens += Number(ev.totalTokens || 0);
       out.events += 1;

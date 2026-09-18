@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.096 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.149 | Fecha: 2026-09-17
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
 // Incluye logs completos de OpenAI (payload y response).
@@ -639,6 +639,8 @@ async function recordTokenUsage(entry = {}) {
     const waId = String(entry.waId || entry.contact || entry.from || meta?.waId || "").trim();
     const channelType = String(entry.channelType || meta?.channelType || "").trim().toLowerCase();
     const usageTraceId = String(entry.usageTraceId || meta?.usageTraceId || "").trim();
+    const audioSeconds = Number(entry.audioSeconds);
+    const costUsd = Number(entry.costUsd);
 
     const db = await getDb();
     await db.collection("ai_token_usage_log").insertOne({
@@ -653,6 +655,8 @@ async function recordTokenUsage(entry = {}) {
       ...(waId ? { waId } : {}),
       ...(channelType ? { channelType } : {}),
       ...(usageTraceId ? { usageTraceId } : {}),
+      ...(Number.isFinite(audioSeconds) && audioSeconds > 0 ? { audioSeconds } : {}),
+      ...(Number.isFinite(costUsd) && costUsd >= 0 && entry.costUsd != null ? { costUsd } : {}),
       meta,
       createdAt: new Date()
     });
@@ -1084,7 +1088,7 @@ async function downloadMediaBuffer(mediaUrl, opts = {}) {
 }
 
 // ================== STT (externo -> fallback OpenAI) ==================
-async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApiKey, aiKeyKind, tenantId, transcribeModel, conversationId, waId, channelType, usageTraceId, transcriptionTimeoutMs } = {}) {
+async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApiKey, aiKeyKind, tenantId, transcribeModel, conversationId, waId, channelType, usageTraceId, audioDurationSeconds, transcriptionTimeoutMs } = {}) {
   const prefer = TRANSCRIBE_API_URL;
   if (prefer && publicAudioUrl) {
     try {
@@ -1147,6 +1151,11 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
     const r = await client.audio.transcriptions.create({ file: fileObj, model }, transcriptionTimeoutMs ? { timeout: transcriptionTimeoutMs, maxRetries: 0 } : undefined);
     const text = (r.text || "").trim();
     const usageInfo = parseTokenUsagePair(r.usage || null, "audio");
+    const audioSeconds = Number(audioDurationSeconds);
+    const whisperRate = Number(process.env.TOKEN_COST_WHISPER_PER_MINUTE);
+    const costPerMinute = Number.isFinite(whisperRate) && whisperRate > 0 ? whisperRate : 0.006;
+    const costUsd = model === "whisper-1" && Number.isFinite(audioSeconds) && audioSeconds > 0
+      ? Number(((audioSeconds / 60) * costPerMinute).toFixed(6)) : null;
     await recordTokenUsage({
       tenantId,
       kind: "audio",
@@ -1159,9 +1168,11 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
       waId,
       channelType,
       usageTraceId,
-      meta: { engine: "openai" }
+      audioSeconds,
+      costUsd,
+      meta: { engine: "openai", ...(costUsd != null ? { costBasis: "audio_duration_estimate", costPerMinute } : {}) }
     });
-    return { text, usage: r.usage || null, engine: "openai", model };
+    return { text, usage: r.usage || null, engine: "openai", model, costUsd };
   } catch (e) {
     console.error("STT OpenAI error:", e.message);
     return { text: "" };
@@ -1780,6 +1791,10 @@ async function executeConversationalHttpApi(actionCfg, action = {}, context = {}
   };
   const timeout = Math.max(1000, Math.min(60000, Number(actionCfg.timeout_ms || 10000) || 10000));
   const maxChars = Math.max(2000, Math.min(100000, Number(actionCfg.max_chars || 30000) || 30000));
+  // Las búsquedas amplias de catálogo pueden devolver JSON de varios MB. Se acepta
+  // una respuesta mayor para poder procesarla y luego se conserva el límite
+  // maxChars que controla cuánto contenido llega al modelo.
+  const maxResponseBytes = 16 * 1024 * 1024;
   
 
   const headers = { Accept: "application/json, text/plain;q=0.9, */*;q=0.8" };
@@ -1796,8 +1811,8 @@ async function executeConversationalHttpApi(actionCfg, action = {}, context = {}
     headers,
     timeout,
     maxRedirects: 3,
-    maxContentLength: 1024 * 1024,
-    maxBodyLength: 1024 * 1024,
+    maxContentLength: maxResponseBytes,
+    maxBodyLength: 2 * 1024 * 1024,
     responseType: "text",
     transformResponse: [(data) => data],
     validateStatus: () => true,
