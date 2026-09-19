@@ -1,5 +1,15 @@
-<!-- Asisto | Version: 5.00.160 | Fecha: 2026-09-18 -->
+<!-- Asisto | Version: 5.00.161 | Fecha: 2026-09-19 -->
 # Restaurante RES
+
+## Carta simplificada (5.00.161)
+
+La pantalla inicial muestra categorías desplegables. Los platos tienen fotos
+pequeñas con lupa: al tocarlas se abre la foto ampliada y la composición.
+El nombre del plato también abre los ingredientes. Al agregar artículos aparece
+un botón fijo con cantidad y total para revisar y confirmar el pedido.
+**Necesito algo** reúne llamados al mozo, solicitud de cuenta, IA y avisos.
+**Mi cuenta** reúne seguimiento, saldo, división y Mercado Pago informativo.
+Los paneles pueden cerrarse para seguir explorando la categoría sin perder el carrito.
 
 ## Control de sala (5.00.160)
 

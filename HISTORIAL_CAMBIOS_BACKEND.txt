@@ -198,6 +198,14 @@ CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
   suite completa: 183/183 aprobadas; comprobación de release/healthz en AWS
   antes de informar.
 
+19/09/2026 - v5.00.161 (commit: publicación de esta entrada) - Reemplaza el
+  diseño de carta de 5.00.160: inicio con categorías, miniaturas con lupa y
+  foto ampliada con ingredientes. Pedido en panel modal con total fijo abajo;
+  ayuda/IA/avisos y cuenta/pago separados. Respeta funciones por dominio.
+  Sin cambios de datos ni migraciones. Pruebas: suite completa, interacción
+  de lupa/carrito/categorías y revisión visual en navegador; release y
+  /healthz verificados en AWS antes de dar por publicado.
+
 REGLA PARA CAMBIOS FUTUROS
 
 Antes de publicar una próxima versión del backend, agregar una entrada con:

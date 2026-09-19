@@ -1,10 +1,42 @@
-// Asisto | Version: 5.00.160 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.161 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { JSDOM } = require('jsdom');
 const { renderRestaurantPage } = require('../restaurant_public_page');
+
+test('carta simple: lupa abre foto e ingredientes, carrito muestra total y conserva la categoría', async t => {
+  const dom = new JSDOM(renderRestaurantPage({ tenant:'RES',token:'a'.repeat(32),name:'Resto',table:'1' }), {runScripts:'outside-only',url:'https://example.test'});
+  const { window } = dom;
+  t.after(() => window.close());
+  // JSDOM no implementa la API nativa de dialog; el foco/modal se revisa en navegador.
+  window.HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  window.HTMLDialogElement.prototype.close = function () { this.open = false; };
+  window.fetch = async url => ({ok:true,json:async()=>url.endsWith('/menu') ? {items:[{id:'uno',nombre:'Pasta',categoria:'Principales',precio:1200,disponible:true,imagen:'/static/restaurant_demo/pasta.webp',observacion:'Trigo y tomate'}]} : {orders:[],notifications:[]}});
+  window.eval(fs.readFileSync(path.join(__dirname,'../static/restaurant_menu.js'),'utf8'));
+  await new Promise(resolve=>setTimeout(resolve,0));
+  const $ = selector=>window.document.querySelector(selector);
+  assert.equal($('dialog[open]'),null);
+  assert.equal($('#cartBar').hidden,true);
+  const category = $('#menu details'); category.open = true;
+  $('.photo-button').click();
+  assert.equal($('#dishDialog').open,true);
+  assert.match($('#dishContent').textContent,/Trigo y tomate/);
+  assert.equal($('#dishContent img').getAttribute('src'),'/static/restaurant_demo/pasta.webp');
+  $('#dishDialog [data-close]').click();
+  assert.equal($('#dishDialog').open,false);
+  assert.equal(category.open,true);
+  $('[data-add]').click();
+  assert.equal($('#cartBar').hidden,false);
+  assert.match($('#cartBarTotal').textContent,/1.200/);
+  $('#openCart').click();
+  assert.equal($('#cartDialog').open,true);
+  $('[data-remove]').click();
+  assert.equal($('#cartExtras').hidden,true);
+  assert.equal($('#cartBar').hidden,true);
+  window.close();
+});
 
 test('Mercado Pago es informativo y reintentar el envío conserva la clave del pedido', async () => {
   const dom = new JSDOM(renderRestaurantPage({ tenant:'RES', token:'a'.repeat(32), name:'Resto', table:'1' }), { runScripts:'outside-only', url:'https://example.test/resto' });

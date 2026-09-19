@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.160 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.161 | Fecha: 2026-09-19
 (() => {
   const base = document.body.dataset.base;
   const $ = id => document.getElementById(id);
@@ -29,6 +29,14 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => $('toast').classList.remove('visible'), 3000);
   }
+  function openPanel(id) {
+    document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+    $(id).showModal();
+  }
+  document.querySelectorAll('dialog').forEach(dialog => {
+    dialog.addEventListener('click', event => { if (event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close(); } });
+  });
+  const magnifier = '<span class="zoom-hint" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg></span>';
   function renderMenu() {
     const groups = new Map();
     for (const item of items) {
@@ -36,17 +44,34 @@
       if (!groups.has(category)) groups.set(category, []);
       groups.get(category).push(item);
     }
-    $('menu').innerHTML = [...groups].map(([category, products]) => `<details><summary>${esc(category)} <small>${products.length}</small></summary><div class="category-items">${products.map(item => `<div class="item">${item.imagen ? `<img class="item-image" src="${esc(item.imagen)}" alt="${esc(item.nombre)}" loading="lazy">` : ''}<div class="item-head"><strong>${esc(item.nombre)}</strong><span class="price">${price(item.precio)}</span></div><p>${esc(item.observacion)}</p>${ordersEnabled ? `<button data-add="${esc(item.id)}" ${item.disponible ? '' : 'disabled'}>${item.disponible ? 'Agregar' : 'No disponible'}</button><span class="item-feedback" data-feedback="${esc(item.id)}" aria-live="polite"></span>` : ''}</div>`).join('')}</div></details>`).join('') || '<p>No hay artículos disponibles en la carta.</p>';
+    $('menu').innerHTML = [...groups].map(([category, products]) => `<details><summary><span class="category-label">${esc(category)}<small>${products.length} ${products.length === 1 ? 'opción' : 'opciones'}</small></span><span class="chevron" aria-hidden="true">⌄</span></summary><div class="category-items">${products.map(item => `<article class="item"><button class="dish-open" data-dish="${esc(item.id)}" aria-label="Ver ingredientes de ${esc(item.nombre)}"><strong>${esc(item.nombre)}</strong><span class="price">${price(item.precio)}</span><small>Ver ingredientes${item.disponible ? '' : ' · No disponible'}</small></button>${item.imagen ? `<button class="photo-button" data-dish="${esc(item.id)}" aria-label="Ampliar foto de ${esc(item.nombre)}"><img class="item-image" src="${esc(item.imagen)}" alt="${esc(item.nombre)}" loading="lazy">${magnifier}</button>` : ''}${ordersEnabled ? `<div class="item-add"><span class="item-feedback" data-feedback="${esc(item.id)}" aria-live="polite"></span><button data-add="${esc(item.id)}" ${item.disponible ? '' : 'disabled'}>${item.disponible ? '+ Agregar' : 'No disponible'}</button></div>` : ''}</article>`).join('')}</div></details>`).join('') || '<p>No hay artículos disponibles en la carta.</p>';
   }
   function renderCart() {
     const count = Object.values(cart).reduce((sum, quantity) => sum + quantity, 0);
     $('cart-count').textContent = `(${count})`;
+    const total = Object.entries(cart).reduce((sum,[id,quantity]) => sum + (items.find(item => item.id === id)?.precio || 0) * quantity, 0);
+    $('cartBar').hidden = !ordersEnabled || !count;
+    $('cartExtras').hidden = !count;
+    $('cartBarLabel').textContent = `Ver mi pedido (${count})`;
+    $('cartBarTotal').textContent = $('cartTotal').textContent = price(total);
     $('cart').innerHTML = Object.entries(cart).map(([id, quantity]) => {
       const item = items.find(product => product.id === id);
       return item ? `<p><span>${esc(item.nombre)} × ${quantity} · ${price(item.precio * quantity)}</span><button data-remove="${esc(id)}" aria-label="Quitar uno de ${esc(item.nombre)}">−</button></p>` : '';
     }).join('') || '<p>Todavía no agregaste platos.</p>';
   }
   document.addEventListener('click', event => {
+    const opener = event.target.closest('[data-open]');
+    if (opener) openPanel(opener.dataset.open);
+    if (event.target.closest('[data-close]')) event.target.closest('dialog').close();
+    const dishButton = event.target.closest('[data-dish]');
+    if (dishButton) {
+      const item = items.find(product => product.id === dishButton.dataset.dish);
+      if (item) {
+        $('dishTitle').textContent = item.nombre;
+        $('dishContent').innerHTML = `${item.imagen ? `<img src="${esc(item.imagen)}" alt="${esc(item.nombre)}">` : ''}<p class="price">${price(item.precio)}</p><p>${esc(item.observacion || 'Consultá al personal por los ingredientes de este plato.')}</p><small>Si tenés alergias, confirmá con el personal antes de pedir.</small>`;
+        openPanel('dishDialog');
+      }
+    }
     const add = event.target.closest('[data-add]');
     if (add && !add.disabled) {
       if (sending) return;
@@ -75,7 +100,9 @@
     try {
       await post('/events', { type, visitorId });
       $('msg').textContent = type === 'call' ? 'Avisamos al mozo.' : 'Pediste la cuenta.';
-    } catch (error) { $('msg').textContent = error.message; }
+      $('helpStatus').textContent = $('msg').textContent;
+      notify($('msg').textContent);
+    } catch (error) { $('helpStatus').textContent = error.message; }
   }
   $('call').onclick = () => action('call');
   $('bill').onclick = () => action('bill');
@@ -97,7 +124,7 @@
       notify('Pedido enviado al restaurante');
       pollAccount();
     } catch (error) { $('msg').textContent = error.message; }
-    finally { sending = false; $('order').disabled = false; $('order').textContent = 'Enviar pedido'; }
+    finally { sending = false; $('order').disabled = false; $('order').textContent = 'Confirmar y enviar pedido'; }
   };
   $('ask').onclick = async () => {
     try {
@@ -124,6 +151,8 @@
         body.textContent = notification.body;
         card.append(heading, body);
         $('guestMessages').prepend(card);
+        $('noticeCount').textContent = `(${$('guestMessages').children.length})`;
+        $('openHelp').textContent = 'Necesito algo · Nuevo aviso';
         notify(notification.body);
         if ('Notification' in window && Notification.permission === 'granted') {
           try { new Notification(notification.title, { body: notification.body, tag: notification.id }); } catch (_) {}
@@ -149,6 +178,7 @@
       const response = await fetch(base + '/account?visitorId=' + encodeURIComponent(visitorId));
       if (!response.ok) return;
       const result = await response.json();
+      $('trackOrder').hidden = !(result.orders || []).length || result.closed;
       const states = { received:'Recibido', preparing:'En preparación', ready:'Listo para entregar', served:'Entregado', cancelled:'Cancelado' };
       $('guestOrderStatus').innerHTML = (result.orders || []).map(order => `<article class="guest-message"><strong>${states[order.status] || 'Recibido'}</strong><p>${order.items.map(item => `${item.quantity} × ${esc(item.nombre)}`).join(' · ')}</p><p>${price(order.totalCents / 100)}</p></article>`).join('') || '<p>Cuando envíes tu pedido, podrás seguir su estado acá.</p>';
       accountBalance = typeof result.balanceCents === 'number' ? result.balanceCents : null;
@@ -175,7 +205,8 @@
     $('pedido').hidden = !ordersEnabled;
     for (const [id, flag] of [['call','callWaiter'],['bill','requestBill'],['guestAiSection','guestAi'],['guestAccount','orderTracking'],['guestPayment','mercadoPago']]) $(id).hidden = features[flag] === false;
     document.querySelector('.guest-notifications').hidden = features.guestNotifications === false;
-    if (!ordersEnabled) document.querySelector('.intro p').textContent = 'Explorá nuestra carta y elegí algo rico para disfrutar.';
+    $('openHelp').hidden = ['callWaiter','requestBill','guestAi','guestNotifications'].every(flag => features[flag] === false);
+    $('openAccount').hidden = features.orderTracking === false && features.mercadoPago === false;
     renderMenu(); renderCart(); refreshGuest();
   }).catch(() => { $('menu').textContent = 'No se pudo cargar la carta. Recargá la página para reintentar.'; });
 })();
