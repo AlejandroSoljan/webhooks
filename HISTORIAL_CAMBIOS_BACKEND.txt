@@ -228,6 +228,16 @@ CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
   Pruebas: compatibilidad, validación, catálogo DOM, guardado aislado, permisos
   entre dominios y suite completa; verificar release y /healthz en AWS.
 
+19/09/2026 - v5.00.164 (commit: publicación de esta entrada) - Corrige la
+  experiencia de cierre de mesa: revisión junto al botón con saldo pendiente
+  o confirmación explícita de entrega de comandas pagadas aún no entregadas.
+  Sin confirmación de entrega no cambia estados; con saldo no cierra. Cierre
+  y entrega se guardan juntos con revisión optimista y auditoría, y se atienden
+  los eventos del mismo servicio. Errores visibles junto al botón. Sin cambios
+  directos de cuentas productivas ni migraciones. Pruebas HTTP de cierre con
+  pago/entrega, bloqueo por saldo y sincronización; DOM de confirmación y mesa
+  libre, suite completa y verificación de release/healthz en AWS.
+
 REGLA PARA CAMBIOS FUTUROS
 
 Antes de publicar una próxima versión del backend, agregar una entrada con:

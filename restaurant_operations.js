@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.163 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.164 | Fecha: 2026-09-19
 const crypto = require('crypto');
 const { ObjectId } = require('mongodb');
 const express = require('express');
@@ -83,7 +83,12 @@ async function mutateTable(db, tenant, tableId, action, payload, catalog, actor,
       payment.voidedAt = now; payment.voidedBy = actor.name; payment.voidReason = clean(payload.reason);
     } else if (action === 'close') {
       if (money.balanceCents > 0) fail('La mesa tiene saldo pendiente.', 409);
-      if (service.orders.some(x => !['served','cancelled'].includes(x.status))) fail('Marcá los pedidos como entregados o cancelados antes de cerrar.', 409);
+      const outstanding = service.orders.filter(x => !['served','cancelled'].includes(x.status));
+      if (outstanding.length && payload.confirmDelivered !== true) fail('Confirmá que los pedidos pendientes fueron entregados antes de cerrar.', 409);
+      if (outstanding.length) {
+        outstanding.forEach(order => { order.status='served'; order.updatedAt=now; });
+        service.audit.push({ action:'orderStatus', by:actor.name, at:now, status:'served', reason:'Entrega confirmada al cerrar la mesa', orderIds:outstanding.map(x=>x.id) });
+      }
       service.status = 'closed'; service.closedAt = now;
     } else fail('Acción inválida.');
     service.updatedAt = now;
@@ -142,7 +147,7 @@ function mountOperations(app, { getDb, auth, menu, tableContext, allowRequest })
     }
     const result = await mutateTable(db, tenant, req.params.id, resolvedAction, { ...payload, requestId:clean(payload.requestId, 80) || crypto.randomUUID() }, catalog, actor, revision);
     if (action === 'importLegacy') await db.collection('restaurant_events').updateOne({ _id:new ObjectId(payload.eventId), tenantId:tenant }, { $set:{ serviceId:result.service.id, updatedAt:new Date() } });
-    if (action === 'close') await db.collection('restaurant_events').updateMany({ tenantId:tenant, tableId:new ObjectId(req.params.id), status:'pending', type:{ $in:['call','bill'] } }, { $set:{ status:'done', updatedAt:new Date() } });
+    if (action === 'close') await db.collection('restaurant_events').updateMany({ tenantId:tenant, tableId:new ObjectId(req.params.id), status:'pending', $or:[{type:{$in:['call','bill']}},{type:'order',serviceId:result.service.id}] }, { $set:{ status:'done', updatedAt:new Date() } });
     if (action === 'editOrder') {
       const order = result.service.orders.find(x => x.id === payload.orderId);
       await db.collection('restaurant_events').updateOne({ _id:new ObjectId(order.id), tenantId:tenant, serviceId:result.service.id }, { $set:{ items:order.items, total:order.totalCents / 100, note:order.note, updatedAt:new Date() } });

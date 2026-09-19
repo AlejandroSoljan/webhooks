@@ -1,5 +1,14 @@
-<!-- Asisto | Version: 5.00.163 | Fecha: 2026-09-19 -->
+<!-- Asisto | Version: 5.00.164 | Fecha: 2026-09-19 -->
 # Restaurante RES
+
+## Cierre de mesa (5.00.164)
+
+**Cerrar cuenta y liberar mesa** abre una revisión dentro del detalle. Si hay
+saldo, muestra el importe y permite ir al registro de pagos. Si el saldo es cero
+y quedan pedidos recibidos/en preparación/listos, exige marcar **Confirmo que
+estos pedidos ya fueron entregados** antes de confirmar el cierre. Esa acción
+actualiza pedidos y cierre en la misma revisión de mesa y deja auditoría. No se
+cierran cuentas con deuda ni se dan por entregados pedidos sin confirmación.
 
 ## Variables de dominio (5.00.163)
 

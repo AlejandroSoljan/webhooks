@@ -1,9 +1,28 @@
-// Asisto | Version: 5.00.160 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.164 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { JSDOM } = require('jsdom');
+
+test('cerrar mesa pagada permite confirmar entregas, libera la mesa y muestra resultado', async t => {
+  const dom=new JSDOM('<select id="domain"><option>RES</option></select><div class="metrics"></div>',{runScripts:'outside-only',url:'https://example.test'});t.after(()=>dom.window.close());
+  const w=dom.window, sent=[];
+  const service={id:'s1',status:'occupied',guests:2,waiter:'',note:'',openedAt:new Date(),orders:[{id:'o1',status:'received',totalCents:10000,items:[{nombre:'Pasta',quantity:1}],createdAt:new Date()}],payments:[],audit:[]};
+  w.setInterval=()=>{};w.confirm=()=>{throw Error('No debe depender de confirmaciones nativas');};
+  w.fetch=async(url,options)=>{if(options?.body){sent.push(JSON.parse(options.body));service.status='closed';return{ok:true,json:async()=>({ok:true})};}return{ok:true,json:async()=>({features:{manualPayments:true},history:[],catalog:[],tables:[{id:'table',label:'1',revision:7,service,totalCents:10000,paidCents:10000,balanceCents:0,pending:[],legacyOrders:[]}]})};};
+  w.eval(fs.readFileSync(path.join(__dirname,'../static/restaurant_operations.js'),'utf8'));
+  const tick=()=>new Promise(r=>setTimeout(r,0));await tick();
+  const $=s=>w.document.querySelector(s);
+  $('[data-select-table]').click();$('#opsClose').click();
+  assert.equal($('#opsCloseReview').hidden,false);assert.equal(sent.length,0);
+  assert.match($('#opsCloseReview').textContent,/todavía no figuran entregados/);
+  $('#opsConfirmDelivered').checked=true;
+  $('#opsCloseForm').dispatchEvent(new w.Event('submit',{bubbles:true,cancelable:true}));await tick();
+  assert.deepEqual(sent[0],{action:'close',revision:7,confirmDelivered:true});
+  assert.match($('#opsBoard').textContent,/Libre/);
+  assert.match($('#opsMessage').textContent,/Cuenta cerrada. Mesa libre/);
+});
 
 test('panel de mesas conserva borradores y envía la revisión mostrada al operario', async () => {
   const dom = new JSDOM('<select id="domain"><option>RES</option></select><input id="ordersEnabled" type="checkbox"><div class="metrics"></div>', { runScripts:'outside-only',url:'https://example.test' });

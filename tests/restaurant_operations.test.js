@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.163 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.164 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -88,5 +88,16 @@ test('operaciones HTTP: configuración por dominio, cuenta privada y pedido ante
     assert.equal(account.orders.length,1); assert.equal(account.balanceCents,20000);
     const other = await fetch(`${base}/api/public/resto/RES/${token}/account?visitorId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`).then(r=>r.json());
     assert.equal(other.orders.length,0); assert.equal(other.totalCents,undefined);
+    assert.equal((await request(`/api/resto/operations/${id}`,{action:'close',revision:1,confirmDelivered:true})).status,409,'no permite liberar con saldo');
+    await db.collection('tenant_config').updateOne({_id:'RES'},{$set:{restaurant_manual_payments_enabled:true}});
+    assert.equal((await request(`/api/resto/operations/${id}`,{action:'payment',revision:1,amount:200,method:'cash'})).status,200);
+    assert.equal((await request(`/api/resto/operations/${id}`,{action:'close',revision:2})).status,409,'requiere confirmar la entrega');
+    const closed=await request(`/api/resto/operations/${id}`,{action:'close',revision:2,confirmDelivered:true});
+    assert.equal(closed.status,200);
+    const closedTable=(await closed.json()).table;
+    assert.equal(closedTable.service.status,'closed');
+    assert.equal(closedTable.service.orders[0].status,'served');
+    assert.ok(closedTable.service.audit.some(a=>a.reason==='Entrega confirmada al cerrar la mesa'));
+    assert.equal((await db.collection('restaurant_events').findOne({_id:legacy.insertedId})).status,'done');
   } finally { await new Promise(resolve=>server.close(resolve)); await client.close(); await mongo.stop(); }
 });
