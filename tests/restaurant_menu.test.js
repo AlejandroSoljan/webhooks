@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.162 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.165 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -28,12 +28,12 @@ test('Mi pedido suma artículos, conserva el borrador al recargar y muestra pend
   assert.match($('#cart').textContent,/Agua × 2/);assert.match($('#cart').textContent,/Pasta × 1/);
   assert.match($('#cartTotal').textContent,/700/);
   $('[data-increase="b"]').click();assert.match($('#cartTotal').textContent,/1.200/);
-  $('#viewSentOrders').click();assert.equal($('#pendingAccount').hidden,false);assert.match($('#pendingAccountText').textContent,/4 artículo/);
+  assert.match($('#cart-count').textContent,/4 sin enviar/);assert.equal($('#accountDialog'),null);
   const w2=await start(w.sessionStorage.getItem(key)),d=w2.document;
   d.querySelector('#openAccount').click();
   assert.match(d.querySelector('#cart').textContent,/Agua × 2/);assert.match(d.querySelector('#cart').textContent,/Pasta × 2/);
   assert.match(d.querySelector('#cartTotal').textContent,/1.200/);
-  assert.equal(d.querySelectorAll('.asisto-powered').length,5);
+  assert.equal(d.querySelectorAll('.asisto-powered').length,4);
 });
 
 test('carta simple: lupa abre foto e ingredientes, carrito muestra total y conserva la categoría', async t => {
@@ -65,6 +65,7 @@ test('carta simple: lupa abre foto e ingredientes, carrito muestra total y conse
   $('[data-remove]').click();
   assert.equal($('#cartExtras').hidden,true);
   assert.equal($('#cartBar').hidden,true);
+  await new Promise(resolve=>setTimeout(resolve,0));
   window.close();
 });
 
@@ -86,7 +87,7 @@ test('Mercado Pago es informativo y reintentar el envío conserva la clave del p
   assert.match(window.document.querySelector('#cart').textContent,/Pasta × 1/);
   await window.document.querySelector('#order').onclick();
   assert.equal(sent.length,2); assert.ok(sent[0].requestId); assert.equal(sent[0].requestId,sent[1].requestId);
-  assert.equal(window.document.querySelector('#cart-count').textContent,'(0)');
+  assert.equal(window.document.querySelector('#cart-count').textContent,'');
   window.close();
 });
 
@@ -109,7 +110,7 @@ test('carta agrupa por categoría y confirma cada artículo agregado', async () 
   assert.equal(groups[0].open, true);
   assert.match(groups[0].querySelector('[data-feedback="uno"]').textContent, /Agregado ✓ \(1\)/);
   assert.match(window.document.querySelector('#cart').textContent, /Milanesa × 1/);
-  assert.equal(window.document.querySelector('#cart-count').textContent, '(1)');
+  assert.equal(window.document.querySelector('#cart-count').textContent, '(1 sin enviar)');
   assert.match(window.document.querySelector('#toast').textContent, /Milanesa agregado/);
   window.close();
 });
@@ -125,4 +126,27 @@ test('si el dominio deshabilita pedidos la carta muestra imágenes sin botón de
   assert.equal(window.document.querySelector('[data-add]'), null);
   assert.equal(window.document.querySelector('.item-image').getAttribute('src'), '/static/restaurant_demo/pasta.webp');
   window.close();
+});
+
+test('enviar, reabrir y recargar conserva pedidos; nuevos artículos quedan separados y una falla de red conserva el comprobante', async t => {
+  let orders=[],offline=false; const html=renderRestaurantPage({tenant:'RES',token:'flow',name:'Resto',table:'1'});
+  async function start(storage={}) {
+    const w=new JSDOM(html,{runScripts:'outside-only',url:'https://example.test'}).window;t.after(()=>w.close());
+    w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
+    for(const [key,value] of Object.entries(storage))w.sessionStorage.setItem(key,value);
+    w.fetch=async(url,options)=> {
+      if(url.endsWith('/menu'))return {ok:true,json:async()=>({items:[{id:'a',nombre:'Agua',precio:100,disponible:true}],features:{guestNotifications:false}})};
+      if(url.endsWith('/events')){const p=JSON.parse(options.body);orders.push({id:p.requestId,status:'received',items:[{nombre:'Agua',quantity:p.items[0].quantity}],totalCents:10000});return {ok:true,json:async()=>({id:p.requestId})};}
+      if(offline)throw Error('offline');return {ok:true,json:async()=>({orders,totalCents:10000,paidCents:0,balanceCents:10000})};
+    };
+    w.eval(fs.readFileSync(path.join(__dirname,'../static/restaurant_menu.js'),'utf8'));await new Promise(r=>setTimeout(r,0));return w;
+  }
+  const w=await start(),$=id=>w.document.getElementById(id);
+  w.document.querySelector('[data-add]').click();$('openAccount').click();await $('order').onclick();
+  assert.equal($('cartDialog').open,true);assert.match($('sentOrders').textContent,/Recibido.*1 × Agua/s);assert.equal($('cartExtras').hidden,true);
+  $('cartDialog').close();$('openAccount').click();await new Promise(r=>setTimeout(r,0));assert.equal($('sentSection').hidden,false);
+  w.document.querySelector('[data-add]').click();assert.match($('cart').textContent,/Agua × 1/);assert.match($('sentOrders').textContent,/1 × Agua/);
+  const saved=Object.fromEntries(Object.keys(w.sessionStorage).map(key=>[key,w.sessionStorage.getItem(key)]));offline=true;
+  const w2=await start(saved);w2.document.getElementById("openAccount").click();await new Promise(r=>setTimeout(r,0));assert.match(w2.document.getElementById('sentOrders').textContent,/1 × Agua/);assert.match(w2.document.getElementById('syncStatus').textContent,/No pudimos actualizar/);assert.match(w2.document.getElementById('cart').textContent,/Agua × 1/);
+  offline=false;orders[0].status='preparing';w2.document.getElementById('openAccount').click();await new Promise(r=>setTimeout(r,0));assert.match(w2.document.getElementById('sentOrders').textContent,/En preparación/);
 });

@@ -248,3 +248,6 @@ TXT en el mismo cambio de código siempre que sea posible.
 
 No afirmar que un commit de GitHub ya está en producción sólo porque fue
 publicado: verificar el despliegue de AWS y la respuesta de /healthz.
+
+2026-09-19 | v5.00.165 | Corrección de experiencia restaurante (reemplaza separación de carrito/cuenta de v5.00.162).
+Mi pedido unifica artículos sin enviar, pedidos enviados y sus estados; permanece abierto tras confirmar. Conserva comprobante en sesión ante falla de red. Cuenta de mesa desplegable. Panel: formularios de mesa, pedido y pago desplegables y siguiente estado de cocina como acción principal. Sin cambios de datos ni de permisos/configuración. Pruebas: flujo envío/reapertura/recarga, fallo de red, borradores y cierre de mesas; suite completa antes de publicar. Commit: el que contiene esta entrada.

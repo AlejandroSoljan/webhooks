@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.162 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.165 | Fecha: 2026-09-19
 (() => {
   const base = document.body.dataset.base;
   const $ = id => document.getElementById(id);
@@ -7,7 +7,15 @@
   const readStorage = (storage, key) => { try { return window[storage].getItem(key); } catch (_) { return null; } };
   const writeStorage = (storage, key, value) => { try { window[storage].setItem(key, value); } catch (_) {} };
   const draftKey = `asistoRestoDraft:${base}`;
-  let accountSequence = 0;
+  let accountSequence = 0, sentOrders = [];
+  const receiptKey = `asistoRestoReceipts:${base}`;
+  function renderSent() {
+    const states = { received:"Recibido", preparing:"En preparación", ready:"Listo para entregar", served:"Entregado", cancelled:"Cancelado" };
+    $("sentSection").hidden = !sentOrders.length;
+    $("sentOrders").innerHTML = sentOrders.map(order => `<article class="guest-message"><strong>✓ ${features.orderTracking === false ? "Enviado" : (states[order.status] || "Enviado")}</strong><p>${order.items.map(item => `${item.quantity} × ${esc(item.nombre)}`).join("<br>")}</p><p>${price(order.totalCents / 100)}</p></article>`).join("");
+    renderCart();
+  }
+  function saveReceipts() { writeStorage("sessionStorage", receiptKey, JSON.stringify({orders:sentOrders,at:Date.now()})); }
   function saveDraft() {
     writeStorage('sessionStorage', draftKey, JSON.stringify({ cart, note:$('note').value, requestFingerprint, orderRequestId, savedAt:Date.now() }));
   }
@@ -48,8 +56,7 @@
     toastTimer = setTimeout(() => $('toast').classList.remove('visible'), 3000);
   }
   function openPanel(id) {
-    if (id === 'cartDialog') renderCart();
-    if (id === 'accountDialog') pollAccount();
+    if (id === 'cartDialog') { renderCart(); pollAccount(); }
     document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
     $(id).showModal();
   }
@@ -68,20 +75,20 @@
   }
   function renderCart() {
     const count = Object.values(cart).reduce((sum, quantity) => sum + quantity, 0);
-    $('cart-count').textContent = `(${count})`;
+    $('cart-count').textContent = count ? `(${count} sin enviar)` : '';
+    $('draftTitle').hidden = !count;
     const total = Object.entries(cart).reduce((sum,[id,quantity]) => sum + (items.find(item => item.id === id)?.precio || 0) * quantity, 0);
-    $('cartBar').hidden = !ordersEnabled || !count;
+    $('cartBar').hidden = !ordersEnabled || (!count && !sentOrders.length);
     $('cartExtras').hidden = !count;
-    $('cartBarLabel').textContent = `Ver mi pedido (${count})`;
+    $('cartBarLabel').textContent = count ? `Enviar ${count} artículo(s)` : 'Ver mi pedido';
     if (ordersEnabled) $('openAccount').textContent = count ? `Mi pedido (${count})` : 'Mi pedido';
-    $('pendingAccount').hidden = !ordersEnabled || !count;
-    $('pendingAccountText').textContent = `${count} artículo(s) sin enviar · ${price(total)}`;
-    $('cartBarTotal').textContent = $('cartTotal').textContent = price(total);
+    $('cartTotal').textContent = price(total);
+    $('cartBarTotal').textContent = count ? price(total) : 'Enviado ✓';
     document.querySelectorAll('[data-feedback]').forEach(element => { const quantity = cart[element.dataset.feedback] || 0; element.textContent = quantity ? `Agregado ✓ (${quantity})` : ''; });
     $('cart').innerHTML = Object.entries(cart).map(([id, quantity]) => {
       const item = items.find(product => product.id === id);
       return item ? `<p><span>${esc(item.nombre)} × ${quantity} · ${price(item.precio * quantity)}</span><span class="quantity-controls"><button data-remove="${esc(id)}" aria-label="Quitar uno de ${esc(item.nombre)}">−</button><button data-increase="${esc(id)}" aria-label="Agregar uno de ${esc(item.nombre)}">+</button></span></p>` : '';
-    }).join('') || '<p>Todavía no agregaste platos.</p>';
+    }).join('') || (sentOrders.length ? '' : '<p>Elegí platos de la carta y agregalos a tu pedido.</p>');
   }
   document.addEventListener('click', event => {
     const opener = event.target.closest('[data-open]');
@@ -143,7 +150,9 @@
       if (fingerprint !== requestFingerprint) { requestFingerprint = fingerprint; orderRequestId = crypto.randomUUID(); }
       saveDraft();
       sending = true; $('order').disabled = true; $('order').textContent = 'Enviando…';
-      await post('/events', { ...payload, requestId:orderRequestId });
+      const receipt = await post('/events', { ...payload, requestId:orderRequestId });
+      sentOrders.push({id:receipt.id || orderRequestId,status:'received',items:payload.items.map(line => ({nombre:items.find(item=>item.id===line.id).nombre,quantity:line.quantity})),totalCents:Math.round(payload.items.reduce((sum,line)=>sum+items.find(item=>item.id===line.id).precio*line.quantity,0)*100)});
+      saveReceipts(); renderSent();
       requestFingerprint = ''; orderRequestId = '';
       cart = {};
       $('note').value = '';
@@ -153,7 +162,7 @@
       $('msg').textContent = 'Pedido enviado al restaurante.';
       notify('Pedido enviado al restaurante');
       await pollAccount();
-      if (features.orderTracking !== false) openPanel('accountDialog');
+
     } catch (error) { $('msg').textContent = error.message; }
     finally { sending = false; $('order').disabled = false; $('order').textContent = 'Confirmar y enviar pedido'; }
   };
@@ -208,17 +217,19 @@
     const sequence = ++accountSequence;
     try {
       const response = await fetch(base + '/account?visitorId=' + encodeURIComponent(visitorId));
-      if (!response.ok) return;
+      if (!response.ok) throw Error('account');
       const result = await response.json();
       if (sequence !== accountSequence) return;
+      sentOrders = result.orders || []; saveReceipts(); renderSent();
+      $('syncStatus').textContent = '';
+      $('tableAccount').hidden = typeof result.balanceCents !== 'number';
       $('trackOrder').hidden = !(result.orders || []).length || result.closed;
-      const states = { received:'Recibido', preparing:'En preparación', ready:'Listo para entregar', served:'Entregado', cancelled:'Cancelado' };
-      $('guestOrderStatus').innerHTML = (result.orders || []).map(order => `<article class="guest-message"><strong>${states[order.status] || 'Recibido'}</strong><p>${order.items.map(item => `${item.quantity} × ${esc(item.nombre)}`).join(' · ')}</p><p>${price(order.totalCents / 100)}</p></article>`).join('') || '<p>Cuando envíes tu pedido, podrás seguir su estado acá.</p>';
+      $('guestOrderStatus').innerHTML = '';
       accountBalance = typeof result.balanceCents === 'number' ? result.balanceCents : null;
       if (accountBalance !== null) $('guestOrderStatus').innerHTML += `<p><strong>Cuenta completa de la mesa: ${price(result.totalCents / 100)}</strong></p><p>Pagado: ${price(result.paidCents / 100)} · Saldo: ${price(accountBalance / 100)}</p>${result.closed ? '<p>Cuenta cerrada. ¡Gracias por visitarnos!</p>' : ''}`;
       $('splitBill').hidden = features.splitBill === false || accountBalance === null || result.closed;
       splitEstimate();
-    } catch (_) {}
+    } catch (_) { $('syncStatus').textContent = 'No pudimos actualizar el estado. Tu pedido enviado sigue guardado; reintentamos automáticamente.'; }
   }
   $('splitGuests').oninput = splitEstimate;
   $('note').oninput = saveDraft;
@@ -241,9 +252,10 @@
     document.querySelector('.guest-notifications').hidden = features.guestNotifications === false;
     $('openHelp').hidden = ['callWaiter','requestBill','guestAi','guestNotifications'].every(flag => features[flag] === false);
     $('openAccount').hidden = !ordersEnabled && features.orderTracking === false && features.mercadoPago === false;
-    $('openAccount').dataset.open = ordersEnabled ? 'cartDialog' : 'accountDialog';
+    $('openAccount').dataset.open = 'cartDialog';
     $('openAccount').textContent = ordersEnabled ? 'Mi pedido' : 'Mi cuenta';
-    $('viewSentOrders').hidden = features.orderTracking === false && features.mercadoPago === false;
+    try { const saved = JSON.parse(readStorage('sessionStorage', receiptKey) || 'null'); if (saved && Date.now()-saved.at < 2*60*60*1000 && Array.isArray(saved.orders)) sentOrders=saved.orders; } catch (_) {}
+    renderSent();
     restoreDraft(); renderMenu(); renderCart(); refreshGuest();
   }).catch(() => { $('menu').textContent = 'No se pudo cargar la carta. Recargá la página para reintentar.'; });
 })();
