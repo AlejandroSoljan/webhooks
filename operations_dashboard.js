@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.154 | Fecha: 2026-09-17
+// Asisto | Version: 5.00.171 | Fecha: 2026-09-19
 // Read-only operational overview. No configuration writes or message sends.
 const { effectiveSessionState } = require('./wweb_phone_access');
 
@@ -16,6 +16,14 @@ function dashboardScope(user, requested) {
   return tenant;
 }
 
+function dashboardRange(period = 'today', now = new Date()) {
+  if (!['today', 'yesterday', '7d'].includes(period)) throw Object.assign(new Error('invalid_period'), { status: 400 });
+  const current = argentinaDay(now);
+  const start = new Date(+current.start - (period === '7d' ? 6 : period === 'yesterday' ? 1 : 0) * 86400000);
+  const end = period === 'yesterday' ? current.start : current.end;
+  return { ...current, start, end, period, fromDay: argentinaDay(start).day, toDay: argentinaDay(new Date(+end - 1)).day };
+}
+
 function sessionRow(lock, policy, channel, now) {
   const state = effectiveSessionState(lock, policy, +now);
   const version = String(lock.runtimeVersion || lock.currentVersion || '');
@@ -30,12 +38,13 @@ function sessionRow(lock, policy, channel, now) {
   };
 }
 
-async function loadDashboard(db, { user, tenant, access, messagePipeline, now = new Date() }) {
-  const { day, start, end } = argentinaDay(now);
+async function loadDashboard(db, { user, tenant, access, messagePipeline, now = new Date(), period = 'today' }) {
+  const { day, start, end, fromDay, toDay } = dashboardRange(period, now);
   const filter = tenant ? { tenantId: tenant } : {};
   const today = { $gte: start, $lt: end };
   const metrics = [], sessions = [], unavailable = [];
   const jobs = [];
+  let activity = null;
   let sessionsTruncated = false;
   const opts = { maxTimeMS: 1800 };
   const count = (collection, query) => db.collection(collection).countDocuments(query, opts);
@@ -59,13 +68,21 @@ async function loadDashboard(db, { user, tenant, access, messagePipeline, now = 
       const policyMap = new Map(policies.map(p => [p.tenantId + ':' + p.numero, p]));
       sessions.push(...locks.slice(0, 500).map(lock => sessionRow(lock, policyMap.get(lock.tenantId + ':' + lock.numero), 'WhatsApp', now)));
     });
-    metric('sent', 'WhatsApp enviados hoy', 'Registro WhatsApp Web, sin duplicados según el criterio de Sesiones. No son solicitudes API ni confirmaciones de entrega.', '/admin/wweb', async () => {
-      const rows = await aggregate('wa_wweb_message_log', [...messagePipeline({ ...filter, direction: 'out', at: today }), { $count: 'n' }]);
-      return rows[0]?.n || 0;
+    metric('sent', 'WhatsApp enviados', 'Envíos registrados · no solicitudes API. Criterio de deduplicado de Sesiones, no confirmación de entrega.', '/admin/wweb', async () => {
+      const rows = await aggregate('wa_wweb_message_log', [
+        ...messagePipeline({ ...filter, direction: { $in: ['out', 'in'] }, at: today }),
+        { $group: { _id: { bucket: { $dateToString: { date: '$at', timezone: 'America/Argentina/Buenos_Aires', format: period === '7d' ? '%Y-%m-%d' : '%H' } }, direction: '$direction' }, n: { $sum: 1 } } },
+      ]);
+      const totals = new Map(rows.map(r => [r._id.bucket + ':' + r._id.direction, r.n]));
+      activity = Array.from({ length: period === '7d' ? 7 : 24 }, (_, i) => {
+        const bucket = period === '7d' ? argentinaDay(new Date(+start + i * 86400000)).day : String(i).padStart(2, '0');
+        return { label: period === '7d' ? bucket.slice(8) + '/' + bucket.slice(5, 7) : bucket, sent: totals.get(bucket + ':out') || 0, received: totals.get(bucket + ':in') || 0 };
+      });
+      return activity.reduce((sum, row) => sum + row.sent, 0);
     });
     metric('confirmationErrors', 'Fallos de confirmación hoy', 'Errores registrados al solicitar autorización para enviar mensajes.', '/admin/wweb', async () => {
       const rows = await aggregate('wa_api_mensajes_confirmaciones', [
-        { $match: { ...(tenant ? { tenantId: tenant.toUpperCase() } : {}), solicitudDayKey: day } },
+        { $match: { ...(tenant ? { tenantId: tenant.toUpperCase() } : {}), solicitudDayKey: { $gte: fromDay, $lte: toDay } } },
         { $group: { _id: null, n: { $sum: { $cond: [{ $eq: ['$tipoDocumento', 'metrica'] }, { $ifNull: ['$contadores.fallos', 0] }, { $cond: [{ $regexMatch: { input: { $ifNull: ['$motivoCancelacion', ''] }, regex: 'error' } }, 1, 0] }] } } } },
       ]);
       return rows[0]?.n || 0;
@@ -98,7 +115,11 @@ async function loadDashboard(db, { user, tenant, access, messagePipeline, now = 
     while (index < jobs.length) await jobs[index++]();
   }));
   sessions.sort((a, b) => (a.state === 'online') - (b.state === 'online') || a.tenantId.localeCompare(b.tenantId));
-  return { tenant, day, generatedAt: now.toISOString(), metrics, sessions, sessionsTruncated, unavailable };
+  if (period !== 'today') for (const metric of metrics) {
+    metric.label = metric.label.replace(/hoy/g, 'del período');
+    metric.detail = metric.detail.replace(/de hoy/g, 'del período seleccionado');
+  }
+  return { tenant, day, period, fromDay, toDay, generatedAt: now.toISOString(), metrics, activity, sessions, sessionsTruncated, unavailable, access };
 }
 
 function mountOperationsDashboard(app, { requireAuth, getDb, getAccess, messagePipeline }) {
@@ -117,8 +138,10 @@ function mountOperationsDashboard(app, { requireAuth, getDb, getAccess, messageP
     try {
       const tenant = dashboardScope(req.user, req.query.tenant);
       const access = getAccess(req.user).sort();
-      const key = JSON.stringify([req.user.uid, req.user.role, tenant, access, argentinaDay().day]);
-      const data = await cached(key, async () => loadDashboard(await getDb(), { user: req.user, tenant, access, messagePipeline }));
+      const period = req.query.period || 'today';
+      dashboardRange(period);
+      const key = JSON.stringify([req.user.uid, req.user.role, tenant, access, argentinaDay().day, period]);
+      const data = await cached(key, async () => loadDashboard(await getDb(), { user: req.user, tenant, access, messagePipeline, period }));
       res.json({ ok: true, ...data });
     } catch (error) { res.status(error.status || 503).json({ ok: false, error: 'No se pudo consultar el estado operativo.' }); }
   });
@@ -134,13 +157,18 @@ function mountOperationsDashboard(app, { requireAuth, getDb, getAccess, messageP
 
 function dashboardHtml(user) {
   return `<section class="opsPanel" id="operationsDashboard" aria-label="Estado operativo">
-    <div class="opsHeading"><div><h2>Tu negocio, ahora</h2><p>Actividad de hoy · hora de Argentina. Pendientes acumulados.</p></div>
-    <div class="opsControls">${user.role === 'superadmin' ? '<label>Dominio<select id="opsTenant"><option value="">Todos los dominios</option></select></label>' : ''}<button type="button" class="btn2" id="opsRefresh">Actualizar</button></div></div>
-    <p id="opsStatus" role="status" aria-live="polite">Consultando indicadores…</p>
-    <div id="opsMetrics" class="opsMetrics"></div>
-    <div id="opsAlerts" class="opsAlerts"></div>
-    <div id="opsConnections"></div>
-  </section><script src="/static/operations_dashboard.js?v=5.00.154" defer></script>`;
+    <header class="opsHeading"><div><h1>Todo tu negocio, de un vistazo</h1><p>Actividad, conexiones y pendientes en un solo lugar.</p></div>
+    <div class="opsControls">${user.role === 'superadmin' ? '<label class="opsSelect"><span class="srOnly">Dominio</span><select id="opsTenant"><option value="">Todos los dominios</option></select></label>' : ''}<label class="opsSelect"><span class="srOnly">Período</span><select id="opsPeriod"><option value="today">Hoy</option><option value="yesterday">Ayer</option><option value="7d">Últimos 7 días</option></select></label><button type="button" id="opsRefresh" aria-label="Actualizar indicadores" title="Actualizar indicadores">↻</button></div></header>
+    <div id="opsNotices" role="status" aria-live="polite"></div>
+    <div id="opsMetrics" class="opsMetrics" aria-label="Indicadores principales"></div>
+    <div class="opsColumns"><section class="opsBox opsActivity"><div class="opsBoxHeading"><h2>Actividad de mensajes</h2><div class="opsChartLegend"><span><i class="mint"></i>Enviados</span><span><i class="blue"></i>Recibidos</span></div></div><div id="opsActivity"></div></section>
+    <section class="opsBox"><h2>Estado de conexiones</h2><div id="opsConnectionChart"></div></section></div>
+    <div class="opsColumns"><section class="opsBox"><div class="opsBoxHeading"><h2>Necesita tu atención</h2><button class="opsTextButton" id="opsShowAlerts" type="button" hidden>Ver todas</button></div><div id="opsAlerts" class="opsAlerts"></div></section>
+    <section class="opsBox"><h2>Pendientes</h2><div id="opsPending"></div></section></div>
+    <nav id="opsQuick" class="opsQuick" aria-label="Acciones rápidas"></nav>
+    <footer class="opsFooter"><span id="opsStatus" role="status">Consultando indicadores…</span><span>Actualización automática cada 60 s</span></footer>
+    <details class="opsExtra"><summary>Ver detalle de conexiones e indicadores</summary><div id="opsSecondary"></div><div id="opsConnections"></div></details>
+  </section><script src="/static/operations_dashboard.js?v=5.00.171" defer></script>`;
 }
 
-module.exports = { argentinaDay, dashboardScope, sessionRow, loadDashboard, mountOperationsDashboard, dashboardHtml };
+module.exports = { argentinaDay, dashboardRange, dashboardScope, sessionRow, loadDashboard, mountOperationsDashboard, dashboardHtml };

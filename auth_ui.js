@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.168 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.171 | Fecha: 2026-09-19
 const { fields: restaurantFields, validateRestaurantConfig } = require('./restaurant_config');
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
@@ -362,7 +362,7 @@ function absUrl(baseUrl, path) {
   return p; // fallback relativo
 }
 
-function pageShell({ title, user, body, head = "", robots = "", showSidebarToggle = false }) {
+function pageShell({ title, user, body, head = "", robots = "", showSidebarToggle = false, home = false }) {
   const u = user ? `${htmlEscape(user.username)} · ${htmlEscape(user.tenantId)} · ${htmlEscape(user.role)}` : "";
   // Importante para SEO:
   // - si hay user => pantalla privada => noindex
@@ -1269,14 +1269,16 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
         }
 
 </style>
+${home ? '<link rel="stylesheet" href="/static/operations_dashboard.css?v=5.00.171">' : ''}
 </head>
-<body>
+<body${home ? ' class="asistoHome"' : ''}>
   ${user ? `
   <div class="topbar">
     <div class="topbarLeft">
       <button type="button" class="menuBtn" id="menuBtn" aria-label="Abrir menú">☰</button>
       ${showSidebarToggle ? `<button type="button" class="sidebarToggleBtn" id="sidebarToggleBtn" aria-label="Ocultar menú lateral" title="Ocultar menú lateral"><span class="icon">☰</span><span class="when-open">Ocultar menú</span><span class="when-closed">Mostrar menú</span></button>` : ``}
-      <div class="pill">
+      ${home ? '<span class="opsBreadcrumb">Panel general</span>' : ''}
+      <div class="pill" ${home ? 'hidden' : ''}>
         <img src="/static/logo-asisto-transparent.png?v=5.00.010" alt="Asisto" style="width:auto;height:28px;max-width:50px;object-fit:contain"/>
         <strong>Asisto</strong>
         <span>·</span>
@@ -1284,6 +1286,7 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
       </div>
     </div>
     <div class="topbarRight">
+      ${home ? `<div class="opsUser"><span class="opsAvatar" aria-hidden="true">${menuIcon('shield')}</span><div><strong>${htmlEscape(user.username)}</strong><small>${htmlEscape(user.role)} · ${htmlEscape(user.tenantId)}</small></div></div>` : ''}
       <form method="POST" action="/logout" style="margin:0">
         <button class="btn2" type="submit">Cerrar sesión</button>
       </form>
@@ -1446,6 +1449,7 @@ function sidebarHtml(user, activeKey) {
         </div>
       </div>
       <nav class="nav" aria-label="Menú principal">${items}</nav>
+      ${activeKey === 'home' ? '<p class="opsSlogan">Tu negocio,<br>siempre más cerca.</p>' : ''}
     </aside>
   `;
 }
@@ -1455,6 +1459,7 @@ function appShell({ title, user, active, main }) {
     title,
     user,
     showSidebarToggle: true,
+    home: active === 'home',
     body: `
     <div class="drawerBackdrop" id="drawerBackdrop"></div>
       <aside class="drawer" id="drawer">
@@ -1652,20 +1657,15 @@ function appMenuPage({ user, routes }) {
     user,
     active: "home",
     main: `
-    <section class="workspaceHead">
-      <div class="homeEyebrow">Tu espacio de trabajo</div>
-      <h1>Hola, ${htmlEscape(user.username)}</h1>
-      <p>Atención, operación y configuración de tu negocio, en un solo lugar.</p>
-      <p>Dominio de tu usuario: <strong>${htmlEscape(user.tenantId)}</strong> · ${htmlEscape(user.role)}</p>
-    </section>
     ${dashboardHtml(user)}
-    <h2 style="font-size:19px;margin:8px 0 16px">Accesos rápidos</h2>
+    <details class="opsAllTools"><summary>Todas las herramientas</summary>
     <div class="workspaceGrid">${groups.map(group => `<section class="workspaceCard">
       <h2>${menuIcon(group.icon)}${htmlEscape(group.title)}</h2>
       <p>${htmlEscape(group.description)}</p>
       ${group.items.map(item => `<a href="${htmlEscape(item.href)}"><span>${htmlEscape(item.title)}</span><span aria-hidden="true">›</span></a>`).join('')}
     </section>`).join('')}</div>
     ${!groups.length ? '<section class="workspaceCard"><p>No tenés herramientas habilitadas. Consultá con tu administrador.</p></section>' : ''}
+    </details>
     ${advanced.length ? `<details class="workspaceTools"><summary>Herramientas avanzadas · API</summary>${advanced.map(route => `<a href="${htmlEscape(route.href)}">${htmlEscape(route.title)}</a>`).join('')}</details>` : ''}
     `,
   });

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.154 | Fecha: 2026-09-17
+// Asisto | Version: 5.00.171 | Fecha: 2026-09-19
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), vm = require('node:vm');
@@ -6,7 +6,7 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const { MongoClient } = require('mongodb');
 const express = require('express');
 const { JSDOM } = require('jsdom');
-const { argentinaDay, dashboardScope, sessionRow, loadDashboard, mountOperationsDashboard, dashboardHtml } = require('../operations_dashboard');
+const { argentinaDay, dashboardRange, dashboardScope, sessionRow, loadDashboard, mountOperationsDashboard, dashboardHtml } = require('../operations_dashboard');
 const now = new Date('2026-09-18T02:00:00Z');
 const user = { uid: 'u1', role: 'admin', tenantId: 'NEA' };
 const source = fs.readFileSync(require.resolve('../auth_ui'), 'utf8');
@@ -24,6 +24,15 @@ test('only superadmin may change domain or select all', () => {
   assert.equal(dashboardScope({ ...user, role: 'superadmin' }, ''), '');
   assert.equal(dashboardScope({ ...user, role: 'superadmin' }, 'RVL'), 'RVL');
   assert.throws(() => dashboardScope(null, ''));
+});
+test('periods use Argentina boundaries and reject arbitrary ranges', () => {
+  const yesterday = dashboardRange('yesterday', now);
+  assert.equal(yesterday.fromDay, '2026-09-16');
+  assert.equal(yesterday.toDay, '2026-09-16');
+  assert.equal(yesterday.end.toISOString(), '2026-09-17T03:00:00.000Z');
+  assert.equal(dashboardRange('7d', now).fromDay, '2026-09-11');
+  assert.equal(dashboardRange('7d', now).toDay, '2026-09-17');
+  assert.throws(() => dashboardRange('all', now), { status: 400 });
 });
 test('connection state uses heartbeat and policies, exposes no credentials', () => {
   const lock = { tenantId: 'NEA', numero: '123', state: 'online', lastSeenAt: new Date(+now - 60000), runtimeVersion: '4.04.55', desiredTag: 'v4.04.56', token: 'secret' };
@@ -55,12 +64,22 @@ test('production-shaped data: tenant isolation, dedupe, day, permissions and own
     assert.deepEqual(data.unavailable, []);
     const values = Object.fromEntries(data.metrics.map(m => [m.key, m.value]));
     assert.equal(values.sent, 1); assert.equal(values.leads, 1); assert.equal(values.tokens, 42); assert.equal(values.orders, 1); assert.equal(values.tasks, 1); assert.equal(values.contacts, 1);
+    assert.equal(data.activity.length, 24);
+    assert.deepEqual(data.activity[23], { label: '23', sent: 1, received: 1 });
+    assert.equal(data.activity.reduce((n, r) => n + r.sent, 0), values.sent);
+    const weekly = await loadDashboard(db, { user, tenant: 'NEA', now, messagePipeline, access: ['wweb'], period: '7d' });
+    assert.deepEqual(weekly.unavailable, []);
+    assert.equal(weekly.activity.length, 7);
+    assert.deepEqual(weekly.activity[5], { label: '16/09', sent: 1, received: 0 });
+    assert.deepEqual(weekly.activity[6], { label: '17/09', sent: 1, received: 1 });
+    assert.equal(weekly.metrics.find(m => m.key === 'sent').value, 2);
     assert.equal(data.sessions.length, 1); assert.equal(data.sessions[0].state, 'paused');
     assert.equal(JSON.stringify(data).includes('never'), false);
     const global = await loadDashboard(db, { user: { ...user, role: 'superadmin' }, tenant: '', access: ['leads'], now });
     assert.equal(global.metrics[0].value, 3);
     const empty = await loadDashboard(db, { user, tenant: 'NEA', access: [], now });
     assert.equal(empty.metrics.length, 0); assert.equal(empty.sessions.length, 0);
+    assert.equal(empty.activity, null);
   } finally { await client.close(); await mongo.stop(); }
 });
 test('failed query is unavailable, not zero; sibling queries still work', async () => {
@@ -81,6 +100,9 @@ test('API rejects anonymous access, confines ordinary users and coalesces refres
     const base = 'http://127.0.0.1:' + server.address().port;
     const results = await Promise.all(Array.from({ length: 5 }, () => fetch(base + '/api/operations-dashboard?tenant=RVL').then(r => r.json())));
     assert.equal(calls, 1); assert.ok(results.every(r => r.tenant === 'NEA'));
+    assert.equal((await fetch(base + '/api/operations-dashboard?period=all')).status, 400);
+    await fetch(base + '/api/operations-dashboard?period=yesterday');
+    assert.equal(calls, 2, 'period must be included in the cache key');
     assert.equal((await fetch(base + '/api/operations-dashboard/tenants')).status, 403);
     assert.equal((await fetch(base + '/api/operations-dashboard', { headers: { 'x-test-anonymous': '1' } })).status, 401);
   } finally { await new Promise(resolve => server.close(resolve)); }

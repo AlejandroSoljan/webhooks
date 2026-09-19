@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.153 | Fecha: 2026-09-17
+// Asisto | Version: 5.00.171 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -41,6 +41,10 @@ test('superadmin home exposes all original screens and advanced APIs', async () 
     assert.equal(menu.querySelectorAll('a[href^="/ui/configuracion"]').length, 1);
     assert.ok(menu.querySelector('a[href="/admin/wweb"]'));
     assert.ok(menu.querySelector('a[href="/admin/inbox"]'));
+    assert.equal(document.querySelector('.sideBrand img').getAttribute('src').split('?')[0], '/static/logo-asisto-transparent.png');
+    assert.match(document.querySelector('.opsSlogan').textContent, /siempre más cerca/);
+    assert.ok(document.querySelector('body.asistoHome'));
+    assert.ok(document.querySelector('link[href^="/static/operations_dashboard.css"]'));
   });
 });
 
@@ -50,6 +54,8 @@ test('configuration tabs and legacy bookmarks embed the same original forms', as
       for (const url of ['/ui/configuracion?seccion=' + key + '&tenant=RVL', '/ui/' + key + '?tenant=RVL']) {
         const { status, document } = await get(url);
         assert.equal(status, 200, url);
+        assert.equal(document.querySelector('body.asistoHome'), null);
+        assert.equal(document.querySelector('link[href^="/static/operations_dashboard.css"]'), null);
         const frame = new URL(document.querySelector('iframe').getAttribute('src'), 'http://test');
         assert.equal(frame.pathname, path);
         assert.equal(frame.searchParams.get('tenant'), 'RVL');
@@ -101,8 +107,8 @@ test('configuration URLs reject arbitrary sections and cannot override embedding
 test('active submenu is expanded and user-supplied labels are escaped', async () => {
   await withPanel({ ...superadmin, username: '<script>alert(1)</script>' }, async get => {
     const home = await get('/app');
-    assert.match(home.document.querySelector('h1').textContent, /<script>/);
-    assert.equal(home.document.querySelector('h1 script'), null);
+    assert.match(home.document.querySelector('.opsUser strong').textContent, /<script>/);
+    assert.equal(home.document.querySelector('.opsUser script'), null);
     const page = await get('/ui/token_control');
     assert.ok(page.document.querySelector('.sidebar details[open] a[aria-current="page"][href="/ui/token_control"]'));
   });
