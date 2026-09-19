@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.163 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.168 | Fecha: 2026-09-19
 const { fields: restaurantFields, validateRestaurantConfig } = require('./restaurant_config');
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
@@ -797,6 +797,8 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
       display:block;
     }
 
+    .restoFrame > .frameHead{display:none}
+    .restoFrame > .frame{height:calc(100dvh - 130px);min-height:480px}
     .homeShell{
       min-height: calc(100vh - 150px);
       display:flex;
@@ -3626,7 +3628,7 @@ function mountAuthRoutes(app) {
         user: req.user,
         active: conf.active,
         main: `
-        <div class="frameWrap">
+        <div class="frameWrap ${page === 'resto' ? 'restoFrame' : ''}">
           <div class="frameHead">
             <div>
               <h2>${htmlEscape(conf.title)}</h2>

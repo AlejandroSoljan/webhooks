@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.167 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.168 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -59,4 +59,14 @@ test('pestañas y filtros conservan borradores y abren mesas desde cocina',async
  w.eval(fs.readFileSync(path.join(__dirname,'../static/restaurant_operations.js'),'utf8'));await new Promise(r=>setTimeout(r,0));const d=w.document;
  d.querySelector('[data-select-table]').click();const input=d.querySelector('[name=waiter]');input.value='Pedro';input.dispatchEvent(new w.Event('input',{bubbles:true}));d.querySelector('[data-view="qr"]').click();assert.equal(d.querySelector('[data-workspace-view="qr"]').hidden,false);d.querySelector('[data-view="salon"]').click();assert.equal(d.querySelector('[name=waiter]').value,'Pedro');
  d.querySelector('[data-filter="free"]').click();assert.equal(d.querySelector('#opsBoard [data-select-table]'),null);d.querySelector('[data-filter="all"]').click();d.querySelector('[data-view="kitchen"]').click();assert.equal(d.getElementById('kitchenSection').open,true);w.confirm=()=>true;d.querySelector('#opsKitchen [data-select-table]').click();assert.equal(d.getElementById('restaurantOps').dataset.view,'salon');assert.match(d.getElementById('opsDetail').textContent,/Mesa 1/);
+});
+
+test('diseño conserva orden numérico, iconos, cancelados accesibles y estado de formularios',async t=>{
+ const w=new JSDOM('<select id="domain"><option>RES</option></select><div class="metrics"></div>',{runScripts:'outside-only',url:'https://example.test'}).window;t.after(()=>w.close());let poll;w.setInterval=cb=>{poll=cb;};
+ const service={status:'occupied',guests:2,waiter:'Ana',openedAt:new Date(),orders:[{id:'cancel',status:'cancelled',totalCents:20000,createdAt:new Date(),items:[{nombre:'Cancelado antiguo',quantity:1,unitPrice:200}]},{id:'active',status:'ready',totalCents:10000,createdAt:new Date(),items:[{nombre:'Pasta actual',quantity:1,unitPrice:100}]}],payments:[],audit:[]};
+ w.fetch=async()=>({ok:true,json:async()=>({features:{manualPayments:true},history:[],catalog:[],tables:['1','10','2'].map(label=>({id:label,label,revision:1,pending:[],legacyOrders:[],totalCents:10000,paidCents:0,balanceCents:10000,service}))})});
+ w.eval(fs.readFileSync(path.join(__dirname,'../static/restaurant_operations.js'),'utf8'));await new Promise(r=>setTimeout(r,0));const d=w.document;
+ assert.deepEqual([...d.querySelectorAll('#opsBoard [data-select-table]')].map(el=>el.dataset.selectTable),['1','2','10']);assert.equal(d.querySelectorAll('#opsMetrics svg').length,3);
+ d.querySelector('#opsBoard [data-select-table]').click();assert.match(d.getElementById('opsActiveOrders').textContent,/Pasta actual/);assert.doesNotMatch(d.getElementById('opsActiveOrders').textContent,/Cancelado antiguo/);assert.equal(d.getElementById('opsCancelledOrders').open,false);assert.match(d.getElementById('opsCancelledOrders').textContent,/Cancelado antiguo/);
+ d.getElementById('opsNewOrder').click();assert.equal(d.getElementById('opsOrderEditor').open,true);poll();await new Promise(r=>setTimeout(r,0));assert.equal(d.getElementById('opsOrderEditor').open,true);d.getElementById('opsHideDetail').click();assert.equal(d.getElementById('opsDetail').hasAttribute('data-table-id'),false);
 });

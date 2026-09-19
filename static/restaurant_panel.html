@@ -1,20 +1,20 @@
-<!-- Asisto | Version: 5.00.167 | Fecha: 2026-09-19 -->
+<!-- Asisto | Version: 5.00.168 | Fecha: 2026-09-19 -->
 <!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Restaurante · Operaciones</title>
-  <link rel="stylesheet" href="/static/restaurant_panel.css?v=5.00.167">
-  <script src="/static/restaurant_panel.js?v=5.00.167" defer></script>
-  <link rel="stylesheet" href="/static/restaurant_operations.css?v=5.00.167">
-  <script src="/static/restaurant_operations.js?v=5.00.167" defer></script>
+  <link rel="stylesheet" href="/static/restaurant_panel.css?v=5.00.168">
+  <script src="/static/restaurant_panel.js?v=5.00.168" defer></script>
+  <link rel="stylesheet" href="/static/restaurant_operations.css?v=5.00.168">
+  <script src="/static/restaurant_operations.js?v=5.00.168" defer></script>
 </head>
 <body>
   <main class="panel">
     <header class="heading">
-      <div><p class="eyebrow">Asisto · Operaciones</p><h1>Restaurante</h1><p>Pedidos, llamados y cuentas por mesa.</p></div>
-      <div class="controls"><label id="domainControl">Dominio<select id="domain"><option value="">Cargando dominios…</option></select></label><button id="refresh" type="button">Actualizar</button></div>
+      <div class="operator-brand"><img id="opsBrandLogo" src="/static/logo-asisto-transparent.png" alt="Logo del restaurante"><span><b id="opsBrandName">Restaurante</b><small>Panel del restaurante</small></span></div>
+      <nav class="ops-top-nav" aria-label="Accesos principales"><button data-top-view="salon" aria-current="page">Salón</button><button data-top-view="kitchen">Cocina</button><button data-top-view="history">Historial</button></nav><div class="controls"><label id="domainControl">Dominio<select id="domain"><option value="">Cargando dominios…</option></select></label><button id="refresh" type="button">Actualizar</button></div>
     </header>
     <p id="status" role="status" aria-live="polite">Cargando restaurante…</p>
     <div class="metrics"><article><strong id="pendingCount">—</strong><span>Solicitudes pendientes</span></article><article><strong id="tableCount">—</strong><span>Mesas activas</span></article><article><strong id="menuCount">—</strong><span>Artículos en la carta</span></article></div>

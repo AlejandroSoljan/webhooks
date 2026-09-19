@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.167 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.168 | Fecha: 2026-09-19
 (() => {
   if(window.parent !== window) document.body.classList.add('embedded');
   const el = id => document.getElementById(id);
@@ -12,7 +12,7 @@
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     return data;
   };
-  const message = text => { el('status').textContent = text; };
+  const message = text => { el('status').textContent = text; el('status').classList.toggle('notice', !text.startsWith('Dominio ')); };
   function reflectTenant() {
     const url = new URL(location.href);
     url.searchParams.set('tenant', tenant);
@@ -56,6 +56,8 @@
       ]);
       if (requestedTenant !== tenant) return;
       el('menuCount').textContent = summary.menuCount;
+      el('opsBrandName').textContent=summary.displayName || 'Restaurante';
+      el('opsBrandLogo').src=summary.logoUrl || '/static/logo-asisto-transparent.png';
       el('setup').classList.toggle('hidden', summary.enabled);
       el('addTable').disabled = !summary.enabled;
       el('pdf').classList.toggle('disabled', !tables.tables.length);

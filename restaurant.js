@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.166 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.168 | Fecha: 2026-09-19
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
@@ -72,13 +72,13 @@ function mountRestaurant(app, auth) {
     const tenant = adminTenant(req, auth);
     if (!validTenant(tenant)) return res.status(400).json({ error: 'dominio_requerido' });
     const db = await getDb();
-    const config = await db.collection('tenant_config').findOne({ _id: tenant }, { projection: { restaurant_enabled: 1, restaurant_orders_enabled:1, restaurant_logo_url:1 } });
+    const config = await db.collection('tenant_config').findOne({ _id: tenant }, { projection: { restaurant_enabled: 1, restaurant_orders_enabled:1, restaurant_logo_url:1, restaurant_display_name:1, nom_emp:1 } });
     if (!config) return res.status(404).json({ error: 'dominio_no_existe' });
     const [menuCount, tableCount] = await Promise.all([
       db.collection('products').countDocuments({ tenantId: tenant, active: { $ne: false } }),
       db.collection('restaurant_tables').countDocuments({ tenantId: tenant, active: true }),
     ]);
-    res.json({ tenant, enabled: config.restaurant_enabled === true, ordersEnabled: config.restaurant_orders_enabled !== false, menuCount, tableCount, logoUrl: config.restaurant_logo_url || '' });
+    res.json({ tenant, enabled: config.restaurant_enabled === true, ordersEnabled: config.restaurant_orders_enabled !== false, menuCount, tableCount, logoUrl: config.restaurant_logo_url || '', displayName:config.restaurant_display_name || config.nom_emp || 'Restaurante' });
   });
   for (const [method, route] of [['post','config'],['put','branding'],['put','orders-config']]) app[method]('/api/resto/' + route, (_req,res)=>res.status(410).json({ error:'Configurá estas variables en Configuración de dominio.' }));
   app.get('/resto/:tenant/:token', async (req, res) => {
