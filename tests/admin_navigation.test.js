@@ -1,9 +1,9 @@
-// Asisto | Version: 5.00.171 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.174 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const { JSDOM } = require('jsdom');
-const { mountAuthRoutes, protectRoutes } = require('../auth_ui');
+const { mountAuthRoutes, protectRoutes, appShell } = require('../auth_ui');
 const { navigationGroups, configurationState } = require('../admin_navigation');
 
 const superadmin = { uid: 'test', username: 'Prueba', tenantId: 'DEMO', role: 'superadmin', allowedPages: [] };
@@ -44,7 +44,7 @@ test('superadmin home exposes all original screens and advanced APIs', async () 
     assert.equal(document.querySelector('.sideBrand img').getAttribute('src').split('?')[0], '/static/logo-asisto-transparent.png');
     assert.match(document.querySelector('.opsSlogan').textContent, /siempre más cerca/);
     assert.ok(document.querySelector('body.asistoHome'));
-    assert.ok(document.querySelector('link[href^="/static/operations_dashboard.css"]'));
+    assert.ok(document.querySelector('link[href^="/static/admin_shell.css"]'));
   });
 });
 
@@ -55,7 +55,8 @@ test('configuration tabs and legacy bookmarks embed the same original forms', as
         const { status, document } = await get(url);
         assert.equal(status, 200, url);
         assert.equal(document.querySelector('body.asistoHome'), null);
-        assert.equal(document.querySelector('link[href^="/static/operations_dashboard.css"]'), null);
+        assert.ok(document.querySelector('body.asistoShell.asistoSection'));
+        assert.ok(document.querySelector('link[href^="/static/admin_shell.css"]'));
         const frame = new URL(document.querySelector('iframe').getAttribute('src'), 'http://test');
         assert.equal(frame.pathname, path);
         assert.equal(frame.searchParams.get('tenant'), 'RVL');
@@ -95,6 +96,25 @@ test('empty permissions deny configuration; support retains sessions access', as
 
 test('unauthenticated requests still require login', async () => {
   await withPanel(null, async get => { assert.equal((await get('/ui/configuracion')).status, 302); });
+});
+test('every administrative section shares the approved shell and current menu state', async () => {
+  for (const active of ['home', ...existingKeys]) {
+    const document = new JSDOM(appShell({title:'Sección · Asisto',user:superadmin,active,main:'<button id="keptAction">Acción existente</button>'})).window.document;
+    assert.ok(document.querySelector('body.asistoShell'), active);
+    assert.ok(document.querySelector('link[href^="/static/admin_shell.css"]'), active);
+    assert.ok(document.querySelector('.sidebar a[aria-current]'), active);
+    assert.match(document.querySelector('.opsSlogan').textContent, /siempre más cerca/);
+    assert.ok(document.querySelector('#keptAction'));
+    assert.ok(document.querySelector('form[action="/logout"]'));
+  }
+  await withPanel(superadmin, async get => {
+    const { status, document } = await get('/admin/wweb');
+    assert.equal(status, 200);
+    assert.ok(document.querySelector('body.asistoShell.asistoSection'));
+    assert.ok(document.querySelector('#wwebSearch'));
+    assert.ok(document.querySelector('#wwebStateFilter'));
+    assert.equal(document.querySelector('.sidebar a[aria-current="page"]').getAttribute('href'), '/admin/wweb');
+  });
 });
 
 test('configuration URLs reject arbitrary sections and cannot override embedding', () => {

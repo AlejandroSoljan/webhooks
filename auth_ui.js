@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.171 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.174 | Fecha: 2026-09-19
 const { fields: restaurantFields, validateRestaurantConfig } = require('./restaurant_config');
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
@@ -363,6 +363,7 @@ function absUrl(baseUrl, path) {
 }
 
 function pageShell({ title, user, body, head = "", robots = "", showSidebarToggle = false, home = false }) {
+  const shell = !!user && showSidebarToggle;
   const u = user ? `${htmlEscape(user.username)} · ${htmlEscape(user.tenantId)} · ${htmlEscape(user.role)}` : "";
   // Importante para SEO:
   // - si hay user => pantalla privada => noindex
@@ -1269,16 +1270,16 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
         }
 
 </style>
-${home ? '<link rel="stylesheet" href="/static/operations_dashboard.css?v=5.00.171">' : ''}
+${shell ? '<link rel="stylesheet" href="/static/admin_shell.css?v=5.00.174">' : ''}
 </head>
-<body${home ? ' class="asistoHome"' : ''}>
+<body${shell ? ` class="asistoShell ${home ? 'asistoHome' : 'asistoSection'}"` : ''}>
   ${user ? `
   <div class="topbar">
     <div class="topbarLeft">
       <button type="button" class="menuBtn" id="menuBtn" aria-label="Abrir menú">☰</button>
       ${showSidebarToggle ? `<button type="button" class="sidebarToggleBtn" id="sidebarToggleBtn" aria-label="Ocultar menú lateral" title="Ocultar menú lateral"><span class="icon">☰</span><span class="when-open">Ocultar menú</span><span class="when-closed">Mostrar menú</span></button>` : ``}
-      ${home ? '<span class="opsBreadcrumb">Panel general</span>' : ''}
-      <div class="pill" ${home ? 'hidden' : ''}>
+      ${shell ? `<span class="opsBreadcrumb">${home ? 'Panel general' : htmlEscape(String(title || 'Asisto').replace(/ · Asisto$/, ''))}</span>` : ''}
+      <div class="pill" ${shell ? 'hidden' : ''}>
         <img src="/static/logo-asisto-transparent.png?v=5.00.010" alt="Asisto" style="width:auto;height:28px;max-width:50px;object-fit:contain"/>
         <strong>Asisto</strong>
         <span>·</span>
@@ -1286,7 +1287,7 @@ ${home ? '<link rel="stylesheet" href="/static/operations_dashboard.css?v=5.00.1
       </div>
     </div>
     <div class="topbarRight">
-      ${home ? `<div class="opsUser"><span class="opsAvatar" aria-hidden="true">${menuIcon('shield')}</span><div><strong>${htmlEscape(user.username)}</strong><small>${htmlEscape(user.role)} · ${htmlEscape(user.tenantId)}</small></div></div>` : ''}
+      ${shell ? `<div class="opsUser"><span class="opsAvatar" aria-hidden="true">${menuIcon('shield')}</span><div><strong>${htmlEscape(user.username)}</strong><small>${htmlEscape(user.role)} · ${htmlEscape(user.tenantId)}</small></div></div>` : ''}
       <form method="POST" action="/logout" style="margin:0">
         <button class="btn2" type="submit">Cerrar sesión</button>
       </form>
@@ -1449,7 +1450,7 @@ function sidebarHtml(user, activeKey) {
         </div>
       </div>
       <nav class="nav" aria-label="Menú principal">${items}</nav>
-      ${activeKey === 'home' ? '<p class="opsSlogan">Tu negocio,<br>siempre más cerca.</p>' : ''}
+      <p class="opsSlogan">Tu negocio,<br>siempre más cerca.</p>
     </aside>
   `;
 }
