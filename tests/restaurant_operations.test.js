@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.169 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.170 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -50,7 +50,7 @@ test('cuenta de mesa: precios, concurrencia, pagos parciales, anulaciones y nuev
     assert.equal(race.filter(x => x.status === 'fulfilled').length,1);
     assert.equal(race.filter(x => x.status === 'rejected')[0].reason.status,409);
     const visitorId = '12345678-1234-4123-8123-123456789abc';
-    const ctx = { db, table:await db.collection('restaurant_tables').findOne({ _id:id }) };
+    const ctx = { db, config:{restaurant_guest_auto_approval:true}, table:await db.collection('restaurant_tables').findOne({ _id:id }) };
     const visit=await joinVisit(ctx,{visitorId,code:ctx.table.service.visitCode});
     const payload = { requestId:'same-request', visitorId, visitToken:visit.token, items:[{ id:productId,quantity:1 }] };
     const [first,second] = await Promise.all([addGuestOrder(ctx,payload,catalog),addGuestOrder(ctx,payload,catalog)]);
@@ -64,7 +64,7 @@ test('operaciones HTTP: configuración por dominio, cuenta privada y pedido ante
   const mongo = await MongoMemoryServer.create(), client = await MongoClient.connect(mongo.getUri());
   const db = client.db('restaurant_ops_http'), id = new ObjectId(), productId = new ObjectId().toString();
   const token = 'a'.repeat(32), visitorId = '12345678-1234-4123-8123-123456789abc';
-  await db.collection('tenant_config').insertMany([{ _id:'RES', restaurant_enabled:true },{ _id:'OTRO', restaurant_enabled:true }]);
+  await db.collection('tenant_config').insertMany([{ _id:'RES', restaurant_enabled:true, restaurant_guest_auto_approval:true },{ _id:'OTRO', restaurant_enabled:true }]);
   await db.collection('restaurant_tables').insertOne({ _id:id, tenantId:'RES', active:true, label:'1', token });
   const legacy = await db.collection('restaurant_events').insertOne({ tenantId:'RES', tableId:id, type:'order', status:'pending', visitorId, items:[{ productId, nombre:'Pasta', quantity:2, unitPrice:100 }], total:200 });
   const app = express();
@@ -86,7 +86,7 @@ test('operaciones HTTP: configuración por dominio, cuenta privada y pedido ante
     assert.equal(table.totalCents,20000, 'importa al precio anterior');
     assert.equal((await request(`/api/resto/operations/${id}`,{ action:'payment', revision:1, amount:200,method:'cash' })).status,403);
     assert.equal((await request(`/api/resto/operations/${id}`,{ action:'importLegacy', revision:1, eventId:String(legacy.insertedId) })).status,409);
-    const visit=await joinVisit({db,table:await db.collection('restaurant_tables').findOne({_id:id})},{visitorId,code:table.service.visitCode});
+    const visit=await joinVisit({db,config:{restaurant_guest_auto_approval:true},table:await db.collection('restaurant_tables').findOne({_id:id})},{visitorId,code:table.service.visitCode});
     const account = await fetch(`${base}/api/public/resto/RES/${token}/account?visitorId=${visitorId}`,{headers:{'x-restaurant-visit':visit.token}}).then(r=>r.json());
     assert.equal(account.orders.length,1); assert.equal(account.balanceCents,20000);
     const other = await fetch(`${base}/api/public/resto/RES/${token}/account?visitorId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`).then(r=>r.json());

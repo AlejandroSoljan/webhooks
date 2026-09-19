@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.168 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.170 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -69,4 +69,13 @@ test('diseño conserva orden numérico, iconos, cancelados accesibles y estado d
  assert.deepEqual([...d.querySelectorAll('#opsBoard [data-select-table]')].map(el=>el.dataset.selectTable),['1','2','10']);assert.equal(d.querySelectorAll('#opsMetrics svg').length,3);
  d.querySelector('#opsBoard [data-select-table]').click();assert.match(d.getElementById('opsActiveOrders').textContent,/Pasta actual/);assert.doesNotMatch(d.getElementById('opsActiveOrders').textContent,/Cancelado antiguo/);assert.equal(d.getElementById('opsCancelledOrders').open,false);assert.match(d.getElementById('opsCancelledOrders').textContent,/Cancelado antiguo/);
  d.getElementById('opsNewOrder').click();assert.equal(d.getElementById('opsOrderEditor').open,true);poll();await new Promise(r=>setTimeout(r,0));assert.equal(d.getElementById('opsOrderEditor').open,true);d.getElementById('opsHideDetail').click();assert.equal(d.getElementById('opsDetail').hasAttribute('data-table-id'),false);
+});
+
+test('mesa libre muestra celulares escaneados y permite abrirla habilitando uno',async t=>{
+ const w=new JSDOM('<select id="domain"><option>RES</option></select><div class="metrics"></div>',{runScripts:'outside-only',url:'https://example.test'}).window;t.after(()=>w.close());
+ w.setInterval=()=>{};const sent=[];
+ w.fetch=async(url,options)=>{if(options?.body){sent.push(JSON.parse(options.body));return{ok:true,json:async()=>({ok:true})};}return{ok:true,json:async()=>({features:{},history:[],catalog:[],tables:[{id:'t',label:'9',revision:0,service:null,totalCents:0,paidCents:0,balanceCents:0,pending:[],legacyOrders:[],devices:[{id:'device',name:'Ana',status:'pending',online:true}]}]})};};
+ w.eval(fs.readFileSync(path.join(__dirname,'../static/restaurant_operations.js'),'utf8'));await new Promise(r=>setTimeout(r,0));w.document.querySelector('[data-select-table]').click();
+ assert.match(w.document.querySelector('#opsDetail').textContent,/Ana/);assert.doesNotMatch(w.document.querySelector('#opsDetail').textContent,/Código de visita/);
+ const button=w.document.querySelector('[data-approve-device]');assert.match(button.textContent,/Abrir mesa y habilitar/);button.click();await new Promise(r=>setTimeout(r,0));assert.deepEqual(sent[0],{action:'approveDevice',revision:0,deviceId:'device'});
 });

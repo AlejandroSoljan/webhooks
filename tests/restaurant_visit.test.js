@@ -1,21 +1,21 @@
-// Asisto | Version: 5.00.169 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.170 | Fecha: 2026-09-19
 const test=require('node:test'),assert=require('node:assert/strict');
 const {MongoMemoryServer}=require('mongodb-memory-server');
 const {MongoClient,ObjectId}=require('mongodb');
 const {mutateTable,addGuestOrder}=require('../restaurant_operations');
 const {joinVisit,validateVisit}=require('../restaurant_visit');
 const {validateRestaurantConfig}=require('../restaurant_config');
-test('QR: código, credencial, vencimiento, cierre/reapertura y concurrencia no reabren visitas',async t=>{
+test('QR: credencial, vencimiento, cierre/reapertura y concurrencia no reabren visitas',async t=>{
  const mongo=await MongoMemoryServer.create(),client=await MongoClient.connect(mongo.getUri()),db=client.db('visit_security');
  t.after(async()=>{await client.close();await mongo.stop();});
  const id=new ObjectId(),visitorId='12345678-1234-4123-8123-123456789abc',actor={name:'test',origin:'operator'},catalog=[{id:new ObjectId().toString(),nombre:'Agua',precio:100,disponible:true}];
  await db.collection('restaurant_tables').insertOne({_id:id,tenantId:'RES',active:true,label:'1'});
- const ctx=async()=>({db,config:{},table:await db.collection('restaurant_tables').findOne({_id:id})});
+ const ctx=async()=>({db,config:{restaurant_guest_auto_approval:true},table:await db.collection('restaurant_tables').findOne({_id:id})});
  const act=(a,p={})=>mutateTable(db,'RES',String(id),a,p,catalog,actor);
  const body={visitorId,requestId:'one',items:[{id:catalog[0].id,quantity:1}]};
  await assert.rejects(addGuestOrder(await ctx(),body,catalog),e=>e.status===403);
  const opened=await act('open');
- await assert.rejects(joinVisit(await ctx(),{visitorId,code:'wrong'}),/código/);
+ await assert.rejects(joinVisit({...await ctx(),config:{}},{visitorId}),/personal/);
  const visit=await joinVisit(await ctx(),{visitorId,code:opened.service.visitCode});
  body.visitToken=visit.token;
  await assert.rejects(addGuestOrder(await ctx(),{...body,visitorId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'},catalog),e=>e.status===403);
@@ -40,13 +40,45 @@ test('QR: código, credencial, vencimiento, cierre/reapertura y concurrencia no 
  const stale=await ctx();await act('close');
  await assert.rejects(addGuestOrder(stale,{...body,visitToken:fresh.token,requestId:'stale-read'},catalog),e=>e.status===403);
  assert.equal((await ctx()).table.service.status,'closed');
- await act('open');const noCode=await ctx();noCode.config={restaurant_visit_code_required:false,restaurant_order_confirmation_required:false};
+ await act('open');const noCode=await ctx();noCode.config={restaurant_guest_auto_approval:true,restaurant_visit_code_required:false,restaurant_order_confirmation_required:false};
  const unrestricted=await joinVisit(noCode,{visitorId});
  await addGuestOrder(noCode,{...body,visitToken:unrestricted.token,requestId:'no-confirm'},catalog);
  assert.equal((await ctx()).table.service.orders[0].status,'received');
 });
 test('configuración de visita rechaza duración inválida y banderas no booleanas',()=>{
  for(const hours of [0,25,1.5,'4',null])assert.throws(()=>validateRestaurantConfig({restaurant_visit_hours:hours}),/entero/);
- for(const name of ['restaurant_visit_code_required','restaurant_order_confirmation_required'])assert.throws(()=>validateRestaurantConfig({[name]:'false'}),/true o false/);
- validateRestaurantConfig({restaurant_visit_hours:4,restaurant_visit_code_required:true,restaurant_order_confirmation_required:false});
+ for(const name of ['restaurant_guest_auto_approval','restaurant_order_confirmation_required'])assert.throws(()=>validateRestaurantConfig({[name]:'false'}),/true o false/);
+ validateRestaurantConfig({restaurant_visit_hours:4,restaurant_guest_auto_approval:false,restaurant_order_confirmation_required:false});
+});
+
+test('escaneo visible en mesa libre, aprobación individual, bloqueo y cierre sin reactivación',async t=>{
+ const {scanVisit}=require('../restaurant_visit');
+ const mongo=await MongoMemoryServer.create(),client=await MongoClient.connect(mongo.getUri()),db=client.db('scan_approval');
+ t.after(async()=>{await client.close();await mongo.stop();});
+ const id=new ObjectId(),visitorId='12345678-1234-4123-8123-123456789abc',deviceToken='a'.repeat(64),actor={origin:'operator',name:'Ana',config:{}},body={visitorId,deviceToken};
+ await db.collection('restaurant_tables').insertOne({_id:id,tenantId:'RES',active:true,label:'1'});
+ let config={};const ctx=async()=>({db,config,table:await db.collection('restaurant_tables').findOne({_id:id})});
+ const act=(action,payload={})=>mutateTable(db,'RES',String(id),action,payload,[],{...actor,config});
+ const scanned=await scanVisit(await ctx(),body);assert.equal(scanned.status,'pending');
+ assert.equal((await ctx()).table.service,undefined,'el escaneo no abre una mesa');
+ await assert.rejects(joinVisit(await ctx(),{visitorId}),/personal/);
+ const opened=await act('approveDevice',{deviceId:scanned.id});assert.equal(opened.service.status,'occupied');
+ assert.equal((await scanVisit(await ctx(),body)).status,'approved');
+ assert.ok(validateVisit((await ctx()).table,visitorId,deviceToken,{}));
+ assert.throws(()=>validateVisit({service:opened.service},visitorId,'b'.repeat(64),{}));
+ await act('blockDevice',{deviceId:scanned.id});assert.equal((await scanVisit(await ctx(),body)).status,'blocked');
+ const blocked=(await ctx()).table;assert.throws(()=>validateVisit(blocked,visitorId,deviceToken,{}));
+ await act('approveDevice',{deviceId:scanned.id});await act('close');
+ assert.equal((await scanVisit(await ctx(),body)).status,'ended');
+ await act('open');assert.equal((await scanVisit(await ctx(),body)).status,'ended');
+ await assert.rejects(act('approveDevice',{deviceId:scanned.id}),/cerrada/);
+ assert.equal((await scanVisit(await ctx(),{...body,request:true,name:'Cliente Ana'})).status,'pending');
+ await act('approveDevice',{deviceId:scanned.id});assert.equal((await scanVisit(await ctx(),body)).status,'approved');
+ await act('close');config={restaurant_guest_auto_approval:true};
+ assert.equal((await scanVisit(await ctx(),body)).status,'ended');
+ const other={visitorId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',deviceToken:'b'.repeat(64)};
+ const pending=await scanVisit(await ctx(),other);assert.equal(pending.status,'pending');
+ await act('open');assert.equal((await scanVisit(await ctx(),other)).status,'approved','automático solo con mesa abierta');
+ assert.equal((await scanVisit(await ctx(),body)).status,'ended','el viejo celular no se rehabilita solo');
+ await act('blockDevice',{deviceId:pending.id});assert.equal((await scanVisit(await ctx(),other)).status,'blocked','automático respeta bloqueo');
 });

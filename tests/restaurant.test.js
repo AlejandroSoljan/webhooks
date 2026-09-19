@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.169 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.170 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -11,7 +11,7 @@ test('mesa QR carga la carta y registra un pedido con precio del servidor', asyn
   const { mountRestaurant } = require('../restaurant');
   const db = await getDb();
   const token = 'a'.repeat(32);
-  await db.collection('tenant_config').insertOne({ _id: 'RES', restaurant_enabled: true, nom_emp: 'Prueba' });
+  await db.collection('tenant_config').insertOne({ _id: 'RES', restaurant_enabled: true, restaurant_guest_auto_approval:true, nom_emp: 'Prueba' });
   await db.collection('tenant_config').insertOne({ _id: 'OTRO', restaurant_enabled: false, nom_emp: 'Otro' });
   await db.collection('restaurant_tables').insertOne({ tenantId: 'RES', label: '1', token, active: true });
   const inserted = await db.collection('products').insertOne({ tenantId: 'RES', descripcion: 'Pasta', tag: 'Principal', importe: 1200, observacion: 'Trigo y tomate', imagen: '/static/restaurant_demo/pasta.webp', active: true });
@@ -47,7 +47,7 @@ test('mesa QR carga la carta y registra un pedido con precio del servidor', asyn
     const row=await db.collection('restaurant_tables').findOne({token});
     const opened=await mutateTable(db,'RES',String(row._id),'open',{},[],{name:'test',origin:'operator'});
     for(const type of ['call','bill','order'])assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/events`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type,visitorId,items:[{id:String(inserted.insertedId),quantity:1}]})})).status,403);
-    const visit=await joinVisit({db,table:await db.collection('restaurant_tables').findOne({_id:row._id}),config:{}},{visitorId,code:opened.service.visitCode});
+    const visit=await joinVisit({db,table:await db.collection('restaurant_tables').findOne({_id:row._id}),config:{restaurant_guest_auto_approval:true}},{visitorId,code:opened.service.visitCode});
     const response = await fetch(`${base}/api/public/resto/RES/${token}/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'order', visitorId, visitToken:visit.token, items: [{ id: String(inserted.insertedId), quantity: 2, unitPrice: 1 }] }) });
     assert.equal(response.status, 201);
     assert.equal((await response.json()).total, 2400);

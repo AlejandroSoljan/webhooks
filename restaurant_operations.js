@@ -1,14 +1,13 @@
-// Asisto | Version: 5.00.169 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.170 | Fecha: 2026-09-19
 const crypto = require('crypto');
 const { ObjectId } = require('mongodb');
 const express = require('express');
 const OpenAI = require('openai');
 const { resolveOpenAiApiKey } = require('./ai_key_router');
-const { validateVisit, policy, joinVisit } = require('./restaurant_visit');
+const { validateVisit, policy, joinVisit, scanVisit } = require('./restaurant_visit');
 const { settings } = require('./restaurant_config');
 const clean = (v, n = 500) => String(v ?? '').trim().slice(0, n);
 const fail = (message, status = 400) => { const error = new Error(message); error.status = status; throw error; };
-function nextVisitCode(previous){let code;do{code=String(crypto.randomInt(100000,1000000));}while(code===previous);return code;}
 function totals(service) {
   const total = (service?.orders || []).filter(x => x.status !== 'cancelled').reduce((n, x) => n + x.totalCents, 0);
   const paid = (service?.payments || []).filter(x => !x.voidedAt).reduce((n, x) => n + x.amountCents, 0);
@@ -39,15 +38,21 @@ async function mutateTable(db, tenant, tableId, action, payload, catalog, actor,
     if (!table) fail('Mesa no disponible.', 404);
     const revision = table.opsRevision || 0;
     if (expectedRevision !== undefined && expectedRevision !== revision) fail('La mesa cambió. Actualizá antes de guardar.', 409);
+    if(action==='blockDevice' && (!table.service || table.service.status==='closed')){
+      const claimed=await db.collection('restaurant_tables').updateOne({_id:table._id,tenantId:tenant,...(table.opsRevision===undefined?{opsRevision:{$exists:false}}:{opsRevision:revision})},{$inc:{opsRevision:1}});
+      if(!claimed.modifiedCount)continue;
+      const result=await db.collection('restaurant_access_requests').updateOne({_id:clean(payload.deviceId,64),tenantId:tenant,tableId:table._id},{$set:{status:'blocked',updatedAt:new Date()}});
+      if(!result.matchedCount) fail('Celular no encontrado.',404);return view({...table,opsRevision:revision+1});
+    }
     let service = table.service ? structuredClone(table.service) : null;
     const now = new Date();
     const grant=actor.origin==='guest' ? validateVisit(table,actor.visitorId,actor.visitToken,actor.config) : null;
     if (action === 'addOrder' && service?.orders?.some(x => x.requestId === payload.requestId && x.origin === actor.origin && x.visitorId === (actor.visitorId || ''))) return view(table);
     if(grant && grant.lastActionAt && Date.now()-new Date(grant.lastActionAt).getTime()<3000) fail('Esperá unos segundos antes de enviar otra solicitud.',429);
     if (!service || service.status === 'closed') {
-      if (!['open', 'addOrder'].includes(action)) fail('Abrí la mesa para realizar esta acción.', 409);
+      if (!['open', 'addOrder', 'approveDevice'].includes(action)) fail('Abrí la mesa para realizar esta acción.', 409);
       if (service) await db.collection('restaurant_service_history').updateOne({ _id:service.id, tenantId:tenant }, { $setOnInsert:{ tableId:table._id, tableLabel:table.label, service, ...totals(service) } }, { upsert:true });
-      service = { id:crypto.randomUUID(), status:'occupied', guests:1, waiter:'', note:'', openedAt:now, visitCode:nextVisitCode(service?.visitCode), guestGrants:[], orders:[], payments:[], audit:[] };
+      service = { id:crypto.randomUUID(), status:'occupied', guests:1, waiter:'', note:'', openedAt:now, guestGrants:[], orders:[], payments:[], audit:[] };
     }
     if(grant) service.guestGrants.find(g=>g.hash===grant.hash).lastActionAt=now;
     const money = totals(service);
@@ -56,8 +61,20 @@ async function mutateTable(db, tenant, tableId, action, payload, catalog, actor,
       if (payload.waiter !== undefined) service.waiter = clean(payload.waiter, 80);
       if (payload.note !== undefined) service.note = clean(payload.note);
       if (payload.status !== undefined) { if (!['occupied', 'reserved', 'bill_requested'].includes(payload.status)) fail('Estado inválido.'); service.status = payload.status; }
+    } else if (['approveDevice','blockDevice'].includes(action)) {
+      const device=await db.collection('restaurant_access_requests').findOne({_id:clean(payload.deviceId,64),tenantId:tenant,tableId:table._id});
+      if(!device) fail('Celular no encontrado.',404);
+      if(action==='approveDevice'){
+        if(Date.now()-new Date(device.lastSeenAt).getTime()>90000) fail('Ese celular no está conectado. Pedile que vuelva a abrir la carta.',409);
+        if((device.visitId && !device.waitingForOpen && device.visitId!==table.service?.id) || (table.service?.closedAt && new Date(device.requestedAt)<=new Date(table.service.closedAt))) fail('Esa solicitud pertenece a una visita cerrada. El cliente debe solicitar habilitación nuevamente.',409);
+        const expiresAt=new Date(new Date(service.visitStartedAt || service.openedAt).getTime()+policy(actor.config).hours*3600000);
+        if(expiresAt<=now) fail('La visita venció. Renovala antes de habilitar celulares.',409);
+        service.guestGrants=(service.guestGrants || []).filter(g=>g.visitorId!==device.visitorId && new Date(g.expiresAt)>now);
+        if(service.guestGrants.length>=100) fail('Máximo de celulares alcanzado.');
+        service.guestGrants.push({visitorId:device.visitorId,hash:device.hash,expiresAt,approvedBy:actor.name,deviceId:device._id});
+      }else service.guestGrants=(service.guestGrants || []).filter(g=>g.deviceId!==device._id);
     } else if (action === 'rotateVisit') {
-      service.visitCode=nextVisitCode(service.visitCode); service.guestGrants=[]; service.visitStartedAt=now;
+      service.guestGrants=[]; service.visitStartedAt=now;
     } else if (action === 'guestSignal') {
       if(payload.type==='bill') service.status='bill_requested';
     } else if (action === 'addOrder') {
@@ -106,7 +123,10 @@ async function mutateTable(db, tenant, tableId, action, payload, catalog, actor,
     service.audit = service.audit.slice(-200);
     const filter = { _id:table._id, tenantId:tenant, ...(table.opsRevision === undefined ? { opsRevision:{ $exists:false } } : { opsRevision:revision }) };
     const result = await db.collection('restaurant_tables').updateOne(filter, { $set:{ service, updatedAt:now }, $inc:{ opsRevision:1 } });
-    if (result.modifiedCount) return view({ ...table, service, opsRevision:revision + 1 });
+    if(result.modifiedCount){
+      if(['approveDevice','blockDevice'].includes(action)) await db.collection('restaurant_access_requests').updateOne({_id:payload.deviceId,tenantId:tenant,tableId:table._id},{$set:{status:action==='approveDevice'?'approved':'blocked',serviceId:service.id,visitId:service.id,waitingForOpen:false,updatedAt:now}});
+      return view({ ...table, service, opsRevision:revision + 1 });
+    }
   }
   fail('La mesa cambió mientras guardabas. Actualizá e intentá nuevamente.', 409);
 }
@@ -134,19 +154,20 @@ function mountOperations(app, { getDb, auth, menu, tableContext, allowRequest })
   app.put('/api/resto/settings', (_req,res)=>res.status(410).json({ error:'Configurá estas variables en Configuración de dominio.' }));
   app.get('/api/resto/operations', route(async (req, res) => {
     const { db, tenant, config } = await context(req);
-    const [tables, events, catalog, history] = await Promise.all([
+    const [tables, events, catalog, history, devices] = await Promise.all([
       db.collection('restaurant_tables').find({ tenantId:tenant, active:true }).sort({ label:1 }).limit(100).toArray(),
       db.collection('restaurant_events').find({ tenantId:tenant, status:'pending' }).sort({ createdAt:1 }).limit(300).toArray(),
       menu(db, tenant), db.collection('restaurant_service_history').find({ tenantId:tenant }).sort({ 'service.closedAt':-1 }).limit(20).toArray(),
+      db.collection('restaurant_access_requests').find({tenantId:tenant,lastSeenAt:{$gte:new Date(Date.now()-600000)}}).limit(500).toArray(),
     ]);
-    res.set('Cache-Control', 'no-store').json({ features:settings(config), catalog, tables:tables.map(table => ({ ...view(table), pending:events.filter(x => String(x.tableId) === String(table._id) && x.type !== 'order' && (!x.serviceId || x.serviceId===table.service?.id && table.service.status!=='closed')).map(x => ({ id:String(x._id), type:x.type, createdAt:x.createdAt })), legacyOrders:events.filter(x => String(x.tableId) === String(table._id) && x.type === 'order' && !x.serviceId).map(x => ({ id:String(x._id), total:x.total, items:x.items, note:x.note })) })), history:history.map(x => ({ id:x._id, tableLabel:x.tableLabel, closedAt:x.service.closedAt, totalCents:x.totalCents, paidCents:x.paidCents })) });
+    res.set('Cache-Control', 'no-store').json({ features:settings(config), catalog, tables:tables.map(table => ({ ...view(table), devices:devices.filter(d=>String(d.tableId)===String(table._id)).map(d=>({id:d._id,name:d.name || 'Celular '+d._id.slice(-4).toUpperCase(),online:Date.now()-new Date(d.lastSeenAt).getTime()<90000,status:d.status==='blocked'?'blocked':table.service?.status!=='closed' && (table.service?.guestGrants || []).some(g=>g.deviceId===d._id && new Date(g.expiresAt)>new Date())?'approved':d.status==='approved' || d.visitId && !d.waitingForOpen && d.visitId!==table.service?.id || table.service?.closedAt && new Date(d.requestedAt)<=new Date(table.service.closedAt)?'ended':'pending'})), pending:events.filter(x => String(x.tableId) === String(table._id) && x.type !== 'order' && (!x.serviceId || x.serviceId===table.service?.id && table.service.status!=='closed')).map(x => ({ id:String(x._id), type:x.type, createdAt:x.createdAt })), legacyOrders:events.filter(x => String(x.tableId) === String(table._id) && x.type === 'order' && !x.serviceId).map(x => ({ id:String(x._id), total:x.total, items:x.items, note:x.note })) })), history:history.map(x => ({ id:x._id, tableLabel:x.tableLabel, closedAt:x.service.closedAt, totalCents:x.totalCents, paidCents:x.paidCents })) });
   }));
   app.post('/api/resto/operations/:id', json, route(async (req, res) => {
     const { db, tenant, config } = await context(req), { action, revision, ...payload } = req.body || {};
     if (!Number.isInteger(revision) || revision < 0) fail('Actualizá la mesa antes de modificarla.');
     if (['payment','voidPayment'].includes(action) && !settings(config).manualPayments) fail('El registro de pagos está deshabilitado.', 403);
     let catalog = await menu(db, tenant), resolvedAction = action;
-    const actor = { name:clean(req.user?.username || req.user?.uid || 'Operador', 100), origin:'operator' };
+    const actor = { name:clean(req.user?.username || req.user?.uid || 'Operador', 100), origin:'operator',config };
     if (action === 'importLegacy') {
       if (!ObjectId.isValid(payload.eventId) || !ObjectId.isValid(req.params.id)) fail('Pedido inválido.');
       const legacy = await db.collection('restaurant_events').findOne({ _id:new ObjectId(payload.eventId), tenantId:tenant, tableId:new ObjectId(req.params.id), type:'order', status:'pending', serviceId:{ $exists:false } });
@@ -168,6 +189,12 @@ function mountOperations(app, { getDb, auth, menu, tableContext, allowRequest })
       if (order.visitorId && settings(config).guestNotifications) await db.collection('restaurant_guest_notifications').insertOne({ tenantId:tenant, tableId:new ObjectId(req.params.id), visitorId:order.visitorId, title:'Estado de tu pedido', body:({ received:'Pedido recibido.', preparing:'Tu pedido está en preparación.', ready:'Tu pedido está listo.', served:'Tu pedido fue entregado.', cancelled:'Tu pedido fue cancelado. Consultá al mozo.' })[order.status], createdAt:new Date() });
     }
     res.json({ ok:true, table:result });
+  }));
+  app.post('/api/public/resto/:tenant/:token/scan',json,route(async(req,res)=>{
+    const ctx=await tableContext(clean(req.params.tenant,40).toUpperCase(),clean(req.params.token,32));
+    if(!ctx) fail('Mesa no disponible.',404);
+    if(!allowRequest('scan:'+ctx.table.token,300)) fail('Esperá un momento.',429);
+    res.set('Cache-Control','no-store').json(await scanVisit(ctx,req.body || {}));
   }));
   app.post('/api/public/resto/:tenant/:token/visit', json, route(async(req,res)=>{
     const ctx=await tableContext(clean(req.params.tenant,40).toUpperCase(),clean(req.params.token,32));

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.169 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.170 | Fecha: 2026-09-19
 (() => {
   const base = document.body.dataset.base;
   const $ = id => document.getElementById(id);
@@ -51,24 +51,35 @@
   let notificationCursor = readStorage('localStorage', cursorKey) || '';
   const price = value => '$ ' + Number(value || 0).toLocaleString('es-AR');
   const visitKey='asistoRestoVisit:'+base;
-  let visitToken=readStorage('sessionStorage',visitKey) || '',visitPolicy=null;
-  function expireVisit(){visitToken='';writeStorage('sessionStorage',visitKey,'');$('syncStatus').textContent='Esta visita terminó o venció. Podés seguir viendo la carta; para pedir necesitás el código actual.';$('tableAccount').hidden=true;$('splitBill').hidden=true;}
+  const deviceKey='asistoRestoDevice:'+base;
+  let deviceToken=readStorage('localStorage',deviceKey) || readStorage('sessionStorage',deviceKey);
+  if(!/^[a-f0-9]{64}$/.test(deviceToken || '')){deviceToken=[...crypto.getRandomValues(new Uint8Array(32))].map(n=>n.toString(16).padStart(2,'0')).join('');writeStorage('localStorage',deviceKey,deviceToken);writeStorage('sessionStorage',deviceKey,deviceToken);}
+  let visitToken=readStorage('sessionStorage',visitKey) || '',visitPolicy=null,deviceStatus='',scanning=false;
+  function expireVisit(){visitToken='';writeStorage('sessionStorage',visitKey,'');$('syncStatus').textContent='Esta visita terminó o venció. Podés seguir viendo la carta; el personal debe habilitarte nuevamente.';$('tableAccount').hidden=true;$('splitBill').hidden=true;}
+  async function scanDevice(request=false){
+    if(!visitPolicy || scanning)return;
+    scanning=true;
+    try{
+      const result=await post('/scan',{visitorId,deviceToken,...(request?{request:true,name:$('deviceName').value}:{})});
+      deviceStatus=result.status;
+      if(result.status==='approved'){visitToken=deviceToken;writeStorage('sessionStorage',visitKey,visitToken);}else{visitToken='';writeStorage('sessionStorage',visitKey,'');}
+      $('deviceState').textContent=result.label+' · '+({pending:'Esperando habilitación',approved:'Celular habilitado',blocked:'Acceso bloqueado',ended:'Visita finalizada'})[result.status];
+      $('deviceHint').textContent=result.status==='approved'?'Ya podés usar las funciones disponibles de tu mesa.':result.status==='pending'?(visitPolicy.operatorApproval?'El personal ya ve tu celular. Avisale para que te habilite.':'Tu celular se habilitará cuando el personal abra la mesa.'):'Podés seguir viendo la carta. Consultá al personal para volver a habilitarte.';
+      $('deviceName').hidden=result.status==='approved';$('deviceAccess').querySelector('label').hidden=result.status==='approved';
+      $('deviceRequest').hidden=result.status==='approved';
+      $('deviceRequest').textContent=result.status==='pending'?'Actualizar mi nombre':'Solicitar habilitación';
+    }catch(error){$('deviceState').textContent=error.message;}finally{scanning=false;}
+  }
+  $('deviceRequest').onclick=()=>scanDevice(true);
   async function ensureVisit(){
-    if(visitToken || !visitPolicy) return;
-    if(!visitPolicy.requireCode){const v=await post('/visit',{visitorId});visitToken=v.token;writeStorage('sessionStorage',visitKey,visitToken);return;}
-    await new Promise((resolve,reject)=>{
-      const dialog=$('visitDialog');$('visitError').textContent='';$('visitCode').value='';
-      const cancel=()=>{dialog.close();reject(Error('No se envió la solicitud. Ingresá el código de la mesa para continuar.'));};
-      $('visitCancel').onclick=cancel;dialog.oncancel=e=>{e.preventDefault();cancel();};
-      $('visitForm').onsubmit=async e=>{e.preventDefault();const button=e.submitter;button.disabled=true;try{const v=await post('/visit',{visitorId,code:$('visitCode').value});visitToken=v.token;writeStorage('sessionStorage',visitKey,visitToken);sentOrders=[];saveReceipts();renderSent();dialog.close();resolve();}catch(error){$('visitError').textContent=error.message;}finally{button.disabled=false;}};
-      dialog.showModal();$('visitCode').focus();
-    });
+    if(!visitPolicy)return;
+    await scanDevice();if(deviceStatus!=='approved' || !visitToken)throw Error(visitPolicy.operatorApproval?'El personal debe habilitar tu celular desde el panel. Tu pedido todavía no se envió.':'La mesa debe estar abierta y tu visita vigente. Consultá al personal.');
   }
   async function post(path, data) {
     if(path==='/events'){await ensureVisit();data={...data,visitToken};}
     const response = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-restaurant-visit':visitToken }, body: JSON.stringify(data) });
     const result = await response.json();
-    if (!response.ok) {if(response.status===403 && path!=='/visit' && /visita|código/.test(result.error || '')) expireVisit();throw Error(result.error || 'No se pudo completar la solicitud');}
+    if (!response.ok) {if(response.status===403 && path!=='/visit' && /visita|habilit/.test(result.error || '')) expireVisit();throw Error(result.error || 'No se pudo completar la solicitud');}
     return result;
   }
   function notify(message) {
@@ -282,6 +293,7 @@
   function refreshGuest() {
     if (!configLoaded || document.hidden) return;
     if (features.guestNotifications !== false && (!visitPolicy || visitToken)) registerVisitor().then(pollNotifications).catch(() => {});
+    scanDevice();
     pollAccount();
   }
   setInterval(refreshGuest, 10000);
@@ -289,7 +301,7 @@
     if (!response.ok) throw Error('No se pudo cargar la carta.');
     return response.json();
   }).then(result => {
-    features = result.features || {}; visitPolicy=result.visitPolicy || null; configLoaded = true;
+    features = result.features || {}; visitPolicy=result.visitPolicy || null; configLoaded = true; $('deviceAccess').hidden=!visitPolicy;
     items = (result.items || []).map(item => features.showImages === false ? { ...item, imagen:'' } : item);
     ordersEnabled = result.ordersEnabled !== false && features.guestOrders !== false;
     $('pedido').hidden = !ordersEnabled;
