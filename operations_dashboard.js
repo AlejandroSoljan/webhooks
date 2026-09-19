@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.171 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.172 | Fecha: 2026-09-19
 // Read-only operational overview. No configuration writes or message sends.
 const { effectiveSessionState } = require('./wweb_phone_access');
 
@@ -48,7 +48,7 @@ async function loadDashboard(db, { user, tenant, access, messagePipeline, now = 
   let sessionsTruncated = false;
   const opts = { maxTimeMS: 1800 };
   const count = (collection, query) => db.collection(collection).countDocuments(query, opts);
-  const aggregate = (collection, pipeline) => db.collection(collection).aggregate(pipeline, opts).toArray();
+  const aggregate = (collection, pipeline, maxTimeMS = opts.maxTimeMS) => db.collection(collection).aggregate(pipeline, { maxTimeMS }).toArray();
   const run = (key, fn) => jobs.push(async () => {
     try { await fn(); } catch { unavailable.push(key); }
   });
@@ -72,7 +72,7 @@ async function loadDashboard(db, { user, tenant, access, messagePipeline, now = 
       const rows = await aggregate('wa_wweb_message_log', [
         ...messagePipeline({ ...filter, direction: { $in: ['out', 'in'] }, at: today }),
         { $group: { _id: { bucket: { $dateToString: { date: '$at', timezone: 'America/Argentina/Buenos_Aires', format: period === '7d' ? '%Y-%m-%d' : '%H' } }, direction: '$direction' }, n: { $sum: 1 } } },
-      ]);
+      ], period === '7d' ? 5000 : opts.maxTimeMS);
       const totals = new Map(rows.map(r => [r._id.bucket + ':' + r._id.direction, r.n]));
       activity = Array.from({ length: period === '7d' ? 7 : 24 }, (_, i) => {
         const bucket = period === '7d' ? argentinaDay(new Date(+start + i * 86400000)).day : String(i).padStart(2, '0');
