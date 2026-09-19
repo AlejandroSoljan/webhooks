@@ -1,21 +1,39 @@
-// Asisto | Version: 5.00.161 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.162 | Fecha: 2026-09-19
 (() => {
   const base = document.body.dataset.base;
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   let items = [], cart = {}, toastTimer, ordersEnabled = true, features = {}, configLoaded = false, sending = false, requestFingerprint = '', orderRequestId = '', accountBalance = null;
+  const readStorage = (storage, key) => { try { return window[storage].getItem(key); } catch (_) { return null; } };
+  const writeStorage = (storage, key, value) => { try { window[storage].setItem(key, value); } catch (_) {} };
+  const draftKey = `asistoRestoDraft:${base}`;
+  let accountSequence = 0;
+  function saveDraft() {
+    writeStorage('sessionStorage', draftKey, JSON.stringify({ cart, note:$('note').value, requestFingerprint, orderRequestId, savedAt:Date.now() }));
+  }
+  function restoreDraft() {
+    try {
+      const draft = JSON.parse(readStorage('sessionStorage', draftKey) || 'null');
+      if (!draft || Date.now() - draft.savedAt > 2 * 60 * 60 * 1000 || !Number.isFinite(draft.savedAt)) return;
+      cart = Object.fromEntries(Object.entries(draft.cart || {}).filter(([id, quantity]) => Number.isInteger(quantity) && quantity > 0 && quantity <= 20 && items.some(item => item.id === id && item.disponible)).slice(0,30));
+      $('note').value = String(draft.note || '').slice(0,500);
+      requestFingerprint = typeof draft.requestFingerprint === 'string' ? draft.requestFingerprint : '';
+      orderRequestId = typeof draft.orderRequestId === 'string' ? draft.orderRequestId : '';
+    } catch (_) {}
+  }
   const visitorKey = `asistoRestoVisitor:${base}`;
-  let visitorId = localStorage.getItem(visitorKey);
+  let visitorId = readStorage('localStorage', visitorKey) || readStorage('sessionStorage', visitorKey);
   if (!/^[a-f0-9-]{36}$/.test(visitorId || '')) {
     const bytes = new Uint8Array(16);
     crypto.getRandomValues(bytes);
     bytes[6] = (bytes[6] & 15) | 64;
     bytes[8] = (bytes[8] & 63) | 128;
     visitorId = [...bytes].map((byte, index) => (index === 4 || index === 6 || index === 8 || index === 10 ? '-' : '') + byte.toString(16).padStart(2, '0')).join('');
-    localStorage.setItem(visitorKey, visitorId);
+    writeStorage('localStorage', visitorKey, visitorId);
+    writeStorage('sessionStorage', visitorKey, visitorId);
   }
   const cursorKey = `asistoRestoCursor:${base}`;
-  let notificationCursor = localStorage.getItem(cursorKey) || '';
+  let notificationCursor = readStorage('localStorage', cursorKey) || '';
   const price = value => '$ ' + Number(value || 0).toLocaleString('es-AR');
   async function post(path, data) {
     const response = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
@@ -30,6 +48,8 @@
     toastTimer = setTimeout(() => $('toast').classList.remove('visible'), 3000);
   }
   function openPanel(id) {
+    if (id === 'cartDialog') renderCart();
+    if (id === 'accountDialog') pollAccount();
     document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
     $(id).showModal();
   }
@@ -53,10 +73,14 @@
     $('cartBar').hidden = !ordersEnabled || !count;
     $('cartExtras').hidden = !count;
     $('cartBarLabel').textContent = `Ver mi pedido (${count})`;
+    if (ordersEnabled) $('openAccount').textContent = count ? `Mi pedido (${count})` : 'Mi pedido';
+    $('pendingAccount').hidden = !ordersEnabled || !count;
+    $('pendingAccountText').textContent = `${count} artículo(s) sin enviar · ${price(total)}`;
     $('cartBarTotal').textContent = $('cartTotal').textContent = price(total);
+    document.querySelectorAll('[data-feedback]').forEach(element => { const quantity = cart[element.dataset.feedback] || 0; element.textContent = quantity ? `Agregado ✓ (${quantity})` : ''; });
     $('cart').innerHTML = Object.entries(cart).map(([id, quantity]) => {
       const item = items.find(product => product.id === id);
-      return item ? `<p><span>${esc(item.nombre)} × ${quantity} · ${price(item.precio * quantity)}</span><button data-remove="${esc(id)}" aria-label="Quitar uno de ${esc(item.nombre)}">−</button></p>` : '';
+      return item ? `<p><span>${esc(item.nombre)} × ${quantity} · ${price(item.precio * quantity)}</span><span class="quantity-controls"><button data-remove="${esc(id)}" aria-label="Quitar uno de ${esc(item.nombre)}">−</button><button data-increase="${esc(id)}" aria-label="Agregar uno de ${esc(item.nombre)}">+</button></span></p>` : '';
     }).join('') || '<p>Todavía no agregaste platos.</p>';
   }
   document.addEventListener('click', event => {
@@ -72,16 +96,18 @@
         openPanel('dishDialog');
       }
     }
-    const add = event.target.closest('[data-add]');
+    const add = event.target.closest('[data-add], [data-increase]');
     if (add && !add.disabled) {
       if (sending) return;
-      const id = add.dataset.add, item = items.find(product => product.id === id);
+      const id = add.dataset.add || add.dataset.increase, item = items.find(product => product.id === id);
       if (!item) return;
       if ((cart[id] || 0) >= 20) return notify('Máximo 20 unidades por artículo.');
       cart[id] = (cart[id] || 0) + 1;
+      $('msg').textContent = '';
       renderCart();
-      const feedback = add.parentElement.querySelector('[data-feedback]');
-      feedback.textContent = `Agregado ✓ (${cart[id]})`;
+      saveDraft();
+      const feedback = [...document.querySelectorAll('[data-feedback]')].find(element => element.dataset.feedback === id);
+      if (feedback) feedback.textContent = `Agregado ✓ (${cart[id]})`;
       notify(`${item.nombre} agregado al pedido`);
       return;
     }
@@ -89,9 +115,11 @@
     if (remove) {
       if (sending) return;
       const id = remove.dataset.remove;
+      if (!cart[id]) return;
       cart[id]--;
       if (!cart[id]) delete cart[id];
       renderCart();
+      saveDraft();
       const feedback = [...document.querySelectorAll('[data-feedback]')].find(element => element.dataset.feedback === id);
       if (feedback) feedback.textContent = cart[id] ? `Agregado ✓ (${cart[id]})` : '';
     }
@@ -113,16 +141,19 @@
       const payload = { type:'order', visitorId, items:Object.entries(cart).map(([id, quantity]) => ({ id, quantity })), note:$('note').value };
       const fingerprint = JSON.stringify(payload);
       if (fingerprint !== requestFingerprint) { requestFingerprint = fingerprint; orderRequestId = crypto.randomUUID(); }
+      saveDraft();
       sending = true; $('order').disabled = true; $('order').textContent = 'Enviando…';
       await post('/events', { ...payload, requestId:orderRequestId });
       requestFingerprint = ''; orderRequestId = '';
       cart = {};
       $('note').value = '';
       renderCart();
+      saveDraft();
       document.querySelectorAll('[data-feedback]').forEach(element => { element.textContent = ''; });
       $('msg').textContent = 'Pedido enviado al restaurante.';
       notify('Pedido enviado al restaurante');
-      pollAccount();
+      await pollAccount();
+      if (features.orderTracking !== false) openPanel('accountDialog');
     } catch (error) { $('msg').textContent = error.message; }
     finally { sending = false; $('order').disabled = false; $('order').textContent = 'Confirmar y enviar pedido'; }
   };
@@ -158,7 +189,7 @@
           try { new Notification(notification.title, { body: notification.body, tag: notification.id }); } catch (_) {}
         }
         notificationCursor = notification.id;
-        localStorage.setItem(cursorKey, notificationCursor);
+        writeStorage('localStorage', cursorKey, notificationCursor);
       }
     } catch (_) {}
   }
@@ -174,10 +205,12 @@
   }
   async function pollAccount() {
     if (!configLoaded || features.orderTracking === false) return;
+    const sequence = ++accountSequence;
     try {
       const response = await fetch(base + '/account?visitorId=' + encodeURIComponent(visitorId));
       if (!response.ok) return;
       const result = await response.json();
+      if (sequence !== accountSequence) return;
       $('trackOrder').hidden = !(result.orders || []).length || result.closed;
       const states = { received:'Recibido', preparing:'En preparación', ready:'Listo para entregar', served:'Entregado', cancelled:'Cancelado' };
       $('guestOrderStatus').innerHTML = (result.orders || []).map(order => `<article class="guest-message"><strong>${states[order.status] || 'Recibido'}</strong><p>${order.items.map(item => `${item.quantity} × ${esc(item.nombre)}`).join(' · ')}</p><p>${price(order.totalCents / 100)}</p></article>`).join('') || '<p>Cuando envíes tu pedido, podrás seguir su estado acá.</p>';
@@ -188,6 +221,7 @@
     } catch (_) {}
   }
   $('splitGuests').oninput = splitEstimate;
+  $('note').oninput = saveDraft;
   $('payMercadoPago').onclick = () => { $('paymentInfo').textContent = 'Mercado Pago estará disponible próximamente. No se realizó ningún cobro. Coordiná el pago con el personal.'; notify('Mercado Pago: próximamente'); };
   function refreshGuest() {
     if (!configLoaded || document.hidden) return;
@@ -206,7 +240,10 @@
     for (const [id, flag] of [['call','callWaiter'],['bill','requestBill'],['guestAiSection','guestAi'],['guestAccount','orderTracking'],['guestPayment','mercadoPago']]) $(id).hidden = features[flag] === false;
     document.querySelector('.guest-notifications').hidden = features.guestNotifications === false;
     $('openHelp').hidden = ['callWaiter','requestBill','guestAi','guestNotifications'].every(flag => features[flag] === false);
-    $('openAccount').hidden = features.orderTracking === false && features.mercadoPago === false;
-    renderMenu(); renderCart(); refreshGuest();
+    $('openAccount').hidden = !ordersEnabled && features.orderTracking === false && features.mercadoPago === false;
+    $('openAccount').dataset.open = ordersEnabled ? 'cartDialog' : 'accountDialog';
+    $('openAccount').textContent = ordersEnabled ? 'Mi pedido' : 'Mi cuenta';
+    $('viewSentOrders').hidden = features.orderTracking === false && features.mercadoPago === false;
+    restoreDraft(); renderMenu(); renderCart(); refreshGuest();
   }).catch(() => { $('menu').textContent = 'No se pudo cargar la carta. Recargá la página para reintentar.'; });
 })();

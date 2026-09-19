@@ -206,6 +206,17 @@ CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
   de lupa/carrito/categorías y revisión visual en navegador; release y
   /healthz verificados en AWS antes de dar por publicado.
 
+19/09/2026 - v5.00.162 (commit: publicación de esta entrada) - Corrige la
+  navegación entre carrito y cuenta de 5.00.161: Mi pedido abre los artículos
+  sin enviar; cuenta avisa si hay pendientes de confirmar. Cantidades +/−,
+  total actualizado, borrador por mesa en sessionStorage con vencimiento de
+  dos horas y clave de reintento conservada. Almacenamiento bloqueado no impide
+  usar la carta. Nueva paleta azul/blanco/celeste y Powered by Asisto con icono
+  y enlace en carta, paneles de cliente y operaciones. Sin migración de datos.
+  Pruebas: suma de varios artículos, recarga, almacenamiento bloqueado,
+  confirmación y cuenta; revisión móvil y suite completa antes de publicar.
+  Despliegue comprobado contra release activo y /healthz en AWS.
+
 REGLA PARA CAMBIOS FUTUROS
 
 Antes de publicar una próxima versión del backend, agregar una entrada con:

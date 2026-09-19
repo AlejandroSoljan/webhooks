@@ -1,5 +1,17 @@
-<!-- Asisto | Version: 5.00.161 | Fecha: 2026-09-19 -->
+<!-- Asisto | Version: 5.00.162 | Fecha: 2026-09-19 -->
 # Restaurante RES
+
+## Pedido y marca (5.00.162)
+
+El acceso superior **Mi pedido** abre los artículos agregados todavía sin enviar;
+permite sumar/quitar unidades y muestra su total. Desde allí se accede a pedidos
+enviados y cuenta, que también avisa si quedan artículos pendientes de confirmar.
+El borrador se conserva al recargar en la misma pestaña durante dos horas, separado
+por dominio y mesa. Si el navegador bloquea almacenamiento, se puede pedir igual,
+pero no se garantiza conservar el borrador al recargar. El envío exitoso limpia
+el borrador y muestra el seguimiento cuando está habilitado.
+La carta usa azul/blanco/celeste. Carta, paneles de cliente y operaciones incluyen
+el icono y enlace **Powered by Asisto · asistobot.com.ar**.
 
 ## Carta simplificada (5.00.161)
 

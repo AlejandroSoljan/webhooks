@@ -1,10 +1,40 @@
-// Asisto | Version: 5.00.161 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.162 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { JSDOM } = require('jsdom');
 const { renderRestaurantPage } = require('../restaurant_public_page');
+
+test('Mi pedido suma artículos, conserva el borrador al recargar y muestra pendientes en la cuenta', async t => {
+  const html = renderRestaurantPage({tenant:'RES',token:'draft',name:'Resto',table:'1'});
+  const script = fs.readFileSync(path.join(__dirname,'../static/restaurant_menu.js'),'utf8');
+  const key='asistoRestoDraft:/api/public/resto/RES/draft';
+  async function start(saved) {
+    const dom=new JSDOM(html,{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
+    t.after(()=>w.close());
+    w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
+    w.HTMLDialogElement.prototype.close=function(){this.open=false;};
+    // Algunos navegadores bloquean localStorage; la carta debe seguir funcionando.
+    Object.defineProperty(w,'localStorage',{get(){throw Error('Storage bloqueado');}});
+    if(saved)w.sessionStorage.setItem(key,saved);
+    w.fetch=async url=>({ok:true,json:async()=>url.endsWith('/menu')?{items:[{id:'a',nombre:'Agua',precio:100,disponible:true},{id:'b',nombre:'Pasta',precio:500,disponible:true}],features:{guestNotifications:false}}:{orders:[]}});
+    w.eval(script);await new Promise(resolve=>setTimeout(resolve,0));return w;
+  }
+  const w=await start(),$=s=>w.document.querySelector(s);
+  $('[data-add="a"]').click();$('[data-add="b"]').click();$('[data-add="a"]').click();
+  $('#openAccount').click();
+  assert.equal($('#cartDialog').open,true);
+  assert.match($('#cart').textContent,/Agua × 2/);assert.match($('#cart').textContent,/Pasta × 1/);
+  assert.match($('#cartTotal').textContent,/700/);
+  $('[data-increase="b"]').click();assert.match($('#cartTotal').textContent,/1.200/);
+  $('#viewSentOrders').click();assert.equal($('#pendingAccount').hidden,false);assert.match($('#pendingAccountText').textContent,/4 artículo/);
+  const w2=await start(w.sessionStorage.getItem(key)),d=w2.document;
+  d.querySelector('#openAccount').click();
+  assert.match(d.querySelector('#cart').textContent,/Agua × 2/);assert.match(d.querySelector('#cart').textContent,/Pasta × 2/);
+  assert.match(d.querySelector('#cartTotal').textContent,/1.200/);
+  assert.equal(d.querySelectorAll('.asisto-powered').length,5);
+});
 
 test('carta simple: lupa abre foto e ingredientes, carrito muestra total y conserva la categoría', async t => {
   const dom = new JSDOM(renderRestaurantPage({ tenant:'RES',token:'a'.repeat(32),name:'Resto',table:'1' }), {runScripts:'outside-only',url:'https://example.test'});
