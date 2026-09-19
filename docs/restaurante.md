@@ -1,5 +1,39 @@
-<!-- Asisto | Version: 5.00.162 | Fecha: 2026-09-19 -->
+<!-- Asisto | Version: 5.00.163 | Fecha: 2026-09-19 -->
 # Restaurante RES
+
+## Variables de dominio (5.00.163)
+
+La configuración se edita en **Dominio Config → Editar → Variables restaurante
+y logo**. El botón agrega las variables faltantes sin sobrescribir valores,
+respetando las funciones anteriores. Revisar y guardar el dominio. También están
+en las sugerencias de nombre de campo, con ayuda en el botón `?` de cada fila.
+Los formularios del panel de operaciones fueron retirados; las indicaciones de
+versiones anteriores que ubican allí la edición quedan reemplazadas.
+
+| Variable | Función |
+| --- | --- |
+| restaurant_enabled | Activar Restaurante (por defecto false) |
+| restaurant_show_images | Fotos de platos |
+| restaurant_orders_enabled | Pedidos desde el celular |
+| restaurant_guest_ai_enabled | IA para cliente |
+| restaurant_call_waiter_enabled | Llamar al mozo |
+| restaurant_request_bill_enabled | Pedir cuenta |
+| restaurant_mercadopago_enabled | Botón informativo Mercado Pago |
+| restaurant_guest_notifications_enabled | Avisos al cliente |
+| restaurant_order_tracking_enabled | Seguimiento y cuenta |
+| restaurant_operator_ai_enabled | IA del operario |
+| restaurant_kitchen_board_enabled | Vista de cocina |
+| restaurant_manual_payments_enabled | Registrar pagos manuales |
+| restaurant_split_bill_enabled | Dividir saldo |
+| restaurant_logo_url | URL HTTPS del logo; vacío usa ejemplo |
+| restaurant_ai_model | Modelo IA; por defecto gpt-4o-mini |
+
+Las 12 funciones admiten `true`/`false` y están habilitadas por defecto.
+Las variables individuales prevalecen sobre el objeto anterior
+`restaurant_features`, que se sigue leyendo para no alterar empresas existentes.
+Las APIs anteriores de escritura `/api/resto/settings`, `/branding`,
+`/orders-config` y `/config` devuelven 410. El guardado se realiza mediante
+`/api/tenant-config`, con los permisos y restricciones de esa pantalla.
 
 ## Pedido y marca (5.00.162)
 

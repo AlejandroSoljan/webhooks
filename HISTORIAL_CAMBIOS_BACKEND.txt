@@ -217,6 +217,17 @@ CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
   confirmación y cuenta; revisión móvil y suite completa antes de publicar.
   Despliegue comprobado contra release activo y /healthz en AWS.
 
+19/09/2026 - v5.00.163 (commit: publicación de esta entrada) - Configuración
+  de restaurante centralizada en Dominio Config. Variables individuales para
+  las 12 funciones, activación, logo y modelo IA, con catálogo y ayuda.
+  Reemplaza los formularios de funciones/logo/pedidos del panel de operaciones
+  de 5.00.162; sus endpoints de escritura anteriores responden 410 indicando
+  usar Dominio Config. Compatibilidad de lectura con restaurant_features:
+  cada variable individual tiene prioridad, sin migración de datos.
+  Guardado valida booleanos y URL de logo y conserva restricciones por dominio.
+  Pruebas: compatibilidad, validación, catálogo DOM, guardado aislado, permisos
+  entre dominios y suite completa; verificar release y /healthz en AWS.
+
 REGLA PARA CAMBIOS FUTUROS
 
 Antes de publicar una próxima versión del backend, agregar una entrada con:

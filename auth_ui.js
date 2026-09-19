@@ -1,4 +1,5 @@
-// Asisto | Version: 5.00.159 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.163 | Fecha: 2026-09-19
+const { fields: restaurantFields, validateRestaurantConfig } = require('./restaurant_config');
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -4046,6 +4047,7 @@ function mountAuthRoutes(app) {
     const key = normalizeTenantConfigFieldName(fieldName);
     if (!key) return false;
     if (key === 'api_aliases') return true;
+    if ((superadminOnlyFields || []).includes('restaurant_features') && restaurantFields.some(f => f.feature && f.name === key)) return true;
     return new Set(Array.isArray(superadminOnlyFields) ? superadminOnlyFields.map(normalizeTenantConfigFieldName) : []).has(key);
   }
 
@@ -4199,7 +4201,7 @@ function mountAuthRoutes(app) {
 
               <div class="actions" style="margin-top:12px">
                 <button class="btn" type="submit" id="tc_btnSave">Guardar</button>
-                <button class="btn2" type="button" id="tc_btnAdd">Agregar campo</button>
+                <button class="btn2" type="button" id="tc_btnAdd">Agregar campo</button><button class="btn2" type="button" id="tc_btnRestaurant">Variables restaurante y logo</button><datalist id="tc_restaurantFields">${restaurantFields.map(f => `<option value="${f.name}">${f.help}</option>`).join('')}</datalist>
                 <button class="btn2" type="button" id="tc_btnAddTag">Agregar TAG versión</button>
                 <button class="btn2" type="button" id="tc_btnAddTokenCosts">Agregar tarifas tokens</button>
                 <button class="btn2" type="button" id="tc_btnAddWwebRetention" title="Agrega wweb_message_log_retention_days. 0 o campo ausente = no borrar; 30 = conservar 30 días.">Retención historial WWeb</button>
@@ -4264,7 +4266,9 @@ function mountAuthRoutes(app) {
         const helpField = document.getElementById('tc_helpField');
         const helpText = document.getElementById('tc_helpText');
 
+        const restaurantDefs = ${JSON.stringify(restaurantFields)};
         const fieldHelp = {
+          ...Object.fromEntries(restaurantDefs.map(f => [f.name, f.help])),
           nom_emp:'Nombre de la empresa que se muestra en paneles y mensajes.', numero:'Número de WhatsApp asociado al dominio, con código de país.', release_tag:'Versión del script cliente que debe instalar automáticamente este dominio.', version:'Versión informativa reportada por la instalación.', script:'Nombre del script principal del cliente.', puerto:'Puerto HTTP local utilizado por el agente.', direccion:'Dirección o ubicación informativa de la empresa.', dsn:'Nombre del origen ODBC usado para conectar con Manager.', headless:'Define si el navegador de WhatsApp Web se ejecuta sin ventana visible.', wweb_engine:'Motor de WhatsApp Web. Valores habituales: wwebjs o baileys.', habilitar_bot:'Activa o desactiva el procesamiento automático de mensajes entrantes.', habilitar_consulta_mensajes:'Activa la consulta y envío de mensajes pendientes desde la API.', habilitar_mensajes_info:'Activa el procesamiento del origen local es_mensajes.', habilitar_odbc_manager:'Habilita la conexión ODBC con la base de Manager.',
           api:'URL del API principal que procesa mensajes entrantes.', api2:'URL del API que consulta mensajes salientes pendientes.', api3:'URL del API que actualiza el estado de los destinatarios.', actualiza:'URL alternativa o histórica usada para actualizar estados.', key:'Clave utilizada para autenticar las APIs de mensajes.', api_mensajes_alta:'URL que registra nuevos mensajes en Api_Mensajes/Alta.', api_mensajes_alta_key:'Clave de autenticación específica del API de Alta.', api_mensajes_alta_nro_tel_from:'Número emisor utilizado al registrar mensajes mediante Alta.', compra_mensajes_usar_api_alta:'Si es true, las notificaciones de compra se registran en el API de Alta; si es false, se envían directamente por WhatsApp.', entrega_mensajes_usar_api_alta:'Si es true, las notificaciones de entrega se registran en el API de Alta; si es false, se envían directamente por WhatsApp.', es_mensajes_usar_api_alta:'Si es true, los registros de es_mensajes se envían mediante el API de Alta; si es false, el script los envía directamente por WhatsApp, incluyendo el adjunto con el texto como descripción.',
           api_mensajes_confirmacion_habilitada:'Activa la solicitud de permiso antes de enviar mensajes automáticos.', api_mensajes_confirmacion_prioridades:'Lista de prioridades que requieren confirmación. Ejemplo: [3]. Si no existe, se confirman todas.', api_mensajes_confirmacion_mensaje:'Texto principal utilizado para solicitar autorización al cliente.', api_mensajes_confirmacion_mensajes:'Lista de variantes del mensaje de autorización; el cliente elige una para evitar repeticiones.', api_mensajes_confirmacion_respuestas_ok:'Respuestas que se consideran autorización, por ejemplo OK, SI o SÍ.', api_mensajes_confirmacion_reenviar_ms:'Tiempo en milisegundos antes de permitir otra solicitud de autorización.', api_mensajes_confirmacion_validez_ms:'Duración en milisegundos de una autorización concedida.', api_mensajes_respuestas_baja:'Palabras que solicitan exclusión permanente; se evalúan según las reglas de BAJA.',
@@ -4353,7 +4357,7 @@ function mountAuthRoutes(app) {
 
         function isFieldMarkedSuperadminOnly(name){
           const key = normalizeFieldName(name);
-          return !!key && superadminOnlyFields.has(key);
+          return !!key && (superadminOnlyFields.has(key) || (superadminOnlyFields.has('restaurant_features') && restaurantDefs.some(f => f.feature && f.name === key)));
          }
 
         function isSuperadminOnlyField(name){
@@ -4394,7 +4398,7 @@ function mountAuthRoutes(app) {
         function addRow(key='', value=''){
           const tr = document.createElement('tr');
           tr.innerHTML =
-            '<td><input class="inp" data-k value="' + esc(key) + '" placeholder="campo"/></td>' +
+            '<td><input class="inp" data-k list="tc_restaurantFields" value="' + esc(key) + '" placeholder="campo"/></td>' +
             '<td><input class="inp" data-v value="' + esc(value) + '" placeholder="valor"/></td>' +
             (isSuper ? '<td class="tc-rule-cell"><label class="tc-rule-label" title="Permiso restringido"><input type="checkbox" data-superonly aria-label="Permiso restringido"/></label></td>' : '') +
             '<td><div class="tc-row-actions"><button class="btn2 tc-help-btn" type="button" data-help aria-label="Ayuda del campo" title="Ayuda">?</button><button class="btn2" type="button" data-rm>✕</button></div></td>';
@@ -4736,6 +4740,17 @@ function mountAuthRoutes(app) {
           }
         }
 
+        document.getElementById('tc_btnRestaurant').addEventListener('click', () => {
+          const legacyRow = findFieldRow('restaurant_features');
+          const legacy = legacyRow ? parseValue(legacyRow.querySelector('[data-v]').value) : {};
+          restaurantDefs.forEach(def => {
+            if (!isSuperadminOnlyField(def.name) && !findFieldRow(def.name)) {
+              const value = def.feature && def.feature !== 'guestOrders' && typeof legacy?.[def.feature] === 'boolean' ? legacy[def.feature] : def.value;
+              addRow(def.name, normalizeValueForInput(value));
+            }
+          });
+          setMsg('ok','Variables de restaurante disponibles. Revisá los valores y guardá el dominio.');
+        });
         btnAdd.addEventListener('click', ()=> addRow('', ''));
         if (btnAddTag) btnAddTag.addEventListener('click', ()=> ensureFieldRow('release_tag', 'v4.00.16'));
         if (btnAddTokenCosts) btnAddTokenCosts.addEventListener('click', ()=> addTokenCostFields());
@@ -5041,6 +5056,8 @@ function mountAuthRoutes(app) {
       const finalData = isSuper
         ? safeData
         : { ...protectedExistingData, ...safeData };
+
+      try { validateRestaurantConfig(finalData); } catch (error) { return res.status(400).json({ ok:false, error:error.message }); }
 
       // Los alias son sólo de consulta: no crean otro tenant ni otra sesión.
       // Evitamos colisiones con dominios reales y con otros propietarios.

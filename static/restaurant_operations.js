@@ -1,13 +1,12 @@
-// Asisto | Version: 5.00.160 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.163 | Fecha: 2026-09-19
 (() => {
   const root = document.createElement('section'); root.id = 'restaurantOps'; root.className = 'section';
   document.querySelector('.metrics').after(root);
-  root.innerHTML = `<div class="sectionHead"><div><p class="eyebrow">Sala en vivo</p><h2>Control de mesas</h2></div><label>Ver<select id="opsFilter"><option value="all">Todas las mesas</option><option value="attention">Necesitan atención</option><option value="occupied">Ocupadas</option><option value="free">Libres</option></select></label></div><p id="opsMessage" role="status" aria-live="polite"></p><div id="opsMetrics" class="ops-metrics"></div><div class="ops-layout"><div id="opsBoard"></div><section id="opsDetail" aria-label="Detalle de la mesa">Seleccioná una mesa.</section></div><details id="kitchenSection"><summary>Cocina · pedidos en preparación</summary><div id="opsKitchen"></div></details><details><summary>Últimas cuentas cerradas</summary><div id="opsHistory"></div></details><details id="operatorAiSection"><summary>Asistente de IA del operario</summary><p>Consultá prioridades, demoras, composición de platos y sugerencias de la carta.</p><form id="opsAiForm"><label>Consulta<input id="opsAiQuestion" maxlength="800" placeholder="¿Qué mesas requieren atención primero?" required></label><button>Consultar IA</button></form><p id="opsAiAnswer" class="ops-answer" role="status"></p></details><details><summary>Funciones habilitadas para esta empresa</summary><form id="opsSettings"><div id="opsFlags" class="ops-flags"></div><button>Guardar funciones</button></form><p>Mercado Pago muestra un botón informativo: todavía no cobra ni verifica pagos.</p></details>`;
+  root.innerHTML = `<div class="sectionHead"><div><p class="eyebrow">Sala en vivo</p><h2>Control de mesas</h2></div><label>Ver<select id="opsFilter"><option value="all">Todas las mesas</option><option value="attention">Necesitan atención</option><option value="occupied">Ocupadas</option><option value="free">Libres</option></select></label></div><p id="opsMessage" role="status" aria-live="polite"></p><div id="opsMetrics" class="ops-metrics"></div><div class="ops-layout"><div id="opsBoard"></div><section id="opsDetail" aria-label="Detalle de la mesa">Seleccioná una mesa.</section></div><details id="kitchenSection"><summary>Cocina · pedidos en preparación</summary><div id="opsKitchen"></div></details><details><summary>Últimas cuentas cerradas</summary><div id="opsHistory"></div></details><details id="operatorAiSection"><summary>Asistente de IA del operario</summary><p>Consultá prioridades, demoras, composición de platos y sugerencias de la carta.</p><form id="opsAiForm"><label>Consulta<input id="opsAiQuestion" maxlength="800" placeholder="¿Qué mesas requieren atención primero?" required></label><button>Consultar IA</button></form><p id="opsAiAnswer" class="ops-answer" role="status"></p></details><p class="hint">Las funciones y el logo se administran en Configuración de dominio → Variables restaurante y logo.</p>`;
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   const money = cents => '$ ' + (Number(cents || 0) / 100).toLocaleString('es-AR', { minimumFractionDigits:2, maximumFractionDigits:2 });
   const stateNames = { received:'Recibido', preparing:'En preparación', ready:'Listo para entregar', served:'Entregado', cancelled:'Cancelado', occupied:'Ocupada', reserved:'Reservada', bill_requested:'Pidió la cuenta', closed:'Libre', free:'Libre' };
-  const flags = { showImages:'Mostrar fotos de los platos', guestOrders:'Pedidos desde el celular', guestAi:'Asistente de IA del cliente', callWaiter:'Botón llamar al mozo', requestBill:'Botón pedir la cuenta', mercadoPago:'Mostrar Mercado Pago (próximamente)', guestNotifications:'Avisos a clientes', orderTracking:'Seguimiento y resumen de cuenta', operatorAi:'Asistente de IA del operario', kitchenBoard:'Vista de cocina', manualPayments:'Registrar pagos manuales', splitBill:'Calculadora para dividir la cuenta' };
   let tenant = '', snapshot = null, selectedId = '', editingOrder = '', detailDirty = false, requestSequence = 0;
   const table = () => snapshot?.tables.find(x => x.id === selectedId);
   const message = text => { $('opsMessage').textContent = text; };
@@ -46,7 +45,7 @@
   }
   async function load(forceDetail = false, reloadSettings = false) {
     if (!tenant) return; const seq = ++requestSequence;
-    try { const data = await api('/api/resto/operations'); if (seq !== requestSequence) return; snapshot = data; drawBoard(); if (forceDetail || (!detailDirty && !editingOrder && !$('opsDetail').contains(document.activeElement))) drawDetail(); if (reloadSettings) $('opsFlags').innerHTML = Object.entries(flags).map(([key,label]) => `<label><input type="checkbox" name="${key}" ${data.features[key] ? 'checked' : ''}>${label}</label>`).join(''); }
+    try { const data = await api('/api/resto/operations'); if (seq !== requestSequence) return; snapshot = data; drawBoard(); if (forceDetail || (!detailDirty && !editingOrder && !$('opsDetail').contains(document.activeElement))) drawDetail(); }
     catch (error) { if (seq === requestSequence) message(error.message); }
   }
   async function action(name, payload = {}) {
@@ -79,14 +78,12 @@
       if (form.id === 'opsDetailsForm') await action(table().service && table().service.status !== 'closed' ? 'details' : 'open', data);
       if (form.id === 'opsOrderForm') { const items = [...$('opsOrderLines').children].map(row => ({ id:row.querySelector('select').value, quantity:Number(row.querySelector('input').value) })); await action(editingOrder ? 'editOrder' : 'addOrder', { orderId:editingOrder, items, note:$('opsOrderNote').value, requestId:crypto.randomUUID() }); }
       if (form.id === 'opsPaymentForm' && confirm('¿Confirmás que recibiste este importe?')) await action('payment', data);
-      if (form.id === 'opsSettings') { const features = Object.fromEntries(Object.keys(flags).map(key => [key, form.elements[key].checked])); await api('/api/resto/settings', { features }, 'PUT'); await load(false,true); $('ordersEnabled').checked = features.guestOrders; message('Funciones guardadas para ' + tenant + '.'); }
       if (form.id === 'opsAiForm') { $('opsAiAnswer').textContent = 'Consultando…'; $('opsAiAnswer').textContent = (await api('/api/resto/operations-ai', { question:$('opsAiQuestion').value })).answer; }
     } catch (error) { message(error.message); if (form.id === 'opsAiForm') $('opsAiAnswer').textContent = error.message; }
     finally { if (button?.isConnected) button.disabled = false; }
   });
   $('opsFilter').onchange = drawBoard;
   function setTenant(value) { if (!value || value === tenant) return; tenant = value; selectedId = ''; snapshot = null; detailDirty = false; editingOrder = ''; $('opsDetail').textContent = 'Seleccioná una mesa.'; $('opsBoard').textContent = 'Cargando…'; $('opsAiAnswer').textContent = ''; load(true,true); }
-  window.addEventListener('restaurant-settings', () => load(false,true));
   window.addEventListener('restaurant-domain', e => setTenant(e.detail));
   if ($('domain').value) setTenant($('domain').value);
   setInterval(() => { if (!document.hidden) load(); }, 8000);

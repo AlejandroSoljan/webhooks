@@ -1,0 +1,32 @@
+// Asisto | Version: 5.00.163 | Fecha: 2026-09-19
+const featureFields = {
+  showImages:'restaurant_show_images', guestOrders:'restaurant_orders_enabled',
+  guestAi:'restaurant_guest_ai_enabled', callWaiter:'restaurant_call_waiter_enabled',
+  requestBill:'restaurant_request_bill_enabled', mercadoPago:'restaurant_mercadopago_enabled',
+  guestNotifications:'restaurant_guest_notifications_enabled', orderTracking:'restaurant_order_tracking_enabled',
+  operatorAi:'restaurant_operator_ai_enabled', kitchenBoard:'restaurant_kitchen_board_enabled',
+  manualPayments:'restaurant_manual_payments_enabled', splitBill:'restaurant_split_bill_enabled',
+};
+const labels = ['Mostrar fotos de los platos','Pedidos desde el celular','IA del cliente','Llamar al mozo','Pedir la cuenta','Mercado Pago (botón informativo, todavía sin cobro)','Avisos a clientes con la carta abierta','Seguimiento y resumen de cuenta','IA del operario','Vista de cocina','Registro manual de pagos','Calculadora para dividir la cuenta'];
+const fields = [
+  { name:'restaurant_enabled', value:false, help:'Habilita el módulo Restaurante para este dominio. Ausente: deshabilitado.' },
+  ...Object.entries(featureFields).map(([feature,name],index)=>({ name,feature,value:true,help:labels[index]+'. Valores: true / false. Por defecto: true.' })),
+  { name:'restaurant_logo_url', value:'',help:'Logo de este restaurante: URL HTTPS pública o ruta /static/. Vacío: logo de ejemplo.' },
+  { name:'restaurant_ai_model', value:'gpt-4o-mini',help:'Modelo de IA para consultas de carta y asistencia al operario.' },
+];
+function settings(config = {}) {
+  return Object.fromEntries(Object.entries(featureFields).map(([feature,name])=>[feature, typeof config[name] === 'boolean' ? config[name] : feature === 'guestOrders' ? true : config.restaurant_features?.[feature] !== false]));
+}
+function validateRestaurantConfig(data) {
+  for (const field of fields) {
+    if (!Object.hasOwn(data,field.name)) continue;
+    if (typeof field.value === 'boolean' && typeof data[field.name] !== 'boolean') throw Error(field.name+': usá true o false.');
+    if (typeof field.value === 'string' && typeof data[field.name] !== 'string') throw Error(field.name+': usá un texto.');
+  }
+  if (Object.hasOwn(data,'restaurant_logo_url')) {
+    const logo=data.restaurant_logo_url.trim();
+    if (logo.length>1000 || (logo && !/^https:\/\/[^\s<>"']+$/i.test(logo) && !/^\/static\/[a-z0-9_./-]+$/i.test(logo))) throw Error('restaurant_logo_url: ingresá una URL HTTPS o una ruta /static/.');
+    data.restaurant_logo_url=logo;
+  }
+}
+module.exports={featureFields,fields,settings,validateRestaurantConfig};

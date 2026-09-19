@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.160 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.163 | Fecha: 2026-09-19
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
@@ -72,7 +72,7 @@ function mountRestaurant(app, auth) {
     const tenant = adminTenant(req, auth);
     if (!validTenant(tenant)) return res.status(400).json({ error: 'dominio_requerido' });
     const db = await getDb();
-    const config = await db.collection('tenant_config').findOne({ _id: tenant }, { projection: { restaurant_enabled: 1 } });
+    const config = await db.collection('tenant_config').findOne({ _id: tenant }, { projection: { restaurant_enabled: 1, restaurant_orders_enabled:1, restaurant_logo_url:1 } });
     if (!config) return res.status(404).json({ error: 'dominio_no_existe' });
     const [menuCount, tableCount] = await Promise.all([
       db.collection('products').countDocuments({ tenantId: tenant, active: { $ne: false } }),
@@ -80,28 +80,7 @@ function mountRestaurant(app, auth) {
     ]);
     res.json({ tenant, enabled: config.restaurant_enabled === true, ordersEnabled: config.restaurant_orders_enabled !== false, menuCount, tableCount, logoUrl: config.restaurant_logo_url || '' });
   });
-  app.post('/api/resto/config', json, async (req, res) => {
-    const tenant = adminTenant(req, auth);
-    if (!validTenant(tenant) || req.body?.enabled !== true) return res.status(400).json({ error: 'solicitud_invalida' });
-    const db = await getDb();
-    const result = await db.collection('tenant_config').updateOne({ _id: tenant }, { $set: { restaurant_enabled: true, updatedAt: new Date() } });
-    res.status(result.matchedCount ? 200 : 404).json({ ok: !!result.matchedCount });
-  });
-  app.put('/api/resto/branding', json, async (req, res) => {
-    const tenant = adminTenant(req, auth);
-    const logoUrl = clean(req.body?.logoUrl, 1000);
-    if (!validTenant(tenant) || (logoUrl && !/^https:\/\/[^\s<>"']+$/i.test(logoUrl))) return res.status(400).json({ error: 'url_logo_invalida' });
-    const db = await getDb();
-    const result = await db.collection('tenant_config').updateOne({ _id: tenant, restaurant_enabled: true }, { $set: { restaurant_logo_url: logoUrl, updatedAt: new Date() } });
-    res.status(result.matchedCount ? 200 : 404).json({ ok: !!result.matchedCount, logoUrl });
-  });
-  app.put('/api/resto/orders-config', json, async (req, res) => {
-    const tenant = adminTenant(req, auth);
-    if (!validTenant(tenant) || typeof req.body?.enabled !== 'boolean') return res.status(400).json({ error: 'solicitud_invalida' });
-    const db = await getDb();
-    const result = await db.collection('tenant_config').updateOne({ _id: tenant, restaurant_enabled: true }, { $set: { restaurant_orders_enabled: req.body.enabled, updatedAt: new Date() } });
-    res.status(result.matchedCount ? 200 : 404).json({ ok: !!result.matchedCount, ordersEnabled: req.body.enabled });
-  });
+  for (const [method, route] of [['post','config'],['put','branding'],['put','orders-config']]) app[method]('/api/resto/' + route, (_req,res)=>res.status(410).json({ error:'Configurá estas variables en Configuración de dominio.' }));
   app.get('/resto/:tenant/:token', async (req, res) => {
     const tenant = clean(req.params.tenant, 40).toUpperCase(), token = clean(req.params.token, 32);
     const ctx = await tableContext(tenant, token).catch(() => null);

@@ -1,17 +1,12 @@
-// Asisto | Version: 5.00.160 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.163 | Fecha: 2026-09-19
 const crypto = require('crypto');
 const { ObjectId } = require('mongodb');
 const express = require('express');
 const OpenAI = require('openai');
 const { resolveOpenAiApiKey } = require('./ai_key_router');
-const FLAGS = { showImages:true, guestOrders:true, guestAi:true, callWaiter:true, requestBill:true, mercadoPago:true, guestNotifications:true, orderTracking:true, operatorAi:true, kitchenBoard:true, manualPayments:true, splitBill:true };
+const { settings } = require('./restaurant_config');
 const clean = (v, n = 500) => String(v ?? '').trim().slice(0, n);
 const fail = (message, status = 400) => { const error = new Error(message); error.status = status; throw error; };
-function settings(config = {}) {
-  const result = { ...FLAGS, ...(config.restaurant_features || {}) };
-  result.guestOrders = config.restaurant_orders_enabled !== false;
-  return Object.fromEntries(Object.keys(FLAGS).map(key => [key, result[key] !== false]));
-}
 function totals(service) {
   const total = (service?.orders || []).filter(x => x.status !== 'cancelled').reduce((n, x) => n + x.totalCents, 0);
   const paid = (service?.payments || []).filter(x => !x.voidedAt).reduce((n, x) => n + x.amountCents, 0);
@@ -121,14 +116,7 @@ function mountOperations(app, { getDb, auth, menu, tableContext, allowRequest })
     return { db, tenant, config };
   }
   app.get('/api/resto/settings', route(async (req, res) => { const { config } = await context(req); res.json({ features:settings(config) }); }));
-  app.put('/api/resto/settings', json, route(async (req, res) => {
-    const { db, tenant } = await context(req), features = req.body?.features;
-    if (!features || typeof features !== 'object' || Object.keys(features).some(key => !Object.hasOwn(FLAGS, key) || typeof features[key] !== 'boolean')) fail('Configuración inválida.');
-    const fields = Object.fromEntries(Object.entries(features).map(([key, value]) => [`restaurant_features.${key}`, value]));
-    if (features.guestOrders !== undefined) fields.restaurant_orders_enabled = features.guestOrders;
-    await db.collection('tenant_config').updateOne({ _id:tenant }, { $set:{ ...fields, updatedAt:new Date() } });
-    res.json({ ok:true });
-  }));
+  app.put('/api/resto/settings', (_req,res)=>res.status(410).json({ error:'Configurá estas variables en Configuración de dominio.' }));
   app.get('/api/resto/operations', route(async (req, res) => {
     const { db, tenant, config } = await context(req);
     const [tables, events, catalog, history] = await Promise.all([

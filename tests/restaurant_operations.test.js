@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.160 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.163 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
@@ -73,10 +73,11 @@ test('operaciones HTTP: configuración por dominio, cuenta privada y pedido ante
   const request = (path,body,method='POST')=>fetch(base+path,{ method,headers:{'content-type':'application/json'},body:JSON.stringify(body) });
   try {
     let response = await request('/api/resto/settings?tenant=OTRO',{ features:{ manualPayments:false, showImages:false, guestOrders:false } },'PUT');
-    assert.equal(response.status,200);
+    assert.equal(response.status,410);
+    await db.collection('tenant_config').updateOne({_id:'RES'},{$set:{restaurant_manual_payments_enabled:false,restaurant_show_images:false,restaurant_orders_enabled:false}});
     assert.equal(settings(await db.collection('tenant_config').findOne({ _id:'RES' })).showImages,false);
     assert.equal(settings(await db.collection('tenant_config').findOne({ _id:'OTRO' })).showImages,true);
-    assert.equal((await request('/api/resto/settings',{ features:{ __bad:true } },'PUT')).status,400);
+    assert.equal((await request('/api/resto/settings',{ features:{ __bad:true } },'PUT')).status,410);
     response = await request(`/api/resto/operations/${id}`,{ action:'importLegacy', revision:0, eventId:String(legacy.insertedId) });
     assert.equal(response.status,200);
     const table = (await response.json()).table;
