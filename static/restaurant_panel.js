@@ -1,5 +1,6 @@
-// Asisto | Version: 5.00.163 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.167 | Fecha: 2026-09-19
 (() => {
+  if(window.parent !== window) document.body.classList.add('embedded');
   const el = id => document.getElementById(id);
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   let tenant = '', firstLoad = true, seen = new Set(), loading = false;

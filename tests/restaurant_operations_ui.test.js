@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.164 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.167 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -51,4 +51,12 @@ test('panel de mesas conserva borradores y envía la revisión mostrada al opera
   window.document.querySelector('#opsReloadDetail').click(); await tick();
   assert.equal(window.document.querySelector('#opsDetail').dataset.revision,'2');
   window.close();
+});
+
+test('pestañas y filtros conservan borradores y abren mesas desde cocina',async t=>{
+ const w=new JSDOM('<select id="domain"><option>RES</option></select><div class="metrics"></div><section data-workspace-view="qr" hidden></section>',{runScripts:'outside-only',url:'https://example.test'}).window;t.after(()=>w.close());w.setInterval=()=>{};
+ w.fetch=async()=>({ok:true,json:async()=>({features:{kitchenBoard:true,operatorAi:true,manualPayments:true},history:[],catalog:[],tables:[{id:'t',label:'1',revision:1,pending:[],legacyOrders:[],totalCents:100,paidCents:0,balanceCents:100,service:{status:'occupied',guests:2,waiter:'Ana',openedAt:new Date(),orders:[{id:'o',status:'ready',items:[],totalCents:100,createdAt:new Date()}],payments:[],audit:[]}}]})});
+ w.eval(fs.readFileSync(path.join(__dirname,'../static/restaurant_operations.js'),'utf8'));await new Promise(r=>setTimeout(r,0));const d=w.document;
+ d.querySelector('[data-select-table]').click();const input=d.querySelector('[name=waiter]');input.value='Pedro';input.dispatchEvent(new w.Event('input',{bubbles:true}));d.querySelector('[data-view="qr"]').click();assert.equal(d.querySelector('[data-workspace-view="qr"]').hidden,false);d.querySelector('[data-view="salon"]').click();assert.equal(d.querySelector('[name=waiter]').value,'Pedro');
+ d.querySelector('[data-filter="free"]').click();assert.equal(d.querySelector('#opsBoard [data-select-table]'),null);d.querySelector('[data-filter="all"]').click();d.querySelector('[data-view="kitchen"]').click();assert.equal(d.getElementById('kitchenSection').open,true);w.confirm=()=>true;d.querySelector('#opsKitchen [data-select-table]').click();assert.equal(d.getElementById('restaurantOps').dataset.view,'salon');assert.match(d.getElementById('opsDetail').textContent,/Mesa 1/);
 });
