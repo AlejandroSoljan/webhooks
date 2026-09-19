@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.166 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.169 | Fecha: 2026-09-19
 (() => {
   const base = document.body.dataset.base;
   const $ = id => document.getElementById(id);
@@ -13,7 +13,7 @@
     return item?.imagen && features.showImages !== false ? `<button class="photo-button" data-dish="${esc(item.id)}" aria-label="Ampliar foto de ${esc(item.nombre)}"><img class="item-image" src="${esc(item.imagen)}" alt="${esc(item.nombre)}" loading="lazy">${magnifier}</button>` : '';
   }
   function renderSent() {
-    const states = { received:'Recibido', preparing:'En preparación', ready:'Listo para entregar', served:'Entregado', cancelled:'Cancelado' };
+    const states = { awaiting_confirmation:'Esperando confirmación', received:'Recibido', preparing:'En preparación', ready:'Listo para entregar', served:'Entregado', cancelled:'Cancelado' };
     $('sentSection').hidden = !sentOrders.length;
     $('sentOrders').innerHTML = sentOrders.map(order => {
       const step = {received:0,preparing:1,ready:1,served:2}[order.status];
@@ -50,10 +50,25 @@
   const cursorKey = `asistoRestoCursor:${base}`;
   let notificationCursor = readStorage('localStorage', cursorKey) || '';
   const price = value => '$ ' + Number(value || 0).toLocaleString('es-AR');
+  const visitKey='asistoRestoVisit:'+base;
+  let visitToken=readStorage('sessionStorage',visitKey) || '',visitPolicy=null;
+  function expireVisit(){visitToken='';writeStorage('sessionStorage',visitKey,'');$('syncStatus').textContent='Esta visita terminó o venció. Podés seguir viendo la carta; para pedir necesitás el código actual.';$('tableAccount').hidden=true;$('splitBill').hidden=true;}
+  async function ensureVisit(){
+    if(visitToken || !visitPolicy) return;
+    if(!visitPolicy.requireCode){const v=await post('/visit',{visitorId});visitToken=v.token;writeStorage('sessionStorage',visitKey,visitToken);return;}
+    await new Promise((resolve,reject)=>{
+      const dialog=$('visitDialog');$('visitError').textContent='';$('visitCode').value='';
+      const cancel=()=>{dialog.close();reject(Error('No se envió la solicitud. Ingresá el código de la mesa para continuar.'));};
+      $('visitCancel').onclick=cancel;dialog.oncancel=e=>{e.preventDefault();cancel();};
+      $('visitForm').onsubmit=async e=>{e.preventDefault();const button=e.submitter;button.disabled=true;try{const v=await post('/visit',{visitorId,code:$('visitCode').value});visitToken=v.token;writeStorage('sessionStorage',visitKey,visitToken);sentOrders=[];saveReceipts();renderSent();dialog.close();resolve();}catch(error){$('visitError').textContent=error.message;}finally{button.disabled=false;}};
+      dialog.showModal();$('visitCode').focus();
+    });
+  }
   async function post(path, data) {
-    const response = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
+    if(path==='/events'){await ensureVisit();data={...data,visitToken};}
+    const response = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-restaurant-visit':visitToken }, body: JSON.stringify(data) });
     const result = await response.json();
-    if (!response.ok) throw Error(result.error || 'No se pudo completar la solicitud');
+    if (!response.ok) {if(response.status===403 && path!=='/visit' && /visita|código/.test(result.error || '')) expireVisit();throw Error(result.error || 'No se pudo completar la solicitud');}
     return result;
   }
   function notify(message) {
@@ -177,7 +192,7 @@
       saveDraft();
       sending = true; $('order').disabled = true; $('order').textContent = 'Enviando…';
       const receipt = await post('/events', { ...payload, requestId:orderRequestId });
-      sentOrders.push({id:receipt.id || orderRequestId,status:'received',items:payload.items.map(line => ({productId:line.id,nombre:items.find(item=>item.id===line.id).nombre,unitPrice:items.find(item=>item.id===line.id).precio,quantity:line.quantity})),totalCents:Math.round(payload.items.reduce((sum,line)=>sum+items.find(item=>item.id===line.id).precio*line.quantity,0)*100)});
+      sentOrders.push({id:receipt.id || orderRequestId,status:receipt.status || 'received',items:payload.items.map(line => ({productId:line.id,nombre:items.find(item=>item.id===line.id).nombre,unitPrice:items.find(item=>item.id===line.id).precio,quantity:line.quantity})),totalCents:Math.round(payload.items.reduce((sum,line)=>sum+items.find(item=>item.id===line.id).precio*line.quantity,0)*100)});
       saveReceipts(); renderSent();
       requestFingerprint = ''; orderRequestId = '';
       cart = {};
@@ -207,7 +222,7 @@
     try {
       const query = new URLSearchParams({ visitorId });
       if (notificationCursor) query.set('after', notificationCursor);
-      const response = await fetch(base + '/notifications?' + query);
+      const response = await fetch(base + '/notifications?' + query,{headers:{'x-restaurant-visit':visitToken}});
       if (!response.ok) return;
       const result = await response.json();
       for (const notification of result.notifications || []) {
@@ -231,6 +246,7 @@
     } catch (_) {}
   }
   $('enableGuestAlerts').onclick = async () => {
+    try { await ensureVisit(); } catch(error) { $('guestAlertStatus').textContent=error.message; return; }
     if (!('Notification' in window)) { $('guestAlertStatus').textContent = 'Este navegador no admite avisos. Los mensajes aparecerán aquí mientras la carta esté abierta.'; return; }
     const permission = await Notification.requestPermission();
     $('guestAlertStatus').textContent = permission === 'granted' ? 'Avisos activados mientras esta carta esté abierta.' : 'Los mensajes aparecerán en esta página mientras la tengas abierta.';
@@ -241,10 +257,11 @@
     $('splitResult').textContent = accountBalance !== null && Number.isInteger(count) && count >= 1 && count <= 100 ? `${price(Math.ceil(accountBalance / count) / 100)} por persona, aproximadamente.` : 'Ingresá entre 1 y 100 comensales.';
   }
   async function pollAccount() {
-    if (!configLoaded || features.orderTracking === false) return;
+    if (!configLoaded || features.orderTracking === false || visitPolicy && !visitToken) return;
     const sequence = ++accountSequence;
     try {
-      const response = await fetch(base + '/account?visitorId=' + encodeURIComponent(visitorId));
+      const response = await fetch(base + '/account?visitorId=' + encodeURIComponent(visitorId),{headers:{'x-restaurant-visit':visitToken}});
+      if(response.status===403){expireVisit();return;}
       if (!response.ok) throw Error('account');
       const result = await response.json();
       if (sequence !== accountSequence) return;
@@ -264,7 +281,7 @@
   $('payMercadoPago').onclick = () => { $('paymentInfo').textContent = 'Mercado Pago estará disponible próximamente. No se realizó ningún cobro. Coordiná el pago con el personal.'; notify('Mercado Pago: próximamente'); };
   function refreshGuest() {
     if (!configLoaded || document.hidden) return;
-    if (features.guestNotifications !== false) registerVisitor().then(pollNotifications).catch(() => {});
+    if (features.guestNotifications !== false && (!visitPolicy || visitToken)) registerVisitor().then(pollNotifications).catch(() => {});
     pollAccount();
   }
   setInterval(refreshGuest, 10000);
@@ -272,7 +289,7 @@
     if (!response.ok) throw Error('No se pudo cargar la carta.');
     return response.json();
   }).then(result => {
-    features = result.features || {}; configLoaded = true;
+    features = result.features || {}; visitPolicy=result.visitPolicy || null; configLoaded = true;
     items = (result.items || []).map(item => features.showImages === false ? { ...item, imagen:'' } : item);
     ordersEnabled = result.ordersEnabled !== false && features.guestOrders !== false;
     $('pedido').hidden = !ordersEnabled;

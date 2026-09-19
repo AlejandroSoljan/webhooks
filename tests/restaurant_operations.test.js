@@ -1,9 +1,10 @@
-// Asisto | Version: 5.00.164 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.169 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { MongoClient, ObjectId } = require('mongodb');
 const express = require('express');
+const {joinVisit}=require('../restaurant_visit');
 const { mutateTable, addGuestOrder, mountOperations, settings } = require('../restaurant_operations');
 
 test('cuenta de mesa: precios, concurrencia, pagos parciales, anulaciones y nueva visita', async () => {
@@ -50,7 +51,8 @@ test('cuenta de mesa: precios, concurrencia, pagos parciales, anulaciones y nuev
     assert.equal(race.filter(x => x.status === 'rejected')[0].reason.status,409);
     const visitorId = '12345678-1234-4123-8123-123456789abc';
     const ctx = { db, table:await db.collection('restaurant_tables').findOne({ _id:id }) };
-    const payload = { requestId:'same-request', visitorId, items:[{ id:productId,quantity:1 }] };
+    const visit=await joinVisit(ctx,{visitorId,code:ctx.table.service.visitCode});
+    const payload = { requestId:'same-request', visitorId, visitToken:visit.token, items:[{ id:productId,quantity:1 }] };
     const [first,second] = await Promise.all([addGuestOrder(ctx,payload,catalog),addGuestOrder(ctx,payload,catalog)]);
     assert.equal(first.id,second.id);
     assert.equal((await db.collection('restaurant_tables').findOne({ _id:id })).service.orders.length,1);
@@ -84,15 +86,16 @@ test('operaciones HTTP: configuración por dominio, cuenta privada y pedido ante
     assert.equal(table.totalCents,20000, 'importa al precio anterior');
     assert.equal((await request(`/api/resto/operations/${id}`,{ action:'payment', revision:1, amount:200,method:'cash' })).status,403);
     assert.equal((await request(`/api/resto/operations/${id}`,{ action:'importLegacy', revision:1, eventId:String(legacy.insertedId) })).status,409);
-    const account = await fetch(`${base}/api/public/resto/RES/${token}/account?visitorId=${visitorId}`).then(r=>r.json());
+    const visit=await joinVisit({db,table:await db.collection('restaurant_tables').findOne({_id:id})},{visitorId,code:table.service.visitCode});
+    const account = await fetch(`${base}/api/public/resto/RES/${token}/account?visitorId=${visitorId}`,{headers:{'x-restaurant-visit':visit.token}}).then(r=>r.json());
     assert.equal(account.orders.length,1); assert.equal(account.balanceCents,20000);
     const other = await fetch(`${base}/api/public/resto/RES/${token}/account?visitorId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`).then(r=>r.json());
-    assert.equal(other.orders.length,0); assert.equal(other.totalCents,undefined);
-    assert.equal((await request(`/api/resto/operations/${id}`,{action:'close',revision:1,confirmDelivered:true})).status,409,'no permite liberar con saldo');
+    assert.match(other.error,/visita/);
+    assert.equal((await request(`/api/resto/operations/${id}`,{action:'close',revision:2,confirmDelivered:true})).status,409,'no permite liberar con saldo');
     await db.collection('tenant_config').updateOne({_id:'RES'},{$set:{restaurant_manual_payments_enabled:true}});
-    assert.equal((await request(`/api/resto/operations/${id}`,{action:'payment',revision:1,amount:200,method:'cash'})).status,200);
-    assert.equal((await request(`/api/resto/operations/${id}`,{action:'close',revision:2})).status,409,'requiere confirmar la entrega');
-    const closed=await request(`/api/resto/operations/${id}`,{action:'close',revision:2,confirmDelivered:true});
+    assert.equal((await request(`/api/resto/operations/${id}`,{action:'payment',revision:2,amount:200,method:'cash'})).status,200);
+    assert.equal((await request(`/api/resto/operations/${id}`,{action:'close',revision:3})).status,409,'requiere confirmar la entrega');
+    const closed=await request(`/api/resto/operations/${id}`,{action:'close',revision:3,confirmDelivered:true});
     assert.equal(closed.status,200);
     const closedTable=(await closed.json()).table;
     assert.equal(closedTable.service.status,'closed');

@@ -1,12 +1,14 @@
-// Asisto | Version: 5.00.164 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.169 | Fecha: 2026-09-19
 const crypto = require('crypto');
 const { ObjectId } = require('mongodb');
 const express = require('express');
 const OpenAI = require('openai');
 const { resolveOpenAiApiKey } = require('./ai_key_router');
+const { validateVisit, policy, joinVisit } = require('./restaurant_visit');
 const { settings } = require('./restaurant_config');
 const clean = (v, n = 500) => String(v ?? '').trim().slice(0, n);
 const fail = (message, status = 400) => { const error = new Error(message); error.status = status; throw error; };
+function nextVisitCode(previous){let code;do{code=String(crypto.randomInt(100000,1000000));}while(code===previous);return code;}
 function totals(service) {
   const total = (service?.orders || []).filter(x => x.status !== 'cancelled').reduce((n, x) => n + x.totalCents, 0);
   const paid = (service?.payments || []).filter(x => !x.voidedAt).reduce((n, x) => n + x.amountCents, 0);
@@ -28,7 +30,7 @@ function pricedItems(raw, catalog, oldItems = []) {
   });
 }
 const totalItems = items => items.reduce((n, x) => n + Math.round(x.unitPrice * 100) * x.quantity, 0);
-const view = table => ({ id:String(table._id), label:table.label, revision:table.opsRevision || 0, service:table.service || null, ...totals(table.service) });
+const view = table => ({ id:String(table._id), label:table.label, revision:table.opsRevision || 0, service:table.service ? { ...table.service, guestGrants:undefined } : null, ...totals(table.service) });
 
 async function mutateTable(db, tenant, tableId, action, payload, catalog, actor, expectedRevision) {
   if (!ObjectId.isValid(tableId)) fail('Mesa inválida.');
@@ -39,22 +41,29 @@ async function mutateTable(db, tenant, tableId, action, payload, catalog, actor,
     if (expectedRevision !== undefined && expectedRevision !== revision) fail('La mesa cambió. Actualizá antes de guardar.', 409);
     let service = table.service ? structuredClone(table.service) : null;
     const now = new Date();
+    const grant=actor.origin==='guest' ? validateVisit(table,actor.visitorId,actor.visitToken,actor.config) : null;
     if (action === 'addOrder' && service?.orders?.some(x => x.requestId === payload.requestId && x.origin === actor.origin && x.visitorId === (actor.visitorId || ''))) return view(table);
+    if(grant && grant.lastActionAt && Date.now()-new Date(grant.lastActionAt).getTime()<3000) fail('Esperá unos segundos antes de enviar otra solicitud.',429);
     if (!service || service.status === 'closed') {
       if (!['open', 'addOrder'].includes(action)) fail('Abrí la mesa para realizar esta acción.', 409);
       if (service) await db.collection('restaurant_service_history').updateOne({ _id:service.id, tenantId:tenant }, { $setOnInsert:{ tableId:table._id, tableLabel:table.label, service, ...totals(service) } }, { upsert:true });
-      service = { id:crypto.randomUUID(), status:'occupied', guests:1, waiter:'', note:'', openedAt:now, orders:[], payments:[], audit:[] };
+      service = { id:crypto.randomUUID(), status:'occupied', guests:1, waiter:'', note:'', openedAt:now, visitCode:nextVisitCode(service?.visitCode), guestGrants:[], orders:[], payments:[], audit:[] };
     }
+    if(grant) service.guestGrants.find(g=>g.hash===grant.hash).lastActionAt=now;
     const money = totals(service);
     if (action === 'open' || action === 'details') {
       if (payload.guests !== undefined) { const guests = Number(payload.guests); if (!Number.isInteger(guests) || guests < 1 || guests > 100) fail('Comensales: entre 1 y 100.'); service.guests = guests; }
       if (payload.waiter !== undefined) service.waiter = clean(payload.waiter, 80);
       if (payload.note !== undefined) service.note = clean(payload.note);
       if (payload.status !== undefined) { if (!['occupied', 'reserved', 'bill_requested'].includes(payload.status)) fail('Estado inválido.'); service.status = payload.status; }
+    } else if (action === 'rotateVisit') {
+      service.visitCode=nextVisitCode(service.visitCode); service.guestGrants=[]; service.visitStartedAt=now;
+    } else if (action === 'guestSignal') {
+      if(payload.type==='bill') service.status='bill_requested';
     } else if (action === 'addOrder') {
       if (service.orders.length >= 100) fail('Esta cuenta alcanzó el máximo de pedidos.');
       const items = pricedItems(payload.items, catalog);
-      service.orders.push({ id:actor.legacyId || new ObjectId().toString(), requestId:clean(payload.requestId, 80), visitorId:actor.visitorId || '', origin:actor.origin, items, note:clean(payload.note), status:'received', totalCents:totalItems(items), createdAt:now, updatedAt:now });
+      service.orders.push({ id:actor.legacyId || new ObjectId().toString(), requestId:clean(payload.requestId, 80), visitorId:actor.visitorId || '', origin:actor.origin, items, note:clean(payload.note), status:actor.origin==='guest' && policy(actor.config).confirmation ? 'awaiting_confirmation' : 'received', totalCents:totalItems(items), createdAt:now, updatedAt:now });
       service.status = 'occupied';
     } else if (['editOrder', 'orderStatus'].includes(action)) {
       const order = service.orders.find(x => x.id === payload.orderId);
@@ -64,6 +73,7 @@ async function mutateTable(db, tenant, tableId, action, payload, catalog, actor,
         const items = pricedItems(payload.items, catalog, order.items);
         order.items = items; order.totalCents = totalItems(items); order.note = clean(payload.note);
       } else {
+        if(order.status==='awaiting_confirmation' && !['received','cancelled'].includes(payload.status)) fail('Confirmá el pedido antes de enviarlo a cocina.',409);
         if (!['received','preparing','ready','served','cancelled'].includes(payload.status)) fail('Estado de pedido inválido.');
         if (order.status === 'cancelled') fail('Un pedido cancelado no puede reabrirse.', 409);
         if (payload.status === 'cancelled' && money.paidCents > 0) fail('Anulá primero los pagos registrados para cancelar este pedido.', 409);
@@ -89,7 +99,7 @@ async function mutateTable(db, tenant, tableId, action, payload, catalog, actor,
         outstanding.forEach(order => { order.status='served'; order.updatedAt=now; });
         service.audit.push({ action:'orderStatus', by:actor.name, at:now, status:'served', reason:'Entrega confirmada al cerrar la mesa', orderIds:outstanding.map(x=>x.id) });
       }
-      service.status = 'closed'; service.closedAt = now;
+      service.status = 'closed'; service.closedAt = now; service.guestGrants=[];
     } else fail('Acción inválida.');
     service.updatedAt = now;
     service.audit.push({ action, by:actor.name, at:now, orderId:payload.orderId || '', reason:clean(payload.reason, 200), previousTotalCents:money.totalCents, totalCents:totals(service).totalCents, paidCents:totals(service).paidCents, status:payload.status || '' });
@@ -104,10 +114,10 @@ async function mutateTable(db, tenant, tableId, action, payload, catalog, actor,
 async function addGuestOrder(ctx, body, catalog) {
   const visitorId = /^[a-f0-9-]{36}$/.test(body.visitorId || '') ? body.visitorId : '';
   const requestId = clean(body.requestId, 80) || crypto.randomUUID();
-  const result = await mutateTable(ctx.db, ctx.table.tenantId, String(ctx.table._id), 'addOrder', { ...body, requestId }, catalog, { name:'Cliente QR', origin:'guest', visitorId });
+  const result = await mutateTable(ctx.db, ctx.table.tenantId, String(ctx.table._id), 'addOrder', { ...body, requestId }, catalog, { name:'Cliente QR', origin:'guest', visitorId, visitToken:body.visitToken, config:ctx.config });
   const order = result.service.orders.find(x => x.requestId === requestId && x.origin === 'guest' && x.visitorId === visitorId);
   await ctx.db.collection('restaurant_events').updateOne({ _id:new ObjectId(order.id), tenantId:ctx.table.tenantId }, { $setOnInsert:{ tableId:ctx.table._id, tableLabel:ctx.table.label, visitorId, type:'order', status:'pending', items:order.items, total:order.totalCents / 100, note:order.note, createdAt:order.createdAt, updatedAt:new Date(), serviceId:result.service.id } }, { upsert:true });
-  return { id:order.id, total:order.totalCents / 100 };
+  return { id:order.id, total:order.totalCents / 100, status:order.status };
 }
 
 function mountOperations(app, { getDb, auth, menu, tableContext, allowRequest }) {
@@ -129,7 +139,7 @@ function mountOperations(app, { getDb, auth, menu, tableContext, allowRequest })
       db.collection('restaurant_events').find({ tenantId:tenant, status:'pending' }).sort({ createdAt:1 }).limit(300).toArray(),
       menu(db, tenant), db.collection('restaurant_service_history').find({ tenantId:tenant }).sort({ 'service.closedAt':-1 }).limit(20).toArray(),
     ]);
-    res.set('Cache-Control', 'no-store').json({ features:settings(config), catalog, tables:tables.map(table => ({ ...view(table), pending:events.filter(x => String(x.tableId) === String(table._id) && x.type !== 'order').map(x => ({ id:String(x._id), type:x.type, createdAt:x.createdAt })), legacyOrders:events.filter(x => String(x.tableId) === String(table._id) && x.type === 'order' && !x.serviceId).map(x => ({ id:String(x._id), total:x.total, items:x.items, note:x.note })) })), history:history.map(x => ({ id:x._id, tableLabel:x.tableLabel, closedAt:x.service.closedAt, totalCents:x.totalCents, paidCents:x.paidCents })) });
+    res.set('Cache-Control', 'no-store').json({ features:settings(config), catalog, tables:tables.map(table => ({ ...view(table), pending:events.filter(x => String(x.tableId) === String(table._id) && x.type !== 'order' && (!x.serviceId || x.serviceId===table.service?.id && table.service.status!=='closed')).map(x => ({ id:String(x._id), type:x.type, createdAt:x.createdAt })), legacyOrders:events.filter(x => String(x.tableId) === String(table._id) && x.type === 'order' && !x.serviceId).map(x => ({ id:String(x._id), total:x.total, items:x.items, note:x.note })) })), history:history.map(x => ({ id:x._id, tableLabel:x.tableLabel, closedAt:x.service.closedAt, totalCents:x.totalCents, paidCents:x.paidCents })) });
   }));
   app.post('/api/resto/operations/:id', json, route(async (req, res) => {
     const { db, tenant, config } = await context(req), { action, revision, ...payload } = req.body || {};
@@ -159,12 +169,19 @@ function mountOperations(app, { getDb, auth, menu, tableContext, allowRequest })
     }
     res.json({ ok:true, table:result });
   }));
+  app.post('/api/public/resto/:tenant/:token/visit', json, route(async(req,res)=>{
+    const ctx=await tableContext(clean(req.params.tenant,40).toUpperCase(),clean(req.params.token,32));
+    if(!ctx) fail('Mesa no disponible.',404);
+    if(!allowRequest('visit:'+ctx.table.token,10,60000)) fail('Demasiados intentos. Esperá un minuto.',429);
+    res.set('Cache-Control','no-store').json(await joinVisit(ctx,req.body || {}));
+  }));
   app.get('/api/public/resto/:tenant/:token/account', route(async (req, res) => {
     const ctx = await tableContext(clean(req.params.tenant, 40).toUpperCase(), clean(req.params.token, 32));
     if (!ctx) fail('Mesa no disponible.', 404);
     if (!settings(ctx.config).orderTracking) fail('Seguimiento deshabilitado.', 403);
     const visitorId = clean(req.query.visitorId, 36), service = ctx.table.service;
     if (!/^[a-f0-9-]{36}$/.test(visitorId)) fail('Sesión inválida.');
+    validateVisit(ctx.table,visitorId,req.headers['x-restaurant-visit'],ctx.config);
     const ownOrders = (service?.orders || []).filter(x => x.visitorId === visitorId).map(x => ({ id:x.id, items:x.items, status:x.status, totalCents:x.totalCents, note:x.note }));
     res.set('Cache-Control', 'no-store').json({ orders:ownOrders, closed:service?.status === 'closed', ...(ownOrders.length ? totals(service) : {}) });
   }));

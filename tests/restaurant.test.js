@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.163 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.169 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -42,18 +42,24 @@ test('mesa QR carga la carta y registra un pedido con precio del servidor', asyn
     assert.equal((await fetch(`${base}/api/resto/summary?tenant=OTRO`).then(r => r.json())).tenant, 'RES');
     role = 'superadmin';
     const visitorId = '12345678-1234-4123-8123-123456789abc';
-    const response = await fetch(`${base}/api/public/resto/RES/${token}/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'order', visitorId, items: [{ id: String(inserted.insertedId), quantity: 2, unitPrice: 1 }] }) });
+    const {mutateTable}=require('../restaurant_operations');
+    const {joinVisit}=require('../restaurant_visit');
+    const row=await db.collection('restaurant_tables').findOne({token});
+    const opened=await mutateTable(db,'RES',String(row._id),'open',{},[],{name:'test',origin:'operator'});
+    for(const type of ['call','bill','order'])assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/events`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type,visitorId,items:[{id:String(inserted.insertedId),quantity:1}]})})).status,403);
+    const visit=await joinVisit({db,table:await db.collection('restaurant_tables').findOne({_id:row._id}),config:{}},{visitorId,code:opened.service.visitCode});
+    const response = await fetch(`${base}/api/public/resto/RES/${token}/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'order', visitorId, visitToken:visit.token, items: [{ id: String(inserted.insertedId), quantity: 2, unitPrice: 1 }] }) });
     assert.equal(response.status, 201);
     assert.equal((await response.json()).total, 2400);
-    assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/visitors`, { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ visitorId, browserNotifications:true }) })).status, 200);
+    assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/visitors`, { method:'POST', headers:{ 'content-type':'application/json','x-restaurant-visit':visit.token }, body:JSON.stringify({ visitorId, browserNotifications:true }) })).status, 200);
     const firstTable = (await fetch(`${base}/api/resto/tables?tenant=RES`).then(r => r.json())).tables[0];
     assert.equal(firstTable.visitors, 1);
     const notice = await fetch(`${base}/api/resto/tables/${firstTable.id}/notifications?tenant=RES`, { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ title:'Tu pedido', body:'Está listo' }) });
     assert.equal(notice.status, 201);
     assert.equal((await notice.json()).recipients, 1);
-    const guestMessages = await fetch(`${base}/api/public/resto/RES/${token}/notifications?visitorId=${visitorId}`).then(r => r.json());
+    const guestMessages = await fetch(`${base}/api/public/resto/RES/${token}/notifications?visitorId=${visitorId}`,{headers:{'x-restaurant-visit':visit.token}}).then(r => r.json());
     assert.equal(guestMessages.notifications[0].body, 'Está listo');
-    assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/notifications?visitorId=${visitorId}&after=${guestMessages.notifications[0].id}`).then(r => r.json())).notifications.length, 0);
+    assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/notifications?visitorId=${visitorId}&after=${guestMessages.notifications[0].id}`,{headers:{'x-restaurant-visit':visit.token}}).then(r => r.json())).notifications.length, 0);
     assert.equal((await fetch(`${base}/api/resto/orders-config?tenant=RES`, { method:'PUT', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ enabled:false }) })).status, 410);
     await db.collection('tenant_config').updateOne({_id:'RES'},{$set:{restaurant_orders_enabled:false}});
     assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/menu`).then(r => r.json())).ordersEnabled, false);
@@ -61,11 +67,13 @@ test('mesa QR carga la carta y registra un pedido con precio del servidor', asyn
     const events = await fetch(`${base}/api/resto/events`).then(r => r.json());
     assert.equal(events.events[0].tableLabel, '1');
     assert.equal(events.events[0].items[0].unitPrice, 1200);
+    await mutateTable(db,'RES',String(row._id),'orderStatus',{orderId:String(events.events[0]._id),status:'received'},[],{name:'test',origin:'operator'});
+    await db.collection('restaurant_tables').updateOne({_id:row._id},{$unset:{'service.guestGrants.0.lastActionAt':''}});
     const done = await fetch(`${base}/api/resto/events/${events.events[0]._id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ status: 'done' }) });
     assert.equal(done.status, 200);
-    assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/notifications?visitorId=${visitorId}&after=${guestMessages.notifications[0].id}`).then(r => r.json())).notifications[0].title, 'Actualización de tu mesa');
+    assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/notifications?visitorId=${visitorId}&after=${guestMessages.notifications[0].id}`,{headers:{'x-restaurant-visit':visit.token}}).then(r => r.json())).notifications[0].title, 'Actualización de tu mesa');
     assert.equal((await fetch(`${base}/api/resto/events`).then(r => r.json())).events.length, 0);
-    assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/events`, { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ type:'call' }) })).status, 201);
+    assert.equal((await fetch(`${base}/api/public/resto/RES/${token}/events`, { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ type:'call',visitorId,visitToken:visit.token }) })).status, 201);
     const table = await fetch(`${base}/api/resto/tables?tenant=RES`, { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify({ label:'2' }) });
     assert.equal(table.status, 201);
     assert.equal((await fetch(`${base}/api/resto/tables?tenant=RES`).then(r => r.json())).tables.length, 2);

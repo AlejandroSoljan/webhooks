@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.166 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.169 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -160,4 +160,22 @@ test('búsqueda y controles del menú conservan el pedido; navegación respeta f
   search.value='';search.dispatchEvent(new w.Event('input'));assert.match(d.querySelector('[data-feedback="p"]').textContent,/Agregado/);
   assert.equal(d.getElementById('aiShortcut').hidden,true);assert.equal(d.getElementById('orderCall').hidden,true);assert.equal(d.getElementById('orderBill').hidden,true);assert.equal([...d.querySelectorAll('[data-help-nav]')].every(el=>el.hidden),true);
   d.querySelector('[data-delete="p"]').click();assert.equal(d.getElementById('cartExtras').hidden,true);
+});
+
+test('código de visita: cancelar no envía, vincular conserva carrito y manda credencial',async t=>{
+ const dom=new JSDOM(renderRestaurantPage({tenant:'RES',token:'visit',name:'Resto',table:'1'}),{runScripts:'outside-only',url:'https://example.test'}),w=dom.window;
+ t.after(()=>w.close());w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
+ const sent=[];w.fetch=async(url,options)=>{
+  if(url.endsWith('/menu'))return {ok:true,json:async()=>({visitPolicy:{requireCode:true},features:{guestNotifications:false},items:[{id:'p',nombre:'Pasta',precio:500,disponible:true}]})};
+  if(url.endsWith('/visit')){assert.equal(JSON.parse(options.body).code,'123456');return {ok:true,json:async()=>({token:'credential'})};}
+  if(url.endsWith('/events')){sent.push(JSON.parse(options.body));return {ok:true,json:async()=>({id:'1',status:'awaiting_confirmation'})};}
+  return {ok:true,json:async()=>({orders:[]})};
+ };
+ w.eval(fs.readFileSync(path.join(__dirname,'../static/restaurant_menu.js'),'utf8'));await new Promise(r=>setTimeout(r,0));
+ const $=id=>w.document.getElementById(id);w.document.querySelector('[data-add]').click();
+ const cancelled=$('order').onclick();assert.equal($('visitDialog').open,true);$('visitCancel').click();await cancelled;
+ assert.equal(sent.length,0);assert.match($('cart').textContent,/Pasta/);
+ const order=$('order').onclick();$('visitCode').value='123456';
+ await $('visitForm').onsubmit({preventDefault(){},submitter:$('visitForm').querySelector('[type=submit]')});await order;
+ assert.equal(sent.length,1);assert.equal(sent[0].visitToken,'credential');assert.equal(sent[0].items[0].id,'p');assert.equal($('visitDialog').open,false);
 });

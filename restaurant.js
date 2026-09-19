@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.168 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.169 | Fecha: 2026-09-19
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
@@ -11,6 +11,7 @@ const { resolveOpenAiApiKey } = require('./ai_key_router');
 const { firebaseSender } = require('./customer_notifications');
 const { renderRestaurantPage } = require('./restaurant_public_page');
 const { validProductImageUrl } = require('./restaurant_image');
+const { validateVisit, policy } = require('./restaurant_visit');
 const { settings, addGuestOrder, mutateTable, mountOperations } = require('./restaurant_operations');
 
 const json = express.json({ limit: '64kb' });
@@ -55,6 +56,7 @@ async function menu(db, tenant) {
   return rows.map(x => ({ id: String(x._id), nombre: x.descripcion, categoria: x.tag || 'Carta', precio: Number(x.importe) || 0, observacion: x.observacion || '', imagen: validProductImageUrl(x.imagen || '') ? (x.imagen || '') : '', disponible: x.cantidad !== 0 }));
 }
 
+function publicVisit(ctx,req,res,visitorId){try{validateVisit(ctx.table,visitorId,req.headers['x-restaurant-visit'],ctx.config);return true;}catch(e){res.status(e.status || 403).json({error:e.message});return false;}}
 function mountRestaurant(app, auth) {
   mountOperations(app, { getDb, auth, menu, tableContext, allowRequest });
   app.get('/api/resto/domains', async (req, res) => {
@@ -93,7 +95,7 @@ function mountRestaurant(app, auth) {
     if (!ctx) return res.status(404).json({ error: 'mesa_no_disponible' });
     const features = settings(ctx.config);
     const items = (await menu(ctx.db, ctx.table.tenantId)).map(x => features.showImages ? x : { ...x, imagen:'' });
-    res.set('Cache-Control', 'no-store').json({ items, ordersEnabled: features.guestOrders, features });
+    res.set('Cache-Control', 'no-store').json({ items, ordersEnabled: features.guestOrders, features, visitPolicy:policy(ctx.config) });
   });
 
   app.post('/api/public/resto/:tenant/:token/visitors', json, async (req, res) => {
@@ -101,6 +103,7 @@ function mountRestaurant(app, auth) {
     if (!ctx) return res.status(404).json({ error: 'mesa_no_disponible' });
     const visitorId = clean(req.body?.visitorId, 36);
     if (!validVisitorId(visitorId) || !allowRequest(`visitor:${ctx.table.token}`, 180)) return res.status(400).json({ error: 'sesion_invalida' });
+    if(!publicVisit(ctx,req,res,visitorId)) return;
     const now = new Date();
     await ctx.db.collection('restaurant_visitors').updateOne({ tenantId: ctx.table.tenantId, tableId: ctx.table._id, visitorId }, { $set: { lastSeenAt: now, browserNotifications: req.body?.browserNotifications === true }, $setOnInsert: { createdAt: now } }, { upsert: true });
     res.json({ ok: true });
@@ -111,9 +114,10 @@ function mountRestaurant(app, auth) {
     if (!settings(ctx.config).guestNotifications) return res.json({ notifications:[] });
     const visitorId = clean(req.query.visitorId, 36), after = clean(req.query.after, 24);
     if (!validVisitorId(visitorId) || (after && !ObjectId.isValid(after))) return res.status(400).json({ error: 'sesion_invalida' });
+    if(!publicVisit(ctx,req,res,visitorId)) return;
     const visitor = await ctx.db.collection('restaurant_visitors').findOne({ tenantId: ctx.table.tenantId, tableId: ctx.table._id, visitorId });
     if (!visitor) return res.status(404).json({ error: 'sesion_no_registrada' });
-    const filter = { tenantId: ctx.table.tenantId, tableId: ctx.table._id, visitorId, ...(after ? { _id: { $gt: new ObjectId(after) } } : {}) };
+    const filter = { tenantId: ctx.table.tenantId, tableId: ctx.table._id, visitorId, createdAt:{$gte:new Date(ctx.table.service.visitStartedAt || ctx.table.service.openedAt)}, ...(after ? { _id: { $gt: new ObjectId(after) } } : {}) };
     const rows = await ctx.db.collection('restaurant_guest_notifications').find(filter).sort({ _id: 1 }).limit(20).toArray();
     res.set('Cache-Control', 'no-store').json({ notifications: rows.map(x => ({ id: String(x._id), title: x.title, body: x.body, createdAt: x.createdAt })) });
   });
@@ -134,12 +138,13 @@ function mountRestaurant(app, auth) {
         if (!event.pushAttemptedAt) void notifyOperatorDevices(ctx.db, event).catch(e => console.error('restaurant push', e.message));
         return res.status(201).json({ ok:true, ...order });
       }
+      const signal=await mutateTable(ctx.db,ctx.table.tenantId,String(ctx.table._id),'guestSignal',{type},[],{name:'Cliente QR',origin:'guest',visitorId:req.body?.visitorId,visitToken:req.body?.visitToken,config:ctx.config});
       const now = new Date();
-      const recent = await ctx.db.collection('restaurant_events').findOne({ tenantId: ctx.table.tenantId, tableId: ctx.table._id, type, status: 'pending', createdAt: { $gte: new Date(now - 30000) } });
+      const recent = await ctx.db.collection('restaurant_events').findOne({ tenantId: ctx.table.tenantId, tableId: ctx.table._id, type, serviceId:signal.service.id, status: 'pending', createdAt: { $gte: new Date(now - 30000) } });
       if (recent && type !== 'order') return res.json({ ok: true, id: String(recent._id) });
       const items = [], total = 0;
       const visitorId = validVisitorId(clean(req.body?.visitorId, 36)) ? clean(req.body.visitorId, 36) : '';
-      const event = { tenantId: ctx.table.tenantId, tableId: ctx.table._id, tableLabel: ctx.table.label, visitorId, type, status: 'pending', items, total, note: clean(req.body?.note, 500), createdAt: now, updatedAt: now };
+      const event = { tenantId: ctx.table.tenantId, tableId: ctx.table._id, tableLabel: ctx.table.label, visitorId, type, serviceId:signal.service.id, status: 'pending', items, total, note: clean(req.body?.note, 500), createdAt: now, updatedAt: now };
       const result = await ctx.db.collection('restaurant_events').insertOne(event);
       void notifyOperatorDevices(ctx.db, { ...event, _id: result.insertedId }).catch(e => console.error('restaurant push', e.message));
       res.status(201).json({ ok: true, id: String(result.insertedId), total });
@@ -253,14 +258,16 @@ function mountRestaurant(app, auth) {
     const tenant = auth.resolveTenantId(req, { envTenantId: process.env.TENANT_ID });
     const db = await getDb();
     const rows = await db.collection('restaurant_events').find({ tenantId: tenant, status: 'pending' }).sort({ createdAt: 1 }).limit(100).toArray();
-    res.set('Cache-Control', 'no-store').json({ events: rows.map(x => ({ ...x, _id: String(x._id), tableId: String(x.tableId) })) });
+    const activeTables=await db.collection('restaurant_tables').find({tenantId:tenant,active:true}).project({service:1}).toArray();
+    const visible=rows.filter(e=>!e.serviceId || activeTables.some(t=>String(t._id)===String(e.tableId) && t.service?.id===e.serviceId && t.service.status!=='closed'));
+    res.set('Cache-Control', 'no-store').json({ events: visible.map(x => ({ ...x, _id: String(x._id), tableId: String(x.tableId) })) });
   });
   app.patch('/api/resto/events/:id', json, async (req, res) => {
     const tenant = auth.resolveTenantId(req, { envTenantId: process.env.TENANT_ID });
     if (!ObjectId.isValid(req.params.id) || !['done','cancelled'].includes(req.body?.status)) return res.status(400).json({ error: 'solicitud_invalida' });
     const db = await getDb();
     const previous = await db.collection('restaurant_events').findOne({ _id:new ObjectId(req.params.id), tenantId:tenant, status:'pending' });
-    if (previous?.serviceId) {
+    if (previous?.serviceId && previous.type==='order') {
       try {
         await mutateTable(db, tenant, String(previous.tableId), 'orderStatus', { orderId:req.params.id, status:req.body.status === 'done' ? 'served' : 'cancelled', reason:req.body.reason || 'Cancelado desde pendientes' }, [], { name:clean(req.user?.username || req.user?.uid, 100), origin:'operator' });
       } catch (error) { return res.status(error.status || 500).json({ error:error.message }); }
