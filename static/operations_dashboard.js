@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.171 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.175 | Fecha: 2026-09-19
 (() => {
   const root = document.getElementById('operationsDashboard');
   if (!root) return;
@@ -24,7 +24,7 @@
     const max = Math.max(4, ...rows.flatMap(r => [r.sent, r.received]));
     const step = Math.max(1, Math.ceil(max / 4)), ceiling = step * 4;
     const x = i => left + i * (width-left-right) / Math.max(1, rows.length-1), y = v => baseline - v * (baseline-top) / ceiling;
-    const chart = svg('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': 'Mensajes enviados y recibidos por ' + (data.period === '7d' ? 'día' : 'hora'), class: 'opsLineChart' });
+    const chart = svg('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': 'Mensajes enviados y recibidos por ' + (['7d','month','30d'].includes(data.period) ? 'día' : 'hora'), class: 'opsLineChart' });
     for (let i=0;i<=4;i++) {
       const yy=y(i*step); chart.append(svg('line',{x1:left,y1:yy,x2:width-right,y2:yy,stroke:'#e8eff6'}));
       const t=svg('text',{x:left-10,y:yy+4,'text-anchor':'end'});t.textContent=number(i*step);chart.append(t);
@@ -98,14 +98,14 @@
   }
   function clear(){['opsMetrics','opsNotices','opsActivity','opsConnectionChart','opsAlerts','opsPending','opsQuick','opsSecondary','opsConnections'].forEach(id=>el(id).replaceChildren());el('opsShowAlerts').hidden=true;}
   async function load() {
-    const current=++sequence;request?.abort();request=new AbortController();const controller=request,timeout=setTimeout(()=>controller.abort(),15000);button.disabled=true;status.textContent='Consultando indicadores…';
+    const current=++sequence;request?.abort();request=new AbortController();const controller=request,timeout=setTimeout(()=>controller.abort(),20000);button.disabled=true;status.textContent='Consultando indicadores…';
     try{const params=new URLSearchParams({period:period.value});if(tenant?.value)params.set('tenant',tenant.value);const response=await fetch('/api/operations-dashboard?'+params,{signal:controller.signal,headers:{Accept:'application/json'}});if(!response.ok||response.redirected)throw new Error('unavailable');const data=await response.json();if(current===sequence)render(data);}
     catch{if(current===sequence){clear();status.textContent='No se pudo actualizar. Revisá tu conexión o sesión y volvé a intentar.';el('opsNotices').append(node('p',status.textContent,'opsNotice'));}}
     finally{clearTimeout(timeout);if(current===sequence)button.disabled=false;}
   }
   function changed(){clear();showAll=false;const url=new URL(location.href);if(tenant?.value)url.searchParams.set('tenant',tenant.value);else url.searchParams.delete('tenant');url.searchParams.set('period',period.value);history.replaceState(null,'',url.pathname+url.search);load();}
   async function init(){
-    const params=new URLSearchParams(location.search);if(['today','yesterday','7d'].includes(params.get('period')))period.value=params.get('period');
+    const params=new URLSearchParams(location.search);if(['today','yesterday','7d','month','30d'].includes(params.get('period')))period.value=params.get('period');
     if(tenant){try{const response=await fetch('/api/operations-dashboard/tenants',{signal:AbortSignal.timeout(10000)});if(!response.ok||response.redirected)throw new Error('tenants');const data=await response.json();data.tenants.forEach(t=>{const option=node('option',t.id+(t.name?' · '+t.name:''));option.value=t.id;tenant.append(option);});if(data.tenants.some(t=>t.id===params.get('tenant')))tenant.value=params.get('tenant');if(data.truncated)tenantsError='El selector muestra los primeros 2000 dominios.';}catch{tenantsError='No se pudo cargar el selector de dominios; se muestra la vista global.';}tenant.addEventListener('change',changed);}
     period.addEventListener('change',changed);button.addEventListener('click',load);el('opsShowAlerts').addEventListener('click',()=>{showAll=!showAll;if(currentData)renderAlerts(currentData,Object.fromEntries(currentData.metrics.map(m=>[m.key,m])));});load();setInterval(()=>{if(!document.hidden&&!button.disabled)load();},60000);
   }

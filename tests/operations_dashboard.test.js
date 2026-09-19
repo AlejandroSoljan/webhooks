@@ -33,6 +33,12 @@ test('periods use Argentina boundaries and reject arbitrary ranges', () => {
   assert.equal(dashboardRange('7d', now).fromDay, '2026-09-11');
   assert.equal(dashboardRange('7d', now).toDay, '2026-09-17');
   assert.throws(() => dashboardRange('all', now), { status: 400 });
+  assert.equal(dashboardRange('month', now).fromDay, '2026-09-01');
+  assert.equal(dashboardRange('month', now).toDay, '2026-09-17');
+  assert.equal(dashboardRange('30d', now).fromDay, '2026-08-19');
+  assert.equal(dashboardRange('30d', now).toDay, '2026-09-17');
+  assert.equal(dashboardRange('month', new Date('2026-03-01T02:00:00Z')).fromDay, '2026-02-01');
+  assert.equal(dashboardRange('30d', new Date('2024-03-01T03:00:00Z')).fromDay, '2024-02-01');
 });
 test('connection state uses heartbeat and policies, exposes no credentials', () => {
   const lock = { tenantId: 'NEA', numero: '123', state: 'online', lastSeenAt: new Date(+now - 60000), runtimeVersion: '4.04.55', desiredTag: 'v4.04.56', token: 'secret' };
@@ -73,6 +79,12 @@ test('production-shaped data: tenant isolation, dedupe, day, permissions and own
     assert.deepEqual(weekly.activity[5], { label: '16/09', sent: 1, received: 0 });
     assert.deepEqual(weekly.activity[6], { label: '17/09', sent: 1, received: 1 });
     assert.equal(weekly.metrics.find(m => m.key === 'sent').value, 2);
+    for (const [period, size] of [['month', 17], ['30d', 30]]) {
+      const longer = await loadDashboard(db, { user, tenant: 'NEA', now, messagePipeline, access: ['wweb'], period });
+      assert.deepEqual(longer.unavailable, []);
+      assert.equal(longer.activity.length, size);
+      assert.equal(longer.activity.reduce((n, r) => n + r.sent, 0), 2);
+    }
     assert.equal(data.sessions.length, 1); assert.equal(data.sessions[0].state, 'paused');
     assert.equal(JSON.stringify(data).includes('never'), false);
     const global = await loadDashboard(db, { user: { ...user, role: 'superadmin' }, tenant: '', access: ['leads'], now });
@@ -111,6 +123,8 @@ test('dashboard DOM renders real values safely and handles total failure', async
   const dom = new JSDOM(dashboardHtml(user), { url: 'https://asistobot.com.ar/app', runScripts: 'outside-only' });
   try {
     let fail = false;
+    assert.equal(dom.window.document.querySelector('#opsPeriod option[value="month"]').textContent, 'Mes corriente');
+    assert.equal(dom.window.document.querySelector('#opsPeriod option[value="30d"]').textContent, 'Últimos 30 días');
     dom.window.fetch = async () => { if (fail) throw new Error('offline'); return { ok: true, json: async () => ({ metrics: [{ key: 'sent', label: '<img src=x>', value: 7, detail: 'Registrados', href: '/admin/wweb' }], sessions: [], unavailable: [], generatedAt: now.toISOString() }) }; };
     dom.window.eval(fs.readFileSync(require.resolve('../static/operations_dashboard.js'), 'utf8'));
     await new Promise(resolve => setTimeout(resolve, 30));
