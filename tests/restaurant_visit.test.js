@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.170 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.173 | Fecha: 2026-09-19
 const test=require('node:test'),assert=require('node:assert/strict');
 const {MongoMemoryServer}=require('mongodb-memory-server');
 const {MongoClient,ObjectId}=require('mongodb');
@@ -81,4 +81,22 @@ test('escaneo visible en mesa libre, aprobación individual, bloqueo y cierre si
  await act('open');assert.equal((await scanVisit(await ctx(),other)).status,'approved','automático solo con mesa abierta');
  assert.equal((await scanVisit(await ctx(),body)).status,'ended','el viejo celular no se rehabilita solo');
  await act('blockDevice',{deviceId:pending.id});assert.equal((await scanVisit(await ctx(),other)).status,'blocked','automático respeta bloqueo');
+});
+
+test('habilitación grupal abre la mesa una vez y rechaza bloqueados sin aprobación parcial',async t=>{
+ const {scanVisit}=require('../restaurant_visit');const mongo=await MongoMemoryServer.create(),client=await MongoClient.connect(mongo.getUri()),db=client.db('bulk_devices');t.after(async()=>{await client.close();await mongo.stop();});
+ const id=new ObjectId();await db.collection('restaurant_tables').insertOne({_id:id,tenantId:'RES',active:true,label:'1'});
+ const ctx=async()=>({db,config:{},table:await db.collection('restaurant_tables').findOne({_id:id})});
+ const actor={name:'Operador',origin:'operator',config:{}};
+ const phones=['a','b','c'].map(c=>({visitorId:c.repeat(8)+'-'+c.repeat(4)+'-4'+c.repeat(3)+'-8'+c.repeat(3)+'-'+c.repeat(12),deviceToken:c.repeat(64)}));
+ const rows=[];for(const phone of phones)rows.push(await scanVisit(await ctx(),phone));
+ await mutateTable(db,'RES',String(id),'blockDevice',{deviceId:rows[2].id},[],actor,0);
+ await assert.rejects(mutateTable(db,'RES',String(id),'approveDevices',{deviceIds:rows.map(r=>r.id)},[],actor,1),e=>e.status===409);
+ assert.equal((await ctx()).table.service,undefined);
+ const approved=await mutateTable(db,'RES',String(id),'approveDevices',{deviceIds:rows.slice(0,2).map(r=>r.id)},[],actor,1);
+ assert.equal(approved.service.status,'occupied');assert.equal(approved.revision,2);
+ for(const phone of phones.slice(0,2))assert.equal((await scanVisit(await ctx(),phone)).status,'approved');
+ assert.equal((await scanVisit(await ctx(),phones[2])).status,'blocked');
+ await mutateTable(db,'RES',String(id),'close',{},[],actor,2);
+ for(const phone of phones.slice(0,2))assert.equal((await scanVisit(await ctx(),phone)).status,'ended');
 });

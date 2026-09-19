@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.170 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.173 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -76,6 +76,6 @@ test('mesa libre muestra celulares escaneados y permite abrirla habilitando uno'
  w.setInterval=()=>{};const sent=[];
  w.fetch=async(url,options)=>{if(options?.body){sent.push(JSON.parse(options.body));return{ok:true,json:async()=>({ok:true})};}return{ok:true,json:async()=>({features:{},history:[],catalog:[],tables:[{id:'t',label:'9',revision:0,service:null,totalCents:0,paidCents:0,balanceCents:0,pending:[],legacyOrders:[],devices:[{id:'device',name:'Ana',status:'pending',online:true}]}]})};};
  w.eval(fs.readFileSync(path.join(__dirname,'../static/restaurant_operations.js'),'utf8'));await new Promise(r=>setTimeout(r,0));w.document.querySelector('[data-select-table]').click();
- assert.match(w.document.querySelector('#opsDetail').textContent,/Ana/);assert.doesNotMatch(w.document.querySelector('#opsDetail').textContent,/Código de visita/);
- const button=w.document.querySelector('[data-approve-device]');assert.match(button.textContent,/Abrir mesa y habilitar/);button.click();await new Promise(r=>setTimeout(r,0));assert.deepEqual(sent[0],{action:'approveDevice',revision:0,deviceId:'device'});
+ assert.match(w.document.querySelector('#opsDetail').textContent,/QR activos: 1/);assert.equal(w.document.querySelector('#opsApproveAll').disabled,false);assert.match(w.document.querySelector('#opsDetail').textContent,/Ana/);assert.doesNotMatch(w.document.querySelector('#opsDetail').textContent,/Código de visita/);
+ const button=w.document.querySelector('[data-approve-device]');assert.match(button.textContent,/Abrir mesa y habilitar/);button.click();await new Promise(r=>setTimeout(r,0));assert.deepEqual(sent[0],{action:'approveDevice',revision:0,deviceId:'device'});w.document.querySelector('#opsApproveAll').click();await new Promise(r=>setTimeout(r,0));assert.deepEqual(sent[1],{action:'approveDevices',revision:0,deviceIds:['device']});
 });

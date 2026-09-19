@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.170 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.173 | Fecha: 2026-09-19
 const crypto = require('crypto');
 const { ObjectId } = require('mongodb');
 const express = require('express');
@@ -50,7 +50,7 @@ async function mutateTable(db, tenant, tableId, action, payload, catalog, actor,
     if (action === 'addOrder' && service?.orders?.some(x => x.requestId === payload.requestId && x.origin === actor.origin && x.visitorId === (actor.visitorId || ''))) return view(table);
     if(grant && grant.lastActionAt && Date.now()-new Date(grant.lastActionAt).getTime()<3000) fail('Esperá unos segundos antes de enviar otra solicitud.',429);
     if (!service || service.status === 'closed') {
-      if (!['open', 'addOrder', 'approveDevice'].includes(action)) fail('Abrí la mesa para realizar esta acción.', 409);
+      if (!['open', 'addOrder', 'approveDevice', 'approveDevices'].includes(action)) fail('Abrí la mesa para realizar esta acción.', 409);
       if (service) await db.collection('restaurant_service_history').updateOne({ _id:service.id, tenantId:tenant }, { $setOnInsert:{ tableId:table._id, tableLabel:table.label, service, ...totals(service) } }, { upsert:true });
       service = { id:crypto.randomUUID(), status:'occupied', guests:1, waiter:'', note:'', openedAt:now, guestGrants:[], orders:[], payments:[], audit:[] };
     }
@@ -61,6 +61,20 @@ async function mutateTable(db, tenant, tableId, action, payload, catalog, actor,
       if (payload.waiter !== undefined) service.waiter = clean(payload.waiter, 80);
       if (payload.note !== undefined) service.note = clean(payload.note);
       if (payload.status !== undefined) { if (!['occupied', 'reserved', 'bill_requested'].includes(payload.status)) fail('Estado inválido.'); service.status = payload.status; }
+    } else if(action==='approveDevices') {
+      const ids=Array.isArray(payload.deviceIds)?[...new Set(payload.deviceIds.map(id=>clean(id,64)))]:[];
+      if(!ids.length || ids.length>100) fail('Seleccioná entre 1 y 100 celulares pendientes.');
+      const devices=await db.collection('restaurant_access_requests').find({_id:{$in:ids},tenantId:tenant,tableId:table._id}).toArray();
+      if(devices.length!==ids.length) fail('La lista de celulares cambió. Actualizá la mesa.',409);
+      const expiresAt=new Date(new Date(service.visitStartedAt || service.openedAt).getTime()+policy(actor.config).hours*3600000);
+      if(expiresAt<=now) fail('La visita venció. Renovala antes de habilitar celulares.',409);
+      for(const device of devices){
+        if(device.status!=='pending' || Date.now()-new Date(device.lastSeenAt).getTime()>90000 || (device.visitId && !device.waitingForOpen && device.visitId!==table.service?.id) || (table.service?.closedAt && new Date(device.requestedAt)<=new Date(table.service.closedAt))) fail('La lista cambió: hay celulares desconectados, bloqueados o de otra visita. Actualizá la mesa.',409);
+      }
+      const visitors=new Set(devices.map(d=>d.visitorId));
+      service.guestGrants=(service.guestGrants || []).filter(g=>!visitors.has(g.visitorId) && new Date(g.expiresAt)>now);
+      if(service.guestGrants.length+devices.length>100) fail('Máximo de celulares alcanzado.');
+      service.guestGrants.push(...devices.map(d=>({visitorId:d.visitorId,hash:d.hash,expiresAt,approvedBy:actor.name,deviceId:d._id})));
     } else if (['approveDevice','blockDevice'].includes(action)) {
       const device=await db.collection('restaurant_access_requests').findOne({_id:clean(payload.deviceId,64),tenantId:tenant,tableId:table._id});
       if(!device) fail('Celular no encontrado.',404);
@@ -124,6 +138,7 @@ async function mutateTable(db, tenant, tableId, action, payload, catalog, actor,
     const filter = { _id:table._id, tenantId:tenant, ...(table.opsRevision === undefined ? { opsRevision:{ $exists:false } } : { opsRevision:revision }) };
     const result = await db.collection('restaurant_tables').updateOne(filter, { $set:{ service, updatedAt:now }, $inc:{ opsRevision:1 } });
     if(result.modifiedCount){
+      if(action==='approveDevices') await db.collection('restaurant_access_requests').updateMany({_id:{$in:payload.deviceIds},tenantId:tenant,tableId:table._id},{$set:{status:'approved',serviceId:service.id,visitId:service.id,waitingForOpen:false,updatedAt:now}});
       if(['approveDevice','blockDevice'].includes(action)) await db.collection('restaurant_access_requests').updateOne({_id:payload.deviceId,tenantId:tenant,tableId:table._id},{$set:{status:action==='approveDevice'?'approved':'blocked',serviceId:service.id,visitId:service.id,waitingForOpen:false,updatedAt:now}});
       return view({ ...table, service, opsRevision:revision + 1 });
     }

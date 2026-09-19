@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.170 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.173 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -173,7 +173,7 @@ test('celular espera habilitación sin código y conserva el pedido hasta que el
   return {ok:true,json:async()=>({orders:[]})};
  };
  w.eval(fs.readFileSync(path.join(__dirname,'../static/restaurant_menu.js'),'utf8'));await new Promise(r=>setTimeout(r,0));
- const $=id=>w.document.getElementById(id);assert.equal($('visitCode'),null);assert.match($('deviceState').textContent,/Esperando habilitación/);
+ const $=id=>w.document.getElementById(id);assert.equal($('visitCode'),null);assert.match($('deviceState').textContent,/Esperando habilitación para realizar pedidos/);assert.equal($('deviceHint').hidden,true);assert.doesNotMatch(w.document.body.textContent,/El personal ya ve/);
  w.document.querySelector('[data-add]').click();await $('order').onclick();assert.equal(sent.length,0);assert.match($('cart').textContent,/Pasta/);
  approved=true;await $('order').onclick();assert.equal(sent.length,1);assert.match(sent[0].visitToken,/^[a-f0-9]{64}$/);assert.match($('deviceState').textContent,/habilitado/);
 });
