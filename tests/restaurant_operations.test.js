@@ -1,0 +1,91 @@
+// Asisto | Version: 5.00.160 | Fecha: 2026-09-18
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { MongoMemoryServer } = require('mongodb-memory-server');
+const { MongoClient, ObjectId } = require('mongodb');
+const express = require('express');
+const { mutateTable, addGuestOrder, mountOperations, settings } = require('../restaurant_operations');
+
+test('cuenta de mesa: precios, concurrencia, pagos parciales, anulaciones y nueva visita', async () => {
+  const mongo = await MongoMemoryServer.create(), client = await MongoClient.connect(mongo.getUri());
+  const db = client.db('restaurant_ops_test'), id = new ObjectId(), productId = new ObjectId().toString();
+  const catalog = [{ id:productId, nombre:'Pasta', precio:1200.25, disponible:true }];
+  const actor = { name:'Operario', origin:'operator' };
+  await db.collection('restaurant_tables').insertOne({ _id:id, tenantId:'RES', active:true, label:'1' });
+  let current;
+  const act = async (action, payload = {}) => current = await mutateTable(db,'RES',String(id),action,payload,catalog,actor,current?.revision || 0);
+  try {
+    await act('open', { guests:3, waiter:'Ana' });
+    await assert.rejects(mutateTable(db,'OTRO',String(id),'open',{},catalog,actor,0), e => e.status === 404);
+    await assert.rejects(mutateTable(db,'RES',String(id),'details',{ guests:5 },catalog,actor,0), e => e.status === 409);
+    await act('addOrder', { requestId:'op1', items:[{ id:productId, quantity:2, unitPrice:1 }] });
+    assert.equal(current.totalCents,240050);
+    const orderId = current.service.orders[0].id;
+    catalog[0].precio = 9999;
+    await act('editOrder', { orderId, items:[{ id:productId, quantity:3 }] });
+    assert.equal(current.totalCents,360075, 'precio original conservado al editar');
+    await act('payment', { amount:1000, method:'cash' });
+    assert.equal(current.paymentStatus,'partial');
+    assert.equal(current.balanceCents,260075);
+    await assert.rejects(act('editOrder',{ orderId, items:[{ id:productId, quantity:1 }] }), e => e.status === 409);
+    await assert.rejects(act('payment',{ amount:99999, method:'cash' }), /saldo/);
+    await assert.rejects(act('close'), e => e.status === 409);
+    await assert.rejects(act('voidPayment',{ paymentId:current.service.payments[0].id }), /motivo/);
+    await act('voidPayment',{ paymentId:current.service.payments[0].id, reason:'Carga equivocada' });
+    assert.equal(current.paidCents,0);
+    await act('payment',{ amount:3600.75, method:'mercadopago_manual' });
+    assert.equal(current.paymentStatus,'paid');
+    assert.equal(current.service.payments[1].verification,'manual');
+    await assert.rejects(act('close'), /entregados/);
+    await act('orderStatus',{ orderId, status:'served' });
+    await act('close');
+    const oldServiceId = current.service.id;
+    await act('open',{ guests:2 });
+    assert.notEqual(current.service.id,oldServiceId);
+    assert.equal(current.totalCents,0);
+    assert.equal(await db.collection('restaurant_service_history').countDocuments({ tenantId:'RES', _id:oldServiceId }),1);
+    const revision = current.revision;
+    const race = await Promise.allSettled([1,2].map(n => mutateTable(db,'RES',String(id),'details',{ guests:n },catalog,actor,revision)));
+    assert.equal(race.filter(x => x.status === 'fulfilled').length,1);
+    assert.equal(race.filter(x => x.status === 'rejected')[0].reason.status,409);
+    const visitorId = '12345678-1234-4123-8123-123456789abc';
+    const ctx = { db, table:await db.collection('restaurant_tables').findOne({ _id:id }) };
+    const payload = { requestId:'same-request', visitorId, items:[{ id:productId,quantity:1 }] };
+    const [first,second] = await Promise.all([addGuestOrder(ctx,payload,catalog),addGuestOrder(ctx,payload,catalog)]);
+    assert.equal(first.id,second.id);
+    assert.equal((await db.collection('restaurant_tables').findOne({ _id:id })).service.orders.length,1);
+    assert.equal(await db.collection('restaurant_events').countDocuments({ tableId:id }),1);
+  } finally { await client.close(); await mongo.stop(); }
+});
+
+test('operaciones HTTP: configuración por dominio, cuenta privada y pedido anterior', async () => {
+  const mongo = await MongoMemoryServer.create(), client = await MongoClient.connect(mongo.getUri());
+  const db = client.db('restaurant_ops_http'), id = new ObjectId(), productId = new ObjectId().toString();
+  const token = 'a'.repeat(32), visitorId = '12345678-1234-4123-8123-123456789abc';
+  await db.collection('tenant_config').insertMany([{ _id:'RES', restaurant_enabled:true },{ _id:'OTRO', restaurant_enabled:true }]);
+  await db.collection('restaurant_tables').insertOne({ _id:id, tenantId:'RES', active:true, label:'1', token });
+  const legacy = await db.collection('restaurant_events').insertOne({ tenantId:'RES', tableId:id, type:'order', status:'pending', visitorId, items:[{ productId, nombre:'Pasta', quantity:2, unitPrice:100 }], total:200 });
+  const app = express();
+  app.use((req,res,next) => { req.user = { username:'Prueba', tenantId:'RES' }; next(); });
+  mountOperations(app,{ getDb:async()=>db, auth:{ resolveTenantId:req=>req.user.tenantId }, menu:async()=>[{ id:productId, nombre:'Pasta', precio:999, disponible:true }], allowRequest:()=>true, tableContext:async(tenant,tok)=>({ db, config:await db.collection('tenant_config').findOne({ _id:tenant }), table:await db.collection('restaurant_tables').findOne({ tenantId:tenant, token:tok }) }) });
+  const server = await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const request = (path,body,method='POST')=>fetch(base+path,{ method,headers:{'content-type':'application/json'},body:JSON.stringify(body) });
+  try {
+    let response = await request('/api/resto/settings?tenant=OTRO',{ features:{ manualPayments:false, showImages:false, guestOrders:false } },'PUT');
+    assert.equal(response.status,200);
+    assert.equal(settings(await db.collection('tenant_config').findOne({ _id:'RES' })).showImages,false);
+    assert.equal(settings(await db.collection('tenant_config').findOne({ _id:'OTRO' })).showImages,true);
+    assert.equal((await request('/api/resto/settings',{ features:{ __bad:true } },'PUT')).status,400);
+    response = await request(`/api/resto/operations/${id}`,{ action:'importLegacy', revision:0, eventId:String(legacy.insertedId) });
+    assert.equal(response.status,200);
+    const table = (await response.json()).table;
+    assert.equal(table.totalCents,20000, 'importa al precio anterior');
+    assert.equal((await request(`/api/resto/operations/${id}`,{ action:'payment', revision:1, amount:200,method:'cash' })).status,403);
+    assert.equal((await request(`/api/resto/operations/${id}`,{ action:'importLegacy', revision:1, eventId:String(legacy.insertedId) })).status,409);
+    const account = await fetch(`${base}/api/public/resto/RES/${token}/account?visitorId=${visitorId}`).then(r=>r.json());
+    assert.equal(account.orders.length,1); assert.equal(account.balanceCents,20000);
+    const other = await fetch(`${base}/api/public/resto/RES/${token}/account?visitorId=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`).then(r=>r.json());
+    assert.equal(other.orders.length,0); assert.equal(other.totalCents,undefined);
+  } finally { await new Promise(resolve=>server.close(resolve)); await client.close(); await mongo.stop(); }
+});

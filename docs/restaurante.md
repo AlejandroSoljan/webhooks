@@ -1,5 +1,39 @@
-<!-- Asisto | Version: 5.00.159 | Fecha: 2026-09-18 -->
+<!-- Asisto | Version: 5.00.160 | Fecha: 2026-09-18 -->
 # Restaurante RES
+
+## Control de sala (5.00.160)
+
+En **Restaurante → Control de mesas**, seleccioná una mesa para abrir una cuenta,
+asignar comensales/mozo, reservar, cargar o editar pedidos y avanzar sus estados:
+recibido, en preparación, listo y entregado. Los llamados y pedidos de cuenta se
+atienden desde el detalle. La vista de cocina reúne comandas pendientes.
+
+Los pagos son registros manuales de dinero recibido: efectivo, tarjeta,
+transferencia o Mercado Pago confirmado por el operario. Admiten pagos parciales;
+anular exige motivo. No se editan ni cancelan pedidos mientras haya pagos vigentes.
+Para cerrar la mesa, el saldo debe ser cero y los pedidos entregados/cancelados.
+La siguiente apertura archiva la visita anterior en `restaurant_service_history`.
+Cada actualización compara `opsRevision` para evitar sobrescribir cambios de otro
+operario. Ante un conflicto, usar **Actualizar detalle** y revisar antes de guardar.
+Los pedidos QR usan una clave de reintento para evitar duplicados en la misma visita.
+
+Las comandas anteriores a esta versión se ofrecen para **Incorporar a esta cuenta**;
+conservan su precio original y no se agregan automáticamente a una visita nueva.
+
+En **Funciones habilitadas para esta empresa**, el dominio seleccionado configura
+fotos, pedidos por celular, IA de cliente/operario, llamar al mozo, pedir cuenta,
+Mercado Pago, avisos, seguimiento, cocina, pagos manuales y división de cuenta.
+Se guardan en `tenant_config.restaurant_features`; pedidos conserva compatibilidad
+con `restaurant_orders_enabled`. Por defecto están habilitadas. Desactivar fotos
+conserva los archivos cargados. Desactivar pedidos no impide cargarlos en el panel.
+
+Mercado Pago es un botón informativo: no abre checkout, no cobra y no cambia el
+estado de pago. La integración de cobro y validación automática queda pendiente.
+El cliente puede seguir sus pedidos y ver el saldo total de su mesa cuando tiene
+un pedido asociado a su sesión. Dividir cuenta solo calcula un importe estimado.
+El asistente del operario usa carta y estado de sala; no modifica pedidos ni pagos.
+Los avisos y el seguimiento se actualizan cada 10 segundos con la carta abierta;
+no se implementó entrega push al cliente con la página cerrada.
 
 El dominio `RES` usa los artículos de `products` como carta. `descripcion` es el nombre, `tag` la categoría, `importe` el precio y `observacion` contiene ingredientes, alérgenos y variantes conocidas. Los artículos inactivos no se muestran. `cantidad: 0` los muestra como no disponibles. Los precios y recetas iniciales son ejemplos y deben revisarse antes de publicar los QR.
 
@@ -11,7 +45,7 @@ El panel está en `/ui/resto?tenant=RES` para superadministradores y en `/ui/res
 
 En el panel, cada empresa puede desactivar la toma de pedidos desde el celular (`restaurant_orders_enabled=false`). La carta oculta la cesta y los botones de agregar; el servidor rechaza eventos `order`. Llamar al mozo, pedir la cuenta y consultar la carta siguen disponibles. El valor ausente conserva los pedidos habilitados.
 
-Cada carta abierta registra una sesión anónima aleatoria en `restaurant_visitors`. El panel muestra cuántas sesiones están activas por mesa y permite enviarles un mensaje. La carta consulta `restaurant_guest_notifications` cada 15 segundos, muestra los mensajes en pantalla y, si el cliente acepta el permiso, usa notificaciones del navegador mientras la página está abierta. Al marcar una solicitud como atendida, la sesión que la creó recibe también un aviso. Estas sesiones no son la app de turnos ni requieren identificar al cliente. El envío en segundo plano con la página cerrada requiere una integración web push o app móvil adicional.
+Cada carta abierta registra una sesión anónima aleatoria en `restaurant_visitors`. El panel muestra cuántas sesiones están activas por mesa y permite enviarles un mensaje. La carta consulta `restaurant_guest_notifications` cada 10 segundos, muestra los mensajes en pantalla y, si el cliente acepta el permiso, usa notificaciones del navegador mientras la página está abierta. Al marcar una solicitud como atendida, la sesión que la creó recibe también un aviso. Estas sesiones no son la app de turnos ni requieren identificar al cliente. El envío en segundo plano con la página cerrada requiere una integración web push o app móvil adicional.
 
 La descarga imprimible de todos los QR activos está en `/api/resto/qr-pdf?tenant=RES`. Requiere iniciar sesión con permiso `resto`. El PDF se genera con los tokens de mesas de la base que usa la aplicación publicada.
 

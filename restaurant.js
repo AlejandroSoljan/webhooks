@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.159 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.160 | Fecha: 2026-09-18
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
@@ -11,6 +11,7 @@ const { resolveOpenAiApiKey } = require('./ai_key_router');
 const { firebaseSender } = require('./customer_notifications');
 const { renderRestaurantPage } = require('./restaurant_public_page');
 const { validProductImageUrl } = require('./restaurant_image');
+const { settings, addGuestOrder, mutateTable, mountOperations } = require('./restaurant_operations');
 
 const json = express.json({ limit: '64kb' });
 const clean = (v, max = 500) => String(v ?? '').trim().slice(0, max);
@@ -55,6 +56,7 @@ async function menu(db, tenant) {
 }
 
 function mountRestaurant(app, auth) {
+  mountOperations(app, { getDb, auth, menu, tableContext, allowRequest });
   app.get('/api/resto/domains', async (req, res) => {
     try {
       const db = await getDb();
@@ -110,7 +112,9 @@ function mountRestaurant(app, auth) {
   app.get('/api/public/resto/:tenant/:token/menu', async (req, res) => {
     const ctx = await tableContext(clean(req.params.tenant, 40).toUpperCase(), clean(req.params.token, 32));
     if (!ctx) return res.status(404).json({ error: 'mesa_no_disponible' });
-    res.set('Cache-Control', 'no-store').json({ items: await menu(ctx.db, ctx.table.tenantId), ordersEnabled: ctx.config.restaurant_orders_enabled !== false });
+    const features = settings(ctx.config);
+    const items = (await menu(ctx.db, ctx.table.tenantId)).map(x => features.showImages ? x : { ...x, imagen:'' });
+    res.set('Cache-Control', 'no-store').json({ items, ordersEnabled: features.guestOrders, features });
   });
 
   app.post('/api/public/resto/:tenant/:token/visitors', json, async (req, res) => {
@@ -125,6 +129,7 @@ function mountRestaurant(app, auth) {
   app.get('/api/public/resto/:tenant/:token/notifications', async (req, res) => {
     const ctx = await tableContext(clean(req.params.tenant, 40).toUpperCase(), clean(req.params.token, 32));
     if (!ctx) return res.status(404).json({ error: 'mesa_no_disponible' });
+    if (!settings(ctx.config).guestNotifications) return res.json({ notifications:[] });
     const visitorId = clean(req.query.visitorId, 36), after = clean(req.query.after, 24);
     if (!validVisitorId(visitorId) || (after && !ObjectId.isValid(after))) return res.status(400).json({ error: 'sesion_invalida' });
     const visitor = await ctx.db.collection('restaurant_visitors').findOne({ tenantId: ctx.table.tenantId, tableId: ctx.table._id, visitorId });
@@ -142,34 +147,31 @@ function mountRestaurant(app, auth) {
       const type = clean(req.body?.type, 20);
       if (!['call','bill','order'].includes(type)) return res.status(400).json({ error: 'tipo_invalido' });
       if (type === 'order' && ctx.config.restaurant_orders_enabled === false) return res.status(403).json({ error: 'pedidos_deshabilitados' });
+      const features = settings(ctx.config);
+      if ((type === 'call' && !features.callWaiter) || (type === 'bill' && !features.requestBill)) return res.status(403).json({ error:'Función deshabilitada por el restaurante.' });
+      if (type === 'order') {
+        const order = await addGuestOrder(ctx, req.body, await menu(ctx.db, ctx.table.tenantId));
+        const event = await ctx.db.collection('restaurant_events').findOne({ _id:new ObjectId(order.id), tenantId:ctx.table.tenantId });
+        if (!event.pushAttemptedAt) void notifyOperatorDevices(ctx.db, event).catch(e => console.error('restaurant push', e.message));
+        return res.status(201).json({ ok:true, ...order });
+      }
       const now = new Date();
       const recent = await ctx.db.collection('restaurant_events').findOne({ tenantId: ctx.table.tenantId, tableId: ctx.table._id, type, status: 'pending', createdAt: { $gte: new Date(now - 30000) } });
       if (recent && type !== 'order') return res.json({ ok: true, id: String(recent._id) });
-      let items = [], total = 0;
-      if (type === 'order') {
-        const raw = req.body?.items;
-        if (!Array.isArray(raw) || !raw.length || raw.length > 30) return res.status(400).json({ error: 'pedido_invalido' });
-        const catalog = await menu(ctx.db, ctx.table.tenantId);
-        for (const item of raw) {
-          const product = catalog.find(x => x.id === item.id && x.disponible);
-          const quantity = Number(item.quantity);
-          if (!product || !Number.isInteger(quantity) || quantity < 1 || quantity > 20) return res.status(400).json({ error: 'articulo_o_cantidad_invalida' });
-          items.push({ productId: product.id, nombre: product.nombre, quantity, unitPrice: product.precio });
-          total += product.precio * quantity;
-        }
-      }
+      const items = [], total = 0;
       const visitorId = validVisitorId(clean(req.body?.visitorId, 36)) ? clean(req.body.visitorId, 36) : '';
       const event = { tenantId: ctx.table.tenantId, tableId: ctx.table._id, tableLabel: ctx.table.label, visitorId, type, status: 'pending', items, total, note: clean(req.body?.note, 500), createdAt: now, updatedAt: now };
       const result = await ctx.db.collection('restaurant_events').insertOne(event);
       void notifyOperatorDevices(ctx.db, { ...event, _id: result.insertedId }).catch(e => console.error('restaurant push', e.message));
       res.status(201).json({ ok: true, id: String(result.insertedId), total });
-    } catch (e) { console.error('restaurant event', e); res.status(500).json({ error: 'error_interno' }); }
+    } catch (e) { console.error('restaurant event', e.message); res.status(e.status || 500).json({ error: e.status ? e.message : 'error_interno' }); }
   });
 
   app.post('/api/public/resto/:tenant/:token/ask', json, async (req, res) => {
     try {
       const ctx = await tableContext(clean(req.params.tenant, 40).toUpperCase(), clean(req.params.token, 32));
       if (!ctx) return res.status(404).json({ error: 'mesa_no_disponible' });
+      if (!settings(ctx.config).guestAi) return res.status(403).json({ error:'Las consultas de IA están deshabilitadas.' });
       if (!allowRequest(`ask:${ctx.table.token}`, 8)) return res.status(429).json({ error: 'demasiadas_consultas' });
       const question = clean(req.body?.question, 500);
       if (question.length < 3) return res.status(400).json({ error: 'consulta_requerida' });
@@ -199,6 +201,8 @@ function mountRestaurant(app, auth) {
     const tenant = adminTenant(req, auth), title = clean(req.body?.title, 80), body = clean(req.body?.body, 300);
     if (!validTenant(tenant) || !ObjectId.isValid(req.params.id) || !title || !body) return res.status(400).json({ error: 'solicitud_invalida' });
     const db = await getDb(), tableId = new ObjectId(req.params.id);
+    const config = await db.collection('tenant_config').findOne({ _id:tenant });
+    if (!settings(config || {}).guestNotifications) return res.status(403).json({ error:'Los avisos a clientes están deshabilitados.' });
     const table = await db.collection('restaurant_tables').findOne({ _id: tableId, tenantId: tenant, active: true });
     if (!table) return res.status(404).json({ error: 'mesa_no_disponible' });
     const visitors = await db.collection('restaurant_visitors').find({ tenantId: tenant, tableId, lastSeenAt: { $gte: new Date(Date.now() - 90000) } }).project({ visitorId: 1 }).limit(50).toArray();
@@ -276,9 +280,16 @@ function mountRestaurant(app, auth) {
     const tenant = auth.resolveTenantId(req, { envTenantId: process.env.TENANT_ID });
     if (!ObjectId.isValid(req.params.id) || !['done','cancelled'].includes(req.body?.status)) return res.status(400).json({ error: 'solicitud_invalida' });
     const db = await getDb();
+    const previous = await db.collection('restaurant_events').findOne({ _id:new ObjectId(req.params.id), tenantId:tenant, status:'pending' });
+    if (previous?.serviceId) {
+      try {
+        await mutateTable(db, tenant, String(previous.tableId), 'orderStatus', { orderId:req.params.id, status:req.body.status === 'done' ? 'served' : 'cancelled', reason:req.body.reason || 'Cancelado desde pendientes' }, [], { name:clean(req.user?.username || req.user?.uid, 100), origin:'operator' });
+      } catch (error) { return res.status(error.status || 500).json({ error:error.message }); }
+    }
     const event = await db.collection('restaurant_events').findOneAndUpdate({ _id: new ObjectId(req.params.id), tenantId: tenant, status: 'pending' }, { $set: { status: req.body.status, updatedAt: new Date() } }, { returnDocument: 'after' });
     if (!event) return res.status(404).json({ ok: false });
-    if (validVisitorId(event.visitorId || '')) {
+    const config = await db.collection('tenant_config').findOne({ _id:tenant });
+    if (validVisitorId(event.visitorId || '') && settings(config || {}).guestNotifications) {
       const body = req.body.status === 'cancelled' ? 'Tu solicitud fue cancelada. Consultá al personal si necesitás ayuda.' : ({ order: 'Tu pedido fue atendido por el restaurante.', call: 'El mozo está en camino.', bill: 'La cuenta está en camino.' }[event.type] || 'Tu solicitud fue atendida.');
       await db.collection('restaurant_guest_notifications').insertOne({ tenantId: tenant, tableId: event.tableId, visitorId: event.visitorId, title: 'Actualización de tu mesa', body, createdAt: new Date(), eventId: event._id });
     }
