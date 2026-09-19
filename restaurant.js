@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.163 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.166 | Fecha: 2026-09-19
 const express = require('express');
 const crypto = require('crypto');
 const path = require('path');
@@ -85,7 +85,7 @@ function mountRestaurant(app, auth) {
     const tenant = clean(req.params.tenant, 40).toUpperCase(), token = clean(req.params.token, 32);
     const ctx = await tableContext(tenant, token).catch(() => null);
     if (!ctx) return res.status(404).send('Mesa no disponible');
-    res.set('Cache-Control', 'no-store').type('html').send(renderRestaurantPage({ tenant, token, name: ctx.config.nom_emp || 'Restaurante', table: ctx.table.label, logoUrl: ctx.config.restaurant_logo_url }));
+    res.set('Cache-Control', 'no-store').type('html').send(renderRestaurantPage({ tenant, token, name: ctx.config.restaurant_display_name || ctx.config.nom_emp || 'Restaurante', tagline:ctx.config.restaurant_tagline ?? 'Cocina de encuentro', table: ctx.table.label, logoUrl: ctx.config.restaurant_logo_url }));
   });
 
   app.get('/api/public/resto/:tenant/:token/menu', async (req, res) => {

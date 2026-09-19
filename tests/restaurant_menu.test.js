@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.165 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.166 | Fecha: 2026-09-19
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -22,7 +22,7 @@ test('Mi pedido suma artículos, conserva el borrador al recargar y muestra pend
     w.eval(script);await new Promise(resolve=>setTimeout(resolve,0));return w;
   }
   const w=await start(),$=s=>w.document.querySelector(s);
-  $('[data-add="a"]').click();$('[data-add="b"]').click();$('[data-add="a"]').click();
+  $('[data-add="a"]').click();$('[data-add="b"]').click();$('[data-increase="a"]').click();
   $('#openAccount').click();
   assert.equal($('#cartDialog').open,true);
   assert.match($('#cart').textContent,/Agua × 2/);assert.match($('#cart').textContent,/Pasta × 1/);
@@ -149,4 +149,15 @@ test('enviar, reabrir y recargar conserva pedidos; nuevos artículos quedan sepa
   const saved=Object.fromEntries(Object.keys(w.sessionStorage).map(key=>[key,w.sessionStorage.getItem(key)]));offline=true;
   const w2=await start(saved);w2.document.getElementById("openAccount").click();await new Promise(r=>setTimeout(r,0));assert.match(w2.document.getElementById('sentOrders').textContent,/1 × Agua/);assert.match(w2.document.getElementById('syncStatus').textContent,/No pudimos actualizar/);assert.match(w2.document.getElementById('cart').textContent,/Agua × 1/);
   offline=false;orders[0].status='preparing';w2.document.getElementById('openAccount').click();await new Promise(r=>setTimeout(r,0));assert.match(w2.document.getElementById('sentOrders').textContent,/En preparación/);
+});
+
+test('búsqueda y controles del menú conservan el pedido; navegación respeta funciones del dominio',async t=>{
+  const w=new JSDOM(renderRestaurantPage({tenant:'RES',token:'search',name:'BRASA',table:'8'}),{runScripts:'outside-only',url:'https://example.test'}).window;t.after(()=>w.close());
+  w.fetch=async()=>({ok:true,json:async()=>({items:[{id:'a',nombre:'Agua',categoria:'Bebidas',precio:100,disponible:true},{id:'p',nombre:'Pasta',categoria:'Principales',precio:500,disponible:true}],features:{guestAi:false,guestNotifications:false,callWaiter:false,requestBill:false}})});
+  w.eval(fs.readFileSync(path.join(__dirname,'../static/restaurant_menu.js'),'utf8'));await new Promise(r=>setTimeout(r,0));
+  const d=w.document;d.querySelector('[data-add="p"]').click();assert.equal(d.querySelector('[data-increase="p"]')!==null,true);
+  const search=d.getElementById('menuSearch');search.value='agua';search.dispatchEvent(new w.Event('input'));assert.match(d.getElementById('menu').textContent,/Agua/);assert.doesNotMatch(d.getElementById('menu').textContent,/Pasta/);assert.match(d.getElementById('cart').textContent,/Pasta/);
+  search.value='';search.dispatchEvent(new w.Event('input'));assert.match(d.querySelector('[data-feedback="p"]').textContent,/Agregado/);
+  assert.equal(d.getElementById('aiShortcut').hidden,true);assert.equal(d.getElementById('orderCall').hidden,true);assert.equal(d.getElementById('orderBill').hidden,true);assert.equal([...d.querySelectorAll('[data-help-nav]')].every(el=>el.hidden),true);
+  d.querySelector('[data-delete="p"]').click();assert.equal(d.getElementById('cartExtras').hidden,true);
 });

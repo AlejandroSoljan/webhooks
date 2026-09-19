@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.163 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.166 | Fecha: 2026-09-19
 const featureFields = {
   showImages:'restaurant_show_images', guestOrders:'restaurant_orders_enabled',
   guestAi:'restaurant_guest_ai_enabled', callWaiter:'restaurant_call_waiter_enabled',
@@ -11,6 +11,8 @@ const labels = ['Mostrar fotos de los platos','Pedidos desde el celular','IA del
 const fields = [
   { name:'restaurant_enabled', value:false, help:'Habilita el módulo Restaurante para este dominio. Ausente: deshabilitado.' },
   ...Object.entries(featureFields).map(([feature,name],index)=>({ name,feature,value:true,help:labels[index]+'. Valores: true / false. Por defecto: true.' })),
+  { name:'restaurant_display_name', value:'',help:'Nombre visible en la carta. Vacío: nombre de la empresa.' },
+  { name:'restaurant_tagline', value:'Cocina de encuentro',help:'Frase breve debajo del nombre de la carta.' },
   { name:'restaurant_logo_url', value:'',help:'Logo de este restaurante: URL HTTPS pública o ruta /static/. Vacío: logo de ejemplo.' },
   { name:'restaurant_ai_model', value:'gpt-4o-mini',help:'Modelo de IA para consultas de carta y asistencia al operario.' },
 ];

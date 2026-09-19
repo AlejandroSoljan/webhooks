@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.165 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.166 | Fecha: 2026-09-19
 (() => {
   const base = document.body.dataset.base;
   const $ = id => document.getElementById(id);
@@ -9,10 +9,17 @@
   const draftKey = `asistoRestoDraft:${base}`;
   let accountSequence = 0, sentOrders = [];
   const receiptKey = `asistoRestoReceipts:${base}`;
+  function thumbnail(item) {
+    return item?.imagen && features.showImages !== false ? `<button class="photo-button" data-dish="${esc(item.id)}" aria-label="Ampliar foto de ${esc(item.nombre)}"><img class="item-image" src="${esc(item.imagen)}" alt="${esc(item.nombre)}" loading="lazy">${magnifier}</button>` : '';
+  }
   function renderSent() {
-    const states = { received:"Recibido", preparing:"En preparación", ready:"Listo para entregar", served:"Entregado", cancelled:"Cancelado" };
-    $("sentSection").hidden = !sentOrders.length;
-    $("sentOrders").innerHTML = sentOrders.map(order => `<article class="guest-message"><strong>✓ ${features.orderTracking === false ? "Enviado" : (states[order.status] || "Enviado")}</strong><p>${order.items.map(item => `${item.quantity} × ${esc(item.nombre)}`).join("<br>")}</p><p>${price(order.totalCents / 100)}</p></article>`).join("");
+    const states = { received:'Recibido', preparing:'En preparación', ready:'Listo para entregar', served:'Entregado', cancelled:'Cancelado' };
+    $('sentSection').hidden = !sentOrders.length;
+    $('sentOrders').innerHTML = sentOrders.map(order => {
+      const step = {received:0,preparing:1,ready:1,served:2}[order.status];
+      const tracking = features.orderTracking !== false;
+      return `<article class="sent-card"><header><svg class="chef-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 17h10v4H7zM6 15a5 5 0 0 1-1-10 7 7 0 0 1 14 0 5 5 0 0 1-1 10v1H6z"/></svg><strong>${tracking ? states[order.status] || 'Enviado' : 'Enviado al restaurante'}</strong><small>${order.status === 'preparing' ? 'Estamos preparando tu pedido.' : order.status === 'ready' ? 'Tu pedido está listo para entregar.' : ''}</small></header>${tracking && step !== undefined ? `<ol class="progress" aria-label="Estado del pedido">${['Recibido','Preparando','Entregado'].map((label,index)=>`<li class="${index<=step?'done':''} ${index===step?'current':''}"><span>${index<step?'✓':''}</span>${label}</li>`).join('')}</ol>` : ''}${order.items.map(line=>{const item=items.find(i=>i.id===line.productId || i.id===line.id || i.nombre===line.nombre);return `<div class="order-row">${thumbnail(item)}<div class="row-copy"><strong>${esc(line.nombre)}</strong><small>${esc(item?.observacion || '').slice(0,100)}</small><span class="sent-quantity"><span aria-hidden="true">× ${line.quantity}</span><span class="sr-only">${line.quantity} × ${esc(line.nombre)}</span></span></div>${Number.isFinite(line.unitPrice) ? `<b>${price(line.unitPrice*line.quantity)}</b>` : ''}</div>`;}).join('')}<p class="cart-total">Total <strong>${price(order.totalCents/100)}</strong></p></article>`;
+    }).join('');
     renderCart();
   }
   function saveReceipts() { writeStorage("sessionStorage", receiptKey, JSON.stringify({orders:sentOrders,at:Date.now()})); }
@@ -55,23 +62,36 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => $('toast').classList.remove('visible'), 3000);
   }
+  let dishReturnPanel = '';
   function openPanel(id) {
+    if(id === 'dishDialog') dishReturnPanel = document.querySelector('dialog[open]')?.id || '';
     if (id === 'cartDialog') { renderCart(); pollAccount(); }
     document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
     $(id).showModal();
+    $(id).scrollTop=0;
   }
+  $('dishDialog').addEventListener('close',()=>{if(dishReturnPanel){const id=dishReturnPanel;dishReturnPanel='';openPanel(id);}});
   document.querySelectorAll('dialog').forEach(dialog => {
     dialog.addEventListener('click', event => { if (event.target === dialog) { const rect = dialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dialog.close(); } });
   });
   const magnifier = '<span class="zoom-hint" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg></span>';
   function renderMenu() {
+    const query = ($('menuSearch').value || '').toLocaleLowerCase('es').trim();
+    const openGroups = new Set([...document.querySelectorAll('#menu details[open]')].map(el=>el.dataset.category));
     const groups = new Map();
     for (const item of items) {
+      if (query && ![item.nombre,item.categoria,item.observacion].join(' ').toLocaleLowerCase('es').includes(query)) continue;
       const category = String(item.categoria || 'Carta').trim() || 'Carta';
       if (!groups.has(category)) groups.set(category, []);
       groups.get(category).push(item);
     }
-    $('menu').innerHTML = [...groups].map(([category, products]) => `<details><summary><span class="category-label">${esc(category)}<small>${products.length} ${products.length === 1 ? 'opción' : 'opciones'}</small></span><span class="chevron" aria-hidden="true">⌄</span></summary><div class="category-items">${products.map(item => `<article class="item"><button class="dish-open" data-dish="${esc(item.id)}" aria-label="Ver ingredientes de ${esc(item.nombre)}"><strong>${esc(item.nombre)}</strong><span class="price">${price(item.precio)}</span><small>Ver ingredientes${item.disponible ? '' : ' · No disponible'}</small></button>${item.imagen ? `<button class="photo-button" data-dish="${esc(item.id)}" aria-label="Ampliar foto de ${esc(item.nombre)}"><img class="item-image" src="${esc(item.imagen)}" alt="${esc(item.nombre)}" loading="lazy">${magnifier}</button>` : ''}${ordersEnabled ? `<div class="item-add"><span class="item-feedback" data-feedback="${esc(item.id)}" aria-live="polite"></span><button data-add="${esc(item.id)}" ${item.disponible ? '' : 'disabled'}>${item.disponible ? '+ Agregar' : 'No disponible'}</button></div>` : ''}</article>`).join('')}</div></details>`).join('') || '<p>No hay artículos disponibles en la carta.</p>';
+    const categoryIcon = category => {
+      const c=category.toLowerCase();
+      const path=c.includes('bebida')?'<path d="M7 3h10l-1 18H8ZM8 8h8M14 3l2-2"/>':c.includes('postre')?'<path d="M4 11h16v10H4ZM4 16h16M7 11V7h10v4M12 7V3"/>':c.includes('entrada')?'<path d="M6 3v7M3 3v5a3 3 0 0 0 6 0V3M6 11v10M17 3c-4 6-4 10 1 10V3M18 13v8"/>':'<path d="M3 18h18M4 16a8 8 0 0 1 16 0ZM12 6V3M10 3h4"/>';
+      return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+path+'</svg>';
+    };
+    $('menu').innerHTML = [...groups].map(([category, products]) => `<details data-category="${esc(category)}" ${query || openGroups.has(category)?'open':''}><summary>${categoryIcon(category)}<span class="category-label">${esc(category)}</span><span class="chevron" aria-hidden="true">⌄</span></summary><div class="category-items">${products.map(item => `<article class="item">${thumbnail(item)}<button class="dish-open" data-dish="${esc(item.id)}" aria-label="Ver ingredientes de ${esc(item.nombre)}"><strong>${esc(item.nombre)}</strong><small>${esc(item.observacion || 'Ver ingredientes')}${item.disponible?'':' · No disponible'}</small></button><div class="item-side"><span class="price">${price(item.precio)}</span>${ordersEnabled ? `<div data-menu-controls="${esc(item.id)}"></div><span class="item-feedback" data-feedback="${esc(item.id)}" aria-live="polite"></span>` : ''}</div></article>`).join('')}</div></details>`).join('') || '<p class="empty-state">No encontramos platos con esa búsqueda.</p>';
+    renderCart();
   }
   function renderCart() {
     const count = Object.values(cart).reduce((sum, quantity) => sum + quantity, 0);
@@ -80,17 +100,22 @@
     const total = Object.entries(cart).reduce((sum,[id,quantity]) => sum + (items.find(item => item.id === id)?.precio || 0) * quantity, 0);
     $('cartBar').hidden = !ordersEnabled || (!count && !sentOrders.length);
     $('cartExtras').hidden = !count;
-    $('cartBarLabel').textContent = count ? `Enviar ${count} artículo(s)` : 'Ver mi pedido';
-    if (ordersEnabled) $('openAccount').textContent = count ? `Mi pedido (${count})` : 'Mi pedido';
+    $('cartBarLabel').textContent = count ? `Ver mi pedido · ${count}` : 'Ver mi pedido';
+    document.querySelectorAll('.nav-badge').forEach(el=>{el.hidden=!count;el.textContent=count;});
     $('cartTotal').textContent = price(total);
     $('cartBarTotal').textContent = count ? price(total) : 'Enviado ✓';
     document.querySelectorAll('[data-feedback]').forEach(element => { const quantity = cart[element.dataset.feedback] || 0; element.textContent = quantity ? `Agregado ✓ (${quantity})` : ''; });
+    document.querySelectorAll('[data-menu-controls]').forEach(el=>{const id=el.dataset.menuControls,item=items.find(i=>i.id===id),quantity=cart[id]||0;el.innerHTML=quantity?`<span class="quantity-controls"><button data-remove="${esc(id)}" aria-label="Quitar uno de ${esc(item.nombre)}">−</button><span>${quantity}</span><button data-increase="${esc(id)}" aria-label="Agregar uno de ${esc(item.nombre)}">+</button></span>`:`<button class="add-button" data-add="${esc(id)}" ${item.disponible?'':'disabled'}>${item.disponible?'+ Agregar':'No disponible'}</button>`;});
     $('cart').innerHTML = Object.entries(cart).map(([id, quantity]) => {
       const item = items.find(product => product.id === id);
-      return item ? `<p><span>${esc(item.nombre)} × ${quantity} · ${price(item.precio * quantity)}</span><span class="quantity-controls"><button data-remove="${esc(id)}" aria-label="Quitar uno de ${esc(item.nombre)}">−</button><button data-increase="${esc(id)}" aria-label="Agregar uno de ${esc(item.nombre)}">+</button></span></p>` : '';
-    }).join('') || (sentOrders.length ? '' : '<p>Elegí platos de la carta y agregalos a tu pedido.</p>');
+      return item ? `<article class="order-row">${thumbnail(item)}<div class="row-copy"><strong>${esc(item.nombre)}<span class="sr-only"> × ${quantity}</span></strong><small>${esc(item.observacion || '').slice(0,110)}</small><span class="quantity-controls"><button data-remove="${esc(id)}" aria-label="Quitar uno de ${esc(item.nombre)}">−</button><span>${quantity}</span><button data-increase="${esc(id)}" aria-label="Agregar uno de ${esc(item.nombre)}">+</button></span></div><div class="row-end"><b>${price(item.precio * quantity)}</b><button class="delete-item" data-delete="${esc(id)}" aria-label="Eliminar ${esc(item.nombre)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7"/></svg></button></div></article>` : '';
+    }).join('') || (sentOrders.length ? '' : '<p class="empty-state">Elegí platos de la carta y agregalos a tu pedido.</p>');
   }
+  $('menuSearch').oninput = renderMenu;
   document.addEventListener('click', event => {
+    if (event.target.closest('[data-home]')) { document.querySelectorAll('dialog[open]').forEach(dialog=>dialog.close()); return; }
+    const deletion=event.target.closest('[data-delete]');
+    if(deletion && !sending){delete cart[deletion.dataset.delete];renderCart();saveDraft();return;}
     const opener = event.target.closest('[data-open]');
     if (opener) openPanel(opener.dataset.open);
     if (event.target.closest('[data-close]')) event.target.closest('dialog').close();
@@ -135,12 +160,13 @@
     try {
       await post('/events', { type, visitorId });
       $('msg').textContent = type === 'call' ? 'Avisamos al mozo.' : 'Pediste la cuenta.';
-      $('helpStatus').textContent = $('msg').textContent;
+      $('helpStatus').textContent = $('orderHelpStatus').textContent = $('msg').textContent;
       notify($('msg').textContent);
-    } catch (error) { $('helpStatus').textContent = error.message; }
+    } catch (error) { $('helpStatus').textContent = $('orderHelpStatus').textContent = error.message; }
   }
   $('call').onclick = () => action('call');
-  $('bill').onclick = () => action('bill');
+  $('bill').onclick = $('orderBill').onclick = () => action('bill');
+  $('orderCall').onclick = () => action('call');
   $('order').onclick = async () => {
     if (sending) return;
     try {
@@ -151,7 +177,7 @@
       saveDraft();
       sending = true; $('order').disabled = true; $('order').textContent = 'Enviando…';
       const receipt = await post('/events', { ...payload, requestId:orderRequestId });
-      sentOrders.push({id:receipt.id || orderRequestId,status:'received',items:payload.items.map(line => ({nombre:items.find(item=>item.id===line.id).nombre,quantity:line.quantity})),totalCents:Math.round(payload.items.reduce((sum,line)=>sum+items.find(item=>item.id===line.id).precio*line.quantity,0)*100)});
+      sentOrders.push({id:receipt.id || orderRequestId,status:'received',items:payload.items.map(line => ({productId:line.id,nombre:items.find(item=>item.id===line.id).nombre,unitPrice:items.find(item=>item.id===line.id).precio,quantity:line.quantity})),totalCents:Math.round(payload.items.reduce((sum,line)=>sum+items.find(item=>item.id===line.id).precio*line.quantity,0)*100)});
       saveReceipts(); renderSent();
       requestFingerprint = ''; orderRequestId = '';
       cart = {};
@@ -159,12 +185,14 @@
       renderCart();
       saveDraft();
       document.querySelectorAll('[data-feedback]').forEach(element => { element.textContent = ''; });
-      $('msg').textContent = 'Pedido enviado al restaurante.';
+      $('msg').textContent = '';
+      $('cartDialog').scrollTop = 0;
       notify('Pedido enviado al restaurante');
       await pollAccount();
+      $('cartDialog').scrollTop = 0;
 
     } catch (error) { $('msg').textContent = error.message; }
-    finally { sending = false; $('order').disabled = false; $('order').textContent = 'Confirmar y enviar pedido'; }
+    finally { sending = false; $('order').disabled = false; $('order').innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m22 2-7 20-4-9-9-4ZM22 2 11 13"/></svg>Enviar al restaurante'; }
   };
   $('ask').onclick = async () => {
     try {
@@ -192,7 +220,7 @@
         card.append(heading, body);
         $('guestMessages').prepend(card);
         $('noticeCount').textContent = `(${$('guestMessages').children.length})`;
-        $('openHelp').textContent = 'Necesito algo · Nuevo aviso';
+        $('openHelp').setAttribute('aria-label','Mozo · Nuevo aviso');
         notify(notification.body);
         if ('Notification' in window && Notification.permission === 'granted') {
           try { new Notification(notification.title, { body: notification.body, tag: notification.id }); } catch (_) {}
@@ -253,7 +281,12 @@
     $('openHelp').hidden = ['callWaiter','requestBill','guestAi','guestNotifications'].every(flag => features[flag] === false);
     $('openAccount').hidden = !ordersEnabled && features.orderTracking === false && features.mercadoPago === false;
     $('openAccount').dataset.open = 'cartDialog';
-    $('openAccount').textContent = ordersEnabled ? 'Mi pedido' : 'Mi cuenta';
+    document.querySelectorAll('[data-nav-order-label]').forEach(el=>el.textContent=ordersEnabled?'Mi pedido':'Mi cuenta');
+    document.querySelectorAll('[data-order-nav]').forEach(el=>el.hidden=$('openAccount').hidden);
+    document.querySelectorAll('[data-help-nav]').forEach(el=>el.hidden=$('openHelp').hidden);
+    $('aiShortcut').hidden=features.guestAi===false;
+    $('orderCall').hidden=features.callWaiter===false;
+    $('orderBill').hidden=features.requestBill===false;
     try { const saved = JSON.parse(readStorage('sessionStorage', receiptKey) || 'null'); if (saved && Date.now()-saved.at < 2*60*60*1000 && Array.isArray(saved.orders)) sentOrders=saved.orders; } catch (_) {}
     renderSent();
     restoreDraft(); renderMenu(); renderCart(); refreshGuest();
