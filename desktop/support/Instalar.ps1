@@ -1,7 +1,7 @@
-# Asisto | Version: 5.00.140 | Fecha: 2026-09-09
+# Asisto | Version: 5.00.178 | Fecha: 2026-09-20
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:LOCALAPPDATA 'AsistoSupport'
-$release = Join-Path $root 'app-5.00.140'
+$release = Join-Path $root 'app-5.00.178'
 $arch = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
 $runtime = Join-Path $root "node-v24.12.0-win-$arch"
 $node = Join-Path $runtime 'node.exe'
@@ -65,6 +65,25 @@ $link = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Vincular Asisto.lnk
 if (Test-Path -LiteralPath $link) {
   $shortcut = $shell.CreateShortcut($link)
   if ($shortcut.Arguments -like '*AsistoSupport*Vincular.ps1*') { Remove-Item -LiteralPath $link }
+}
+if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'Extension')) {
+  $extension = Join-Path $root 'Extension'
+  New-Item -ItemType Directory -Path $extension -Force | Out-Null
+  Copy-Item -Path (Join-Path $PSScriptRoot 'Extension\*') -Destination $extension -Recurse -Force
+  $extensionLink = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Extension Asisto.lnk'
+  $shortcut = $shell.CreateShortcut($extensionLink)
+  $shortcut.TargetPath = 'explorer.exe'
+  $shortcut.Arguments = "`"$extension`""
+  $shortcut.WorkingDirectory = $extension
+  $shortcut.Description = 'Carpeta permanente de la extensión Asisto para Chrome'
+  $shortcut.Save()
+  Write-Host ''
+  Write-Host 'EXTENSION PREPARADA:' -ForegroundColor Green
+  Write-Host "1. En Chrome abre chrome://extensions"
+  Write-Host '2. Activa Modo de desarrollador y pulsa Cargar descomprimida.'
+  Write-Host "3. Selecciona esta carpeta: $extension"
+  Write-Host 'Si ya estaba cargada, pulsa Recargar en la extension Asisto.'
+  Write-Host 'Tambien quedo el acceso directo Extension Asisto en el Escritorio.'
 }
 Write-Host 'Instalado. Ingresa a la web con tu usuario y usa Escanear mi QR > Vincular / reconectar.'
 Write-Host 'El agente no abre el navegador automaticamente.'
