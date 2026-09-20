@@ -6,7 +6,7 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const { MongoClient } = require('mongodb');
 const express = require('express');
 const { JSDOM } = require('jsdom');
-const { argentinaDay, dashboardRange, dashboardScope, sessionRow, loadDashboard, mountOperationsDashboard, dashboardHtml } = require('../operations_dashboard');
+const { argentinaDay, dashboardRange, dashboardScope, sessionRow, dashboardFeatures, loadDashboard, mountOperationsDashboard, dashboardHtml } = require('../operations_dashboard');
 const now = new Date('2026-09-18T02:00:00Z');
 const user = { uid: 'u1', role: 'admin', tenantId: 'NEA' };
 const source = fs.readFileSync(require.resolve('../auth_ui'), 'utf8');
@@ -47,11 +47,18 @@ test('connection state uses heartbeat and policies, exposes no credentials', () 
   assert.equal(sessionRow(lock, { disabled: true }, 'WhatsApp', now).state, 'disabled');
   assert.equal(sessionRow({ ...lock, runtimeVersion: '4.04.56' }, {}, 'WhatsApp', now).versionMismatch, false);
 });
+test('selected tenant capabilities classify only configured services', () => {
+  assert.deepEqual(dashboardFeatures({ numero: '1', habilitar_bot: true, habilitar_consulta_mensajes: false }, {}, []), { classified: true, whatsapp: true, telegram: false, orders: false, followup: false, leads: false, tasks: false, tokens: false });
+  const enabled = dashboardFeatures({ services: ['Tareas WhatsApp', 'Ayuda Manager'] }, {}, []);
+  assert.equal(enabled.tasks, true); assert.equal(enabled.tokens, true); assert.equal(enabled.orders, false);
+});
 test('production-shaped data: tenant isolation, dedupe, day, permissions and own tasks', async () => {
   const mongo = await MongoMemoryServer.create();
   const client = await new MongoClient(mongo.getUri(), { serverApi: { version: '1', strict: true } }).connect();
   try {
     const db = client.db('dashboard_test');
+    await db.collection('tenant_config').insertOne({ _id: 'NEA', services: ['Pedidos', 'Conversacional', 'Tareas WhatsApp', 'Lead'] });
+    await db.collection('settings').insertOne({ _id: 'behavior:NEA', bot_mode: 'conversacional', lead_capture_enabled: true });
     await db.collection('wa_wweb_message_log').insertMany([
       { tenantId: 'NEA', numero: '1', contact: '2', body: 'Factura', direction: 'out', at: now },
       { tenantId: 'NEA', numero: '1', contact: '2', body: 'Factura', direction: 'out', at: new Date(+now + 1000), messageId: 'modern-id' },
@@ -95,7 +102,7 @@ test('production-shaped data: tenant isolation, dedupe, day, permissions and own
   } finally { await client.close(); await mongo.stop(); }
 });
 test('failed query is unavailable, not zero; sibling queries still work', async () => {
-  const db = { collection: name => ({ countDocuments: async () => { if (name === 'orders') throw new Error('timeout'); return 2; } }) };
+  const db = { collection: name => ({ findOne: async query => name === 'tenant_config' ? null : {}, find: () => ({ limit: () => ({ toArray: async () => [] }) }), countDocuments: async () => { if (name === 'orders') throw new Error('timeout'); return 2; } }) };
   const data = await loadDashboard(db, { user, tenant: 'NEA', access: ['admin', 'leads'], now });
   assert.deepEqual(data.unavailable, ['orders']);
   assert.equal(data.metrics.length, 1); assert.equal(data.metrics[0].value, 2);
@@ -105,7 +112,11 @@ test('API rejects anonymous access, confines ordinary users and coalesces refres
   app.use((req, res, next) => { req.user = req.headers['x-test-anonymous'] ? null : user; next(); });
   mountOperationsDashboard(app, {
     requireAuth: (req, res, next) => req.user ? next() : res.sendStatus(401), getAccess: () => ['leads'],
-    getDb: async () => ({ collection: () => ({ countDocuments: async query => { calls++; assert.equal(query.tenantId, 'NEA'); return 3; } }) }), messagePipeline,
+    getDb: async () => ({ collection: name => ({
+      findOne: async () => name === 'tenant_config' ? null : {},
+      find: () => ({ limit: () => ({ toArray: async () => [] }) }),
+      countDocuments: async query => { calls++; assert.equal(query.tenantId, 'NEA'); return 3; },
+    }) }), messagePipeline,
   });
   const server = await new Promise(resolve => { const s = app.listen(0, '127.0.0.1', () => resolve(s)); });
   try {

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.175 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.179 | Fecha: 2026-09-20
 // Read-only operational overview. No configuration writes or message sends.
 const { effectiveSessionState } = require('./wweb_phone_access');
 
@@ -38,12 +38,51 @@ function sessionRow(lock, policy, channel, now) {
   };
 }
 
+function configBool(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  return ['1', 'true', 'yes', 'si', 'sí', 'on', 'habilitado', 'enabled'].includes(String(value).trim().toLowerCase());
+}
+
+function dashboardFeatures(config, behavior = {}, channels = []) {
+  // A missing tenant document is treated as legacy/unclassified, so an old
+  // installation never loses information merely because its config is incomplete.
+  if (!config) return { classified: false, whatsapp: true, telegram: true, orders: true, followup: true, leads: true, tokens: true, tasks: true };
+  const extras = config.services ?? config.servicios ?? config.servicios_habilitados ?? config.serviciosHabilitados ?? [];
+  const serviceNames = (Array.isArray(extras) ? extras : []).filter(item => typeof item !== 'object' || item === null || configBool(item.enabled ?? item.habilitado, true)).map(item => String(typeof item === 'string' ? item : item?.name ?? item?.nombre ?? item?.code ?? item?.codigo ?? '').trim().toLowerCase());
+  const has = (...words) => serviceNames.some(name => words.some(word => name.includes(word)));
+  const bot = configBool(config.habilitar_bot ?? config.habilitarBot ?? config.bot_habilitado ?? config.enableBot, true);
+  const apiMessages = configBool(config.habilitar_consulta_mensajes ?? config.habilitarConsultaMensajes ?? config.consulta_api_mensajes_habilitado ?? config.envio_mensajes_habilitado, false);
+  const channelModes = channels.filter(row => String(row.channelType || 'whatsapp').toLowerCase() === 'whatsapp').map(row => String(row.wwebBotLogicMode ?? row.wweb_bot_logic_mode ?? row.botLogicMode ?? row.bot_logic_mode ?? '').toLowerCase()).filter(Boolean);
+  const logicMode = channelModes[0] || String(config.wweb_bot_logic_mode ?? config.wwebBotLogicMode ?? config.bot_logic_mode ?? config.botLogicMode ?? 'api').toLowerCase();
+  const botMode = String(behavior.bot_mode ?? behavior.botMode ?? 'pedidos').toLowerCase();
+  const chatgpt = bot && logicMode === 'chatgpt';
+  const orders = has('pedido', 'venta', 'restaurante') || (chatgpt && botMode !== 'conversacional');
+  const followup = has('conversacional', 'seguimiento') || (chatgpt && botMode === 'conversacional');
+  const help = configBool(config.help_enabled ?? config.ayuda_enabled ?? config.ayudaManagerEnabled, false) || has('ayuda');
+  const tasks = has('tarea');
+  const leads = followup && (configBool(behavior.lead_capture_enabled ?? behavior.leadCaptureEnabled, false) || has('lead'));
+  return {
+    classified: true,
+    whatsapp: !!(config.numero || bot || apiMessages || help || tasks || channels.some(row => String(row.channelType || 'whatsapp').toLowerCase() === 'whatsapp')),
+    telegram: !!(config.telegram_bot_username || channels.some(row => String(row.channelType || '').toLowerCase() === 'telegram')),
+    orders, followup, leads, tasks,
+    tokens: orders || followup || help || tasks || has('ia', 'qr web', 'lectura qr'),
+  };
+}
+
 async function loadDashboard(db, { user, tenant, access, messagePipeline, now = new Date(), period = 'today' }) {
   const { day, start, end, fromDay, toDay } = dashboardRange(period, now);
   const daily = ['7d', 'month', '30d'].includes(period);
   const filter = tenant ? { tenantId: tenant } : {};
   const today = { $gte: start, $lt: end };
   const metrics = [], sessions = [], unavailable = [];
+  const [tenantConfig, behavior, tenantChannels] = tenant ? await Promise.all([
+    db.collection('tenant_config').findOne({ _id: tenant }, { maxTimeMS: 1800 }),
+    db.collection('settings').findOne({ _id: 'behavior:' + tenant }, { projection: { bot_mode: 1, botMode: 1, lead_capture_enabled: 1, leadCaptureEnabled: 1 }, maxTimeMS: 1800 }),
+    db.collection('tenant_channels').find({ tenantId: tenant }, { projection: { channelType: 1, wwebBotLogicMode: 1, wweb_bot_logic_mode: 1, botLogicMode: 1, bot_logic_mode: 1 }, maxTimeMS: 1800 }).limit(100).toArray(),
+  ]) : [null, {}, []];
+  const features = tenant ? dashboardFeatures(tenantConfig, behavior || {}, tenantChannels) : { classified: false, whatsapp: true, telegram: true, orders: true, followup: true, leads: true, tokens: true, tasks: true };
   const jobs = [];
   let activity = null;
   let sessionsTruncated = false;
@@ -57,7 +96,7 @@ async function loadDashboard(db, { user, tenant, access, messagePipeline, now = 
     metrics.push({ key, label, detail, href, value: await fn() });
   });
   const scopedLink = path => path + (tenant ? '?tenant=' + encodeURIComponent(tenant) + '&tenantId=' + encodeURIComponent(tenant) : '');
-  if (access.includes('wweb')) {
+  if (access.includes('wweb') && features.whatsapp) {
     run('whatsapp', async () => {
       const projection = { tenantId: 1, numero: 1, state: 1, lastSeenAt: 1, updatedAt: 1, runtimeVersion: 1, currentVersion: 1, desiredTag: 1, targetTag: 1 };
       const [locks, policies] = await Promise.all([
@@ -89,7 +128,7 @@ async function loadDashboard(db, { user, tenant, access, messagePipeline, now = 
       return rows[0]?.n || 0;
     });
   }
-  if (access.includes('telegram')) run('telegram', async () => {
+  if (access.includes('telegram') && features.telegram) run('telegram', async () => {
     const [locks, policies] = await Promise.all([
       db.collection('tg_locks').find(filter, { projection: { tenantId: 1, numero: 1, state: 1, lastSeenAt: 1 }, ...opts }).limit(501).toArray(),
       db.collection('tg_bot_policies').find(filter, { projection: { tenantId: 1, numero: 1, disabled: 1, paused: 1 }, ...opts }).limit(2001).toArray(),
@@ -99,17 +138,17 @@ async function loadDashboard(db, { user, tenant, access, messagePipeline, now = 
     const policyMap = new Map(policies.map(p => [p.tenantId + ':' + p.numero, p]));
     sessions.push(...locks.slice(0, 500).map(lock => sessionRow(lock, policyMap.get(lock.tenantId + ':' + lock.numero), 'Telegram', now)));
   });
-  if (access.includes('followup')) {
+  if (access.includes('followup') && features.followup) {
     metric('review', 'Conversaciones por revisar', 'Acumulado marcado como pendiente de revisión en Seguimiento; no equivale a mensajes sin leer.', scopedLink('/ui/followup'), () => count('conversations', { ...filter, botMode: 'conversacional', followupReviewPending: true }));
     metric('contacts', 'Contactos pendientes', 'Acumulado con “volver a contactar” y sin estado resuelto o descartado.', scopedLink('/ui/followup'), () => count('conversation_followups', { ...filter, pendingContact: true, workflowStatus: { $nin: ['resolved', 'discarded'] } }));
   }
-  if (access.includes('admin')) metric('orders', 'Pedidos registrados hoy', 'Pedidos definitivos con estado COMPLETED y fecha de creación de hoy.', scopedLink('/ui/admin'), () => count('orders', { ...filter, createdAt: today, $or: [{ status: 'COMPLETED' }, { estado: 'COMPLETED' }] }));
-  if (access.includes('leads')) metric('leads', 'Leads nuevos hoy', tenant ? 'Leads asignados a este dominio. No incluye formularios generales sin dominio.' : 'Incluye formularios generales de Asisto sin dominio asignado.', '/admin/leads', () => count('leads', { ...filter, createdAt: today }));
-  if (access.includes('token_control')) metric('tokens', 'Tokens IA de hoy', 'Suma de totalTokens registrados. El costo se consulta en Consumos y facturación.', scopedLink('/ui/token_control'), async () => {
+  if (access.includes('admin') && features.orders) metric('orders', 'Pedidos registrados hoy', 'Pedidos definitivos con estado COMPLETED y fecha de creación de hoy.', scopedLink('/ui/admin'), () => count('orders', { ...filter, createdAt: today, $or: [{ status: 'COMPLETED' }, { estado: 'COMPLETED' }] }));
+  if (access.includes('leads') && features.leads) metric('leads', 'Leads nuevos hoy', tenant ? 'Leads asignados a este dominio. No incluye formularios generales sin dominio.' : 'Incluye formularios generales de Asisto sin dominio asignado.', '/admin/leads', () => count('leads', { ...filter, createdAt: today }));
+  if (access.includes('token_control') && features.tokens) metric('tokens', 'Tokens IA de hoy', 'Suma de totalTokens registrados. El costo se consulta en Consumos y facturación.', scopedLink('/ui/token_control'), async () => {
     const rows = await aggregate('ai_token_usage_log', [{ $match: { ...filter, createdAt: today } }, { $group: { _id: null, n: { $sum: { $ifNull: ['$totalTokens', 0] } } } }]);
     return rows[0]?.n || 0;
   });
-  if (access.includes('support')) metric('tasks', 'Mis tareas pendientes', 'Tareas de tu usuario por revisar o guardar; no incluye tareas privadas de otros usuarios.', '/admin/wweb', () => count('support_drafts', { ...filter, userId: String(user.uid), state: { $nin: ['merged', 'ignored'] }, $or: [{ 'hubspot.state': { $ne: 'saved' } }, { 'hubspot.pendingFollowup': true }, { sourceChanged: true }, { reconciliationRequired: true }] }));
+  if (access.includes('support') && features.tasks) metric('tasks', 'Mis tareas pendientes', 'Tareas de tu usuario por revisar o guardar; no incluye tareas privadas de otros usuarios.', '/admin/wweb', () => count('support_drafts', { ...filter, userId: String(user.uid), state: { $nin: ['merged', 'ignored'] }, $or: [{ 'hubspot.state': { $ne: 'saved' } }, { 'hubspot.pendingFollowup': true }, { sourceChanged: true }, { reconciliationRequired: true }] }));
   // Bound concurrent Mongo work even when every feature is authorized.
   let index = 0;
   await Promise.all(Array.from({ length: Math.min(3, jobs.length) }, async () => {
@@ -120,7 +159,7 @@ async function loadDashboard(db, { user, tenant, access, messagePipeline, now = 
     metric.label = metric.label.replace(/hoy/g, 'del período');
     metric.detail = metric.detail.replace(/de hoy/g, 'del período seleccionado');
   }
-  return { tenant, day, period, fromDay, toDay, generatedAt: now.toISOString(), metrics, activity, sessions, sessionsTruncated, unavailable, access };
+  return { tenant, day, period, fromDay, toDay, generatedAt: now.toISOString(), metrics, activity, sessions, sessionsTruncated, unavailable, access, features };
 }
 
 function mountOperationsDashboard(app, { requireAuth, getDb, getAccess, messagePipeline }) {
@@ -162,14 +201,14 @@ function dashboardHtml(user) {
     <div class="opsControls">${user.role === 'superadmin' ? '<label class="opsSelect"><span class="srOnly">Dominio</span><select id="opsTenant"><option value="">Todos los dominios</option></select></label>' : ''}<label class="opsSelect"><span class="srOnly">Período</span><select id="opsPeriod"><option value="today">Hoy</option><option value="yesterday">Ayer</option><option value="7d">Últimos 7 días</option><option value="month">Mes corriente</option><option value="30d">Últimos 30 días</option></select></label><button type="button" id="opsRefresh" aria-label="Actualizar indicadores" title="Actualizar indicadores">↻</button></div></header>
     <div id="opsNotices" role="status" aria-live="polite"></div>
     <div id="opsMetrics" class="opsMetrics" aria-label="Indicadores principales"></div>
-    <div class="opsColumns"><section class="opsBox opsActivity"><div class="opsBoxHeading"><h2>Actividad de mensajes</h2><div class="opsChartLegend"><span><i class="mint"></i>Enviados</span><span><i class="blue"></i>Recibidos</span></div></div><div id="opsActivity"></div></section>
-    <section class="opsBox"><h2>Estado de conexiones</h2><div id="opsConnectionChart"></div></section></div>
-    <div class="opsColumns"><section class="opsBox"><div class="opsBoxHeading"><h2>Necesita tu atención</h2><button class="opsTextButton" id="opsShowAlerts" type="button" hidden>Ver todas</button></div><div id="opsAlerts" class="opsAlerts"></div></section>
-    <section class="opsBox"><h2>Pendientes</h2><div id="opsPending"></div></section></div>
+    <div class="opsColumns" id="opsMessagingRow"><section class="opsBox opsActivity" id="opsActivityBox"><div class="opsBoxHeading"><h2>Actividad de mensajes</h2><div class="opsChartLegend"><span><i class="mint"></i>Enviados</span><span><i class="blue"></i>Recibidos</span></div></div><div id="opsActivity"></div></section>
+    <section class="opsBox" id="opsConnectionsBox"><h2>Estado de conexiones</h2><div id="opsConnectionChart"></div></section></div>
+    <div class="opsColumns" id="opsAttentionRow"><section class="opsBox" id="opsAlertsBox"><div class="opsBoxHeading"><h2>Necesita tu atención</h2><button class="opsTextButton" id="opsShowAlerts" type="button" hidden>Ver todas</button></div><div id="opsAlerts" class="opsAlerts"></div></section>
+    <section class="opsBox" id="opsPendingBox"><h2>Pendientes</h2><div id="opsPending"></div></section></div>
     <nav id="opsQuick" class="opsQuick" aria-label="Acciones rápidas"></nav>
     <footer class="opsFooter"><span id="opsStatus" role="status">Consultando indicadores…</span><span>Actualización automática cada 60 s</span></footer>
     <details class="opsExtra"><summary>Ver detalle de conexiones e indicadores</summary><div id="opsSecondary"></div><div id="opsConnections"></div></details>
-  </section><script src="/static/operations_dashboard.js?v=5.00.175" defer></script>`;
+  </section><script src="/static/operations_dashboard.js?v=5.00.179" defer></script>`;
 }
 
-module.exports = { argentinaDay, dashboardRange, dashboardScope, sessionRow, loadDashboard, mountOperationsDashboard, dashboardHtml };
+module.exports = { argentinaDay, dashboardRange, dashboardScope, sessionRow, dashboardFeatures, loadDashboard, mountOperationsDashboard, dashboardHtml };

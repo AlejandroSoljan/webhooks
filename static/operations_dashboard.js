@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.175 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.179 | Fecha: 2026-09-20
 (() => {
   const root = document.getElementById('operationsDashboard');
   if (!root) return;
@@ -69,11 +69,12 @@
   }
   function render(data) {
     currentData=data; data.unavailable ||= []; data.sessions ||= [];
+    const features=data.features||{whatsapp:true,telegram:true,orders:true,followup:true,leads:true,tokens:true,tasks:true};
     const metrics=Object.fromEntries(data.metrics.map(m=>[m.key,m]));
     el('opsMetrics').replaceChildren();el('opsNotices').replaceChildren();
     const pendingAvailable=metrics.review && metrics.contacts;
     const pendingValue=pendingAvailable?metrics.review.value+metrics.contacts.value:null;
-    const cards=[['sent','WhatsApp enviados','whatsapp','green','Envíos registrados · no solicitudes API'],['orders',data.period==='today'||!data.period?'Pedidos de hoy':'Pedidos del período','cart','teal','Pedidos confirmados'],['attention','Pendientes de atención','clock','amber',pendingAvailable?`${number(metrics.review.value)} por revisar · ${number(metrics.contacts.value)} por contactar`:'Pendientes acumulados'],['tokens','Consumo IA','chip','teal',data.period==='today'||!data.period?'Tokens utilizados hoy':'Tokens utilizados en el período']];
+    const cards=[features.whatsapp&&['sent','WhatsApp enviados','whatsapp','green','Envíos registrados · no solicitudes API'],features.orders&&['orders',data.period==='today'||!data.period?'Pedidos de hoy':'Pedidos del período','cart','teal','Pedidos confirmados'],features.followup&&['attention','Pendientes de atención','clock','amber',pendingAvailable?`${number(metrics.review.value)} por revisar · ${number(metrics.contacts.value)} por contactar`:'Pendientes acumulados'],features.tokens&&['tokens','Consumo IA','chip','teal',data.period==='today'||!data.period?'Tokens utilizados hoy':'Tokens utilizados en el período']].filter(Boolean);
     cards.forEach(([key,title,type,color,detail])=>{
       const m=key==='attention'?(pendingAvailable?{value:pendingValue,href:metrics.review.href}:null):metrics[key];
       const failed=key==='attention'?['review','contacts'].some(k=>data.unavailable.includes(k)):data.unavailable.includes(key);
@@ -83,14 +84,17 @@
     if(tenantsError)el('opsNotices').append(node('p',tenantsError,'opsNotice'));
     if(data.unavailable.length)el('opsNotices').append(node('p','Información parcial: no disponible '+data.unavailable.map(k=>labels[k]||k).join(', ')+'.','opsNotice'));
     if(data.sessionsTruncated)el('opsNotices').append(node('p','Conexiones: se muestran hasta 500 registros por canal; totales parciales.','opsNotice'));
-    renderActivity(data);renderConnections(data);renderAlerts(data,metrics);
+    const showActivity=features.whatsapp,showConnections=features.whatsapp||features.telegram,showAlerts=showConnections||features.followup,showPending=features.followup||features.tasks;
+    el('opsActivityBox').hidden=!showActivity;el('opsConnectionsBox').hidden=!showConnections;el('opsMessagingRow').hidden=!showActivity&&!showConnections;
+    el('opsAlertsBox').hidden=!showAlerts;el('opsPendingBox').hidden=!showPending;el('opsAttentionRow').hidden=!showAlerts&&!showPending;
+    if(showActivity)renderActivity(data);if(showConnections)renderConnections(data);if(showAlerts)renderAlerts(data,metrics);
     el('opsPending').replaceChildren();const maximum=Math.max(1,...['review','contacts','tasks'].map(k=>metrics[k]?.value||0));
-    for(const [key,label,color] of [['review','Conversaciones','blue'],['contacts','Contactos','mint'],['tasks','Mis tareas','slate']]){
+    for(const [key,label,color] of [['review','Conversaciones','blue'],['contacts','Contactos','mint'],['tasks','Mis tareas','slate']].filter(([key])=>key==='tasks'?features.tasks:features.followup)){
       const m=metrics[key],row=node('div','','opsBarRow');const track=node('span','','opsBarTrack'),fill=node('i','',color);fill.style.width=`${m?m.value/maximum*100:0}%`;track.append(fill);row.append(node('span',label),track,node('strong',m?number(m.value):data.unavailable.includes(key)?'N/D':'—'));el('opsPending').append(row);
     }
     if(metrics.review)el('opsPending').append(link('Ver seguimiento →',metrics.review.href,'opsFollowLink'));
     el('opsQuick').replaceChildren();const access=data.access||[];
-    for(const [allowed,text,href,type] of [[access.includes('inbox'),'Abrir WhatsApp','/admin/inbox','whatsapp'],[!!metrics.tokens,'Ver consumos',metrics.tokens?.href,'chart'],[access.some(k=>['tenant_config','canales','comportamiento','horarios','order_config','client_access'].includes(k)),'Configurar negocio','/ui/configuracion','settings']]){if(!allowed)continue;const a=link('',href,'opsQuickLink');a.append(icon(type),node('span',text),node('b','›'));el('opsQuick').append(a);}el('opsQuick').hidden=!el('opsQuick').children.length;
+    for(const [allowed,text,href,type] of [[features.whatsapp&&access.includes('inbox'),'Abrir WhatsApp','/admin/inbox','whatsapp'],[features.tokens&&!!metrics.tokens,'Ver consumos',metrics.tokens?.href,'chart'],[access.some(k=>['tenant_config','canales','comportamiento','horarios','order_config','client_access'].includes(k)),'Configurar negocio','/ui/configuracion','settings']]){if(!allowed)continue;const a=link('',href,'opsQuickLink');a.append(icon(type),node('span',text),node('b','›'));el('opsQuick').append(a);}el('opsQuick').hidden=!el('opsQuick').children.length;
     el('opsSecondary').replaceChildren(); data.metrics.forEach(m=>{const row=node('div','','opsDetailMetric');row.append(link(m.label,m.href),node('strong',number(m.value)),node('small',m.detail));el('opsSecondary').append(row);});
     const table=node('table','','opsTable');const header=node('tr');['Dominio / canal','Número','Estado actual','Última señal','Versión / objetivo'].forEach(t=>header.append(node('th',t)));table.append(header);
     data.sessions.forEach(s=>{const row=node('tr');[s.tenantId+' · '+s.channel,s.number||'—',states[s.state]||s.state,s.lastSeenAt?new Date(s.lastSeenAt).toLocaleString('es-AR',{timeZone:'America/Argentina/Buenos_Aires'}):'Sin registro',[s.version,s.target].filter(Boolean).join(' / ')||'—'].forEach(t=>row.append(node('td',t)));table.append(row);});el('opsConnections').replaceChildren(table);
