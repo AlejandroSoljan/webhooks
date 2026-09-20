@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.083 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.177 | Fecha: 2026-09-20
 const OpenAI = require('openai');
 const { fail, text } = require('./core');
 const { resolveOpenAiApiKey } = require('../../ai_key_router');
@@ -8,7 +8,15 @@ function asistoTitleAnalyzer(env = process.env, { runtimeFor = tenantId => requi
     const [runtime, config] = await Promise.all([runtimeFor(context.tenantId), configFor(context.tenantId)]);
     const apiKey = resolveOpenAiApiKey('tareas_ws', env);
     if (!apiKey) fail('task_title_provider_required', 422);
-    const model = String(config?.openai?.chat_model || config?.openai?.chatModel || config?.CHAT_MODEL || config?.chat_model || config?.chatModel || env.CHAT_MODEL || 'gpt-5.4');
+    // Tareas WhatsApp tiene una carga breve y estructurada. Su modelo se
+    // configura aparte para no alterar pedidos, ayuda ni el bot conversacional.
+    const model = String(
+      config?.openai?.tasks_model ||
+      config?.openai?.tasksModel ||
+      config?.tareas_ws_model ||
+      env.SUPPORT_TASK_MODEL ||
+      'gpt-5.4-mini'
+    );
     const transcript = messages.map(m => `${m.fromMe ? 'OPERADOR' : 'CLIENTE'}: ${m.text}`).join('\n').slice(-30000);
     const response = await clientFor(apiKey).chat.completions.create({
       model,
