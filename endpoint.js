@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.159 | Fecha: 2026-09-18
+// Asisto | Version: 5.00.176 | Fecha: 2026-09-20
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -21,6 +21,7 @@ const DOMAIN_STATUS_API_KEY = String(
 const { ObjectId } = require("mongodb");
 const { getDb, closeDb } = require("./db");
 const { resolveCanonicalTenantId, resolveCanonicalLockId } = require("./tenant_aliases");
+const { domainStatusGroupIds, documentTenantId } = require("./domain_status_group");
 const {
   getRuntimeByPhoneNumberId,
   getRuntimeByInstagramAccountId,
@@ -1411,30 +1412,32 @@ app.get("/api/ext/domain-status", requireDomainStatusAccess, async (req, res) =>
 
     const db = await getDb();
     const tenantId = await resolveCanonicalTenantId(db, requestedTenantId);
-    const tenantRegex = new RegExp(
-      "^" + tenantId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ":",
+    const tenantDoc = await db.collection("tenant_config").findOne({
+      $or: [{ _id: tenantId }, { tenantId }, { tenantid: tenantId }]
+    });
+    const tenantIds = domainStatusGroupIds(tenantDoc, tenantId);
+    const lockIdScopes = tenantIds.map((id) => new RegExp(
+      "^" + id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ":",
       "i"
-    );
+    ));
 
-    const [tenantDoc, locks, policies, channels, helpCfg] = await Promise.all([
-      db.collection("tenant_config").findOne({
-        $or: [{ _id: tenantId }, { tenantId }, { tenantid: tenantId }]
-      }),
+    const [tenantDocs, locks, policies, channels, helpCfg] = await Promise.all([
+      db.collection("tenant_config").find({ _id: { $in: tenantIds } }).limit(500).toArray(),
       db.collection("wa_locks").find({
         $or: [
-          { tenantId },
-          { tenantid: tenantId },
-          { _id: tenantRegex }
+          { tenantId: { $in: tenantIds } },
+          { tenantid: { $in: tenantIds } },
+          ...lockIdScopes.map((scope) => ({ _id: scope }))
         ]
-      }).sort({ lastSeenAt: -1 }).limit(500).toArray(),
+      }).sort({ lastSeenAt: -1 }).limit(1500).toArray(),
       db.collection("wa_wweb_policies").find({
         $or: [
-          { tenantId },
-          { tenantid: tenantId },
-          { _id: tenantRegex }
+          { tenantId: { $in: tenantIds } },
+          { tenantid: { $in: tenantIds } },
+          ...lockIdScopes.map((scope) => ({ _id: scope }))
         ]
-      }).limit(1000).toArray(),
-      db.collection("tenant_channels").find({ tenantId }).limit(500).toArray(),
+      }).limit(3000).toArray(),
+      db.collection("tenant_channels").find({ tenantId: { $in: tenantIds } }).limit(1500).toArray(),
       loadHelpConfig("MANAGER").catch(() => ({ enabled: false }))
     ]);
 
@@ -1445,41 +1448,51 @@ app.get("/api/ext/domain-status", requireDomainStatusAccess, async (req, res) =>
       });
     }
 
-    const conf = domainStatusConfig(tenantDoc);
     const helpStatus = publicHelpConfig(helpCfg || {});
     // La habilitación es por dominio. Acá sólo verificamos que el servicio
     // global tenga fuente y clave configuradas.
     const helpServiceEnabled = helpStatus.api_key_configured === true && !!helpStatus.source_url;
-    const policyById = new Map(
-      policies.map((p) => [String(p._id || ""), p])
-    );
-    const sessions = locks.map((lock) => {
-      const lockId = String(lock._id || "");
-      const numero = domainStatusDigits(
-        lock.numero ||
-        lock.number ||
-        lock.phone ||
-        (lockId.includes(":") ? lockId.split(":").slice(1).join(":") : "")
-      );
+    const tenantDocById = new Map(tenantDocs.map((doc) => [String(doc._id || '').toUpperCase(), doc]));
+    if (tenantDoc) tenantDocById.set(tenantId, tenantDoc);
+    const policyById = new Map(policies.map((p) => [String(p._id || ""), p]));
 
-      const channel = domainStatusFindChannel(channels, numero);
-      const policy = policyById.get(lockId) || null;
+    const domains = tenantIds.map((domainId) => {
+      const conf = domainStatusConfig(tenantDocById.get(domainId));
+      const domainChannels = channels.filter((row) => documentTenantId(row) === domainId);
+      const sessions = locks
+        .filter((lock) => documentTenantId(lock) === domainId)
+        .map((lock) => {
+          const lockId = String(lock._id || "");
+          const numero = domainStatusDigits(
+            lock.numero || lock.number || lock.phone ||
+            (lockId.includes(":") ? lockId.split(":").slice(1).join(":") : "")
+          );
+          const channel = domainStatusFindChannel(domainChannels, numero);
+          const policy = policyById.get(lockId) || null;
+          return {
+            numero,
+            estado: domainStatusEstado(lock, policy),
+            version: domainStatusVersion(lock.runtimeVersion || lock.currentVersion),
+            servicios: domainStatusServices(conf, channel, helpServiceEnabled),
+            pc: String(lock.host || lock.hostname || "").trim() || null
+          };
+        })
+        .sort((a, b) => String(a.numero).localeCompare(String(b.numero), "es", { numeric: true }));
+      const servicios = [...new Set([
+        ...domainStatusServices(conf, null, helpServiceEnabled),
+        ...sessions.flatMap((session) => session.servicios)
+      ])];
+      return { tenantId: domainId, servicios, sessions };
+    });
 
-      return {
-        numero,
-        estado: domainStatusEstado(lock, policy),
-        version: domainStatusVersion(lock.runtimeVersion || lock.currentVersion),
-        servicios: domainStatusServices(conf, channel, helpServiceEnabled),
-        pc: String(lock.host || lock.hostname || "").trim() || null
-      };
-    }).sort((a, b) =>
-      String(a.numero).localeCompare(String(b.numero), "es", { numeric: true })
-    );
+    const sessions = domains.find((item) => item.tenantId === tenantId)?.sessions || [];
 
     res.set("Cache-Control", "no-store");
     return res.json({
       ok: true,
       tenantId,
+      associatedDomains: tenantIds.filter((id) => id !== tenantId),
+      domains,
       sessions
     });
  } catch (e) {

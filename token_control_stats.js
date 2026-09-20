@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.149 | Fecha: 2026-09-17
+// Asisto | Version: 5.00.176 | Fecha: 2026-09-20
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -96,10 +96,13 @@ function tokenChannelMatches(item, channels = []) {
 }
 
 
-function buildUsageMatch({ tenantId = "", from = "", to = "" } = {}) {
+function buildUsageMatch({ tenantId = "", tenantIds = [], from = "", to = "" } = {}) {
   const match = {};
   const safeTenant = String(tenantId || "").trim();
-  if (safeTenant) match.tenantId = safeTenant;
+  const safeTenants = [...new Set((Array.isArray(tenantIds) ? tenantIds : []).map(x => String(x || '').trim()).filter(Boolean))];
+  if (safeTenants.length > 1) match.tenantId = { $in: safeTenants };
+  else if (safeTenants.length === 1) match.tenantId = safeTenants[0];
+  else if (safeTenant) match.tenantId = safeTenant;
 
   const createdAt = {};
   const fromDate = parseDateStart(from);
@@ -107,7 +110,15 @@ function buildUsageMatch({ tenantId = "", from = "", to = "" } = {}) {
   if (fromDate) createdAt.$gte = fromDate;
   if (toDate) createdAt.$lte = toDate;
    if (Object.keys(createdAt).length) match.createdAt = createdAt;
-  return { match, safeTenant };
+  return { match, safeTenant, safeTenants: safeTenants.length ? safeTenants : (safeTenant ? [safeTenant] : []) };
+}
+
+async function resolveUsageTenantIds(db, tenantId = '') {
+  const owner = String(tenantId || '').trim();
+  if (!owner) return [];
+  const doc = await db.collection('tenant_config').findOne({ _id: owner }, { projection: { consumption_domains: 1 } });
+  const children = Array.isArray(doc?.consumption_domains) ? doc.consumption_domains : [];
+  return [...new Set([owner, ...children].map(x => String(x || '').trim()).filter(Boolean))];
 }
 
 async function loadTenantCosts(db, tenantIds = []) {
@@ -573,7 +584,8 @@ async function buildTokenSummary({
   isSuper = false
   } = {}) {
   const db = await getDb();
-  const { match, safeTenant } = buildUsageMatch({ tenantId, from, to });
+  const tenantIds = await resolveUsageTenantIds(db, tenantId);
+  const { match, safeTenant } = buildUsageMatch({ tenantId, tenantIds, from, to });
   const noTypes = String(types || "").trim().toLowerCase() === "none";
   const noChannels = String(channels || "").trim().toLowerCase() === "none";
   const safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional", "ayuda", "tareas_whatsapp"]);
@@ -582,7 +594,7 @@ async function buildTokenSummary({
   if (noTypes || noChannels) {
     return {
       ok: true,
-      filters: { tenantId: safeTenant || null, from: from || null, to: to || null, types: [], channels: [], isSuper: !!isSuper },
+      filters: { tenantId: safeTenant || null, tenantIds, from: from || null, to: to || null, types: [], channels: [], isSuper: !!isSuper },
       items: [],
       totals: {
         message_input_tokens: 0, message_output_tokens: 0, audio_input_tokens: 0, audio_output_tokens: 0,
@@ -694,7 +706,7 @@ async function buildTokenSummary({
 
     return {
       ok: true,
-      filters: { tenantId: safeTenant || null, from: from || null, to: to || null, types: safeTypes, channels: safeChannels, isSuper: !!isSuper },
+      filters: { tenantId: safeTenant || null, tenantIds, from: from || null, to: to || null, types: safeTypes, channels: safeChannels, isSuper: !!isSuper },
       items,
       totals
     };
@@ -838,6 +850,7 @@ async function buildTokenSummary({
     ok: true,
     filters: {
       tenantId: safeTenant || null,
+      tenantIds,
       from: from || null,
       to: to || null,
       types: safeTypes,
@@ -882,7 +895,8 @@ async function buildTokenConversationSummary({
   isSuper = false
 } = {}) {
   const db = await getDb();
-  const { match, safeTenant } = buildUsageMatch({ tenantId, from, to });
+  const scopeTenantIds = await resolveUsageTenantIds(db, tenantId);
+  const { match, safeTenant } = buildUsageMatch({ tenantId, tenantIds: scopeTenantIds, from, to });
   const rawView = String(view || "all").trim().toLowerCase();
   const safeView = ["all", "completed", "conversational"].includes(rawView) ? rawView : "all";
   const noTypes = String(types || "").trim().toLowerCase() === "none";
@@ -1372,6 +1386,7 @@ async function buildTokenConversationSummary({
     ok: true,
     filters: {
       tenantId: safeTenant || null,
+      tenantIds: scopeTenantIds,
       from: from || null,
       to: to || null,
       view: safeView,
@@ -2125,4 +2140,6 @@ module.exports = {
   buildTokenSummary,
   buildTokenConversationSummary,
   buildApiMessageWindowBilling,
+  buildUsageMatch,
+  resolveUsageTenantIds,
 };
