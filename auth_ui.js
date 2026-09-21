@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.174 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.180 | Fecha: 2026-09-21
 const { fields: restaurantFields, validateRestaurantConfig } = require('./restaurant_config');
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
@@ -329,6 +329,28 @@ function requireWwebAccess(req, res, next) {
     return res.status(403).json({ error: "forbidden" });
   }
   return res.status(403).send("403 - No autorizado");
+}
+
+async function resolveWwebTenantScope(db, user) {
+  if (String(user?.role || '').toLowerCase() === 'superadmin') return null;
+  const primary = String(user?.tenantId || 'default').trim();
+  const config = await db.collection('tenant_config').findOne(
+    { _id: primary },
+    { projection: { wweb_domains: 1, consumption_domains: 1 } }
+  );
+  const linked = Array.isArray(config?.wweb_domains)
+    ? config.wweb_domains
+    : (Array.isArray(config?.consumption_domains) ? config.consumption_domains : []);
+  return [...new Set([primary, ...linked].map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function wwebTenantFilter(scope) {
+  if (scope === null) return {};
+  return scope.length > 1 ? { tenantId: { $in: scope } } : { tenantId: scope[0] || 'default' };
+}
+
+function wwebTenantAllowed(scope, tenantId) {
+  return scope === null || scope.includes(String(tenantId || '').trim());
 }
 
 // ===== Tenant resolver =====
@@ -5451,7 +5473,7 @@ function mountAuthRoutes(app) {
   }
 
   async function wwebDashboardStats(db, filter, todayYmd, todayStart, todayEnd) {
-    const cacheKey = filter?.tenantId ? `tenant:${String(filter.tenantId)}` : 'superadmin:all';
+    const cacheKey = filter?.tenantId ? `tenant:${JSON.stringify(filter.tenantId)}` : 'superadmin:all';
     const cached = wwebDashboardStatsCache.get(cacheKey);
     if (cached && cached.day === todayYmd && Date.now() - cached.at < WWEB_DASHBOARD_STATS_CACHE_MS) return cached.value;
     const value = await Promise.all([
@@ -5464,7 +5486,8 @@ function mountAuthRoutes(app) {
 
   async function wwebPermissionStatsMap(db, tenantFilter, fromYmd, toYmd) {
     const query = { solicitudDayKey: { $gte: fromYmd, $lte: toYmd } };
-    if (tenantFilter?.tenantId) query.tenantId = String(tenantFilter.tenantId).toUpperCase();
+    if (tenantFilter?.tenantId?.$in) query.tenantId = { $in: tenantFilter.tenantId.$in.map((id) => String(id).toUpperCase()) };
+    else if (tenantFilter?.tenantId) query.tenantId = String(tenantFilter.tenantId).toUpperCase();
     const docs = await db.collection('wa_api_mensajes_confirmaciones').find(query).limit(10000).toArray();
     const map = new Map();
     for (const d of docs) {
@@ -5490,9 +5513,8 @@ function mountAuthRoutes(app) {
   app.get("/api/wweb/locks", requireAuth, requireWwebAccess, async (req, res) => {
     try {
       const db = await getDb();
-      const role = String(req.user?.role || "").toLowerCase();
-      const isSuper = role === "superadmin";
-      const filter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+      const scope = await resolveWwebTenantScope(db, req.user);
+      const filter = wwebTenantFilter(scope);
 
       const todayYmd = wwebArYmd(new Date());
       const { start: todayStart, end: todayEnd } = wwebArDateRange(todayYmd, todayYmd);
@@ -5585,9 +5607,8 @@ function mountAuthRoutes(app) {
       if (!lockId) return res.status(400).json({ ok: false, error: "lockId requerido" });
 
       const db = await getDb();
-      const role = String(req.user?.role || "").toLowerCase();
-      const isSuper = role === "superadmin";
-      const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+      const scope = await resolveWwebTenantScope(db, req.user);
+      const tenantFilter = wwebTenantFilter(scope);
 
       const lock = await db.collection("wa_locks").findOne(
         { _id: lockId, ...tenantFilter },
@@ -5635,7 +5656,8 @@ function mountAuthRoutes(app) {
       const db = await getDb();
       const role = String(req.user?.role || "").toLowerCase();
       const isSuper = role === "superadmin";
-      const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+      const scope = await resolveWwebTenantScope(db, req.user);
+      const tenantFilter = wwebTenantFilter(scope);
       if (resetAuth && !isSuper) return res.status(403).json({ error: "forbidden" });
 
       const _id = lockId;
@@ -5753,12 +5775,12 @@ function mountAuthRoutes(app) {
       const db = await getDb();
       const role = String(req.user?.role || "").toLowerCase();
       const isSuper = role === "superadmin";
-      const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+      const scope = await resolveWwebTenantScope(db, req.user);
 
-      const tenantId = String(req.body?.tenantId || (tenantFilter.tenantId || "")).trim();
+      const tenantId = String(req.body?.tenantId || (scope?.[0] || "")).trim();
       const numero = String(req.body?.numero || "").trim();
       if (!tenantId || !numero) return res.status(400).json({ error: "tenantId y numero requeridos" });
-      if (!isSuper && tenantId !== tenantFilter.tenantId) return res.status(403).json({ error: "forbidden" });
+      if (!wwebTenantAllowed(scope, tenantId)) return res.status(403).json({ error: "forbidden" });
       const lockId = `${tenantId}:${numero}`;
 
       const mode = String(req.body?.mode || "").trim(); // 'any' | 'pinned'
@@ -5866,10 +5888,11 @@ function mountAuthRoutes(app) {
       const db = await getDb();
       const role = String(req.user?.role || "").toLowerCase();
       const isSuper = role === "superadmin";
-      const tenantId = String(req.query?.tenantId || (!isSuper ? (req.user?.tenantId || "default") : "")).trim();
+      const scope = await resolveWwebTenantScope(db, req.user);
+      const tenantId = String(req.query?.tenantId || (scope?.[0] || "")).trim();
       const numero = String(req.query?.numero || "").trim();
       if (!tenantId || !numero) return res.status(400).json({ ok:false, error: "tenantId y numero requeridos" });
-      if (!isSuper && tenantId !== String(req.user?.tenantId || "default")) return res.status(403).json({ ok:false, error: "forbidden" });
+      if (!wwebTenantAllowed(scope, tenantId)) return res.status(403).json({ ok:false, error: "forbidden" });
 
       const from = String(req.query?.from || wwebArYmd(new Date())).trim();
       const to = String(req.query?.to || from).trim();
@@ -5978,12 +6001,12 @@ function mountAuthRoutes(app) {
       const db = await getDb();
        const role = String(req.user?.role || "").toLowerCase();
       const isSuper = role === "superadmin";
-      const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+      const scope = await resolveWwebTenantScope(db, req.user);
 
       const tenantId = String(req.query?.tenantId || "").trim();
       const numero = String(req.query?.numero || "").trim();
       if (!tenantId || !numero) return res.status(400).json({ error: "tenantId y numero requeridos" });
-      if (!isSuper && tenantId !== tenantFilter.tenantId) return res.status(403).json({ error: "forbidden" });
+      if (!wwebTenantAllowed(scope, tenantId)) return res.status(403).json({ error: "forbidden" });
 
       const items = await db.collection("wa_wweb_history")
         .find({ tenantId, numero })
@@ -6021,9 +6044,8 @@ function mountAuthRoutes(app) {
       if (action === "clear_auth" && !reason) reason = "phone_web_clear_auth";
 
       const db = await getDb();
-      const role = String(req.user?.role || "").toLowerCase();
-      const isSuper = role === "superadmin";
-      const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+      const scope = await resolveWwebTenantScope(db, req.user);
+      const tenantFilter = wwebTenantFilter(scope);
 
       const lock = await db.collection("wa_locks").findOne({ _id: lockId, ...tenantFilter });
       if (!lock) return res.status(404).json({ error: "Lock no encontrado (o no autorizado)." });
@@ -6137,6 +6159,9 @@ module.exports = {
   protectRoutes,
   appShell,
   resolveTenantId,
+  resolveWwebTenantScope,
+  wwebTenantFilter,
+  wwebTenantAllowed,
   hashPassword,
   verifyPassword,
 };
