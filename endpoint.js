@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.176 | Fecha: 2026-09-20
+// Asisto | Version: 5.00.181 | Fecha: 2026-09-21
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -893,6 +893,55 @@ async function requireWwebAgentAccess(req, res, next) {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
 }
+
+// Primer arranque de un agente nuevo. La credencial se entrega una sola vez:
+// después de guardarla en tenant_config, el mismo alias ya no puede reclamarla.
+// Esto reemplaza el antiguo bootstrap que exigía acceso Mongo directo desde la PC.
+const wwebBootstrapAttempts = new Map();
+app.post('/api/ext/wweb/agent/bootstrap', wwebAgentJson, async (req, res) => {
+  try {
+    const tenantId = String(req.body?.tenantId || req.headers['x-asisto-tenant'] || '').trim().toUpperCase();
+    if (!/^[A-Z0-9_-]{2,32}$/.test(tenantId)) {
+      return res.status(400).json({ ok: false, error: 'tenant_invalid' });
+    }
+
+    const source = String(req.ip || req.socket?.remoteAddress || 'unknown');
+    const rateKey = `${source}:${tenantId}`;
+    const previous = wwebBootstrapAttempts.get(rateKey) || { count: 0, resetAt: 0 };
+    const now = Date.now();
+    const attempt = now > previous.resetAt ? { count: 1, resetAt: now + 3600000 } : { ...previous, count: previous.count + 1 };
+    wwebBootstrapAttempts.set(rateKey, attempt);
+    if (attempt.count > 5) return res.status(429).json({ ok: false, error: 'rate_limited' });
+
+    const db = await getDb();
+    const col = db.collection('tenant_config');
+    const selector = { $or: [{ _id: tenantId }, { tenantId }, { tenantid: tenantId }] };
+    const doc = await col.findOne(selector);
+    if (!doc) return res.status(404).json({ ok: false, error: 'tenant_not_found' });
+
+    const nested = !!(doc.configuracion && typeof doc.configuracion === 'object');
+    const tokenPath = nested ? 'configuracion.control_api_token' : 'control_api_token';
+    const current = String(nested ? doc.configuracion?.control_api_token || '' : doc.control_api_token || '').trim();
+    if (current) return res.status(409).json({ ok: false, error: 'already_claimed' });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const result = await col.updateOne(
+      { $and: [selector, { $or: [{ [tokenPath]: { $exists: false } }, { [tokenPath]: null }, { [tokenPath]: '' }] }] },
+      { $set: {
+        [tokenPath]: token,
+        [nested ? 'configuracion.control_api_enabled' : 'control_api_enabled']: true,
+        [nested ? 'configuracion.control_api_url' : 'control_api_url']: 'https://www.asistobot.com.ar/api/ext/wweb/agent',
+        [nested ? 'configuracion.control_api_claimed_at' : 'control_api_claimed_at']: new Date(),
+      } }
+    );
+    if (result.modifiedCount !== 1) return res.status(409).json({ ok: false, error: 'already_claimed' });
+    console.log(`[WWEB_BOOTSTRAP] credencial inicial reclamada tenant=${tenantId} source=${source}`);
+    return res.json({ ok: true, tenantId, token });
+  } catch (e) {
+    console.error('POST /api/ext/wweb/agent/bootstrap error:', e?.message || e);
+    return res.status(500).json({ ok: false, error: 'bootstrap_error' });
+  }
+});
 
 function wwebAgentSafeOptions(operation, raw) {
   const options = raw && typeof raw === 'object' ? raw : {};
