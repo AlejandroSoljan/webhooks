@@ -10,3 +10,5 @@ El dominio operativo es `MCN`. `DEMO_FERRETERIA` se conserva como entorno de pru
 - MongoDB: `127.0.0.1:27017`, base `asisto_turnero`
 
 El kiosco, la atención y las pantallas siguen funcionando en la LAN si se corta Internet. Firebase, los celulares por 4G y cualquier recurso externo requieren Internet.
+
+El panel de atención acepta filtros por enlace. Sin `sector` muestra todas; por ejemplo, `?sector=ferreteria` o `?sector=Ferreteria` muestra solamente Ferretería. También acepta el nombre visible sin distinguir mayúsculas ni acentos.

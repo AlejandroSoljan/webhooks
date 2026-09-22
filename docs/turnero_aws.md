@@ -109,3 +109,4 @@ Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un únic
 - Cada solicitud lleva una clave idempotente: un reintento de red no duplica el ticket físico; el botón explícito “Volver a imprimir” genera una solicitud nueva.
 - `QUEUE_PRINTER_NAME` fija la cola CUPS. Si se omite, se usa la impresora predeterminada del sistema.
 - El kiosco genera identificadores también en HTTP local. Los navegadores reservan `crypto.randomUUID()` para contextos seguros; el fallback evita que el clic en una sección quede sin respuesta al abrir el LXC por IP privada.
+- El panel local de atención elimina los accesos rápidos a otras pantallas. El parámetro `sector` permite abrir todas las secciones sin parámetro o una sola mediante su identificador o nombre, sin distinguir mayúsculas ni acentos.

@@ -47,3 +47,11 @@ test('MCN receives Mecan branding while the demo remains available', () => {
     assert.match(html, /mecan-logo\.webp/);
   }
 });
+
+test('attention panel has no quick links and supports section URLs by id or name', () => {
+  const { queuePage } = require('../queue_pages');
+  const html = queuePage('MCN', 'admin');
+  assert.doesNotMatch(html, /Abrir turnero|Abrir pantalla|Abrir celular|Estadísticas en Asisto/);
+  assert.match(html, /normalizeSector/);
+  assert.match(html, /normalizeSector\(s\.name\)===requested/);
+});
