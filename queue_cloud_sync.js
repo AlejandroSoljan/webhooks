@@ -79,7 +79,7 @@ function mountQueueSyncEndpoint(app, { getDb, secret = process.env.QUEUE_SYNC_SE
   });
 }
 
-function startQueueCloudSync({ getDb, url = process.env.QUEUE_SYNC_URL, secret = process.env.QUEUE_SYNC_SECRET, tenantList = process.env.QUEUE_SYNC_TENANTS || 'MCN', everyMs = Number(process.env.QUEUE_SYNC_EVERY_MS || 2000) } = {}) {
+function startQueueCloudSync({ getDb, url = process.env.QUEUE_SYNC_URL, secret = process.env.QUEUE_SYNC_SECRET, tenantList = process.env.QUEUE_SYNC_TENANTS || 'MCN', everyMs = Number(process.env.QUEUE_SYNC_EVERY_MS || 1000) } = {}) {
   const tenants = parseTenants(tenantList);
   if (!url || String(secret || '').length < 20 || !tenants.length) return { enabled: false, stop: async () => {}, run: async () => ({ skipped: true }) };
   let running = false, stopped = false, initial = true, lastSync = null;

@@ -53,14 +53,14 @@ function ticketAlert(ticket) {
   localStorage.asistoLastTicketAlert = key;
   const title = kind === 'called' ? '¡Es tu turno!' : 'Sos el próximo';
   const detail = kind === 'called' ? (ticket.desk ? 'Acercate a ' + ticket.desk + '.' : 'Acercate al sector.') : 'Preparáte, enseguida te llamamos.';
-  toast(title + ' ' + detail, 9000);
-  document.title = title + ' · Asisto';
-  if (navigator.vibrate) navigator.vibrate(kind === 'called' ? [500, 180, 500, 180, 800] : [300, 140, 300]);
   if (ticketAlertsEnabled && ticketAudioContext) {
     const frequencies = kind === 'called' ? [740, 980, 740, 980, 740, 980] : [700, 920, 700];
     const volume = kind === 'called' ? .5 : .38;
     frequencies.forEach((frequency, index) => { const oscillator=ticketAudioContext.createOscillator(),gain=ticketAudioContext.createGain(),start=ticketAudioContext.currentTime+index*.4;oscillator.connect(gain);gain.connect(ticketAudioContext.destination);oscillator.frequency.value=frequency;gain.gain.setValueAtTime(volume,start);gain.gain.exponentialRampToValueAtTime(.001,start+.34);oscillator.start(start);oscillator.stop(start+.35); });
   }
+  if (navigator.vibrate) navigator.vibrate(kind === 'called' ? [500, 180, 500, 180, 800] : [300, 140, 300]);
+  toast(title + ' ' + detail, 9000);
+  document.title = title + ' · Asisto';
   if ('Notification' in window && Notification.permission === 'granted' && document.hidden) new Notification(title, { body: detail, tag: 'asisto-turno-' + ticket.id, renotify: true });
 }
 function armDefaultTicketAlerts() {

@@ -18,4 +18,5 @@ test('customer web ticket notices hide the unpublished app and expose browser al
   assert.match(source, /peopleAhead === 0/);
   assert.match(source, /navigator\.vibrate/);
   assert.match(source, /addEventListener\('pointerdown', unlock/);
+  assert.ok(source.indexOf('oscillator.start(start)') < source.indexOf("toast(title + ' ' + detail"));
 });
