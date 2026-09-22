@@ -71,19 +71,21 @@ async function load(e){e?.preventDefault();q('error').textContent='';q('csv').di
 if(q('statsTenant'))q('statsTenant').onchange=()=>{top.location.href='/ui/turnero/'+encodeURIComponent(q('statsTenant').value)+'/estadisticas'};q('filters').onsubmit=load;q('csv').onclick=()=>{const rows=[['ID turno','Número','Día','Estado','Entrega','Sección','Ingreso','Primer llamado','Fin etapa','Resultado','Espera segundos','Atención segundos']];data.tickets.forEach(t=>(t.visits.length?t.visits:[{}]).forEach(v=>rows.push([t.id,t.number,t.day,t.status,t.source,v.sectorId,v.queuedAt?new Date(v.queuedAt).toISOString():'',v.calledAt?new Date(v.calledAt).toISOString():'',v.endedAt?new Date(v.endedAt).toISOString():'',v.outcome,v.waitSeconds,v.serviceSeconds])));const cell=v=>{let s=String(v??'');if(/^[=+@-]/.test(s))s="'"+s;return '"'+s.replaceAll('"','""')+'"'};const blob=new Blob(['\uFEFF'+rows.map(r=>r.map(cell).join(';')).join('\\r\\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=node('a','');a.href=url;a.download='turnos-'+q('from').value+'-'+q('to').value+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};load();
 </script></body></html>`;
 }
-function mountQueueStats(app, { scope, wrap, allowed, dayKey, auth }) {
+function mountQueueStats(app, { scope, wrap, allowed, isOpen = () => false, dayKey, auth }) {
   app.get('/ui/turnero/:tenant/estadisticas', wrap(async (req, res) => {
     const { t, db } = await scope(req);
-    if (!allowed(req, t)) return res.redirect('/login?to=' + encodeURIComponent(req.originalUrl));
+    const publicTenant = isOpen(t);
+    if (!publicTenant && !allowed(req, t)) return res.redirect('/login?to=' + encodeURIComponent(req.originalUrl));
     const isSuper = String(req.user?.role || '').toLowerCase() === 'superadmin';
     const tenants = isSuper ? await listStatsTenants(db, t) : [t];
+    if (publicTenant && !req.user?.uid) return res.type('html').send(statsPage(t, dayKey(), { tenants: [t], isSuper: false }));
     if (String(req.query.embed || '') === '1' || typeof auth?.appShell !== 'function') return res.type('html').send(statsPage(t, dayKey(), { tenants, isSuper }));
     const embed = `/ui/turnero/${encodeURIComponent(t)}/estadisticas?embed=1`;
     res.type('html').send(auth.appShell({ title: 'Estadísticas Turnero · Asisto', user: req.user, active: 'queue_stats', main: `<iframe title="Estadísticas Turnero" src="${embed}" style="display:block;width:100%;height:calc(100vh - 110px);min-height:720px;border:0;border-radius:18px;background:#f4f4f4"></iframe>` }));
   }));
   app.get('/api/customer-app-admin/:tenant/stats', wrap(async (req, res) => {
     const { t, db, cfg, base } = await scope(req);
-    if (!allowed(req, t)) return res.status(req.user?.uid ? 403 : 401).json({ error: 'Iniciá sesión en Asisto para consultar estadísticas.' });
+    if (!isOpen(t) && !allowed(req, t)) return res.status(req.user?.uid ? 403 : 401).json({ error: 'Iniciá sesión en Asisto para consultar estadísticas.' });
     const from = String(req.query.from || dayKey()), to = String(req.query.to || dayKey());
     const valid = s => /^\d{4}-\d{2}-\d{2}$/.test(s) && Number.isFinite(Date.parse(s)) && new Date(s).toISOString().slice(0, 10) === s;
     if (!valid(from) || !valid(to) || from > to || Date.parse(to) - Date.parse(from) > 92 * 86400000) return res.status(400).json({ error: 'Elegí un período válido de hasta 93 días.' });

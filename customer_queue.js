@@ -56,7 +56,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
   const { reconcile } = createQueueNotifications({ firebaseSender, publicBase });
   const reconcileBase = (db, base) => serial(base.tenantId, () => reconcile(db, base));
   const reconcileTenant = async t => { const db = await getDb(), cfg = await configFor(db, t); return reconcileBase(db, { tenantId: t, branchId: cfg.branchId, dayKey: dayKey() }); };
-  mountQueueStats(app, { scope, wrap, allowed, dayKey, auth });
+  mountQueueStats(app, { scope, wrap, allowed, isOpen, dayKey, auth });
   let indexPromise;
   async function prepare(db) {
     if (!indexPromise) indexPromise = (async () => {

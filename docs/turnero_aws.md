@@ -1,6 +1,6 @@
 # Turnero de Mecan en AWS
 
-Actualizado el 16/09/2026. Servicio publicado en AWS; la app principal sigue en 5.00.139 con la actualización corregida del menú y notificaciones. Turnero: `/opt/asisto/turnero/releases/20260916-9`. Android: **Asisto 1.1.7**.
+Actualizado el 22/09/2026. Servicio publicado en AWS. Turnero: `/opt/asisto/turnero/releases/20260922-10`. Android: **Asisto 1.1.7**.
 
 ## Accesos reales
 
@@ -67,8 +67,8 @@ Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un únic
 ## Avisos, acceso temporal y estadísticas (1.1.7)
 
 - Release AWS base previa: `/opt/asisto/turnero/releases/20260914-7`, puerto 3102. App principal: `/opt/asisto/releases/5cf94e5354a5-turnero-notifications-fixed`. La release 4 corrigió el barrido para Mongo API estricta con aggregate + group; la 5 incorporó el historial automático y el filtro; la 6 integró estadísticas al shell y el selector superadmin; la 7 agregó el cierre/cancelación del QR. Ambos servicios mantienen sus releases anteriores para rollback.
-- QUEUE_OPEN_TENANTS=DEMO_FERRETERIA en /etc/asisto/turnero.env habilita emisión y operación sin login solo en ese comercio, a pedido del usuario. Retirar ese valor y reiniciar el servicio restablece el login. Los eventos anónimos guardan operador-sin-login y puesto; no identifican una persona.
-- Panel: https://asistobot.com.ar/ui/turnero/DEMO_FERRETERIA/estadisticas. Enlace desde atención. Requiere sesión Asisto del mismo comercio o superadmin. API /api/customer-app-admin/:tenant/stats?from=AAAA-MM-DD&to=AAAA-MM-DD.
+- QUEUE_OPEN_TENANTS=DEMO_FERRETERIA en /etc/asisto/turnero.env habilita emisión, atención y estadísticas sin login solo en ese comercio, a pedido del usuario. Retirar ese valor y reiniciar el servicio restablece el login. Los eventos anónimos guardan operador-sin-login y puesto; no identifican una persona.
+- Panel público del comercio habilitado: https://asistobot.com.ar/ui/turnero/DEMO_FERRETERIA/estadisticas. API pública del mismo dominio: /api/customer-app-admin/:tenant/stats?from=AAAA-MM-DD&to=AAAA-MM-DD. Otros dominios conservan la autorización Asisto.
 - Mongo queue_tickets conserva fechas, estado, entrega e historial (creación, activación, primer llamado, repeticiones, cierre, ausencia, traslado y puesto). El panel reconstruye todas las visitas a secciones, incluidas las anteriores a esta actualización. Promedios excluyen etapas incompletas, P90 espera, conteos por día/sección/hora, datos de móvil/impresión y CSV de recorridos sin identificadores de dispositivos ni códigos QR. No hay borrado automático de históricos.
 - Filtros por día de emisión, zona America/Argentina/Buenos_Aires, hasta 93 días y 50.000 turnos por consulta. Si se supera el límite pide acortar el rango y nunca entrega totales truncados.
 - La espera empieza en activación o traslado y termina en el primer llamado. Atención significa tiempo desde ese llamado hasta finalizar, ausente o trasladar. Repetir llamado no reinicia la medición. El CSV expresa instantes ISO UTC y duraciones en segundos.
@@ -91,3 +91,10 @@ Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un únic
 - Pantallas de atención y llamados: intentan habilitar sonido al abrir y lo activan en la primera interacción si el navegador bloquea audio automático.
 - Traslado: selector y botón agrupados con etiqueta y espacio; botón "Trasladar a la sección elegida".
 - Pruebas locales: 23/23. Despliegue reversible con `deploy/turnero/update-next-sound-layout.sh`. AWS quedó en `/opt/asisto/turnero/releases/20260916-9`; ambos servicios activos y `/healthz` correcto. La web pública muestra el texto nuevo, el avance habilitado, el bloque de traslado y la activación de sonido.
+
+## Cambios publicados el 22/09/2026
+
+- Los dominios incluidos explícitamente en `QUEUE_OPEN_TENANTS` exponen sin login el kiosco, la atención, las estadísticas y la API de estadísticas. La apertura queda limitada a esos dominios; los demás conservan la autorización de Asisto.
+- El turnero dejó de depender de `node_modules` perteneciente a una release antigua eliminable. Su enlace apunta a `/opt/asisto/current/node_modules`, por lo que acompaña la release activa de Asisto y no vuelve a romper el procesamiento JSON durante la limpieza de versiones.
+- Incidente corregido: la eliminación de `/opt/asisto/releases/5cf94e5354a5` dejó incompleto `iconv-lite`; las páginas GET seguían abriendo pero los POST devolvían `400 Bad Request` y el kiosco no podía generar el QR.
+- Verificación: prueba aislada del turnero, acceso anónimo al panel y API de estadísticas, generación real de QR, servicios activos y `/healthz` antes de informar.

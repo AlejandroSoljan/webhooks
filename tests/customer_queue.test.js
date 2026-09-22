@@ -77,15 +77,17 @@ test('Asisto navigation builds the queue statistics link without breaking login 
   assert.doesNotThrow(() => getNavItemsForUser({ role: 'admin', tenantId: null }));
   assert.ok(!getNavItemsForUser({ role: 'admin', tenantId: 'TEST', allowedPages: [] }).some(item => item.key === 'queue_stats'));
 });
-test('temporary open tenant can operate without a session but statistics stay tenant-authorized', async () => {
+test('temporary open tenant exposes operation and statistics without a session', async () => {
   cfg.queuePresence = 'open';
   for (const route of ['/customer-app/OPEN/kiosk', '/ui/turnero/OPEN']) assert.equal((await fetch(url + route, { redirect: 'manual' })).status, 200);
   const x = await req('/api/customer-app/OPEN/tickets', { sectorId: 'caja', installId: 'open-kiosk', source: 'kiosk' }); assert.equal(x.status, 200);
   assert.equal((await req('/api/customer-app-admin/OPEN/sectors/caja/next', { expectedTicketId: null, desk: 'Caja abierta' })).status, 200);
-  assert.equal((await req('/api/customer-app-admin/OPEN/stats')).status, 401);
-  assert.equal((await req('/api/customer-app-admin/OPEN/stats', undefined, 'TEST')).status, 403);
+  const publicStatsPage = await fetch(url + '/ui/turnero/OPEN/estadisticas', { redirect: 'manual' });
+  assert.equal(publicStatsPage.status, 200); assert.match(await publicStatsPage.text(), /Estadísticas de turnos/);
+  assert.equal((await req('/api/customer-app-admin/OPEN/stats')).status, 200);
+  assert.equal((await req('/api/customer-app-admin/OPEN/stats', undefined, 'TEST')).status, 200);
   assert.equal((await req('/api/customer-app-admin/OPEN/stats', undefined, 'OPEN')).status, 200);
-  assert.equal((await req('/api/customer-app-admin/OPEN/stats?from=2026-02-30', undefined, 'OPEN')).status, 400);
+  assert.equal((await req('/api/customer-app-admin/OPEN/stats?from=2026-02-30')).status, 400);
 });
 test('QR expires, rejects tampering and cannot be used by a different commerce', () => {
   const token = presenceToken('TEST', 'secret', 1000);
