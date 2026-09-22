@@ -111,6 +111,7 @@ const auth = require("./auth_ui");
 const { mountWebAccessRoutes, recordPublicVisit } = require("./web_access_stats");
 const { mountTokenControlRoutes } = require("./token_control_stats");
 const { mountMonetizationRoutes } = require("./monetization_config");
+const { recordMonetizationEvent } = require("./monetization_engine");
 const { mountFleterosViajesPanel } = require("./fleteros_viajes_panel");
 const { mountOrderConfigPanel } = require("./order_config_panel");
 const { mountWwebPhoneAccess } = require("./wweb_phone_access");
@@ -1023,6 +1024,19 @@ app.post('/api/ext/wweb/agent/db', wwebAgentJson, requireWwebAgentAccess, async 
     } else if (operation === 'findOneAndUpdate') {
       const update = wwebAgentScopeUpdate(collectionName, args.update || {}, tenantId, numero);
       result = await collection.findOneAndUpdate(query, update, options);
+    }
+
+    if (collectionName === 'wa_api_message_windows' && !['find','findOne','deleteMany'].includes(operation)) {
+      const windowDoc = await collection.findOne(query, { sort: { updatedAt: -1, lastMessageAt: -1 } }).catch(() => null);
+      const messages = Array.isArray(windowDoc?.messages) ? windowDoc.messages : [];
+      await Promise.all(messages.map((message, index) => recordMonetizationEvent({
+        db,
+        tenantId,
+        eventKey: 'whatsapp.api_sent',
+        sourceId: String(message?.waMessageId || message?.messageId || `${windowDoc?._id || 'window'}:${index}:${message?.at || message?.createdAt || ''}:${message?.text || ''}`),
+        occurredAt: message?.at || message?.createdAt || new Date(),
+        metadata: { numeroFrom: numero, contact: windowDoc?.contact || windowDoc?.numero || '', windowId: String(windowDoc?._id || '') }
+      }).catch(error => console.warn('[monetization] api message:', error?.message || error))));
     }
 
     return res.json(wwebAgentEncode({ ok: true, result }));

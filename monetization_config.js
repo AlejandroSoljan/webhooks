@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.188 | Fecha: 2026-09-22
+// Asisto | Version: 5.00.189 | Fecha: 2026-09-22
 const { getDb } = require('./db');
 
 const CATALOG = Object.freeze([
@@ -34,6 +34,7 @@ function mountMonetizationRoutes(app,auth){
   app.get('/admin/monetization',auth.requireAuth,requireSuper,(_req,res)=>res.type('html').send(renderPage()));
   app.get('/api/monetization/tenants',auth.requireAuth,requireSuper,async(req,res)=>{const db=await getDb(),rows=await db.collection('tenant_config').find({}, {projection:{_id:1}}).sort({_id:1}).limit(3000).toArray(),tenants=rows.map(x=>tenant(x._id)).filter(Boolean);res.json({tenants:[...new Set(tenants)],current:tenant(req.user?.tenantId)});});
   app.get('/api/monetization/config',auth.requireAuth,requireSuper,async(req,res)=>{const tenantId=tenant(req.query.tenantId);if(!tenantId)return res.status(400).json({error:'Dominio inválido'});const doc=await (await getDb()).collection('monetization_config').findOne({_id:tenantId});res.json(normalizeConfig(doc||{},tenantId));});
+  app.get('/api/monetization/summary',auth.requireAuth,async(req,res)=>{try{const {buildMonetizationSummary}=require('./monetization_engine'),isSuper=String(req.user?.role||'').toLowerCase()==='superadmin',tenantId=isSuper?tenant(req.query.tenantId):tenant(req.user?.tenantId);res.json(await buildMonetizationSummary({tenantId,from:String(req.query.from||''),to:String(req.query.to||''),isSuper}));}catch(error){console.error('[monetization] summary:',error);res.status(500).json({ok:false,error:'No se pudo calcular el resumen.'});}});
   app.put('/api/monetization/config',auth.requireAuth,requireSuper,async(req,res)=>{const tenantId=tenant(req.body?.tenantId);if(!tenantId)return res.status(400).json({error:'Dominio inválido'});const value=normalizeConfig(req.body,tenantId),now=new Date();await (await getDb()).collection('monetization_config').updateOne({_id:tenantId},{$set:{...value,updatedAt:now,updatedBy:String(req.user?.username||req.user?.uid||'superadmin')},$setOnInsert:{createdAt:now}},{upsert:true});res.json(value);});
 }
 module.exports={CATALOG,GROUP_NAMES,defaultConfig,normalizeConfig,renderPage,mountMonetizationRoutes};

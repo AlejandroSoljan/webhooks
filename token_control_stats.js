@@ -1449,6 +1449,7 @@ function renderTokenControlPage(user) {
     .kpi{background:#fff;border:1px solid var(--border);border-radius:14px;padding:14px}
     .kpi .t{font-size:12px;color:var(--muted);margin-bottom:6px}
     .kpi .v{font-size:25px;font-weight:800;line-height:1.1}
+    .dashboardGrid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(320px,.85fr);gap:12px}.chartCard{min-height:300px}.barChart{display:grid;gap:12px;margin-top:18px}.barRow{display:grid;grid-template-columns:minmax(120px,190px) minmax(120px,1fr) auto;gap:10px;align-items:center}.barLabel{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:700}.barTrack{height:12px;border-radius:99px;background:#e8eef5;overflow:hidden}.barFill{height:100%;border-radius:99px;background:linear-gradient(90deg,#10bfa9,#087d72);min-width:2px}.barValue{font-weight:800;font-variant-numeric:tabular-nums}.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px}.legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}.emptyChart{display:grid;place-items:center;min-height:190px;color:var(--muted);text-align:center}.currencyTotals{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.currencyTotals span{background:#e9f7f5;color:#07685f;border-radius:999px;padding:6px 10px;font-weight:800}
     .tableWrap{overflow:auto;border:1px solid var(--border);border-radius:14px}
     table{width:100%;border-collapse:collapse;background:#fff;min-width:${isSuper ? '1280px' : '760px'}}
     th,td{padding:12px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle;font-size:14px}
@@ -1470,7 +1471,7 @@ function renderTokenControlPage(user) {
     .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px}
     .warnBox{padding:10px 12px;border-radius:12px;background:#fffbeb;color:#92400e;border:1px solid #fde68a;font-size:13px}
     #msg{min-height:20px}
-    @media (max-width:1100px){.kpis,.kpis.detail{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media (max-width:1100px){.kpis,.kpis.detail{grid-template-columns:repeat(2,minmax(0,1fr))}.dashboardGrid{grid-template-columns:1fr}}
     @media (max-width:760px){.kpis,.kpis.detail{grid-template-columns:1fr}}
   </style>
 </head>
@@ -1527,6 +1528,21 @@ function renderTokenControlPage(user) {
       <div class="kpi"><div class="t">Eventos</div><div class="v" id="kpiEvents">0</div></div>
       <div class="kpi"><div class="t">Importe</div><div class="v money" id="kpiBilledCost">US$ 0</div></div>
       <div class="kpi"><div class="t">Último uso</div><div class="v" id="kpiLastUse" style="font-size:16px">-</div></div>`}
+    </div>
+
+    <div class="card">
+      <div class="sectionTitle"><div><h2>Consumos monetizables</h2><div class="small">Operaciones registradas con la tarifa vigente de cada dominio. Los cargos sólo se aplican cuando “Cobrar consumos” está habilitado.</div></div></div>
+      <div class="kpis detail">
+        <div class="kpi"><div class="t">Operaciones medidas</div><div class="v" id="kpiMonOperations">0</div></div>
+        <div class="kpi"><div class="t">Créditos utilizados</div><div class="v" id="kpiMonCredits">0</div></div>
+        <div class="kpi"><div class="t">Costo real registrado</div><div class="v money" id="kpiMonReal">US$ 0</div></div>
+        <div class="kpi"><div class="t">Importe calculado</div><div class="v money" id="kpiMonBilled">$ 0</div><div class="currencyTotals" id="monCurrencies"></div></div>
+      </div>
+    </div>
+
+    <div class="dashboardGrid">
+      <div class="card chartCard"><div class="sectionTitle"><div><h2>Consumo por funcionalidad</h2><div class="small">Cantidad de operaciones del período.</div></div></div><div class="barChart" id="featureChart"><div class="emptyChart">Todavía no hay consumos medidos.</div></div></div>
+      <div class="card chartCard"><div class="sectionTitle"><div><h2>Comparativa por dominio</h2><div class="small">Operaciones registradas por cada dominio.</div></div></div><div class="barChart" id="domainChart"><div class="emptyChart">Todavía no hay consumos medidos.</div></div></div>
     </div>
 
     <div class="card">
@@ -1662,6 +1678,7 @@ function renderTokenControlPage(user) {
   const kpiCompleted = document.getElementById('kpiCompleted');
   const kpiAvgConversation = document.getElementById('kpiAvgConversation');
   const kpiAvgBilled = document.getElementById('kpiAvgBilled');
+  const kpiMonOperations=document.getElementById('kpiMonOperations'),kpiMonCredits=document.getElementById('kpiMonCredits'),kpiMonReal=document.getElementById('kpiMonReal'),kpiMonBilled=document.getElementById('kpiMonBilled'),monCurrencies=document.getElementById('monCurrencies'),featureChart=document.getElementById('featureChart'),domainChart=document.getElementById('domainChart');
   const btnReload = document.getElementById('btnReload');
   const btnLoadConversations = document.getElementById('btnLoadConversations');
   const btnLoadMessages = document.getElementById('btnLoadMessages');
@@ -1714,6 +1731,13 @@ function renderTokenControlPage(user) {
     if(!keys.length)return fmtCurrency(0,'USD');
     keys.sort(function(a,b){if(a==='USD')return -1;if(b==='USD')return 1;if(a==='ARS')return -1;if(b==='ARS')return 1;return a.localeCompare(b);});
     return keys.map(function(c){return fmtCurrency(map[c],c);}).join(' / ');
+  }
+  function renderBars(root,items,label,value){
+    if(!root)return;const rows=(items||[]).filter(function(x){return num(value(x))>0;}).sort(function(a,b){return num(value(b))-num(value(a));}).slice(0,10),max=Math.max(1,...rows.map(function(x){return num(value(x));}));
+    root.innerHTML=rows.length?rows.map(function(x){const v=num(value(x));return '<div class="barRow"><div class="barLabel" title="'+esc(label(x))+'">'+esc(label(x))+'</div><div class="barTrack"><div class="barFill" style="width:'+Math.max(1,v/max*100).toFixed(1)+'%"></div></div><div class="barValue">'+fmtInt(v)+'</div></div>';}).join(''):'<div class="emptyChart">Todavía no hay consumos medidos para este período.</div>';
+  }
+  function renderMonetization(j){
+    const totals=j&&j.totals||{},currencies=totals.byCurrency||{};kpiMonOperations.textContent=fmtInt(totals.operations);kpiMonCredits.textContent=fmtInt(totals.credits);kpiMonReal.textContent=fmtMoney(totals.realCost);const keys=Object.keys(currencies);kpiMonBilled.textContent=keys.length===1?fmtCurrency(currencies[keys[0]].billedAmount,keys[0]):(keys.length?keys.length+' monedas':'$ 0');monCurrencies.innerHTML=keys.map(function(c){return '<span>'+esc(fmtCurrency(currencies[c].billedAmount,c))+'</span>';}).join('');renderBars(featureChart,j&&j.byType,function(x){return x.name||x.eventKey;},function(x){return x.quantity;});renderBars(domainChart,j&&j.byDomain,function(x){return x.tenantId;},function(x){return x.operations;});
   }
   function amountStackHtml(aiUsd,apiMap){
     const apiKeys=Object.keys(apiMap||{}).filter(function(c){return Math.abs(num(apiMap[c]))>0;});
@@ -2017,12 +2041,15 @@ function renderTokenControlPage(user) {
       const summaryUrl = '/api/token-control/summary?' + buildQuery(false).toString();
       const apiQuery=buildQuery(false);apiQuery.set('details','0');
       const apiMessagesUrl = '/api/token-control/api-message-windows?' + apiQuery.toString();
+      const monetizationQuery=new URLSearchParams();const selectedTenant=String(tenantEl.value||'').trim();if(selectedTenant)monetizationQuery.set('tenantId',selectedTenant);if(fromEl.value)monetizationQuery.set('from',fromEl.value);if(toEl.value)monetizationQuery.set('to',toEl.value);
       const result = await Promise.all([
         getJson(summaryUrl),
-        getJson(apiMessagesUrl)
+        getJson(apiMessagesUrl),
+        getJson('/api/monetization/summary?'+monetizationQuery.toString())
       ]);
       if(sequence!==loadSequence)return;
       renderDomainSummary(result[0],result[1]);
+      renderMonetization(result[2]);
     } catch(e){
       if(sequence!==loadSequence)return;
       msgEl.textContent = e && e.message ? e.message : String(e);
