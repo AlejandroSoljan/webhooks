@@ -36,6 +36,10 @@ async function enableTicketAlerts() {
     await ticketAudioContext.resume();
     ticketAlertsEnabled = ticketAudioContext.state === 'running';
     if (ticketAlertsEnabled) sessionStorage.asistoTicketAlerts = '1';
+    if (ticketAlertsEnabled) {
+      const oscillator=ticketAudioContext.createOscillator(),gain=ticketAudioContext.createGain(),start=ticketAudioContext.currentTime;
+      oscillator.connect(gain);gain.connect(ticketAudioContext.destination);oscillator.frequency.value=820;gain.gain.setValueAtTime(.14,start);gain.gain.exponentialRampToValueAtTime(.001,start+.25);oscillator.start(start);oscillator.stop(start+.26);
+    }
     if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
     if (navigator.vibrate) navigator.vibrate(80);
     return ticketAlertsEnabled;
