@@ -38,7 +38,7 @@ async function enableTicketAlerts() {
     if (ticketAlertsEnabled) sessionStorage.asistoTicketAlerts = '1';
     if (ticketAlertsEnabled) {
       const oscillator=ticketAudioContext.createOscillator(),gain=ticketAudioContext.createGain(),start=ticketAudioContext.currentTime;
-      oscillator.connect(gain);gain.connect(ticketAudioContext.destination);oscillator.frequency.value=820;gain.gain.setValueAtTime(.14,start);gain.gain.exponentialRampToValueAtTime(.001,start+.25);oscillator.start(start);oscillator.stop(start+.26);
+      oscillator.connect(gain);gain.connect(ticketAudioContext.destination);oscillator.frequency.value=820;gain.gain.setValueAtTime(.3,start);gain.gain.exponentialRampToValueAtTime(.001,start+.32);oscillator.start(start);oscillator.stop(start+.33);
     }
     if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
     if (navigator.vibrate) navigator.vibrate(80);
@@ -55,10 +55,11 @@ function ticketAlert(ticket) {
   const detail = kind === 'called' ? (ticket.desk ? 'Acercate a ' + ticket.desk + '.' : 'Acercate al sector.') : 'Preparáte, enseguida te llamamos.';
   toast(title + ' ' + detail, 9000);
   document.title = title + ' · Asisto';
-  if (navigator.vibrate) navigator.vibrate(kind === 'called' ? [350, 150, 350, 150, 600] : [220, 120, 220]);
+  if (navigator.vibrate) navigator.vibrate(kind === 'called' ? [500, 180, 500, 180, 800] : [300, 140, 300]);
   if (ticketAlertsEnabled && ticketAudioContext) {
-    const frequencies = kind === 'called' ? [740, 940, 740] : [660, 820];
-    frequencies.forEach((frequency, index) => { const oscillator=ticketAudioContext.createOscillator(),gain=ticketAudioContext.createGain(),start=ticketAudioContext.currentTime+index*.3;oscillator.connect(gain);gain.connect(ticketAudioContext.destination);oscillator.frequency.value=frequency;gain.gain.setValueAtTime(.16,start);gain.gain.exponentialRampToValueAtTime(.001,start+.22);oscillator.start(start);oscillator.stop(start+.23); });
+    const frequencies = kind === 'called' ? [740, 980, 740, 980, 740, 980] : [700, 920, 700];
+    const volume = kind === 'called' ? .5 : .38;
+    frequencies.forEach((frequency, index) => { const oscillator=ticketAudioContext.createOscillator(),gain=ticketAudioContext.createGain(),start=ticketAudioContext.currentTime+index*.4;oscillator.connect(gain);gain.connect(ticketAudioContext.destination);oscillator.frequency.value=frequency;gain.gain.setValueAtTime(volume,start);gain.gain.exponentialRampToValueAtTime(.001,start+.34);oscillator.start(start);oscillator.stop(start+.35); });
   }
   if ('Notification' in window && Notification.permission === 'granted' && document.hidden) new Notification(title, { body: detail, tag: 'asisto-turno-' + ticket.id, renotify: true });
 }
