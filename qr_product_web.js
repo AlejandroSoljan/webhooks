@@ -1215,14 +1215,15 @@ function allowAiRequest(req, sessionId) {
   return state.count <= max;
 }
 
-function qrPublicBranding(cfg) {
+function qrPublicBranding(cfg, tenant = '') {
+  const mecan = ['MCN', 'DEMO_FERRETERIA'].includes(String(tenant || '').trim().toUpperCase());
   return {
     pageTitle: cfg.pageTitle,
     pageSubtitle: cfg.pageSubtitle,
-    companyName: cfg.companyName,
-    companyLogoUrl: cfg.companyLogoUrl,
-    buttonColor: cfg.buttonColor,
-    buttonTextColor: cfg.buttonTextColor,
+    companyName: mecan ? 'Mecan' : cfg.companyName,
+    companyLogoUrl: mecan ? '/customer-app/assets/mecan-logo.webp' : cfg.companyLogoUrl,
+    buttonColor: mecan ? '#e00000' : cfg.buttonColor,
+    buttonTextColor: mecan ? '#ffffff' : cfg.buttonTextColor,
   };
 }
 
@@ -1241,7 +1242,7 @@ function pageHtml({ tenant, code, branding = {} }) {
  @media(max-width:520px){.page{padding:calc(18px + env(safe-area-inset-top,0px)) 8px calc(20px + env(safe-area-inset-bottom,0px))}.content{padding:15px}.title{font-size:21px}.facts{grid-template-columns:1fr}.chatBody{max-height:48vh}.composeRow{grid-template-columns:1fr}.send{height:42px}.bubble{max-width:94%}}
 .lookup{margin-bottom:14px}.lookupForm{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:12px}.lookupForm input{width:100%;min-width:0;border:1px solid var(--line);border-radius:11px;padding:12px;outline:none;font:inherit}.scanner{margin-top:12px}.scannerViewport{position:relative;overflow:hidden;border-radius:12px;background:#101828}.scanner video{display:block;width:100%;max-height:360px;object-fit:cover}.scanGuide{position:absolute;left:8%;right:8%;top:35%;height:30%;border:2px solid rgba(255,255,255,.92);border-radius:10px;box-shadow:0 0 0 999px rgba(0,0,0,.18);pointer-events:none}.scanStatus{font-size:12px;color:var(--muted);margin:8px 0}.scanControls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}.scanControls label{font-size:12px;font-weight:700}.scanControls input{width:150px}.scanControls .btn{padding:8px 11px}
 .photoAction{margin:9px 0 0 8px}.photoResult{font-size:13px;color:var(--muted);margin-top:10px;line-height:1.4}.scanner.photoMode .scannerViewport,.scanner.photoMode .scanStatus,.scanner.photoMode #zoomLabel,.scanner.photoMode #torchBtn{display:none!important}.photoChoices{display:grid;gap:8px;margin:10px 0}.photoChoice{width:100%;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--text);padding:11px;text-align:left}.photoChoice b,.photoChoice span{display:block}.photoChoice small{display:block;margin-top:3px}.photoChoice span{color:var(--primary);font-weight:850;margin-top:4px}
-.appNav{position:fixed;left:0;right:0;bottom:0;height:calc(76px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);display:flex;justify-content:space-around;background:#fff;box-shadow:0 -3px 18px rgba(16,36,61,.16);z-index:50}.appNav a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#52617c;text-decoration:none;font-size:11px;font-weight:650}.appNav svg{width:22px;height:22px;display:block;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.appNav a.active{color:#e71932}body{padding-bottom:calc(78px + env(safe-area-inset-bottom,0px))}
+.appNav{position:fixed;left:0;right:0;bottom:0;height:calc(76px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);display:flex;justify-content:space-around;background:#fff;box-shadow:0 -3px 18px rgba(16,36,61,.16);z-index:50}.appNav a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#52617c;text-decoration:none;font-size:11px;font-weight:650}.appNav svg{width:22px;height:22px;display:block;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.appNav a.active{color:#e71932}.appNav a:last-child{display:none}body{padding-bottom:calc(78px + env(safe-area-inset-bottom,0px))}
 </style>
 </head>
 <body>
@@ -1399,7 +1400,7 @@ function mountQrProductWeb(app) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-      return res.status(200).send(pageHtml({ tenant, code, branding: qrPublicBranding(cfg) }));
+      return res.status(200).send(pageHtml({ tenant, code, branding: qrPublicBranding(cfg, tenant) }));
     } catch (error) {
       console.error('[qr] page:', error?.message || error);
       return res.status(503).send('El servicio está ocupado. Reintentá en unos segundos.');
@@ -1416,7 +1417,7 @@ function mountQrProductWeb(app) {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-      return res.status(200).send(pageHtml({ tenant, code, branding: qrPublicBranding(cfg) }));
+      return res.status(200).send(pageHtml({ tenant, code, branding: qrPublicBranding(cfg, tenant) }));
     } catch (error) {
       console.error('[qr] page:', error?.message || error);
       return res.status(503).send('El servicio está ocupado. Reintentá en unos segundos.');
@@ -1760,4 +1761,4 @@ function mountQrProductWeb(app) {
   });
 }
 
-module.exports = { mountQrProductWeb, loadQrConfig, normalizeQrProduct, managerDirectLookupUrl };
+module.exports = { mountQrProductWeb, loadQrConfig, normalizeQrProduct, managerDirectLookupUrl, qrPublicBranding };
