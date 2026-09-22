@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.122 | Fecha: 2026-09-12
+// Asisto | Version: 5.00.183 | Fecha: 2026-09-22
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta el catálogo local y su API de respaldo: NO usa OpenAI.
@@ -1254,7 +1254,7 @@ function pageHtml({ tenant, code, branding = {} }) {
     <div class="chatBody" id="chatBody"></div>
     <div class="composer"><div class="composeRow"><textarea id="message" maxlength="2500" placeholder="Preguntá sobre uso, características, compatibilidad…"></textarea><button class="btn btnPrimary send" id="sendBtn" type="button">Enviar</button></div></div>
   </section>
- <div class="footer"><div>Información comercial obtenida del sistema del negocio. La información ampliada puede utilizar IA y fuentes públicas de Internet.</div><div class="powered">Powered by <img src="/static/asisto-logo-transparent.png" alt="Asisto"/><strong>Asisto</strong> · <a href="https://www.asistobot.com.ar" target="_blank" rel="noopener">www.asistobot.com.ar</a></div></div>
+ <div class="footer"><div>Información comercial obtenida del sistema del negocio. La información ampliada puede utilizar IA y fuentes públicas de Internet.</div><div class="powered">Powered by <img src="/static/asisto-logo-transparent.png" alt="Asisto"/><strong>Asisto</strong> · <a href="https://www.asistobot.com.ar/r?source=powered_asisto&amp;app=consulta_producto_qr&amp;placement=pie_producto&amp;tenant=${encodeURIComponent(tenant)}" target="_blank" rel="noopener">www.asistobot.com.ar</a></div></div>
 </div>
 <nav class="appNav" aria-label="Navegación principal"><a href="/customer-app/${encodeURIComponent(tenant)}"><svg viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg>Inicio</a><a class="active" href="/qr/${encodeURIComponent(tenant)}?scan=1"><svg viewBox="0 0 24 24"><path d="M4 7V4h3M17 4h3v3M20 17v3h-3M7 20H4v-3M8 8v8M11 8v8M15 8v8"/></svg>Escanear</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=turns"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/></svg>Turnos</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=ticket"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6h5"/></svg>Mi turno</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=seller"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>Vendedor</a></nav>
 <script>

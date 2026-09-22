@@ -1,7 +1,73 @@
-// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.183 | Fecha: 2026-09-22
+const crypto = require('crypto');
 const { getDb } = require("./db");
 
 const COLLECTION = "web_access_log";
+const VISIT_COLLECTION = 'web_visit_log';
+const VISITOR_COOKIE = 'asisto_vid';
+
+function clean(value, limit = 120) { return String(value || '').trim().slice(0, limit); }
+function cookieValue(req, name) {
+  const raw = String(req?.headers?.cookie || '');
+  for (const part of raw.split(';')) {
+    const at = part.indexOf('=');
+    if (at > 0 && part.slice(0, at).trim() === name) return decodeURIComponent(part.slice(at + 1).trim());
+  }
+  return '';
+}
+function referrerInfo(req) {
+  const referrer = clean(req?.headers?.referer || req?.headers?.referrer, 500);
+  if (!referrer) return { referrer: '', host: '' };
+  try { return { referrer, host: clean(new URL(referrer).hostname.toLowerCase().replace(/^www\./, ''), 160) }; }
+  catch { return { referrer: '', host: '' }; }
+}
+function inferSource(explicit, host) {
+  const value = clean(explicit, 80).toLowerCase();
+  if (value) return value;
+  if (/instagram|l\.instagram/.test(host)) return 'instagram';
+  if (/facebook|fb\.com/.test(host)) return 'facebook';
+  if (host) return host;
+  return 'directo';
+}
+function poweredLink({ app = 'aplicacion', placement = 'powered_by', tenant = '' } = {}) {
+  const params = new URLSearchParams({ source: 'powered_asisto', app: clean(app, 80), placement: clean(placement, 80) });
+  if (tenant) params.set('tenant', clean(tenant, 120));
+  return '/r?' + params.toString();
+}
+
+async function recordPublicVisit({ req, res, overrides = {} } = {}) {
+  try {
+    if (!req) return null;
+    let visitorId = clean(cookieValue(req, VISITOR_COOKIE), 80);
+    if (!/^[a-f0-9]{32}$/i.test(visitorId)) {
+      visitorId = crypto.randomBytes(16).toString('hex');
+      res?.cookie?.(VISITOR_COOKIE, visitorId, { httpOnly: true, secure: true, sameSite: 'lax', maxAge: 365 * 86400000, path: '/' });
+    }
+    const ref = referrerInfo(req), query = req.query || {};
+    const doc = {
+      visitorId,
+      source: inferSource(overrides.source ?? query.utm_source ?? query.source, ref.host),
+      medium: clean(overrides.medium ?? query.utm_medium ?? query.medium, 80),
+      campaign: clean(overrides.campaign ?? query.utm_campaign ?? query.campaign, 120),
+      content: clean(overrides.content ?? query.utm_content ?? query.content, 120),
+      app: clean(overrides.app ?? query.app, 80) || 'sitio_asisto',
+      placement: clean(overrides.placement ?? query.placement, 100) || 'entrada',
+      tenantId: clean(overrides.tenantId ?? query.tenant, 120),
+      destination: clean(overrides.destination ?? query.to, 200) || '/login',
+      referrer: ref.referrer || null,
+      referrerHost: ref.host || null,
+      path: clean(req.path || '/', 200),
+      ip: getClientIp(req),
+      userAgent: clean(req.headers?.['user-agent'], 500) || null,
+      createdAt: new Date(),
+    };
+    await (await getDb()).collection(VISIT_COLLECTION).insertOne(doc);
+    return doc;
+  } catch (error) {
+    console.error('[web_access] recordPublicVisit error:', error?.message || error);
+    return null;
+  }
+}
 
 function htmlEscape(s) {
   return String(s || "")
@@ -82,6 +148,38 @@ function buildFilter(req) {
   return filter;
 }
 
+function buildVisitFilter(req) {
+  const filter = {};
+  const tenantId = resolveTenantFilter(req);
+  if (tenantId) filter.tenantId = tenantId;
+  const from = toDateStart(req.query?.from), to = toDateEnd(req.query?.to);
+  if (from || to) {
+    filter.createdAt = {};
+    if (from) filter.createdAt.$gte = from;
+    if (to) filter.createdAt.$lte = to;
+  }
+  return filter;
+}
+
+async function buildPublicVisitSummary(req) {
+  const db = await getDb(), col = db.collection(VISIT_COLLECTION), filter = buildVisitFilter(req);
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const [total, today, visitors, sources, placements, recent] = await Promise.all([
+    col.countDocuments(filter),
+    col.countDocuments({ ...filter, createdAt: { ...(filter.createdAt || {}), $gte: todayStart } }),
+    col.aggregate([{ $match: filter }, { $group: { _id: '$visitorId' } }, { $count: 'total' }]).toArray(),
+    col.aggregate([{ $match: filter }, { $group: { _id: '$source', visits: { $sum: 1 }, visitors: { $addToSet: '$visitorId' }, lastAt: { $max: '$createdAt' } } }, { $sort: { visits: -1 } }, { $limit: 25 }]).toArray(),
+    col.aggregate([{ $match: filter }, { $group: { _id: { app: '$app', placement: '$placement', tenantId: '$tenantId' }, visits: { $sum: 1 }, visitors: { $addToSet: '$visitorId' }, lastAt: { $max: '$createdAt' } } }, { $sort: { visits: -1 } }, { $limit: 50 }]).toArray(),
+    col.find(filter, { projection: { visitorId: 1, source: 1, medium: 1, campaign: 1, app: 1, placement: 1, tenantId: 1, referrerHost: 1, createdAt: 1 } }).sort({ createdAt: -1 }).limit(100).toArray(),
+  ]);
+  return {
+    total, today, uniqueVisitors: visitors[0]?.total || 0,
+    sources: sources.map(row => ({ source: row._id || 'directo', visits: row.visits || 0, visitors: row.visitors?.length || 0, lastAt: row.lastAt || null })),
+    placements: placements.map(row => ({ app: row._id?.app || '-', placement: row._id?.placement || '-', tenantId: row._id?.tenantId || '-', visits: row.visits || 0, visitors: row.visitors?.length || 0, lastAt: row.lastAt || null })),
+    recent: recent.map(row => ({ visitor: String(row.visitorId || '').slice(0, 8), source: row.source || 'directo', medium: row.medium || '', campaign: row.campaign || '', app: row.app || '-', placement: row.placement || '-', tenantId: row.tenantId || '-', referrerHost: row.referrerHost || '-', createdAt: row.createdAt || null })),
+  };
+}
+
 async function buildSummary(req) {
   const db = await getDb();
   const filter = buildFilter(req);
@@ -111,6 +209,7 @@ async function buildSummary(req) {
     ]).toArray()
   ]);
 
+  const publicVisits = await buildPublicVisitSummary(req);
   return {
     total,
     today,
@@ -142,6 +241,7 @@ async function buildSummary(req) {
       ip: row.ip || "-",
       userAgent: row.userAgent || "-",
     })),
+    publicVisits,
   };
 }
 
@@ -205,7 +305,7 @@ function renderPage(req) {
     <section class="panel head">
       <div>
         <h1>Ingresos Web</h1>
-        <p>Registro de accesos exitosos al panel. Se guarda cada login correcto con usuario, dominio, IP y navegador.</p>
+        <p>Ingresos al sitio y accesos al panel: origen, aplicación, ubicación del enlace y dominio.</p>
       </div>
       <div class="muted">Usuario actual: ${htmlEscape(req.user?.username || "")}</div>
     </section>
@@ -222,6 +322,22 @@ function renderPage(req) {
         </div>
       </div>
       <div class="cards" id="cards"></div>
+      <div class="grid">
+        <div class="box">
+          <h3>Visitas públicas por origen</h3>
+          <table><thead><tr><th>Origen</th><th>Visitas</th><th>Personas</th><th>Última</th></tr></thead><tbody id="sourcesBody"></tbody></table>
+        </div>
+        <div class="box">
+          <h3>Enlaces y pantallas que generaron visitas</h3>
+          <table><thead><tr><th>Aplicación / ubicación</th><th>Dominio</th><th>Visitas</th><th>Personas</th></tr></thead><tbody id="placementsBody"></tbody></table>
+        </div>
+      </div>
+      <div class="grid" style="padding-top:0">
+        <div class="box" style="grid-column:1 / -1">
+          <h3>Visitas públicas recientes</h3>
+          <table><thead><tr><th>Fecha</th><th>Origen</th><th>Campaña</th><th>Aplicación</th><th>Ubicación</th><th>Dominio</th><th>Referencia</th></tr></thead><tbody id="visitsBody"></tbody></table>
+        </div>
+      </div>
       <div class="grid">
         <div class="box">
           <h3>Ingresos por día</h3>
@@ -259,7 +375,10 @@ function renderPage(req) {
       topUsersBody: document.getElementById("topUsersBody"),
       recentBody: document.getElementById("recentBody"),
       btnLoad: document.getElementById("btnLoad"),
-      btnClear: document.getElementById("btnClear")
+      btnClear: document.getElementById("btnClear"),
+      sourcesBody: document.getElementById("sourcesBody"),
+      placementsBody: document.getElementById("placementsBody"),
+      visitsBody: document.getElementById("visitsBody")
     };
 
     function esc(value){
@@ -288,8 +407,19 @@ function renderPage(req) {
     }
 
     function renderCards(data){
-      const items = [["Ingresos", data.total || 0],["Hoy", data.today || 0],["Usuarios únicos", data.uniqueUsers || 0],["Dominios activos", data.uniqueTenants || 0]];
+      const pv = data.publicVisits || {};
+      const items = [["Logins", data.total || 0],["Logins hoy", data.today || 0],["Visitas públicas", pv.total || 0],["Visitantes únicos", pv.uniqueVisitors || 0]];
       els.cards.innerHTML = items.map(function(pair){ return '<div class="stat"><div class="k">' + esc(pair[0]) + '</div><div class="v">' + esc(pair[1]) + '</div></div>'; }).join("");
+    }
+
+    function renderPublicVisits(data){
+      const pv = data.publicVisits || {};
+      const sources = Array.isArray(pv.sources) ? pv.sources : [];
+      const placements = Array.isArray(pv.placements) ? pv.placements : [];
+      const recent = Array.isArray(pv.recent) ? pv.recent : [];
+      els.sourcesBody.innerHTML = sources.length ? sources.map(function(row){return '<tr><td>'+esc(row.source)+'</td><td>'+esc(row.visits)+'</td><td>'+esc(row.visitors)+'</td><td>'+esc(fmtDate(row.lastAt))+'</td></tr>';}).join('') : '<tr><td colspan="4" class="empty">Sin visitas registradas.</td></tr>';
+      els.placementsBody.innerHTML = placements.length ? placements.map(function(row){return '<tr><td><b>'+esc(row.app)+'</b><br><span class="muted">'+esc(row.placement)+'</span></td><td>'+esc(row.tenantId)+'</td><td>'+esc(row.visits)+'</td><td>'+esc(row.visitors)+'</td></tr>';}).join('') : '<tr><td colspan="4" class="empty">Sin enlaces registrados.</td></tr>';
+      els.visitsBody.innerHTML = recent.length ? recent.map(function(row){return '<tr><td>'+esc(fmtDate(row.createdAt))+'</td><td>'+esc(row.source)+'</td><td>'+esc(row.campaign || '-')+'</td><td>'+esc(row.app)+'</td><td>'+esc(row.placement)+'</td><td>'+esc(row.tenantId)+'</td><td>'+esc(row.referrerHost)+'</td></tr>';}).join('') : '<tr><td colspan="7" class="empty">Sin visitas recientes.</td></tr>';
     }
 
     function renderChart(chart){
@@ -324,6 +454,7 @@ function renderPage(req) {
         const j = await r.json();
         if (!r.ok || !j.ok) throw new Error(j.error || 'request_failed');
         renderCards(j.summary || {});
+        renderPublicVisits(j.summary || {});
         renderChart(j.summary && j.summary.chart ? j.summary.chart : []);
         renderTopUsers(j.summary && j.summary.topUsers ? j.summary.topUsers : []);
         renderRecent(j.summary && j.summary.recent ? j.summary.recent : []);
@@ -356,6 +487,13 @@ function mountWebAccessRoutes(app, auth) {
   if (!app || !auth) throw new Error("mountWebAccessRoutes_requires_app_and_auth");
   const { requireAuth, requireAdmin } = auth;
 
+  app.get('/r', async (req, res) => {
+    const requested = clean(req.query?.to, 200);
+    const destination = requested.startsWith('/') && !requested.startsWith('//') ? requested : '/login';
+    await recordPublicVisit({ req, res, overrides: { destination } });
+    return res.redirect(302, destination);
+  });
+
   app.get("/admin/web-access", requireAuth, requireAdmin, async (req, res) => {
     try {
       return res.status(200).send(renderPage(req));
@@ -379,4 +517,6 @@ function mountWebAccessRoutes(app, auth) {
 module.exports = {
   mountWebAccessRoutes,
   recordWebAccessLogin,
+  recordPublicVisit,
+  poweredLink,
 };

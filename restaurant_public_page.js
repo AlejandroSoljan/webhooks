@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.173 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.183 | Fecha: 2026-09-22
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
 const paths = {
  book:'<path d="M12 5v15M3 4c3-1 6-1 9 1 3-2 6-2 9-1v15c-3-1-6-1-9 1-3-2-6-2-9-1Z"/>',
@@ -14,7 +14,7 @@ function renderRestaurantPage({ tenant, token, name, table, logoUrl, tagline = '
   const base = `/api/public/resto/${encodeURIComponent(tenant)}/${encodeURIComponent(token)}`;
   const logo = typeof logoUrl === 'string' && (/^https:\/\//i.test(logoUrl) || logoUrl.startsWith('/static/')) ? logoUrl : '/static/restaurant_logo_brasa.svg';
   const brandName = name || 'BRASA';
-  const powered = '<a class="asisto-powered" href="https://asistobot.com.ar" target="_blank" rel="noopener noreferrer"><img src="/static/logo-asisto-transparent.png" alt="" width="20" height="20"><span>Powered by <strong>Asisto</strong> · asistobot.com.ar</span></a>';
+  const powered = `<a class="asisto-powered" href="https://asistobot.com.ar/r?source=powered_asisto&amp;app=restaurante_cliente&amp;placement=carta_mesa&amp;tenant=${encodeURIComponent(tenant)}" target="_blank" rel="noopener noreferrer"><img src="/static/logo-asisto-transparent.png" alt="" width="20" height="20"><span>Powered by <strong>Asisto</strong> · asistobot.com.ar</span></a>`;
   const header = `<header class="hero"><img class="logo" src="${escapeHtml(logo)}" alt="Logo de ${escapeHtml(brandName)}"><div><h1>${escapeHtml(brandName)}</h1><p>${escapeHtml(tagline)}</p></div><span class="table-chip">Mesa ${escapeHtml(table)}</span></header>`;
   const nav = active => `<div class="bottom-shell"><nav class="bottom-nav" aria-label="Navegación de la carta"><button data-home ${active==='menu'?'aria-current="page"':''}>${icon('book')}<span>Carta</span></button><button ${active==='menu'?'id="openAccount"':''} data-open="cartDialog" data-order-nav ${active==='order'?'aria-current="page"':''}>${icon('order')}<span data-nav-order-label>Mi pedido</span><b class="nav-badge" hidden></b></button><button ${active==='menu'?'id="openHelp"':''} data-open="helpDialog" data-help-nav ${active==='help'?'aria-current="page"':''}>${icon('bell')}<span>Mozo</span></button></nav>${powered}</div>`;
   const back = `<button class="back" data-home>${icon('back')}Volver a la carta</button>`;

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.181 | Fecha: 2026-09-21
+// Asisto | Version: 5.00.183 | Fecha: 2026-09-22
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -108,7 +108,7 @@ const path = require("path");
 
 // ⬇️ Auth UI (login + sesiones + admin usuarios)
 const auth = require("./auth_ui");
-const { mountWebAccessRoutes } = require("./web_access_stats");
+const { mountWebAccessRoutes, recordPublicVisit } = require("./web_access_stats");
 const { mountTokenControlRoutes } = require("./token_control_stats");
 const { mountFleterosViajesPanel } = require("./fleteros_viajes_panel");
 const { mountOrderConfigPanel } = require("./order_config_panel");
@@ -1825,10 +1825,11 @@ function absUrl(p = "/") {
   return base ? (base + path) : path;
 }
 
-app.get("/", (req, res) => {
+app.get("/", async (req, res) => {
   const qs = req.originalUrl && req.originalUrl.includes("?")
     ? req.originalUrl.slice(req.originalUrl.indexOf("?"))
     : "";
+  await recordPublicVisit({ req, res, overrides: { app: "sitio_asisto", placement: "inicio", destination: "/login" + qs } });
   return res.redirect(302, "/login" + qs);
 });
 
