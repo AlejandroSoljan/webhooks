@@ -4,7 +4,7 @@ const { createHmac, timingSafeEqual, randomBytes, createHash } = require('node:c
 const QRCode = require('qrcode');
 const { queuePage } = require('./queue_pages');
 const { createQueueNotifications } = require('./queue_notifications');
-const { mountQueueStats } = require('./queue_stats');
+const { mountQueueStats, listStatsTenants } = require('./queue_stats');
 const { createQueuePrinter } = require('./queue_printer');
 const clean = (s, n = 120) => String(s || '').trim().slice(0, n);
 const tenant = s => clean(s, 60).toUpperCase().replace(/[^A-Z0-9_-]/g, '');
@@ -91,7 +91,12 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     if (mode === 'kiosk' && !isOpen(t) && !allowed(req, t)) return res.redirect('/login?to=' + encodeURIComponent(req.originalUrl));
     res.type('html').send(queuePage(t, mode));
   }));
-  app.get('/ui/turnero/:tenant', wrap(async (req, res) => { const t = tenant(req.params.tenant); guard(req, t); res.type('html').send(queuePage(t, 'admin')); }));
+  app.get('/ui/turnero/:tenant', wrap(async (req, res) => {
+    const { t, db } = await scope(req); guard(req, t);
+    const isSuper = String(req.user?.role || '').toLowerCase() === 'superadmin';
+    const tenants = isSuper ? await listStatsTenants(db, t) : [t];
+    res.type('html').send(queuePage(t, 'admin', { tenants, isSuper }));
+  }));
   app.get('/api/customer-app-admin/:tenant/presence', wrap(async (req, res) => {
     const { t, cfg } = await scope(req); guard(req, t);
     if (cfg.queuePresence === 'qr' && !secret) fail(503, 'Falta configurar la validación presencial.');

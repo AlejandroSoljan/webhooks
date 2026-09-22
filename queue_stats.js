@@ -1,4 +1,5 @@
 const branding = require('./queue_branding');
+const { statsPage: redesignedStatsPage } = require('./queue_stats_page');
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const time = value => value ? +new Date(value) : null;
 // Reconstruct each section visit from the persistent event history, including older tickets.
@@ -59,7 +60,7 @@ function summarize(rows, sectors) {
     tickets: rows.map(d => ({ id: String(d._id), number: d.displayNumber, day: d.dayKey, status: d.status, source: d.deliveryMode || d.source, createdAt: d.createdAt, visits: ticketVisits(d) })),
   };
 }
-function statsPage(tenant, today, { tenants = [tenant], isSuper = false } = {}) {
+function legacyStatsPage(tenant, today, { tenants = [tenant], isSuper = false } = {}) {
   const domainControl = isSuper ? `<label>Dominio<select id="statsTenant">${tenants.map(t => `<option value="${esc(t)}"${t === tenant ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label>` : '';
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Estadísticas de turnos · Asisto</title><style>
 *{box-sizing:border-box}body{margin:0;background:#f4f4f4;color:#161616;font:16px/1.5 system-ui}header,main{max-width:1500px;margin:auto;padding:24px}header{display:flex;justify-content:space-between;align-items:center;gap:20px}h1{font-size:32px;margin:0}p{color:#626262}.filters{display:flex;gap:16px;align-items:end;flex-wrap:wrap;margin:20px 0}label{display:grid;gap:6px}input,select,button{font:inherit;border:1px solid #ccc;border-radius:10px;padding:11px;background:white}button{background:#df0000;color:white;border:0;cursor:pointer}button:disabled{opacity:.5}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:14px}.card,section{background:white;border-radius:16px;padding:20px}.card strong{display:block;font-size:30px}section{margin:20px 0;overflow:auto}table{border-collapse:collapse;width:100%;white-space:nowrap}th,td{text-align:left;padding:12px;border-bottom:1px solid #eee}th{font-size:13px;color:#666}.bar{display:flex;gap:15px;align-items:center;margin:8px 0}.bar span{min-width:110px}.bar i{display:block;background:#e00000;min-width:2px;height:18px;border-radius:4px}.muted{font-size:13px;color:#666}#error{color:#ad0000}a{color:inherit}${branding.css}</style></head><body>
@@ -78,8 +79,8 @@ function mountQueueStats(app, { scope, wrap, allowed, isOpen = () => false, dayK
     if (!publicTenant && !allowed(req, t)) return res.redirect('/login?to=' + encodeURIComponent(req.originalUrl));
     const isSuper = String(req.user?.role || '').toLowerCase() === 'superadmin';
     const tenants = isSuper ? await listStatsTenants(db, t) : [t];
-    if (publicTenant && !req.user?.uid) return res.type('html').send(statsPage(t, dayKey(), { tenants: [t], isSuper: false }));
-    if (String(req.query.embed || '') === '1' || typeof auth?.appShell !== 'function') return res.type('html').send(statsPage(t, dayKey(), { tenants, isSuper }));
+    if (publicTenant && !req.user?.uid) return res.type('html').send(redesignedStatsPage(t, dayKey(), { tenants: [t], isSuper: false }));
+    if (String(req.query.embed || '') === '1' || typeof auth?.appShell !== 'function') return res.type('html').send(redesignedStatsPage(t, dayKey(), { tenants, isSuper }));
     const embed = `/ui/turnero/${encodeURIComponent(t)}/estadisticas?embed=1`;
     res.type('html').send(auth.appShell({ title: 'Estadísticas Turnero · Asisto', user: req.user, active: 'queue_stats', main: `<iframe title="Estadísticas Turnero" src="${embed}" style="display:block;width:100%;height:calc(100vh - 110px);min-height:720px;border:0;border-radius:18px;background:#f4f4f4"></iframe>` }));
   }));
@@ -94,4 +95,4 @@ function mountQueueStats(app, { scope, wrap, allowed, isOpen = () => false, dayK
     res.json({ from, to, ...summarize(rows, cfg.sectors) });
   }));
 }
-module.exports = { mountQueueStats, ticketVisits, summarize, statsPage, listStatsTenants };
+module.exports = { mountQueueStats, ticketVisits, summarize, statsPage: redesignedStatsPage, listStatsTenants };
