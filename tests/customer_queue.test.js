@@ -100,6 +100,11 @@ test('pages contain syntactically valid scripts and escape tenant names', () => 
   for (const mode of ['kiosk', 'display', 'admin']) { const html = queuePage('TEST', mode); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); if (mode === 'kiosk') assert.match(html, /id="dismissTicket"[^>]+aria-label="Cerrar y cancelar esta reserva"/); else { assert.match(html, /enableCallSound/); assert.match(html, /transferControls/); } }
   assert.match(queuePage('TEST', 'kiosk'), /Recibí el llamado en tu celular/);
 });
+test('attention page only builds the section selector for the all-sections view', () => {
+  const html = queuePage('MCN', 'admin');
+  assert.match(html, /if\(!selectedSector\)\{root\.append\(element\('label','Sección'\)\)/);
+  assert.match(html, /const visible=x\.sectors\.filter\(s=>!selectedSector\|\|s\.id===selectedSector\)/);
+});
 test('existing Android page renders cancellation and product discovery with a valid script', async () => {
   const app = express(); require('../customer_app_web').mountCustomerApp(app);
   const temp = app.listen(0, '127.0.0.1'); await new Promise(r => temp.once('listening', r));
