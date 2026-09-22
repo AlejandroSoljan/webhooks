@@ -23,7 +23,7 @@ function setupTicketNotices() {
     message.textContent = 'Tu turno está vinculado a Asisto. Permití las notificaciones de la app: te avisamos cuando faltan 2 turnos, 1 y cuando te llamen.'; box.append(message);
   } else {
     message.textContent = 'Tu turno está guardado en este celular. Mantené esta página abierta: te avisaremos cuando seas el próximo y cuando te llamen.';
-    const button = document.createElement('button'); button.className = 'action'; button.textContent = ticketAlertsEnabled ? 'Avisos activados' : 'Activar sonido y vibración'; button.disabled = ticketAlertsEnabled;
+    const button = document.createElement('button'); button.className = 'action'; button.textContent = ticketAlertsEnabled ? 'Avisos automáticos activados' : 'Activar sonido y vibración'; button.disabled = ticketAlertsEnabled;
     button.onclick = async () => { const enabled = await enableTicketAlerts(); button.textContent = enabled ? 'Avisos activados' : 'No se pudo activar el sonido'; button.disabled = enabled; if (enabled) { localStorage.removeItem('asistoLastTicketAlert'); refreshTicket().catch(()=>{}); } };
     box.append(message, button);
   }
@@ -62,4 +62,20 @@ function ticketAlert(ticket) {
   }
   if ('Notification' in window && Notification.permission === 'granted' && document.hidden) new Notification(title, { body: detail, tag: 'asisto-turno-' + ticket.id, renotify: true });
 }
-module.exports = { linkReservedTicket, setupTicketNotices, enableTicketAlerts, ticketAlert };
+function armDefaultTicketAlerts() {
+  ticketAlertsEnabled = true;
+  sessionStorage.asistoTicketAlerts = '1';
+  let unlocking = false;
+  const unlock = async () => {
+    if (unlocking || ticketAudioContext?.state === 'running') return;
+    unlocking = true;
+    const enabled = await enableTicketAlerts();
+    unlocking = false;
+    const button = document.querySelector('#ticketNotices button');
+    if (button) { button.textContent = enabled ? 'Avisos automáticos activados' : 'Tocá para activar el sonido'; button.disabled = enabled; }
+    if (enabled) { localStorage.removeItem('asistoLastTicketAlert'); refreshTicket().catch(()=>{}); }
+  };
+  addEventListener('pointerdown', unlock, { capture: true });
+  addEventListener('keydown', unlock, { capture: true });
+}
+module.exports = { linkReservedTicket, setupTicketNotices, enableTicketAlerts, ticketAlert, armDefaultTicketAlerts };
