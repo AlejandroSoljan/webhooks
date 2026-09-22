@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.173 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.184 | Fecha: 2026-09-21
 (() => {
   const base = document.body.dataset.base;
   const $ = id => document.getElementById(id);
@@ -62,6 +62,7 @@
     try{
       const result=await post('/scan',{visitorId,deviceToken,...(request?{request:true,name:$('deviceName').value}:{})});
       deviceStatus=result.status;
+      $('deviceAccess').hidden=result.status==='approved';
       if(result.status==='approved'){visitToken=deviceToken;writeStorage('sessionStorage',visitKey,visitToken);}else{visitToken='';writeStorage('sessionStorage',visitKey,'');}
       $('deviceState').textContent=result.label+' · '+({pending:'Esperando habilitación para realizar pedidos',approved:'Celular habilitado',blocked:'Acceso bloqueado',ended:'Visita finalizada'})[result.status];
       $('deviceHint').textContent=result.status==='approved'?'Ya podés usar las funciones disponibles de tu mesa.':result.status==='pending'?'':'Podés seguir viendo la carta. Consultá al personal para volver a habilitarte.';
