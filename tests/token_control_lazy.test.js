@@ -22,8 +22,9 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
     const script = [...dom.window.document.scripts].pop().textContent;
     dom.window.eval(script);
     await tick();
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3);
     assert.ok(calls.some(url => url.includes('/summary')));
+    assert.ok(calls.some(url => url.includes('/api/monetization/summary')));
     assert.ok(calls.some(url => url.includes('/api-message-windows') && url.includes('details=0')));
     assert.ok(!calls.some(url => url.includes('/conversations')));
     assert.equal(dom.window.document.getElementById('conversationDetailCard').hidden, true);

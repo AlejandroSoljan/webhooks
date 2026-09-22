@@ -31,7 +31,7 @@ function load(api) {
   const db = { collection: name => name === 'settings' ? { findOne: async () => config } : f.col };
   const file = path.resolve(__dirname, '../qr_product_web.js'), realRequire = createRequire(file);
   const sandbox = { module: { exports: {} }, process, console: { log() {}, warn() {}, error() {} }, setTimeout, clearTimeout, setImmediate() {}, Buffer, URL,
-    require: name => name === './logic' ? {} : name === './db' ? { getDb: async () => db } : name === 'axios' ? api : realRequire(name) };
+    require: name => name === './logic' ? {} : name === './db' ? { getDb: async () => db } : name === './monetization_engine' ? { recordMonetizationEvent: async () => ({ recorded: true }) } : name === 'axios' ? api : realRequire(name) };
   vm.runInNewContext(fs.readFileSync(file, 'utf8'), sandbox, { filename: file });
   sandbox.module.exports.mountQrProductWeb({ get: (route, handler) => routes.set(route, handler), post() {} });
   async function request(code) {
