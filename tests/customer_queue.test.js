@@ -60,8 +60,8 @@ test('notification history filters preserve legacy manual records and separate q
 });
 test('Asisto navigation builds the queue statistics link without breaking login users', () => {
   const { getNavItemsForUser } = require('../auth_ui');
-  const regular = getNavItemsForUser({ role: 'admin', tenantId: 'demo_ferreteria', allowedPages: ['notifications'] });
-  assert.ok(regular.some(item => item.title === 'Estadísticas Turnero' && item.href === '/ui/turnero/DEMO_FERRETERIA/estadisticas'));
+  const regular = getNavItemsForUser({ role: 'admin', tenantId: 'demo_ferreteria', allowedPages: ['queue_stats'] });
+  assert.ok(regular.some(item => item.title === 'Estadísticas' && item.href === '/ui/turnero/demo_ferreteria/estadisticas'));
   assert.doesNotThrow(() => getNavItemsForUser({ role: 'admin', tenantId: null }));
   assert.ok(!getNavItemsForUser({ role: 'admin', tenantId: 'TEST', allowedPages: [] }).some(item => item.key === 'queue_stats'));
 });
