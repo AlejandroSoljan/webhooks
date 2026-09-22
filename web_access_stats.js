@@ -1,10 +1,12 @@
-// Asisto | Version: 5.00.183 | Fecha: 2026-09-22
+// Asisto | Version: 5.00.185 | Fecha: 2026-09-22
 const crypto = require('crypto');
 const { getDb } = require("./db");
 
 const COLLECTION = "web_access_log";
 const VISIT_COLLECTION = 'web_visit_log';
 const VISITOR_COOKIE = 'asisto_vid';
+const REPORT_TIMEZONE = 'America/Argentina/Buenos_Aires';
+const REPORT_OFFSET = '-03:00';
 
 function clean(value, limit = 120) { return String(value || '').trim().slice(0, limit); }
 function cookieValue(req, name) {
@@ -81,15 +83,26 @@ function htmlEscape(s) {
 function toDateStart(value) {
   const s = String(value || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
-  const d = new Date(`${s}T00:00:00.000Z`);
+  const d = new Date(`${s}T00:00:00.000${REPORT_OFFSET}`);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
 function toDateEnd(value) {
   const s = String(value || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
-  const d = new Date(`${s}T23:59:59.999Z`);
+  const d = new Date(`${s}T23:59:59.999${REPORT_OFFSET}`);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function todayStartInReportTimezone(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: REPORT_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return toDateStart(`${values.year}-${values.month}-${values.day}`);
 }
 
 function getClientIp(req) {
@@ -163,7 +176,7 @@ function buildVisitFilter(req) {
 
 async function buildPublicVisitSummary(req) {
   const db = await getDb(), col = db.collection(VISIT_COLLECTION), filter = buildVisitFilter(req);
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const todayStart = todayStartInReportTimezone();
   const [total, today, visitors, sources, placements, recent] = await Promise.all([
     col.countDocuments(filter),
     col.countDocuments({ ...filter, createdAt: { ...(filter.createdAt || {}), $gte: todayStart } }),
@@ -185,9 +198,7 @@ async function buildSummary(req) {
   const filter = buildFilter(req);
   const col = db.collection(COLLECTION);
 
-  const now = new Date();
-  const todayStart = new Date(now);
-  todayStart.setHours(0, 0, 0, 0);
+  const todayStart = todayStartInReportTimezone();
 
   const [total, today, uniqueUsersRows, uniqueTenantsRows, recent, topUsers, chartRows] = await Promise.all([
     col.countDocuments(filter),
@@ -203,8 +214,8 @@ async function buildSummary(req) {
     ]).toArray(),
     col.aggregate([
       { $match: filter },
-      { $group: { _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" }, d: { $dayOfMonth: "$createdAt" } }, total: { $sum: 1 } } },
-      { $sort: { "_id.y": 1, "_id.m": 1, "_id.d": 1 } },
+      { $group: { _id: { $dateToString: { date: "$createdAt", format: "%Y-%m-%d", timezone: REPORT_TIMEZONE } }, total: { $sum: 1 } } },
+      { $sort: { _id: 1 } },
       { $limit: 90 }
     ]).toArray()
   ]);
@@ -229,7 +240,7 @@ async function buildSummary(req) {
       lastAt: row?.lastAt || null,
     })),
     chart: (chartRows || []).map((row) => ({
-      date: `${String(row._id.y).padStart(4, "0")}-${String(row._id.m).padStart(2, "0")}-${String(row._id.d).padStart(2, "0")}`,
+      date: String(row._id || ""),
       total: Number(row.total || 0),
     })),
     recent: (recent || []).map((row) => ({
@@ -519,4 +530,5 @@ module.exports = {
   recordWebAccessLogin,
   recordPublicVisit,
   poweredLink,
+  _test: { toDateStart, toDateEnd, todayStartInReportTimezone, buildFilter, buildVisitFilter },
 };

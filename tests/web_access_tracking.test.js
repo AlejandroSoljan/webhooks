@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.183 | Fecha: 2026-09-22
+// Asisto | Version: 5.00.185 | Fecha: 2026-09-22
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -44,5 +44,25 @@ test('enlace medido Powered by Asisto contiene aplicación, ubicación y dominio
   assert.equal(
     poweredLink({ app: 'consulta_producto_qr', placement: 'pie_producto', tenant: 'RVL' }),
     '/r?source=powered_asisto&app=consulta_producto_qr&placement=pie_producto&tenant=RVL'
+  );
+});
+
+test('filtro de fechas usa el día calendario de Argentina para logins y visitas', () => {
+  const { _test } = require('../web_access_stats');
+  const req = { user: { role: 'superadmin' }, query: { from: '2026-09-20', to: '2026-09-21' } };
+  const expected = {
+    $gte: new Date('2026-09-20T03:00:00.000Z'),
+    $lte: new Date('2026-09-22T02:59:59.999Z'),
+  };
+  assert.deepEqual(_test.buildFilter(req).createdAt, expected);
+  assert.deepEqual(_test.buildVisitFilter(req).createdAt, expected);
+  assert.equal(new Date('2026-09-22T02:14:40.645Z') <= expected.$lte, true);
+});
+
+test('hoy comienza a medianoche de Argentina aunque en UTC ya sea el día siguiente', () => {
+  const { _test } = require('../web_access_stats');
+  assert.equal(
+    _test.todayStartInReportTimezone(new Date('2026-09-22T02:30:00.000Z')).toISOString(),
+    '2026-09-21T03:00:00.000Z'
   );
 });
