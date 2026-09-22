@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.078 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.149 | Fecha: 2026-09-17
 const { fail } = require('./core');
 const { downloadAudio, localTranscriber } = require('./baileys');
 const { resolveOpenAiApiKey } = require('../../ai_key_router');
@@ -17,9 +17,10 @@ function asistoTranscriber(env = process.env, {
     const buffer = await download(raw, audio);
     const result = await transcribe({ buffer, mime: audio.mimetype, tenantId: context.tenantId,
       openaiApiKey, conversationId: context.conversationId, waId: context.jid,
-      channelType: 'whatsapp_tasks', aiKeyKind: 'tareas_ws', usageTraceId: context.messageId, transcriptionTimeoutMs: 60000 });
+      channelType: 'whatsapp_tasks', aiKeyKind: 'tareas_ws', usageTraceId: context.messageId,
+      audioDurationSeconds: audio.seconds, transcriptionTimeoutMs: 60000 });
     if (typeof result?.text !== 'string' || !result.text.trim()) fail('transcription_failed', 502);
-    return { text: result.text, model: result.model || 'asisto-transcription', costUsd: null };
+    return { text: result.text, model: result.model || 'asisto-transcription', costUsd: result.costUsd ?? null };
   } };
 }
 module.exports = { asistoTranscriber };

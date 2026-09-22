@@ -1,0 +1,279 @@
+2026-09-21 | 5.00.184 | Carta restaurante: oculta el bloque completo de habilitación cuando el celular está aprobado; vuelve a mostrarse si queda pendiente, bloqueado o finaliza la visita. Sin cambios en permisos. Verificación: pruebas existentes de carta y release/healthz AWS. Commit: release 5.00.184.
+2026-09-20 | v5.00.178 | Instalador unificado de Tareas WhatsApp para Windows: un solo ZIP incluye agente Baileys y extensión Chrome, sin node_modules ni secretos. Instala runtime Node privado verificado, dependencias por npm ci, perfil protegido e inicio automático; copia la extensión a una carpeta permanente y crea acceso directo para cargarla/recargarla manualmente en Chrome. El panel enlaza el nuevo paquete y documenta la confirmación exigida por Chrome. Pruebas de contenido, ausencia de dependencias/secretos y enlace publicado. Commit de esta entrada; tag v5.00.178, verificar autoactualización, descarga y healthz en AWS.
+2026-09-20 | v5.00.177 | Optimiza Tareas WhatsApp sin afectar otras IA: títulos y resúmenes usan un modelo exclusivo configurable mediante openai.tasks_model/tareas_ws_model, con gpt-5.4-mini por defecto, sin heredar el modelo conversacional. Cuando el procesamiento automático ya resumió exactamente el conjunto vigente de mensajes, guarda su huella y evita una segunda llamada al abrir la tarea en la extensión. Audios, ayuda, pedidos y conversaciones no cambian. Pruebas de modelo aislado, fallback Mini, medición y deduplicación de resumen. Commit de esta entrada; tag v5.00.177, verificar autoactualización y healthz en AWS.
+2026-09-20 | v5.00.176 | Grupos de dominio sin mezclar operaciones: un dominio principal puede declarar consumption_domains y el Control de Consumos suma tokens y detalle de todos los dominios del grupo. El API /api/ext/domain-status del principal agrega associatedDomains y domains, con funcionalidades y sesiones discriminadas por dominio, mientras sessions conserva por compatibilidad sólo las del dominio consultado. MSM consolida MSM, ALSO y DEMJG; cada dominio conserva su propia sesión, PC y número de WhatsApp. Pruebas de agrupación, deduplicado, pertenencia de sesiones y aislamiento de dominios sin grupo. Commit de esta entrada; tag v5.00.176, verificar autoactualización y healthz en AWS.
+2026-09-19 | 5.00.173 | Detalle de mesa: contador QR activos y Habilitar todos para celulares pendientes conectados. Aprobación grupal atómica por revisión, respeta bloqueados y visitas cerradas; abre mesa libre. Carta: Esperando habilitación para realizar pedidos, sin texto El personal ya ve. Pruebas de aprobación grupal y UI; verificación de release AWS. Commit: release 5.00.173.
+2026-09-19 | 5.00.170 | Reemplaza ingreso de código de 5.00.169 por aprobación de celulares escaneados desde el operador. Escaneo visible aun con mesa libre; habilitar abre visita y vincula credencial, bloquear revoca; cierre y vencimiento invalidan, sin reactivación automática. Habilitación automática opcional por dominio (false por defecto), solo con mesa abierta y sin revivir visitas anteriores. Configuración por dominio. Pruebas de aprobación, aislamiento, cierre y UI; despliegue verificado AWS. Commit: release 5.00.170.
+2026-09-19 | 5.00.169 | Seguridad de visitas QR: código por apertura, credencial por celular vinculada a visita y vencimiento configurable; validación con concurrencia en pedidos y solicitudes, cierre revoca accesos; confirmación de pedidos configurable y límites por visita. Reemplaza acceso indefinido del QR. Operador muestra código y permite renovarlo; carta permanece pública. Pruebas: sesiones, cierre/reapertura, duplicados y configuración; publicación con verificación AWS. Commit: release 5.00.169.
+2026-09-19 | v5.00.171 | Inicio administrativo según diseño aprobado: cuatro indicadores, actividad de mensajes, gráfico de conexiones, alertas, pendientes y accesos rápidos. Logo original transparente de Asisto y frase «Tu negocio, siempre más cerca». Filtros Hoy/Ayer/7 días con zona argentina; gráfico y contador comparten deduplicado de Sesiones. Conexiones actuales y pendientes acumulados identificados; errores no se muestran como cero. Conserva permisos, herramientas y detalle completo desplegable. CSS limitado al inicio y vista móvil. Sólo consultas, sin migración ni escrituras en Mongo; caché 20 s, refresco visible 60 s y límites de consulta. Pruebas: períodos, aislamiento de dominios, permisos, deduplicado, fallos, navegación, revisión visual escritorio/móvil y suite completa. Commit: el que contiene esta entrada; tag v5.00.171. Verificar release y healthz en AWS tras publicación automática.
+2026-09-19 | v5.00.172 | Corrige límite del gráfico semanal de v5.00.171: consulta global de siete días medida en AWS en 2400 ms excedía 1800 ms. Amplía sólo esa agregación a 5000 ms, manteniendo límites de las demás consultas, caché, permisos y sin escrituras ni cambios de índices. Pruebas de períodos, aislamiento, deduplicado, suite y lectura real en AWS; commit de esta entrada y tag v5.00.172.
+2026-09-19 | v5.00.174 | Extiende el formato aprobado del inicio a todas las secciones del panel administrativo mediante admin_shell.css compartido: menú fijo azul, selección verde, encabezado claro, logo original y frase «Tu negocio, siempre más cerca». Sesiones WhatsApp, configuración, usuarios y páginas contenedoras conservan funciones y permisos. Bandeja WhatsApp y Viajes Fleteros usan el mismo contenedor con embed=1 para evitar menús anidados, conservando parámetros. Tablas anchas desplazan dentro de su tarjeta; menú móvil y salida de sesión preservados. No modifica consultas, envíos ni datos. Pruebas de todas las claves del menú, rutas de configuración/sesiones, aislamiento y suite completa; revisión visual escritorio/móvil. Commit de esta entrada; tag v5.00.174, verificar autoactualización y healthz en AWS.
+2026-09-19 | v5.00.175 | Inicio: agrega Mes corriente (desde el día 1 hasta hoy) y Últimos 30 días (hoy y 29 anteriores), con límites argentinos y gráfico diario. Conserva permisos y caché por período/dominio. Límite de agregación de mensajes de estos períodos: 10 s; cliente espera hasta 20 s. No modifica datos. Pruebas de límites mensuales, año bisiesto, totales, aislamiento y suite completa. Commit de esta entrada; tag v5.00.175, verificar release/healthz en AWS.
+ASISTO - BACKEND WEB/API
+Historial de cambios (reconstruido de Git el 17/09/2026)
+
+Repositorio: AlejandroSoljan/webhooks
+Versión declarada en ASISTO_VERSION.json: 5.00.148 (16/09/2026).
+El último tag de la serie 5.00 disponible en Git es v5.00.094. Hay commits
+posteriores sin tag; por eso se citan también sus identificadores. No confundir
+este historial con HISTORIAL_CAMBIOS_4.04.txt del agente WhatsApp para Windows.
+
+HISTÓRICO RESUMIDO (anteriores a este archivo)
+
+v5.00.000 a v5.00.011 - Base de la serie 5.00, control de consumos, ajustes
+  de identidad visual y documentación/API de ayuda. El historial temprano no
+  tiene una descripción funcional verificable para cada número intermedio.
+
+v5.00.012 a v5.00.018 - Métricas de seguridad/permisos de sesiones WhatsApp,
+  correcciones de _id inmutable y del parser numérico de configuración;
+  controles de prioridades de confirmación y ayudas en el panel de dominios.
+
+v5.00.019 a v5.00.044 - Respuestas de ayuda con transcripciones y videos,
+  selección de modelos IA por dominio, mejoras de rendimiento y consistencia
+  de consultas QR, y búsqueda de productos por QR/código de barras. Se agregó
+  catálogo por dominio y se protegieron las consultas bajo carga concurrente.
+
+v5.00.045 a v5.00.054 - Sincronización paginada del catálogo Manager a Mongo,
+  reintentos de páginas vacías, soporte de producto por código de barras y
+  panel de atención WhatsApp con agentes personales y revisión previa a HubSpot.
+
+v5.00.055 a v5.00.090 - Evolución del panel de sesiones/soporte WhatsApp,
+  extensión de navegador para tareas y tickets HubSpot, métricas de mensajes
+  realmente enviados y separación de claves OpenAI por tipo de IA. En esta
+  etapa se incorporó la consulta directa a Manager por código de barras.
+
+v5.00.093 a v5.00.112 - Búsqueda de productos por foto, mejoras del escáner,
+  App Clientes con turnos multisector, interfaz móvil, navegación, ofertas,
+  lectura difícil de códigos y opciones similares del catálogo.
+
+v5.00.113 a v5.00.119 - Centro de notificaciones dirigido por dominio y
+  dispositivo, correcciones del formulario móvil, registro obligatorio de
+  Firebase y vibración cuando se acerca un turno.
+
+v5.00.120 a v5.00.122 - Rendimiento del panel de sesiones, endurecimiento
+  del tráfico QR y del pool de Mongo, y espera correcta de la configuración QR.
+
+CAMBIOS POSTERIORES A v5.00.122 (commits sin tag individual)
+
+12-16/09/2026 - Panel/extensión de tareas WhatsApp: selección de mensajes,
+  agrupación por tema, exclusiones por contacto, conservación de evidencias,
+  borradores y autenticación asociada al agente local. Commits representativos:
+  238448f, cd1279a, 5e010f3, ff180e3, f936d07.
+
+13/09/2026 - Corrección de campos duplicados en upserts de sesiones del agente
+  en Mongo (a703718). Evita el error de ruta "numero" coincidente dos veces.
+
+14-15/09/2026 - Conteos de WhatsApp/API Mensajes: distinguir mensajes reales,
+  sesiones y registros de facturación; deduplicar métricas. Commits 82f8596,
+  72f5d2a, 955b4a8 y 50df0bb.
+
+16/09/2026 - Avisos de leads públicos por la sesión WhatsApp configurada
+  (6bca651). Configuración de dominios secundarios para resolver consultas
+  externas con el dominio principal (4a32bdc).
+
+17/09/2026 - Despliegue automático del backend desde GitHub main hacia AWS
+  Lightsail: instalación, pruebas, health check y reversión si falla. Commits
+ ab8d8cb y 9464886. Verificado en AWS con /healthz correcto.
+
+17/09/2026 - v5.00.149 (tag v5.00.149) - Costos de IA para tickets
+  WhatsApp de ALSO por modelo y duración de audio whisper-1. Se guardan
+  segundos y costo estimado por transcripción; el panel suma el costo real
+  histórico sin alterar tarifas comerciales. Se incluyen cambios locales
+  pendientes de diagnóstico operativo, límite de respuesta de catálogo y
+  exclusión de .env. Migración: backfill idempotente de audios ALSO con
+  duración y transcripción exitosa en la base productiva AWS. Pruebas:
+  sintaxis Node, pruebas unitarias y npm test; verificación de /healthz y
+  release activo posterior al despliegue. Reemplaza el cálculo anterior que
+  omitía el costo de las transcripciones.
+
+17/09/2026 - v5.00.150 (tag v5.00.150) - Corrección de verificación del
+  despliegue automático: el release ahora incluye tests/ antes de ejecutar
+  npm test, para evitar el falso resultado de 0 pruebas. El backfill acepta
+  DOTENV_CONFIG_PATH al ejecutarse manualmente en AWS. Impacto operativo:
+  release con rollback automático si fallan pruebas o /healthz. Pruebas:
+  suite local 159/159 y /healthz tras el despliegue. La ejecución del suite
+  en AWS quedó pendiente porque el temporizador usó el script anterior.
+
+17/09/2026 - v5.00.151 (tag v5.00.151) - Reintento del release con el
+  script de despliegue actualizado ya instalado en AWS. No cambia datos ni
+  lógica funcional respecto de v5.00.150. Impacto operativo: fuerza la
+  construcción de un release que incluya tests/ y ejecute el suite real;
+  conserva el rollback automático. Pruebas: 159/159 locales; el release en
+  AWS se rechazó por caché de Mongo de prueba sin permisos. Producción
+  permaneció en v5.00.150.
+
+17/09/2026 - v5.00.152 (tag v5.00.152) - El despliegue reserva una caché
+  escribible para MongoDB de prueba y ejecuta el suite con la zona horaria
+  Argentina, usada por la captura de mensajes WhatsApp. Impacto operativo:
+  el release vuelve a validar pruebas reales antes de activar producción.
+  Pruebas: suite en AWS 158 aprobadas, 1 omitida; verificar release activo
+  y /healthz luego del despliegue. Reemplaza el intento fallido v5.00.151.
+
+17/09/2026 - v5.00.153 (tag v5.00.153) - Reorganización del panel Asisto.
+  Menú agrupado en Atención al cliente, Mensajes y conexiones, Ventas y
+  operaciones, App del comercio, Consumos y facturación, Configuración del
+  negocio y Administración. Inicio con accesos directos por área. Nueva
+  entrada de configuración con pestañas de Dominio, Canales, Asistente IA,
+  Horarios, Reglas de pedidos y Clientes habilitados; reutiliza los mismos
+  formularios y APIs. Conserva enlaces anteriores, páginas predeterminadas
+  y permisos. Las herramientas API continúan disponibles en Inicio.
+  Menú móvil con fondo opaco y sección activa expandida. Sin migraciones,
+  escrituras a Mongo, cambios de parámetros, lógica de IA ni envíos WhatsApp.
+  Pruebas: 167/167 locales, incluidas 8 nuevas de navegación, permisos,
+  enlaces anteriores, aislamiento de dominio, autenticación y escape HTML;
+  revisión visual desktop y móvil. Publicación por GitHub y despliegue
+  automático AWS; verificar release activo y /healthz antes de darlo por listo.
+
+17/09/2026 - v5.00.154 (tag v5.00.154) - Inicio operativo con indicadores
+  reales y selector de dominio exclusivo del superadmin. Actividad del día
+  argentino: envíos registrados en WhatsApp Web (mismo criterio de deduplicado
+  de Sesiones, sin sumar solicitudes API), pedidos definitivos creados, tokens
+  IA, leads y fallos de confirmación. Pendientes acumulados de revisión y
+  contacto; tareas privadas limitadas al usuario autenticado. Leads sin dominio
+  solamente en vista global. Conexiones WhatsApp/Telegram con heartbeat y
+  políticas, avisos por conexión y versión diferente al objetivo del agente.
+  Conserva los accesos rápidos. Encabezado móvil compacto sin superposición.
+  Consultas de solo lectura con permisos por módulo, timeout, concurrencia
+  acotada y caché 20 s con unificación de solicitudes. Actualización visual
+  cada 60 s en página visible. Fallos parciales muestran No disponible, no 0.
+  No cambia parámetros, índices, sesiones, mensajes ni configuración de IA.
+  Pruebas: 174/174 locales; nuevas pruebas Mongo aislado, aislamiento entre
+  dominios, permisos, deduplicado, fechas, tareas privadas, fallos parciales,
+  caché y DOM. Revisión visual escritorio/celular con datos de prueba.
+  Publicación GitHub -> AWS automático, con verificación de release y salud.
+
+18/09/2026 - v5.00.155 (commit/tag pendiente) - Módulo restaurante:
+  carta pública por QR de mesa, consultas de IA fundamentadas en los artículos,
+  llamados al mozo, solicitudes de cuenta y pedidos guardados como eventos.
+  Panel privado para el operario con eventos pendientes, QR y estado atendido.
+  Reutiliza products y requiere permiso resto para el panel. Nuevas colecciones
+  restaurant_tables y restaurant_events, con índices creados por el sembrado.
+  Carga RES: 19 artículos y 10 mesas mediante script ejecutado únicamente en
+  AWS con MongoDB productivo verificado; la carga en la copia anterior no es
+  productiva. Precios y recetas de demostración sujetos a revisión comercial.
+  Pruebas: npm test 175/175 y prueba HTTP aislada de carta, pedido y panel; verificar release
+  activo, /healthz y flujo público tras el despliegue. No reemplaza una versión
+  previa.
+
+18/09/2026 - v5.00.156 (commit/tag pendiente) - Descarga de PDF A4
+  imprimible con los QR obtenidos de las mesas activas del MongoDB productivo.
+  Acceso autenticado y limitado al permiso resto; evita reutilizar los QR
+  generados previamente desde una copia antigua de la base. Sin cambios de
+  datos ni migración. Pruebas: PDF generado en Mongo de prueba aislado,
+  validación de cabecera y suite completa; verificar en AWS y /healthz.
+
+18/09/2026 - v5.00.157 (commit/tag pendiente) - Corrección de selección
+  de dominio para superadmin en Restaurante y Productos. Restaurante elige
+  un dominio habilitado al abrir, muestra mesas, carta y pendientes, y permite
+  activar otros dominios existentes y agregar mesas. El alta de artículos
+  transmite el dominio elegido también en guardados y borrados; no mezcla
+  artículos de dominios. Avisos del navegador mientras el panel está abierto
+  y registro de tokens FCM de operadores para la futura app Android/iPhone;
+  los eventos intentan enviar push sólo a dispositivos del mismo dominio.
+  No migra datos existentes ni envía a clientes de la app de turnos.
+  Pruebas: suite completa 176/176, panel superadmin con cambio de dominio, carta y
+  pedido con MongoDB aislado; comprobar release activo y /healthz en AWS.
+
+18/09/2026 - v5.00.158 (commit pendiente) - Carta pública por categorías
+  desplegables; confirmación visible, contador y resumen al agregar artículos;
+  consultas de IA más desarrolladas con sugerencias de opciones y combinaciones
+  disponibles de la carta. Diseño móvil renovado con logo de ejemplo y URL de
+  logo configurable por dominio desde el panel. Sin migración de datos.
+  Pruebas: carta y pedido con MongoDB aislado; interacción de categorías y
+  confirmación con DOM; suite completa y verificación de release/healthz en AWS.
+
+18/09/2026 - v5.00.159 (commit pendiente) - Imágenes por artículo en la carta
+  y alta de productos (URL o archivo), fotos generadas para los artículos de
+  RES, control de pedidos por dominio y avisos a clientes con la carta abierta
+  por sesión anónima de mesa. El panel envía mensajes y la atención de una
+  solicitud produce un aviso. Se incorpora Restaurante al selector visible de
+  permisos de usuarios. Datos nuevos: product_images, restaurant_visitors y
+  restaurant_guest_notifications; se completan imágenes faltantes solo en RES.
+  Los avisos del navegador requieren permiso y página abierta. Sin cambios en
+  dominios ajenos a RES. Pruebas: suite completa, producto/imagen, carta,
+  pedidos deshabilitados, avisos y permisos; release/healthz en AWS.
+
+18/09/2026 - v5.00.160 (commit: publicación de esta entrada) - Control de sala:
+  cuenta por visita, comensales, mozo, reservas, pedidos editables y estados de
+  cocina. Pagos manuales parciales/totales, anulación con motivo, cierre sin
+  saldo y archivo de visitas anteriores. Importación explícita de comandas
+  pendientes anteriores conservando sus precios. Concurrencia por revisión
+  de mesa e idempotencia del pedido QR. Asistente IA del operario de consulta.
+  Botón Mercado Pago informativo (sin cobro ni verificación), seguimiento del
+  pedido en el celular y calculadora para dividir saldo. Doce funciones
+  configurables por dominio, incluidos imágenes, pedidos e IA. Amplía 5.00.159.
+  Datos: service/opsRevision en restaurant_tables, restaurant_service_history
+  y restaurant_features en tenant_config; sin migración masiva ni uso de la
+  base antigua. Pruebas: Mongo aislado para pagos, cierre, concurrencia,
+  aislamiento de dominio e importación; DOM para reintentos y borradores;
+  suite completa: 183/183 aprobadas; comprobación de release/healthz en AWS
+  antes de informar.
+
+19/09/2026 - v5.00.161 (commit: publicación de esta entrada) - Reemplaza el
+  diseño de carta de 5.00.160: inicio con categorías, miniaturas con lupa y
+  foto ampliada con ingredientes. Pedido en panel modal con total fijo abajo;
+  ayuda/IA/avisos y cuenta/pago separados. Respeta funciones por dominio.
+  Sin cambios de datos ni migraciones. Pruebas: suite completa, interacción
+  de lupa/carrito/categorías y revisión visual en navegador; release y
+  /healthz verificados en AWS antes de dar por publicado.
+
+19/09/2026 - v5.00.162 (commit: publicación de esta entrada) - Corrige la
+  navegación entre carrito y cuenta de 5.00.161: Mi pedido abre los artículos
+  sin enviar; cuenta avisa si hay pendientes de confirmar. Cantidades +/−,
+  total actualizado, borrador por mesa en sessionStorage con vencimiento de
+  dos horas y clave de reintento conservada. Almacenamiento bloqueado no impide
+  usar la carta. Nueva paleta azul/blanco/celeste y Powered by Asisto con icono
+  y enlace en carta, paneles de cliente y operaciones. Sin migración de datos.
+  Pruebas: suma de varios artículos, recarga, almacenamiento bloqueado,
+  confirmación y cuenta; revisión móvil y suite completa antes de publicar.
+  Despliegue comprobado contra release activo y /healthz en AWS.
+
+19/09/2026 - v5.00.163 (commit: publicación de esta entrada) - Configuración
+  de restaurante centralizada en Dominio Config. Variables individuales para
+  las 12 funciones, activación, logo y modelo IA, con catálogo y ayuda.
+  Reemplaza los formularios de funciones/logo/pedidos del panel de operaciones
+  de 5.00.162; sus endpoints de escritura anteriores responden 410 indicando
+  usar Dominio Config. Compatibilidad de lectura con restaurant_features:
+  cada variable individual tiene prioridad, sin migración de datos.
+  Guardado valida booleanos y URL de logo y conserva restricciones por dominio.
+  Pruebas: compatibilidad, validación, catálogo DOM, guardado aislado, permisos
+  entre dominios y suite completa; verificar release y /healthz en AWS.
+
+19/09/2026 - v5.00.164 (commit: publicación de esta entrada) - Corrige la
+  experiencia de cierre de mesa: revisión junto al botón con saldo pendiente
+  o confirmación explícita de entrega de comandas pagadas aún no entregadas.
+  Sin confirmación de entrega no cambia estados; con saldo no cierra. Cierre
+  y entrega se guardan juntos con revisión optimista y auditoría, y se atienden
+  los eventos del mismo servicio. Errores visibles junto al botón. Sin cambios
+  directos de cuentas productivas ni migraciones. Pruebas HTTP de cierre con
+  pago/entrega, bloqueo por saldo y sincronización; DOM de confirmación y mesa
+  libre, suite completa y verificación de release/healthz en AWS.
+
+REGLA PARA CAMBIOS FUTUROS
+
+Antes de publicar una próxima versión del backend, agregar una entrada con:
+fecha, versión declarada, cambio funcional, efectos operativos/migraciones,
+pruebas realizadas y commit/tag. Si una versión anterior resultó incorrecta,
+marcarla como reemplazada y explicar qué versión la corrigió. Actualizar el
+TXT en el mismo cambio de código siempre que sea posible.
+
+No afirmar que un commit de GitHub ya está en producción sólo porque fue
+publicado: verificar el despliegue de AWS y la respuesta de /healthz.
+
+2026-09-19 | v5.00.165 | Corrección de experiencia restaurante (reemplaza separación de carrito/cuenta de v5.00.162).
+Mi pedido unifica artículos sin enviar, pedidos enviados y sus estados; permanece abierto tras confirmar. Conserva comprobante en sesión ante falla de red. Cuenta de mesa desplegable. Panel: formularios de mesa, pedido y pago desplegables y siguiente estado de cocina como acción principal. Sin cambios de datos ni de permisos/configuración. Pruebas: flujo envío/reapertura/recarga, fallo de red, borradores y cierre de mesas; suite completa antes de publicar. Commit: el que contiene esta entrada.
+
+2026-09-19 | v5.00.166 | Carta móvil conforme a propuesta BRASA aprobada.
+Fondo blanco, acciones coral, tipografía Inter local con licencia OFL, logo de llama SVG, iconos lineales, categorías con búsqueda, miniaturas con lupa, cantidades en carta y navegación inferior fija. Revisión y seguimiento en pantallas completas, progreso real del pedido, acceso a mozo/cuenta y Powered by Asisto. Nombre y frase visibles configurables en dominio; RES usará BRASA. Conserva restricciones de funciones por empresa, precios y pedidos existentes. Verificación visual móvil y flujo de envío en entorno aislado, pruebas de búsqueda/configuración y suite completa. Commit: el que contiene esta entrada.
+
+2026-09-19 | v5.00.167 | Rediseño del panel operador dentro de Asisto.
+Paleta Asisto azul #0f2741 y petróleo #0e6b66; navegación interna Salón/Cocina/Historial/Avisos/QR/IA, tablero de mesas con filtros, alertas y detalle lateral adaptable. Resumen de cobro junto al registro de pagos/cierre, aviso al cliente desde la mesa, estados de preparación visibles. Respeta la interfaz contenedora y permisos por dominio. Conserva confirmación de cierre, revisión de concurrencia y borradores. Pruebas: navegación, filtros, edición, cierre y cambio de dominio; revisión visual dentro de iframe y suite completa. Sin modificaciones de cuentas productivas. Commit: el que contiene esta entrada.
+
+2026-09-19 | v5.00.168 | Corrección visual del operador respecto a maqueta aprobada; reemplaza disposición v5.00.167.
+Barra lateral y accesos superiores con SVG de personas, reloj, mesa, cocina, recibo, avisos, IA, edición, cobro y cierre; Inter, métricas con iconos, estados junto al número y detalle alineado arriba. Panel aprovecha alto del iframe sin encabezado exterior duplicado. Pedidos activos primero y cancelados desplegables; importes por artículo y cobro compacto. Orden natural de mesas 1,2,...10; conserva formularios desplegados al refrescar. Marca de restaurante obtenida de Configuración de dominio; tonos de Asisto. Pruebas de navegación, orden, iconos, cancelados, borradores y cierre; revisión visual en iframe con escenario equivalente a captura. Commit: el que contiene esta entrada.
+2026-09-20 | v5.00.179 | Inicio sensible a las funcionalidades del dominio seleccionado: consulta tenant_config, comportamiento y canales para mostrar y consultar únicamente WhatsApp, Telegram, pedidos, seguimiento, leads, consumo IA y tareas que correspondan. Oculta tarjetas, gráficos, pendientes y accesos rápidos no habilitados; “Todos los dominios” conserva el panorama general y una configuración histórica incompleta conserva compatibilidad. Sólo lecturas; sin migraciones ni cambios de Mongo. Pruebas de clasificación, aislamiento, DOM, períodos, caché y fallos parciales. Commit de esta entrada; tag v5.00.179, verificar autoactualización y healthz en AWS.
+2026-09-21 | v5.00.182 | Control de Consumos con carga diferida: la apertura consulta sólo resumen de IA y totales reales/API de WhatsApp por dominio. El detalle de conversaciones y el listado de mensajes/ventanas se solicitan mediante botones independientes; cambiar filtros oculta y descarta el detalle previo. El modo resumen del API omite documentos y cuerpos de mensajes, conservando totales, importes y deduplicación. Sin migraciones ni escrituras en Mongo. Pruebas DOM de solicitudes iniciales y carga bajo demanda, suite completa y verificación de autoactualización/healthz en AWS. Commit de esta entrada; tag v5.00.182.
+2026-09-22 | v5.00.183 | Medición de ingresos públicos y atribución de enlaces. Registra visitante anónimo, origen, campaña, aplicación, ubicación del enlace, dominio y referencia; incorpora resumen, fuentes, pantallas y visitas recientes en Ingresos Web. Agrega /r como redirección medida y etiqueta Powered by Asisto en consulta QR y restaurante. La raíz conserva parámetros UTM y registra entradas directas o sociales antes del login. Nueva colección web_visit_log, sin modificar documentos existentes. Pruebas unitarias, rutas públicas, aislamiento por dominio, enlaces y suite completa antes de publicar. Commit de esta entrada; tag v5.00.183, verificar autoactualización y healthz en AWS.
+2026-09-22 | v5.00.185 | Corrige el filtro temporal de Ingresos Web de v5.00.183: Desde/Hasta, la métrica de hoy y el gráfico diario usan America/Argentina/Buenos_Aires en lugar de UTC. De este modo, una visita nocturna del día elegido no desaparece por haberse almacenado con fecha UTC del día siguiente. Sin migraciones ni escrituras en MongoDB. Pruebas específicas de límites 20–21/09 y cambio de día UTC, más suite completa; verificar release activo y /healthz en AWS. Commit y tag v5.00.185.
+2026-09-22 | v5.00.186 | Incorpora el módulo Turnero al menú principal de Asisto con permisos independientes por usuario para Emisión de turnos, Atención, Pantalla de llamados y Estadísticas. Atención y Estadísticas validan su permiso al abrir la ruta privada; kiosco y pantalla conservan sus enlaces públicos para terminales y televisores sin sesión. Los usuarios sin configuración explícita de permisos mantienen compatibilidad completa. Sin migraciones ni cambios de MongoDB. Pruebas de agrupación, visibilidad, URLs por dominio y denegación independiente; verificar autoactualización y healthz en AWS. Commit y tag v5.00.186.
+2026-09-22 | v5.00.187 | Unifica el Turnero con el contenedor administrativo vigente de Asisto: Estadísticas deja de mostrar la navegación antigua y conserva el menú agrupado actual. Rediseña Estadísticas con indicadores, gráficos, períodos rápidos y detalle diferido; el selector de dominio se limita al superadmin dentro de Asisto y los accesos públicos continúan resolviendo el dominio desde la URL. La pantalla Escanear reutiliza la misma cabecera visual de Inicio, incluido logo del comercio y acceso de notificaciones, sin alterar lectura de QR/código, foto, navegación inferior ni consultas de producto. Sin migraciones ni escrituras de configuración. Pruebas de sintaxis, render de páginas, catálogo QR y verificación visual; verificar release activo y /healthz en AWS. Commit: el que contiene esta entrada; tag v5.00.187.

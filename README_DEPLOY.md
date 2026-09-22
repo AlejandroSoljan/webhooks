@@ -1,5 +1,11 @@
-<!-- Asisto | Version: 5.00.001 | Fecha: 2026-08-29-->
+<!-- Asisto | Version: 5.00.149 | Fecha: 2026-09-17 -->
 # Proyecto listo (endpoint.js / Render)
+
+## Regla de verificación operativa
+
+- Los diagnósticos de sesiones, bloqueos, métricas y colas actuales deben realizarse contra la fuente productiva que alimenta el panel, preferentemente mediante Control API.
+- Antes de informar un estado, comprobar la frescura de `lastSeenAt`, la versión en ejecución y el último evento. MongoDB local, backups, exportaciones y logs anteriores son fuentes históricas y no deben presentarse como estado actual.
+- Una auditoría no debe ejecutar `Consulta_no_enviados` ni otros endpoints con efectos laterales, porque pueden reservar o cambiar el estado de los mensajes.
 
 Este zip incluye DOS ubicaciones de los archivos:
 - En la raíz: endpoint.js, logic.js, db.js, tenant_runtime.js, auth_ui.js, etc.

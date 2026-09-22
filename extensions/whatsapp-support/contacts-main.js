@@ -25,8 +25,14 @@
       });
     } finally { db.close(); }
   }
-  readContacts().then(contacts => {
-    for (let offset = 0; offset < contacts.length; offset += 500) window.postMessage({ source: SOURCE, contacts: contacts.slice(offset, offset + 500) }, location.origin);
+  let contactsReady = false, cachedContacts = [];
+  function publishContacts() {
+    if (!contactsReady) return;
+    for (let offset = 0; offset < cachedContacts.length; offset += 500) window.postMessage({ source: SOURCE, contacts: cachedContacts.slice(offset, offset + 500) }, location.origin);
     window.postMessage({ source: SOURCE, complete: true }, location.origin);
-  }).catch(() => window.postMessage({ source: SOURCE, complete: true }, location.origin));
+  }
+  window.addEventListener('message', event => {
+    if (event.source === window && event.origin === location.origin && event.data?.source === SOURCE && event.data.request === true) publishContacts();
+  });
+  readContacts().then(contacts => { cachedContacts = contacts; contactsReady = true; publishContacts(); }).catch(() => { contactsReady = true; publishContacts(); });
 })();

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.174 | Fecha: 2026-09-19
 // fleteros_viajes_panel.js
 // Panel móvil para carga de viajes de fleteros.
 // Script nuevo y aislado: no modifica endpoint.js, auth_ui.js, logic.js ni db.js.
@@ -2638,6 +2638,10 @@ function mountFleterosViajesPanel(app, { auth } = {}) {
 
   app.get('/admin/fleteros/viajes', requireAuth, async (req, res) => {
     try {
+      if (req.user && typeof auth?.appShell === 'function' && String(req.query.embed || '') !== '1') {
+        const params = new URLSearchParams(req.query); params.set('embed', '1');
+        return res.status(200).send(auth.appShell({ title: 'Viajes Fleteros · Asisto', user: req.user, active: 'fleteros', main: `<iframe class="standaloneFrame" title="Viajes Fleteros" src="/admin/fleteros/viajes?${params.toString().replace(/&/g, '&amp;')}"></iframe>` }));
+      }
       const tenantId = resolveTenantId(req, auth);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.status(200).send(panelHtml({ tenantId, user: req.user }));

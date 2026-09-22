@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.122 | Fecha: 2026-09-12
+// Asisto | Version: 5.00.183 | Fecha: 2026-09-22
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta el catálogo local y su API de respaldo: NO usa OpenAI.
@@ -9,6 +9,7 @@ const express = require('express');
 const axios = require('axios');
 const { ObjectId } = require('mongodb');
 const { getDb } = require('./db');
+const { resolveCanonicalTenantId } = require('./tenant_aliases');
 const { resolveOpenAiApiKey } = require('./ai_key_router');
 const { createProductCatalog, sourceKey } = require('./product_catalog');
 const {
@@ -129,6 +130,9 @@ function intValue(value, fallback, min, max) {
 }
 function safeTenant(value) {
   return clean(value, 100).replace(/[^a-zA-Z0-9_.-]/g, '').toUpperCase();
+}
+async function canonicalQrTenant(db, value) {
+  return resolveCanonicalTenantId(db, safeTenant(value));
 }
 function safeSessionId(value) {
   const raw = clean(value, 96);
@@ -1239,9 +1243,11 @@ function pageHtml({ tenant, code, branding = {} }) {
 .lookup{margin-bottom:14px}.lookupForm{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:12px}.lookupForm input{width:100%;min-width:0;border:1px solid var(--line);border-radius:11px;padding:12px;outline:none;font:inherit}.scanner{margin-top:12px}.scannerViewport{position:relative;overflow:hidden;border-radius:12px;background:#101828}.scanner video{display:block;width:100%;max-height:360px;object-fit:cover}.scanGuide{position:absolute;left:8%;right:8%;top:35%;height:30%;border:2px solid rgba(255,255,255,.92);border-radius:10px;box-shadow:0 0 0 999px rgba(0,0,0,.18);pointer-events:none}.scanStatus{font-size:12px;color:var(--muted);margin:8px 0}.scanControls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}.scanControls label{font-size:12px;font-weight:700}.scanControls input{width:150px}.scanControls .btn{padding:8px 11px}
 .photoAction{margin:9px 0 0 8px}.photoResult{font-size:13px;color:var(--muted);margin-top:10px;line-height:1.4}.scanner.photoMode .scannerViewport,.scanner.photoMode .scanStatus,.scanner.photoMode #zoomLabel,.scanner.photoMode #torchBtn{display:none!important}.photoChoices{display:grid;gap:8px;margin:10px 0}.photoChoice{width:100%;border:1px solid var(--line);border-radius:12px;background:#fff;color:var(--text);padding:11px;text-align:left}.photoChoice b,.photoChoice span{display:block}.photoChoice small{display:block;margin-top:3px}.photoChoice span{color:var(--primary);font-weight:850;margin-top:4px}
 .appNav{position:fixed;left:0;right:0;bottom:0;height:calc(76px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);display:flex;justify-content:space-around;background:#fff;box-shadow:0 -3px 18px rgba(16,36,61,.16);z-index:50}.appNav a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#52617c;text-decoration:none;font-size:11px;font-weight:650}.appNav svg{width:22px;height:22px;display:block;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.appNav a.active{color:#e71932}.appNav a:last-child{display:none}body{padding-bottom:calc(78px + env(safe-area-inset-bottom,0px))}
+.appTop{max-width:720px;margin:auto;padding:calc(22px + env(safe-area-inset-top,0px)) 20px 10px;display:flex;align-items:center;gap:12px}.topLogo{display:block;width:200px;max-width:44vw;height:auto;object-fit:contain}.topBrand{font-size:29px;font-weight:950;letter-spacing:-1px;line-height:1}.topBell{margin-left:auto;border:0;background:transparent;color:#092451;padding:4px;position:relative}.topBell svg{width:29px;height:29px;display:block;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.topBell:after{content:'';position:absolute;width:9px;height:9px;border-radius:50%;background:#e71932;right:3px;top:2px}.brand{display:none}@media(max-height:800px){.appTop{padding-top:calc(12px + env(safe-area-inset-top,0px));padding-bottom:5px}.topLogo{max-height:48px;width:auto;max-width:48vw}.topBrand{font-size:25px}}
 </style>
 </head>
 <body>
+<header class="appTop"><img class="topLogo hidden" id="topCompanyLogo" alt="Logo de la empresa"><div class="topBrand" id="topBrand">Asisto</div><button class="topBell" type="button" aria-label="Notificaciones"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></button></header>
 <div class="page">
   <div class="brand"><div class="brandMark" id="brandMark">A</div><img class="brandLogo hidden" id="companyLogo" alt="Logo de la empresa"/><div class="brandText"><b id="companyName">Información del producto</b><span id="pageTitle">Información del producto</span><small id="pageSubtitle">Cargando ficha…</small></div></div>
   <section class="card lookup" id="lookup"><div class="content"><div class="eyebrow">Buscar producto</div><h1 class="title">Escaneá o ingresá el código</h1><button class="btn btnPrimary" id="scanBtn" type="button">Abrir cámara</button><div class="lookupForm"><input id="codeInput" type="text" maxlength="180" autocomplete="off" placeholder="Código, SKU o código de barras"/><button class="btn" id="lookupBtn" type="button">Buscar</button></div><div class="scanner hidden" id="scanner"><div class="scannerViewport"><video id="scanVideo" playsinline muted></video><div class="scanGuide"></div></div><div class="scanStatus" id="scanStatus">Apuntá al QR o al código de barras.</div><div class="scanControls"><label id="zoomLabel" class="hidden">Zoom <input id="zoomControl" type="range" step="0.1"/></label><button class="btn hidden" id="torchBtn" type="button">Encender luz</button><button class="btn btnPrimary" id="photoBtn" type="button">Sacar foto al producto</button><input class="hidden" id="photoInput" type="file" accept="image/*" capture="environment"/></div><div class="photoResult hidden" id="photoResult"></div><button class="btn" id="stopScanBtn" type="button">Cerrar cámara</button></div></div></section>
@@ -1251,7 +1257,7 @@ function pageHtml({ tenant, code, branding = {} }) {
     <div class="chatBody" id="chatBody"></div>
     <div class="composer"><div class="composeRow"><textarea id="message" maxlength="2500" placeholder="Preguntá sobre uso, características, compatibilidad…"></textarea><button class="btn btnPrimary send" id="sendBtn" type="button">Enviar</button></div></div>
   </section>
- <div class="footer"><div>Información comercial obtenida del sistema del negocio. La información ampliada puede utilizar IA y fuentes públicas de Internet.</div><div class="powered">Powered by <img src="/static/asisto-logo-transparent.png" alt="Asisto"/><strong>Asisto</strong> · <a href="https://www.asistobot.com.ar" target="_blank" rel="noopener">www.asistobot.com.ar</a></div></div>
+ <div class="footer"><div>Información comercial obtenida del sistema del negocio. La información ampliada puede utilizar IA y fuentes públicas de Internet.</div><div class="powered">Powered by <img src="/static/asisto-logo-transparent.png" alt="Asisto"/><strong>Asisto</strong> · <a href="https://www.asistobot.com.ar/r?source=powered_asisto&amp;app=consulta_producto_qr&amp;placement=pie_producto&amp;tenant=${encodeURIComponent(tenant)}" target="_blank" rel="noopener">www.asistobot.com.ar</a></div></div>
 </div>
 <nav class="appNav" aria-label="Navegación principal"><a href="/customer-app/${encodeURIComponent(tenant)}"><svg viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg>Inicio</a><a class="active" href="/qr/${encodeURIComponent(tenant)}?scan=1"><svg viewBox="0 0 24 24"><path d="M4 7V4h3M17 4h3v3M20 17v3h-3M7 20H4v-3M8 8v8M11 8v8M15 8v8"/></svg>Escanear</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=turns"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/></svg>Turnos</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=ticket"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6h5"/></svg>Mi turno</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=seller"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>Vendedor</a></nav>
 <script>
@@ -1294,7 +1300,7 @@ async function syncChatMessages(force=false){if(sending&&!force)return false;try
 function scheduleChatPoll(delay){if(pollTimer)return;pollTimer=setTimeout(runChatPoll,delay)} async function runChatPoll(){pollTimer=null;let changed=false;const active=started&&el('chat').classList.contains('open')&&!sending&&!document.hidden;if(active)changed=await syncChatMessages(false);unchangedPolls=changed?0:Math.min(unchangedPolls+1,20);const delay=document.hidden?30000:(!active?15000:(unchangedPolls<2?3000:(unchangedPolls<6?7000:15000)));scheduleChatPoll(delay)} function startChatPolling(){scheduleChatPoll(3000)}
 async function jsonFetch(url,opts={}){const r=await fetch(url,{cache:'no-store',...opts});const text=await r.text();let j={};try{j=text?JSON.parse(text):{}}catch{}if(!r.ok)throw new Error(j.detail||j.error||('HTTP '+r.status));return j}
 function safeColor(v,fallback){const x=String(v||'').trim();return /^#[0-9a-f]{6}$/i.test(x)?x:fallback}
-function applyBranding(j){const company=String(j.companyName||'').trim()||j.pageTitle||'Información del producto';el('companyName').textContent=company;el('pageTitle').textContent=j.pageTitle||'Información del producto';el('pageSubtitle').textContent=j.pageSubtitle||'';document.documentElement.style.setProperty('--primary',safeColor(j.buttonColor,'#0f766e'));document.documentElement.style.setProperty('--buttonText',safeColor(j.buttonTextColor,'#ffffff'));const logo=el('companyLogo'),mark=el('brandMark');if(j.companyLogoUrl){logo.src=j.companyLogoUrl;logo.classList.remove('hidden');mark.classList.add('hidden');logo.onerror=()=>{logo.classList.add('hidden');mark.classList.remove('hidden')}}else{logo.classList.add('hidden');mark.classList.remove('hidden')}mark.textContent=(company.trim().charAt(0)||'A').toUpperCase()}
+function applyBranding(j){const company=String(j.companyName||'').trim()||j.pageTitle||'Información del producto';el('companyName').textContent=company;el('pageTitle').textContent=j.pageTitle||'Información del producto';el('pageSubtitle').textContent=j.pageSubtitle||'';document.documentElement.style.setProperty('--primary',safeColor(j.buttonColor,'#0f766e'));document.documentElement.style.setProperty('--buttonText',safeColor(j.buttonTextColor,'#ffffff'));const logo=el('companyLogo'),mark=el('brandMark'),topLogo=el('topCompanyLogo'),topBrand=el('topBrand');if(j.companyLogoUrl){logo.src=j.companyLogoUrl;logo.classList.remove('hidden');mark.classList.add('hidden');topLogo.src=j.companyLogoUrl;topLogo.classList.remove('hidden');topBrand.classList.add('hidden');const fallback=()=>{logo.classList.add('hidden');mark.classList.remove('hidden');topLogo.classList.add('hidden');topBrand.classList.remove('hidden')};logo.onerror=fallback;topLogo.onerror=fallback}else{logo.classList.add('hidden');mark.classList.remove('hidden');topLogo.classList.add('hidden');topBrand.classList.remove('hidden')}mark.textContent=(company.trim().charAt(0)||'A').toUpperCase();topBrand.textContent=company}
 function renderPrices(p,currency){
   const prices=Array.isArray(p.prices)&&p.prices.length?p.prices:[{label:'Precio',note:'',value:p.price,primary:true}];
   const valid=prices.filter(x=>x&&x.value!==null&&x.value!==undefined&&x.value!=='');
@@ -1388,10 +1394,11 @@ function mountQrProductWeb(app) {
   // También se mantiene /qr/DOMINIO/SKU para códigos simples.
   app.get('/qr/:tenant', async (req, res) => {
     try {
-      const tenant = safeTenant(req.params.tenant);
+      const db = await getDb();
+      const tenant = await canonicalQrTenant(db, req.params.tenant);
       const code = digitsOrText(req.query?.codigo, 180);
       if (!tenant) return res.status(404).send('Dominio inválido');
-      const cfg = await loadQrPageConfig(await getDb(), tenant);
+      const cfg = await loadQrPageConfig(db, tenant);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Robots-Tag', 'noindex, nofollow');
@@ -1404,10 +1411,11 @@ function mountQrProductWeb(app) {
 
   app.get('/qr/:tenant/:codigo', async (req, res) => {
     try {
-      const tenant = safeTenant(req.params.tenant);
+      const db = await getDb();
+      const tenant = await canonicalQrTenant(db, req.params.tenant);
       const code = digitsOrText(req.params.codigo, 180);
       if (!tenant || !code) return res.status(404).send('QR inválido');
-      const cfg = await loadQrPageConfig(await getDb(), tenant);
+      const cfg = await loadQrPageConfig(db, tenant);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Robots-Tag', 'noindex, nofollow');
@@ -1420,13 +1428,14 @@ function mountQrProductWeb(app) {
 
   app.post('/api/ext/qr/photo', qrPhotoJson, async (req, res) => {
     try {
-      const tenant = safeTenant(req.body?.tenant);
+      const requestedTenant = safeTenant(req.body?.tenant);
       const image = String(req.body?.image || '').trim();
-      if (!tenant || !/^data:image\/(?:jpeg|png|webp);base64,/i.test(image) || image.length > 7_500_000) {
+      if (!requestedTenant || !/^data:image\/(?:jpeg|png|webp);base64,/i.test(image) || image.length > 7_500_000) {
         return res.status(400).json({ ok: false, error: 'invalid_product_photo', detail: 'La foto no es válida o es demasiado grande.' });
       }
-      if (!allowAiRequest(req, `photo_lookup_${tenant}`)) return res.status(429).json({ ok: false, error: 'rate_limited' });
       const db = await getDb();
+      const tenant = await canonicalQrTenant(db, requestedTenant);
+      if (!allowAiRequest(req, `photo_lookup_${tenant}`)) return res.status(429).json({ ok: false, error: 'rate_limited' });
       const cfg = await loadQrConfig(db, tenant);
       if (!cfg.enabled || !cfg.aiEnabled) return res.status(404).json({ ok: false, error: 'photo_lookup_disabled' });
       const analysis = await analyzeImageExternal({ publicImageUrl: image, mime: 'image/jpeg', purpose: 'product-identification', tenantId: tenant, channelType: 'qr_web', aiKeyKind: 'conversacional', visionMaxTokens: 450 });
@@ -1453,10 +1462,11 @@ function mountQrProductWeb(app) {
 
   app.get('/api/ext/qr/product', async (req, res) => {
     try {
-      const tenant = safeTenant(req.query?.tenant);
+      const requestedTenant = safeTenant(req.query?.tenant);
       const code = digitsOrText(req.query?.codigo, 180);
-      if (!tenant || !code) return res.status(400).json({ ok: false, error: 'tenant_codigo_required' });
+      if (!requestedTenant || !code) return res.status(400).json({ ok: false, error: 'tenant_codigo_required' });
       const db = await getDb();
+      const tenant = await canonicalQrTenant(db, requestedTenant);
       const cfg = await loadQrConfig(db, tenant);
       const product = await fetchQrProduct(cfg, tenant, code);
       res.setHeader('Cache-Control', 'no-store');
@@ -1487,11 +1497,12 @@ function mountQrProductWeb(app) {
 
   app.get('/api/ext/qr/chat/messages', async (req, res) => {
     try {
-      const tenant = safeTenant(req.query?.tenant);
+      const requestedTenant = safeTenant(req.query?.tenant);
       const code = digitsOrText(req.query?.codigo, 180);
       const sid = safeSessionId(req.query?.sessionId);
-      if (!tenant || !code || !sid) return res.status(400).json({ ok: false, error: 'tenant_codigo_session_required' });
+      if (!requestedTenant || !code || !sid) return res.status(400).json({ ok: false, error: 'tenant_codigo_session_required' });
       const db = await getDb();
+      const tenant = await canonicalQrTenant(db, requestedTenant);
       let conv = await db.collection('conversations').findOne(
         { tenantId: tenant, qrSessionId: sid, qrProductCode: code, channelType: 'qr_web', botMode: 'conversacional' },
         { sort: { updatedAt: -1, openedAt: -1 } }
@@ -1537,16 +1548,17 @@ function mountQrProductWeb(app) {
   app.post('/api/ext/qr/chat', qrJson, async (req, res) => {
     const startedAt = Date.now();
     try {
-      const tenant = safeTenant(req.body?.tenant);
+      const requestedTenant = safeTenant(req.body?.tenant);
       const code = digitsOrText(req.body?.codigo, 180);
       const sessionId = safeSessionId(req.body?.sessionId);
       const initial = req.body?.initial === true;
       const message = clean(req.body?.message, 2500);
-      if (!tenant || !code) return res.status(400).json({ ok: false, error: 'tenant_codigo_required' });
+      if (!requestedTenant || !code) return res.status(400).json({ ok: false, error: 'tenant_codigo_required' });
       if (!initial && !message) return res.status(400).json({ ok: false, error: 'message_required' });
       if (!allowAiRequest(req, sessionId)) return res.status(429).json({ ok: false, error: 'rate_limit' });
 
       const db = await getDb();
+      const tenant = await canonicalQrTenant(db, requestedTenant);
       const cfg = await loadQrConfig(db, tenant);
       if (!cfg.enabled || !cfg.aiEnabled) return res.status(404).json({ ok: false, error: 'qr_ai_disabled' });
       const [product, apiKey] = await Promise.all([

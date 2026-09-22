@@ -131,6 +131,21 @@ test('late evidence preserves edits, invalidates approval and checks optimistic 
   assert.equal(changed.state, 'needs_review'); assert.equal(changed.sourceChanged, true);
   await assert.rejects(() => service.editDraft(scope, changed._id, changed.revision, {}, true), /source_reconciliation_required/);
 });
+test('an already generated changed-source summary is not billed again when opened', async () => {
+  let calls = 0;
+  service.titleAnalyzer = { run: async () => {
+    calls++;
+    return { subject:'Revisar impresión', description:'Se debe revisar la impresión informada.', model:'fixture-mini', inputTokens:10, outputTokens:5, totalTokens:15 };
+  } };
+  const [draft] = await processMessages([message('base-ai')]);
+  await service.editDraft(scope, draft._id, draft.revision, { subject:'Título revisado por una persona' });
+  await processMessages([message('late-ai', 30, { text:'Sigue sin imprimir después de reiniciar' })]);
+  const changed = await service.col('drafts').findOne({ _id:draft._id });
+  assert.equal(changed.sourceSuggestionMessageHash, hash(changed.messageIds));
+  assert.equal(calls, 2);
+  assert.equal(await service.refreshChangedDraft(scope, draft._id), false);
+  assert.equal(calls, 2);
+});
 test('missing audio provider fails closed, retries are bounded, local transcript is metered and reused', async () => {
   const audio = message('audio', 30, { text: '', raw: 'fixture', audio: { seconds: 5, bytes: 50 } });
   await processMessages([message('one'), audio]);
@@ -272,6 +287,7 @@ test('Asisto menu, shell and user editor expose support only under the intended 
     assert.match(shell.url, /\/admin\/wweb$/); assert.doesNotMatch(await shell.text(), /Tickets desde WhatsApp/);
     const editor = await (await fetch(base + '/admin/users')).text();
     assert.match(editor, /key: "support", title: "Extensión de tareas WhatsApp"/);
+    assert.match(editor, /key: "resto", title: "Restaurante"/);
     const denied = await fetch(base + '/ui/support', { headers: { 'test-denied': '1' } }); assert.equal(denied.status, 403);
     const restrictedMenu = await (await fetch(base + '/app', { headers: { 'test-denied': '1' } })).text();
     assert.doesNotMatch(restrictedMenu, /href="\/ui\/support"/);

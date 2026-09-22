@@ -7,15 +7,15 @@ async function startLocal({ readAccount, port = 17658 }) {
     res.setHeader('Cache-Control', 'no-store');
     const deny = status => { res.writeHead(status); res.end(); };
     const origin = req.headers.origin;
-    const extensionRequest = req.url === '/extension-session' && origin === EXTENSION_ORIGIN;
+    const extensionRequest = req.url === '/extension-session' && (origin === EXTENSION_ORIGIN || (!origin && req.headers['x-asisto-extension-id'] === EXTENSION_ORIGIN.slice('chrome-extension://'.length)));
     const pairingRequest = req.url === '/pairing' && origin === ORIGIN;
     if ((!extensionRequest && !pairingRequest) || req.headers.host !== `127.0.0.1:${server.address().port}`) return deny(403);
-    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Origin', origin || EXTENSION_ORIGIN);
     res.setHeader('Vary', 'Origin');
     if (req.method === 'OPTIONS') {
       if (req.headers['access-control-request-method'] !== 'GET' || !String(req.headers['access-control-request-headers'] || '').toLowerCase().split(',').map(x => x.trim()).includes('x-asisto-local')) return deny(403);
       res.setHeader('Access-Control-Allow-Methods', 'GET');
-      res.setHeader('Access-Control-Allow-Headers', 'X-Asisto-Local');
+      res.setHeader('Access-Control-Allow-Headers', 'X-Asisto-Local, X-Asisto-Extension-Id');
       res.setHeader('Access-Control-Allow-Private-Network', 'true');
       return deny(204);
     }

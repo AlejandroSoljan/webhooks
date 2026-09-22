@@ -1,0 +1,26 @@
+<!-- Asisto | Version: 5.00.183 | Fecha: 2026-09-22 -->
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Restaurante · Operaciones</title>
+  <link rel="stylesheet" href="/static/restaurant_panel.css?v=5.00.173">
+  <script src="/static/restaurant_panel.js?v=5.00.173" defer></script>
+  <link rel="stylesheet" href="/static/restaurant_operations.css?v=5.00.173">
+  <script src="/static/restaurant_operations.js?v=5.00.173" defer></script>
+</head>
+<body>
+  <main class="panel">
+    <header class="heading">
+      <div class="operator-brand"><img id="opsBrandLogo" src="/static/logo-asisto-transparent.png" alt="Logo del restaurante"><span><b id="opsBrandName">Restaurante</b><small>Panel del restaurante</small></span></div>
+      <nav class="ops-top-nav" aria-label="Accesos principales"><button data-top-view="salon" aria-current="page">Salón</button><button data-top-view="kitchen">Cocina</button><button data-top-view="history">Historial</button></nav><div class="controls"><label id="domainControl">Dominio<select id="domain"><option value="">Cargando dominios…</option></select></label><button id="refresh" type="button">Actualizar</button></div>
+    </header>
+    <p id="status" role="status" aria-live="polite">Cargando restaurante…</p>
+    <div class="metrics"><article><strong id="pendingCount">—</strong><span>Solicitudes pendientes</span></article><article><strong id="tableCount">—</strong><span>Mesas activas</span></article><article><strong id="menuCount">—</strong><span>Artículos en la carta</span></article></div>
+    <section id="setup" class="setup hidden"><h2>Activar restaurante</h2><p>Este dominio todavía no tiene Restaurante habilitado. Configurá restaurant_enabled en Configuración de dominio.</p></section>
+    <section class="section" data-workspace-view="alerts" hidden><div class="sectionHead"><div><h2>Solicitudes pendientes</h2><p>Se actualizan cada 5 segundos.</p></div><button id="alerts" type="button" class="soft">Activar avisos en este dispositivo</button></div><div id="events" class="events empty">Seleccioná un dominio para ver sus solicitudes.</div><p class="hint">Los avisos del navegador funcionan mientras esta pantalla está abierta. La app móvil podrá registrar su token para recibir notificaciones push.</p></section>
+    <section class="section" data-workspace-view="qr" hidden><div class="sectionHead"><div><h2>Mesas y códigos QR</h2><p>Un código distinto para cada mesa. Desde aquí también podés enviar avisos a los clientes que tengan abierta su carta.</p></div><div class="actions"><a id="pdf" class="button soft" href="#">Descargar PDF de QR</a><a id="products" class="button soft" href="#">Administrar carta</a></div></div><div class="newTable"><label>Nueva mesa<input id="tableLabel" maxlength="20" placeholder="Ej.: 11 o Terraza 1"></label><button id="addTable" type="button">Agregar mesa</button></div><div id="tables" class="tables"></div></section>
+  <footer class="asisto-powered-footer"><a href="https://asistobot.com.ar/r?source=powered_asisto&amp;app=restaurante_operaciones&amp;placement=pie_panel" target="_blank" rel="noopener noreferrer"><img src="/static/logo-asisto-transparent.png" alt="" width="28" height="28"> <span>Powered by <strong>Asisto</strong> · asistobot.com.ar ↗</span></a></footer></main>
+</body>
+</html>

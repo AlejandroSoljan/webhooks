@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.088 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.182 | Fecha: 2026-09-21
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -11,6 +11,13 @@ const { getDb } = require("./db");
 // Se pueden sobreescribir por dominio con token_cost_help_*_per_1k.
 const DEFAULT_HELP_COST_INPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_HELP_INPUT_PER_1K) || 0.0002;
 const DEFAULT_HELP_COST_OUTPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_HELP_OUTPUT_PER_1K) || 0.0012;
+// Internal USD costs for ALSO's WhatsApp ticket analysis, per 1K tokens.
+const TASKS_WS_COST_MODEL = String(process.env.TOKEN_COST_TASKS_WS_MODEL || 'gpt-5.4').trim().toLowerCase();
+const TASKS_WS_MODEL_PATTERN = new RegExp(`^${TASKS_WS_COST_MODEL.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:-\\d{4}|$)`);
+const TASKS_WS_COST_INPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_TASKS_WS_INPUT_PER_1K) || 0.0025;
+const TASKS_WS_COST_OUTPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_TASKS_WS_OUTPUT_PER_1K) || 0.015;
+const TASKS_WS_LUNA_INPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_TASKS_WS_LUNA_INPUT_PER_1K) || 0.0002;
+const TASKS_WS_LUNA_OUTPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_TASKS_WS_LUNA_OUTPUT_PER_1K) || 0.0012;
 
 
 function esc(s) {
@@ -37,6 +44,21 @@ function parseDateEnd(raw) {
 function toPositiveNumber(v) {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function taskTokenSum(modelPattern, tokenField, channelField) {
+  return { $sum: { $cond: [{ $and: [
+    { $eq: ["$kind", "message"] },
+    { $eq: [channelField, "whatsapp_tasks"] },
+    { $regexMatch: { input: { $ifNull: ["$model", ""] }, regex: modelPattern } }
+  ] }, { $ifNull: [tokenField, 0] }, 0] } };
+}
+
+function audioCostSum() {
+  return { $sum: { $cond: [
+    { $and: [{ $eq: ["$kind", "audio"] }, { $eq: ["$provider", "openai"] }] },
+    { $ifNull: ["$costUsd", 0] }, 0
+  ] } };
 }
 
 function clampInt(v, min, max, fallback = min) {
@@ -74,10 +96,13 @@ function tokenChannelMatches(item, channels = []) {
 }
 
 
-function buildUsageMatch({ tenantId = "", from = "", to = "" } = {}) {
+function buildUsageMatch({ tenantId = "", tenantIds = [], from = "", to = "" } = {}) {
   const match = {};
   const safeTenant = String(tenantId || "").trim();
-  if (safeTenant) match.tenantId = safeTenant;
+  const safeTenants = [...new Set((Array.isArray(tenantIds) ? tenantIds : []).map(x => String(x || '').trim()).filter(Boolean))];
+  if (safeTenants.length > 1) match.tenantId = { $in: safeTenants };
+  else if (safeTenants.length === 1) match.tenantId = safeTenants[0];
+  else if (safeTenant) match.tenantId = safeTenant;
 
   const createdAt = {};
   const fromDate = parseDateStart(from);
@@ -85,7 +110,15 @@ function buildUsageMatch({ tenantId = "", from = "", to = "" } = {}) {
   if (fromDate) createdAt.$gte = fromDate;
   if (toDate) createdAt.$lte = toDate;
    if (Object.keys(createdAt).length) match.createdAt = createdAt;
-  return { match, safeTenant };
+  return { match, safeTenant, safeTenants: safeTenants.length ? safeTenants : (safeTenant ? [safeTenant] : []) };
+}
+
+async function resolveUsageTenantIds(db, tenantId = '') {
+  const owner = String(tenantId || '').trim();
+  if (!owner) return [];
+  const doc = await db.collection('tenant_config').findOne({ _id: owner }, { projection: { consumption_domains: 1 } });
+  const children = Array.isArray(doc?.consumption_domains) ? doc.consumption_domains : [];
+  return [...new Set([owner, ...children].map(x => String(x || '').trim()).filter(Boolean))];
 }
 
 async function loadTenantCosts(db, tenantIds = []) {
@@ -122,16 +155,21 @@ async function loadTenantCosts(db, tenantIds = []) {
 }
 
 function calculateCostWithRates(row, tenantDoc = {}, mode = "real") {
+  const charge = String(mode || "").toLowerCase() === "charge";
   const messageInput = Number(row.message_input_tokens || 0);
   const messageOutput = Number(row.message_output_tokens || 0);
   const helpInput = Math.max(0, Math.min(messageInput, Number(row.help_input_tokens || 0)));
   const helpOutput = Math.max(0, Math.min(messageOutput, Number(row.help_output_tokens || 0)));
-  const regularMessageInput = Math.max(0, messageInput - helpInput);
-  const regularMessageOutput = Math.max(0, messageOutput - helpOutput);
+  const tasksInput = charge ? 0 : Math.max(0, Math.min(messageInput - helpInput, Number(row.tasks_ws_input_tokens || 0)));
+  const tasksOutput = charge ? 0 : Math.max(0, Math.min(messageOutput - helpOutput, Number(row.tasks_ws_output_tokens || 0)));
+  const lunaInput = charge ? 0 : Math.max(0, Math.min(messageInput - helpInput - tasksInput, Number(row.tasks_ws_luna_input_tokens || 0)));
+  const lunaOutput = charge ? 0 : Math.max(0, Math.min(messageOutput - helpOutput - tasksOutput, Number(row.tasks_ws_luna_output_tokens || 0)));
+  const regularMessageInput = Math.max(0, messageInput - helpInput - tasksInput - lunaInput);
+  const regularMessageOutput = Math.max(0, messageOutput - helpOutput - tasksOutput - lunaOutput);
   const audioInput = Number(row.audio_input_tokens || 0);
   const audioOutput = Number(row.audio_output_tokens || 0);
+  const audioCost = charge ? 0 : Number(row.audio_cost_usd || 0);
 
-  const charge = String(mode || "").toLowerCase() === "charge";
   const prefix = charge ? "token_charge_" : "token_cost_";
   const chatInput = toPositiveNumber(tenantDoc[prefix + "chat_input_per_1k"]);
   const chatOutput = toPositiveNumber(tenantDoc[prefix + "chat_output_per_1k"]);
@@ -143,14 +181,24 @@ function calculateCostWithRates(row, tenantDoc = {}, mode = "real") {
     (charge ? chatInput : DEFAULT_HELP_COST_INPUT_PER_1K);
   const helpOutputRate = toPositiveNumber(tenantDoc[prefix + "help_output_per_1k"]) ||
     (charge ? chatOutput : DEFAULT_HELP_COST_OUTPUT_PER_1K);
+  const isAlso = String(tenantDoc._id || '').toUpperCase() === 'ALSO';
+  const tasksInputRate = isAlso ? TASKS_WS_COST_INPUT_PER_1K : chatInput;
+  const tasksOutputRate = isAlso ? TASKS_WS_COST_OUTPUT_PER_1K : chatOutput;
+  const lunaInputRate = isAlso ? TASKS_WS_LUNA_INPUT_PER_1K : chatInput;
+  const lunaOutputRate = isAlso ? TASKS_WS_LUNA_OUTPUT_PER_1K : chatOutput;
 
   return Number((
     (regularMessageInput / 1000) * chatInput +
     (regularMessageOutput / 1000) * chatOutput +
     (helpInput / 1000) * helpInputRate +
     (helpOutput / 1000) * helpOutputRate +
+    (tasksInput / 1000) * tasksInputRate +
+    (tasksOutput / 1000) * tasksOutputRate +
+    (lunaInput / 1000) * lunaInputRate +
+    (lunaOutput / 1000) * lunaOutputRate +
     (audioInput / 1000) * audioInputRate +
-    (audioOutput / 1000) * audioOutputRate
+    (audioOutput / 1000) * audioOutputRate +
+    audioCost
   ).toFixed(6));
 }
 
@@ -207,7 +255,8 @@ async function buildApiMessageWindowBilling({
   to = "",
   types = "",
   channels = "",
-  limit = 500
+  limit = 500,
+  includeDetails = true
 } = {}) {
   const db = await getDb();
   const { match, safeTenant } = buildApiMessageWindowMatch({ tenantId, from, to });
@@ -242,7 +291,7 @@ async function buildApiMessageWindowBilling({
 
   const coll = db.collection("wa_api_message_windows");
 
-  const docs = await coll.find(match, {
+  const docs = includeDetails ? await coll.find(match, {
     projection: {
       tenantId: 1,
       numeroFrom: 1,
@@ -257,7 +306,7 @@ async function buildApiMessageWindowBilling({
       amount: 1,
       currency: 1
     }
-  }).sort({ windowStartedAt: -1 }).limit(safeLimit).toArray();
+  }).sort({ windowStartedAt: -1 }).limit(safeLimit).toArray() : [];
 
   // El resumen por dominio no debe depender del límite visual del detalle.
   const groupedRows = await coll.aggregate([
@@ -273,34 +322,66 @@ async function buildApiMessageWindowBilling({
     }
   ], { allowDiskUse: true }).toArray();
 
-  // El Control de Consumos muestra únicamente envíos realizados por el script.
-  // La fuente canónica son las entradas guardadas dentro de cada ventana API;
-  // los mensajes manuales del teléfono/WhatsApp Web quedan fuera.
-  const realItems = [];
+  // messageCount puede contener la misma escritura repetida por agentes de
+  // distintas generaciones. Se cuenta el contenido único dentro de 10 s para
+  // que "mensajes API" sea comparable con el registro real de WhatsApp.
+  const uniqueApiMessageRows = await coll.aggregate([
+    { $match: match },
+    { $unwind: '$messages' },
+    { $set: {
+        __entryAt: { $ifNull: ['$messages.at', { $ifNull: ['$lastMessageAt', '$windowStartedAt'] }] },
+        __entryKey: { $concat: [
+          '$tenantId', ':', { $ifNull: ['$numeroFrom', ''] }, ':',
+          { $ifNull: ['$contact', ''] }, ':', { $ifNull: ['$messages.text', ''] }
+        ] }
+    } },
+    { $setWindowFields: {
+        partitionBy: '$__entryKey', sortBy: { __entryAt: 1 },
+        output: { __previousAt: { $shift: { output: '$__entryAt', by: -1, default: null } } }
+    } },
+    { $match: { $expr: { $or: [
+      { $eq: ['$__previousAt', null] },
+      { $gt: [{ $subtract: [{ $toLong: '$__entryAt' }, { $toLong: '$__previousAt' }] }, 10000] }
+    ] } } },
+    { $group: { _id: '$tenantId', messages: { $sum: 1 } } }
+  ], { allowDiskUse: true }).toArray();
+  const uniqueApiMessagesByTenant = new Map(uniqueApiMessageRows.map(row => [String(row._id || ''), Number(row.messages || 0)]));
+
+  // Entradas valorizadas como API Mensajes. Más abajo se cruzan contra el
+  // registro canónico de WhatsApp para mostrar también los envíos que no
+  // quedaron asociados a una ventana facturable.
+  const apiEntries = [];
   for (const windowDoc of docs) {
     const entries = Array.isArray(windowDoc?.messages) ? windowDoc.messages : [];
     for (let index = entries.length - 1; index >= 0; index--) {
       const entry = entries[index] || {};
       const type = String(entry.type || 'text');
-      realItems.push({
+      apiEntries.push({
         id: String(windowDoc?._id || '') + ':' + String(index),
         tenantId: String(windowDoc?.tenantId || '').trim(),
         numeroFrom: String(windowDoc?.numeroFrom || '').trim(),
         contact: String(windowDoc?.contact || '').trim(),
         messageType: type,
         text: String(entry.text || '').slice(0, 2000),
-        hasMedia: /^(?:media|document|image|video|audio)$/i.test(type),
+        waMessageId: String(entry.waMessageId || '').trim(),
         at: entry.at || windowDoc?.lastMessageAt || windowDoc?.windowStartedAt || null
       });
     }
   }
-  realItems.sort((a, b) => Date.parse(b.at || 0) - Date.parse(a.at || 0));
-  if (realItems.length > safeLimit) realItems.length = safeLimit;
+  apiEntries.sort((a, b) => Date.parse(a.at || 0) - Date.parse(b.at || 0));
+  const lastApiAtByKey = new Map();
+  const uniqueApiEntries = apiEntries.filter(entry => {
+    const atMs = Date.parse(entry.at || 0);
+    const key = [entry.tenantId, entry.numeroFrom, entry.contact, String(entry.text || '').replace(/\s+/g, ' ').trim().toLowerCase()].join(':');
+    const previous = lastApiAtByKey.get(key);
+    if (Number.isFinite(atMs)) lastApiAtByKey.set(key, atMs);
+    return !Number.isFinite(previous) || !Number.isFinite(atMs) || atMs - previous > 10000;
+  }).sort((a, b) => Date.parse(b.at || 0) - Date.parse(a.at || 0));
 
   // Cantidad real de mensajes enviados por WhatsApp. No es lo mismo que la
-  // cantidad de ventanas facturables del API. Los registros históricos sin
-  // messageId se deduplican por contacto, texto y segundo porque versiones
-  // anteriores podían registrar el mismo evento como "chat" y "text".
+  // cantidad de ventanas facturables del API. Versiones anteriores podían
+  // registrar el mismo evento como "chat" y "text" con algunos segundos de
+  // diferencia, por eso se deduplica por contenido dentro de 10 segundos.
   const realMatch = { direction: 'out' };
   if (safeTenant) realMatch.tenantId = safeTenant;
   const realAt = {};
@@ -309,28 +390,78 @@ async function buildApiMessageWindowBilling({
   if (realFrom) realAt.$gte = realFrom;
   if (realTo) realAt.$lte = realTo;
   if (Object.keys(realAt).length) realMatch.at = realAt;
-  const realMessageRows = await db.collection('wa_wweb_message_log').aggregate([
+  const realPipeline = [
     { $match: realMatch },
     { $set: {
-        __messageId: { $toString: { $ifNull: ['$messageId', ''] } },
-        __second: { $floor: { $divide: [{ $toLong: '$at' }, 1000] } }
+        // Un mismo envío puede existir como registro moderno (con messageId)
+        // y como registro legado (sin messageId). Contacto + cuerpo + segundo
+        // es la identidad común disponible en las dos versiones.
+        __dedupeKey: { $concat: [
+          'sent:', '$tenantId', ':', '$numero', ':',
+          { $ifNull: ['$contact', ''] }, ':', { $ifNull: ['$body', ''] }
+        ] }
     } },
-    { $set: {
-        __dedupeKey: {
-          $cond: [
-            { $gt: [{ $strLenCP: '$__messageId' }, 0] },
-            { $concat: ['id:', '$tenantId', ':', '$numero', ':', '$__messageId'] },
-            { $concat: [
-                'legacy:', '$tenantId', ':', { $ifNull: ['$contact', ''] }, ':',
-                { $ifNull: ['$body', ''] }, ':', { $toString: '$__second' }
-            ] }
-          ]
-        }
+    { $setWindowFields: {
+        partitionBy: '$__dedupeKey',
+        sortBy: { at: 1 },
+        output: { __previousAt: { $shift: { output: '$at', by: -1, default: null } } }
     } },
-    { $group: { _id: '$__dedupeKey', tenantId: { $first: '$tenantId' }, at: { $max: '$at' } } },
-    { $group: { _id: '$tenantId', messages: { $sum: 1 }, last_at: { $max: '$at' } } }
-  ]).toArray();
+    { $match: { $expr: { $or: [
+      { $eq: ['$__previousAt', null] },
+      { $gt: [{ $subtract: [{ $toLong: '$at' }, { $toLong: '$__previousAt' }] }, 10000] }
+    ] } } }
+  ];
+  const [realMessageRows, realDocs] = await Promise.all([
+    db.collection('wa_wweb_message_log').aggregate([
+      ...realPipeline,
+      { $group: { _id: '$tenantId', messages: { $sum: 1 }, last_at: { $max: '$at' } } }
+    ]).toArray(),
+    includeDetails ? db.collection('wa_wweb_message_log').aggregate([
+      ...realPipeline,
+      { $sort: { at: -1 } },
+      { $limit: safeLimit }
+    ]).toArray() : Promise.resolve([])
+  ]);
   const realMessagesByTenant = new Map(realMessageRows.map(row => [String(row._id || ''), row]));
+
+  const comparableText = value => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const usedApiEntries = new Set();
+  const realItems = realDocs.map((doc, realIndex) => {
+    const tenantId = String(doc?.tenantId || '').trim();
+    const numeroFrom = String(doc?.numero || '').trim();
+    const contact = String(doc?.contact || '').trim();
+    const text = String(doc?.body || '').slice(0, 2000);
+    const messageId = String(doc?.messageId || '').trim();
+    const at = doc?.at || null;
+    const atMs = Date.parse(at || 0);
+    let bestIndex = -1;
+    let bestDistance = Infinity;
+    for (let index = 0; index < uniqueApiEntries.length; index++) {
+      if (usedApiEntries.has(index)) continue;
+      const api = uniqueApiEntries[index];
+      if (api.tenantId !== tenantId || api.numeroFrom !== numeroFrom || api.contact !== contact) continue;
+      const idMatches = messageId && api.waMessageId && messageId === api.waMessageId;
+      const textMatches = comparableText(text) === comparableText(api.text);
+      if (!idMatches && !textMatches) continue;
+      const apiAtMs = Date.parse(api.at || 0);
+      const distance = Number.isFinite(atMs) && Number.isFinite(apiAtMs) ? Math.abs(atMs - apiAtMs) : 0;
+      if (!idMatches && distance > 10 * 60 * 1000) continue;
+      if (idMatches || distance < bestDistance) {
+        bestIndex = index;
+        bestDistance = distance;
+        if (idMatches) break;
+      }
+    }
+    if (bestIndex >= 0) usedApiEntries.add(bestIndex);
+    const apiEntry = bestIndex >= 0 ? uniqueApiEntries[bestIndex] : null;
+    const messageType = String(doc?.messageType || apiEntry?.messageType || 'text');
+    return {
+      id: messageId || String(doc?._id || realIndex), tenantId, numeroFrom, contact,
+      messageType, text,
+      hasMedia: /^(?:media|document|image|video|audio)$/i.test(messageType),
+      at, apiMessage: !!apiEntry, apiType: apiEntry?.messageType || null
+    };
+  });
 
   const tenantIds = Array.from(new Set(
     [...groupedRows.map(r => String(r?._id?.tenantId || '').trim()), ...realMessagesByTenant.keys()].filter(Boolean)
@@ -357,7 +488,7 @@ async function buildApiMessageWindowBilling({
       byTenantMap.set(tenantKey, acc);
     }
     acc.windows += Number(row.windows || 0);
-    acc.messages += Number(row.messages || 0);
+    acc.messages = uniqueApiMessagesByTenant.get(tenantKey) || 0;
     acc.realMessages += Number(row.messages || 0);
     addCurrencyAmount(acc.byCurrency, row?._id?.currency || "ARS", row.amount || 0);
     if (!acc.last_at || Date.parse(row.last_at || 0) > Date.parse(acc.last_at || 0)) {
@@ -410,7 +541,16 @@ async function buildApiMessageWindowBilling({
     windowStartedAt: doc?.windowStartedAt || null,
     windowEndsAt: doc?.windowEndsAt || null,
     lastMessageAt: doc?.lastMessageAt || null,
-    messageCount: Number(doc?.messageCount || 0),
+    messageCount: (() => {
+      const seen = new Map();
+      return (Array.isArray(doc?.messages) ? doc.messages : []).filter(entry => {
+        const atMs = Date.parse(entry?.at || doc?.lastMessageAt || doc?.windowStartedAt || 0);
+        const key = String(entry?.text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const previous = seen.get(key);
+        if (Number.isFinite(atMs)) seen.set(key, atMs);
+        return !Number.isFinite(previous) || !Number.isFinite(atMs) || atMs - previous > 10000;
+      }).length;
+    })(),
     unitValue: Number(doc?.unitValue || 0),
     amount: Number(doc?.amount || 0),
     currency: normalizeBillingCurrency(doc?.currency || "ARS")
@@ -425,7 +565,8 @@ async function buildApiMessageWindowBilling({
       to: to || null,
       types: safeTypes,
       channels: safeChannels,
-      limit: safeLimit
+      limit: safeLimit,
+      includeDetails: !!includeDetails
     },
     items,
     realItems,
@@ -445,7 +586,8 @@ async function buildTokenSummary({
   isSuper = false
   } = {}) {
   const db = await getDb();
-  const { match, safeTenant } = buildUsageMatch({ tenantId, from, to });
+  const tenantIds = await resolveUsageTenantIds(db, tenantId);
+  const { match, safeTenant } = buildUsageMatch({ tenantId, tenantIds, from, to });
   const noTypes = String(types || "").trim().toLowerCase() === "none";
   const noChannels = String(channels || "").trim().toLowerCase() === "none";
   const safeTypes = noTypes ? [] : parseCsvFilter(types, ["pedidos", "conversacional", "ayuda", "tareas_whatsapp"]);
@@ -454,7 +596,7 @@ async function buildTokenSummary({
   if (noTypes || noChannels) {
     return {
       ok: true,
-      filters: { tenantId: safeTenant || null, from: from || null, to: to || null, types: [], channels: [], isSuper: !!isSuper },
+      filters: { tenantId: safeTenant || null, tenantIds, from: from || null, to: to || null, types: [], channels: [], isSuper: !!isSuper },
       items: [],
       totals: {
         message_input_tokens: 0, message_output_tokens: 0, audio_input_tokens: 0, audio_output_tokens: 0,
@@ -566,7 +708,7 @@ async function buildTokenSummary({
 
     return {
       ok: true,
-      filters: { tenantId: safeTenant || null, from: from || null, to: to || null, types: safeTypes, channels: safeChannels, isSuper: !!isSuper },
+      filters: { tenantId: safeTenant || null, tenantIds, from: from || null, to: to || null, types: safeTypes, channels: safeChannels, isSuper: !!isSuper },
       items,
       totals
     };
@@ -605,6 +747,10 @@ async function buildTokenSummary({
             ]
           }
         },
+        tasks_ws_input_tokens: taskTokenSum(TASKS_WS_MODEL_PATTERN, "$inputTokens", { $ifNull: ["$channelType", "$meta.channelType"] }),
+        tasks_ws_output_tokens: taskTokenSum(TASKS_WS_MODEL_PATTERN, "$outputTokens", { $ifNull: ["$channelType", "$meta.channelType"] }),
+        tasks_ws_luna_input_tokens: taskTokenSum(/^gpt-5\.6-luna(?:-|$)/, "$inputTokens", { $ifNull: ["$channelType", "$meta.channelType"] }),
+        tasks_ws_luna_output_tokens: taskTokenSum(/^gpt-5\.6-luna(?:-|$)/, "$outputTokens", { $ifNull: ["$channelType", "$meta.channelType"] }),
         audio_input_tokens: {
           $sum: {
             $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$inputTokens", 0] }, 0]
@@ -615,6 +761,7 @@ async function buildTokenSummary({
             $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$outputTokens", 0] }, 0]
           }
         },
+        audio_cost_usd: audioCostSum(),
         total_tokens: { $sum: { $ifNull: ["$totalTokens", 0] } },
         events: { $sum: 1 },
         last_at: { $max: "$createdAt" }
@@ -705,6 +852,7 @@ async function buildTokenSummary({
     ok: true,
     filters: {
       tenantId: safeTenant || null,
+      tenantIds,
       from: from || null,
       to: to || null,
       types: safeTypes,
@@ -749,7 +897,8 @@ async function buildTokenConversationSummary({
   isSuper = false
 } = {}) {
   const db = await getDb();
-  const { match, safeTenant } = buildUsageMatch({ tenantId, from, to });
+  const scopeTenantIds = await resolveUsageTenantIds(db, tenantId);
+  const { match, safeTenant } = buildUsageMatch({ tenantId, tenantIds: scopeTenantIds, from, to });
   const rawView = String(view || "all").trim().toLowerCase();
   const safeView = ["all", "completed", "conversational"].includes(rawView) ? rawView : "all";
   const noTypes = String(types || "").trim().toLowerCase() === "none";
@@ -817,6 +966,10 @@ async function buildTokenConversationSummary({
                   $cond: [{ $eq: ["$_channelType", "help_api"] }, { $ifNull: ["$outputTokens", 0] }, 0]
                 }
               },
+              tasks_ws_input_tokens: taskTokenSum(TASKS_WS_MODEL_PATTERN, "$inputTokens", "$_channelType"),
+              tasks_ws_output_tokens: taskTokenSum(TASKS_WS_MODEL_PATTERN, "$outputTokens", "$_channelType"),
+              tasks_ws_luna_input_tokens: taskTokenSum(/^gpt-5\.6-luna(?:-|$)/, "$inputTokens", "$_channelType"),
+              tasks_ws_luna_output_tokens: taskTokenSum(/^gpt-5\.6-luna(?:-|$)/, "$outputTokens", "$_channelType"),
               audio_input_tokens: {
                 $sum: {
                   $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$inputTokens", 0] }, 0]
@@ -827,6 +980,7 @@ async function buildTokenConversationSummary({
                   $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$outputTokens", 0] }, 0]
                 }
               },
+              audio_cost_usd: audioCostSum(),
               total_tokens: { $sum: { $ifNull: ["$totalTokens", 0] } },
               events: { $sum: 1 },
               first_at: { $min: "$createdAt" },
@@ -968,6 +1122,8 @@ async function buildTokenConversationSummary({
           inputTokens: 1,
           outputTokens: 1,
           totalTokens: 1,
+          costUsd: 1,
+          provider: 1,
           model: 1,
           createdAt: 1
         }
@@ -993,6 +1149,7 @@ async function buildTokenConversationSummary({
       help_output_tokens: 0,
       audio_input_tokens: 0,
       audio_output_tokens: 0,
+      audio_cost_usd: 0,
       total_tokens: 0,
       events: 0,
       first_at: null,
@@ -1014,6 +1171,7 @@ async function buildTokenConversationSummary({
       } else if (kind === "audio") {
         out.audio_input_tokens += input;
        out.audio_output_tokens += output;
+        if (String(ev.provider || 'openai').toLowerCase() === 'openai') out.audio_cost_usd += Number(ev.costUsd || 0);
       }
       out.total_tokens += Number(ev.totalTokens || 0);
       out.events += 1;
@@ -1230,6 +1388,7 @@ async function buildTokenConversationSummary({
     ok: true,
     filters: {
       tenantId: safeTenant || null,
+      tenantIds: scopeTenantIds,
       from: from || null,
       to: to || null,
       view: safeView,
@@ -1395,7 +1554,13 @@ function renderTokenControlPage(user) {
       </div>
     </div>
 
-    ${isSuper ? `<div class="kpis detail">
+    <div class="row" id="detailActions">
+      <button class="btn2" type="button" id="btnLoadConversations">Ver detalle de consumos</button>
+      <button class="btn2" type="button" id="btnLoadMessages">Ver detalle de envíos WhatsApp</button>
+      <span class="small">Los detalles se consultan únicamente cuando los necesitás.</span>
+    </div>
+
+    ${isSuper ? `<div class="kpis detail" id="conversationKpis" hidden>
       <div class="kpi">
         <div class="t">Conversaciones / sesiones</div>
         <div class="v" id="kpiConversations">0</div>
@@ -1414,7 +1579,7 @@ function renderTokenControlPage(user) {
       </div>
     </div>` : ``}
 
-    <div class="card">
+    <div class="card" id="conversationDetailCard" hidden>
       <div class="sectionTitle">
         <div>
           <h2>Detalle por conversación</h2>
@@ -1432,27 +1597,27 @@ function renderTokenControlPage(user) {
             </tr>`}
           </thead>
           <tbody id="detailRows">
-            <tr><td colspan="${isSuper ? 12 : 6}" class="small">Cargando…</td></tr>
+            <tr><td colspan="${isSuper ? 12 : 6}" class="small">Usá “Ver detalle de consumos” para consultar las conversaciones.</td></tr>
            </tbody>
           </tbody>
         </table>
       </div>
     </div>
 
-    <div class="card" id="apiMessagesCard">
+    <div class="card" id="apiMessagesCard" hidden>
       <div class="sectionTitle">
         <div>
-          <h2>Mensajes enviados por el script</h2>
-          <div class="small">Incluye solicitudes de confirmación y documentos o textos enviados automáticamente. Excluye mensajes manuales del teléfono y WhatsApp Web.</div>
+          <h2>Mensajes enviados por WhatsApp</h2>
+          <div class="small">Detalle real registrado por el script. La columna Facturación indica cuáles quedaron incluidos en API Mensajes.</div>
         </div>
       </div>
       <div class="apiSummary" id="apiMessageSummary">
-        <span class="chip">Cargando…</span>
+        <span class="chip">Usá “Ver detalle de envíos WhatsApp” para consultar los mensajes.</span>
       </div>
       <div class="tableWrap" style="margin-bottom:18px">
         <table style="min-width:800px">
-          <thead><tr><th>Dominio</th><th>Destinatario</th><th>Fecha</th><th>Tipo</th><th>Mensaje</th></tr></thead>
-          <tbody id="realMessageRows"><tr><td colspan="5" class="small">Cargando…</td></tr></tbody>
+          <thead><tr><th>Dominio</th><th>Destinatario</th><th>Fecha</th><th>Tipo</th><th>Facturación</th><th>Mensaje</th></tr></thead>
+          <tbody id="realMessageRows"><tr><td colspan="6" class="small">Cargando…</td></tr></tbody>
         </table>
       </div>
       <div class="sectionTitle"><div><h2>Ventanas facturables</h2><div class="small">Una confirmación también abre una ventana. Los mensajes posteriores al mismo número se agrupan mientras esa ventana siga vigente.</div></div></div>
@@ -1480,6 +1645,8 @@ function renderTokenControlPage(user) {
   const rowsEl = document.getElementById('rows');
   const detailRowsEl = document.getElementById('detailRows');
   const detailNoteEl = document.getElementById('detailNote');
+  const conversationDetailCard = document.getElementById('conversationDetailCard');
+  const conversationKpis = document.getElementById('conversationKpis');
   const apiMessagesCard = document.getElementById('apiMessagesCard');
   const apiMessageSummary = document.getElementById('apiMessageSummary');
   const apiMessageRows = document.getElementById('apiMessageRows');
@@ -1496,6 +1663,9 @@ function renderTokenControlPage(user) {
   const kpiAvgConversation = document.getElementById('kpiAvgConversation');
   const kpiAvgBilled = document.getElementById('kpiAvgBilled');
   const btnReload = document.getElementById('btnReload');
+  const btnLoadConversations = document.getElementById('btnLoadConversations');
+  const btnLoadMessages = document.getElementById('btnLoadMessages');
+  let loadSequence = 0;
 
   function esc(s){
     return String(s||'').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]); });
@@ -1679,7 +1849,7 @@ function renderTokenControlPage(user) {
         ? '<span class="small" style="color:#b45309">Tarifa comercial IA sin configurar</span>'
         : '';
       const apiInfo = num(it.real_messages)>0 || num(it.api_windows)>0
-        ? '<span class="small"><b>'+fmtInt(it.real_messages)+' mensajes enviados</b> · '+fmtInt(it.api_windows)+' ventanas facturables · '+fmtInt(it.api_messages)+' mensajes API</span>'
+        ? '<span class="small"><b>'+fmtInt(it.real_messages)+' WhatsApp totales</b>: '+fmtInt(it.api_messages)+' API + '+fmtInt(Math.max(0,num(it.real_messages)-num(it.api_messages)))+' otros · '+fmtInt(it.api_windows)+' ventanas facturables</span>'
         : '';
       if (!isSuper) {
         return '<tr>' +
@@ -1780,16 +1950,18 @@ function renderTokenControlPage(user) {
   }
 
 
-  function renderApiMessageWindows(j){
+  function renderApiMessageWindows(j,showDetails){
     const enabled=!!(j&&j.enabled);
-    if(apiMessagesCard)apiMessagesCard.style.display=enabled?'block':'none';
+    if(apiMessagesCard)apiMessagesCard.hidden=!enabled||!showDetails;
     if(!enabled)return;
 
     const items=Array.isArray(j.items)?j.items:[];
     const totals=j.totals||{};
     const amounts=amountMapText(totals.byCurrency||{});
     apiMessageSummary.innerHTML=
-      '<span class="chip"><b>'+fmtInt(totals.realMessages||0)+'</b> mensajes del script</span>'+
+      '<span class="chip"><b>'+fmtInt(totals.realMessages||0)+'</b> enviados por WhatsApp</span>'+
+      '<span class="chip"><b>'+fmtInt(totals.messages||0)+'</b> mensajes API</span>'+
+      '<span class="chip"><b>'+fmtInt(Math.max(0,num(totals.realMessages)-num(totals.messages)))+'</b> fuera de API</span>'+
       '<span class="chip"><b>'+fmtInt(totals.windows||0)+'</b> ventanas facturables</span>'+
       '<span class="chip">Importe: <b>'+esc(amounts)+'</b></span>';
 
@@ -1798,8 +1970,10 @@ function renderTokenControlPage(user) {
       const type=it.hasMedia?'Archivo / '+String(it.messageType||'media'):String(it.messageType||'texto');
       return '<tr><td><span class="pill">'+esc(it.tenantId||'')+'</span></td>'+
         '<td><div class="stack"><b>'+esc(it.contact||'-')+'</b>'+(it.numeroFrom?'<span class="small">Desde: '+esc(it.numeroFrom)+'</span>':'')+'</div></td>'+
-        '<td>'+esc(fmtDate(it.at))+'</td><td>'+esc(type)+'</td><td style="white-space:pre-wrap;max-width:460px">'+esc(it.text||'(sin texto)')+'</td></tr>';
-    }).join(''):'<tr><td colspan="5" class="small">No hay mensajes enviados para los filtros seleccionados.</td></tr>';
+        '<td>'+esc(fmtDate(it.at))+'</td><td>'+esc(type)+'</td>'+
+        '<td><span class="status '+(it.apiMessage?'active':'pending')+'">'+(it.apiMessage?'API MENSAJES':'FUERA DE API')+'</span></td>'+
+        '<td style="white-space:pre-wrap;max-width:460px">'+esc(it.text||'(sin texto)')+'</td></tr>';
+    }).join(''):'<tr><td colspan="6" class="small">No hay mensajes enviados para los filtros seleccionados.</td></tr>';
 
     if(!items.length){
       apiMessageRows.innerHTML='<tr><td colspan="8" class="small">No hay ventanas de API Mensajes para los filtros seleccionados.</td></tr>';
@@ -1825,36 +1999,59 @@ function renderTokenControlPage(user) {
 
 
 
+  function resetDetails(){
+    if(conversationDetailCard)conversationDetailCard.hidden=true;
+    if(conversationKpis)conversationKpis.hidden=true;
+    if(apiMessagesCard)apiMessagesCard.hidden=true;
+    if(btnLoadConversations){btnLoadConversations.disabled=false;btnLoadConversations.textContent='Ver detalle de consumos';}
+    if(btnLoadMessages){btnLoadMessages.disabled=false;btnLoadMessages.textContent='Ver detalle de envíos WhatsApp';}
+  }
+
   async function load(){
+    const sequence=++loadSequence;
     msgEl.textContent = '';
     rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">Cargando…</td></tr>';
-    detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '6') + '" class="small">Cargando…</td></tr>';
-    if(apiMessageRows) apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Cargando…</td></tr>';
-    if(realMessageRows) realMessageRows.innerHTML='<tr><td colspan="5" class="small">Cargando…</td></tr>';
-    if(apiMessageSummary) apiMessageSummary.innerHTML='<span class="chip">Cargando…</span>';
+    resetDetails();
 
     try{
       const summaryUrl = '/api/token-control/summary?' + buildQuery(false).toString();
-      const conversationsUrl = '/api/token-control/conversations?' + buildQuery(true).toString();
-      const apiMessagesUrl = '/api/token-control/api-message-windows?' + buildQuery(true).toString();
+      const apiQuery=buildQuery(false);apiQuery.set('details','0');
+      const apiMessagesUrl = '/api/token-control/api-message-windows?' + apiQuery.toString();
       const result = await Promise.all([
         getJson(summaryUrl),
-        getJson(conversationsUrl),
         getJson(apiMessagesUrl)
       ]);
-      renderDomainSummary(result[0],result[2]);
-      renderConversationSummary(result[1]);
-      renderApiMessageWindows(result[2]);
+      if(sequence!==loadSequence)return;
+      renderDomainSummary(result[0],result[1]);
     } catch(e){
+      if(sequence!==loadSequence)return;
       msgEl.textContent = e && e.message ? e.message : String(e);
       rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">Error cargando datos.</td></tr>';
-      detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '6') + '" class="small">Error cargando detalle por conversación.</td></tr>';
-      if(apiMessageRows) apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Error cargando ventanas API Mensajes.</td></tr>';
-      if(realMessageRows) realMessageRows.innerHTML='<tr><td colspan="5" class="small">Error cargando mensajes enviados.</td></tr>';
     }
   }
 
+  async function loadConversationDetails(){
+    const sequence=loadSequence;btnLoadConversations.disabled=true;btnLoadConversations.textContent='Cargando detalle…';
+    detailRowsEl.innerHTML='<tr><td colspan="'+(isSuper?'12':'6')+'" class="small">Cargando…</td></tr>';
+    conversationDetailCard.hidden=false;if(conversationKpis)conversationKpis.hidden=false;
+    try{const j=await getJson('/api/token-control/conversations?'+buildQuery(true).toString());if(sequence!==loadSequence)return;renderConversationSummary(j);btnLoadConversations.textContent='Actualizar detalle de consumos';}
+    catch(e){if(sequence!==loadSequence)return;detailRowsEl.innerHTML='<tr><td colspan="'+(isSuper?'12':'6')+'" class="small">Error cargando detalle por conversación.</td></tr>';btnLoadConversations.textContent='Reintentar detalle de consumos';}
+    finally{if(sequence===loadSequence)btnLoadConversations.disabled=false;}
+  }
+
+  async function loadMessageDetails(){
+    const sequence=loadSequence;btnLoadMessages.disabled=true;btnLoadMessages.textContent='Cargando envíos…';apiMessagesCard.hidden=false;
+    if(apiMessageRows)apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Cargando…</td></tr>';
+    if(realMessageRows)realMessageRows.innerHTML='<tr><td colspan="6" class="small">Cargando…</td></tr>';
+    if(apiMessageSummary)apiMessageSummary.innerHTML='<span class="chip">Cargando…</span>';
+    try{const j=await getJson('/api/token-control/api-message-windows?'+buildQuery(true).toString());if(sequence!==loadSequence)return;renderApiMessageWindows(j,true);btnLoadMessages.textContent='Actualizar detalle de envíos WhatsApp';}
+    catch(e){if(sequence!==loadSequence)return;if(realMessageRows)realMessageRows.innerHTML='<tr><td colspan="6" class="small">Error cargando mensajes enviados.</td></tr>';if(apiMessageRows)apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Error cargando ventanas API Mensajes.</td></tr>';btnLoadMessages.textContent='Reintentar detalle de envíos WhatsApp';}
+    finally{if(sequence===loadSequence)btnLoadMessages.disabled=false;}
+  }
+
   btnReload.addEventListener('click', load);
+  btnLoadConversations.addEventListener('click',loadConversationDetails);
+  btnLoadMessages.addEventListener('click',loadMessageDetails);
   setupMulti('typeFilter','tokenType','Tipo IA');
   setupMulti('channelFilter','tokenChannel','Canal');
   if (isSuper && tenantEl) tenantEl.addEventListener('keydown', function(ev){ if (ev.key === 'Enter') load(); });
@@ -1963,7 +2160,8 @@ function mountTokenControlRoutes(app, auth) {
         to: String(req.query?.to || "").trim(),
         types: String(req.query?.types || "").trim(),
         channels: String(req.query?.channels || "").trim(),
-        limit: req.query?.limit
+        limit: req.query?.limit,
+        includeDetails: String(req.query?.details ?? '1') !== '0'
       });
       return res.json(data);
     } catch (e) {
@@ -1976,7 +2174,10 @@ function mountTokenControlRoutes(app, auth) {
 
 module.exports = {
   mountTokenControlRoutes,
+  renderTokenControlPage,
   buildTokenSummary,
   buildTokenConversationSummary,
   buildApiMessageWindowBilling,
+  buildUsageMatch,
+  resolveUsageTenantIds,
 };

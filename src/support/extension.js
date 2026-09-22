@@ -146,6 +146,10 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const row = await rowFor(s, scope, req.params.id), fields = s.vault.open(row.fields, row._id);
     const source = s.vault.open(row.source, row._id + ':source');
     if ((row.sourceChanged || row.reconciliationRequired) && source.subject) fields.subject = source.subject;
+    if (!fields.company && row.jid) {
+      const memory = await s.col('memory').findOne({ ...scope, jid: row.jid });
+      if (memory?.company) { fields.company = memory.company; fields.companyId = memory.companyId || ''; }
+    }
     if (!fields.contact) fields.contact = (await s.col('contacts').findOne({ _id: scopedId(scope, 'contact', row.jid), ...scope }))?.name || '';
     return { id: row._id, jid: row.jid, state: row.state, revision: row.revision, fields, source, sourceChanged: !!row.sourceChanged, reconciliationRequired: !!row.reconciliationRequired, hubspot: row.hubspot || null, mode: row.mode };
   }));

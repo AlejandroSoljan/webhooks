@@ -1,10 +1,9 @@
 // Asisto | Version: 5.00.130 | Fecha: 2026-09-10
 const BASE = 'https://asistobot.com.ar/api/support/extension';
 const LOCAL = 'http://127.0.0.1:17658/extension-session';
-let deviceToken = '';
-async function request(path, body, grant) {
-  const response = await fetch(BASE + path, { credentials: 'include', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(30000), headers: {
-    'X-Asisto-Extension-Id': chrome.runtime.id, ...(deviceToken ? { Authorization: 'Bearer ' + deviceToken } : {}), ...(body ? { 'Content-Type': 'application/json', 'X-Asisto-Extension': grant } : {}),
+async function request(path, token, body, grant) {
+  const response = await fetch(BASE + path, { credentials: 'omit', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(30000), headers: {
+    'X-Asisto-Extension-Id': chrome.runtime.id, Authorization: 'Bearer ' + token, ...(body ? { 'Content-Type': 'application/json', 'X-Asisto-Extension': grant } : {}),
   }, ...(body ? { method: 'POST', body: JSON.stringify(body) } : {}) });
   if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('authentication_required');
   const result = await response.json();
@@ -12,15 +11,15 @@ async function request(path, body, grant) {
   return result;
 }
 async function authenticatedSession() {
-  try { return await request('/session'); }
-  catch {
-    const local = await fetch(LOCAL, { cache: 'no-store', signal: AbortSignal.timeout(3000), headers: { 'X-Asisto-Local': '1' } });
-    if (!local.ok || !local.headers.get('content-type')?.includes('application/json')) throw new Error('agent_not_authorized');
-    const result = await local.json();
-    if (!/^[A-Za-z0-9_-]{43}$/.test(result.token || '')) throw new Error('agent_not_authorized');
-    deviceToken = result.token;
-    return request('/session');
-  }
+  // The local WhatsApp agent owns this workflow. A browser cookie may belong
+  // to another tenant and must never select the extension's account.
+  const local = await fetch(LOCAL, { cache: 'no-store', signal: AbortSignal.timeout(5000), headers: { 'X-Asisto-Local': '1', 'X-Asisto-Extension-Id': chrome.runtime.id } });
+  if (local.status === 403) throw new Error('agent_access_denied');
+  if (!local.ok || !local.headers.get('content-type')?.includes('application/json')) throw new Error('agent_not_authorized');
+  const result = await local.json();
+  const token = result.token;
+  if (!/^[A-Za-z0-9_-]{43}$/.test(token || '')) throw new Error('agent_not_authorized');
+  return { session: await request('/session', token), token };
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   const fromWhatsApp = sender.tab && sender.url?.startsWith('https://web.whatsapp.com/');
@@ -32,13 +31,18 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     Promise.all([opened, chrome.storage.session.set({ ['selection-' + sender.tab.id]: { jid: String(message.jid || ''), name: String(message.name || ''), draftId: String(message.draftId || ''), refreshAt: Date.now() } })]).then(() => reply({ ok: true }), () => reply({ error: 'panel_open_failed' }));
     return true;
   }
+  if (message.action === 'SET_CONTEXT' && fromWhatsApp) {
+    chrome.storage.session.set({ ['selection-' + sender.tab.id]: { jid: String(message.jid || ''), name: String(message.name || ''), refreshAt: Date.now() } }).then(() => reply({ ok: true }), () => reply({ error: 'context_failed' }));
+    return true;
+  }
   if (fromWhatsApp && !['INDEX', 'CONTACT', 'CONTACTS', 'MESSAGES', 'ASSIGN_MESSAGES', 'ACTIVE_CONTEXT'].includes(message.action)) return false;
   (async () => {
-    const session = await authenticatedSession();
+    const { session, token } = await authenticatedSession();
+    const api = (path, body, grant) => request(path, token, body, grant);
     if (message.action === 'SESSION') return { ...session, csrf: undefined };
     if (message.action === 'INDEX') {
       if (sender.tab?.id) chrome.sidePanel.setOptions?.({ tabId: sender.tab.id, path: 'panel.html', enabled: true }).catch(() => {});
-      return { ...await request('/index'), owner: session.tenantId + ':' + session.userId };
+      return { ...await api('/index'), owner: session.tenantId + ':' + session.userId };
     }
     if (message.action === 'ACTIVE_CONTEXT' && sender.tab?.id) {
       const key = 'selection-' + sender.tab.id, stored = await chrome.storage.session.get(key);
@@ -47,17 +51,17 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (message.owner && message.owner !== session.tenantId + ':' + session.userId) throw new Error('account_changed');
     const id = encodeURIComponent(String(message.id || ''));
     switch (message.action) {
-      case 'CONTACT_CONTROL': return request('/contact-control?q=' + encodeURIComponent(String(message.query || '')));
-      case 'SET_CONTACT_CONTROL': return request('/contact-control', { jid: String(message.jid || ''), excluded: message.excluded === true }, session.csrf);
-      case 'CONTACT': return request('/contact', { jid: String(message.jid || ''), name: String(message.name || '') }, session.csrf);
-      case 'CONTACTS': return request('/contacts', { contacts: Array.isArray(message.contacts) ? message.contacts : [] }, session.csrf);
-      case 'DRAFTS': return request('/drafts?jid=' + encodeURIComponent(String(message.jid || '')));
-      case 'MESSAGES': return request('/messages?jid=' + encodeURIComponent(String(message.jid || '')));
-      case 'ASSIGN_MESSAGES': return request('/messages/assign', { jid: String(message.jid || ''), messageIds: Array.isArray(message.messageIds) ? message.messageIds : [], destination: String(message.destination || ''), existingAction: String(message.existingAction || ''), reassign: message.reassign === true, duplicate: message.duplicate === true }, session.csrf);
-      case 'DETAIL': return request('/drafts/' + id);
-      case 'SAVE': return request('/drafts/' + id + '/save', { revision: message.revision, fields: message.fields }, session.csrf);
-      case 'RECONCILE': return request('/drafts/' + id + '/reconcile', { revision: message.revision, fields: message.fields }, session.csrf);
-      case 'QUEUE': return request('/drafts/' + id + '/queue', { revision: message.revision }, session.csrf);
+      case 'CONTACT_CONTROL': return api('/contact-control?q=' + encodeURIComponent(String(message.query || '')));
+      case 'SET_CONTACT_CONTROL': return api('/contact-control', { jid: String(message.jid || ''), excluded: message.excluded === true }, session.csrf);
+      case 'CONTACT': return api('/contact', { jid: String(message.jid || ''), name: String(message.name || '') }, session.csrf);
+      case 'CONTACTS': return api('/contacts', { contacts: Array.isArray(message.contacts) ? message.contacts : [] }, session.csrf);
+      case 'DRAFTS': return api('/drafts?jid=' + encodeURIComponent(String(message.jid || '')));
+      case 'MESSAGES': return api('/messages?jid=' + encodeURIComponent(String(message.jid || '')));
+      case 'ASSIGN_MESSAGES': return api('/messages/assign', { jid: String(message.jid || ''), messageIds: Array.isArray(message.messageIds) ? message.messageIds : [], selectedMessages: Array.isArray(message.selectedMessages) ? message.selectedMessages : [], destination: String(message.destination || ''), existingAction: String(message.existingAction || ''), reassign: message.reassign === true, duplicate: message.duplicate === true }, session.csrf);
+      case 'DETAIL': return api('/drafts/' + id);
+      case 'SAVE': return api('/drafts/' + id + '/save', { revision: message.revision, fields: message.fields }, session.csrf);
+      case 'RECONCILE': return api('/drafts/' + id + '/reconcile', { revision: message.revision, fields: message.fields }, session.csrf);
+      case 'QUEUE': return api('/drafts/' + id + '/queue', { revision: message.revision }, session.csrf);
       case 'MANUAL_HUBSPOT': {
         const job = { id: message.id, revision: message.revision, fields: message.fields, owner: session.tenantId + ':' + session.userId, createdAt: Date.now() };
         await chrome.storage.session.set({ hubspotManualJob: job });
@@ -69,11 +73,11 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         else await chrome.tabs.create({ url: 'https://app.hubspot.com/contacts/', active: true });
         return { started: true };
       }
-      case 'DISMISS': return request('/drafts/' + id + '/dismiss', { revision: message.revision }, session.csrf);
-      case 'HUBSPOT': return request('/hubspot');
-      case 'HUBSPOT_SEARCH': return request('/hubspot/search?type=' + encodeURIComponent(String(message.type || '')) + '&q=' + encodeURIComponent(String(message.query || '')));
-      case 'CONNECT': return request('/hubspot/connect', { token: message.token }, session.csrf);
-      case 'PUBLISH': return request('/drafts/' + id + '/publish', { revision: message.revision, mapping: message.mapping }, session.csrf);
+      case 'DISMISS': return api('/drafts/' + id + '/dismiss', { revision: message.revision }, session.csrf);
+      case 'HUBSPOT': return api('/hubspot');
+      case 'HUBSPOT_SEARCH': return api('/hubspot/search?type=' + encodeURIComponent(String(message.type || '')) + '&q=' + encodeURIComponent(String(message.query || '')));
+      case 'CONNECT': return api('/hubspot/connect', { token: message.token }, session.csrf);
+      case 'PUBLISH': return api('/drafts/' + id + '/publish', { revision: message.revision, mapping: message.mapping }, session.csrf);
       default: throw new Error('invalid_action');
     }
   })().then(data => reply({ data }), error => reply({ error: error.message === 'Failed to fetch' ? 'connection_failed' : error.message }));
@@ -85,8 +89,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     const stored = await chrome.storage.session.get('hubspotManualJob'), job = stored.hubspotManualJob;
     if (message.action === 'HUBSPOT_UI_READY') return job && Date.now() - job.createdAt < 15 * 60 * 1000 ? job : null;
     if (message.action === 'HUBSPOT_UI_COMPLETE' && job && message.id === job.id) {
-      const session = await authenticatedSession();
-      const result = await request('/drafts/' + encodeURIComponent(job.id) + '/manual-complete', { revision: job.revision, ticketId: String(message.ticketId || 'manual') }, session.csrf);
+      const { session, token } = await authenticatedSession();
+      const result = await request('/drafts/' + encodeURIComponent(job.id) + '/manual-complete', token, { revision: job.revision, ticketId: String(message.ticketId || 'manual') }, session.csrf);
       await chrome.storage.session.remove('hubspotManualJob');
       return result;
     }

@@ -1,0 +1,45 @@
+// Asisto | Version: 5.00.163 | Fecha: 2026-09-19
+const test=require('node:test'),assert=require('node:assert/strict'),express=require('express');
+const {MongoMemoryServer}=require('mongodb-memory-server');
+const {JSDOM}=require('jsdom');
+const {fields,settings,validateRestaurantConfig}=require('../restaurant_config');
+test('variables individuales respetan configuración anterior y validan tipos y logo',()=>{
+  assert.equal(fields.filter(f=>f.feature).length,12);
+  assert.equal(settings({restaurant_features:{showImages:false}}).showImages,false);
+  assert.equal(settings({restaurant_show_images:true,restaurant_features:{showImages:false}}).showImages,true);
+  assert.throws(()=>validateRestaurantConfig({restaurant_orders_enabled:'false'}),/true o false/);
+  assert.throws(()=>validateRestaurantConfig({restaurant_logo_url:'javascript:alert(1)'}),/HTTPS/);
+  validateRestaurantConfig({restaurant_logo_url:'https://example.org/logo.png',restaurant_show_images:false});
+});
+test('Dominio Config ofrece variables restaurante, preserva valores y guarda con permisos del dominio',async t=>{
+  const mongo=await MongoMemoryServer.create();process.env.MONGODB_URI=mongo.getUri('resto_config_test');
+  const {getDb,closeDb}=require('../db'),auth=require('../auth_ui'),db=await getDb();
+  await db.collection('tenant_config').insertMany([{_id:'RES',restaurant_enabled:true,restaurant_features:{showImages:false},restaurant_logo_url:'https://example.org/logo.png'},{_id:'OTRO',restaurant_enabled:true}]);
+  let user={uid:'test',role:'superadmin',tenantId:'RES',allowedPages:['tenant_config']};
+  const app=express();app.use(express.json());app.use((req,res,next)=>{req.user=user;next();});auth.mountAuthRoutes(app);
+  const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));}),base=`http://127.0.0.1:${server.address().port}`;
+  t.after(async()=>{await new Promise(resolve=>server.close(resolve));await closeDb();await mongo.stop();});
+  const html=await fetch(base+'/admin/tenant-config?embed=1&tenant=RES').then(r=>r.text());
+  const dom=new JSDOM(html,{runScripts:'outside-only',url:base});t.after(()=>dom.window.close());
+  const w=dom.window;w.fetch=(url,options)=>fetch(new URL(url,base),options);
+  const script=[...w.document.scripts].find(s=>s.textContent.includes('const fieldsEl'));
+  assert.ok(script);w.eval(script.textContent);
+  for(let i=0;i<50&&!w.document.querySelector('[data-edit="RES"]');i++)await new Promise(r=>setTimeout(r,10));
+  w.document.querySelector('[data-edit="RES"]').click();
+  for(let i=0;i<50&&!w.document.querySelector('#tc_fields [data-k][value="restaurant_features"]');i++)await new Promise(r=>setTimeout(r,10));
+  w.document.querySelector('#tc_btnRestaurant').click();
+  const rows=[...w.document.querySelectorAll('#tc_fields tr')];
+  for(const f of fields)assert.ok(rows.some(row=>row.querySelector('[data-k]').value===f.name),f.name);
+  const value=name=>rows.find(row=>row.querySelector('[data-k]').value===name).querySelector('[data-v]').value;
+  assert.equal(value('restaurant_show_images'),'false');
+  assert.equal(value('restaurant_enabled'),'true');
+  assert.equal(value('restaurant_logo_url'),'https://example.org/logo.png');
+  const post=data=>fetch(base+'/api/tenant-config',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(data)});
+  let result=await post({tenantId:'RES',data:{restaurant_enabled:true,restaurant_show_images:false,restaurant_logo_url:'https://example.org/new.png'}});
+  assert.equal(result.status,200);
+  assert.equal(settings(await db.collection('tenant_config').findOne({_id:'RES'})).showImages,false);
+  assert.equal((await post({tenantId:'RES',data:{restaurant_show_images:'no'}})).status,400);
+  user={...user,role:'admin'};
+  assert.equal((await post({tenantId:'OTRO',data:{restaurant_show_images:false}})).status,403);
+  assert.equal(settings(await db.collection('tenant_config').findOne({_id:'OTRO'})).showImages,true);
+});

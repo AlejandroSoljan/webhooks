@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.067 | Fecha: 2026-09-08 -->
+<!-- Asisto | Version: 5.00.178 | Fecha: 2026-09-20 -->
 # Tickets desde WhatsApp: agente personal en cada PC
 
 ## Arquitectura acordada
@@ -12,11 +12,12 @@ La extensión puede publicar tickets mediante la aplicación privada de HubSpot.
 ## Instalación y autorización
 
 1. Ingresar a Asisto y abrir **Sesiones WhatsApp Web**, `/admin/wweb`. La sección personal muestra únicamente la PC y el QR del usuario autenticado. Los permisos `support` permiten esta sección; las APIs y controles legacy siguen requiriendo `wweb`.
-2. Descargar el ZIP, descomprimirlo y ejecutar `Instalar.cmd` en la PC del usuario.
-3. El instalador prepara un runtime privado Node 24.12.0, verifica el SHA256 del ZIP oficial e instala las dependencias fijadas. No requiere administrador.
-4. El usuario ingresa normalmente a Asisto y abre **Sesiones WhatsApp Web → Escanear mi QR → Vincular / reconectar**. La web consulta exclusivamente `http://127.0.0.1:17658/pairing` y asocia el agente pendiente con la cuenta autenticada. El navegador puede pedir permiso de acceso local. No hay acceso de escritorio ni aperturas automáticas de páginas o diálogos.
-5. El agente inicia Baileys automáticamente y el panel muestra el QR para escanear desde WhatsApp → Dispositivos vinculados.
-6. Las siguientes sesiones de Windows recuperan el proceso y las credenciales locales; no necesitan otra instalación ni un QR salvo que WhatsApp cierre la vinculación.
+2. Descargar `AsistoTareas-5.00.178.zip`, descomprimirlo y ejecutar `Instalar.cmd` en la PC del usuario.
+3. El instalador prepara un runtime privado Node 24.12.0, verifica el SHA256 del ZIP oficial, instala con el lockfile las dependencias de Baileys y configura el inicio automático. No incluye `node_modules` ni requiere administrador.
+4. El mismo instalador copia la extensión a `%LOCALAPPDATA%\AsistoSupport\Extension` y deja el acceso directo **Extension Asisto** en el Escritorio. Chrome exige que el usuario abra `chrome://extensions`, active Modo de desarrollador y confirme **Cargar descomprimida** sobre esa carpeta. Si ya estaba cargada, se pulsa **Recargar**.
+5. El usuario ingresa normalmente a Asisto y abre **Sesiones WhatsApp Web → Escanear mi QR → Vincular / reconectar**. La web consulta exclusivamente `http://127.0.0.1:17658/pairing` y asocia el agente pendiente con la cuenta autenticada. El navegador puede pedir permiso de acceso local. No hay acceso de escritorio ni aperturas automáticas de páginas o diálogos.
+6. El agente inicia Baileys automáticamente y el panel muestra el QR para escanear desde WhatsApp → Dispositivos vinculados.
+7. Las siguientes sesiones de Windows recuperan el proceso y las credenciales locales; no necesitan otra instalación ni un QR salvo que WhatsApp cierre la vinculación.
 
 La instalación inicial y el escaneo requieren al usuario. El clic en Vincular / reconectar autoriza la PC; no se ingresan códigos ni otra contraseña. El puente local sólo escucha en loopback y exige origen exacto de Asisto, Host de loopback y encabezado propio; no expone tokens ni credenciales de WhatsApp. Un agente ya asociado a otra cuenta se rechaza, comparando usuario y dominio. No se copian claves de Render, MongoDB ni OpenAI a las PCs.
 
@@ -30,7 +31,7 @@ Reinstalar conserva el único perfil existente de esa cuenta de Windows; registr
 | --- | --- |
 | `desktop/support/agent.cjs` | Proceso local por usuario, emparejamiento, Baileys, reconexión y cola de envío |
 | `storage.cjs`, `protect.ps1` | Archivos AES-GCM y clave local protegida con DPAPI CurrentUser |
-| `Instalar.ps1`, `run.ps1` | Runtime verificado, instalación sin administrador, inicio HKCU y reinicio |
+| `Instalar.ps1`, `run.ps1` | Runtime verificado, instalación sin administrador, tarea de inicio y preparación de la extensión |
 | `src/support/devices.js` | Autorización de PCs, identidad autenticada, lease por usuario y API limitada |
 | `routes.js`, `panel.html`, `static/support.*` | Panel dentro de Asisto, QR y revisión de borradores |
 | `service.js`, `core.js` | Exclusiones, ingestión idempotente, cola, análisis y revisión por usuario |
@@ -102,7 +103,7 @@ La API de revisión permanece en `/api/support`. `/status` informa el agente de 
 
 ## Compilación, pruebas y despliegue
 
-`scripts/build_support_desktop.ps1` produce `static/downloads/AsistoSupport-5.00.062.zip` desde una lista explícita, sin `.env`, perfiles, claves ni `node_modules`. El instalador ejecuta `npm ci --omit=dev --ignore-scripts` con su lockfile.
+`scripts/build_support_desktop.ps1` produce `static/downloads/AsistoTareas-5.00.178.zip` con el agente y la extensión desde listas explícitas, sin `.env`, perfiles, claves ni `node_modules`. El instalador ejecuta `npm ci --omit=dev --ignore-scripts` con su lockfile.
 
 Ejecutar `npm test`, `npm run support:migrate` y desplegar la web normalmente. La migración es aditiva y repetible; incorpora índices de dispositivos con expiración y unicidad por usuario. Los tests usan MongoDB efímero.
 

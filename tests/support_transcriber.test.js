@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.078 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.149 | Fecha: 2026-09-17
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { asistoTranscriber } = require('../src/support/transcriber');
@@ -8,16 +8,17 @@ test('support uses the exclusive tareas WS key and the existing Asisto usage pat
   const provider = asistoTranscriber({ OPENAI_API_KEY_TAREAS_WS: 'tasks-fixture' }, {
     runtimeFor: async tenant => { assert.equal(tenant, 'a'); return { openaiApiKey: 'tenant-fixture' }; },
     download: async () => Buffer.from('audio-fixture'),
-    transcribe: async input => { call = input; return { text: 'Manager no abre', model: 'tenant-model' }; },
+    transcribe: async input => { call = input; return { text: 'Manager no abre', model: 'whisper-1', costUsd: 0.0005 }; },
   });
-  const result = await provider.run('raw-fixture', { mimetype: 'audio/ogg' }, { tenantId: 'a', userId: 'user', jid: '123', conversationId: 'job', messageId: 'scoped-message' });
+  const result = await provider.run('raw-fixture', { mimetype: 'audio/ogg', seconds: 5 }, { tenantId: 'a', userId: 'user', jid: '123', conversationId: 'job', messageId: 'scoped-message' });
   assert.equal(call.openaiApiKey, 'tasks-fixture');
   assert.equal(call.aiKeyKind, 'tareas_ws');
   assert.equal(call.tenantId, 'a'); assert.equal(call.usageTraceId, 'scoped-message');
   assert.equal(call.buffer.toString(), 'audio-fixture');
   assert.equal(call.transcriptionTimeoutMs, 60000);
-  assert.equal(result.text, 'Manager no abre'); assert.equal(result.model, 'tenant-model');
-  assert.equal(result.costUsd, null);
+  assert.equal(call.audioDurationSeconds, 5);
+  assert.equal(result.text, 'Manager no abre'); assert.equal(result.model, 'whisper-1');
+  assert.equal(result.costUsd, 0.0005);
   await assert.rejects(() => provider.run('', {}, {}), /authentication_required/);
 });
 

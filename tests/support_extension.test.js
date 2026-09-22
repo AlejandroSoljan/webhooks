@@ -59,6 +59,17 @@ test('extension session exposes the existing Asisto classifications as dropdown 
  assert.ok(result.data.choices.errorType.includes('Consulta / Capacitacion'));
  assert.deepEqual(result.data.choices.channel,['Telefono','Email','WhatsApp','Reunion','Interno']);
 });
+test('saving a company remembers it for another task of the same WhatsApp contact',async()=>{
+ const saved=await call('/drafts/'+id+'/save',{revision:1,fields:{company:'CONFORMA SRL',companyId:'3096337608'}});
+ assert.equal(saved.status,200);
+ const second='b'.repeat(64);
+ await service.col('drafts').insertOne({_id:second,...scope,jid:'123@lid',revision:1,state:'pending',fields:vault.seal({...fields,company:'',companyId:''},second),source:vault.seal(fields,second+':source')});
+ const detail=(await call('/drafts/'+second)).data;
+ assert.equal(detail.fields.company,'CONFORMA SRL');assert.equal(detail.fields.companyId,'3096337608');
+ const other='c'.repeat(64);
+ await service.col('drafts').insertOne({_id:other,...scope,jid:'456@lid',revision:1,state:'pending',fields:vault.seal({...fields,company:'',companyId:''},other),source:vault.seal(fields,other+':source')});
+ assert.equal((await call('/drafts/'+other)).data.fields.company,'');
+});
 test('contact control excludes aliases for this user and restores monitoring without deleting tickets',async()=>{
  await service.col('contacts').insertOne({...scope,jid:'123@lid',name:'Esther (local)',aliases:['123@lid','549123@s.whatsapp.net']});
  let rows=(await call('/contact-control?q=%28local%29')).data;assert.equal(rows.length,1);assert.equal(rows[0].excluded,false);
@@ -299,14 +310,87 @@ test('WhatsApp contact reader exports only names and normalized identifiers from
  const store={openCursor(){const request={};queueMicrotask(function next(){const value=rows[position++];request.result=value?{value,continue:()=>queueMicrotask(next)}:null;request.onsuccess();});return request;}};
  const db={objectStoreNames:{contains:name=>name==='contact'},transaction:()=>({objectStore:()=>store}),close(){}};
  const indexedDB={databases:async()=>[{name:'model-storage'}],open(){const request={result:db};queueMicrotask(()=>request.onsuccess());return request;}};
- vm.runInNewContext(fs.readFileSync(require.resolve('../extensions/whatsapp-support/contacts-main.js'),'utf8'),{indexedDB,location:{origin:'https://web.whatsapp.com'},window:{postMessage:(value,target)=>messages.push({value,target})},queueMicrotask});
+ let listener; const page={postMessage:(value,target)=>messages.push({value,target}),addEventListener:(_type,callback)=>{listener=callback;}};
+ vm.runInNewContext(fs.readFileSync(require.resolve('../extensions/whatsapp-support/contacts-main.js'),'utf8'),{indexedDB,location:{origin:'https://web.whatsapp.com'},window:page,queueMicrotask});
  await new Promise(resolve=>setTimeout(resolve,20));const contacts=messages.flatMap(message=>message.value.contacts||[]);
  assert.deepEqual(JSON.parse(JSON.stringify(contacts)),[{name:'Vane',aliases:['123@lid','549123@s.whatsapp.net']},{name:'Gime',aliases:['456@lid']}]);assert.ok(!JSON.stringify(messages).includes('never-copy'));assert.ok(messages.at(-1).value.complete);
+ messages.length=0; listener({source:page,origin:'https://web.whatsapp.com',data:{source:'asisto-whatsapp-contacts-v1',request:true}});
+ assert.equal(messages[0].value.contacts[0].name,'Vane');
 });
+test('explicit selection imports missing readable messages once and preserves stored evidence', async () => {
+ const jid = '123@s.whatsapp.net';
+ const input = { jid, destination: 'new', messageIds: ['selected-text', 'selected-caption'], selectedMessages: [
+   { id: 'selected-text', jid, at: '2026-09-14T14:31:00Z', fromMe: false, text: 'Hola Alejandro, buen día' },
+   { id: 'selected-caption', jid, at: '2026-09-14T14:33:00Z', fromMe: false, text: 'Esta factura figura en julio pero el período difiere en ingreso de comprobantes' },
+ ] };
+ const first = await service.assignMessages(scope, input);
+ const row = await service.col('drafts').findOne({ _id: first.draftId });
+ assert.equal(row.messageIds.length, 2);
+ assert.match(vault.open(row.fields, row._id).description, /factura/);
+ assert.equal(await service.col('messages').countDocuments({ ...scope, historical: true }), 2);
+ const again = await service.assignMessages(scope, { ...input, destination: first.draftId, selectedMessages: input.selectedMessages.map(m => ({ ...m, text: 'incorrect replacement' })) });
+ assert.equal(again.assigned, 0);
+ const stored = await service.col('messages').findOne({ ...scope, id: 'selected-caption' });
+ assert.match(vault.open(stored.payload, stored._id).text, /factura/);
+ assert.equal(await service.col('drafts').countDocuments({ _id: first.draftId }), 1);
+});
+
+test('missing selection cannot import another contact or silently omit unreadable messages', async () => {
+ const input = { jid: '123@s.whatsapp.net', destination: 'new', messageIds: ['missing'], selectedMessages: [{ id: 'missing', jid: '999@s.whatsapp.net', at: '2026-09-14T14:31:00Z', text: 'Private other contact' }] };
+ await assert.rejects(service.assignMessages(scope, input), /message_selection_not_found/);
+ await assert.rejects(service.assignMessages(scope, { ...input, selectedMessages: [{ ...input.selectedMessages[0], jid: input.jid, text: '' }] }), /message_selection_not_found/);
+ assert.equal(await service.col('messages').countDocuments(scope), 0);
+});
+test('explicitly selected media without a visible date imports at server receipt without Baileys history', async () => {
+ const jid = '123@lid', id = 'asisto-local-audio';
+ const result = await service.assignMessages(scope, { jid, destination: 'new', messageIds: [id], selectedMessages: [{ id, jid, observedAt: true, at: '2099-01-01T00:00:00Z', fromMe: false, text: '[Fecha original no visible en WhatsApp] [Audio seleccionado sin texto visible]' }] });
+ assert.ok(result.draftId);
+ const row = await service.col('messages').findOne({ ...scope, id });
+ assert.ok(row);
+ assert.ok(row.at < new Date('2099-01-01T00:00:00Z'));
+ assert.match(vault.open(row.payload, row._id).text, /Fecha original no visible/);
+});
+
+test('extension always selects the local agent account and never falls back to a browser login', async () => {
+ const vm = require('node:vm'), fs = require('node:fs');
+ const listeners = [], calls = []; let available = true;
+ const chrome = { runtime: { id: extensionId, getURL: p => 'chrome-extension://' + extensionId + '/' + p, onMessage: { addListener: fn => listeners.push(fn) } }, action: { onClicked: { addListener() {} } } };
+ vm.runInNewContext(fs.readFileSync(require.resolve('../extensions/whatsapp-support/background.js'), 'utf8'), { chrome, AbortSignal, fetch: async (url, options) => {
+   calls.push({ url, options });
+   if (url.includes('127.0.0.1')) return { ok: available, status: available ? 200 : 401, headers: { get: () => 'application/json' }, json: async () => ({ token: 'A'.repeat(43) }) };
+   return { ok: true, headers: { get: () => 'application/json' }, json: async () => options.credentials === 'omit' && options.headers.Authorization ? { tenantId: 'ALSO', userId: 'agent-user' } : { tenantId: 'CARICO', userId: 'browser-user' } };
+ } });
+ const send = () => new Promise(resolve => listeners[0]({ action: 'SESSION' }, { id: extensionId, url: chrome.runtime.getURL('panel.html') }, resolve));
+ assert.equal((await send()).data.tenantId, 'ALSO');
+ assert.match(calls[0].url, /127\.0\.0\.1/);
+ calls.length = 0; available = false;
+ assert.equal((await send()).error, 'agent_not_authorized');
+ assert.equal(calls.length, 1, 'no remote browser-account fallback');
+});
+test('simultaneous panel requests retain their own agent token while one local login waits', async () => {
+ const vm = require('node:vm'), fs = require('node:fs');
+ const listeners = [], calls = [], held = []; let localCalls = 0;
+ const chrome = { runtime: { id: extensionId, getURL: p => 'chrome-extension://' + extensionId + '/' + p, onMessage: { addListener: fn => listeners.push(fn) } }, action: { onClicked: { addListener() {} } }, sidePanel: { setOptions: async () => {} } };
+ const json = value => ({ ok: true, headers: { get: () => 'application/json' }, json: async () => value });
+ vm.runInNewContext(fs.readFileSync(require.resolve('../extensions/whatsapp-support/background.js'), 'utf8'), { chrome, AbortSignal, fetch: (url, options) => {
+   if (url.includes('127.0.0.1')) { localCalls++; return localCalls === 2 ? new Promise(resolve => held.push(() => resolve(json({ token: 'B'.repeat(43) })))) : Promise.resolve(json({ token: 'A'.repeat(43) })); }
+   calls.push({ url, options }); return Promise.resolve(json(url.endsWith('/session') ? { ...scope, csrf: 'private-grant' } : { chats: [] }));
+ } });
+ const sender = { id: extensionId, url: chrome.runtime.getURL('panel.html') };
+ const send = action => new Promise(resolve => listeners[0]({ action }, sender, resolve));
+ const first = send('INDEX');
+ while (!calls.some(call => call.url.endsWith('/session'))) await new Promise(resolve => setImmediate(resolve));
+ const second = send('SESSION');
+ while (localCalls < 2) await new Promise(resolve => setImmediate(resolve));
+ assert.ok((await first).data);
+ assert.equal(calls.find(call => call.url.endsWith('/index')).options.headers.Authorization, 'Bearer ' + 'A'.repeat(43));
+ held[0](); assert.ok((await second).data);
+});
+
 test('background restricts WhatsApp messages, exposes the active chat and forces panel refreshes',async()=>{
  const vm=require('node:vm'),fs=require('node:fs');const listeners=[];let action;const calls=[],opened=[],selections=[],sessionStore={};let now=100;
  const chrome={runtime:{id:extensionId,getURL:p=>'chrome-extension://'+extensionId+'/'+p,onMessage:{addListener:fn=>listeners.push(fn)}},sidePanel:{setOptions:async()=>{},open:args=>{opened.push(args);return Promise.resolve();}},storage:{session:{set:async value=>{selections.push(value);Object.assign(sessionStore,value);},get:async key=>({[key]:sessionStore[key]})}},action:{onClicked:{addListener:fn=>action=fn}}};
- vm.runInNewContext(fs.readFileSync(require.resolve('../extensions/whatsapp-support/background.js'),'utf8'),{chrome,AbortSignal,Date:{now:()=>++now},fetch:async(url,options)=>{calls.push({url,options});return{ok:true,headers:{get:()=> 'application/json'},json:async()=>url.endsWith('/session')?{...scope,csrf:'private-grant'}:{chats:[]}};}});
+ vm.runInNewContext(fs.readFileSync(require.resolve('../extensions/whatsapp-support/background.js'),'utf8'),{chrome,AbortSignal,Date:{now:()=>++now},fetch:async(url,options)=>{calls.push({url,options});return{ok:true,headers:{get:()=> 'application/json'},json:async()=>url.includes('127.0.0.1')?{token:'A'.repeat(43)}:url.endsWith('/session')?{...scope,csrf:'private-grant'}:{chats:[]}};}});
  const listener=(message,sender,reply)=>{for(const candidate of listeners){const handled=candidate(message,sender,reply);if(handled)return handled;}return false;};
  assert.equal(opened.length,0);const sender={id:extensionId,url:'https://web.whatsapp.com/',tab:{id:7}};
  assert.equal(listener({action:'PUBLISH',id},sender,()=>{}),false);assert.equal(calls.length,0);
@@ -315,6 +399,6 @@ test('background restricts WhatsApp messages, exposes the active chat and forces
  const active=await new Promise(resolve=>listener({action:'ACTIVE_CONTEXT'},sender,resolve));assert.equal(active.data.jid,'123@lid');
  await new Promise(resolve=>listener({action:'OPEN',jid:'123@lid',name:'Juan'},sender,resolve));assert.equal(selections[1]['selection-7'].refreshAt,102);
  await new Promise(resolve=>listener({action:'SAVE',id,revision:1,fields:{}},{id:extensionId,url:chrome.runtime.getURL('panel.html')},resolve));
- const save=calls.at(-1);assert.equal(save.options.headers['X-Asisto-Extension'],'private-grant');assert.equal(save.options.credentials,'include');assert.match(save.url,/^https:\/\/asistobot\.com\.ar\/api\/support\/extension\//);
+ const save=calls.at(-1);assert.equal(save.options.headers['X-Asisto-Extension'],'private-grant');assert.equal(save.options.credentials,'omit');assert.equal(save.options.headers.Authorization,'Bearer '+'A'.repeat(43));assert.match(save.url,/^https:\/\/asistobot\.com\.ar\/api\/support\/extension\//);
  assert.equal(typeof action,'function');
 });

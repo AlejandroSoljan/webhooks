@@ -1,17 +1,22 @@
-Asisto | Version: 5.00.074 | Fecha: 2026-09-09
+Asisto | Version: 5.00.178 | Fecha: 2026-09-20
 
 AGENTE PERSONAL DE WHATSAPP PARA WINDOWS
 
 1. Descomprimi todos los archivos y ejecuta Instalar.cmd.
-2. Ingresa a la web de Asisto con TU usuario y abre Sesiones WhatsApp Web.
-3. Pulsa Escanear mi QR y luego Vincular / reconectar. La web detecta el agente de esta PC y lo asocia con tu usuario y dominio. Si el navegador pide acceso local, permitilo para conectar con el agente.
-4. Escanea el QR con WhatsApp > Dispositivos vinculados.
+2. El instalador prepara Baileys y copia la extension en una carpeta permanente.
+3. En Chrome abre chrome://extensions, activa Modo de desarrollador, pulsa
+   Cargar descomprimida y selecciona la carpeta indicada por el instalador.
+   Tambien queda un acceso directo Extension Asisto en el Escritorio.
+4. Ingresa a la web de Asisto con TU usuario y abre Sesiones WhatsApp Web.
+5. Pulsa Escanear mi QR y luego Vincular / reconectar. La web detecta el agente de esta PC y lo asocia con tu usuario y dominio. Si el navegador pide acceso local, permitilo para conectar con el agente.
+6. Escanea el QR con WhatsApp > Dispositivos vinculados y recarga WhatsApp Web.
 
 Desde ese momento el proceso de Baileys inicia automaticamente al ingresar
 a Windows. Tu PC debe permanecer encendida y conectada a Internet.
 La instalacion y autorizacion se realizan una vez por usuario/PC.
 Una nueva autorizacion reemplaza la PC anterior de ese usuario.
-El agente y el instalador nunca abren el navegador automaticamente.
+El agente y el instalador nunca abren el navegador automaticamente. Chrome
+exige confirmar manualmente la carga de una extension no publicada.
 La renovacion de un codigo pendiente ocurre en segundo plano.
 
 Cada perfil tiene su proceso, sesion y almacenamiento protegido por la

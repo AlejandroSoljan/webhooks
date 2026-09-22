@@ -1,4 +1,5 @@
-// Asisto | Version: 5.00.120 | Fecha: 2026-09-11
+// Asisto | Version: 5.00.186 | Fecha: 2026-09-22
+const { fields: restaurantFields, validateRestaurantConfig } = require('./restaurant_config');
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
 // Requiere MongoDB (getDb) y la colección "users".
@@ -15,7 +16,11 @@ const crypto = require("crypto");
 const express = require("express");
 const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
+const { normalizeTenantAliases } = require("./tenant_aliases");
 const { recordWebAccessLogin } = require("./web_access_stats");
+const { queueLeadWhatsAppAlert } = require("./lead_notification");
+const { CONFIG_SECTIONS, configurationState, navigationGroups, icon: menuIcon } = require("./admin_navigation");
+const { dashboardHtml, mountOperationsDashboard } = require('./operations_dashboard');
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://www.asistobot.com.ar"; // ej: https://tudominio.com
 
 
@@ -45,6 +50,7 @@ const ACCESS_PAGES = [
   { key: "inbox", title: "WhatsApp" },
   { key: "fleteros", title: "Viajes Fleteros" },
   { key: "productos", title: "Productos" },
+  { key: "resto", title: "Restaurante" },
   { key: "horarios", title: "Horarios" },
   { key: "comportamiento", title: "Comportamiento" },
   { key: "leads", title: "Leads" },
@@ -58,6 +64,10 @@ const ACCESS_PAGES = [
   { key: "web_access", title: "Ingresos Web" },
   { key: "token_control", title: "Control de Tokens" },
   { key: "notifications", title: "Notificaciones App" },
+  { key: "queue_kiosk", title: "Emisión de turnos" },
+  { key: "queue_attention", title: "Atención del turnero" },
+  { key: "queue_display", title: "Pantalla de llamados" },
+  { key: "queue_stats", title: "Estadísticas del turnero" },
 ];
 
 function normalizeAllowedPages(value) {
@@ -88,6 +98,7 @@ function hasAccess(user, ...keys) {
 function requiredAccessForPath(p) {
   const path = String(p || "");
   if (path.startsWith("/admin/support") || path.startsWith("/api/support")) return ["support"];
+  if (path.startsWith("/admin/resto") || path.startsWith("/api/resto")) return ["resto"];
   if (path === "/app") return [];
 
   // Admin de usuarios
@@ -118,12 +129,17 @@ function requiredAccessForPath(p) {
   if (path.startsWith("/admin/web-access") || path.startsWith("/api/web-access")) return ["web_access"];
   // Control de tokens
   if (path.startsWith("/admin/token-control") || path.startsWith("/api/token-control")) return ["token_control"];
+  // Operación y estadísticas privadas del turnero. Emisión y pantalla son públicas
+  // para que funcionen en kioscos/TV sin iniciar sesión.
+  if (path.startsWith("/ui/turnero/")) {
+    return path.split("?")[0].endsWith("/estadisticas") ? ["queue_stats"] : ["queue_attention"];
+  }
  
 
   // UI wrapper
   if (path.startsWith("/ui/")) {
     const seg = path.split("/")[2] || "";
-    if (["support", "admin", "followup", "bot_test", "inbox", "productos", "horarios", "comportamiento", "tenant_config", "order_config", "canales", "client_access", "telegram", "web_access", "token_control"].includes(seg)) return [seg];
+    if (["support", "admin", "followup", "bot_test", "inbox", "productos", "resto", "horarios", "comportamiento", "tenant_config", "order_config", "canales", "client_access", "telegram", "web_access", "token_control"].includes(seg)) return [seg];
   }
 
   // Pantallas directas
@@ -324,6 +340,28 @@ function requireWwebAccess(req, res, next) {
   return res.status(403).send("403 - No autorizado");
 }
 
+async function resolveWwebTenantScope(db, user) {
+  if (String(user?.role || '').toLowerCase() === 'superadmin') return null;
+  const primary = String(user?.tenantId || 'default').trim();
+  const config = await db.collection('tenant_config').findOne(
+    { _id: primary },
+    { projection: { wweb_domains: 1, consumption_domains: 1 } }
+  );
+  const linked = Array.isArray(config?.wweb_domains)
+    ? config.wweb_domains
+    : (Array.isArray(config?.consumption_domains) ? config.consumption_domains : []);
+  return [...new Set([primary, ...linked].map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function wwebTenantFilter(scope) {
+  if (scope === null) return {};
+  return scope.length > 1 ? { tenantId: { $in: scope } } : { tenantId: scope[0] || 'default' };
+}
+
+function wwebTenantAllowed(scope, tenantId) {
+  return scope === null || scope.includes(String(tenantId || '').trim());
+}
+
 // ===== Tenant resolver =====
 function resolveTenantId(req, { defaultTenantId = "default", envTenantId = "" } = {}) {
   // Si el usuario NO es superadmin -> el tenant del usuario manda.
@@ -355,7 +393,8 @@ function absUrl(baseUrl, path) {
   return p; // fallback relativo
 }
 
-function pageShell({ title, user, body, head = "", robots = "", showSidebarToggle = false }) {
+function pageShell({ title, user, body, head = "", robots = "", showSidebarToggle = false, home = false }) {
+  const shell = !!user && showSidebarToggle;
   const u = user ? `${htmlEscape(user.username)} · ${htmlEscape(user.tenantId)} · ${htmlEscape(user.role)}` : "";
   // Importante para SEO:
   // - si hay user => pantalla privada => noindex
@@ -706,6 +745,49 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
       flex:0 0 auto;
     }
     .navItem.active .navDot{background: rgba(0,210,160,.75); border-color: rgba(0,210,160,.65);}
+    .sidebar.sidebar--drawer{background:#102e4a;width:100%;position:static;height:calc(100dvh - 28px);max-height:calc(100dvh - 28px)}
+    .nav > .navItem{font-size:13px;font-weight:650}
+    .topbar .pill > span:last-child{min-width:0;overflow-wrap:anywhere}
+    .topbarRight{flex-shrink:0}
+    .menuIcon{width:20px;height:20px;flex:0 0 20px;vertical-align:middle}
+    .navGroup{border-bottom:1px solid rgba(255,255,255,.08);padding-bottom:4px}
+    .navGroup summary{cursor:pointer;list-style:none;font-size:13px;font-weight:650}
+    .navGroup summary::-webkit-details-marker{display:none}
+    .navGroup summary:after{content:'›';margin-left:auto;transition:transform .15s}
+    .navGroup[open] summary:after{transform:rotate(90deg)}
+    .navChildren{padding:2px 0 5px 20px}
+    .navChildren .navItem{font-size:13px;padding:8px 10px;border-left:2px solid rgba(255,255,255,.12);border-radius:0 8px 8px 0}
+    .navChildren .navItem.active{border-left-color:#00d2a0}
+    .navItem:focus-visible,.configTab:focus-visible,.workspaceCard a:focus-visible{outline:2px solid #00bb96;outline-offset:3px}
+    .workspaceHead{padding:24px;background:#fff;border-radius:18px;color:#102c49;margin-bottom:18px}
+    .workspaceHead h1{font-size:28px;margin:8px 0}
+    .workspaceHead p{color:#64748b;margin:6px 0;line-height:1.5}
+    .workspaceGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+    .workspaceCard{background:#fff;border:1px solid #dce7ed;border-radius:18px;padding:20px;color:#102c49;min-width:0}
+    .workspaceCard h2{font-size:17px;display:flex;gap:10px;align-items:center;margin:0 0 10px}
+    .workspaceCard h2 .menuIcon{color:#008e7b}
+    .workspaceCard p{font-size:13px;color:#64748b;line-height:1.5;margin:0 0 14px}
+    .workspaceCard a{display:flex;align-items:center;justify-content:space-between;text-decoration:none;color:#123c60;padding:10px 0;border-top:1px solid #eef2f6;font-size:14px}
+    .workspaceCard a:hover{color:#008675}
+    .workspaceTools{margin-top:18px;background:#fff;border-radius:14px;padding:16px;color:#102c49}
+    .workspaceTools summary{cursor:pointer;font-weight:600}
+    .workspaceTools a{display:inline-block;margin:12px 20px 0 0;color:#14587a}
+    .opsPanel{padding:22px;border-radius:18px;background:#f4f8fa;color:#102c49;margin-bottom:22px}
+    .opsHeading{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+    .opsHeading h2{margin:0 0 7px;font-size:24px}.opsHeading p,#opsStatus{font-size:13px;color:#52677b;margin:6px 0 16px}
+    .opsControls{display:flex;align-items:end;gap:10px;flex-wrap:wrap}.opsControls label{font-size:12px;display:grid;gap:5px}.opsControls select{max-width:320px;width:100%;padding:9px;border:1px solid #b9cbd7;border-radius:9px;background:white;color:#102c49}.opsControls button{background:#0c675e;color:white}
+    .opsMetrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+    .opsMetric{display:flex;flex-direction:column;gap:9px;background:white;border:1px solid #dce7ed;border-radius:14px;padding:17px;text-decoration:none;color:#102c49;font-size:14px}
+    .opsMetric:hover{border-color:#119a87}.opsMetric strong{font-size:30px}.opsMetric small{font-size:11px;line-height:1.5;color:#52677b}.opsMissing strong{font-size:18px;color:#a13c21}
+    .opsAlert{padding:12px 14px;background:#fff4dc;border-left:3px solid #ce9427;border-radius:8px;font-size:13px;line-height:1.5}.opsAlerts:empty{display:none}
+    .opsTableWrap{overflow-x:auto;border:1px solid #dce7ed;border-radius:12px;background:white}.opsTable{border-collapse:collapse;width:100%;font-size:12px}.opsTable th,.opsTable td{text-align:left;padding:12px;border-bottom:1px solid #edf1f4;white-space:nowrap}.opsTable th{background:#eaf2f5;color:#254763}
+    .opsState{display:inline-block;background:#fff0d5;color:#784d05;border-radius:20px;padding:5px 9px}.opsOnline{background:#ddf6ec;color:#056a52}.opsFootnote{font-size:12px;color:#52677b}
+    @media(max-width:600px){.opsPanel{padding:15px}.opsMetrics{grid-template-columns:1fr}.opsControls{width:100%}.opsControls label{flex:1;min-width:0}.opsHeading h2{font-size:21px}.topbar .pill > span{display:none}.topbar{gap:8px;padding:14px}.topbarLeft{gap:8px}.workspaceHead{padding:16px}.workspaceHead .homeEyebrow{margin-bottom:4px}}
+    .configTabs{display:flex;flex-wrap:wrap;gap:7px;padding:12px 18px;background:#fff;border-bottom:1px solid #dce7ed}
+    .configTab{padding:9px 12px;text-decoration:none;border-radius:9px;background:#f1f5f9;color:#334b62;font-size:13px}
+    .configTab.active{background:#0c675e;color:#fff;font-weight:650}
+    .configFrame{height:calc(100vh - 266px);min-height:460px}
+    @media(max-width:600px){.workspaceHead{padding:18px}.workspaceHead h1{font-size:23px}.workspaceGrid{grid-template-columns:1fr}.configTabs{padding:10px;gap:6px}.configTab{padding:9px;font-size:12px}.configFrame{height:calc(100dvh - 300px)}}
     .main{flex:1; min-width:0;}
     .frameWrap{
       background: rgba(255,255,255,.94);
@@ -747,6 +829,8 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
       display:block;
     }
 
+    .restoFrame > .frameHead{display:none}
+    .restoFrame > .frame{height:calc(100dvh - 130px);min-height:480px}
     .homeShell{
       min-height: calc(100vh - 150px);
       display:flex;
@@ -1217,14 +1301,16 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
         }
 
 </style>
+${shell ? '<link rel="stylesheet" href="/static/admin_shell.css?v=5.00.174">' : ''}
 </head>
-<body>
+<body${shell ? ` class="asistoShell ${home ? 'asistoHome' : 'asistoSection'}"` : ''}>
   ${user ? `
   <div class="topbar">
     <div class="topbarLeft">
       <button type="button" class="menuBtn" id="menuBtn" aria-label="Abrir menú">☰</button>
       ${showSidebarToggle ? `<button type="button" class="sidebarToggleBtn" id="sidebarToggleBtn" aria-label="Ocultar menú lateral" title="Ocultar menú lateral"><span class="icon">☰</span><span class="when-open">Ocultar menú</span><span class="when-closed">Mostrar menú</span></button>` : ``}
-      <div class="pill">
+      ${shell ? `<span class="opsBreadcrumb">${home ? 'Panel general' : htmlEscape(String(title || 'Asisto').replace(/ · Asisto$/, ''))}</span>` : ''}
+      <div class="pill" ${shell ? 'hidden' : ''}>
         <img src="/static/logo-asisto-transparent.png?v=5.00.010" alt="Asisto" style="width:auto;height:28px;max-width:50px;object-fit:contain"/>
         <strong>Asisto</strong>
         <span>·</span>
@@ -1232,6 +1318,7 @@ function pageShell({ title, user, body, head = "", robots = "", showSidebarToggl
       </div>
     </div>
     <div class="topbarRight">
+      ${shell ? `<div class="opsUser"><span class="opsAvatar" aria-hidden="true">${menuIcon('shield')}</span><div><strong>${htmlEscape(user.username)}</strong><small>${htmlEscape(user.role)} · ${htmlEscape(user.tenantId)}</small></div></div>` : ''}
       <form method="POST" action="/logout" style="margin:0">
         <button class="btn2" type="submit">Cerrar sesión</button>
       </form>
@@ -1319,11 +1406,15 @@ function getNavItemsForUser(user) {
   if (hasAccess(user, "inbox")) items.push({ key: "inbox", title: "WhatsApp", href: "/admin/inbox" });
   if (hasAccess(user, "fleteros")) items.push({ key: "fleteros", title: "Viajes Fleteros", href: "/admin/fleteros/viajes" });
   if (hasAccess(user, "productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
+  if (hasAccess(user, "resto")) items.push({ key: "resto", title: "Restaurante", href: "/ui/resto" });
   if (hasAccess(user, "horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
   if (hasAccess(user, "notifications")) items.push({ key: "notifications", title: "Notificaciones App", href: "/ui/notificaciones-app" });
-  const queueTenant = String(user?.tenantId || "").trim().toUpperCase().replace(/[^A-Z0-9_-]/g, "").slice(0, 60);
-  if (queueTenant && hasAccess(user, "notifications")) items.push({ key: "queue_stats", title: "Estadísticas Turnero", href: `/ui/turnero/${encodeURIComponent(queueTenant)}/estadisticas` });
+  const queueTenant = encodeURIComponent(String(user?.tenantId || "").trim());
+  if (queueTenant && hasAccess(user, "queue_kiosk")) items.push({ key: "queue_kiosk", title: "Emisión de turnos", href: `/customer-app/${queueTenant}/kiosk` });
+  if (queueTenant && hasAccess(user, "queue_attention")) items.push({ key: "queue_attention", title: "Atención", href: `/ui/turnero/${queueTenant}` });
+  if (queueTenant && hasAccess(user, "queue_display")) items.push({ key: "queue_display", title: "Pantalla de llamados", href: `/customer-app/${queueTenant}/display` });
+  if (queueTenant && hasAccess(user, "queue_stats")) items.push({ key: "queue_stats", title: "Estadísticas", href: `/ui/turnero/${queueTenant}/estadisticas` });
 
   if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
   if (hasAccess(user, "wweb", "support")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
@@ -1375,14 +1466,15 @@ function defaultPageOptionsHtml(userLike, selectedHref) {
 }
 
 function sidebarHtml(user, activeKey) {
-  const items = getNavItemsForUser(user)
-    .map((it) => {
-      const active = it.key === activeKey ? "active" : "";
-      return `<a class="navItem ${active}" href="${htmlEscape(it.href)}"><span class="navDot"></span><span>${htmlEscape(
-        it.title
-      )}</span></a>`;
-    })
-    .join("");
+  const groups = navigationGroups(getNavItemsForUser(user));
+  const link = (item, icon = '') => `<a class="navItem ${item.key === activeKey ? 'active' : ''}" ${item.key === activeKey ? 'aria-current="page"' : ''} href="${htmlEscape(item.href)}">${icon}<span>${htmlEscape(item.title)}</span></a>`;
+  const items = link({ key: 'home', title: 'Inicio', href: '/app' }, menuIcon('home')) + groups.map(group => {
+    const active = group.items.some(item => item.key === activeKey);
+    if (group.key === 'configuration') {
+      return `<a class="navItem ${active ? 'active' : ''}" ${active ? 'aria-current="location"' : ''} href="${htmlEscape(group.items[0].href)}">${menuIcon(group.icon)}<span>${htmlEscape(group.title)}</span></a>`;
+    }
+    return `<details class="navGroup" ${active ? 'open' : ''}><summary class="navItem">${menuIcon(group.icon)}<span>${htmlEscape(group.title)}</span></summary><div class="navChildren">${group.items.map(item => link(item)).join('')}</div></details>`;
+  }).join('');
 
   return `
     <aside class="sidebar">
@@ -1393,7 +1485,8 @@ function sidebarHtml(user, activeKey) {
           <div class="sideSub">${htmlEscape(user.tenantId)} · ${htmlEscape(user.role)}</div>
         </div>
       </div>
-      <nav class="nav">${items}</nav>
+      <nav class="nav" aria-label="Menú principal">${items}</nav>
+      <p class="opsSlogan">Tu negocio,<br>siempre más cerca.</p>
     </aside>
   `;
 }
@@ -1403,6 +1496,7 @@ function appShell({ title, user, active, main }) {
     title,
     user,
     showSidebarToggle: true,
+    home: active === 'home',
     body: `
     <div class="drawerBackdrop" id="drawerBackdrop"></div>
       <aside class="drawer" id="drawer">
@@ -1538,7 +1632,7 @@ function loginPage({ error, msg, to, baseUrl }) {
 
           <section class="lpSection" id="contacto">
             <h2>Contacto</h2>
-            <p class="lpLeadSmall">Contanos tu negocio y te contactaremos.</p>
+            <p class="lpLeadSmall">Contanos qué querés mejorar en la gestión de tu empresa. Te ayudamos a encontrar la solución adecuada.</p>
             <div class="lpContact">
               <form class="lpForm" method="POST" action="/contact">
                 <div class="lpRow">
@@ -1573,7 +1667,7 @@ function loginPage({ error, msg, to, baseUrl }) {
 
                 <div class="lpMessageField">
                   <span class="lpInputIcon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h16v13H9l-5 4V4Z"/><path d="M8 9h8M8 13h5"/></svg></span>
-                  <textarea name="message" rows="4" placeholder="Quiero automatizar pedidos por WhatsApp, tengo X sucursales, etc." aria-label="Mensaje" required></textarea>
+                  <textarea name="message" rows="4" placeholder="Quiero simplificar la atención, automatizar procesos y tener más control de mi empresa..." aria-label="Mensaje" required></textarea>
                 </div>
                 <button class="btn" type="submit">✈&nbsp;&nbsp; Enviar</button>
               </form>
@@ -1592,43 +1686,39 @@ function loginPage({ error, msg, to, baseUrl }) {
 }
 
 function appMenuPage({ user, routes }) {
-  const enabledRoutes = Array.isArray(routes) ? routes.filter((r) => r && r.href && r.href !== "/app") : [];
-  const accessBadges = enabledRoutes
-    .slice(0, 8)
-    .map((r) => `<span class="badge">${htmlEscape(r.title)}</span>`)
-    .join("");
-  const extraCount = Math.max(0, enabledRoutes.length - 8);
+  const groups = navigationGroups(getNavItemsForUser(user));
+  const advanced = (routes || []).filter(route => route.href?.startsWith('/api/'));
 
   return appShell({
     title: "Inicio · Asisto",
     user,
     active: "home",
     main: `
-    <div class="homeShell">
-      <section class="homeCard">
-        <div class="homeLogoWrap">
-          <div class="homeLogoHalo">
-            <img class="homeLogo" src="/static/logo-asisto-transparent.png?v=5.00.010" alt="Asisto"/>
-          </div>
-        </div>
-
-        <div class="homeEyebrow">Panel principal</div>
-        <h1 class="homeTitle">Bienvenido, ${htmlEscape(user.username)}</h1>
-       
-
-        ${accessBadges ? `
-        <div class="homeAccess">
-          ${accessBadges}
-          ${extraCount > 0 ? `<span class="badge">+${extraCount} más</span>` : ""}
-        </div>` : ""}
-
-        <div class="homeMeta">
-          <span class="homeMetaItem">Dominio: ${htmlEscape(user.tenantId)}</span>
-          <span class="homeMetaItem">Rol: ${htmlEscape(user.role)}</span>
-        </div>
-      </section>
-    </div>
+    ${dashboardHtml(user)}
+    <details class="opsAllTools"><summary>Todas las herramientas</summary>
+    <div class="workspaceGrid">${groups.map(group => `<section class="workspaceCard">
+      <h2>${menuIcon(group.icon)}${htmlEscape(group.title)}</h2>
+      <p>${htmlEscape(group.description)}</p>
+      ${group.items.map(item => `<a href="${htmlEscape(item.href)}"><span>${htmlEscape(item.title)}</span><span aria-hidden="true">›</span></a>`).join('')}
+    </section>`).join('')}</div>
+    ${!groups.length ? '<section class="workspaceCard"><p>No tenés herramientas habilitadas. Consultá con tu administrador.</p></section>' : ''}
+    </details>
+    ${advanced.length ? `<details class="workspaceTools"><summary>Herramientas avanzadas · API</summary>${advanced.map(route => `<a href="${htmlEscape(route.href)}">${htmlEscape(route.title)}</a>`).join('')}</details>` : ''}
     `,
+  });
+}
+
+function configurationPage({ user, requestedSection, rawQuery }) {
+  const state = configurationState(getNavItemsForUser(user), user, requestedSection, rawQuery);
+  if (!state) return null;
+  const { section, sections, src, query } = state;
+  return appShell({
+    title: section.title + ' · Configuración · Asisto', user, active: section.key,
+    main: `<div class="frameWrap">
+      <div class="frameHead"><div><h2>Configuración del negocio</h2><p>${htmlEscape(section.description)}</p></div></div>
+      <nav class="configTabs" aria-label="Secciones de configuración">${sections.map(item => `<a class="configTab ${item.key === section.key ? 'active' : ''}" ${item.key === section.key ? 'aria-current="page"' : ''} href="${htmlEscape('/ui/configuracion?seccion=' + item.key + (query ? '&' + query : ''))}">${htmlEscape(item.title)}</a>`).join('')}</nav>
+      <iframe class="frame configFrame" title="${htmlEscape(section.title)}" src="${htmlEscape(src)}"></iframe>
+    </div>`,
   });
 }
 
@@ -1945,16 +2035,24 @@ function usersAdminPage({ user, users, msg, err }) {
         { key: "inbox", title: "WhatsApp" },
          { key: "fleteros", title: "Viajes Fleteros" },
         { key: "productos", title: "Productos" },
+        { key: "resto", title: "Restaurante" },
         { key: "horarios", title: "Horarios" },
         { key: "comportamiento", title: "Comportamiento" },
         { key: "leads", title: "Leads" },
         { key: "wweb", title: "Sesiones WhatsApp Web" },
+        { key: "canales", title: "Canales" },
         { key: "client_access", title: "Clientes habilitados" },
         { key: "telegram", title: "Sesiones Telegram" },
         { key: "users", title: "Sesiones de usuarios" },
         { key: "tenant_config", title: "Dominio Config" },
+        { key: "order_config", title: "Reglas de Pedidos" },
          { key: "web_access", title: "Ingresos Web" },
           { key: "token_control", title: "Control de Tokens" },
+        { key: "notifications", title: "Notificaciones App" },
+        { key: "queue_kiosk", title: "Emisión de turnos" },
+        { key: "queue_attention", title: "Atención del turnero" },
+        { key: "queue_display", title: "Pantalla de llamados" },
+        { key: "queue_stats", title: "Estadísticas del turnero" },
       ];
       const IS_SUPER = ${isSuper ? "true" : "false"};
       const USERS = ${JSON.stringify(userItems).replace(/</g, '\\u003c')};
@@ -2018,13 +2116,14 @@ function usersAdminPage({ user, users, msg, err }) {
         return ACCESS_PAGES.filter((page) => IS_SUPER ? true : page.key !== "users");
       }
 
-      function buildDefaultPageOptions(allowedKeys, selectedHref){
+      function buildDefaultPageOptions(allowedKeys, selectedHref, tenantId){
         const items = [{ key: "home", title: "Inicio", href: "/app" }];
         if (allowedKeys.includes("admin")) items.push({ key: "admin", title: "Conversaciones", href: "/ui/admin" });
         if (allowedKeys.includes("followup")) items.push({ key: "followup", title: "Seguimiento", href: "/ui/followup" });
         if (allowedKeys.includes("bot_test")) items.push({ key: "bot_test", title: "Pruebas Bot", href: "/ui/bot_test" });
         if (allowedKeys.includes("fleteros")) items.push({ key: "fleteros", title: "Viajes Fleteros", href: "/admin/fleteros/viajes" });
         if (allowedKeys.includes("productos")) items.push({ key: "productos", title: "Productos", href: "/ui/productos" });
+        if (allowedKeys.includes("resto")) items.push({ key: "resto", title: "Restaurante", href: "/ui/resto" });
         if (allowedKeys.includes("horarios")) items.push({ key: "horarios", title: "Horarios", href: "/ui/horarios" });
         if (allowedKeys.includes("comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
         if (allowedKeys.includes("leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
@@ -2037,6 +2136,12 @@ function usersAdminPage({ user, users, msg, err }) {
         if (allowedKeys.includes("order_config")) items.push({ key: "order_config", title: "Reglas de Pedidos", href: "/ui/order_config" });
         if (allowedKeys.includes("web_access")) items.push({ key: "web_access", title: "Ingresos Web", href: "/ui/web_access" });
         if (allowedKeys.includes("token_control")) items.push({ key: "token_control", title: "Control de Tokens", href: "/ui/token_control" });
+        if (allowedKeys.includes("notifications")) items.push({ key: "notifications", title: "Notificaciones App", href: "/ui/notificaciones-app" });
+        const queueTenant = encodeURIComponent(String(tenantId || "").trim());
+        if (queueTenant && allowedKeys.includes("queue_kiosk")) items.push({ key: "queue_kiosk", title: "Emisión de turnos", href: "/customer-app/" + queueTenant + "/kiosk" });
+        if (queueTenant && allowedKeys.includes("queue_attention")) items.push({ key: "queue_attention", title: "Atención", href: "/ui/turnero/" + queueTenant });
+        if (queueTenant && allowedKeys.includes("queue_display")) items.push({ key: "queue_display", title: "Pantalla de llamados", href: "/customer-app/" + queueTenant + "/display" });
+        if (queueTenant && allowedKeys.includes("queue_stats")) items.push({ key: "queue_stats", title: "Estadísticas", href: "/ui/turnero/" + queueTenant + "/estadisticas" });
 
         const desired = items.some((it) => it.href === selectedHref) ? selectedHref : "/app";
         return {
@@ -2053,7 +2158,8 @@ function usersAdminPage({ user, users, msg, err }) {
         const select = scope.querySelector('[data-default-page]');
         if (!select) return;
         const allowed = getCheckedValues(scope);
-        const built = buildDefaultPageOptions(allowed, selectedHref || select.value || "/app");
+        const tenantInput = scope.querySelector('[name="tenantId"]');
+        const built = buildDefaultPageOptions(allowed, selectedHref || select.value || "/app", tenantInput ? tenantInput.value : "");
         select.innerHTML = built.html;
         select.value = built.selected;
       }
@@ -2078,6 +2184,8 @@ function usersAdminPage({ user, users, msg, err }) {
 
       function setupCreateModal(){
         installPermissionSync(createForm);
+        const tenantInput = createForm.querySelector('[name="tenantId"]');
+        tenantInput && tenantInput.addEventListener('input', () => syncDefaultPageSelect(createForm));
         syncDefaultPageSelect(createForm, "/app");
       }
 
@@ -2094,6 +2202,7 @@ function usersAdminPage({ user, users, msg, err }) {
         editMeta.textContent = 'Dominio: ' + (userData.tenantId || '-') + ' · Rol: ' + (userData.role || '-') + (userData.updatedAt ? ' · Actualizado: ' + userData.updatedAt : '');
         editUsername.value = userData.username || '';
         editTenantInput.value = userData.tenantId || '';
+        editTenantInput.oninput = () => syncDefaultPageSelect(editForm);
         fillEditRoleOptions(userData.role || 'user');
 
         const selfLocked = !!userData.isSelf;
@@ -3245,6 +3354,8 @@ document.addEventListener('click', function(e){
   });
 }
 function mountAuthRoutes(app) {
+  mountOperationsDashboard(app, { requireAuth, getDb, messagePipeline: wwebRealMessagePipeline,
+    getAccess: user => [...getNavItemsForUser(user).map(item => item.key), ...(hasAccess(user, 'support') ? ['support'] : [])] });
   // login
   ensureBodyParsers(app);
   app.get("/login", (req, res) => {
@@ -3276,13 +3387,21 @@ function mountAuthRoutes(app) {
       }
 
       const db = await getDb();
-      await db.collection("leads").insertOne({
+      const lead = {
         name, email, company, phone, message,
         createdAt: new Date(),
         ip: req.headers["x-forwarded-for"] || req.socket?.remoteAddress || null,
         ua: req.headers["user-agent"] || null,
         page: "/login"
-      });
+      };
+      const result = await db.collection("leads").insertOne(lead);
+      try {
+        const notification = await queueLeadWhatsAppAlert(db, { ...lead, _id: result.insertedId });
+        await db.collection("leads").updateOne({ _id: result.insertedId }, { $set: { whatsappAlertStatus: notification.status } });
+      } catch (notifyError) {
+        console.error("[contact] lead guardado, aviso WhatsApp pendiente:", notifyError?.message || notifyError);
+        await db.collection("leads").updateOne({ _id: result.insertedId }, { $set: { whatsappAlertStatus: "error" } }).catch(() => {});
+      }
       return res.redirect("/login?msg=" + encodeURIComponent("¡Gracias! Te vamos a contactar a la brevedad.") + "#contacto");
     } catch (e) {
       console.error("[contact] error:", e);
@@ -3498,6 +3617,14 @@ function mountAuthRoutes(app) {
     return res.status(200).send(appMenuPage({ user: req.user, routes: filtered }));
   });
 
+  // One configuration entry; permissions remain those of the original screens.
+  app.get('/ui/configuracion', requireAuth, (req, res) => {
+    const rawQuery = String(req.originalUrl || '').split('?').slice(1).join('?');
+    const html = configurationPage({ user: req.user, requestedSection: req.query?.seccion, rawQuery });
+    if (!html) return res.status(403).send('403 - No autorizado');
+    return res.status(200).send(html);
+  });
+
   // wrappers UI con menú lateral (mantienen el layout al navegar endpoints)
   app.get("/ui/:page", requireAuth, (req, res) => {
     const page = String(req.params.page || "").trim();
@@ -3512,6 +3639,15 @@ function mountAuthRoutes(app) {
     }
     if (page === "support") return res.redirect(302, "/admin/wweb");
 
+    // Keep bookmarks and configured landing pages, with the new tabs around
+    // the exact same forms. Their API endpoints and save behavior are untouched.
+    if (Object.hasOwn(CONFIG_SECTIONS, page)) {
+      const rawQuery = String(req.originalUrl || '').split('?').slice(1).join('?');
+      const html = configurationPage({ user: req.user, requestedSection: page, rawQuery });
+      if (!html) return res.status(403).send('403 - No autorizado');
+      return res.status(200).send(html);
+    }
+
 
     const map = {
       admin: { title: "Conversaciones", desc: "Panel de conversaciones y seguimiento", badge: "Admin UI", src: "/admin", active: "admin" },
@@ -3519,6 +3655,7 @@ function mountAuthRoutes(app) {
       bot_test: { title: "Pruebas Bot", desc: "Simulador del comportamiento del bot sin WhatsApp ni teléfono conectado", badge: "Laboratorio", src: "/admin/bot-test?embed=1", active: "bot_test" },
       inbox: { title: "WhatsApp", desc: "Bandeja WhatsApp para responder clientes y pausar el bot por conversación", badge: "Admin UI", src: "/admin/inbox", active: "inbox" },
       productos: { title: "Productos", desc: "Catálogo y mantenimiento del dominio", badge: "UI", src: "/productos", active: "productos" },
+      resto: { title: "Restaurante", desc: "Mesas, pedidos y llamados", badge: "Operaciones", src: "/admin/resto", active: "resto" },
       horarios: { title: "Horarios", desc: "Configuración de disponibilidad", badge: "UI", src: "/horarios", active: "horarios" },
       comportamiento: { title: "Comportamiento", desc: "Prompt, reglas y configuración del asistente", badge: "UI", src: "/comportamiento", active: "comportamiento" },
       canales: { title: "Canales", desc: "Transporte API Meta / WhatsApp Web y credenciales por dominio", badge: "Admin", src: "/canales?embed=1", active: "canales" },
@@ -3545,7 +3682,7 @@ function mountAuthRoutes(app) {
         user: req.user,
         active: conf.active,
         main: `
-        <div class="frameWrap">
+        <div class="frameWrap ${page === 'resto' ? 'restoFrame' : ''}">
           <div class="frameHead">
             <div>
               <h2>${htmlEscape(conf.title)}</h2>
@@ -3965,6 +4102,8 @@ function mountAuthRoutes(app) {
  function tenantConfigIsSuperadminOnlyField(fieldName, superadminOnlyFields) {
     const key = normalizeTenantConfigFieldName(fieldName);
     if (!key) return false;
+    if (key === 'api_aliases') return true;
+    if ((superadminOnlyFields || []).includes('restaurant_features') && restaurantFields.some(f => f.feature && f.name === key)) return true;
     return new Set(Array.isArray(superadminOnlyFields) ? superadminOnlyFields.map(normalizeTenantConfigFieldName) : []).has(key);
   }
 
@@ -4058,6 +4197,7 @@ function mountAuthRoutes(app) {
             <thead>
               <tr>
                 <th>Dominio</th>
+                <th>Dominios secundarios</th>
                 <th>Empresa</th>
                 <th>Número</th>
                 <th>TAG deseado</th>
@@ -4066,7 +4206,7 @@ function mountAuthRoutes(app) {
               </tr>
             </thead>
             <tbody id="tc_list">
-              <tr><td colspan="6" class="small">Cargando...</td></tr>
+              <tr><td colspan="7" class="small">Cargando...</td></tr>
             </tbody>
           </table>
         </div>
@@ -4085,6 +4225,9 @@ function mountAuthRoutes(app) {
             <form id="tc_form">
               <label class="small">Dominio</label>
               <input class="inp" id="tc_tenant" name="tenantId" value="${htmlEscape(tenantId)}" ${isSuper ? "" : "readonly"} placeholder="default"/>
+              <label class="small" for="tc_aliases" style="display:block;margin-top:10px">Dominios secundarios</label>
+              <input class="inp" id="tc_aliases" name="apiAliases" ${isSuper ? "" : "readonly"} placeholder="Ej.: NEA1, NEA2" autocomplete="off"/>
+              <div class="small" style="margin-top:5px">Se separan con comas. Consultar cualquiera de estos dominios devuelve la información del dominio principal. Sólo el superadmin puede cambiarlos.</div>
               ${isSuper ? `
               <div id="tc_copyWrap" style="margin-top:10px">
                 <label class="small">Copiar configuración desde</label>
@@ -4114,7 +4257,7 @@ function mountAuthRoutes(app) {
 
               <div class="actions" style="margin-top:12px">
                 <button class="btn" type="submit" id="tc_btnSave">Guardar</button>
-                <button class="btn2" type="button" id="tc_btnAdd">Agregar campo</button>
+                <button class="btn2" type="button" id="tc_btnAdd">Agregar campo</button><button class="btn2" type="button" id="tc_btnRestaurant">Variables restaurante y logo</button><datalist id="tc_restaurantFields">${restaurantFields.map(f => `<option value="${f.name}">${f.help}</option>`).join('')}</datalist>
                 <button class="btn2" type="button" id="tc_btnAddTag">Agregar TAG versión</button>
                 <button class="btn2" type="button" id="tc_btnAddTokenCosts">Agregar tarifas tokens</button>
                 <button class="btn2" type="button" id="tc_btnAddWwebRetention" title="Agrega wweb_message_log_retention_days. 0 o campo ausente = no borrar; 30 = conservar 30 días.">Retención historial WWeb</button>
@@ -4152,6 +4295,7 @@ function mountAuthRoutes(app) {
         const msgEl = document.getElementById('tc_msg');
         const form = document.getElementById('tc_form');
         const tenantEl = document.getElementById('tc_tenant');
+        const aliasesEl = document.getElementById('tc_aliases');
         const fieldsEl = document.getElementById('tc_fields');
         const listEl = document.getElementById('tc_list');
         const metaEl = document.getElementById('tc_meta');
@@ -4178,7 +4322,9 @@ function mountAuthRoutes(app) {
         const helpField = document.getElementById('tc_helpField');
         const helpText = document.getElementById('tc_helpText');
 
+        const restaurantDefs = ${JSON.stringify(restaurantFields)};
         const fieldHelp = {
+          ...Object.fromEntries(restaurantDefs.map(f => [f.name, f.help])),
           nom_emp:'Nombre de la empresa que se muestra en paneles y mensajes.', numero:'Número de WhatsApp asociado al dominio, con código de país.', release_tag:'Versión del script cliente que debe instalar automáticamente este dominio.', version:'Versión informativa reportada por la instalación.', script:'Nombre del script principal del cliente.', puerto:'Puerto HTTP local utilizado por el agente.', direccion:'Dirección o ubicación informativa de la empresa.', dsn:'Nombre del origen ODBC usado para conectar con Manager.', headless:'Define si el navegador de WhatsApp Web se ejecuta sin ventana visible.', wweb_engine:'Motor de WhatsApp Web. Valores habituales: wwebjs o baileys.', habilitar_bot:'Activa o desactiva el procesamiento automático de mensajes entrantes.', habilitar_consulta_mensajes:'Activa la consulta y envío de mensajes pendientes desde la API.', habilitar_mensajes_info:'Activa el procesamiento del origen local es_mensajes.', habilitar_odbc_manager:'Habilita la conexión ODBC con la base de Manager.',
           api:'URL del API principal que procesa mensajes entrantes.', api2:'URL del API que consulta mensajes salientes pendientes.', api3:'URL del API que actualiza el estado de los destinatarios.', actualiza:'URL alternativa o histórica usada para actualizar estados.', key:'Clave utilizada para autenticar las APIs de mensajes.', api_mensajes_alta:'URL que registra nuevos mensajes en Api_Mensajes/Alta.', api_mensajes_alta_key:'Clave de autenticación específica del API de Alta.', api_mensajes_alta_nro_tel_from:'Número emisor utilizado al registrar mensajes mediante Alta.', compra_mensajes_usar_api_alta:'Si es true, las notificaciones de compra se registran en el API de Alta; si es false, se envían directamente por WhatsApp.', entrega_mensajes_usar_api_alta:'Si es true, las notificaciones de entrega se registran en el API de Alta; si es false, se envían directamente por WhatsApp.', es_mensajes_usar_api_alta:'Si es true, los registros de es_mensajes se envían mediante el API de Alta; si es false, el script los envía directamente por WhatsApp, incluyendo el adjunto con el texto como descripción.',
           api_mensajes_confirmacion_habilitada:'Activa la solicitud de permiso antes de enviar mensajes automáticos.', api_mensajes_confirmacion_prioridades:'Lista de prioridades que requieren confirmación. Ejemplo: [3]. Si no existe, se confirman todas.', api_mensajes_confirmacion_mensaje:'Texto principal utilizado para solicitar autorización al cliente.', api_mensajes_confirmacion_mensajes:'Lista de variantes del mensaje de autorización; el cliente elige una para evitar repeticiones.', api_mensajes_confirmacion_respuestas_ok:'Respuestas que se consideran autorización, por ejemplo OK, SI o SÍ.', api_mensajes_confirmacion_reenviar_ms:'Tiempo en milisegundos antes de permitir otra solicitud de autorización.', api_mensajes_confirmacion_validez_ms:'Duración en milisegundos de una autorización concedida.', api_mensajes_respuestas_baja:'Palabras que solicitan exclusión permanente; se evalúan según las reglas de BAJA.',
@@ -4267,7 +4413,7 @@ function mountAuthRoutes(app) {
 
         function isFieldMarkedSuperadminOnly(name){
           const key = normalizeFieldName(name);
-          return !!key && superadminOnlyFields.has(key);
+          return !!key && (superadminOnlyFields.has(key) || (superadminOnlyFields.has('restaurant_features') && restaurantDefs.some(f => f.feature && f.name === key)));
          }
 
         function isSuperadminOnlyField(name){
@@ -4308,7 +4454,7 @@ function mountAuthRoutes(app) {
         function addRow(key='', value=''){
           const tr = document.createElement('tr');
           tr.innerHTML =
-            '<td><input class="inp" data-k value="' + esc(key) + '" placeholder="campo"/></td>' +
+            '<td><input class="inp" data-k list="tc_restaurantFields" value="' + esc(key) + '" placeholder="campo"/></td>' +
             '<td><input class="inp" data-v value="' + esc(value) + '" placeholder="valor"/></td>' +
             (isSuper ? '<td class="tc-rule-cell"><label class="tc-rule-label" title="Permiso restringido"><input type="checkbox" data-superonly aria-label="Permiso restringido"/></label></td>' : '') +
             '<td><div class="tc-row-actions"><button class="btn2 tc-help-btn" type="button" data-help aria-label="Ayuda del campo" title="Ayuda">?</button><button class="btn2" type="button" data-rm>✕</button></div></td>';
@@ -4393,7 +4539,8 @@ function mountAuthRoutes(app) {
 
         function setFieldsFromDoc(doc){
           fieldsEl.innerHTML = '';
-          const entries = Object.entries(doc || {});
+          aliasesEl.value = Array.isArray(doc?.api_aliases) ? doc.api_aliases.join(', ') : '';
+          const entries = Object.entries(doc || {}).filter(([key]) => key !== 'api_aliases');
           if (!entries.length) addRow('', '');
           for (const [k,v] of entries) addRow(k, normalizeValueForInput(v));
           refreshProtectedRows();
@@ -4421,6 +4568,7 @@ function mountAuthRoutes(app) {
           const doc = j && j.item ? j.item : null;
           if (!doc) throw new Error('No existe configuración para el dominio origen.');
           setFieldsFromDoc(doc.data || {});
+          aliasesEl.value = '';
           renderMeta({ createdAt: doc.createdAt, updatedAt: doc.updatedAt });
           return doc;
         }
@@ -4463,6 +4611,13 @@ function mountAuthRoutes(app) {
               if (typeof parsed !== 'number' || parsed < 0 || parsed > 1) throw new Error('api_mensajes_circuit_sin_respuesta_ratio debe estar entre 0 y 1.');
             }
             doc[k] = parsed;
+          }
+          if (isSuper) {
+            const aliases = [...new Set(String(aliasesEl.value || '').split(/[\\s,;]+/).map(v => v.trim().toUpperCase()).filter(Boolean))];
+            if (aliases.length > 50 || aliases.some(v => !/^[A-Z0-9_-]{2,80}$/.test(v) || v === String(tenantEl.value || '').trim().toUpperCase())) {
+              throw new Error('Revisá los dominios secundarios: deben ser únicos, válidos y distintos del dominio principal.');
+            }
+            doc.api_aliases = aliases;
           }
           return doc;
         }
@@ -4575,12 +4730,13 @@ function mountAuthRoutes(app) {
             tenantListCache = Array.isArray(items) ? items.slice() : [];
             renderCopyOptions(tenantListCache);
             if (!items.length) {
-              listEl.innerHTML = '<tr><td colspan="6" class="small">No hay registros.</td></tr>';
+              listEl.innerHTML = '<tr><td colspan="7" class="small">No hay registros.</td></tr>';
               return;
             }
             listEl.innerHTML = items.map(it => {
               return '<tr>'+
                 '<td><span class="pill">'+esc(it._id||'')+'</span></td>'+
+                '<td>'+esc(Array.isArray(it.api_aliases) ? it.api_aliases.join(', ') : '')+'</td>'+
                 '<td>'+esc(it.nom_emp||'')+'</td>'+
                 '<td>'+esc(it.numero||'')+'</td>'+
                 '<td><span class="pill">'+esc(it.release_tag || it.version_tag || it.target_tag || '-')+'</span></td>'+
@@ -4599,7 +4755,7 @@ function mountAuthRoutes(app) {
             });
           } catch (e) {
             console.error('[tenant_config] list error:', e);
-            listEl.innerHTML = '<tr><td colspan="6" class="small">Error: '+esc(e?.message||String(e))+'</td></tr>';
+            listEl.innerHTML = '<tr><td colspan="7" class="small">Error: '+esc(e?.message||String(e))+'</td></tr>';
           }
         }
 
@@ -4640,6 +4796,17 @@ function mountAuthRoutes(app) {
           }
         }
 
+        document.getElementById('tc_btnRestaurant').addEventListener('click', () => {
+          const legacyRow = findFieldRow('restaurant_features');
+          const legacy = legacyRow ? parseValue(legacyRow.querySelector('[data-v]').value) : {};
+          restaurantDefs.forEach(def => {
+            if (!isSuperadminOnlyField(def.name) && !findFieldRow(def.name)) {
+              const value = def.feature && def.feature !== 'guestOrders' && typeof legacy?.[def.feature] === 'boolean' ? legacy[def.feature] : def.value;
+              addRow(def.name, normalizeValueForInput(value));
+            }
+          });
+          setMsg('ok','Variables de restaurante disponibles. Revisá los valores y guardá el dominio.');
+        });
         btnAdd.addEventListener('click', ()=> addRow('', ''));
         if (btnAddTag) btnAddTag.addEventListener('click', ()=> ensureFieldRow('release_tag', 'v4.00.16'));
         if (btnAddTokenCosts) btnAddTokenCosts.addEventListener('click', ()=> addTokenCostFields());
@@ -4895,7 +5062,7 @@ function mountAuthRoutes(app) {
 
       // listado (superadmin)
       const items = await col
-        .find({}, { projection: { _id: 1, nom_emp: 1, numero: 1, release_tag: 1, version_tag: 1, target_tag: 1, createdAt: 1, updatedAt: 1 } })
+        .find({}, { projection: { _id: 1, api_aliases: 1, nom_emp: 1, numero: 1, release_tag: 1, version_tag: 1, target_tag: 1, createdAt: 1, updatedAt: 1 } })
         .sort({ _id: 1 })
         .limit(500)
         .toArray();
@@ -4931,6 +5098,10 @@ function mountAuthRoutes(app) {
       }
 
       const existing = await col.findOne({ _id: tenantId });
+      if (!existing) {
+        const claimedId = await col.findOne({ api_aliases: tenantId.toUpperCase() }, { projection: { _id: 1 } });
+        if (claimedId) return res.status(409).json({ ok:false, error:`domain_is_alias:${claimedId._id}` });
+      }
       const existingData = stripTenantConfigDoc(existing);
       const safeData = isSuper
         ? data
@@ -4941,6 +5112,29 @@ function mountAuthRoutes(app) {
       const finalData = isSuper
         ? safeData
         : { ...protectedExistingData, ...safeData };
+
+      try { validateRestaurantConfig(finalData); } catch (error) { return res.status(400).json({ ok:false, error:error.message }); }
+
+      // Los alias son sólo de consulta: no crean otro tenant ni otra sesión.
+      // Evitamos colisiones con dominios reales y con otros propietarios.
+      if (isSuper && Object.prototype.hasOwnProperty.call(finalData, 'api_aliases')) {
+        try {
+          finalData.api_aliases = normalizeTenantAliases(finalData.api_aliases, tenantId);
+        } catch (error) {
+          return res.status(400).json({ ok:false, error:error.message });
+        }
+        if (finalData.api_aliases.length) {
+          const [realDomain, otherOwner] = await Promise.all([
+            col.findOne({ _id: { $in: finalData.api_aliases } }, { projection: { _id: 1 } }),
+            col.findOne({ _id: { $ne: tenantId }, api_aliases: { $in: finalData.api_aliases } }, { projection: { _id: 1 } }),
+          ]);
+          if (realDomain) return res.status(409).json({ ok:false, error:`alias_is_domain:${realDomain._id}` });
+          if (otherOwner) return res.status(409).json({ ok:false, error:`alias_already_used:${otherOwner._id}` });
+        }
+      } else if (isSuper && existing?.api_aliases) {
+        // Clientes antiguos del panel no deben borrar alias al guardar otros campos.
+        finalData.api_aliases = existing.api_aliases;
+      }
  
 
       const replacement = {
@@ -5003,6 +5197,7 @@ function mountAuthRoutes(app) {
     const page = htmlEscape(String(lead?.page || ""));
     const tenantId = htmlEscape(String(lead?.tenantId || ""));
     const source = htmlEscape(String(lead?.source || (lead?.page ? "formulario" : "")));
+    const whatsappAlertStatus = htmlEscape(String(lead?.whatsappAlertStatus || ""));
     const leadType = htmlEscape(String(lead?.leadType || ""));
     const channelType = htmlEscape(String(lead?.channelType || ""));
     const quoteReady = lead?.quoteReady === true;
@@ -5037,6 +5232,7 @@ function mountAuthRoutes(app) {
           <div style="font-weight:600">${tenantId || "-"}</div>
           <div class="small">${leadType || "contacto"}${channelType ? ` · ${channelType}` : ""}</div>
           <div class="small">${source || "-"}</div>
+          ${whatsappAlertStatus ? `<div class="small">Aviso WhatsApp: ${whatsappAlertStatus}</div>` : ``}
           ${leadType === "cotizacion" ? `<div class="small" style="margin-top:4px;font-weight:700">${quoteReady ? "Datos suficientes" : "Recolectando datos"}</div>` : ``}
         </td>
         <td style="white-space:nowrap">${createdLabel}</td>
@@ -5256,26 +5452,25 @@ function mountAuthRoutes(app) {
 
   function wwebRealMessagePipeline(match) {
     return [
-      { $match: match },
+        { $match: match },
       { $set: {
-          __messageId: { $toString: { $ifNull: ['$messageId', ''] } },
-          __second: { $floor: { $divide: [{ $toLong: '$at' }, 1000] } }
+            // Un envío puede estar registrado una vez por el agente (con
+            // messageId) y otra por el wrapper legado (sin messageId). Esta
+            // identidad común evita contarlo dos veces en Sesiones.
+            __dedupeKey: { $concat: [
+              'message:', '$tenantId', ':', '$numero', ':', '$direction', ':',
+              { $ifNull: ['$contact', ''] }, ':', { $ifNull: ['$body', ''] }
+            ] }
       } },
-      { $set: {
-          __dedupeKey: {
-            $cond: [
-              { $gt: [{ $strLenCP: '$__messageId' }, 0] },
-              { $concat: ['id:', '$tenantId', ':', '$numero', ':', '$direction', ':', '$__messageId'] },
-              { $concat: [
-                  'legacy:', '$tenantId', ':', '$numero', ':', '$direction', ':',
-                  { $ifNull: ['$contact', ''] }, ':', { $ifNull: ['$body', ''] }, ':',
-                  { $toString: '$__second' }
-              ] }
-            ]
-          }
+      { $setWindowFields: {
+          partitionBy: '$__dedupeKey',
+          sortBy: { at: 1 },
+          output: { __previousAt: { $shift: { output: '$at', by: -1, default: null } } }
       } },
-      { $group: { _id: '$__dedupeKey', doc: { $first: '$$ROOT' } } },
-      { $replaceRoot: { newRoot: '$doc' } }
+      { $match: { $expr: { $or: [
+        { $eq: ['$__previousAt', null] },
+        { $gt: [{ $subtract: [{ $toLong: '$at' }, { $toLong: '$__previousAt' }] }, 10000] }
+      ] } } }
     ];
   }
 
@@ -5309,7 +5504,7 @@ function mountAuthRoutes(app) {
   }
 
   async function wwebDashboardStats(db, filter, todayYmd, todayStart, todayEnd) {
-    const cacheKey = filter?.tenantId ? `tenant:${String(filter.tenantId)}` : 'superadmin:all';
+    const cacheKey = filter?.tenantId ? `tenant:${JSON.stringify(filter.tenantId)}` : 'superadmin:all';
     const cached = wwebDashboardStatsCache.get(cacheKey);
     if (cached && cached.day === todayYmd && Date.now() - cached.at < WWEB_DASHBOARD_STATS_CACHE_MS) return cached.value;
     const value = await Promise.all([
@@ -5322,7 +5517,8 @@ function mountAuthRoutes(app) {
 
   async function wwebPermissionStatsMap(db, tenantFilter, fromYmd, toYmd) {
     const query = { solicitudDayKey: { $gte: fromYmd, $lte: toYmd } };
-    if (tenantFilter?.tenantId) query.tenantId = String(tenantFilter.tenantId).toUpperCase();
+    if (tenantFilter?.tenantId?.$in) query.tenantId = { $in: tenantFilter.tenantId.$in.map((id) => String(id).toUpperCase()) };
+    else if (tenantFilter?.tenantId) query.tenantId = String(tenantFilter.tenantId).toUpperCase();
     const docs = await db.collection('wa_api_mensajes_confirmaciones').find(query).limit(10000).toArray();
     const map = new Map();
     for (const d of docs) {
@@ -5348,9 +5544,8 @@ function mountAuthRoutes(app) {
   app.get("/api/wweb/locks", requireAuth, requireWwebAccess, async (req, res) => {
     try {
       const db = await getDb();
-      const role = String(req.user?.role || "").toLowerCase();
-      const isSuper = role === "superadmin";
-      const filter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+      const scope = await resolveWwebTenantScope(db, req.user);
+      const filter = wwebTenantFilter(scope);
 
       const todayYmd = wwebArYmd(new Date());
       const { start: todayStart, end: todayEnd } = wwebArDateRange(todayYmd, todayYmd);
@@ -5443,9 +5638,8 @@ function mountAuthRoutes(app) {
       if (!lockId) return res.status(400).json({ ok: false, error: "lockId requerido" });
 
       const db = await getDb();
-      const role = String(req.user?.role || "").toLowerCase();
-      const isSuper = role === "superadmin";
-      const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+      const scope = await resolveWwebTenantScope(db, req.user);
+      const tenantFilter = wwebTenantFilter(scope);
 
       const lock = await db.collection("wa_locks").findOne(
         { _id: lockId, ...tenantFilter },
@@ -5493,7 +5687,8 @@ function mountAuthRoutes(app) {
       const db = await getDb();
       const role = String(req.user?.role || "").toLowerCase();
       const isSuper = role === "superadmin";
-      const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+      const scope = await resolveWwebTenantScope(db, req.user);
+      const tenantFilter = wwebTenantFilter(scope);
       if (resetAuth && !isSuper) return res.status(403).json({ error: "forbidden" });
 
       const _id = lockId;
@@ -5611,12 +5806,12 @@ function mountAuthRoutes(app) {
       const db = await getDb();
       const role = String(req.user?.role || "").toLowerCase();
       const isSuper = role === "superadmin";
-      const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+      const scope = await resolveWwebTenantScope(db, req.user);
 
-      const tenantId = String(req.body?.tenantId || (tenantFilter.tenantId || "")).trim();
+      const tenantId = String(req.body?.tenantId || (scope?.[0] || "")).trim();
       const numero = String(req.body?.numero || "").trim();
       if (!tenantId || !numero) return res.status(400).json({ error: "tenantId y numero requeridos" });
-      if (!isSuper && tenantId !== tenantFilter.tenantId) return res.status(403).json({ error: "forbidden" });
+      if (!wwebTenantAllowed(scope, tenantId)) return res.status(403).json({ error: "forbidden" });
       const lockId = `${tenantId}:${numero}`;
 
       const mode = String(req.body?.mode || "").trim(); // 'any' | 'pinned'
@@ -5724,10 +5919,11 @@ function mountAuthRoutes(app) {
       const db = await getDb();
       const role = String(req.user?.role || "").toLowerCase();
       const isSuper = role === "superadmin";
-      const tenantId = String(req.query?.tenantId || (!isSuper ? (req.user?.tenantId || "default") : "")).trim();
+      const scope = await resolveWwebTenantScope(db, req.user);
+      const tenantId = String(req.query?.tenantId || (scope?.[0] || "")).trim();
       const numero = String(req.query?.numero || "").trim();
       if (!tenantId || !numero) return res.status(400).json({ ok:false, error: "tenantId y numero requeridos" });
-      if (!isSuper && tenantId !== String(req.user?.tenantId || "default")) return res.status(403).json({ ok:false, error: "forbidden" });
+      if (!wwebTenantAllowed(scope, tenantId)) return res.status(403).json({ ok:false, error: "forbidden" });
 
       const from = String(req.query?.from || wwebArYmd(new Date())).trim();
       const to = String(req.query?.to || from).trim();
@@ -5836,12 +6032,12 @@ function mountAuthRoutes(app) {
       const db = await getDb();
        const role = String(req.user?.role || "").toLowerCase();
       const isSuper = role === "superadmin";
-      const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+      const scope = await resolveWwebTenantScope(db, req.user);
 
       const tenantId = String(req.query?.tenantId || "").trim();
       const numero = String(req.query?.numero || "").trim();
       if (!tenantId || !numero) return res.status(400).json({ error: "tenantId y numero requeridos" });
-      if (!isSuper && tenantId !== tenantFilter.tenantId) return res.status(403).json({ error: "forbidden" });
+      if (!wwebTenantAllowed(scope, tenantId)) return res.status(403).json({ error: "forbidden" });
 
       const items = await db.collection("wa_wweb_history")
         .find({ tenantId, numero })
@@ -5879,9 +6075,8 @@ function mountAuthRoutes(app) {
       if (action === "clear_auth" && !reason) reason = "phone_web_clear_auth";
 
       const db = await getDb();
-      const role = String(req.user?.role || "").toLowerCase();
-      const isSuper = role === "superadmin";
-      const tenantFilter = isSuper ? {} : { tenantId: String(req.user?.tenantId || "default") };
+      const scope = await resolveWwebTenantScope(db, req.user);
+      const tenantFilter = wwebTenantFilter(scope);
 
       const lock = await db.collection("wa_locks").findOne({ _id: lockId, ...tenantFilter });
       if (!lock) return res.status(404).json({ error: "Lock no encontrado (o no autorizado)." });
@@ -5951,6 +6146,8 @@ function protectRoutes(app) {
       p.startsWith("/qr/") ||
       p.startsWith("/customer-app/") ||
       p.startsWith("/api/customer-app/") ||
+      p.startsWith("/resto/") ||
+      p.startsWith("/api/public/resto/") ||
       p.startsWith("/api/ext/qr/") ||
       p.startsWith("/api/ext/wweb/") ||
       p.startsWith("/api/ext/domain-status") ||
@@ -5993,6 +6190,9 @@ module.exports = {
   protectRoutes,
   appShell,
   resolveTenantId,
+  resolveWwebTenantScope,
+  wwebTenantFilter,
+  wwebTenantAllowed,
   hashPassword,
   verifyPassword,
   getNavItemsForUser,

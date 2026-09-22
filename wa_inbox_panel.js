@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.001 | Fecha: 2026-08-29
+// Asisto | Version: 5.00.174 | Fecha: 2026-09-19
 // wa_inbox_panel.js
 // Panel WhatsApp aislado: agrega rutas nuevas sin tocar la lógica existente de /admin Conversaciones.
 
@@ -971,6 +971,10 @@ function mountWhatsAppInboxPanel(app, { auth } = {}) {
   // Nueva UI. Se monta antes del /admin/inbox legacy; el código viejo queda intacto debajo.
   app.get("/admin/inbox", async (req, res) => {
     try {
+      if (req.user && typeof auth.appShell === 'function' && String(req.query.embed || '') !== '1') {
+        const params = new URLSearchParams(req.query); params.set('embed', '1');
+        return res.status(200).send(auth.appShell({ title: 'WhatsApp · Asisto', user: req.user, active: 'inbox', main: `<iframe class="standaloneFrame" title="WhatsApp" src="/admin/inbox?${params.toString().replace(/&/g, '&amp;')}"></iframe>` }));
+      }
       const tenant = resolveTenantIdFromAuth(auth, req);
       const conversations = await loadInboxConversations(tenant, 500);
       res.status(200).send(inboxHtml(conversations, tenant));

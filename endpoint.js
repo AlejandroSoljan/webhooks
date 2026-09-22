@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.104 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.183 | Fecha: 2026-09-22
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -20,6 +20,8 @@ const DOMAIN_STATUS_API_KEY = String(
 // ⬇️ Para catálogo en Mongo
 const { ObjectId } = require("mongodb");
 const { getDb, closeDb } = require("./db");
+const { resolveCanonicalTenantId, resolveCanonicalLockId } = require("./tenant_aliases");
+const { domainStatusGroupIds, documentTenantId } = require("./domain_status_group");
 const {
   getRuntimeByPhoneNumberId,
   getRuntimeByInstagramAccountId,
@@ -106,7 +108,7 @@ const path = require("path");
 
 // ⬇️ Auth UI (login + sesiones + admin usuarios)
 const auth = require("./auth_ui");
-const { mountWebAccessRoutes } = require("./web_access_stats");
+const { mountWebAccessRoutes, recordPublicVisit } = require("./web_access_stats");
 const { mountTokenControlRoutes } = require("./token_control_stats");
 const { mountFleterosViajesPanel } = require("./fleteros_viajes_panel");
 const { mountOrderConfigPanel } = require("./order_config_panel");
@@ -115,6 +117,7 @@ const { mountClientPhoneAccess, isClientPhoneAllowed } = require("./client_phone
 const { mountConversationFollowupPanel } = require("./conversation_followup_panel");
 const { mountBotTestPanel } = require("./bot_test_panel");
 const { mountQrProductWeb } = require("./qr_product_web");
+const { mountRestaurant } = require("./restaurant");
 const { mountDemoCatalogApi } = require("./demo_catalog_api");
 const { mountCustomerApp } = require("./customer_app_web");
 const { mountCustomerNotifications } = require("./customer_notifications");
@@ -169,6 +172,7 @@ mountConversationFollowupPanel(app, { auth });
 mountBotTestPanel(app, { auth });
 mountQrProductWeb(app);
 mountCustomerApp(app, { auth });
+mountRestaurant(app, auth);
 mountDemoCatalogApi(app);
 mountHelpTool(app);
 require('./src/support/routes').mountSupport(app);
@@ -890,6 +894,55 @@ async function requireWwebAgentAccess(req, res, next) {
   }
 }
 
+// Primer arranque de un agente nuevo. La credencial se entrega una sola vez:
+// después de guardarla en tenant_config, el mismo alias ya no puede reclamarla.
+// Esto reemplaza el antiguo bootstrap que exigía acceso Mongo directo desde la PC.
+const wwebBootstrapAttempts = new Map();
+app.post('/api/ext/wweb/agent/bootstrap', wwebAgentJson, async (req, res) => {
+  try {
+    const tenantId = String(req.body?.tenantId || req.headers['x-asisto-tenant'] || '').trim().toUpperCase();
+    if (!/^[A-Z0-9_-]{2,32}$/.test(tenantId)) {
+      return res.status(400).json({ ok: false, error: 'tenant_invalid' });
+    }
+
+    const source = String(req.ip || req.socket?.remoteAddress || 'unknown');
+    const rateKey = `${source}:${tenantId}`;
+    const previous = wwebBootstrapAttempts.get(rateKey) || { count: 0, resetAt: 0 };
+    const now = Date.now();
+    const attempt = now > previous.resetAt ? { count: 1, resetAt: now + 3600000 } : { ...previous, count: previous.count + 1 };
+    wwebBootstrapAttempts.set(rateKey, attempt);
+    if (attempt.count > 5) return res.status(429).json({ ok: false, error: 'rate_limited' });
+
+    const db = await getDb();
+    const col = db.collection('tenant_config');
+    const selector = { $or: [{ _id: tenantId }, { tenantId }, { tenantid: tenantId }] };
+    const doc = await col.findOne(selector);
+    if (!doc) return res.status(404).json({ ok: false, error: 'tenant_not_found' });
+
+    const nested = !!(doc.configuracion && typeof doc.configuracion === 'object');
+    const tokenPath = nested ? 'configuracion.control_api_token' : 'control_api_token';
+    const current = String(nested ? doc.configuracion?.control_api_token || '' : doc.control_api_token || '').trim();
+    if (current) return res.status(409).json({ ok: false, error: 'already_claimed' });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const result = await col.updateOne(
+      { $and: [selector, { $or: [{ [tokenPath]: { $exists: false } }, { [tokenPath]: null }, { [tokenPath]: '' }] }] },
+      { $set: {
+        [tokenPath]: token,
+        [nested ? 'configuracion.control_api_enabled' : 'control_api_enabled']: true,
+        [nested ? 'configuracion.control_api_url' : 'control_api_url']: 'https://www.asistobot.com.ar/api/ext/wweb/agent',
+        [nested ? 'configuracion.control_api_claimed_at' : 'control_api_claimed_at']: new Date(),
+      } }
+    );
+    if (result.modifiedCount !== 1) return res.status(409).json({ ok: false, error: 'already_claimed' });
+    console.log(`[WWEB_BOOTSTRAP] credencial inicial reclamada tenant=${tenantId} source=${source}`);
+    return res.json({ ok: true, tenantId, token });
+  } catch (e) {
+    console.error('POST /api/ext/wweb/agent/bootstrap error:', e?.message || e);
+    return res.status(500).json({ ok: false, error: 'bootstrap_error' });
+  }
+});
+
 function wwebAgentSafeOptions(operation, raw) {
   const options = raw && typeof raw === 'object' ? raw : {};
   const out = {};
@@ -1289,8 +1342,8 @@ async function wwebLog(db, entry) {
 // GET /api/wweb/sessions  -> lista estado (locks + policies) para el panel
 app.get("/api/wweb/sessions", async (req, res) => {
   try {
-    const tenantId = resolveTenantId(req);
     const db = await getDb();
+    const tenantId = await resolveCanonicalTenantId(db, resolveTenantId(req));
     const { locks, policies } = await wwebCollections(db);
 
     const [lockDocs, policyDocs] = await Promise.all([
@@ -1354,8 +1407,8 @@ app.get("/api/ext/wweb/status", requireWwebExternalAccess, async (req, res) => {
   try {
     const db = await getDb();
     const { locks, policies } = await wwebCollections(db);
-    const lockId = wwebResolveLockIdFromReq(req);
-    const tenantId = String(req.query?.tenantId || "").trim();
+    const lockId = await resolveCanonicalLockId(db, wwebResolveLockIdFromReq(req));
+    const tenantId = await resolveCanonicalTenantId(db, req.query?.tenantId);
 
     if (lockId) {
       const [lockDoc, policyDoc] = await Promise.all([
@@ -1401,36 +1454,39 @@ app.get("/api/ext/wweb/status", requireWwebExternalAccess, async (req, res) => {
 // GET /api/ext/domain-status?dominio=SDG
 app.get("/api/ext/domain-status", requireDomainStatusAccess, async (req, res) => {
   try {
-    const tenantId = String(req.query?.dominio || "").trim().toUpperCase();
-    if (!tenantId) {
+    const requestedTenantId = String(req.query?.dominio || "").trim().toUpperCase();
+    if (!requestedTenantId) {
       return res.status(400).json({ ok: false, error: "dominio_required" });
     }
 
     const db = await getDb();
-    const tenantRegex = new RegExp(
-      "^" + tenantId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ":",
+    const tenantId = await resolveCanonicalTenantId(db, requestedTenantId);
+    const tenantDoc = await db.collection("tenant_config").findOne({
+      $or: [{ _id: tenantId }, { tenantId }, { tenantid: tenantId }]
+    });
+    const tenantIds = domainStatusGroupIds(tenantDoc, tenantId);
+    const lockIdScopes = tenantIds.map((id) => new RegExp(
+      "^" + id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ":",
       "i"
-    );
+    ));
 
-    const [tenantDoc, locks, policies, channels, helpCfg] = await Promise.all([
-      db.collection("tenant_config").findOne({
-        $or: [{ _id: tenantId }, { tenantId }, { tenantid: tenantId }]
-      }),
+    const [tenantDocs, locks, policies, channels, helpCfg] = await Promise.all([
+      db.collection("tenant_config").find({ _id: { $in: tenantIds } }).limit(500).toArray(),
       db.collection("wa_locks").find({
         $or: [
-          { tenantId },
-          { tenantid: tenantId },
-          { _id: tenantRegex }
+          { tenantId: { $in: tenantIds } },
+          { tenantid: { $in: tenantIds } },
+          ...lockIdScopes.map((scope) => ({ _id: scope }))
         ]
-      }).sort({ lastSeenAt: -1 }).limit(500).toArray(),
+      }).sort({ lastSeenAt: -1 }).limit(1500).toArray(),
       db.collection("wa_wweb_policies").find({
         $or: [
-          { tenantId },
-          { tenantid: tenantId },
-          { _id: tenantRegex }
+          { tenantId: { $in: tenantIds } },
+          { tenantid: { $in: tenantIds } },
+          ...lockIdScopes.map((scope) => ({ _id: scope }))
         ]
-      }).limit(1000).toArray(),
-      db.collection("tenant_channels").find({ tenantId }).limit(500).toArray(),
+      }).limit(3000).toArray(),
+      db.collection("tenant_channels").find({ tenantId: { $in: tenantIds } }).limit(1500).toArray(),
       loadHelpConfig("MANAGER").catch(() => ({ enabled: false }))
     ]);
 
@@ -1441,41 +1497,51 @@ app.get("/api/ext/domain-status", requireDomainStatusAccess, async (req, res) =>
       });
     }
 
-    const conf = domainStatusConfig(tenantDoc);
     const helpStatus = publicHelpConfig(helpCfg || {});
     // La habilitación es por dominio. Acá sólo verificamos que el servicio
     // global tenga fuente y clave configuradas.
     const helpServiceEnabled = helpStatus.api_key_configured === true && !!helpStatus.source_url;
-    const policyById = new Map(
-      policies.map((p) => [String(p._id || ""), p])
-    );
-    const sessions = locks.map((lock) => {
-      const lockId = String(lock._id || "");
-      const numero = domainStatusDigits(
-        lock.numero ||
-        lock.number ||
-        lock.phone ||
-        (lockId.includes(":") ? lockId.split(":").slice(1).join(":") : "")
-      );
+    const tenantDocById = new Map(tenantDocs.map((doc) => [String(doc._id || '').toUpperCase(), doc]));
+    if (tenantDoc) tenantDocById.set(tenantId, tenantDoc);
+    const policyById = new Map(policies.map((p) => [String(p._id || ""), p]));
 
-      const channel = domainStatusFindChannel(channels, numero);
-      const policy = policyById.get(lockId) || null;
+    const domains = tenantIds.map((domainId) => {
+      const conf = domainStatusConfig(tenantDocById.get(domainId));
+      const domainChannels = channels.filter((row) => documentTenantId(row) === domainId);
+      const sessions = locks
+        .filter((lock) => documentTenantId(lock) === domainId)
+        .map((lock) => {
+          const lockId = String(lock._id || "");
+          const numero = domainStatusDigits(
+            lock.numero || lock.number || lock.phone ||
+            (lockId.includes(":") ? lockId.split(":").slice(1).join(":") : "")
+          );
+          const channel = domainStatusFindChannel(domainChannels, numero);
+          const policy = policyById.get(lockId) || null;
+          return {
+            numero,
+            estado: domainStatusEstado(lock, policy),
+            version: domainStatusVersion(lock.runtimeVersion || lock.currentVersion),
+            servicios: domainStatusServices(conf, channel, helpServiceEnabled),
+            pc: String(lock.host || lock.hostname || "").trim() || null
+          };
+        })
+        .sort((a, b) => String(a.numero).localeCompare(String(b.numero), "es", { numeric: true }));
+      const servicios = [...new Set([
+        ...domainStatusServices(conf, null, helpServiceEnabled),
+        ...sessions.flatMap((session) => session.servicios)
+      ])];
+      return { tenantId: domainId, servicios, sessions };
+    });
 
-      return {
-        numero,
-        estado: domainStatusEstado(lock, policy),
-        version: domainStatusVersion(lock.runtimeVersion || lock.currentVersion),
-        servicios: domainStatusServices(conf, channel, helpServiceEnabled),
-        pc: String(lock.host || lock.hostname || "").trim() || null
-      };
-    }).sort((a, b) =>
-      String(a.numero).localeCompare(String(b.numero), "es", { numeric: true })
-    );
+    const sessions = domains.find((item) => item.tenantId === tenantId)?.sessions || [];
 
     res.set("Cache-Control", "no-store");
     return res.json({
       ok: true,
       tenantId,
+      associatedDomains: tenantIds.filter((id) => id !== tenantId),
+      domains,
       sessions
     });
  } catch (e) {
@@ -1488,12 +1554,12 @@ app.get("/api/ext/domain-status", requireDomainStatusAccess, async (req, res) =>
 // GET /api/ext/wweb/qr
 app.get("/api/ext/wweb/qr", requireWwebExternalAccess, async (req, res) => {
   try {
-    const lockId = wwebResolveLockIdFromReq(req);
+    const db = await getDb();
+    const lockId = await resolveCanonicalLockId(db, wwebResolveLockIdFromReq(req));
     if (!lockId) {
       return res.status(400).json({ ok: false, error: "lockId_or_tenant_numero_required" });
     }
 
-    const db = await getDb();
     const lock = await db.collection("wa_locks").findOne(
       { _id: lockId },
       {
@@ -1546,12 +1612,12 @@ app.get("/api/ext/wweb/qr", requireWwebExternalAccess, async (req, res) => {
 // JSON por defecto. Binario solo con ?raw=1
 app.get("/api/ext/wweb/qr-image", requireWwebExternalAccess, async (req, res) => {
   try {
-    const lockId = wwebResolveLockIdFromReq(req);
+    const db = await getDb();
+    const lockId = await resolveCanonicalLockId(db, wwebResolveLockIdFromReq(req));
     if (!lockId) {
       return res.status(400).json({ ok: false, error: "lockId_or_tenant_numero_required" });
     }
 
-    const db = await getDb();
     const lock = await db.collection("wa_locks").findOne(
       { _id: lockId },
       {
@@ -1759,10 +1825,11 @@ function absUrl(p = "/") {
   return base ? (base + path) : path;
 }
 
-app.get("/", (req, res) => {
+app.get("/", async (req, res) => {
   const qs = req.originalUrl && req.originalUrl.includes("?")
     ? req.originalUrl.slice(req.originalUrl.indexOf("?"))
     : "";
+  await recordPublicVisit({ req, res, overrides: { app: "sitio_asisto", placement: "inicio", destination: "/login" + qs } });
   return res.redirect(302, "/login" + qs);
 });
 
@@ -7487,6 +7554,17 @@ app.get("/admin/ticket/:convId", async (req, res) => {
 
 
 // GET /api/products  → lista (activos por defecto; status=all|active|inactive)
+const { validProductImageUrl, mountProductImageRoutes } = require('./restaurant_image');
+mountProductImageRoutes(app, { getDb, resolveTenantId, express });
+app.get("/api/products/domains", async (req, res) => {
+  if (String(req.user?.role || '').toLowerCase() !== 'superadmin') return res.status(403).json({ error: 'forbidden' });
+  try {
+    const db = await getDb();
+    const rows = await db.collection('tenant_config').find({}, { projection: { _id: 1, nom_emp: 1, restaurant_enabled: 1 } }).sort({ _id: 1 }).limit(1000).toArray();
+    res.json({ domains: rows.map(x => ({ id: String(x._id), name: String(x.nom_emp || ''), restaurantEnabled: x.restaurant_enabled === true })) });
+  } catch (e) { res.status(503).json({ error: 'domains_unavailable' }); }
+});
+
 app.get("/api/products", async (req, res) => {
   try {
     const db = await getDb();
@@ -7509,10 +7587,12 @@ app.get("/api/products", async (req, res) => {
 app.post("/api/products", async (req, res) => {
   try {
     const db = await getDb();
-    let { descripcion, tag, importe, cantidad, observacion, active } = req.body || {};
+    let { descripcion, tag, importe, cantidad, observacion, imagen, active } = req.body || {};
     descripcion = String(descripcion || "").trim();
     tag = String(tag || "").trim();
     observacion = String(observacion || "").trim();
+    imagen = String(imagen || "").trim();
+    if (!validProductImageUrl(imagen)) return res.status(400).json({ error: 'imagen_invalida' });
     if (typeof active !== "boolean") active = !!active;
     let imp = null;
     if (typeof importe === "number") imp = importe;
@@ -7538,7 +7618,7 @@ app.post("/api/products", async (req, res) => {
     if (!descripcion) return res.status(400).json({ error: "descripcion requerida" });
     const now = new Date();
     const tenant = resolveTenantId(req);
-    const doc = { tenantId: (tenant || TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, active, createdAt: now, updatedAt: now };
+    const doc = { tenantId: (tenant || TENANT_ID || DEFAULT_TENANT_ID || null), descripcion, observacion, imagen, active, createdAt: now, updatedAt: now };
     if (tag) doc.tag = tag;
     if (qty !== null) doc.cantidad = qty;
     if (imp !== null) doc.importe = imp;
@@ -7556,11 +7636,15 @@ app.put("/api/products/:id", async (req, res) => {
     const db = await getDb();
     const { id } = req.params;
     const upd = {};
-    ["descripcion","tag","observacion","active","importe","cantidad"].forEach(k => {
+    ["descripcion","tag","observacion","imagen","active","importe","cantidad"].forEach(k => {
       if (req.body[k] !== undefined) upd[k] = req.body[k];
     });
     if (upd.tag !== undefined) {
       upd.tag = String(upd.tag || "").trim();
+    }
+    if (upd.imagen !== undefined) {
+      upd.imagen = String(upd.imagen || '').trim();
+      if (!validProductImageUrl(upd.imagen)) return res.status(400).json({ error: 'imagen_invalida' });
     }
     if (upd.importe !== undefined && typeof upd.importe === "string") {
       const n = Number(upd.importe.replace(/[^\d.,-]/g, "").replace(",", "."));
@@ -7617,6 +7701,8 @@ app.post("/api/products/bulk-save", async (req, res) => {
       let descripcion = String(raw.descripcion || "").trim();
       const tag = String(raw.tag || "").trim();
       const observacion = String(raw.observacion || "").trim();
+      const imagen = String(raw.imagen || '').trim();
+      if (!validProductImageUrl(imagen)) return res.status(400).json({ error: 'imagen_invalida' });
       let active = raw.active;
       if (typeof active !== "boolean") active = !!active;
 
@@ -7625,7 +7711,8 @@ app.post("/api/products/bulk-save", async (req, res) => {
         && !tag
         && !String(raw.importe ?? "").trim()
         && !String(raw.cantidad ?? "").trim()
-        && !observacion;
+        && !observacion
+        && !imagen;
       if (emptyDraft) { skipped++; continue; }
 
       if (!descripcion) {
@@ -7650,7 +7737,7 @@ app.post("/api/products/bulk-save", async (req, res) => {
         }
       }
 
-      const doc = { tenantId: tenantValue, descripcion, observacion, active, updatedAt: now };
+      const doc = { tenantId: tenantValue, descripcion, observacion, imagen, active, updatedAt: now };
       if (tag) doc.tag = tag; else doc.tag = "";
       if (qty !== null) doc.cantidad = qty; else doc.cantidad = null;
       if (imp !== null) doc.importe = imp; else doc.importe = null;
@@ -7750,10 +7837,12 @@ app.post("/api/products/:id/reactivate", async (req, res) => {
 app.get("/productos", async (req, res) => {
   try {
     const db = await getDb();
-    const tenant = resolveTenantId(req);
+    const isSuper = String(req.user?.role || '').toLowerCase() === 'superadmin';
+    const selectedTenant = String(req.query?.tenant || '').trim().toUpperCase();
+    const tenant = isSuper && !selectedTenant ? '' : resolveTenantId(req);
     const filtro = {};
-    if (tenant) filtro.tenantId = tenant; else if (TENANT_ID) filtro.tenantId = TENANT_ID;
-    const productos = await db.collection("products").find(filtro).sort({ active: -1, descripcion: 1, createdAt: -1 }).toArray();
+    if (tenant) filtro.tenantId = tenant; else if (TENANT_ID && !isSuper) filtro.tenantId = TENANT_ID;
+    const productos = isSuper && !tenant ? [] : await db.collection("products").find(filtro).sort({ active: -1, descripcion: 1, createdAt: -1 }).toArray();
 
     const escAttr = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
     const escText = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -7763,6 +7852,7 @@ app.get("/productos", async (req, res) => {
         <td class="col-price"><input class="importe" type="number" step="0.01" value="${escAttr(p.importe ?? "")}" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" value="${escAttr(p.cantidad ?? "")}" placeholder="0" /></td>
         <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación...">${escText(p.observacion || "")}</textarea></td>
+        <td class="col-image"><input class="imagen" type="text" value="${escAttr(validProductImageUrl(p.imagen || '') ? (p.imagen || '') : '')}" placeholder="URL HTTPS de imagen"><input class="image-file" type="file" accept="image/jpeg,image/png,image/webp"><img class="image-preview" src="${escAttr(validProductImageUrl(p.imagen || '') ? (p.imagen || '') : '')}" alt="Vista previa" ${p.imagen && validProductImageUrl(p.imagen) ? '' : 'hidden'}></td>
         <td class="col-active">
           <label class="active-check" title="Activo">
             <input class="active" type="checkbox" ${p.active !== false ? "checked" : ""} />
@@ -7872,7 +7962,11 @@ app.get("/productos", async (req, res) => {
         .col-tag{width:14%}
         .col-price{width:12%}
         .col-qty{width:11%}
-        .col-obs{width:24%}
+        .col-obs{width:20%}
+        .col-image{width:18%}
+        .image-file{max-width:100%;font-size:11px;margin-top:5px}
+        .image-preview{display:block;width:70px;height:58px;object-fit:cover;border-radius:8px;margin-top:6px}
+        .image-preview[hidden]{display:none}
         .col-active{width:8%;text-align:center}
         .col-actions{width:10%}
         input[type=text],input[type=number],textarea{
@@ -7900,7 +7994,8 @@ app.get("/productos", async (req, res) => {
           .col-tag{width:12%}
           .col-price{width:10%}
           .col-qty{width:9%}
-          .col-obs{width:20%}
+          .col-obs{width:18%}
+          .col-image{width:18%}
           .col-active{width:8%}
           .col-actions{width:10%}
         }
@@ -7911,7 +8006,7 @@ app.get("/productos", async (req, res) => {
           .toolbar-actions .btn{flex:1 1 148px}
           .table-card{border-radius:20px}
           .table-wrap{overflow:auto}
-          table{min-width:1080px}
+          table{min-width:1250px}
           
         }
       </style></head><body>
@@ -7935,6 +8030,7 @@ app.get("/productos", async (req, res) => {
             </label>
           </div>
           <div class="toolbar-bottom">
+            ${isSuper ? '<div class="filterBox"><label for="domainFilter">Dominio</label><select id="domainFilter" class="filter-select"><option value="">Seleccioná un dominio</option></select></div>' : ''}
             <div class="filterBox">
               <label for="statusFilter">Filtro</label>
               <select id="statusFilter" class="filter-select">
@@ -7967,11 +8063,12 @@ app.get("/productos", async (req, res) => {
                 <th class="col-price">Importe</th>
                 <th class="col-qty">Cantidad máx.</th>
                 <th class="col-obs">Observación</th>
+                <th class="col-image">Imagen</th>
                 <th class="col-active">Activo</th>
                 <th class="col-actions">Acciones</th>
               </tr>
               </thead>
-               <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="7">No hay productos para mostrar.</td></tr>`}</tbody>
+               <tbody id="productRows">${initialRows || `<tr class="empty-row"><td colspan="8">No hay productos para mostrar.</td></tr>`}</tbody>
             </table>
           </div>
         </section>
@@ -7983,6 +8080,7 @@ app.get("/productos", async (req, res) => {
         <td class="col-price"><input class="importe" type="number" step="0.01" placeholder="0" /></td>
         <td class="col-qty"><input class="cantidad" type="number" step="1" placeholder="0" /></td>
         <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación..."></textarea></td>
+        <td class="col-image"><input class="imagen" type="text" placeholder="URL HTTPS de imagen"><input class="image-file" type="file" accept="image/jpeg,image/png,image/webp"><img class="image-preview" alt="Vista previa" hidden></td>
         <td class="col-active">
           <label class="active-check" title="Activo">
             <input class="active" type="checkbox" checked />
@@ -7996,6 +8094,15 @@ app.get("/productos", async (req, res) => {
       </tr></template>
 
       <script>
+        const isSuper=${isSuper ? 'true' : 'false'};
+        let selectedTenant=${JSON.stringify(selectedTenant)};
+        function scoped(url){
+          if(!isSuper) return url;
+          if(!selectedTenant) throw new Error('Seleccioná un dominio.');
+          const u=new URL(url,location.origin);
+          u.searchParams.set('tenant',selectedTenant);
+          return u.pathname+u.search;
+        }
         function q(s,c){return (c||document).querySelector(s)}
         function all(s,c){return Array.from((c||document).querySelectorAll(s))}
         async function j(url,opts){
@@ -8035,6 +8142,8 @@ app.get("/productos", async (req, res) => {
           q('.importe',tr).value=(it && (typeof it.importe==='number' || it.importe)) ? it.importe : '';
           q('.cantidad',tr).value=(it && (typeof it.cantidad==='number' || it.cantidad)) ? it.cantidad : '';
           q('.observacion',tr).value=it && it.observacion ? it.observacion : '';
+          q('.imagen',tr).value=it && it.imagen ? it.imagen : '';
+          showImagePreview(tr);
           q('.active',tr).checked=!(it && it.active===false);
           
         }
@@ -8104,6 +8213,28 @@ app.get("/productos", async (req, res) => {
             el.addEventListener(evt,()=>markDirty(tr));
             if(el.type==='checkbox') el.addEventListener('change',()=>markDirty(tr));
           });
+          q('.imagen',tr).addEventListener('input',()=>showImagePreview(tr));
+          q('.image-file',tr).addEventListener('change',async e=>{
+            const file=e.target.files?.[0];
+            if(!file) return;
+            if(!['image/jpeg','image/png','image/webp'].includes(file.type)||file.size>2*1024*1024){setFlash('err','Usá JPG, PNG o WebP de hasta 2 MB.');return}
+            try{
+              const response=await fetch(scoped('/api/products/images'),{method:'POST',headers:{'Content-Type':file.type},body:file});
+              const data=await response.json();
+              if(!response.ok) throw Error(data.error||'No se pudo cargar la imagen.');
+              q('.imagen',tr).value=data.url;
+              showImagePreview(tr);
+              markDirty(tr);
+              setFlash('ok','Imagen cargada. Guardá los cambios del catálogo para asignarla al artículo.');
+            }catch(error){setFlash('err',error.message)}
+          });
+        }
+
+        function showImagePreview(tr){
+          const url=q('.imagen',tr).value.trim(),preview=q('.image-preview',tr);
+          const valid=url.startsWith('https://')||url.startsWith('/resto/image/')||url.startsWith('/static/restaurant_demo/');
+          preview.hidden=!valid;
+          if(valid) preview.src=url; else preview.removeAttribute('src');
         }
 
         function showEmptyIfNeeded(){
@@ -8114,7 +8245,7 @@ app.get("/productos", async (req, res) => {
             if(!currentEmpty){
               const tr=document.createElement('tr');
               tr.className='empty-row';
-              tr.innerHTML='<td colspan="7">No hay productos para mostrar.</td>';
+              tr.innerHTML='<td colspan="8">No hay productos para mostrar.</td>';
               tb.appendChild(tr);
             }
           }else if(currentEmpty){
@@ -8130,6 +8261,7 @@ app.get("/productos", async (req, res) => {
             importe:q('.importe',tr).value.trim(),
             cantidad:q('.cantidad',tr).value.trim(),
             observacion:q('.observacion',tr).value.trim(),
+            imagen:q('.imagen',tr).value.trim(),
             active:q('.active',tr).checked
           };
         }
@@ -8140,11 +8272,12 @@ app.get("/productos", async (req, res) => {
             && !payload.tag
             && !String(payload.importe || '').trim()
             && !String(payload.cantidad || '').trim()
-            && !payload.observacion;
+            && !payload.observacion
+            && !payload.imagen;
         }
 
         async function reload(){
-           const data=await j('/api/products?status=all');
+           const data=await j(scoped('/api/products?status=all'));
           const tb=q('#productRows');
           tb.innerHTML='';
           if(Array.isArray(data) && data.length){
@@ -8182,7 +8315,7 @@ app.get("/productos", async (req, res) => {
           btn.disabled=true;
           btn.textContent='Guardando...';
           try{
-            await j('/api/products/bulk-save',{
+            await j(scoped('/api/products/bulk-save'),{
               method:'POST',
               headers:{'Content-Type':'application/json'},
               body:JSON.stringify({ items: payloads })
@@ -8207,7 +8340,7 @@ app.get("/productos", async (req, res) => {
             return;
           }
           if(!confirm('¿Eliminar definitivamente este producto?')) return;
-          await j('/api/products/'+encodeURIComponent(id),{method:'DELETE'});
+          await j(scoped('/api/products/'+encodeURIComponent(id)),{method:'DELETE'});
           tr.remove();
           showEmptyIfNeeded();
           updateMeta();
@@ -8227,6 +8360,50 @@ app.get("/productos", async (req, res) => {
           q('.descripcion',tr).focus();
         });
         q('#statusFilter').addEventListener('change',updateMeta);
+
+        if(isSuper){
+          const selector=q('#domainFilter');
+          const setDomain=async tenant=>{
+            selectedTenant=tenant;
+            sessionStorage.setItem('asistoSelectedTenant',tenant);
+            const u=new URL(location.href);
+            if(tenant) u.searchParams.set('tenant',tenant); else u.searchParams.delete('tenant');
+            history.replaceState(null,'',u.pathname+u.search);
+            try{
+              if(parent!==window && parent.location.pathname==='/ui/productos'){
+                parent.history.replaceState(null,'','/ui/productos'+(tenant?'?tenant='+encodeURIComponent(tenant):''));
+              }
+            }catch(_){}
+            q('#btnAdd').disabled=!tenant;
+            q('#btnSaveAll').disabled=!tenant;
+            q('#productRows').innerHTML='';
+            showEmptyIfNeeded();
+            updateMeta();
+            if(tenant) await reload();
+          };
+          selector.addEventListener('change',()=>{
+            if(dataRows().some(tr=>tr.dataset.dirty==='1') && !confirm('Hay cambios sin guardar. ¿Cambiar de dominio?')){
+              selector.value=selectedTenant;
+              return;
+            }
+            setDomain(selector.value).catch(e=>setFlash('err',e.message||String(e)));
+          });
+          q('#btnAdd').disabled=true;
+          q('#btnSaveAll').disabled=true;
+          j('/api/products/domains').then(data=>{
+            const domains=Array.isArray(data.domains)?data.domains:[];
+            domains.forEach(d=>{
+              const option=document.createElement('option');
+              option.value=d.id;
+              option.textContent=d.id+(d.name?' · '+d.name:'');
+              selector.appendChild(option);
+            });
+            const saved=sessionStorage.getItem('asistoSelectedTenant')||'';
+            const chosen=[selectedTenant,saved,domains.find(d=>d.restaurantEnabled)?.id,domains[0]?.id].find(id=>domains.some(d=>d.id===id))||'';
+            selector.value=chosen;
+            return setDomain(chosen);
+          }).catch(e=>setFlash('err','No se pudieron cargar los dominios: '+(e.message||String(e))));
+        }
 
         all('#productRows tr').forEach(tr=>{
           if(!tr.classList.contains('empty-row')) bindRow(tr);

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Logo de ejemplo restaurante">
+  <defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="#ffbd66"/><stop offset="1" stop-color="#f47a58"/></linearGradient></defs>
+  <rect width="128" height="128" rx="30" fill="#fff5e6"/>
+  <circle cx="64" cy="63" r="42" fill="url(#g)"/>
+  <circle cx="64" cy="63" r="28" fill="#fff7e8"/>
+  <circle cx="64" cy="63" r="17" fill="none" stroke="#de684b" stroke-width="5"/>
+  <path d="M23 23v27m-7-27v19m14-19v19m-7 8v52M105 23c-12 8-14 23-9 31h9v48" fill="none" stroke="#315947" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
