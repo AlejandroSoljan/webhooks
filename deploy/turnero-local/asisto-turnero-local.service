@@ -9,6 +9,7 @@ User=asisto
 Group=asisto
 WorkingDirectory=/opt/asisto/turnero-local/current
 EnvironmentFile=/etc/asisto/turnero-local.env
+EnvironmentFile=-/etc/asisto/turnero-cloud.env
 ExecStart=/usr/bin/node /opt/asisto/turnero-local/current/turnero_server.js
 Restart=on-failure
 RestartSec=3

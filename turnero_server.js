@@ -4,11 +4,14 @@ const express = require('express');
 const auth = require('./auth_ui');
 const { getDb, closeDb } = require('./db');
 const { mountCustomerApp } = require('./customer_app_web');
+const { mountQueueSyncEndpoint, startQueueCloudSync } = require('./queue_cloud_sync');
 const app = express();
 app.disable('x-powered-by');
 app.use((_req, res, next) => { res.set('X-Content-Type-Options', 'nosniff'); res.set('Referrer-Policy', 'same-origin'); next(); });
 app.use(auth.attachUser);
 const queue = mountCustomerApp(app, { auth });
+mountQueueSyncEndpoint(app, { getDb });
+const cloudSync = startQueueCloudSync({ getDb });
 let reconciling = false;
 const notifications = setInterval(async () => {
   if (reconciling) return;
@@ -26,4 +29,4 @@ app.get('/healthz', async (_req, res) => {
   catch { res.status(503).json({ ok: false }); }
 });
 const server = app.listen(Number(process.env.QUEUE_PORT || 3102), '127.0.0.1');
-process.on('SIGTERM', () => { server.close(async () => { if (closeDb) await closeDb(); process.exit(0); }); setTimeout(() => process.exit(1), 15000).unref(); });
+process.on('SIGTERM', () => { server.close(async () => { await cloudSync.stop(); if (closeDb) await closeDb(); process.exit(0); }); setTimeout(() => process.exit(1), 15000).unref(); });
