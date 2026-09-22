@@ -63,6 +63,7 @@ const ACCESS_PAGES = [
   { key: "order_config", title: "Reglas de Pedidos" },
   { key: "web_access", title: "Ingresos Web" },
   { key: "token_control", title: "Control de Tokens" },
+  { key: "monetization", title: "Monetización" },
   { key: "notifications", title: "Notificaciones App" },
   { key: "queue_kiosk", title: "Emisión de turnos" },
   { key: "queue_attention", title: "Atención del turnero" },
@@ -129,6 +130,7 @@ function requiredAccessForPath(p) {
   if (path.startsWith("/admin/web-access") || path.startsWith("/api/web-access")) return ["web_access"];
   // Control de tokens
   if (path.startsWith("/admin/token-control") || path.startsWith("/api/token-control")) return ["token_control"];
+  if (path.startsWith("/admin/monetization") || path.startsWith("/api/monetization")) return ["monetization"];
   // Operación y estadísticas privadas del turnero. Emisión y pantalla son públicas
   // para que funcionen en kioscos/TV sin iniciar sesión.
   if (path.startsWith("/ui/turnero/")) {
@@ -139,7 +141,7 @@ function requiredAccessForPath(p) {
   // UI wrapper
   if (path.startsWith("/ui/")) {
     const seg = path.split("/")[2] || "";
-    if (["support", "admin", "followup", "bot_test", "inbox", "productos", "resto", "horarios", "comportamiento", "tenant_config", "order_config", "canales", "client_access", "telegram", "web_access", "token_control"].includes(seg)) return [seg];
+    if (["support", "admin", "followup", "bot_test", "inbox", "productos", "resto", "horarios", "comportamiento", "tenant_config", "order_config", "canales", "client_access", "telegram", "web_access", "token_control", "monetization"].includes(seg)) return [seg];
   }
 
   // Pantallas directas
@@ -1426,6 +1428,7 @@ function getNavItemsForUser(user) {
   if (isAdmin && hasAccess(user, "order_config")) items.push({ key: "order_config", title: "Reglas de Pedidos", href: "/ui/order_config" });
   if (isAdmin && hasAccess(user, "web_access")) items.push({ key: "web_access", title: "Ingresos Web", href: "/ui/web_access" });
   if (hasAccess(user, "token_control")) items.push({ key: "token_control", title: "Control de Tokens", href: "/ui/token_control" });
+  if (String(user?.role || '').toLowerCase() === 'superadmin') items.push({ key: "monetization", title: "Monetización", href: "/ui/monetization" });
 
   return items;
 }
@@ -3665,6 +3668,7 @@ function mountAuthRoutes(app) {
       telegram: { title: "Sesiones Telegram", desc: "Estado de bots, chats y acciones por tenant", badge: "Admin", src: "/admin/telegram?embed=1", active: "telegram" },
       web_access: { title: "Ingresos Web", desc: "Estadísticas de accesos al panel web", badge: "Admin", src: "/admin/web-access?embed=1", active: "web_access" },
       token_control: { title: "Control de Tokens", desc: "Consumo de IA e importe a cobrar por dominio", badge: "Consumo", src: "/admin/token-control?embed=1", active: "token_control" },
+      monetization: { title: "Monetización", desc: "Funciones, créditos y tarifas configurables por dominio", badge: "Facturación", src: "/admin/monetization?embed=1", active: "monetization" },
 
     };
 

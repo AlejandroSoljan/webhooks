@@ -7,7 +7,7 @@ const { mountAuthRoutes, protectRoutes, appShell } = require('../auth_ui');
 const { navigationGroups, configurationState } = require('../admin_navigation');
 
 const superadmin = { uid: 'test', username: 'Prueba', tenantId: 'DEMO', role: 'superadmin', allowedPages: [] };
-const existingKeys = ['admin', 'followup', 'bot_test', 'inbox', 'fleteros', 'productos', 'resto', 'horarios', 'comportamiento', 'notifications', 'queue_kiosk', 'queue_attention', 'queue_display', 'queue_stats', 'leads', 'wweb', 'canales', 'client_access', 'telegram', 'users', 'tenant_config', 'order_config', 'web_access', 'token_control'];
+const existingKeys = ['admin', 'followup', 'bot_test', 'inbox', 'fleteros', 'productos', 'resto', 'horarios', 'comportamiento', 'notifications', 'queue_kiosk', 'queue_attention', 'queue_display', 'queue_stats', 'leads', 'wweb', 'canales', 'client_access', 'telegram', 'users', 'tenant_config', 'order_config', 'web_access', 'token_control', 'monetization'];
 
 async function withPanel(user, fn) {
   const app = express();

@@ -15,7 +15,7 @@ const GROUPS = [
   { key: 'operations', title: 'Ventas y operaciones', description: 'Catálogo, restaurante y viajes.', icon: 'box', keys: ['productos', 'resto', 'fleteros'] },
   { key: 'app', title: 'App del comercio', description: 'Notificaciones a los clientes con la app.', icon: 'phone', keys: ['notifications'] },
   { key: 'queue', title: 'Turnero', description: 'Emisión, atención, pantalla de llamados y estadísticas.', icon: 'queue', keys: ['queue_kiosk', 'queue_attention', 'queue_display', 'queue_stats'] },
-  { key: 'costs', title: 'Consumos y facturación', description: 'Uso de IA, mensajes e importes a cobrar.', icon: 'chart', keys: ['token_control'] },
+  { key: 'costs', title: 'Consumos y facturación', description: 'Uso, tarifas e importes a cobrar.', icon: 'chart', keys: ['token_control', 'monetization'] },
   { key: 'configuration', title: 'Configuración del negocio', description: 'Dominio, canales, asistente, horarios y reglas.', icon: 'settings', keys: Object.keys(CONFIG_SECTIONS) },
   { key: 'administration', title: 'Administración', description: 'Usuarios, accesos y pruebas del bot.', icon: 'shield', keys: ['users', 'web_access', 'bot_test'] },
 ];
