@@ -5,6 +5,7 @@ const QRCode = require('qrcode');
 const { queuePage } = require('./queue_pages');
 const { createQueueNotifications } = require('./queue_notifications');
 const { mountQueueStats } = require('./queue_stats');
+const { createQueuePrinter } = require('./queue_printer');
 const clean = (s, n = 120) => String(s || '').trim().slice(0, n);
 const tenant = s => clean(s, 60).toUpperCase().replace(/[^A-Z0-9_-]/g, '');
 const active = ['WAITING', 'CALLED'];
@@ -40,7 +41,7 @@ function publicTicket(doc) {
   return { id: String(doc._id), displayNumber: doc.displayNumber, status: doc.status,
     sectorId: doc.sectorId, sectorName: doc.sectorName, desk: doc.desk || '', calledAt: doc.calledAt || null, claimed: !!doc.claimedAt };
 }
-function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey, firebaseSender, auth, secret = process.env.QUEUE_PRESENCE_SECRET || '', publicBase = process.env.PUBLIC_BASE_URL || 'https://asistobot.com.ar', openTenants = (process.env.QUEUE_OPEN_TENANTS || '').split(',').map(tenant).filter(Boolean) }) {
+function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey, firebaseSender, auth, printer = createQueuePrinter(), secret = process.env.QUEUE_PRESENCE_SECRET || '', publicBase = process.env.PUBLIC_BASE_URL || 'https://asistobot.com.ar', openTenants = (process.env.QUEUE_OPEN_TENANTS || '').split(',').map(tenant).filter(Boolean) }) {
   const wrap = fn => async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try { await fn(req, res); } catch (e) { if (!e.status) console.error('[queue]', e.message); res.status(e.status || 500).json({ error: e.status ? e.message : 'No se pudo completar la operación. Reintentá.' }); }
@@ -174,20 +175,41 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     });
     res.json({ ok: true, cancelled: doc.status === 'CANCELLED' && doc.deliveryMode === 'dismissed', status: doc.status });
   }));
+  app.get('/api/customer-app-admin/:tenant/printer/status', wrap(async (req, res) => {
+    const { t } = await scope(req); guard(req, t);
+    res.json(await printer.status());
+  }));
   app.post('/api/customer-app-admin/:tenant/tickets/:id/print', wrap(async (req, res) => {
     const { t, db, cfg, base } = await scope(req); guard(req, t);
     if (!ObjectId.isValid(req.params.id)) fail(404, 'Turno inexistente');
-    const doc = await serial(t, async () => {
+    const printRequestId = clean(req.body?.printRequestId, 120);
+    if (printer.enabled && !/^[A-Za-z0-9_.:-]{8,120}$/.test(printRequestId)) fail(400, 'Solicitud de impresion invalida.');
+    const result = await serial(t, async () => {
       await expire(db, base);
       const tickets = db.collection('queue_tickets'), doc = await tickets.findOne({ ...base, _id: new ObjectId(req.params.id) });
       if (!doc) fail(404, 'Turno inexistente');
       if (doc.status === 'CANCELLED') fail(410, 'La reserva venció. Elegí nuevamente la sección.');
-      if (doc.deliveryMode === 'print') return doc;
-      if (doc.status !== 'RESERVED' || doc.claimedAt) fail(409, 'Este turno ya fue entregado al celular.');
-      return tickets.findOneAndUpdate({ _id: doc._id, status: 'RESERVED' }, { $set: { status: 'WAITING', queuedAt: new Date(), deliveryMode: 'print', updatedAt: new Date() }, $push: { history: { action: 'print_requested', at: new Date() } } }, { returnDocument: 'after' });
+      const alreadySubmitted = printer.enabled && (doc.printRequestIds || []).includes(printRequestId);
+      if (doc.deliveryMode !== 'print' && (doc.status !== 'RESERVED' || doc.claimedAt)) fail(409, 'Este turno ya fue entregado al celular.');
+      let submitted = { enabled: printer.enabled, printed: alreadySubmitted, duplicate: alreadySubmitted, jobId: doc.lastPrintJobId || '' };
+      if (printer.enabled && !alreadySubmitted) {
+        try { submitted = await printer.printTicket({ ...doc, businessName: cfg.businessName }); }
+        catch (error) { fail(503, error.message || 'La impresora no esta disponible.'); }
+      }
+      if (alreadySubmitted) return { doc, submitted };
+      const now = new Date(), firstPrint = doc.deliveryMode !== 'print';
+      const update = {
+        $set: { ...(firstPrint ? { status: 'WAITING', queuedAt: now, deliveryMode: 'print' } : {}), updatedAt: now, ...(submitted.jobId ? { lastPrintJobId: submitted.jobId } : {}) },
+        $push: { history: { action: firstPrint ? 'print_requested' : 'reprint_requested', at: now, ...(submitted.jobId ? { jobId: submitted.jobId } : {}) } },
+        ...(printer.enabled ? { $addToSet: { printRequestIds: printRequestId } } : {}),
+      };
+      const updated = await tickets.findOneAndUpdate({ _id: doc._id }, update, { returnDocument: 'after' });
+      return { doc: updated, submitted };
     });
     await reconcileBase(db, base);
-    res.json({ ...publicTicket(doc), businessName: cfg.businessName, createdAt: doc.createdAt });
+    res.json({ ...publicTicket(result.doc), businessName: cfg.businessName, createdAt: result.doc.createdAt,
+      serverPrinted: !!result.submitted?.printed, duplicatePrintRequest: !!result.submitted?.duplicate,
+      printJobId: result.submitted?.jobId || '', printer: result.submitted?.printer || '' });
   }));
   app.post('/api/customer-app/:tenant/tickets/:id/claim', wrap(async (req, res) => {
     const { t, db, base } = await scope(req), installId = clean(req.body?.installId), code = clean(req.body?.code, 200);

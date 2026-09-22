@@ -1,0 +1,25 @@
+[Unit]
+Description=Asisto Turnero local (motor unico de cola)
+After=network-online.target mongod.service
+Requires=mongod.service
+
+[Service]
+Type=simple
+User=asisto
+Group=asisto
+WorkingDirectory=/opt/asisto/turnero-local/current
+EnvironmentFile=/etc/asisto/turnero-local.env
+ExecStart=/usr/bin/node /opt/asisto/turnero-local/current/turnero_server.js
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+MemoryHigh=512M
+MemoryMax=768M
+
+[Install]
+WantedBy=multi-user.target

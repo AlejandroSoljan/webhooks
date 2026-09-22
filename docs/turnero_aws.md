@@ -98,3 +98,12 @@ Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un únic
 - El turnero dejó de depender de `node_modules` perteneciente a una release antigua eliminable. Su enlace apunta a `/opt/asisto/current/node_modules`, por lo que acompaña la release activa de Asisto y no vuelve a romper el procesamiento JSON durante la limpieza de versiones.
 - Incidente corregido: la eliminación de `/opt/asisto/releases/5cf94e5354a5` dejó incompleto `iconv-lite`; las páginas GET seguían abriendo pero los POST devolvían `400 Bad Request` y el kiosco no podía generar el QR.
 - Verificación: prueba aislada del turnero, acceso anónimo al panel y API de estadísticas, generación real de QR, servicios activos y `/healthz` antes de informar.
+
+## Nodo local e impresión automática — 22/09/2026
+
+- Se preparó el despliegue híbrido: el LXC local será el escritor único de la cola con MongoDB local; AWS publicará las rutas para celulares por 4G mientras exista Internet.
+- Kiosco, atención y pantallas se publican en LAN y ZeroTier y continúan operando cuando el comercio pierde Internet.
+- `QUEUE_SERVER_PRINT=true` activa impresión silenciosa del lado servidor mediante CUPS. El navegador no abre selector ni confirmación.
+- El turno pasa de reserva a espera solamente después de que CUPS acepta el trabajo. Una falla de impresora conserva la reserva y permite reintentar el mismo número.
+- Cada solicitud lleva una clave idempotente: un reintento de red no duplica el ticket físico; el botón explícito “Volver a imprimir” genera una solicitud nueva.
+- `QUEUE_PRINTER_NAME` fija la cola CUPS. Si se omite, se usa la impresora predeterminada del sistema.
