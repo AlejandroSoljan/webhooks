@@ -99,6 +99,7 @@ test('QR expires, rejects tampering and cannot be used by a different commerce',
 test('pages contain syntactically valid scripts and escape tenant names', () => {
   for (const mode of ['kiosk', 'display', 'admin']) { const html = queuePage('TEST', mode); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); if (mode === 'kiosk') assert.match(html, /id="dismissTicket"[^>]+aria-label="Cerrar y cancelar esta reserva"/); else { assert.match(html, /enableCallSound/); assert.match(html, /transferControls/); } }
   assert.match(queuePage('TEST', 'kiosk'), /Recibí el llamado en tu celular/);
+  assert.match(queuePage('MCN', 'kiosk'), /Te avisaremos en el celular cuando sea tu turno/);
 });
 test('attention page only builds the section selector for the all-sections view', () => {
   const html = queuePage('MCN', 'admin');
