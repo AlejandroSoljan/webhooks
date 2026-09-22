@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.174 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.186 | Fecha: 2026-09-22
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -7,7 +7,7 @@ const { mountAuthRoutes, protectRoutes, appShell } = require('../auth_ui');
 const { navigationGroups, configurationState } = require('../admin_navigation');
 
 const superadmin = { uid: 'test', username: 'Prueba', tenantId: 'DEMO', role: 'superadmin', allowedPages: [] };
-const existingKeys = ['admin', 'followup', 'bot_test', 'inbox', 'fleteros', 'productos', 'resto', 'horarios', 'comportamiento', 'notifications', 'leads', 'wweb', 'canales', 'client_access', 'telegram', 'users', 'tenant_config', 'order_config', 'web_access', 'token_control'];
+const existingKeys = ['admin', 'followup', 'bot_test', 'inbox', 'fleteros', 'productos', 'resto', 'horarios', 'comportamiento', 'notifications', 'queue_kiosk', 'queue_attention', 'queue_display', 'queue_stats', 'leads', 'wweb', 'canales', 'client_access', 'telegram', 'users', 'tenant_config', 'order_config', 'web_access', 'token_control'];
 
 async function withPanel(user, fn) {
   const app = express();
@@ -91,6 +91,20 @@ test('empty permissions deny configuration; support retains sessions access', as
   await withPanel({ ...superadmin, role: 'user', allowedPages: ['support'] }, async get => {
     assert.ok((await get('/app')).document.querySelector('a[href="/admin/wweb"]'));
     assert.equal((await get('/ui/support')).location, '/admin/wweb');
+  });
+});
+
+test('turnero menu and private screens follow each independent user permission', async () => {
+  const user = { ...superadmin, role: 'user', tenantId: 'MCN', allowedPages: ['queue_kiosk', 'queue_stats'] };
+  await withPanel(user, async get => {
+    const home = await get('/app');
+    const menu = home.document.querySelector('.sidebar .nav');
+    assert.ok(menu.querySelector('a[href="/customer-app/MCN/kiosk"]'));
+    assert.ok(menu.querySelector('a[href="/ui/turnero/MCN/estadisticas"]'));
+    assert.equal(menu.querySelector('a[href="/ui/turnero/MCN"]'), null);
+    assert.equal(menu.querySelector('a[href="/customer-app/MCN/display"]'), null);
+    assert.equal((await get('/ui/turnero/MCN')).status, 403);
+    assert.notEqual((await get('/ui/turnero/MCN/estadisticas')).status, 403);
   });
 });
 

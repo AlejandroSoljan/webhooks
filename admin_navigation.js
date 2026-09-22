@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.153 | Fecha: 2026-09-17
+// Asisto | Version: 5.00.186 | Fecha: 2026-09-22
 // Presentation only: receives the existing, permission-filtered navigation.
 const CONFIG_SECTIONS = Object.freeze({
   tenant_config: { title: 'Dominio', description: 'Datos del negocio, dominios secundarios y parámetros generales.', src: '/admin/tenant-config?embed=1' },
@@ -14,6 +14,7 @@ const GROUPS = [
   { key: 'connections', title: 'Mensajes y conexiones', description: 'Estado y gestión de las sesiones conectadas.', icon: 'connection', keys: ['wweb', 'telegram'] },
   { key: 'operations', title: 'Ventas y operaciones', description: 'Catálogo, restaurante y viajes.', icon: 'box', keys: ['productos', 'resto', 'fleteros'] },
   { key: 'app', title: 'App del comercio', description: 'Notificaciones a los clientes con la app.', icon: 'phone', keys: ['notifications'] },
+  { key: 'queue', title: 'Turnero', description: 'Emisión, atención, pantalla de llamados y estadísticas.', icon: 'queue', keys: ['queue_kiosk', 'queue_attention', 'queue_display', 'queue_stats'] },
   { key: 'costs', title: 'Consumos y facturación', description: 'Uso de IA, mensajes e importes a cobrar.', icon: 'chart', keys: ['token_control'] },
   { key: 'configuration', title: 'Configuración del negocio', description: 'Dominio, canales, asistente, horarios y reglas.', icon: 'settings', keys: Object.keys(CONFIG_SECTIONS) },
   { key: 'administration', title: 'Administración', description: 'Usuarios, accesos y pruebas del bot.', icon: 'shield', keys: ['users', 'web_access', 'bot_test'] },
@@ -67,6 +68,7 @@ function icon(name) {
     chart: '<path d="M4 3v18h17M8 16v-5m5 5V7m5 9V4"/>',
     settings: '<path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="10" cy="18" r="2"/>',
     shield: '<path d="m12 2 8 3v7c0 5-8 10-8 10S4 17 4 12V5Z"/><path d="m8 12 3 3 5-6"/>',
+    queue: '<path d="M4 5h16v11H4zM8 20h8M12 16v4"/><path d="M8 9h8m-8 3h5"/>',
   };
   return `<svg class="menuIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.box}</svg>`;
 }

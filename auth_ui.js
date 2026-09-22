@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.180 | Fecha: 2026-09-21
+// Asisto | Version: 5.00.186 | Fecha: 2026-09-22
 const { fields: restaurantFields, validateRestaurantConfig } = require('./restaurant_config');
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
@@ -64,6 +64,10 @@ const ACCESS_PAGES = [
   { key: "web_access", title: "Ingresos Web" },
   { key: "token_control", title: "Control de Tokens" },
   { key: "notifications", title: "Notificaciones App" },
+  { key: "queue_kiosk", title: "Emisión de turnos" },
+  { key: "queue_attention", title: "Atención del turnero" },
+  { key: "queue_display", title: "Pantalla de llamados" },
+  { key: "queue_stats", title: "Estadísticas del turnero" },
 ];
 
 function normalizeAllowedPages(value) {
@@ -125,6 +129,11 @@ function requiredAccessForPath(p) {
   if (path.startsWith("/admin/web-access") || path.startsWith("/api/web-access")) return ["web_access"];
   // Control de tokens
   if (path.startsWith("/admin/token-control") || path.startsWith("/api/token-control")) return ["token_control"];
+  // Operación y estadísticas privadas del turnero. Emisión y pantalla son públicas
+  // para que funcionen en kioscos/TV sin iniciar sesión.
+  if (path.startsWith("/ui/turnero/")) {
+    return path.split("?")[0].endsWith("/estadisticas") ? ["queue_stats"] : ["queue_attention"];
+  }
  
 
   // UI wrapper
@@ -1402,6 +1411,12 @@ function getNavItemsForUser(user) {
   if (hasAccess(user, "comportamiento")) items.push({ key: "comportamiento", title: "Comportamiento", href: "/ui/comportamiento" });
   if (hasAccess(user, "notifications")) items.push({ key: "notifications", title: "Notificaciones App", href: "/ui/notificaciones-app" });
 
+  const queueTenant = encodeURIComponent(String(user?.tenantId || "").trim());
+  if (queueTenant && hasAccess(user, "queue_kiosk")) items.push({ key: "queue_kiosk", title: "Emisión de turnos", href: `/customer-app/${queueTenant}/kiosk` });
+  if (queueTenant && hasAccess(user, "queue_attention")) items.push({ key: "queue_attention", title: "Atención", href: `/ui/turnero/${queueTenant}` });
+  if (queueTenant && hasAccess(user, "queue_display")) items.push({ key: "queue_display", title: "Pantalla de llamados", href: `/customer-app/${queueTenant}/display` });
+  if (queueTenant && hasAccess(user, "queue_stats")) items.push({ key: "queue_stats", title: "Estadísticas", href: `/ui/turnero/${queueTenant}/estadisticas` });
+
   if (isAdmin && hasAccess(user, "leads")) items.push({ key: "leads", title: "Leads", href: "/admin/leads" });
   if (hasAccess(user, "wweb", "support")) items.push({ key: "wweb", title: "Sesiones WhatsApp Web", href: "/admin/wweb" });
    if (isAdmin && hasAccess(user, "canales")) items.push({ key: "canales", title: "Canales", href: "/ui/canales" });
@@ -2026,12 +2041,19 @@ function usersAdminPage({ user, users, msg, err }) {
         { key: "comportamiento", title: "Comportamiento" },
         { key: "leads", title: "Leads" },
         { key: "wweb", title: "Sesiones WhatsApp Web" },
+        { key: "canales", title: "Canales" },
         { key: "client_access", title: "Clientes habilitados" },
         { key: "telegram", title: "Sesiones Telegram" },
         { key: "users", title: "Sesiones de usuarios" },
         { key: "tenant_config", title: "Dominio Config" },
+        { key: "order_config", title: "Reglas de Pedidos" },
          { key: "web_access", title: "Ingresos Web" },
           { key: "token_control", title: "Control de Tokens" },
+        { key: "notifications", title: "Notificaciones App" },
+        { key: "queue_kiosk", title: "Emisión de turnos" },
+        { key: "queue_attention", title: "Atención del turnero" },
+        { key: "queue_display", title: "Pantalla de llamados" },
+        { key: "queue_stats", title: "Estadísticas del turnero" },
       ];
       const IS_SUPER = ${isSuper ? "true" : "false"};
       const USERS = ${JSON.stringify(userItems).replace(/</g, '\\u003c')};
@@ -2095,7 +2117,7 @@ function usersAdminPage({ user, users, msg, err }) {
         return ACCESS_PAGES.filter((page) => IS_SUPER ? true : page.key !== "users");
       }
 
-      function buildDefaultPageOptions(allowedKeys, selectedHref){
+      function buildDefaultPageOptions(allowedKeys, selectedHref, tenantId){
         const items = [{ key: "home", title: "Inicio", href: "/app" }];
         if (allowedKeys.includes("admin")) items.push({ key: "admin", title: "Conversaciones", href: "/ui/admin" });
         if (allowedKeys.includes("followup")) items.push({ key: "followup", title: "Seguimiento", href: "/ui/followup" });
@@ -2115,6 +2137,12 @@ function usersAdminPage({ user, users, msg, err }) {
         if (allowedKeys.includes("order_config")) items.push({ key: "order_config", title: "Reglas de Pedidos", href: "/ui/order_config" });
         if (allowedKeys.includes("web_access")) items.push({ key: "web_access", title: "Ingresos Web", href: "/ui/web_access" });
         if (allowedKeys.includes("token_control")) items.push({ key: "token_control", title: "Control de Tokens", href: "/ui/token_control" });
+        if (allowedKeys.includes("notifications")) items.push({ key: "notifications", title: "Notificaciones App", href: "/ui/notificaciones-app" });
+        const queueTenant = encodeURIComponent(String(tenantId || "").trim());
+        if (queueTenant && allowedKeys.includes("queue_kiosk")) items.push({ key: "queue_kiosk", title: "Emisión de turnos", href: "/customer-app/" + queueTenant + "/kiosk" });
+        if (queueTenant && allowedKeys.includes("queue_attention")) items.push({ key: "queue_attention", title: "Atención", href: "/ui/turnero/" + queueTenant });
+        if (queueTenant && allowedKeys.includes("queue_display")) items.push({ key: "queue_display", title: "Pantalla de llamados", href: "/customer-app/" + queueTenant + "/display" });
+        if (queueTenant && allowedKeys.includes("queue_stats")) items.push({ key: "queue_stats", title: "Estadísticas", href: "/ui/turnero/" + queueTenant + "/estadisticas" });
 
         const desired = items.some((it) => it.href === selectedHref) ? selectedHref : "/app";
         return {
@@ -2131,7 +2159,8 @@ function usersAdminPage({ user, users, msg, err }) {
         const select = scope.querySelector('[data-default-page]');
         if (!select) return;
         const allowed = getCheckedValues(scope);
-        const built = buildDefaultPageOptions(allowed, selectedHref || select.value || "/app");
+        const tenantInput = scope.querySelector('[name="tenantId"]');
+        const built = buildDefaultPageOptions(allowed, selectedHref || select.value || "/app", tenantInput ? tenantInput.value : "");
         select.innerHTML = built.html;
         select.value = built.selected;
       }
@@ -2156,6 +2185,8 @@ function usersAdminPage({ user, users, msg, err }) {
 
       function setupCreateModal(){
         installPermissionSync(createForm);
+        const tenantInput = createForm.querySelector('[name="tenantId"]');
+        tenantInput && tenantInput.addEventListener('input', () => syncDefaultPageSelect(createForm));
         syncDefaultPageSelect(createForm, "/app");
       }
 
@@ -2172,6 +2203,7 @@ function usersAdminPage({ user, users, msg, err }) {
         editMeta.textContent = 'Dominio: ' + (userData.tenantId || '-') + ' · Rol: ' + (userData.role || '-') + (userData.updatedAt ? ' · Actualizado: ' + userData.updatedAt : '');
         editUsername.value = userData.username || '';
         editTenantInput.value = userData.tenantId || '';
+        editTenantInput.oninput = () => syncDefaultPageSelect(editForm);
         fillEditRoleOptions(userData.role || 'user');
 
         const selfLocked = !!userData.isSelf;
