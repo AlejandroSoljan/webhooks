@@ -102,6 +102,7 @@ Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un únic
 ## Nodo local e impresión automática — 22/09/2026
 
 - Se preparó el despliegue híbrido: el LXC local será el escritor único de la cola con MongoDB local; AWS publicará las rutas para celulares por 4G mientras exista Internet.
+- El dominio operativo del nodo local es `MCN`; `DEMO_FERRETERIA` permanece habilitado exclusivamente para pruebas y conserva su propia cola.
 - Kiosco, atención y pantallas se publican en LAN y ZeroTier y continúan operando cuando el comercio pierde Internet.
 - `QUEUE_SERVER_PRINT=true` activa impresión silenciosa del lado servidor mediante CUPS. El navegador no abre selector ni confirmación.
 - El turno pasa de reserva a espera solamente después de que CUPS acepta el trabajo. Una falla de impresora conserva la reserva y permite reintentar el mismo número.

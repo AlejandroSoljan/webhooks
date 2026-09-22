@@ -2,6 +2,8 @@
 
 El LXC es el escritor único de la cola y usa MongoDB local. Nginx publica el servicio en la LAN y en ZeroTier. AWS podrá reenviar las rutas públicas al nodo a través de ZeroTier mientras el comercio tenga Internet.
 
+El dominio operativo es `MCN`. `DEMO_FERRETERIA` se conserva como entorno de prueba con datos separados.
+
 - LAN: `http://192.168.0.79/`
 - ZeroTier: `http://172.25.168.99/`
 - Servicio Node: `127.0.0.1:3102`

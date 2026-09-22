@@ -38,3 +38,12 @@ test('kiosk source includes an HTTP-compatible request id fallback', () => {
   assert.match(source, /Math\.random\(\)\.toString\(36\)/);
   assert.doesNotMatch(source, /installId:\s*crypto\.randomUUID\(\)/);
 });
+
+test('MCN receives Mecan branding while the demo remains available', () => {
+  const { queuePage } = require('../queue_pages');
+  for (const tenant of ['MCN', 'DEMO_FERRETERIA']) {
+    const html = queuePage(tenant, 'kiosk');
+    assert.match(html, /class="kiosk mecan"/);
+    assert.match(html, /mecan-logo\.webp/);
+  }
+});

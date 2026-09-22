@@ -69,7 +69,7 @@ function kiosk() {
         return;
       }
       const receipt = $('receipt'); receipt.replaceChildren();
-      if(T==='DEMO_FERRETERIA'){const mark=element('img');mark.src='/customer-app/assets/mecan-logo.webp';mark.alt='Mecan';mark.className='receiptLogo';receipt.append(mark)}
+      if(['MCN','DEMO_FERRETERIA'].includes(T)){const mark=element('img');mark.src='/customer-app/assets/mecan-logo.webp';mark.alt='Mecan';mark.className='receiptLogo';receipt.append(mark)}
       receipt.append(element('h2', x.businessName), element('p', x.sectorName), element('div', x.displayNumber, 'receiptNumber'), element('p', new Date(x.createdAt).toLocaleString('es-AR')), element('p', 'Mirá la pantalla de llamados.'), element('p', 'Conservá este número si te derivan a otra sección.'));
       const powered=element('div',undefined,'receiptPowered');powered.append(element('span','Powered by'));const asisto=element('img');asisto.src='/customer-app/assets/asisto-logo.png';asisto.alt='';powered.append(asisto,element('strong','Asisto'));receipt.append(powered,element('div','www.asistobot.com.ar'));
       $('deliveryStatus').textContent = 'Turno confirmado para imprimir';
