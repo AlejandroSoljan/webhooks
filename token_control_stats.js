@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.176 | Fecha: 2026-09-20
+// Asisto | Version: 5.00.182 | Fecha: 2026-09-21
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -255,7 +255,8 @@ async function buildApiMessageWindowBilling({
   to = "",
   types = "",
   channels = "",
-  limit = 500
+  limit = 500,
+  includeDetails = true
 } = {}) {
   const db = await getDb();
   const { match, safeTenant } = buildApiMessageWindowMatch({ tenantId, from, to });
@@ -290,7 +291,7 @@ async function buildApiMessageWindowBilling({
 
   const coll = db.collection("wa_api_message_windows");
 
-  const docs = await coll.find(match, {
+  const docs = includeDetails ? await coll.find(match, {
     projection: {
       tenantId: 1,
       numeroFrom: 1,
@@ -305,7 +306,7 @@ async function buildApiMessageWindowBilling({
       amount: 1,
       currency: 1
     }
-  }).sort({ windowStartedAt: -1 }).limit(safeLimit).toArray();
+  }).sort({ windowStartedAt: -1 }).limit(safeLimit).toArray() : [];
 
   // El resumen por dominio no debe depender del límite visual del detalle.
   const groupedRows = await coll.aggregate([
@@ -415,11 +416,11 @@ async function buildApiMessageWindowBilling({
       ...realPipeline,
       { $group: { _id: '$tenantId', messages: { $sum: 1 }, last_at: { $max: '$at' } } }
     ]).toArray(),
-    db.collection('wa_wweb_message_log').aggregate([
+    includeDetails ? db.collection('wa_wweb_message_log').aggregate([
       ...realPipeline,
       { $sort: { at: -1 } },
       { $limit: safeLimit }
-    ]).toArray()
+    ]).toArray() : Promise.resolve([])
   ]);
   const realMessagesByTenant = new Map(realMessageRows.map(row => [String(row._id || ''), row]));
 
@@ -564,7 +565,8 @@ async function buildApiMessageWindowBilling({
       to: to || null,
       types: safeTypes,
       channels: safeChannels,
-      limit: safeLimit
+      limit: safeLimit,
+      includeDetails: !!includeDetails
     },
     items,
     realItems,
@@ -1552,7 +1554,13 @@ function renderTokenControlPage(user) {
       </div>
     </div>
 
-    ${isSuper ? `<div class="kpis detail">
+    <div class="row" id="detailActions">
+      <button class="btn2" type="button" id="btnLoadConversations">Ver detalle de consumos</button>
+      <button class="btn2" type="button" id="btnLoadMessages">Ver detalle de envíos WhatsApp</button>
+      <span class="small">Los detalles se consultan únicamente cuando los necesitás.</span>
+    </div>
+
+    ${isSuper ? `<div class="kpis detail" id="conversationKpis" hidden>
       <div class="kpi">
         <div class="t">Conversaciones / sesiones</div>
         <div class="v" id="kpiConversations">0</div>
@@ -1571,7 +1579,7 @@ function renderTokenControlPage(user) {
       </div>
     </div>` : ``}
 
-    <div class="card">
+    <div class="card" id="conversationDetailCard" hidden>
       <div class="sectionTitle">
         <div>
           <h2>Detalle por conversación</h2>
@@ -1589,14 +1597,14 @@ function renderTokenControlPage(user) {
             </tr>`}
           </thead>
           <tbody id="detailRows">
-            <tr><td colspan="${isSuper ? 12 : 6}" class="small">Cargando…</td></tr>
+            <tr><td colspan="${isSuper ? 12 : 6}" class="small">Usá “Ver detalle de consumos” para consultar las conversaciones.</td></tr>
            </tbody>
           </tbody>
         </table>
       </div>
     </div>
 
-    <div class="card" id="apiMessagesCard">
+    <div class="card" id="apiMessagesCard" hidden>
       <div class="sectionTitle">
         <div>
           <h2>Mensajes enviados por WhatsApp</h2>
@@ -1604,7 +1612,7 @@ function renderTokenControlPage(user) {
         </div>
       </div>
       <div class="apiSummary" id="apiMessageSummary">
-        <span class="chip">Cargando…</span>
+        <span class="chip">Usá “Ver detalle de envíos WhatsApp” para consultar los mensajes.</span>
       </div>
       <div class="tableWrap" style="margin-bottom:18px">
         <table style="min-width:800px">
@@ -1637,6 +1645,8 @@ function renderTokenControlPage(user) {
   const rowsEl = document.getElementById('rows');
   const detailRowsEl = document.getElementById('detailRows');
   const detailNoteEl = document.getElementById('detailNote');
+  const conversationDetailCard = document.getElementById('conversationDetailCard');
+  const conversationKpis = document.getElementById('conversationKpis');
   const apiMessagesCard = document.getElementById('apiMessagesCard');
   const apiMessageSummary = document.getElementById('apiMessageSummary');
   const apiMessageRows = document.getElementById('apiMessageRows');
@@ -1653,6 +1663,9 @@ function renderTokenControlPage(user) {
   const kpiAvgConversation = document.getElementById('kpiAvgConversation');
   const kpiAvgBilled = document.getElementById('kpiAvgBilled');
   const btnReload = document.getElementById('btnReload');
+  const btnLoadConversations = document.getElementById('btnLoadConversations');
+  const btnLoadMessages = document.getElementById('btnLoadMessages');
+  let loadSequence = 0;
 
   function esc(s){
     return String(s||'').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]); });
@@ -1937,9 +1950,9 @@ function renderTokenControlPage(user) {
   }
 
 
-  function renderApiMessageWindows(j){
+  function renderApiMessageWindows(j,showDetails){
     const enabled=!!(j&&j.enabled);
-    if(apiMessagesCard)apiMessagesCard.style.display=enabled?'block':'none';
+    if(apiMessagesCard)apiMessagesCard.hidden=!enabled||!showDetails;
     if(!enabled)return;
 
     const items=Array.isArray(j.items)?j.items:[];
@@ -1986,36 +1999,59 @@ function renderTokenControlPage(user) {
 
 
 
+  function resetDetails(){
+    if(conversationDetailCard)conversationDetailCard.hidden=true;
+    if(conversationKpis)conversationKpis.hidden=true;
+    if(apiMessagesCard)apiMessagesCard.hidden=true;
+    if(btnLoadConversations){btnLoadConversations.disabled=false;btnLoadConversations.textContent='Ver detalle de consumos';}
+    if(btnLoadMessages){btnLoadMessages.disabled=false;btnLoadMessages.textContent='Ver detalle de envíos WhatsApp';}
+  }
+
   async function load(){
+    const sequence=++loadSequence;
     msgEl.textContent = '';
     rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">Cargando…</td></tr>';
-    detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '6') + '" class="small">Cargando…</td></tr>';
-    if(apiMessageRows) apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Cargando…</td></tr>';
-    if(realMessageRows) realMessageRows.innerHTML='<tr><td colspan="6" class="small">Cargando…</td></tr>';
-    if(apiMessageSummary) apiMessageSummary.innerHTML='<span class="chip">Cargando…</span>';
+    resetDetails();
 
     try{
       const summaryUrl = '/api/token-control/summary?' + buildQuery(false).toString();
-      const conversationsUrl = '/api/token-control/conversations?' + buildQuery(true).toString();
-      const apiMessagesUrl = '/api/token-control/api-message-windows?' + buildQuery(true).toString();
+      const apiQuery=buildQuery(false);apiQuery.set('details','0');
+      const apiMessagesUrl = '/api/token-control/api-message-windows?' + apiQuery.toString();
       const result = await Promise.all([
         getJson(summaryUrl),
-        getJson(conversationsUrl),
         getJson(apiMessagesUrl)
       ]);
-      renderDomainSummary(result[0],result[2]);
-      renderConversationSummary(result[1]);
-      renderApiMessageWindows(result[2]);
+      if(sequence!==loadSequence)return;
+      renderDomainSummary(result[0],result[1]);
     } catch(e){
+      if(sequence!==loadSequence)return;
       msgEl.textContent = e && e.message ? e.message : String(e);
       rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">Error cargando datos.</td></tr>';
-      detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '6') + '" class="small">Error cargando detalle por conversación.</td></tr>';
-      if(apiMessageRows) apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Error cargando ventanas API Mensajes.</td></tr>';
-      if(realMessageRows) realMessageRows.innerHTML='<tr><td colspan="6" class="small">Error cargando mensajes enviados.</td></tr>';
     }
   }
 
+  async function loadConversationDetails(){
+    const sequence=loadSequence;btnLoadConversations.disabled=true;btnLoadConversations.textContent='Cargando detalle…';
+    detailRowsEl.innerHTML='<tr><td colspan="'+(isSuper?'12':'6')+'" class="small">Cargando…</td></tr>';
+    conversationDetailCard.hidden=false;if(conversationKpis)conversationKpis.hidden=false;
+    try{const j=await getJson('/api/token-control/conversations?'+buildQuery(true).toString());if(sequence!==loadSequence)return;renderConversationSummary(j);btnLoadConversations.textContent='Actualizar detalle de consumos';}
+    catch(e){if(sequence!==loadSequence)return;detailRowsEl.innerHTML='<tr><td colspan="'+(isSuper?'12':'6')+'" class="small">Error cargando detalle por conversación.</td></tr>';btnLoadConversations.textContent='Reintentar detalle de consumos';}
+    finally{if(sequence===loadSequence)btnLoadConversations.disabled=false;}
+  }
+
+  async function loadMessageDetails(){
+    const sequence=loadSequence;btnLoadMessages.disabled=true;btnLoadMessages.textContent='Cargando envíos…';apiMessagesCard.hidden=false;
+    if(apiMessageRows)apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Cargando…</td></tr>';
+    if(realMessageRows)realMessageRows.innerHTML='<tr><td colspan="6" class="small">Cargando…</td></tr>';
+    if(apiMessageSummary)apiMessageSummary.innerHTML='<span class="chip">Cargando…</span>';
+    try{const j=await getJson('/api/token-control/api-message-windows?'+buildQuery(true).toString());if(sequence!==loadSequence)return;renderApiMessageWindows(j,true);btnLoadMessages.textContent='Actualizar detalle de envíos WhatsApp';}
+    catch(e){if(sequence!==loadSequence)return;if(realMessageRows)realMessageRows.innerHTML='<tr><td colspan="6" class="small">Error cargando mensajes enviados.</td></tr>';if(apiMessageRows)apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Error cargando ventanas API Mensajes.</td></tr>';btnLoadMessages.textContent='Reintentar detalle de envíos WhatsApp';}
+    finally{if(sequence===loadSequence)btnLoadMessages.disabled=false;}
+  }
+
   btnReload.addEventListener('click', load);
+  btnLoadConversations.addEventListener('click',loadConversationDetails);
+  btnLoadMessages.addEventListener('click',loadMessageDetails);
   setupMulti('typeFilter','tokenType','Tipo IA');
   setupMulti('channelFilter','tokenChannel','Canal');
   if (isSuper && tenantEl) tenantEl.addEventListener('keydown', function(ev){ if (ev.key === 'Enter') load(); });
@@ -2124,7 +2160,8 @@ function mountTokenControlRoutes(app, auth) {
         to: String(req.query?.to || "").trim(),
         types: String(req.query?.types || "").trim(),
         channels: String(req.query?.channels || "").trim(),
-        limit: req.query?.limit
+        limit: req.query?.limit,
+        includeDetails: String(req.query?.details ?? '1') !== '0'
       });
       return res.json(data);
     } catch (e) {
@@ -2137,6 +2174,7 @@ function mountTokenControlRoutes(app, auth) {
 
 module.exports = {
   mountTokenControlRoutes,
+  renderTokenControlPage,
   buildTokenSummary,
   buildTokenConversationSummary,
   buildApiMessageWindowBilling,
