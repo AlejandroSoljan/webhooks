@@ -14,6 +14,12 @@ const DEFAULT_SECTORS = [
   { id: "caja", name: "Caja", prefix: "C" },
   { id: "retiro", name: "Retiro de pedidos", prefix: "R" },
 ];
+const MECAN_SECTORS = [
+  { id: "ferreteria", name: "Ferretería", prefix: "F" },
+  { id: "herrajes", name: "Herrajes", prefix: "H" },
+  { id: "buloneria", name: "Bulonería", prefix: "B" },
+  { id: "servicio_tecnico", name: "Servicio Técnico", prefix: "S" },
+];
 
 const DEFAULT_BANNERS = [
   "https://acdn-us.mitiendanube.com/stores/006/162/992/themes/amazonas/1-slide-1786043920585-7689600605-7fb70c00de38f8b949bb2fde436d37ea1786043922-1024-1024.jpg?4168203849057930746",
@@ -26,6 +32,13 @@ const CUSTOMER_CONFIG_CACHE_MS = 30000;
 function clean(value, max = 80) { return String(value || "").trim().slice(0, max); }
 function tenant(value) { return clean(value, 60).toUpperCase().replace(/[^A-Z0-9_-]/g, ""); }
 function isMecanTenant(value) { return ['MCN', 'DEMO_FERRETERIA'].includes(tenant(value)); }
+function normalizedSectors(saved, tenantId) {
+  const sectors = Array.isArray(saved?.sectors) && saved.sectors.length ? saved.sectors : null;
+  if (!isMecanTenant(tenantId)) return sectors || DEFAULT_SECTORS;
+  const ids = new Set((sectors || []).map(item => clean(item?.id, 60).toLowerCase()));
+  if (!sectors || ids.has('caja') || ids.has('retiro') || !ids.has('servicio_tecnico')) return MECAN_SECTORS;
+  return sectors;
+}
 function dayKey() { return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires" }).format(new Date()); }
 
 async function configFor(db, tenantId) {
@@ -34,7 +47,7 @@ async function configFor(db, tenantId) {
   return { tenantId, businessName: saved?.businessName || behavior.qr_company_name || "Mecan", branchId: saved?.branchId || "CENTRAL", salesWhatsapp: saved?.salesWhatsapp || "5493462610000",
     branchName: saved?.branchName || behavior.app_branch_name || "Sucursal principal", branchAddress: saved?.branchAddress || behavior.app_branch_address || "Atención en el local", businessHours: saved?.businessHours || behavior.app_business_hours || "Horario comercial", estimatedWaitMinutes: Number(saved?.estimatedWaitMinutes ?? behavior.app_estimated_wait_minutes ?? 15),
     queuePresence: saved?.queuePresence === "qr" ? "qr" : "open", queuePromotion: clean(saved?.queuePromotion, 240),
-    sectors: Array.isArray(saved?.sectors) && saved.sectors.length ? saved.sectors : DEFAULT_SECTORS,
+    sectors: normalizedSectors(saved, tenantId),
     banners: Array.isArray(saved?.banners) && saved.banners.length ? saved.banners : DEFAULT_BANNERS };})();customerConfigCache.set(tenantId,{at:Date.now(),pending});try{const value=await pending;customerConfigCache.set(tenantId,{at:Date.now(),value});return value}catch(error){customerConfigCache.delete(tenantId);throw error}
 }
 
@@ -77,4 +90,4 @@ function mountCustomerApp(app, { auth } = {}) {
   app.post("/api/customer-app/:tenant/devices", async (req,res)=>{ try{const t=tenant(req.params.tenant),installId=clean(req.body.installId,120),pushToken=clean(req.body.pushToken,500),now=new Date(),userAgent=clean(req.get('user-agent'),300),platform=/android/i.test(userAgent)?'Android':(/iphone|ipad/i.test(userAgent)?'iOS':'Web'),deviceName=clean(req.body.deviceName||req.get('x-asisto-device-name'),100);if(!installId||!pushToken)return res.status(400).json({error:"Datos incompletos"});await (await getDb()).collection("customer_app_devices").updateOne({tenantId:t,installId},{$set:{pushToken,userAgent,platform,...(deviceName?{deviceName}:{}),updatedAt:now,lastSeenAt:now},$setOnInsert:{createdAt:now}},{upsert:true});await queue.reconcileTenant(t);res.json({ok:true})}catch(e){res.status(500).json({error:"No se pudo registrar el dispositivo"})} });
   return queue;
 }
-module.exports = { mountCustomerApp, DEFAULT_SECTORS, dayKey };
+module.exports = { mountCustomerApp, DEFAULT_SECTORS, MECAN_SECTORS, normalizedSectors, dayKey };
