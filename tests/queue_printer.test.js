@@ -31,3 +31,10 @@ test('receipt is narrow plain text suitable for thermal CUPS queues', () => {
   const output = receiptText({ businessName: 'Mecan', sectorName: 'Ferreteria', displayNumber: 'F123' });
   assert.ok(output.split('\n').every(line => line.length <= 42));
 });
+
+test('kiosk source includes an HTTP-compatible request id fallback', () => {
+  const source = require('../queue_kiosk').kiosk.toString();
+  assert.match(source, /typeof globalThis\.crypto\.randomUUID/);
+  assert.match(source, /Math\.random\(\)\.toString\(36\)/);
+  assert.doesNotMatch(source, /installId:\s*crypto\.randomUUID\(\)/);
+});

@@ -1,6 +1,9 @@
 // Asisto | Reserva, vinculación e impresión del mismo turno | 2026-09-14
 function kiosk() {
   let pendingRequest = null, reserved = null, poll = null, polling = false, deadline = 0, printing = false, printRequestId = '';
+  const requestId = () => globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function'
+    ? globalThis.crypto.randomUUID()
+    : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2) + '-' + Math.random().toString(36).slice(2);
   const dialog = $('ticketDialog');
   $('content').innerHTML = '<div class="layout"><section><div class="eyebrow">Paso 1 · Elegí tu sección</div><h1>¿En qué podemos<br>ayudarte hoy?</h1><p>Elegí dónde necesitás atención. Después llevá tu turno al celular.</p><div class="sectors" id="sectors"></div></section><aside class="mobile"><span class="pill">Más cómodo en tu celular</span><h2>Elegí tu sección.<br>Escaneá. Y listo.</h2><p>Te vamos a mostrar un QR exclusivo para guardar tu turno en el teléfono.</p><ol class="steps"><li>Seleccioná una sección.</li><li>Escaneá el QR de tu turno.</li><li>Seguí tu lugar desde el celular.</li></ol><div class="benefit">Recibí el llamado en tu celular<small>También podés llevarte un ticket impreso.</small></div><div id="promo"></div></aside></div>';
   cfg.sectors.forEach(s => { const b = button('', () => reserve(s)); b.className = 'sector'; b.append(element('span', s.name), element('b', '›')); $('sectors').append(b); });
@@ -8,7 +11,7 @@ function kiosk() {
   async function reserve(s) {
     if (busy) return;
     if (pendingRequest && pendingRequest.sectorId !== s.id) { error(Error('Reintentá la sección anterior para recuperar tu reserva.')); return; }
-    pendingRequest ||= { sectorId: s.id, installId: crypto.randomUUID(), source: 'kiosk', delivery: 'qr_or_print' };
+    pendingRequest ||= { sectorId: s.id, installId: requestId(), source: 'kiosk', delivery: 'qr_or_print' };
     setBusy(true);
     try {
       const x = await request(API + '/tickets', { method: 'POST', body: JSON.stringify(pendingRequest) });
@@ -53,7 +56,7 @@ function kiosk() {
     if (!reserved || printing) return;
     printing = true; $('printTicket').disabled = true;
     try {
-      printRequestId ||= crypto.randomUUID();
+      printRequestId ||= requestId();
       const x = await request(ADMIN + '/tickets/' + reserved.id + '/print', { method: 'POST', body: JSON.stringify({ printRequestId }) });
       printRequestId = '';
       if (x.serverPrinted) {

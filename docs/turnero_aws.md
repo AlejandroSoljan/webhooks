@@ -107,3 +107,4 @@ Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un únic
 - El turno pasa de reserva a espera solamente después de que CUPS acepta el trabajo. Una falla de impresora conserva la reserva y permite reintentar el mismo número.
 - Cada solicitud lleva una clave idempotente: un reintento de red no duplica el ticket físico; el botón explícito “Volver a imprimir” genera una solicitud nueva.
 - `QUEUE_PRINTER_NAME` fija la cola CUPS. Si se omite, se usa la impresora predeterminada del sistema.
+- El kiosco genera identificadores también en HTTP local. Los navegadores reservan `crypto.randomUUID()` para contextos seguros; el fallback evita que el clic en una sección quede sin respuesta al abrir el LXC por IP privada.
