@@ -1,30 +1,19 @@
 // Asisto | Turnero AWS | Fecha: 2026-09-14
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { spawn } = require('node:child_process');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-const net = require('node:net');
 const { MongoClient } = require('mongodb');
+const { MongoMemoryServer } = require('mongodb-memory-server');
 const express = require('express');
 const { mountQueue, presenceToken, validPresence } = require('../customer_queue');
 const { queuePage } = require('../queue_pages');
 const vm = require('node:vm');
-let mongo, dir, client, db, server, url, queue, sent = 0;
+let mongo, client, db, server, url, queue, sent = 0;
 const notifications = []; let rejectPush = false;
 const cfg = { businessName: 'Mecan', branchId: 'CENTRAL', queuePresence: 'open', sectors: [{ id: 'ferreteria', name: 'Ferretería', prefix: 'F' }, { id: 'caja', name: 'Caja', prefix: 'C' }] };
 before(async () => {
-  const socket = net.createServer(); await new Promise(r => socket.listen(0, '127.0.0.1', r)); const port = socket.address().port; await new Promise(r => socket.close(r));
-  dir = fs.mkdtempSync(path.join(os.tmpdir(), 'asisto-queue-test-'));
-  const binary = process.env.QUEUE_TEST_MONGOD || 'C:\\Program Files\\MongoDB\\Server\\8.2\\bin\\mongod.exe';
-  mongo = spawn(binary, ['--dbpath', dir, '--port', String(port), '--bind_ip', '127.0.0.1', '--quiet', '--logpath', path.join(dir, 'mongo.log')], { windowsHide: true, stdio: 'ignore' });
-  let spawnError; mongo.on('error', e => { spawnError = e; });
-  for (let i = 0; i < 80; i++) {
-    if (spawnError) throw spawnError;
-    client = new MongoClient('mongodb://127.0.0.1:' + port, { serverSelectionTimeoutMS: 200 });
-    try { await client.connect(); break; } catch (e) { await client.close(); if (i === 79) throw e; await new Promise(r => setTimeout(r, 100)); }
-  }
+  mongo = await MongoMemoryServer.create();
+  client = new MongoClient(mongo.getUri());
+  await client.connect();
   db = client.db('queue_isolated_test');
   const app = express(); app.use(express.json());
   app.use((req, _res, next) => { if (req.get('x-test-user')) req.user = { uid: 'test', tenantId: req.get('x-test-user'), username: 'Tester', role: req.get('x-test-role') || 'admin' }; next(); });
@@ -34,8 +23,7 @@ before(async () => {
 });
 after(async () => {
   if (server) await new Promise(r => server.close(r)); await client?.close();
-  if (mongo?.pid && mongo.exitCode === null) { const exit = new Promise(r => mongo.once('exit', r)); mongo.kill(); await exit; }
-  if (dir && path.basename(dir).startsWith('asisto-queue-test-') && path.dirname(dir) === os.tmpdir()) fs.rmSync(dir, { recursive: true, force: true });
+  await mongo?.stop();
 });
 async function req(route, body, user = '') { const r = await fetch(url + route, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', ...(user ? { 'x-test-user': user } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) }); return { status: r.status, body: await r.json() }; }
 const api = '/api/customer-app/TEST', admin = '/api/customer-app-admin/TEST';
