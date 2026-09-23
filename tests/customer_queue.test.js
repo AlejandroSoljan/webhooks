@@ -121,6 +121,10 @@ test('MCN kiosk exposes QR-only Autoservicio and focused display keeps other sec
   const kioskHtml = queuePage('MCN', 'kiosk');
   assert.match(kioskHtml, /s\.kind === 'presence' \? autoservice\(s\) : reserve\(s\)/);
   assert.match(kioskHtml, /Este QR registra tu visita al local y habilita la solicitud de turnos desde el celular durante 2 horas/);
+  assert.match(kioskHtml, /id="themeMode"/);
+  assert.match(kioskHtml, /localStorage\.setItem\('queueTheme:'\+T,theme\.value\)/);
+  assert.match(kioskHtml, /body\.kiosk\{width:100%;max-width:100vw;overflow-x:hidden\}/);
+  assert.match(kioskHtml, /\.kiosk\[data-theme="dark"\]/);
   assert.match(kioskHtml, /No genera turno ni ticket impreso/);
   const displayHtml = queuePage('MCN', 'display');
   assert.match(displayHtml, /className='focusedDisplay'/);
