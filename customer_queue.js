@@ -126,7 +126,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
         tickets.findOne({ ...filter, status: 'CALLED' }), tickets.countDocuments({ ...filter, status: 'WAITING' }),
         tickets.find({ ...filter, status: 'WAITING' }).sort(order).limit(4).toArray(),
       ]);
-      return { ...s, waiting, current: current ? publicTicket(current) : null, currentDisplay: current?.displayNumber || '', next: next.map(d => ({ displayNumber: d.displayNumber })) };
+      return { ...s, waiting, estimatedMinutes: waiting * Math.max(1, Number(cfg.estimatedWaitMinutes) || 5), current: current ? publicTicket(current) : null, currentDisplay: current?.displayNumber || '', next: next.map(d => ({ displayNumber: d.displayNumber })) };
     }));
     res.json({ sectors });
   });

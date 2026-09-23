@@ -109,6 +109,13 @@ test('existing Android page renders cancellation and product discovery with a va
   try { const html = await (await fetch('http://127.0.0.1:' + temp.address().port + '/customer-app/TEST')).text(); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); assert.match(html, /Cancelar mi turno/); assert.match(html, /consultar con IA/); assert.match(html, /activeTicketDialog/); }
   finally { await new Promise(r => temp.close(r)); }
 });
+test('customer schedule reports open, closed and unconfigured without guessing', () => {
+  const { businessScheduleStatus } = require('../customer_app_web');
+  const hours = { monday: [{ from: '09:00', to: '13:00' }, { from: '15:00', to: '18:00' }] };
+  assert.deepEqual(businessScheduleStatus(hours, new Date('2026-09-21T13:00:00Z')), { configured: true, open: true, todayLabel: '09:00 a 13:00 · 15:00 a 18:00' });
+  assert.deepEqual(businessScheduleStatus(hours, new Date('2026-09-21T22:00:00Z')), { configured: true, open: false, todayLabel: '09:00 a 13:00 · 15:00 a 18:00' });
+  assert.deepEqual(businessScheduleStatus({}, new Date('2026-09-21T13:00:00Z')), { configured: false, open: null, todayLabel: 'Horario no configurado' });
+});
 test('two kiosks allocate unique numbers; same device retries return the same ticket', async () => {
   const results = await Promise.all(Array.from({ length: 12 }, (_, i) => req(api + '/tickets', { sectorId: 'ferreteria', installId: 'device-' + i, source: 'kiosk' }, 'TEST')));
   assert.ok(results.every(r => r.status === 200)); assert.equal(new Set(results.map(r => r.body.displayNumber)).size, 12);
