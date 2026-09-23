@@ -103,6 +103,12 @@ test('attention page only builds the section selector for the all-sections view'
   assert.match(html, /if\(!selectedSector\)\{root\.append\(element\('label','Sección'\)\)/);
   assert.match(html, /const visible=x\.sectors\.filter\(s=>!selectedSector\|\|s\.id===selectedSector\)/);
 });
+test('operator transfer controls stay contained inside each card', () => {
+  const html = queuePage('TEST', 'admin');
+  assert.match(html, /\.transferControls\{[^}]*grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(html, /\.transferControls button\{[^}]*width:100%/);
+  assert.match(html, /\.card\{[^}]*min-width:0;overflow:hidden/);
+});
 test('existing Android page renders cancellation and product discovery with a valid script', async () => {
   const app = express(); require('../customer_app_web').mountCustomerApp(app);
   const temp = app.listen(0, '127.0.0.1'); await new Promise(r => temp.once('listening', r));
