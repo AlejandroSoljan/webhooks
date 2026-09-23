@@ -71,9 +71,11 @@ test('kiosk keeps the Asisto badge without a link that can leave the turnero', (
   const kioskHtml = queuePage('MCN', 'kiosk');
   assert.match(kioskHtml, /Powered by/);
   assert.match(kioskHtml, /asisto-logo\.png/);
+  assert.match(kioskHtml, /<span class="poweredUrl">www\.asistobot\.com\.ar<\/span>/);
   assert.doesNotMatch(kioskHtml, /href="https:\/\/www\.asistobot\.com\.ar"/);
   assert.match(kioskHtml, /\.dialogBrandRow\{[^}]*padding-right:58px/);
   assert.match(kioskHtml, /\.dialogBrandRow \.poweredAsisto\{[^}]*flex-wrap:nowrap/);
+  assert.match(kioskHtml, /\.dialogBrandRow \.poweredUrl\{display:inline/);
   assert.match(queuePage('MCN', 'admin'), /href="https:\/\/www\.asistobot\.com\.ar"/);
 });
 

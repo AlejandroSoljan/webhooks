@@ -301,3 +301,4 @@ Barra lateral y accesos superiores con SVG de personas, reloj, mesa, cocina, rec
 2026-09-23 | v5.00.208 | Turnero: el kiosco cierra la confirmación dos segundos después de vincular el QR o imprimir, queda listo para el siguiente cliente y restablece siempre el botón como "Imprimir ticket".
 2026-09-23 | v5.00.209 | Panel de operadores del turnero: ordena el bloque para trasladar turnos en una sola columna adaptable, contiene selector y botón dentro de la tarjeta y evita solapamientos en pantallas angostas.
 2026-09-23 | v5.00.210 | Kiosco: reserva un espacio exclusivo para cerrar el diálogo y reorganiza la insignia Powered by Asisto para que no se superponga; mantiene ambas insignias del kiosco como elementos sin enlace.
+2026-09-23 | v5.00.211 | Kiosco: conserva visible www.asistobot.com.ar en la insignia incluso en pantallas angostas, como texto no interactivo y adaptable, sin enlace que permita abandonar el turnero.
