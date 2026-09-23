@@ -48,6 +48,15 @@ test('MCN receives Mecan branding while the demo remains available', () => {
   }
 });
 
+test('kiosk keeps the Asisto badge without a link that can leave the turnero', () => {
+  const { queuePage } = require('../queue_pages');
+  const kioskHtml = queuePage('MCN', 'kiosk');
+  assert.match(kioskHtml, /Powered by/);
+  assert.match(kioskHtml, /asisto-logo\.png/);
+  assert.doesNotMatch(kioskHtml, /href="https:\/\/www\.asistobot\.com\.ar"/);
+  assert.match(queuePage('MCN', 'admin'), /href="https:\/\/www\.asistobot\.com\.ar"/);
+});
+
 test('attention panel has no quick links and supports section URLs by id or name', () => {
   const { queuePage } = require('../queue_pages');
   const html = queuePage('MCN', 'admin');
