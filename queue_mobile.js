@@ -49,8 +49,9 @@ function ticketAlert(ticket) {
   const kind = ticket.status === 'CALLED' ? 'called' : ticket.status === 'WAITING' && ticket.peopleAhead === 0 ? 'next' : '';
   if (!kind) return;
   const key = [ticket.id, kind, ticket.calledAt || ''].join(':');
-  if (localStorage.asistoLastTicketAlert === key) return;
-  localStorage.asistoLastTicketAlert = key;
+  const storageKey = 'asistoTicketAlert:' + ticket.id + ':' + kind;
+  if (localStorage.getItem(storageKey) === key) return;
+  localStorage.setItem(storageKey, key);
   const title = kind === 'called' ? '¡Es tu turno!' : 'Sos el próximo';
   const detail = kind === 'called' ? (ticket.desk ? 'Acercate a ' + ticket.desk + '.' : 'Acercate al sector.') : 'Preparáte, enseguida te llamamos.';
   if (ticketAlertsEnabled && ticketAudioContext) {

@@ -129,7 +129,7 @@ test('MCN kiosk exposes QR-only Autoservicio and focused display keeps other sec
 test('existing Android page renders cancellation and product discovery with a valid script', async () => {
   const app = express(); require('../customer_app_web').mountCustomerApp(app);
   const temp = app.listen(0, '127.0.0.1'); await new Promise(r => temp.once('listening', r));
-  try { const html = await (await fetch('http://127.0.0.1:' + temp.address().port + '/customer-app/TEST')).text(); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); assert.match(html, /Cancelar mi turno/); assert.match(html, /consultar con IA/); assert.match(html, /activeTicketDialog/); assert.doesNotMatch(html, /Encontralo al instante/); assert.doesNotMatch(html, />Consultas'/); assert.doesNotMatch(html, /Hacer una consulta/); }
+  try { const html = await (await fetch('http://127.0.0.1:' + temp.address().port + '/customer-app/TEST')).text(); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); assert.match(html, /Cancelar mi turno/); assert.match(html, /consultar con IA/); assert.match(html, /activeTicketDialog/); assert.match(html, /id="ticketPicker"/); assert.match(html, /asistoTicketIds/); assert.match(html, /ticket\.sectorId===sectorId/); assert.doesNotMatch(html, /Encontralo al instante/); assert.doesNotMatch(html, />Consultas'/); assert.doesNotMatch(html, /Hacer una consulta/); }
   finally { await new Promise(r => temp.close(r)); }
 });
 test('customer schedule reports open, closed and unconfigured without guessing', () => {
