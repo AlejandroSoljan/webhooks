@@ -108,6 +108,10 @@ test('operator transfer controls stay contained inside each card', () => {
   assert.match(html, /\.transferControls\{[^}]*grid-template-columns:minmax\(0,1fr\)/);
   assert.match(html, /\.transferControls button\{[^}]*width:100%/);
   assert.match(html, /\.card\{[^}]*min-width:0;overflow:hidden/);
+  assert.match(html, /id="themeMode"/);
+  assert.match(html, /localStorage\.setItem\('queueOperatorTheme:'\+T,theme\.value\)/);
+  assert.match(html, /body\.admin\{width:100%;max-width:100vw;overflow-x:hidden\}/);
+  assert.match(html, /\.admin\[data-theme="dark"\]/);
 });
 test('display uses the louder friendly call chime and resumes sound by default', () => {
   const html = queuePage('MCN', 'display');
@@ -121,10 +125,7 @@ test('MCN kiosk exposes QR-only Autoservicio and focused display keeps other sec
   const kioskHtml = queuePage('MCN', 'kiosk');
   assert.match(kioskHtml, /s\.kind === 'presence' \? autoservice\(s\) : reserve\(s\)/);
   assert.match(kioskHtml, /Este QR registra tu visita al local y habilita la solicitud de turnos desde el celular durante 2 horas/);
-  assert.match(kioskHtml, /id="themeMode"/);
-  assert.match(kioskHtml, /localStorage\.setItem\('queueTheme:'\+T,theme\.value\)/);
-  assert.match(kioskHtml, /body\.kiosk\{width:100%;max-width:100vw;overflow-x:hidden\}/);
-  assert.match(kioskHtml, /\.kiosk\[data-theme="dark"\]/);
+  assert.doesNotMatch(kioskHtml, /id="themeMode"/);
   assert.match(kioskHtml, /No genera turno ni ticket impreso/);
   const displayHtml = queuePage('MCN', 'display');
   assert.match(displayHtml, /className='focusedDisplay'/);
