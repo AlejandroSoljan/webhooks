@@ -22,7 +22,7 @@ function kiosk() {
       $('claimQr').src = x.claimQr;
       $('deliveryTitle').textContent = 'Llevá tu turno al celular';
       $('deliveryMessage').textContent = 'Escaneá este QR con la cámara. Tu turno se guarda en ese teléfono.';
-      $('claimArea').hidden = false; $('printTicket').hidden = false; $('closeTicket').hidden = true;
+      $('claimArea').hidden = false; $('printTicket').hidden = false; $('printTicket').textContent = 'Imprimir ticket'; $('closeTicket').hidden = true;
       $('deliveryStatus').textContent = 'Esperando que escanees…';
       $('deliveryError').textContent = '';
       dialog.showModal(); ok();
@@ -42,7 +42,7 @@ function kiosk() {
         $('deliveryMessage').textContent = 'Podés seguirlo desde el teléfono. Para recibir avisos, abrilo en la app Asisto.';
         $('claimArea').hidden = true; $('printTicket').hidden = true; $('closeTicket').hidden = false;
         $('deliveryStatus').textContent = 'Turno vinculado correctamente'; $('countdown').textContent = '';
-        closeTimer = setTimeout(close, 6000);
+        closeTimer = setTimeout(close, 2000);
       } else if (x.status === 'CANCELLED') {
         clearInterval(poll); $('claimArea').hidden = true; $('printTicket').hidden = true; $('closeTicket').hidden = false;
         $('deliveryTitle').textContent = 'La reserva venció'; $('deliveryMessage').textContent = 'Volvé a elegir la sección para obtener un nuevo QR.';
@@ -64,7 +64,8 @@ function kiosk() {
         $('deliveryMessage').textContent = 'Retirá tu comprobante y mirá la pantalla de llamados.';
         $('deliveryStatus').textContent = x.duplicatePrintRequest ? 'La solicitud ya había sido enviada a la impresora.' : 'Impresión enviada correctamente.';
         $('closeTicket').hidden = false; $('closeTicket').textContent = 'Listo';
-        $('printTicket').textContent = 'Volver a imprimir'; $('deliveryError').textContent = '';
+        $('printTicket').hidden = true; $('printTicket').textContent = 'Imprimir ticket'; $('deliveryError').textContent = '';
+        closeTimer = setTimeout(close, 2000);
         return;
       }
       const parts = Object.fromEntries(new Intl.DateTimeFormat('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', hour12:false }).formatToParts(new Date(x.createdAt)).map(part => [part.type, part.value]));
@@ -77,7 +78,8 @@ function kiosk() {
       $('deliveryMessage').textContent = 'Retirá tu comprobante y mirá la pantalla de llamados.';
       $('deliveryStatus').textContent = 'Impresión enviada correctamente.';
       $('closeTicket').hidden = false; $('closeTicket').textContent = 'Terminé';
-      $('printTicket').textContent = 'Volver a imprimir'; $('deliveryError').textContent = '';
+      $('printTicket').hidden = true; $('printTicket').textContent = 'Imprimir ticket'; $('deliveryError').textContent = '';
+      closeTimer = setTimeout(close, 2000);
     } catch (e) { $('deliveryError').textContent = e?.name === 'TimeoutError' ? 'El servicio local de impresión no respondió.' : (e.message || 'No se pudo conectar con la impresora local.'); }
     finally { printing = false; $('printTicket').disabled = false; }
   }

@@ -50,6 +50,13 @@ test('kiosk sends ticket data and its full claim URL to the local print service'
   assert.doesNotMatch(source, /window\.print\(/);
 });
 
+test('kiosk resets quickly after QR delivery or printing', () => {
+  const source = require('../queue_kiosk').kiosk.toString();
+  assert.match(source, /closeTimer = setTimeout\(close, 2000\)/);
+  assert.match(source, /textContent = 'Imprimir ticket'/);
+  assert.doesNotMatch(source, /Volver a imprimir/);
+});
+
 test('MCN receives Mecan branding while the demo remains available', () => {
   const { queuePage } = require('../queue_pages');
   for (const tenant of ['MCN', 'DEMO_FERRETERIA']) {
