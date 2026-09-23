@@ -23,8 +23,19 @@ async function serial(key, fn) {
 async function nextSequence(db, tickets, base, sectorId) {
   const counterId = [base.tenantId, base.dayKey, base.branchId, sectorId].join(':');
   const latest = await tickets.findOne({ ...base, sectorId, number: { $type: 'number' } }, { sort: { number: -1 }, projection: { number: 1 } });
-  await db.collection('queue_counters').updateOne({ _id: counterId }, { $max: { sequence: Math.max(0, Number(latest?.number) || 0) } }, { upsert: true });
-  return db.collection('queue_counters').findOneAndUpdate({ _id: counterId }, { $inc: { sequence: 1 } }, { returnDocument: 'after' });
+  const observed = Math.max(0, Number(latest?.number) || 0), syncUrl = String(process.env.QUEUE_SYNC_URL || ''), syncSecret = String(process.env.QUEUE_SYNC_SECRET || '');
+  if (syncUrl && syncSecret.length >= 20) {
+    try {
+      const response = await fetch(syncUrl.replace(/\/queue-sync\/?(?:\?.*)?$/, '/queue-sequence'), { method: 'POST', headers: { 'content-type': 'application/json', 'x-queue-sync-key': syncSecret }, body: JSON.stringify({ tenantId: base.tenantId, dayKey: base.dayKey, branchId: base.branchId, sectorId, observed }), signal: AbortSignal.timeout(5000) });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok || !Number.isInteger(payload.sequence)) throw new Error(payload.error || `http_${response.status}`);
+      await db.collection('queue_counters').updateOne({ _id: counterId }, { $max: { sequence: payload.sequence } }, { upsert: true });
+      return { _id: counterId, sequence: payload.sequence, central: true };
+    } catch (error) { console.warn('[QUEUE_SEQUENCE] central unavailable; using offline number:', error.message); }
+  }
+  await db.collection('queue_counters').updateOne({ _id: counterId }, { $max: { sequence: observed } }, { upsert: true });
+  const counter = await db.collection('queue_counters').findOneAndUpdate({ _id: counterId }, { $inc: { sequence: 1 } }, { returnDocument: 'after' });
+  return { ...counter, offline: !!syncUrl };
 }
 function allowed(req, t) { return !!req.user?.uid && (req.user.role === 'superadmin' || tenant(req.user.tenantId) === t); }
 function fail(status, message) { const e = new Error(message); e.status = status; throw e; }
@@ -161,7 +172,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
         if (!admitted) fail(403, 'Para sacar tu primer turno, acercate al turnero del local y escaneá el QR. Después podrás sacar otros turnos desde esta web durante 2 horas.');
       }
       const counter = await nextSequence(db, tickets, base, sectorId);
-      const now = new Date(), doc = { ...base, sectorId, sectorName: sector.name, prefix: sector.prefix, number: counter.sequence, displayNumber: sector.prefix + String(counter.sequence).padStart(3, '0'), installId, status: 'WAITING', createdAt: now, queuedAt: now, updatedAt: now, source: kiosk ? 'kiosk' : 'mobile', history: [{ action: 'created', sectorId, at: now }] };
+      const now = new Date(), doc = { ...base, sectorId, sectorName: sector.name, prefix: sector.prefix, number: counter.sequence, displayNumber: sector.prefix + String(counter.sequence).padStart(3, '0') + (counter.offline ? '-L' : ''), offlineNumber: !!counter.offline, installId, status: 'WAITING', createdAt: now, queuedAt: now, updatedAt: now, source: kiosk ? 'kiosk' : 'mobile', history: [{ action: 'created', sectorId, at: now }] };
       if (kiosk) doc.kioskRequestId = installId;
       if (reserve) Object.assign(doc, { status: 'RESERVED', reservationExpiresAt: new Date(+now + 180000), deliveryMode: 'pending' });
       doc._id = (await tickets.insertOne(doc)).insertedId;
