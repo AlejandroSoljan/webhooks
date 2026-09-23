@@ -7,7 +7,7 @@ async function linkReservedTicket() {
   try {
     const r = await fetch(API + '/tickets/' + encodeURIComponent(id) + '/claim', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, installId }) });
     const x = await r.json(); if (!r.ok) throw Error(x.error || 'No se pudo vincular el turno');
-    localStorage.asistoTicketId = x.id;
+    rememberTicket(x.id);
     claimPending = false;
     history.replaceState(null, '', location.pathname + '?view=ticket');
     await refreshTicket();

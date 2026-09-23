@@ -6,8 +6,38 @@ function kiosk() {
     : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2) + '-' + Math.random().toString(36).slice(2);
   const dialog = $('ticketDialog');
   $('content').innerHTML = '<div class="layout"><section><div class="eyebrow">Paso 1 · Elegí tu sección</div><h1>¿En qué podemos<br>ayudarte hoy?</h1><p>Elegí dónde necesitás atención. Después llevá tu turno al celular.</p><div class="sectors" id="sectors"></div></section><aside class="mobile"><span class="pill">Más cómodo en tu celular</span><h2>Elegí tu sección.<br>Escaneá. Y listo.</h2><p>Te vamos a mostrar un QR exclusivo para guardar tu turno en el teléfono.</p><ol class="steps"><li>Seleccioná una sección.</li><li>Escaneá el QR de tu turno.</li><li>Seguí tu lugar desde el celular.</li></ol><div class="benefit">Recibí el llamado en tu celular<small>También podés llevarte un ticket impreso.</small></div><div id="promo"></div></aside></div>';
-  cfg.sectors.forEach(s => { const b = button('', () => reserve(s)); b.className = 'sector'; b.append(element('span', s.name), element('b', '›')); $('sectors').append(b); });
+  cfg.sectors.forEach(s => { const b = button('', () => s.kind === 'presence' ? autoservice(s) : reserve(s)); b.className = 'sector'; b.append(element('span', s.name), element('b', s.kind === 'presence' ? '⌁' : '›')); $('sectors').append(b); });
   $('promo').textContent = cfg.queuePromotion || '';
+  async function autoservice(s) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const x = await request(ADMIN + '/presence');
+      reserved = null; deadline = Date.now() + Number(x.expiresIn || 90) * 1000;
+      $('ticketSector').textContent = s.name;
+      $('claimQr').src = x.image;
+      $('deliveryTitle').textContent = 'Registrá tu ingreso';
+      $('deliveryMessage').textContent = 'Escaneá este QR con tu celular. No genera turno ni ticket impreso.';
+      $('claimArea').hidden = false; $('printTicket').hidden = true; $('closeTicket').hidden = true;
+      $('deliveryStatus').textContent = 'Después podrás solicitar turnos desde la web durante 2 horas.';
+      $('deliveryError').textContent = '';
+      dialog.showModal(); ok();
+      clearInterval(poll); poll = setInterval(async () => {
+        try {
+          const status = await request(ADMIN + '/presence/' + encodeURIComponent(x.sessionId) + '/status');
+          const seconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+          $('countdown').textContent = 'El QR se actualiza en ' + seconds + ' segundos.';
+          if (status.checkedIn) {
+            clearInterval(poll); $('claimArea').hidden = true; $('closeTicket').hidden = false;
+            $('deliveryTitle').textContent = 'Ingreso registrado';
+            $('deliveryMessage').textContent = 'Ya podés solicitar turnos desde tu celular durante 2 horas.';
+            $('deliveryStatus').textContent = '¡Bienvenido!'; $('countdown').textContent = '';
+            closeTimer = setTimeout(close, 2000);
+          } else if (seconds === 0) { clearInterval(poll); close(); }
+        } catch (_) { $('deliveryError').textContent = 'No pudimos comprobar el ingreso. Reintentando…'; }
+      }, 1000);
+    } catch (e) { error(e); } finally { setBusy(false); }
+  }
   async function reserve(s) {
     if (busy) return;
     if (pendingRequest && pendingRequest.sectorId !== s.id) { error(Error('Reintentá la sección anterior para recuperar tu reserva.')); return; }

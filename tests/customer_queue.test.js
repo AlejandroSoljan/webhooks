@@ -117,6 +117,15 @@ test('display uses the louder friendly call chime and resumes sound by default',
   assert.match(html, /visibilitychange/);
   assert.doesNotMatch(html, /oscillator\.frequency\.value=740/);
 });
+test('MCN kiosk exposes QR-only Autoservicio and focused display keeps other sections aside', () => {
+  const kioskHtml = queuePage('MCN', 'kiosk');
+  assert.match(kioskHtml, /s\.kind === 'presence' \? autoservice\(s\) : reserve\(s\)/);
+  assert.match(kioskHtml, /No genera turno ni ticket impreso/);
+  const displayHtml = queuePage('MCN', 'display');
+  assert.match(displayHtml, /className='focusedDisplay'/);
+  assert.match(displayHtml, /Otras secciones/);
+  assert.match(displayHtml, /focusedNumber/);
+});
 test('existing Android page renders cancellation and product discovery with a valid script', async () => {
   const app = express(); require('../customer_app_web').mountCustomerApp(app);
   const temp = app.listen(0, '127.0.0.1'); await new Promise(r => temp.once('listening', r));
@@ -183,6 +192,26 @@ test('presence gate only restricts new tickets and permits recovery after QR exp
   const retry = await req(api + '/tickets', { sectorId: 'caja', installId: 'inside' }); assert.equal(retry.body.id, x.body.id);
   assert.equal((await req(api + '/tickets/' + x.body.id + '?installId=inside')).status, 200);
   const qr = await req(admin + '/presence', undefined, 'TEST'); assert.match(qr.body.image, /^data:image\/png;base64,/);
+});
+test('Autoservicio records presence and enables web tickets for two hours', async () => {
+  cfg.queuePresence = 'qr';
+  const sessionId = 'autoservicio-session';
+  const token = presenceToken('TEST', 'test-secret', Date.now(), sessionId);
+  const checkin = await req(api + '/presence/checkin', { installId: 'visitor-phone', presence: token });
+  assert.equal(checkin.status, 200); assert.equal(checkin.body.ok, true);
+  const event = await db.collection('queue_presence_events').findOne({ tenantId: 'TEST', sessionId, installId: 'visitor-phone' });
+  assert.equal(event.source, 'kiosk_autoservicio');
+  const status = await req(admin + '/presence/' + sessionId + '/status', undefined, 'TEST'); assert.equal(status.body.checkedIn, true);
+  const ticket = await req(api + '/tickets', { sectorId: 'caja', installId: 'visitor-phone' }); assert.equal(ticket.status, 200);
+});
+test('a customer can hold one active ticket in each section but not two in the same section', async () => {
+  cfg.queuePresence = 'open';
+  const first = await req(api + '/tickets', { sectorId: 'ferreteria', installId: 'multi-sector-phone' });
+  const second = await req(api + '/tickets', { sectorId: 'caja', installId: 'multi-sector-phone' });
+  const repeated = await req(api + '/tickets', { sectorId: 'ferreteria', installId: 'multi-sector-phone' });
+  assert.equal(first.status, 200); assert.equal(second.status, 200);
+  assert.notEqual(first.body.id, second.body.id);
+  assert.equal(repeated.body.id, first.body.id);
 });
 test('finish and skip clear the section, and a late kiosk retry cannot issue a second ticket', async () => {
   const next = await req(admin + '/sectors/ferreteria/next', { expectedTicketId: null }, 'TEST');

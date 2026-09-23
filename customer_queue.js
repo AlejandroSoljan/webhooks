@@ -39,22 +39,23 @@ async function nextSequence(db, tickets, base, sectorId) {
 }
 function allowed(req, t) { return !!req.user?.uid && (req.user.role === 'superadmin' || tenant(req.user.tenantId) === t); }
 function fail(status, message) { const e = new Error(message); e.status = status; throw e; }
-function presenceToken(t, secret, now = Date.now()) {
-  const payload = Buffer.from(JSON.stringify({ t, exp: now + 90000 })).toString('base64url');
+function presenceToken(t, secret, now = Date.now(), sessionId = '') {
+  const payload = Buffer.from(JSON.stringify({ t, exp: now + 90000, ...(sessionId ? { sid: sessionId } : {}) })).toString('base64url');
   return payload + '.' + createHmac('sha256', secret).update(payload).digest('base64url');
 }
-function validPresence(token, t, secret, now = Date.now()) {
-  if (!secret || typeof token !== 'string' || token.length > 500) return false;
+function presencePayload(token, t, secret, now = Date.now()) {
+  if (!secret || typeof token !== 'string' || token.length > 500) return null;
   try {
     const [payload, signature, extra] = token.split('.');
-    if (extra) return false;
+    if (extra) return null;
     const expected = createHmac('sha256', secret).update(payload).digest();
     const actual = Buffer.from(signature, 'base64url');
-    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return false;
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
     const value = JSON.parse(Buffer.from(payload, 'base64url'));
-    return value.t === t && value.exp > now && value.exp <= now + 90000;
-  } catch { return false; }
+    return value.t === t && value.exp > now && value.exp <= now + 90000 ? value : null;
+  } catch { return null; }
 }
+function validPresence(token, t, secret, now = Date.now()) { return !!presencePayload(token, t, secret, now); }
 function publicTicket(doc) {
   return { id: String(doc._id), displayNumber: doc.displayNumber, status: doc.status,
     sectorId: doc.sectorId, sectorName: doc.sectorName, desk: doc.desk || '', calledAt: doc.calledAt || null, claimed: !!doc.claimedAt };
@@ -82,6 +83,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
       await db.collection('queue_tickets').updateMany({ queuedAt: { $exists: false } }, [{ $set: { queuedAt: '$createdAt' } }]);
       await db.collection('queue_tickets').createIndex({ tenantId: 1, branchId: 1, dayKey: 1, sectorId: 1, status: 1, queuedAt: 1, _id: 1 });
       await db.collection('queue_tickets').createIndex({ tenantId: 1, branchId: 1, dayKey: 1, installId: 1, status: 1 });
+      await db.collection('queue_presence_events').createIndex({ tenantId: 1, sessionId: 1, installId: 1 }, { unique: true });
     })().catch(e => { indexPromise = null; throw e; });
     return indexPromise;
   }
@@ -120,8 +122,26 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     if (cfg.queuePresence === 'qr' && !secret) fail(503, 'Falta configurar la validación presencial.');
     const url = new URL('/customer-app/' + encodeURIComponent(t), publicBase);
     url.searchParams.set('view', 'turns');
-    if (secret) url.searchParams.set('presence', presenceToken(t, secret));
-    res.json({ image: await QRCode.toDataURL(url.href, { width: 320, margin: 3, errorCorrectionLevel: 'M' }), expiresIn: 90 });
+    const sessionId = randomBytes(12).toString('base64url');
+    if (secret) url.searchParams.set('presence', presenceToken(t, secret, Date.now(), sessionId));
+    res.json({ image: await QRCode.toDataURL(url.href, { width: 320, margin: 3, errorCorrectionLevel: 'M' }), expiresIn: 90, sessionId });
+  }));
+  app.post('/api/customer-app/:tenant/presence/checkin', wrap(async (req, res) => {
+    const { t, db } = await scope(req), installId = clean(req.body?.installId), value = presencePayload(req.body?.presence, t, secret);
+    if (!installId || !value?.sid) fail(403, 'El QR presencial no es válido o venció. Volvé a escanearlo en el local.');
+    const now = new Date(), accessUntil = new Date(Date.now() + QUEUE_DEVICE_ACCESS_MS);
+    await prepare(db);
+    await Promise.all([
+      db.collection('customer_app_devices').updateOne({ tenantId: t, installId }, { $max: { queueAccessUntil: accessUntil }, $set: { lastSeenAt: now }, $setOnInsert: { createdAt: now, platform: 'Web' } }, { upsert: true }),
+      db.collection('queue_presence_events').updateOne({ tenantId: t, sessionId: value.sid, installId }, { $setOnInsert: { tenantId: t, sessionId: value.sid, installId, checkedInAt: now, source: 'kiosk_autoservicio' } }, { upsert: true }),
+    ]);
+    res.json({ ok: true, accessUntil });
+  }));
+  app.get('/api/customer-app-admin/:tenant/presence/:sessionId/status', wrap(async (req, res) => {
+    const { t, db } = await scope(req); guard(req, t);
+    const sessionId = clean(req.params.sessionId, 80);
+    const event = sessionId && await db.collection('queue_presence_events').findOne({ tenantId: t, sessionId }, { projection: { _id: 1 } });
+    res.json({ checkedIn: !!event });
   }));
   app.post('/api/customer-app-admin/:tenant/settings', wrap(async (req, res) => {
     const { t, db } = await scope(req); guard(req, t);
@@ -138,7 +158,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     await prepare(db);
     await expire(db, base);
     const tickets = db.collection('queue_tickets');
-    const sectors = await Promise.all(cfg.sectors.map(async s => {
+    const sectors = await Promise.all(cfg.sectors.filter(s => s.kind !== 'presence').map(async s => {
       const filter = { ...base, sectorId: s.id };
       const [current, waiting, next] = await Promise.all([
         tickets.findOne({ ...filter, status: 'CALLED' }), tickets.countDocuments({ ...filter, status: 'WAITING' }),
@@ -152,7 +172,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
   app.get('/api/customer-app-admin/:tenant/state', state);
   app.post('/api/customer-app/:tenant/tickets', wrap(async (req, res) => {
     const { t, db, cfg, base } = await scope(req), installId = clean(req.body?.installId), sectorId = clean(req.body?.sectorId, 40);
-    const sector = cfg.sectors.find(s => s.id === sectorId);
+    const sector = cfg.sectors.find(s => s.id === sectorId && s.kind !== 'presence');
     if (!installId || !sector) fail(400, 'Seleccioná una sección válida.');
     const kiosk = req.body?.source === 'kiosk';
     if (kiosk) guard(req, t);
@@ -163,7 +183,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     const doc = await serial(t, async () => {
       const tickets = db.collection('queue_tickets');
       // Retries can retrieve the same ticket even after its QR has expired.
-      const existing = await tickets.findOne({ ...base, ...(kiosk ? { kioskRequestId: installId } : { $or: [{ installId }, { linkedInstallIds: installId }], status: { $in: active } }) });
+      const existing = await tickets.findOne({ ...base, ...(kiosk ? { kioskRequestId: installId } : { sectorId, $or: [{ installId }, { linkedInstallIds: installId }], status: { $in: active } }) });
       const legacy = kiosk && !existing ? await tickets.findOne({ ...base, installId, source: 'kiosk' }) : null;
       if (existing) return existing;
       if (legacy) return legacy;
@@ -334,4 +354,4 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
   }));
   return { reconcileTenant };
 }
-module.exports = { mountQueue, presenceToken, validPresence, serial, nextSequence, QUEUE_DEVICE_ACCESS_MS };
+module.exports = { mountQueue, presenceToken, presencePayload, validPresence, serial, nextSequence, QUEUE_DEVICE_ACCESS_MS };
