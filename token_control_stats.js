@@ -2122,7 +2122,8 @@ function mountTokenControlRoutes(app, auth) {
       let tenants = [];
       if (isSuper) {
         const db = await getDb();
-        tenants = await db.collection('tenant_config').distinct('_id', { _id: { $type: 'string' } });
+        const rows = await db.collection('tenant_config').find({}, { projection: { _id: 1 } }).sort({ _id: 1 }).toArray();
+        tenants = rows.map(row => row?._id).filter(value => typeof value === 'string');
       }
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       return res.status(200).send(renderTokenControlPage(user, tenants));
