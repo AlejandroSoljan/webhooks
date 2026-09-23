@@ -109,6 +109,14 @@ test('operator transfer controls stay contained inside each card', () => {
   assert.match(html, /\.transferControls button\{[^}]*width:100%/);
   assert.match(html, /\.card\{[^}]*min-width:0;overflow:hidden/);
 });
+test('display uses the louder friendly call chime and resumes sound by default', () => {
+  const html = queuePage('MCN', 'display');
+  assert.match(html, /function playCallSound\(\)/);
+  assert.match(html, /\[\[523\.25,0,\.46\],\[659\.25,\.18,\.55\],\[783\.99,\.38,\.78\]\]/);
+  assert.match(html, /master\.gain\.setValueAtTime\(\.46,start\)/);
+  assert.match(html, /visibilitychange/);
+  assert.doesNotMatch(html, /oscillator\.frequency\.value=740/);
+});
 test('existing Android page renders cancellation and product discovery with a valid script', async () => {
   const app = express(); require('../customer_app_web').mountCustomerApp(app);
   const temp = app.listen(0, '127.0.0.1'); await new Promise(r => temp.once('listening', r));
