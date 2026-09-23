@@ -21,6 +21,8 @@ test('un producto escaneado conserva su chat contextual sin mostrar el acceso al
   assert.match(html, /id="moreBtn"/);
   assert.match(html, /Mostrar más info/);
   assert.doesNotMatch(html, />Consultas<\/a>/);
+  assert.match(html, />Mi turno<\/a>/);
+  assert.doesNotMatch(html, /\.appNav a:last-child\{display:none\}/);
 });
 
 test('Manager consulta directamente código de barras sin descargar el catálogo', () => {
