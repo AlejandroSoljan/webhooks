@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-const { CATALOG, defaultConfig, normalizeConfig, renderPage } = require('../monetization_config');
+const { CATALOG, defaultConfig, normalizeConfig, listMonetizationTenants, renderPage } = require('../monetization_config');
 
 test('el catálogo inicial activa únicamente QR y código de barras o SKU', () => {
   const config = defaultConfig('mcn');
@@ -26,4 +26,10 @@ test('el panel contiene el catálogo completo y JavaScript válido', () => {
   assert.match(html, /Lectura por código de barras o SKU/);
   assert.match(html, /Configuración guardada/);
   new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]);
+});
+
+test('el selector incluye dominios del turnero aunque no estén en tenant_config', async () => {
+  const rows={tenant_config:[{_id:'RVL'}],customer_app_config:[{tenantId:'MCN'}],queue_tickets:[{_id:'DEMO_FERRETERIA'}],monetization_config:[]};
+  const db={collection:name=>({find:()=>({limit:()=>({toArray:async()=>rows[name]})}),aggregate:()=>({toArray:async()=>rows[name]})})};
+  assert.deepEqual(await listMonetizationTenants(db,'CARICO'),['CARICO','DEMO_FERRETERIA','MCN','RVL']);
 });
