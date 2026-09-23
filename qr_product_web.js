@@ -1229,6 +1229,7 @@ function qrPublicBranding(cfg, tenant = '') {
 }
 
 function pageHtml({ tenant, code, branding = {} }) {
+  const generalChat = code === 'CONSULTA_GENERAL';
   return String.raw`<!doctype html>
 <html lang="es">
 <head>
@@ -1254,16 +1255,17 @@ function pageHtml({ tenant, code, branding = {} }) {
   <section class="card lookup" id="lookup"><div class="content"><div class="eyebrow">Buscar producto</div><h1 class="title">Escaneá o ingresá el código</h1><button class="btn btnPrimary" id="scanBtn" type="button">Abrir cámara</button><div class="lookupForm"><input id="codeInput" type="text" maxlength="180" autocomplete="off" placeholder="Código, SKU o código de barras"/><button class="btn" id="lookupBtn" type="button">Buscar</button></div><div class="scanner hidden" id="scanner"><div class="scannerViewport"><video id="scanVideo" playsinline muted></video><div class="scanGuide"></div></div><div class="scanStatus" id="scanStatus">Apuntá al QR o al código de barras.</div><div class="scanControls"><label id="zoomLabel" class="hidden">Zoom <input id="zoomControl" type="range" step="0.1"/></label><button class="btn hidden" id="torchBtn" type="button">Encender luz</button><button class="btn btnPrimary" id="photoBtn" type="button">Sacar foto al producto</button><input class="hidden" id="photoInput" type="file" accept="image/*" capture="environment"/></div><div class="photoResult hidden" id="photoResult"></div><button class="btn" id="stopScanBtn" type="button">Cerrar cámara</button></div></div></section>
   <section class="card" id="productCard"><div class="loading">Consultando producto…</div></section>
   <section class="chat" id="chat">
-    <div class="chatHead"><div><b>Asistente del producto</b><br/><span id="chatProduct"></span></div><button class="btn" id="closeChat" type="button">Cerrar</button></div>
+    <div class="chatHead"><div><b id="chatTitle">Asistente del producto</b><br/><span id="chatProduct"></span></div><button class="btn" id="closeChat" type="button">Cerrar</button></div>
     <div class="chatBody" id="chatBody"></div>
     <div class="composer"><div class="composeRow"><textarea id="message" maxlength="2500" placeholder="Preguntá sobre uso, características, compatibilidad…"></textarea><button class="btn btnPrimary send" id="sendBtn" type="button">Enviar</button></div></div>
   </section>
  <div class="footer"><div>Información comercial obtenida del sistema del negocio. La información ampliada puede utilizar IA y fuentes públicas de Internet.</div><div class="powered">Powered by <img src="/static/asisto-logo-transparent.png" alt="Asisto"/><strong>Asisto</strong> · <a href="https://www.asistobot.com.ar/r?source=powered_asisto&amp;app=consulta_producto_qr&amp;placement=pie_producto&amp;tenant=${encodeURIComponent(tenant)}" target="_blank" rel="noopener">www.asistobot.com.ar</a></div></div>
 </div>
-<nav class="appNav" aria-label="Navegación principal"><a href="/customer-app/${encodeURIComponent(tenant)}"><svg viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg>Inicio</a><a class="active" href="/qr/${encodeURIComponent(tenant)}?scan=1"><svg viewBox="0 0 24 24"><path d="M4 7V4h3M17 4h3v3M20 17v3h-3M7 20H4v-3M8 8v8M11 8v8M15 8v8"/></svg>Escanear</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=turns"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/></svg>Turnos</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=ticket"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6h5"/></svg>Mi turno</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=seller"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/></svg>Vendedor</a></nav>
+<nav class="appNav" aria-label="Navegación principal"><a href="/customer-app/${encodeURIComponent(tenant)}"><svg viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg>Inicio</a><a class="${generalChat ? '' : 'active'}" href="/qr/${encodeURIComponent(tenant)}?scan=1"><svg viewBox="0 0 24 24"><path d="M4 7V4h3M17 4h3v3M20 17v3h-3M7 20H4v-3M8 8v8M11 8v8M15 8v8"/></svg>Escanear</a><a class="${generalChat ? 'active' : ''}" href="/qr/${encodeURIComponent(tenant)}?chat=1"><svg viewBox="0 0 24 24"><path d="M3 4h18v13H8l-5 4V4Z"/><path d="M7 9h10M7 13h7"/></svg>Consultas</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=turns"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18"/></svg>Turnos</a><a href="/customer-app/${encodeURIComponent(tenant)}?view=ticket"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v6h5"/></svg>Mi turno</a></nav>
 <script>
 const TENANT=${JSON.stringify(tenant)};
 const BRANDING=${JSON.stringify(branding)};
+const GENERAL_CHAT=${JSON.stringify(generalChat)};
 let CODE=${JSON.stringify(code)};
 let PRODUCT=null, AI_ENABLED=false, sending=false, started=false, conversationId='', pollTimer=null, unchangedPolls=0, lastMessagesSignature='', scanStream=null, scanTrack=null, scanFrame=0, scanCandidate='', scanHits=0, scanCandidateAt=0, torchOn=false, scanOcrAttempted=false;
 const el=id=>document.getElementById(id);
@@ -1273,7 +1275,7 @@ function money(v,currency){if(v==null||v==='')return 'Consultar';try{return new 
 function richText(s){let x=esc(s);x=x.replace(/\*([^*\n]+)\*/g,'<strong>$1</strong>');x=x.replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener">$1</a>');return x.replace(/\n/g,'<br>')}
 function now(){return new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}
 function msgTime(v){if(!v)return now();const d=new Date(v);return isNaN(d)?now():d.toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}
-function addMsg(role,text,typing=false,label='',at='',autoScroll=true){const row=document.createElement('div');row.className='msg '+(role==='user'?'user':'bot');if(typing)row.id='typing';const who=label||(role==='user'?'Vos':'Asisto');row.innerHTML='<div class="bubble">'+(typing?'<span class="typing"><i></i><i></i><i></i></span>':richText(text))+'<span class="meta">'+esc(who)+' · '+esc(msgTime(at))+'</span></div>';const body=el('chatBody');body.appendChild(row);if(autoScroll)body.scrollTop=body.scrollHeight}
+function addMsg(role,text,typing=false,label='',at='',autoScroll=true){const row=document.createElement('div');row.className='msg '+(role==='user'?'user':'bot');if(typing)row.id='typing';const who=label||(role==='user'?'Vos':'Asistente');row.innerHTML='<div class="bubble">'+(typing?'<span class="typing"><i></i><i></i><i></i></span>':richText(text))+'<span class="meta">'+esc(who)+' · '+esc(msgTime(at))+'</span></div>';const body=el('chatBody');body.appendChild(row);if(autoScroll)body.scrollTop=body.scrollHeight}
 function removeTyping(){const n=el('typing');if(n)n.remove()}
 function renderServerMessages(items){
   const body=el('chatBody');
@@ -1366,7 +1368,7 @@ async function tryPrintedBarcode(){if(scanOcrAttempted||!scanStream)return;const
 async function identifyPhoto(file){if(!file)return;const out=el('photoResult'),btn=el('photoBtn');out.classList.remove('hidden');out.textContent='Analizando la foto y buscando en el catálogo…';btn.disabled=true;try{const image=await photoDataUrl(file);const j=await jsonFetch('/api/ext/qr/photo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenant:TENANT,image})});if(j.product?.code){out.textContent='Producto encontrado: '+j.product.description;setTimeout(()=>openCode(j.product.code),350);return}const i=j.identification||{},label=[i.brand,i.name,i.model].filter(Boolean).join(' · '),choices=Array.isArray(j.suggestions)?j.suggestions:[];if(choices.length){out.innerHTML=(label?'<b>Identificación aproximada: '+esc(label)+'</b>':'<b>Encontré estas opciones similares:</b>')+'<div class="photoChoices">'+choices.map(p=>'<button class="photoChoice" type="button" data-photo-code="'+esc(p.code)+'"><b>'+esc(p.description)+'</b><small>SKU: '+esc(p.code)+'</small><span>'+esc(money(p.price,j.currency||'ARS'))+'</span></button>').join('')+'</div><small>Elegí una opción para ver su ficha.</small>';out.querySelectorAll('[data-photo-code]').forEach(x=>x.addEventListener('click',()=>openCode(x.dataset.photoCode)));return}out.textContent=label?'Identifiqué aproximadamente '+label+', pero no encontré alternativas confirmadas en el catálogo. Probá una foto donde se vea mejor la marca o el modelo.':'No pude identificarlo con seguridad. Probá acercando la cámara al frente o al código de barras.'}catch(e){out.textContent='No pude analizar la foto: '+e.message}finally{btn.disabled=false;el('photoInput').value=''}}
 el('photoBtn').addEventListener('click',()=>{stopScanner(false);el('scanner').classList.remove('hidden');el('scanner').classList.add('photoMode');el('photoResult').classList.add('hidden');el('photoInput').click()});el('photoInput').addEventListener('change',e=>identifyPhoto(e.currentTarget.files&&e.currentTarget.files[0]));
 el('scanBtn').addEventListener('click',()=>{el('scanner').classList.remove('photoMode')});
-el('sendBtn').addEventListener('click',send);el('message').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});el('closeChat').addEventListener('click',()=>el('chat').classList.remove('open'));el('scanBtn').addEventListener('click',startScanner);el('stopScanBtn').addEventListener('click',stopScanner);el('zoomControl').addEventListener('input',e=>setScannerZoom(e.currentTarget.value));el('torchBtn').addEventListener('click',toggleScannerTorch);el('lookupBtn').addEventListener('click',()=>openCode(el('codeInput').value));el('codeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openCode(e.currentTarget.value)}});window.addEventListener('pagehide',stopScanner);document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(pollTimer){clearTimeout(pollTimer);pollTimer=null}if(started)scheduleChatPoll(0)}});applyBranding(BRANDING);if(CODE){el('lookup').classList.add('hidden');loadProduct()}else{el('productCard').classList.add('hidden');if(!BRANDING.pageSubtitle)el('pageSubtitle').textContent='Escaneá un QR, un código de barras o ingresá el código manualmente.';if(new URLSearchParams(location.search).get('scan')==='1')setTimeout(startScanner,150)}
+el('sendBtn').addEventListener('click',send);el('message').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});el('closeChat').addEventListener('click',()=>GENERAL_CHAT?history.back():el('chat').classList.remove('open'));el('scanBtn').addEventListener('click',startScanner);el('stopScanBtn').addEventListener('click',stopScanner);el('zoomControl').addEventListener('input',e=>setScannerZoom(e.currentTarget.value));el('torchBtn').addEventListener('click',toggleScannerTorch);el('lookupBtn').addEventListener('click',()=>openCode(el('codeInput').value));el('codeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openCode(e.currentTarget.value)}});window.addEventListener('pagehide',stopScanner);document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(pollTimer){clearTimeout(pollTimer);pollTimer=null}if(started)scheduleChatPoll(0)}});applyBranding(BRANDING);if(GENERAL_CHAT){el('lookup').classList.add('hidden');el('productCard').classList.add('hidden');el('chat').classList.add('open');el('chatTitle').textContent='Encontralo al instante';el('chatProduct').textContent='Consultá precios, productos, disponibilidad y recibí ayuda en el momento.';el('message').placeholder='Escribí tu consulta…';addMsg('bot','¡Hola! ¿Qué producto o información necesitás encontrar?');syncChatMessages(true).then(changed=>{started=changed;if(changed)startChatPolling()});setTimeout(()=>el('message').focus(),100)}else if(CODE){el('lookup').classList.add('hidden');loadProduct()}else{el('productCard').classList.add('hidden');if(!BRANDING.pageSubtitle)el('pageSubtitle').textContent='Escaneá un QR, un código de barras o ingresá el código manualmente.';if(new URLSearchParams(location.search).get('scan')==='1')setTimeout(startScanner,150)}
 </script>
 </body>
 </html>`;
@@ -1397,7 +1399,7 @@ function mountQrProductWeb(app) {
     try {
       const db = await getDb();
       const tenant = await canonicalQrTenant(db, req.params.tenant);
-      const code = digitsOrText(req.query?.codigo, 180);
+      const code = req.query?.chat === '1' ? 'CONSULTA_GENERAL' : digitsOrText(req.query?.codigo, 180);
       if (!tenant) return res.status(404).send('Dominio inválido');
       const cfg = await loadQrPageConfig(db, tenant);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -1570,8 +1572,9 @@ function mountQrProductWeb(app) {
       const tenant = await canonicalQrTenant(db, requestedTenant);
       const cfg = await loadQrConfig(db, tenant);
       if (!cfg.enabled || !cfg.aiEnabled) return res.status(404).json({ ok: false, error: 'qr_ai_disabled' });
+      const generalChat = code === 'CONSULTA_GENERAL';
       const [product, apiKey] = await Promise.all([
-        fetchQrProduct(cfg, tenant, code),
+        generalChat ? Promise.resolve({ code: 'CONSULTA_GENERAL', description: 'Consulta general de productos', available: null, prices: [], source: 'chat' }) : fetchQrProduct(cfg, tenant, code),
         resolveOpenAiKey(db, tenant),
       ]);
       if (!apiKey) return res.status(503).json({ ok: false, error: 'ai_not_configured' });
@@ -1613,7 +1616,9 @@ function mountQrProductWeb(app) {
         return res.json({ ok: true, conversationId: String(convId), reply, contactCaptured: false });
       }
 
-      const ctx = productContext(product, cfg);
+      const ctx = generalChat
+        ? '[CONTEXTO DE CONSULTA GENERAL]\nEl visitante abrió el chat sin escanear un producto. Si pregunta por productos, precios o disponibilidad, buscá primero en el catálogo del negocio mediante consulta_articulos. No inventes artículos ni datos comerciales.'
+        : productContext(product, cfg);
       const catalogRequest = !initial && requestsCatalogData(message);
       const behaviorOverride = cfg.aiUseSameBehavior
         ? undefined
@@ -1772,4 +1777,4 @@ function mountQrProductWeb(app) {
   });
 }
 
-module.exports = { mountQrProductWeb, loadQrConfig, normalizeQrProduct, managerDirectLookupUrl, qrPublicBranding };
+module.exports = { mountQrProductWeb, loadQrConfig, normalizeQrProduct, managerDirectLookupUrl, qrPublicBranding, pageHtml };

@@ -6,7 +6,15 @@ const vm = require('vm');
 const { createRequire } = require('module');
 const path = require('path');
 const { fixture } = require('./catalog_fixture');
-const { managerDirectLookupUrl } = require('../qr_product_web');
+const { managerDirectLookupUrl, pageHtml } = require('../qr_product_web');
+
+test('la consulta general abre un chat sin mencionar la marca en el título', () => {
+  const html = pageHtml({ tenant: 'MCN', code: 'CONSULTA_GENERAL', branding: { companyName: 'Mecan' } });
+  assert.match(html, /Encontralo al instante/);
+  assert.match(html, />Consultas<\/a>/);
+  assert.match(html, /GENERAL_CHAT=true/);
+  new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]);
+});
 
 test('Manager consulta directamente código de barras sin descargar el catálogo', () => {
   const url = new URL(managerDirectLookupUrl('https://manager.example/v300/api/Api_Articulos/Consulta?key=x&campo=ID&valor=*', '236100016'));
