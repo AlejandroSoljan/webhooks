@@ -141,10 +141,11 @@ test('concurrent calls cannot skip a ticket; transfer preserves identity and joi
   assert.equal((await req(admin + '/sectors/ferreteria/transfer', { expectedTicketId: current.id, destination: 'invalid' }, 'TEST')).status, 400);
   const moved = await req(admin + '/sectors/ferreteria/transfer', { expectedTicketId: current.id, destination: 'caja' }, 'TEST');
   assert.equal(moved.body.ticket.id, current.id); assert.equal(moved.body.ticket.displayNumber, current.displayNumber);
-  const mobile = await req(api + '/tickets/' + current.id + '?installId=device-0'); assert.equal(mobile.body.sectorId, 'caja'); assert.equal(mobile.body.peopleAhead, 1);
+  const currentDoc = await db.collection('queue_tickets').findOne({ _id: new (require('mongodb').ObjectId)(current.id) });
+  const mobile = await req(api + '/tickets/' + current.id + '?installId=' + encodeURIComponent(currentDoc.installId)); assert.equal(mobile.body.sectorId, 'caja'); assert.equal(mobile.body.peopleAhead, 1);
   const state = await req(api + '/queue'); assert.equal(state.body.sectors[0].current, null); assert.equal(state.body.sectors[1].next[0].displayNumber, waiting.body.displayNumber);
   assert.equal((await req(api + '/tickets/' + current.id + '?installId=wrong')).status, 404);
-  const history = (await db.collection('queue_tickets').findOne({ installId: 'device-0' })).history; assert.deepEqual(history.map(h => h.action), ['created', 'next', 'transfer']);
+  assert.deepEqual(currentDoc.history.map(h => h.action), ['created', 'next', 'transfer']);
 });
 test('presence gate only restricts new tickets and permits recovery after QR expiration', async () => {
   cfg.queuePresence = 'qr';
