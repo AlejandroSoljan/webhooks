@@ -110,8 +110,10 @@ test('operator transfer controls stay contained inside each card', () => {
   assert.match(html, /\.card\{[^}]*min-width:0;overflow:hidden/);
   assert.match(html, /id="themeMode"/);
   assert.match(html, /localStorage\.setItem\('queueOperatorTheme:'\+T,theme\.value\)/);
-  assert.match(html, /body\.admin\{width:100%;max-width:100vw;overflow-x:hidden\}/);
+  assert.match(html, /body\.admin\{width:100%;max-width:100vw;height:100vh;overflow:hidden\}/);
   assert.match(html, /\.admin\[data-theme="dark"\]/);
+  assert.match(html, /\.admin \.cards\{[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
+  assert.match(html, /@media\(max-width:1350px\)\{body\.admin\{height:auto;min-height:100vh;overflow-y:auto\}/);
 });
 test('display uses the louder friendly call chime and resumes sound by default', () => {
   const html = queuePage('MCN', 'display');
