@@ -18,6 +18,7 @@ function kiosk() {
       $('claimQr').src = x.image;
       $('deliveryTitle').textContent = 'Registrá tu ingreso';
       $('deliveryMessage').textContent = 'Escaneá este QR con tu celular. No genera turno ni ticket impreso.';
+      $('claimHelp').textContent = 'Este QR registra tu visita al local y habilita la solicitud de turnos desde el celular durante 2 horas.';
       $('claimArea').hidden = false; $('printTicket').hidden = true; $('closeTicket').hidden = true;
       $('deliveryStatus').textContent = 'Después podrás solicitar turnos desde la web durante 2 horas.';
       $('deliveryError').textContent = '';
@@ -52,6 +53,7 @@ function kiosk() {
       $('claimQr').src = x.claimQr;
       $('deliveryTitle').textContent = 'Llevá tu turno al celular';
       $('deliveryMessage').textContent = 'Escaneá este QR con la cámara. Tu turno se guarda en ese teléfono.';
+      $('claimHelp').innerHTML = '<b>Te avisaremos en el celular cuando sea tu turno.</b> Mientras esperás, descubrí todo lo que podés hacer con Asisto.';
       $('claimArea').hidden = false; $('printTicket').hidden = false; $('printTicket').textContent = 'Imprimir ticket'; $('closeTicket').hidden = true;
       $('deliveryStatus').textContent = 'Esperando que escanees…';
       $('deliveryError').textContent = '';

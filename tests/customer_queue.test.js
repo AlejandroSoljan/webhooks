@@ -120,9 +120,17 @@ test('display uses the louder friendly call chime and resumes sound by default',
 test('MCN kiosk exposes QR-only Autoservicio and focused display keeps other sections aside', () => {
   const kioskHtml = queuePage('MCN', 'kiosk');
   assert.match(kioskHtml, /s\.kind === 'presence' \? autoservice\(s\) : reserve\(s\)/);
+  assert.match(kioskHtml, /Este QR registra tu visita al local y habilita la solicitud de turnos desde el celular durante 2 horas/);
   assert.match(kioskHtml, /No genera turno ni ticket impreso/);
   const displayHtml = queuePage('MCN', 'display');
   assert.match(displayHtml, /className='focusedDisplay'/);
+  assert.match(displayHtml, /grid-template-columns:minmax\(0,1fr\) clamp\(340px,28vw,520px\)/);
+  assert.match(displayHtml, /\.display\.focusedMode main\{width:100%;max-width:none/);
+  assert.match(displayHtml, /\.asideSector\{width:100%/);
+  assert.doesNotMatch(displayHtml, /new Option\('Todas las secciones'/);
+  const launcher = require('fs').readFileSync(require('path').join(__dirname, '..', 'deploy', 'turnero-local', 'launch-display.sh'), 'utf8');
+  assert.match(launcher, /--kiosk/);
+  assert.match(launcher, /--autoplay-policy=no-user-gesture-required/);
   assert.match(displayHtml, /Otras secciones/);
   assert.match(displayHtml, /focusedNumber/);
 });
