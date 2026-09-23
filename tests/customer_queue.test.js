@@ -133,6 +133,8 @@ test('MCN kiosk exposes QR-only Autoservicio and focused display keeps other sec
   assert.match(displayHtml, /\.asideSector strong\{min-width:0;display:flex;align-items:center;justify-content:center/);
   assert.match(displayHtml, /body\.display\.focusedMode\{height:100vh;max-width:100vw;overflow:hidden\}/);
   assert.match(displayHtml, /body\.display \.brandFooter \.poweredAsisto img\{width:52px;height:42px\}/);
+  assert.match(displayHtml, /body\.display:not\(\.focusedMode\) \.cards\{[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
+  assert.match(displayHtml, /body\.display:not\(\.focusedMode\) \.card h2\{[^}]*background:#ed101c;color:#fff/);
   assert.doesNotMatch(displayHtml, /new Option\('Todas las secciones'/);
   const launcher = require('fs').readFileSync(require('path').join(__dirname, '..', 'deploy', 'turnero-local', 'launch-display.sh'), 'utf8');
   assert.match(launcher, /--kiosk/);
