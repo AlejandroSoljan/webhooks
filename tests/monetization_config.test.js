@@ -20,11 +20,18 @@ test('normaliza tarifas y descarta funcionalidades inventadas', () => {
   assert.equal(config.items.invented, undefined);
 });
 
+test('interpreta precio unitario sin créditos como precio fijo', () => {
+  const config = normalizeConfig({ items: { 'whatsapp.api_sent': { enabled: true, mode: 'credits', credits: 0, unitPrice: 20 } } }, 'sdg');
+  assert.equal(config.items['whatsapp.api_sent'].mode, 'fixed');
+  assert.equal(config.items['whatsapp.api_sent'].unitPrice, 20);
+});
+
 test('el panel contiene el catálogo completo y JavaScript válido', () => {
   const html = renderPage();
   assert.match(html, /Lectura de QR/);
   assert.match(html, /Lectura por código de barras o SKU/);
   assert.match(html, /Configuración guardada/);
+  assert.match(html, /price\.oninput/);
   new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]);
 });
 
