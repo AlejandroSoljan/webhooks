@@ -28,7 +28,7 @@ after(async () => {
 async function req(route, body, user = '') { const r = await fetch(url + route, { method: body ? 'POST' : 'GET', headers: { 'content-type': 'application/json', ...(user ? { 'x-test-user': user } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) }); return { status: r.status, body: await r.json() }; }
 const api = '/api/customer-app/TEST', admin = '/api/customer-app-admin/TEST';
 test('statistics reconstruct transfers and do not reset service time on recalls', () => {
-  const { summarize, ticketVisits, statsPage } = require('../queue_stats');
+  const { summarize, ticketVisits, ticketOrigin, statsPage } = require('../queue_stats');
   const at = seconds => new Date(Date.UTC(2026, 8, 14, 12, 0, seconds));
   const doc = { _id: 'stats', displayNumber: 'F001', dayKey: '2026-09-14', status: 'DONE', createdAt: at(0), history: [
     { action: 'created', sectorId: 'ferreteria', at: at(0) }, { action: 'claimed', at: at(30) },
@@ -40,6 +40,15 @@ test('statistics reconstruct transfers and do not reset service time on recalls'
   assert.deepEqual(ticketVisits({ status: 'CANCELLED', history: [] }), []);
   const cancelled = { _id: 'cancelled', displayNumber: 'F002', dayKey: '2026-09-14', status: 'CANCELLED', source: 'mobile', sectorId: 'ferreteria', createdAt: at(0), history: [{ action: 'created', sectorId: 'ferreteria', at: at(0) }, { action: 'customer_cancelled', sectorId: 'ferreteria', at: at(30) }] };
   const cancellationStats = summarize([cancelled], cfg.sectors); assert.equal(cancellationStats.summary.customerCancelled, 1); assert.equal(cancellationStats.summary.expired, 0); assert.equal(ticketVisits(cancelled)[0].outcome, 'customer_cancelled');
+  const origins = [
+    { _id: 'qr', displayNumber: 'F003', dayKey: '2026-09-14', status: 'WAITING', source: 'kiosk', deliveryMode: 'mobile', createdAt: at(0), history: [{ action: 'claimed', at: at(1) }] },
+    { _id: 'paper', displayNumber: 'F004', dayKey: '2026-09-14', status: 'WAITING', source: 'kiosk', deliveryMode: 'print', createdAt: at(0), history: [{ action: 'print_requested', at: at(1) }] },
+    { _id: 'phone', displayNumber: 'F005', dayKey: '2026-09-14', status: 'WAITING', source: 'mobile', deliveryMode: 'mobile', createdAt: at(0), history: [] },
+  ];
+  assert.deepEqual(origins.map(ticketOrigin), ['qr', 'printed', 'mobile']);
+  const originStats = summarize(origins, cfg.sectors);
+  assert.deepEqual([originStats.summary.qr, originStats.summary.printed, originStats.summary.mobile], [1, 1, 1]);
+  assert.deepEqual([originStats.days[0].qr, originStats.days[0].printed, originStats.days[0].mobile], [1, 1, 1]);
   new vm.Script(statsPage('TEST', '2026-09-14').match(/<script>([\s\S]*)<\/script>/)[1]);
 });
 test('queue statistics use the Asisto shell and superadmin can select a tenant', async () => {

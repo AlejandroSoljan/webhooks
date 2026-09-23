@@ -1402,9 +1402,10 @@ async function buildTokenConversationSummary({
   };
 }
 
-function renderTokenControlPage(user) {
+function renderTokenControlPage(user, tenants = []) {
   const isSuper = String(user?.role || "").toLowerCase() === "superadmin";
   const tenant = String(user?.tenantId || "").trim();
+  const tenantOptions = [...new Set((tenants || []).map(value => String(value || '').trim().toUpperCase()).filter(Boolean))].sort();
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -1487,7 +1488,7 @@ function renderTokenControlPage(user) {
 
     <div class="card">
       <div class="row">
-        ${isSuper ? `<label>Dominio<input id="fTenant" placeholder="Todos los dominios"/></label>` : `<label>Dominio<input id="fTenant" value="${esc(tenant)}" readonly/></label>`}
+        ${isSuper ? `<label>Dominio<select id="fTenant"><option value="">Todos los dominios</option>${tenantOptions.map(value => `<option value="${esc(value)}">${esc(value)}</option>`).join('')}</select></label>` : `<label>Dominio<input id="fTenant" value="${esc(tenant)}" readonly/></label>`}
         <label>Desde<input id="fFrom" type="date"/></label>
         <label>Hasta<input id="fTo" type="date"/></label>
         
@@ -1683,6 +1684,7 @@ function renderTokenControlPage(user) {
   const btnLoadConversations = document.getElementById('btnLoadConversations');
   const btnLoadMessages = document.getElementById('btnLoadMessages');
   let loadSequence = 0;
+  let lastTokenSummary = null;
 
   function esc(s){
     return String(s||'').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]); });
@@ -2039,17 +2041,15 @@ function renderTokenControlPage(user) {
 
     try{
       const summaryUrl = '/api/token-control/summary?' + buildQuery(false).toString();
-      const apiQuery=buildQuery(false);apiQuery.set('details','0');
-      const apiMessagesUrl = '/api/token-control/api-message-windows?' + apiQuery.toString();
       const monetizationQuery=new URLSearchParams();const selectedTenant=String(tenantEl.value||'').trim();if(selectedTenant)monetizationQuery.set('tenantId',selectedTenant);if(fromEl.value)monetizationQuery.set('from',fromEl.value);if(toEl.value)monetizationQuery.set('to',toEl.value);
       const result = await Promise.all([
         getJson(summaryUrl),
-        getJson(apiMessagesUrl),
         getJson('/api/monetization/summary?'+monetizationQuery.toString())
       ]);
       if(sequence!==loadSequence)return;
-      renderDomainSummary(result[0],result[1]);
-      renderMonetization(result[2]);
+      lastTokenSummary=result[0];
+      renderDomainSummary(lastTokenSummary,null);
+      renderMonetization(result[1]);
     } catch(e){
       if(sequence!==loadSequence)return;
       msgEl.textContent = e && e.message ? e.message : String(e);
@@ -2071,7 +2071,7 @@ function renderTokenControlPage(user) {
     if(apiMessageRows)apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Cargando…</td></tr>';
     if(realMessageRows)realMessageRows.innerHTML='<tr><td colspan="6" class="small">Cargando…</td></tr>';
     if(apiMessageSummary)apiMessageSummary.innerHTML='<span class="chip">Cargando…</span>';
-    try{const j=await getJson('/api/token-control/api-message-windows?'+buildQuery(true).toString());if(sequence!==loadSequence)return;renderApiMessageWindows(j,true);btnLoadMessages.textContent='Actualizar detalle de envíos WhatsApp';}
+    try{const j=await getJson('/api/token-control/api-message-windows?'+buildQuery(true).toString());if(sequence!==loadSequence)return;renderApiMessageWindows(j,true);if(lastTokenSummary)renderDomainSummary(lastTokenSummary,j);btnLoadMessages.textContent='Actualizar detalle de envíos WhatsApp';}
     catch(e){if(sequence!==loadSequence)return;if(realMessageRows)realMessageRows.innerHTML='<tr><td colspan="6" class="small">Error cargando mensajes enviados.</td></tr>';if(apiMessageRows)apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Error cargando ventanas API Mensajes.</td></tr>';btnLoadMessages.textContent='Reintentar detalle de envíos WhatsApp';}
     finally{if(sequence===loadSequence)btnLoadMessages.disabled=false;}
   }
@@ -2081,7 +2081,7 @@ function renderTokenControlPage(user) {
   btnLoadMessages.addEventListener('click',loadMessageDetails);
   setupMulti('typeFilter','tokenType','Tipo IA');
   setupMulti('channelFilter','tokenChannel','Canal');
-  if (isSuper && tenantEl) tenantEl.addEventListener('keydown', function(ev){ if (ev.key === 'Enter') load(); });
+  if (isSuper && tenantEl) tenantEl.addEventListener('change', load);
   load();
 })();
 </script>
@@ -2117,8 +2117,15 @@ function mountTokenControlRoutes(app, auth) {
       if (typeof auth.resolveTenantId === "function") {
         req._resolvedTenantId = auth.resolveTenantId(req);
       }
+      const user = req.user || {};
+      const isSuper = String(user?.role || '').toLowerCase() === 'superadmin';
+      let tenants = [];
+      if (isSuper) {
+        const db = await getDb();
+        tenants = await db.collection('tenant_config').distinct('_id', { _id: { $type: 'string' } });
+      }
       res.setHeader("Content-Type", "text/html; charset=utf-8");
-      return res.status(200).send(renderTokenControlPage(req.user || {}));
+      return res.status(200).send(renderTokenControlPage(user, tenants));
     } catch (e) {
       console.error("[token-control] page error:", e);
       return res.status(500).send("internal");

@@ -23,6 +23,14 @@ function ticketVisits(doc) {
   return visits.map(v => ({ ...v, waitSeconds: v.calledAt && v.queuedAt ? Math.max(0, (v.calledAt - v.queuedAt) / 1000) : null, serviceSeconds: v.endedAt && v.calledAt ? Math.max(0, (v.endedAt - v.calledAt) / 1000) : null }));
 }
 const mean = xs => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+function ticketOrigin(doc) {
+  const actions = new Set((doc.history || []).map(item => item.action));
+  if (doc.deliveryMode === 'print' || actions.has('print_requested')) return 'printed';
+  if (doc.source === 'kiosk' && (doc.deliveryMode === 'mobile' || actions.has('claimed') || actions.has('linked_app'))) return 'qr';
+  if (doc.source === 'mobile') return 'mobile';
+  if (doc.deliveryMode === 'mobile') return 'qr';
+  return doc.source || 'other';
+}
 async function listStatsTenants(db, fallback) {
   const out = new Set(), add = value => { const t = String(value || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 60); if (t && t !== 'DEFAULT' && !t.startsWith('__')) out.add(t); };
   add(fallback);
@@ -50,14 +58,14 @@ function summarize(rows, sectors) {
     if (v.serviceSeconds !== null) g.services.push(v.serviceSeconds);
   }
   const days = new Map();
-  for (const d of rows) { if (!days.has(d.dayKey)) days.set(d.dayKey, { day: d.dayKey, issued: 0, finished: 0, expired: 0 }); const g = days.get(d.dayKey); g.issued++; g.finished += Number(d.status === 'DONE'); g.expired += Number(d.status === 'CANCELLED' && !hasAction(d, 'customer_cancelled') && !hasAction(d, 'kiosk_closed')); }
+  for (const d of rows) { if (!days.has(d.dayKey)) days.set(d.dayKey, { day: d.dayKey, issued: 0, qr: 0, mobile: 0, printed: 0, finished: 0, expired: 0 }); const g = days.get(d.dayKey),origin=ticketOrigin(d); g.issued++; g.qr += Number(origin==='qr'); g.mobile += Number(origin==='mobile'); g.printed += Number(origin==='printed'); g.finished += Number(d.status === 'DONE'); g.expired += Number(d.status === 'CANCELLED' && !hasAction(d, 'customer_cancelled') && !hasAction(d, 'kiosk_closed')); }
   const hours = Array.from({ length: 24 }, (_, hour) => ({ hour, issued: 0 }));
   for (const d of rows) if (d.createdAt) hours[Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hourCycle: 'h23' }).format(d.createdAt))].issued++;
   return {
-    summary: { issued: rows.length, activated: rows.filter(d => ticketVisits(d).length).length, finished: rows.filter(d => d.status === 'DONE').length, skipped: rows.filter(d => d.status === 'SKIPPED').length, customerCancelled: rows.filter(d => hasAction(d, 'customer_cancelled')).length, expired: rows.filter(d => d.status === 'CANCELLED' && !hasAction(d, 'customer_cancelled') && !hasAction(d, 'kiosk_closed')).length, waiting: rows.filter(d => d.status === 'WAITING').length, called: rows.filter(d => d.status === 'CALLED').length, transfers: visits.filter(v => v.outcome === 'transfer').length, mobile: rows.filter(d => d.deliveryMode === 'mobile' || d.source === 'mobile').length, printed: rows.filter(d => d.deliveryMode === 'print').length, averageWaitSeconds: mean(waits), p90WaitSeconds: waits.length ? waits[Math.ceil(waits.length * .9) - 1] : null, averageServiceSeconds: mean(services), waitSamples: waits.length, serviceSamples: services.length },
+    summary: { issued: rows.length, activated: rows.filter(d => ticketVisits(d).length).length, finished: rows.filter(d => d.status === 'DONE').length, skipped: rows.filter(d => d.status === 'SKIPPED').length, customerCancelled: rows.filter(d => hasAction(d, 'customer_cancelled')).length, expired: rows.filter(d => d.status === 'CANCELLED' && !hasAction(d, 'customer_cancelled') && !hasAction(d, 'kiosk_closed')).length, waiting: rows.filter(d => d.status === 'WAITING').length, called: rows.filter(d => d.status === 'CALLED').length, transfers: visits.filter(v => v.outcome === 'transfer').length, qr: rows.filter(d => ticketOrigin(d) === 'qr').length, mobile: rows.filter(d => ticketOrigin(d) === 'mobile').length, printed: rows.filter(d => ticketOrigin(d) === 'printed').length, otherOrigin: rows.filter(d => !['qr','mobile','printed'].includes(ticketOrigin(d))).length, averageWaitSeconds: mean(waits), p90WaitSeconds: waits.length ? waits[Math.ceil(waits.length * .9) - 1] : null, averageServiceSeconds: mean(services), waitSamples: waits.length, serviceSamples: services.length },
     sectors: [...groups.values()].map(({ waits, services, ...g }) => ({ ...g, averageWaitSeconds: mean(waits), averageServiceSeconds: mean(services), waitSamples: waits.length, serviceSamples: services.length })),
     days: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)), hours,
-    tickets: rows.map(d => ({ id: String(d._id), number: d.displayNumber, day: d.dayKey, status: d.status, source: d.deliveryMode || d.source, createdAt: d.createdAt, visits: ticketVisits(d) })),
+    tickets: rows.map(d => ({ id: String(d._id), number: d.displayNumber, day: d.dayKey, status: d.status, source: ticketOrigin(d), createdAt: d.createdAt, visits: ticketVisits(d) })),
   };
 }
 function legacyStatsPage(tenant, today, { tenants = [tenant], isSuper = false } = {}) {
@@ -95,4 +103,4 @@ function mountQueueStats(app, { scope, wrap, allowed, isOpen = () => false, dayK
     res.json({ from, to, ...summarize(rows, cfg.sectors) });
   }));
 }
-module.exports = { mountQueueStats, ticketVisits, summarize, statsPage: redesignedStatsPage, listStatsTenants };
+module.exports = { mountQueueStats, ticketVisits, ticketOrigin, summarize, statsPage: redesignedStatsPage, listStatsTenants };
