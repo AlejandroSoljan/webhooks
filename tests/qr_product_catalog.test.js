@@ -11,9 +11,16 @@ const { managerDirectLookupUrl, managerCatalogSearchUrl, generalCatalogSearchQue
 test('la consulta general abre un chat sin mencionar la marca en el título', () => {
   const html = pageHtml({ tenant: 'MCN', code: 'CONSULTA_GENERAL', branding: { companyName: 'Mecan' } });
   assert.match(html, /Encontralo al instante/);
-  assert.match(html, />Consultas<\/a>/);
+  assert.doesNotMatch(html, />Consultas<\/a>/);
   assert.match(html, /GENERAL_CHAT=true/);
   new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]);
+});
+
+test('un producto escaneado conserva su chat contextual sin mostrar el acceso al chat general', () => {
+  const html = pageHtml({ tenant: 'MCN', code: 'SKU-1', branding: { companyName: 'Mecan' }, aiEnabled: true });
+  assert.match(html, /id="moreBtn"/);
+  assert.match(html, /Mostrar más info/);
+  assert.doesNotMatch(html, />Consultas<\/a>/);
 });
 
 test('Manager consulta directamente código de barras sin descargar el catálogo', () => {
