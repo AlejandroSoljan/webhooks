@@ -1,7 +1,7 @@
-# Asisto | Version: 5.00.178 | Fecha: 2026-09-20
+# Asisto | Version: 5.00.213 | Fecha: 2026-09-23
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:LOCALAPPDATA 'AsistoSupport'
-$release = Join-Path $root 'app-5.00.178'
+$release = Join-Path $root 'app-5.00.213'
 $arch = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
 $runtime = Join-Path $root "node-v24.12.0-win-$arch"
 $node = Join-Path $runtime 'node.exe'
@@ -60,6 +60,21 @@ while ((Get-ScheduledTask -TaskName $taskName).State -ne 'Running') {
   if ((Get-Date) -gt $deadline) { throw 'Windows no inicio la tarea de Asisto. Revisa el Programador de tareas.' }
   Start-Sleep -Milliseconds 200
 }
+$pairing = $null
+$lastLocalError = $null
+$deadline = (Get-Date).AddSeconds(45)
+while ((Get-Date) -lt $deadline) {
+  try {
+    $pairing = Invoke-RestMethod -Uri 'http://127.0.0.1:17658/pairing' -Headers @{ Origin = 'https://asistobot.com.ar'; 'X-Asisto-Local' = '1' } -TimeoutSec 3
+    if ($pairing.state -in @('pending','approved')) { break }
+  } catch { $lastLocalError = $_.Exception.Message }
+  Start-Sleep -Seconds 1
+}
+if (-not $pairing -or $pairing.state -notin @('pending','approved')) {
+  $errorLog = Join-Path $profile 'logs\agent-error.log'
+  $detail = if (Test-Path -LiteralPath $errorLog) { (Get-Content -LiteralPath $errorLog -Tail 12) -join [Environment]::NewLine } else { $lastLocalError }
+  throw "La tarea se inicio, pero el agente no quedo operativo ni se registro en Asisto. Detalle: $detail`nRegistro: $errorLog"
+}
 $shell = New-Object -ComObject WScript.Shell
 $link = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Vincular Asisto.lnk'
 if (Test-Path -LiteralPath $link) {
@@ -85,7 +100,13 @@ if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'Extension')) {
   Write-Host 'Si ya estaba cargada, pulsa Recargar en la extension Asisto.'
   Write-Host 'Tambien quedo el acceso directo Extension Asisto en el Escritorio.'
 }
-Write-Host 'Instalado. Ingresa a la web con tu usuario y usa Escanear mi QR > Vincular / reconectar.'
+if ($pairing.state -eq 'pending') {
+  Write-Host "Agente registrado correctamente. Codigo de esta PC: $($pairing.code)"
+  Write-Host 'Ingresa a Asisto con el usuario correcto y usa Sesiones WhatsApp Web > Vincular / reconectar.'
+} else {
+  Write-Host 'Agente operativo y autorizado. Ingresa a Sesiones WhatsApp Web para ver o reconectar WhatsApp.'
+}
 Write-Host 'El agente no abre el navegador automaticamente.'
 Write-Host 'Luego el agente iniciara automaticamente al ingresar a Windows.'
 Write-Host "Perfil instalado: $profile"
+Write-Host "Diagnostico: $(Join-Path $profile 'logs')"
