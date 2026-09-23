@@ -6,7 +6,7 @@ const vm = require('vm');
 const { createRequire } = require('module');
 const path = require('path');
 const { fixture } = require('./catalog_fixture');
-const { managerDirectLookupUrl, pageHtml } = require('../qr_product_web');
+const { managerDirectLookupUrl, managerCatalogSearchUrl, generalCatalogSearchQuery, isGeneralCatalogQuery, pageHtml } = require('../qr_product_web');
 
 test('la consulta general abre un chat sin mencionar la marca en el título', () => {
   const html = pageHtml({ tenant: 'MCN', code: 'CONSULTA_GENERAL', branding: { companyName: 'Mecan' } });
@@ -32,6 +32,15 @@ test('Manager acepta SKU en minúsculas y lo consulta normalizado', () => {
   const url = new URL(managerDirectLookupUrl('https://manager.example/v300/api/Api_Articulos/Consulta?key=x', 'bp-mar0475'));
   assert.equal(url.searchParams.get('campo'), 'ID');
   assert.equal(url.searchParams.get('valor'), 'BP-MAR0475');
+});
+
+test('la búsqueda general usa descripción flexible y normaliza preguntas y plurales', () => {
+  assert.equal(generalCatalogSearchQuery('¿Tenés motosierras?'), 'motosierra');
+  assert.equal(generalCatalogSearchQuery('Mostrame taladros percutores Bosch'), 'taladro%percutor%bosch');
+  const url = new URL(managerCatalogSearchUrl('https://manager.example/v300/api/Api_Articulos/Consulta?key=x', generalCatalogSearchQuery('¿Tenés motosierras?')));
+  assert.equal(url.searchParams.get('campo'), 'OTRO');
+  assert.equal(url.searchParams.get('valor'), '%motosierra%');
+  assert.equal(isGeneralCatalogQuery('¿Tenés motosierras?'), true);
 });
 function load(api) {
   const f = fixture(), routes = new Map();

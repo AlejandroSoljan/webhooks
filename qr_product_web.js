@@ -281,8 +281,27 @@ function managerDirectLookupUrl(value, code) {
 function managerCatalogSearchUrl(value, query) {
   const url = new URL(String(value || ''));
   url.searchParams.set('campo', 'OTRO');
-  url.searchParams.set('valor', clean(query, 120));
+  const normalized = clean(query, 120).replace(/^%+|%+$/g, '');
+  url.searchParams.set('valor', normalized ? `%${normalized}%` : '');
   return url.toString();
+}
+
+function generalCatalogSearchQuery(value) {
+  const stopWords = new Set([
+    'a', 'al', 'algo', 'alguna', 'algun', 'alguno', 'algunos', 'con', 'de', 'del', 'el', 'en', 'hay',
+    'la', 'las', 'lo', 'los', 'me', 'mostrame', 'necesito', 'para', 'por', 'precio', 'precios', 'que',
+    'quisiera', 'stock', 'tenes', 'tienen', 'un', 'una', 'unas', 'unos', 'venden', 'ver', 'y'
+  ]);
+  const tokens = String(value || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(/\s+/)
+    .filter(token => token.length > 1 && !stopWords.has(token));
+  const normalized = tokens.map(token => token.length > 5 && token.endsWith('es') ? token.slice(0, -2) : (token.length > 4 && token.endsWith('s') ? token.slice(0, -1) : token));
+  return [...new Set(normalized)].slice(0, 5).join('%');
+}
+
+function isGeneralCatalogQuery(value) {
+  return /(?:\bten[eé]s\b|\btienen\b|\bhay\b|\bbusco\b|\bbuscar\b|\bnecesito\b|\bvenden\b|\bprecio(?:s)?\b|\bstock\b|\bdisponib|\bproducto(?:s)?\b|\bmodelo(?:s)?\b|\bmarca(?:s)?\b)/i.test(String(value || ''));
 }
 
 function photoSearchTerms(identification) {
@@ -307,6 +326,24 @@ async function fetchPhotoCatalogSuggestions(cfg, identification) {
     if (found.size >= 4) break;
   }
   return [...found.values()].slice(0, 4);
+}
+
+async function fetchGeneralCatalogSuggestions(cfg, message) {
+  if (cfg.apiMethod !== 'GET' || !/\/api\/Api_Articulos\/Consulta/i.test(cfg.apiUrl)) return [];
+  const query = generalCatalogSearchQuery(message);
+  if (!query) return [];
+  const headers = { Accept: 'application/json' };
+  if (cfg.apiAuthHeader && cfg.apiAuthValue) headers[cfg.apiAuthHeader] = cfg.apiAuthValue;
+  const response = await axios({ method: 'GET', url: managerCatalogSearchUrl(cfg.apiUrl, query), headers, timeout: Math.min(cfg.apiTimeoutMs, 20000), validateStatus: () => true, maxContentLength: 2_000_000 });
+  if (response.status < 200 || response.status >= 300) return [];
+  const found = new Map();
+  for (const raw of externalProductRows(response.data).slice(0, 100)) {
+    try {
+      const product = normalizeQrProduct(raw, cfg);
+      if (!found.has(product.code.toUpperCase())) found.set(product.code.toUpperCase(), product);
+    } catch {}
+  }
+  return [...found.values()].sort((a, b) => Number(b.available === true) - Number(a.available === true)).slice(0, 4);
 }
 
 async function loadQrConfig(db, tenant) {
@@ -1608,6 +1645,25 @@ function mountQrProductWeb(app) {
         return res.json({ ok: true, conversationId: String(convId), manual: true, reply: '' });
       }
 
+      if (generalChat && !initial && isGeneralCatalogQuery(message)) {
+        const directProducts = await fetchGeneralCatalogSuggestions(cfg, message);
+        if (directProducts.length) {
+          const mergedProducts = mergeConfirmedCommercialProducts(conv.qrConfirmedCommercialProducts, directProducts);
+          const shownCodes = directProducts.map(item => String(item?.code || '').trim()).filter(Boolean);
+          await db.collection('conversations').updateOne(
+            { _id: convId },
+            { $set: { qrConfirmedCommercialProducts: mergedProducts, qrLastShownCatalogCodes: shownCodes, qrLastShownCatalogAt: new Date(), updatedAt: new Date() } }
+          );
+          const narrative = deterministicCatalogNarrative(directProducts, message);
+          const prices = authoritativeCatalogPricesBlock(directProducts, cfg);
+          const reply = [narrative, prices].filter(Boolean).join('\n\n');
+          await saveQrMessage(db, { tenant, conversationId: convId, waId, role: 'assistant', content: reply, product, meta: { catalogSearch: true, direct: true } });
+          console.log(`[qr] direct catalog search tenant=${tenant} conv=${String(convId)} products=${directProducts.length} ms=${Date.now() - startedAt}`);
+          res.setHeader('Cache-Control', 'no-store');
+          return res.json({ ok: true, conversationId: String(convId), reply, contactCaptured: false });
+        }
+      }
+
       if (catalogFollowUp) {
         const reply = catalogFollowUpReply(shownCatalogProducts, message, cfg);
         await saveQrMessage(db, { tenant, conversationId: convId, waId, role: 'assistant', content: reply, product, meta: { catalogFollowUp: true } });
@@ -1777,4 +1833,4 @@ function mountQrProductWeb(app) {
   });
 }
 
-module.exports = { mountQrProductWeb, loadQrConfig, normalizeQrProduct, managerDirectLookupUrl, qrPublicBranding, pageHtml };
+module.exports = { mountQrProductWeb, loadQrConfig, normalizeQrProduct, managerDirectLookupUrl, managerCatalogSearchUrl, generalCatalogSearchQuery, isGeneralCatalogQuery, qrPublicBranding, pageHtml };
