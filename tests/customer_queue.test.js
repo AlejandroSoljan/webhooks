@@ -122,6 +122,13 @@ test('two kiosks allocate unique numbers; same device retries return the same ti
   const repeated = await Promise.all(Array.from({ length: 4 }, () => req(api + '/tickets', { sectorId: 'ferreteria', installId: 'device-0' })));
   assert.ok(repeated.every(r => r.body.id === results[0].body.id)); assert.equal(sent, 0);
 });
+
+test('a stale counter continues after the highest synchronized ticket', async () => {
+  await db.collection('queue_tickets').insertOne({ tenantId: 'TEST', branchId: 'CENTRAL', dayKey: '2026-09-14', sectorId: 'ferreteria', sectorName: 'Ferretería', prefix: 'F', number: 80, displayNumber: 'F080', installId: 'synced-80', status: 'DONE', createdAt: new Date(), updatedAt: new Date(), history: [] });
+  await db.collection('queue_counters').updateOne({ _id: 'TEST:2026-09-14:CENTRAL:ferreteria' }, { $set: { sequence: 2 } }, { upsert: true });
+  const issued = await req(api + '/tickets', { sectorId: 'ferreteria', installId: 'after-sync-80', source: 'kiosk' }, 'TEST');
+  assert.equal(issued.status, 200); assert.equal(issued.body.displayNumber, 'F081');
+});
 test('a phone can cancel only its own active ticket and then request a new one', async () => {
   const created = await req(api + '/tickets', { sectorId: 'caja', installId: 'cancel-owner' });
   assert.equal(created.status, 200);

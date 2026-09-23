@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { ObjectId } = require('mongodb');
-const { preferred, reviveTicket } = require('../queue_cloud_sync');
+const { preferred, reviveTicket, reviveCounter, mergeCounters } = require('../queue_cloud_sync');
 
 test('cloud sync keeps the newest queue update and uses richer history on ties', () => {
   const old = { updatedAt: new Date('2026-09-22T10:00:00Z'), history: [{ action: 'created' }] };
@@ -10,6 +10,14 @@ test('cloud sync keeps the newest queue update and uses richer history on ties',
   assert.equal(preferred(recent, old), 'local');
   assert.equal(preferred(old, recent), 'cloud');
   assert.equal(preferred({ ...old, history: [{}, {}] }, old), 'local');
+});
+
+test('queue counters only move forward and remain scoped to the tenant', async () => {
+  assert.deepEqual(reviveCounter({ _id: 'MCN:2026-09-22:CENTRAL:herrajes', sequence: 3 }, 'MCN'), { _id: 'MCN:2026-09-22:CENTRAL:herrajes', sequence: 3 });
+  assert.throws(() => reviveCounter({ _id: 'OTRO:2026-09-22:CENTRAL:herrajes', sequence: 3 }, 'MCN'), /invalid_counter/);
+  const calls = [], collection = { updateOne: async (...args) => calls.push(args) };
+  await mergeCounters(collection, [{ _id: 'MCN:x', sequence: 7 }]);
+  assert.deepEqual(calls[0], [{ _id: 'MCN:x' }, { $max: { sequence: 7 } }, { upsert: true }]);
 });
 
 test('cloud sync restores Mongo identifiers and dates and rejects another tenant', () => {

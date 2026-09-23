@@ -20,6 +20,12 @@ async function serial(key, fn) {
   await previous;
   try { return await fn(); } finally { release(); if (locks.get(key) === pending) locks.delete(key); }
 }
+async function nextSequence(db, tickets, base, sectorId) {
+  const counterId = [base.tenantId, base.dayKey, base.branchId, sectorId].join(':');
+  const latest = await tickets.findOne({ ...base, sectorId, number: { $type: 'number' } }, { sort: { number: -1 }, projection: { number: 1 } });
+  await db.collection('queue_counters').updateOne({ _id: counterId }, { $max: { sequence: Math.max(0, Number(latest?.number) || 0) } }, { upsert: true });
+  return db.collection('queue_counters').findOneAndUpdate({ _id: counterId }, { $inc: { sequence: 1 } }, { returnDocument: 'after' });
+}
 function allowed(req, t) { return !!req.user?.uid && (req.user.role === 'superadmin' || tenant(req.user.tenantId) === t); }
 function fail(status, message) { const e = new Error(message); e.status = status; throw e; }
 function presenceToken(t, secret, now = Date.now()) {
@@ -154,7 +160,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
         const admitted = await db.collection('customer_app_devices').findOne({ tenantId: t, installId, queueAccessUntil: { $gt: new Date() } }, { projection: { _id: 1 } });
         if (!admitted) fail(403, 'Para sacar tu primer turno, acercate al turnero del local y escaneá el QR. Después podrás sacar otros turnos desde esta web durante 2 horas.');
       }
-      const counter = await db.collection('queue_counters').findOneAndUpdate({ _id: [t, base.dayKey, base.branchId, sectorId].join(':') }, { $inc: { sequence: 1 } }, { upsert: true, returnDocument: 'after' });
+      const counter = await nextSequence(db, tickets, base, sectorId);
       const now = new Date(), doc = { ...base, sectorId, sectorName: sector.name, prefix: sector.prefix, number: counter.sequence, displayNumber: sector.prefix + String(counter.sequence).padStart(3, '0'), installId, status: 'WAITING', createdAt: now, queuedAt: now, updatedAt: now, source: kiosk ? 'kiosk' : 'mobile', history: [{ action: 'created', sectorId, at: now }] };
       if (kiosk) doc.kioskRequestId = installId;
       if (reserve) Object.assign(doc, { status: 'RESERVED', reservationExpiresAt: new Date(+now + 180000), deliveryMode: 'pending' });
@@ -315,4 +321,4 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
   }));
   return { reconcileTenant };
 }
-module.exports = { mountQueue, presenceToken, validPresence, serial, QUEUE_DEVICE_ACCESS_MS };
+module.exports = { mountQueue, presenceToken, validPresence, serial, nextSequence, QUEUE_DEVICE_ACCESS_MS };
