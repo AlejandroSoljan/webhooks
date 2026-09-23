@@ -137,10 +137,22 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     ]);
     res.json({ ok: true, accessUntil });
   }));
+  app.get('/api/customer-app/:tenant/presence/:sessionId/status', wrap(async (req, res) => {
+    const { t, db } = await scope(req), sessionId = clean(req.params.sessionId, 80);
+    const event = sessionId && await db.collection('queue_presence_events').findOne({ tenantId: t, sessionId }, { projection: { _id: 1 } });
+    res.json({ checkedIn: !!event });
+  }));
   app.get('/api/customer-app-admin/:tenant/presence/:sessionId/status', wrap(async (req, res) => {
     const { t, db } = await scope(req); guard(req, t);
     const sessionId = clean(req.params.sessionId, 80);
-    const event = sessionId && await db.collection('queue_presence_events').findOne({ tenantId: t, sessionId }, { projection: { _id: 1 } });
+    let event = sessionId && await db.collection('queue_presence_events').findOne({ tenantId: t, sessionId }, { projection: { _id: 1 } });
+    if (!event && sessionId) {
+      try {
+        const remote = new URL('/api/customer-app/' + encodeURIComponent(t) + '/presence/' + encodeURIComponent(sessionId) + '/status', publicBase);
+        const response = await fetch(remote, { signal: AbortSignal.timeout(3000) });
+        if (response.ok) event = (await response.json()).checkedIn;
+      } catch (_) {}
+    }
     res.json({ checkedIn: !!event });
   }));
   app.post('/api/customer-app-admin/:tenant/settings', wrap(async (req, res) => {

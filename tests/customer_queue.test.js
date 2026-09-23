@@ -201,6 +201,7 @@ test('Autoservicio records presence and enables web tickets for two hours', asyn
   assert.equal(checkin.status, 200); assert.equal(checkin.body.ok, true);
   const event = await db.collection('queue_presence_events').findOne({ tenantId: 'TEST', sessionId, installId: 'visitor-phone' });
   assert.equal(event.source, 'kiosk_autoservicio');
+  const publicStatus = await req(api + '/presence/' + sessionId + '/status'); assert.equal(publicStatus.body.checkedIn, true);
   const status = await req(admin + '/presence/' + sessionId + '/status', undefined, 'TEST'); assert.equal(status.body.checkedIn, true);
   const ticket = await req(api + '/tickets', { sectorId: 'caja', installId: 'visitor-phone' }); assert.equal(ticket.status, 200);
 });
