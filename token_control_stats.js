@@ -5,6 +5,7 @@
 const { ObjectId } = require("mongodb");
 
 const { getDb } = require("./db");
+const { listMonetizationTenants } = require('./monetization_config');
 
 // Tarifas reales por defecto para Ayuda cuando usa gpt-5.6-luna.
 // Se expresan por 1K tokens para mantener el mismo esquema del panel.
@@ -2122,8 +2123,7 @@ function mountTokenControlRoutes(app, auth) {
       let tenants = [];
       if (isSuper) {
         const db = await getDb();
-        const rows = await db.collection('tenant_config').find({}, { projection: { _id: 1 } }).sort({ _id: 1 }).toArray();
-        tenants = rows.map(row => row?._id).filter(value => typeof value === 'string');
+        tenants = await listMonetizationTenants(db, user?.tenantId);
       }
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       return res.status(200).send(renderTokenControlPage(user, tenants));
