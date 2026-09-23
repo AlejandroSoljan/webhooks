@@ -156,7 +156,8 @@ test('concurrent calls cannot skip a ticket; transfer preserves identity and joi
 });
 test('presence gate only restricts new tickets and permits recovery after QR expiration', async () => {
   cfg.queuePresence = 'qr';
-  assert.equal((await req(api + '/tickets', { sectorId: 'caja', installId: 'outside' })).status, 403);
+  const denied = await req(api + '/tickets', { sectorId: 'caja', installId: 'outside' });
+  assert.equal(denied.status, 403); assert.match(denied.body.error, /primer turno.*turnero/i);
   const x = await req(api + '/tickets', { sectorId: 'caja', installId: 'inside', presence: presenceToken('TEST', 'test-secret') }); assert.equal(x.status, 200);
   const retry = await req(api + '/tickets', { sectorId: 'caja', installId: 'inside' }); assert.equal(retry.body.id, x.body.id);
   assert.equal((await req(api + '/tickets/' + x.body.id + '?installId=inside')).status, 200);
@@ -229,6 +230,12 @@ test('browser-to-app handoff transfers notification ownership, is retryable, and
   const doc = await db.collection('queue_tickets').findOne({ kioskRequestId: 'kiosk-reservation' }); assert.equal(doc.installId, 'native-phone');
   assert.equal((await req(api + '/tickets/' + reserved.id + '?installId=' + reserved.owner)).status, 200);
   assert.equal((await req(api + '/tickets', { sectorId: 'caja', installId: reserved.owner })).body.id, reserved.id);
+  assert.equal((await req(api + '/tickets/' + reserved.id + '/cancel', { installId: reserved.owner })).status, 200);
+  const admitted = await req(api + '/tickets', { sectorId: 'ferreteria', installId: reserved.owner });
+  assert.equal(admitted.status, 200); assert.notEqual(admitted.body.id, reserved.id);
+  assert.equal((await req(api + '/tickets/' + admitted.body.id + '/cancel', { installId: reserved.owner })).status, 200);
+  const access = await db.collection('customer_app_devices').findOne({ tenantId: 'TEST', installId: reserved.owner });
+  assert.ok(+access.queueAccessUntil > Date.now() + 119 * 60 * 1000);
 });
 test('printing activates the same reservation and retries never create a second ticket', async () => {
   const x = (await req(api + '/tickets', { sectorId: 'caja', installId: 'paper', source: 'kiosk', delivery: 'qr_or_print' }, 'TEST')).body;

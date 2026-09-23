@@ -9,6 +9,7 @@ const { createQueuePrinter } = require('./queue_printer');
 const clean = (s, n = 120) => String(s || '').trim().slice(0, n);
 const tenant = s => clean(s, 60).toUpperCase().replace(/[^A-Z0-9_-]/g, '');
 const active = ['WAITING', 'CALLED'];
+const QUEUE_DEVICE_ACCESS_MS = 2 * 60 * 60 * 1000;
 const locks = new Map();
 // This service has one authoritative Node process. All writes share this lock.
 async function serial(key, fn) {
@@ -149,7 +150,10 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
       const legacy = kiosk && !existing ? await tickets.findOne({ ...base, installId, source: 'kiosk' }) : null;
       if (existing) return existing;
       if (legacy) return legacy;
-      if (!kiosk && cfg.queuePresence === 'qr' && !validPresence(req.body?.presence, t, secret)) fail(403, 'Escaneá el QR de la pantalla del local para sacar tu turno.');
+      if (!kiosk && cfg.queuePresence === 'qr' && !validPresence(req.body?.presence, t, secret)) {
+        const admitted = await db.collection('customer_app_devices').findOne({ tenantId: t, installId, queueAccessUntil: { $gt: new Date() } }, { projection: { _id: 1 } });
+        if (!admitted) fail(403, 'Para sacar tu primer turno, acercate al turnero del local y escaneá el QR. Después podrás sacar otros turnos desde esta web durante 2 horas.');
+      }
       const counter = await db.collection('queue_counters').findOneAndUpdate({ _id: [t, base.dayKey, base.branchId, sectorId].join(':') }, { $inc: { sequence: 1 } }, { upsert: true, returnDocument: 'after' });
       const now = new Date(), doc = { ...base, sectorId, sectorName: sector.name, prefix: sector.prefix, number: counter.sequence, displayNumber: sector.prefix + String(counter.sequence).padStart(3, '0'), installId, status: 'WAITING', createdAt: now, queuedAt: now, updatedAt: now, source: kiosk ? 'kiosk' : 'mobile', history: [{ action: 'created', sectorId, at: now }] };
       if (kiosk) doc.kioskRequestId = installId;
@@ -235,6 +239,11 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
       if (handoff) Object.assign(updated, { usedHandoffHash: doc.handoffHash, usedHandoffInstallId: installId, usedHandoffExpiresAt: doc.handoffExpiresAt });
       return tickets.findOneAndUpdate({ _id: doc._id }, { $set: updated, $unset: { handoffHash: '', handoffExpiresAt: '' }, ...(handoff ? { $addToSet: { linkedInstallIds: doc.installId } } : {}), $push: { history: { action: handoff ? 'linked_app' : 'claimed', at: new Date() } } }, { returnDocument: 'after' });
     });
+    await db.collection('customer_app_devices').updateOne(
+      { tenantId: t, installId },
+      { $max: { queueAccessUntil: new Date(Date.now() + QUEUE_DEVICE_ACCESS_MS) }, $set: { lastSeenAt: new Date() }, $setOnInsert: { createdAt: new Date(), platform: 'Web' } },
+      { upsert: true }
+    );
     await reconcileBase(db, base);
     res.json(await view(db, doc));
   }));
@@ -306,4 +315,4 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
   }));
   return { reconcileTenant };
 }
-module.exports = { mountQueue, presenceToken, validPresence, serial };
+module.exports = { mountQueue, presenceToken, validPresence, serial, QUEUE_DEVICE_ACCESS_MS };
