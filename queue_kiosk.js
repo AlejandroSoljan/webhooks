@@ -57,8 +57,7 @@ function kiosk() {
     printing = true; $('printTicket').disabled = true;
     try {
       printRequestId ||= requestId();
-      const x = await request(ADMIN + '/tickets/' + reserved.id + '/print', { method: 'POST', body: JSON.stringify({ printRequestId }) });
-      printRequestId = '';
+      const x = await request(ADMIN + '/tickets/' + reserved.id + '/print', { method: 'POST', body: JSON.stringify({ printRequestId, clientPrinter: 'local_http' }) });
       if (x.serverPrinted) {
         $('claimArea').hidden = true;
         $('deliveryTitle').textContent = 'Ticket impreso';
@@ -68,15 +67,18 @@ function kiosk() {
         $('printTicket').textContent = 'Volver a imprimir'; $('deliveryError').textContent = '';
         return;
       }
-      const receipt = $('receipt'); receipt.replaceChildren();
-      if(['MCN','DEMO_FERRETERIA'].includes(T)){const mark=element('img');mark.src='/customer-app/assets/mecan-logo.webp';mark.alt='Mecan';mark.className='receiptLogo';receipt.append(mark)}
-      receipt.append(element('h2', x.businessName), element('p', x.sectorName), element('div', x.displayNumber, 'receiptNumber'), element('p', new Date(x.createdAt).toLocaleString('es-AR')), element('p', 'Mirá la pantalla de llamados.'), element('p', 'Conservá este número si te derivan a otra sección.'));
-      const powered=element('div',undefined,'receiptPowered');powered.append(element('span','Powered by'));const asisto=element('img');asisto.src='/customer-app/assets/asisto-logo.png';asisto.alt='';powered.append(asisto,element('strong','Asisto'));receipt.append(powered,element('div','www.asistobot.com.ar'));
-      $('deliveryStatus').textContent = 'Turno confirmado para imprimir';
+      const parts = Object.fromEntries(new Intl.DateTimeFormat('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', hour12:false }).formatToParts(new Date(x.createdAt)).map(part => [part.type, part.value]));
+      const payload = { numero:x.displayNumber, seccion:x.sectorName, fecha:parts.day+'/'+parts.month+'/'+parts.year+' '+parts.hour+':'+parts.minute, qr:x.claimUrl };
+      const localResponse = await fetch('http://127.0.0.1:9105/imprimir', { method:'POST', headers:{ 'content-type':'application/json' }, body:JSON.stringify(payload), signal:AbortSignal.timeout(8000) });
+      if (!localResponse.ok) throw Error('El servicio local de impresión respondió '+localResponse.status+'.');
+      printRequestId = '';
+      $('claimArea').hidden = true;
+      $('deliveryTitle').textContent = 'Ticket impreso';
+      $('deliveryMessage').textContent = 'Retirá tu comprobante y mirá la pantalla de llamados.';
+      $('deliveryStatus').textContent = 'Impresión enviada correctamente.';
       $('closeTicket').hidden = false; $('closeTicket').textContent = 'Terminé';
       $('printTicket').textContent = 'Volver a imprimir'; $('deliveryError').textContent = '';
-      window.print();
-    } catch (e) { $('deliveryError').textContent = e.message; }
+    } catch (e) { $('deliveryError').textContent = e?.name === 'TimeoutError' ? 'El servicio local de impresión no respondió.' : (e.message || 'No se pudo conectar con la impresora local.'); }
     finally { printing = false; $('printTicket').disabled = false; }
   }
   async function dismiss() {

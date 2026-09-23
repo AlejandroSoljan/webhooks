@@ -39,6 +39,17 @@ test('kiosk source includes an HTTP-compatible request id fallback', () => {
   assert.doesNotMatch(source, /installId:\s*crypto\.randomUUID\(\)/);
 });
 
+test('kiosk sends ticket data and its full claim URL to the local print service', () => {
+  const source = require('../queue_kiosk').kiosk.toString();
+  assert.match(source, /http:\/\/127\.0\.0\.1:9105\/imprimir/);
+  assert.match(source, /numero:x\.displayNumber/);
+  assert.match(source, /seccion:x\.sectorName/);
+  assert.match(source, /fecha:parts\.day/);
+  assert.match(source, /qr:x\.claimUrl/);
+  assert.match(source, /clientPrinter:\s*'local_http'/);
+  assert.doesNotMatch(source, /window\.print\(/);
+});
+
 test('MCN receives Mecan branding while the demo remains available', () => {
   const { queuePage } = require('../queue_pages');
   for (const tenant of ['MCN', 'DEMO_FERRETERIA']) {

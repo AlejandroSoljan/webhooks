@@ -209,16 +209,17 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     const { t, db, cfg, base } = await scope(req); guard(req, t);
     if (!ObjectId.isValid(req.params.id)) fail(404, 'Turno inexistente');
     const printRequestId = clean(req.body?.printRequestId, 120);
-    if (printer.enabled && !/^[A-Za-z0-9_.:-]{8,120}$/.test(printRequestId)) fail(400, 'Solicitud de impresion invalida.');
+    const clientPrinter = req.body?.clientPrinter === 'local_http';
+    if ((printer.enabled || clientPrinter) && !/^[A-Za-z0-9_.:-]{8,120}$/.test(printRequestId)) fail(400, 'Solicitud de impresion invalida.');
     const result = await serial(t, async () => {
       await expire(db, base);
       const tickets = db.collection('queue_tickets'), doc = await tickets.findOne({ ...base, _id: new ObjectId(req.params.id) });
       if (!doc) fail(404, 'Turno inexistente');
       if (doc.status === 'CANCELLED') fail(410, 'La reserva venció. Elegí nuevamente la sección.');
-      const alreadySubmitted = printer.enabled && (doc.printRequestIds || []).includes(printRequestId);
+      const alreadySubmitted = !clientPrinter && printer.enabled && (doc.printRequestIds || []).includes(printRequestId);
       if (doc.deliveryMode !== 'print' && (doc.status !== 'RESERVED' || doc.claimedAt)) fail(409, 'Este turno ya fue entregado al celular.');
-      let submitted = { enabled: printer.enabled, printed: alreadySubmitted, duplicate: alreadySubmitted, jobId: doc.lastPrintJobId || '' };
-      if (printer.enabled && !alreadySubmitted) {
+      let submitted = { enabled: !clientPrinter && printer.enabled, printed: alreadySubmitted, duplicate: alreadySubmitted, jobId: doc.lastPrintJobId || '' };
+      if (!clientPrinter && printer.enabled && !alreadySubmitted) {
         try { submitted = await printer.printTicket({ ...doc, businessName: cfg.businessName }); }
         catch (error) { fail(503, error.message || 'La impresora no esta disponible.'); }
       }
@@ -227,15 +228,16 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
       const update = {
         $set: { ...(firstPrint ? { status: 'WAITING', queuedAt: now, deliveryMode: 'print' } : {}), updatedAt: now, ...(submitted.jobId ? { lastPrintJobId: submitted.jobId } : {}) },
         $push: { history: { action: firstPrint ? 'print_requested' : 'reprint_requested', at: now, ...(submitted.jobId ? { jobId: submitted.jobId } : {}) } },
-        ...(printer.enabled ? { $addToSet: { printRequestIds: printRequestId } } : {}),
+        ...(!clientPrinter && printer.enabled ? { $addToSet: { printRequestIds: printRequestId } } : {}),
       };
       const updated = await tickets.findOneAndUpdate({ _id: doc._id }, update, { returnDocument: 'after' });
       return { doc: updated, submitted };
     });
     await reconcileBase(db, base);
-    res.json({ ...publicTicket(result.doc), businessName: cfg.businessName, createdAt: result.doc.createdAt,
+    const printDelivery = clientPrinter ? await delivery(result.doc) : {};
+    res.json({ ...publicTicket(result.doc), businessName: cfg.businessName, createdAt: result.doc.createdAt, ...printDelivery,
       serverPrinted: !!result.submitted?.printed, duplicatePrintRequest: !!result.submitted?.duplicate,
-      printJobId: result.submitted?.jobId || '', printer: result.submitted?.printer || '' });
+      printJobId: result.submitted?.jobId || '', printer: result.submitted?.printer || '', clientPrint: clientPrinter });
   }));
   app.post('/api/customer-app/:tenant/tickets/:id/claim', wrap(async (req, res) => {
     const { t, db, base } = await scope(req), installId = clean(req.body?.installId), code = clean(req.body?.code, 200);
@@ -250,7 +252,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
       if (!original && !handoff) fail(403, 'El QR no es válido.');
       if (doc.claimedAt && owns(doc, installId)) return doc;
       if (doc.claimedAt && !handoff) fail(409, 'Este turno ya está asociado a otro celular.');
-      if (!handoff && +doc.reservationExpiresAt <= Date.now()) fail(410, 'El QR venció. Volvé al turnero.');
+      if (!handoff && +doc.reservationExpiresAt <= Date.now() && doc.deliveryMode !== 'print') fail(410, 'El QR venció. Volvé al turnero.');
       if (!['RESERVED', 'WAITING', 'CALLED'].includes(doc.status)) fail(410, 'El turno ya no está disponible.');
       const updated = { installId, claimedAt: doc.claimedAt || new Date(), deliveryMode: 'mobile', updatedAt: new Date(), ...(doc.status === 'RESERVED' ? { status: 'WAITING', queuedAt: new Date() } : {}) };
       if (handoff) Object.assign(updated, { usedHandoffHash: doc.handoffHash, usedHandoffInstallId: installId, usedHandoffExpiresAt: doc.handoffExpiresAt });
