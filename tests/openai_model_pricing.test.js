@@ -1,7 +1,8 @@
-// Asisto | Version: 5.00.233 | Fecha: 2026-09-24
+// Asisto | Version: 5.00.234 | Fecha: 2026-09-24
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { canonicalOpenAiModel, textModelPrice, audioModelPrice } = require('../openai_model_pricing');
+const { calculateEstimatedCost, calculateBillableCost } = require('../token_control_stats');
 
 test('precios oficiales se guardan por 1K tokens', () => {
   assert.deepEqual(textModelPrice('gpt-5.6-luna'), { input: 0.0002, output: 0.0012 });
@@ -13,4 +14,24 @@ test('precios oficiales se guardan por 1K tokens', () => {
 test('snapshots usan el precio de su modelo y audio conserva unidad por minuto', () => {
   assert.equal(canonicalOpenAiModel('gpt-5.4-2026-03-05'), 'gpt-5.4');
   assert.deepEqual(audioModelPrice('whisper-1'), { unit: 'minute', usd: 0.006 });
+});
+
+test('todo dominio con tokens calcula costo real desde el modelo registrado', () => {
+  const usage = {
+    message_input_tokens: 1000,
+    message_output_tokens: 1000,
+    models: ['gpt-5.6-terra']
+  };
+
+  assert.equal(calculateEstimatedCost(usage, {}), 0.014);
+  assert.equal(calculateBillableCost(usage, {}), 0);
+});
+
+test('la tarifa configurada prevalece y un modelo ausente usa el costo base vigente', () => {
+  const usage = { message_input_tokens: 1000, message_output_tokens: 1000 };
+  assert.equal(calculateEstimatedCost(usage, {}), 0.0014);
+  assert.equal(calculateEstimatedCost(usage, {
+    token_cost_chat_input_per_1k: 0.01,
+    token_cost_chat_output_per_1k: 0.02
+  }), 0.03);
 });

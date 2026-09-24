@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.182 | Fecha: 2026-09-21
+// Asisto | Version: 5.00.234 | Fecha: 2026-09-24
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -6,6 +6,7 @@ const { ObjectId } = require("mongodb");
 
 const { getDb } = require("./db");
 const { listMonetizationTenants } = require('./monetization_config');
+const { textModelPrice } = require('./openai_model_pricing');
 
 // Tarifas reales por defecto para Ayuda cuando usa gpt-5.6-luna.
 // Se expresan por 1K tokens para mantener el mismo esquema del panel.
@@ -172,8 +173,15 @@ function calculateCostWithRates(row, tenantDoc = {}, mode = "real") {
   const audioCost = charge ? 0 : Number(row.audio_cost_usd || 0);
 
   const prefix = charge ? "token_charge_" : "token_cost_";
-  const chatInput = toPositiveNumber(tenantDoc[prefix + "chat_input_per_1k"]);
-  const chatOutput = toPositiveNumber(tenantDoc[prefix + "chat_output_per_1k"]);
+  const recordedModels = [...new Set([
+    row?.model,
+    ...(Array.isArray(row?.models) ? row.models : [])
+  ].map(value => String(value || '').trim()).filter(Boolean))];
+  const officialPrices = charge ? [] : recordedModels.map(textModelPrice).filter(Boolean);
+  const fallbackInput = officialPrices.length ? Math.max(...officialPrices.map(price => Number(price.input || 0))) : DEFAULT_HELP_COST_INPUT_PER_1K;
+  const fallbackOutput = officialPrices.length ? Math.max(...officialPrices.map(price => Number(price.output || 0))) : DEFAULT_HELP_COST_OUTPUT_PER_1K;
+  const chatInput = toPositiveNumber(tenantDoc[prefix + "chat_input_per_1k"]) || (charge ? 0 : fallbackInput);
+  const chatOutput = toPositiveNumber(tenantDoc[prefix + "chat_output_per_1k"]) || (charge ? 0 : fallbackOutput);
   const audioInputRate = toPositiveNumber(tenantDoc[prefix + "audio_input_per_1k"]);
   const audioOutputRate = toPositiveNumber(tenantDoc[prefix + "audio_output_per_1k"]);
   // Ayuda puede usar un modelo distinto al bot principal (p.ej. Luna).
@@ -765,7 +773,8 @@ async function buildTokenSummary({
         audio_cost_usd: audioCostSum(),
         total_tokens: { $sum: { $ifNull: ["$totalTokens", 0] } },
         events: { $sum: 1 },
-        last_at: { $max: "$createdAt" }
+        last_at: { $max: "$createdAt" },
+        models: { $addToSet: "$model" }
       }
     },
     { $sort: { _id: 1 } }
@@ -794,6 +803,7 @@ async function buildTokenSummary({
       audio_output_tokens: Number(row.audio_output_tokens || 0),
       total_tokens: Number(row.total_tokens || 0),
       events: Number(row.events || 0),
+      models: (Array.isArray(row.models) ? row.models : []).filter(Boolean),
       
       last_at: row.last_at || null,
       billed_cost: calculateBillableCost(row, doc),
@@ -807,8 +817,9 @@ async function buildTokenSummary({
     if (isSuper) {
       item.real_cost = calculateEstimatedCost(row, doc);
       item.gross_margin = Number((item.billed_cost - item.real_cost).toFixed(6));
-      item.cost_chat_input_per_1k = toPositiveNumber(doc.token_cost_chat_input_per_1k);
-      item.cost_chat_output_per_1k = toPositiveNumber(doc.token_cost_chat_output_per_1k);
+      const officialPrices = item.models.map(textModelPrice).filter(Boolean);
+      item.cost_chat_input_per_1k = toPositiveNumber(doc.token_cost_chat_input_per_1k) || (officialPrices.length ? Math.max(...officialPrices.map(price => price.input)) : DEFAULT_HELP_COST_INPUT_PER_1K);
+      item.cost_chat_output_per_1k = toPositiveNumber(doc.token_cost_chat_output_per_1k) || (officialPrices.length ? Math.max(...officialPrices.map(price => price.output)) : DEFAULT_HELP_COST_OUTPUT_PER_1K);
       item.cost_audio_input_per_1k = toPositiveNumber(doc.token_cost_audio_input_per_1k);
       item.cost_audio_output_per_1k = toPositiveNumber(doc.token_cost_audio_output_per_1k);
       item.cost_help_input_per_1k = toPositiveNumber(doc.token_cost_help_input_per_1k) || DEFAULT_HELP_COST_INPUT_PER_1K;
@@ -2210,6 +2221,8 @@ function mountTokenControlRoutes(app, auth) {
 module.exports = {
   mountTokenControlRoutes,
   renderTokenControlPage,
+  calculateEstimatedCost,
+  calculateBillableCost,
   buildTokenSummary,
   buildTokenConversationSummary,
   buildApiMessageWindowBilling,
