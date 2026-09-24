@@ -20,13 +20,15 @@ async function serial(key, fn) {
   await previous;
   try { return await fn(); } finally { release(); if (locks.get(key) === pending) locks.delete(key); }
 }
-async function nextSequence(db, tickets, base, sectorId) {
-  const counterId = [base.tenantId, base.dayKey, base.branchId, sectorId].join(':');
-  const latest = await tickets.findOne({ ...base, sectorId, number: { $type: 'number' } }, { sort: { number: -1 }, projection: { number: 1 } });
+async function nextSequence(db, tickets, base, sectorId, resetDaily = true) {
+  const sequenceDayKey = resetDaily ? base.dayKey : 'continuous';
+  const counterId = [base.tenantId, sequenceDayKey, base.branchId, sectorId].join(':');
+  const ticketScope = resetDaily ? base : { tenantId: base.tenantId, branchId: base.branchId };
+  const latest = await tickets.findOne({ ...ticketScope, sectorId, number: { $type: 'number' } }, { sort: { number: -1 }, projection: { number: 1 } });
   const observed = Math.max(0, Number(latest?.number) || 0), syncUrl = String(process.env.QUEUE_SYNC_URL || ''), syncSecret = String(process.env.QUEUE_SYNC_SECRET || '');
   if (syncUrl && syncSecret.length >= 20) {
     try {
-      const response = await fetch(syncUrl.replace(/\/queue-sync\/?(?:\?.*)?$/, '/queue-sequence'), { method: 'POST', headers: { 'content-type': 'application/json', 'x-queue-sync-key': syncSecret }, body: JSON.stringify({ tenantId: base.tenantId, dayKey: base.dayKey, branchId: base.branchId, sectorId, observed }), signal: AbortSignal.timeout(5000) });
+      const response = await fetch(syncUrl.replace(/\/queue-sync\/?(?:\?.*)?$/, '/queue-sequence'), { method: 'POST', headers: { 'content-type': 'application/json', 'x-queue-sync-key': syncSecret }, body: JSON.stringify({ tenantId: base.tenantId, dayKey: sequenceDayKey, branchId: base.branchId, sectorId, observed }), signal: AbortSignal.timeout(5000) });
       const payload = await response.json();
       if (!response.ok || !payload.ok || !Number.isInteger(payload.sequence)) throw new Error(payload.error || `http_${response.status}`);
       await db.collection('queue_counters').updateOne({ _id: counterId }, { $max: { sequence: payload.sequence } }, { upsert: true });
@@ -203,7 +205,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
         const admitted = await db.collection('customer_app_devices').findOne({ tenantId: t, installId, queueAccessUntil: { $gt: new Date() } }, { projection: { _id: 1 } });
         if (!admitted) fail(403, 'Para sacar tu primer turno, acercate al turnero del local y escaneá el QR. Después podrás sacar otros turnos desde esta web durante 2 horas.');
       }
-      const counter = await nextSequence(db, tickets, base, sectorId);
+      const counter = await nextSequence(db, tickets, base, sectorId, cfg.queueCounterResetDaily !== false);
       const now = new Date(), doc = { ...base, sectorId, sectorName: sector.name, prefix: sector.prefix, number: counter.sequence, displayNumber: sector.prefix + String(counter.sequence).padStart(3, '0') + (counter.offline ? '-L' : ''), offlineNumber: !!counter.offline, installId, status: 'WAITING', createdAt: now, queuedAt: now, updatedAt: now, source: kiosk ? 'kiosk' : 'mobile', history: [{ action: 'created', sectorId, at: now }] };
       if (kiosk) doc.kioskRequestId = installId;
       if (reserve) Object.assign(doc, { status: 'RESERVED', reservationExpiresAt: new Date(+now + 180000), deliveryMode: 'pending' });

@@ -72,7 +72,7 @@ function mountQueueSyncEndpoint(app, { getDb, secret = process.env.QUEUE_SYNC_SE
     if (!safeSecret(req.get('x-queue-sync-key'), secret)) return res.status(401).json({ ok: false, error: 'unauthorized' });
     const tenantId = cleanTenant(req.body?.tenantId), dayKey = String(req.body?.dayKey || ''), branchId = String(req.body?.branchId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 60), sectorId = String(req.body?.sectorId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 60), observed = Math.max(0, Math.floor(Number(req.body?.observed) || 0));
     if (!tenantId || !allowed.has(tenantId)) return res.status(403).json({ ok: false, error: 'tenant_not_allowed' });
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dayKey) || !branchId || !sectorId) return res.status(400).json({ ok: false, error: 'invalid_sequence_scope' });
+    if (!(dayKey === 'continuous' || /^\d{4}-\d{2}-\d{2}$/.test(dayKey)) || !branchId || !sectorId) return res.status(400).json({ ok: false, error: 'invalid_sequence_scope' });
     try {
       const counters = (await getDb()).collection('queue_counters'), id = [tenantId, dayKey, branchId, sectorId].join(':');
       await counters.updateOne({ _id: id }, { $max: { sequence: observed } }, { upsert: true });

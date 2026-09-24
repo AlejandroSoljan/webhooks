@@ -98,10 +98,11 @@ test('pages contain syntactically valid scripts and escape tenant names', () => 
   assert.match(queuePage('TEST', 'kiosk'), /Recibí el llamado en tu celular/);
   assert.match(queuePage('MCN', 'kiosk'), /Te avisaremos en el celular cuando sea tu turno/);
 });
-test('attention page only builds the section selector for the all-sections view', () => {
+test('attention page filters sections exclusively from the URL', () => {
   const html = queuePage('MCN', 'admin');
-  assert.match(html, /if\(!selectedSector\)\{root\.append\(element\('label','Sección'\)\)/);
   assert.match(html, /const visible=x\.sectors\.filter\(s=>!selectedSector\|\|s\.id===selectedSector\)/);
+  assert.doesNotMatch(html, /new Option\('Todas las secciones'/);
+  assert.doesNotMatch(html, /Opciones del turnero/);
 });
 test('operator transfer controls stay contained inside each card', () => {
   const html = queuePage('TEST', 'admin');
@@ -176,6 +177,17 @@ test('a stale counter continues after the highest synchronized ticket', async ()
   await db.collection('queue_counters').updateOne({ _id: 'TEST:2026-09-14:CENTRAL:ferreteria' }, { $set: { sequence: 2 } }, { upsert: true });
   const issued = await req(api + '/tickets', { sectorId: 'ferreteria', installId: 'after-sync-80', source: 'kiosk' }, 'TEST');
   assert.equal(issued.status, 200); assert.equal(issued.body.displayNumber, 'F081');
+});
+test('continuous numbering keeps the highest number when the day changes', async () => {
+  cfg.queueCounterResetDaily = false;
+  try {
+    await db.collection('queue_tickets').insertOne({ tenantId: 'TEST', branchId: 'CENTRAL', dayKey: '2026-09-13', sectorId: 'caja', sectorName: 'Caja', prefix: 'C', number: 900, displayNumber: 'C900', installId: 'previous-day-900', status: 'DONE', createdAt: new Date('2026-09-13T20:00:00Z'), updatedAt: new Date('2026-09-13T20:00:00Z'), history: [] });
+    const issued = await req(api + '/tickets', { sectorId: 'caja', installId: 'continuous-next-day', source: 'kiosk' }, 'TEST');
+    assert.equal(issued.status, 200); assert.equal(issued.body.displayNumber, 'C901');
+    const counter = await db.collection('queue_counters').findOne({ _id: 'TEST:continuous:CENTRAL:caja' });
+    assert.equal(counter.sequence, 901);
+    await db.collection('queue_tickets').updateOne({ _id: new (require('mongodb').ObjectId)(issued.body.id) }, { $set: { status: 'DONE' } });
+  } finally { cfg.queueCounterResetDaily = true; }
 });
 test('a phone can cancel only its own active ticket and then request a new one', async () => {
   const created = await req(api + '/tickets', { sectorId: 'caja', installId: 'cancel-owner' });

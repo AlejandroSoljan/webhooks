@@ -55,10 +55,10 @@ function businessScheduleStatus(hours, now = new Date()) {
 
 async function configFor(db, tenantId) {
   const cached=customerConfigCache.get(tenantId);if(cached?.pending)return cached.pending;if(cached?.value&&Date.now()-cached.at<CUSTOMER_CONFIG_CACHE_MS)return cached.value;
-  const pending=(async()=>{const [saved,behaviorDoc,hoursDoc]=await Promise.all([db.collection("customer_app_config").findOne({tenantId}),db.collection("settings").findOne({_id:`behavior:${tenantId}`}),db.collection("settings").findOne({_id:`store_hours:${tenantId}`})]);const behavior=behaviorDoc||{},schedule=businessScheduleStatus(hoursDoc?.hours);
+  const pending=(async()=>{const [saved,behaviorDoc,hoursDoc,tenantDoc]=await Promise.all([db.collection("customer_app_config").findOne({tenantId}),db.collection("settings").findOne({_id:`behavior:${tenantId}`}),db.collection("settings").findOne({_id:`store_hours:${tenantId}`}),db.collection("tenant_config").findOne({_id:tenantId})]);const behavior=behaviorDoc||{},schedule=businessScheduleStatus(hoursDoc?.hours);
   return { tenantId, businessName: saved?.businessName || behavior.qr_company_name || "Mecan", branchId: saved?.branchId || "CENTRAL", salesWhatsapp: saved?.salesWhatsapp || "5493462610000",
     branchName: saved?.branchName || behavior.app_branch_name || "Sucursal principal", branchAddress: saved?.branchAddress || behavior.app_branch_address || "Atención en el local", businessHours: schedule.configured ? schedule.todayLabel : (saved?.businessHours || behavior.app_business_hours || schedule.todayLabel), businessOpen: schedule.open, businessHoursConfigured: schedule.configured, estimatedWaitMinutes: Math.max(1,Number(saved?.estimatedWaitMinutes ?? behavior.app_estimated_wait_minutes ?? 5)||5),
-    queuePresence: saved?.queuePresence === "qr" ? "qr" : "open", queuePromotion: clean(saved?.queuePromotion, 240),
+    queuePresence: saved?.queuePresence === "qr" ? "qr" : "open", queuePromotion: clean(saved?.queuePromotion, 240), queueCounterResetDaily: tenantDoc?.queue_counter_reset_daily === undefined ? saved?.queueCounterResetDaily !== false : tenantDoc.queue_counter_reset_daily !== false,
     sectors: normalizedSectors(saved, tenantId),
     banners: Array.isArray(saved?.banners) && saved.banners.length ? saved.banners : DEFAULT_BANNERS };})();customerConfigCache.set(tenantId,{at:Date.now(),pending});try{const value=await pending;customerConfigCache.set(tenantId,{at:Date.now(),value});return value}catch(error){customerConfigCache.delete(tenantId);throw error}
 }
