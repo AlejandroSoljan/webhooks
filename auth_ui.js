@@ -2402,13 +2402,15 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
                   <tr>
                     <th>Teléfono</th>
                     <th>Entrada</th>
-                    <th>Salida</th>
+                    <th>Salida Asisto</th>
+                    <th>Salida manual</th>
+                    <th>Sin identificar</th>
                     <th>Total</th>
                     <th>Último mensaje</th>
                   </tr>
                 </thead>
                 <tbody id="statsContactsBody">
-                  <tr><td colspan="5" class="small">Sin datos.</td></tr>
+                  <tr><td colspan="7" class="small">Sin datos.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -2645,11 +2647,13 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
           return '<tr>'
             + '<td class="mono">' + escapeHtml(c.contact || '-') + '</td>'
             + '<td>' + escapeHtml(String(c.incoming || 0)) + '</td>'
-            + '<td>' + escapeHtml(String(c.outgoing || 0)) + '</td>'
+            + '<td>' + escapeHtml(String(c.outgoingAsisto || 0)) + '</td>'
+            + '<td>' + escapeHtml(String(c.outgoingManual || 0)) + '</td>'
+            + '<td>' + escapeHtml(String(c.outgoingUnknown || 0)) + '</td>'
             + '<td>' + escapeHtml(String(c.total || 0)) + '</td>'
             + '<td>' + escapeHtml(c.lastAt ? fmtDate(c.lastAt) : '-') + '</td>'
             + '</tr>';
-        }).join('') : '<tr><td colspan="5" class="small">No hay contactos para este filtro.</td></tr>';
+        }).join('') : '<tr><td colspan="7" class="small">No hay contactos para este filtro.</td></tr>';
       }
       function renderStatsPermissions(){
         var result = statsPage(statsPermissionsRows, statsPermissionsSearch && statsPermissionsSearch.value, statsPermissionsPageSize && statsPermissionsPageSize.value, statsPermissionsPageIndex);
@@ -2672,7 +2676,10 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
           + ' · Último mensaje global: ' + (overall.lastMessageAt ? fmtDate(overall.lastMessageAt) : '-');
         statsCards.innerHTML = ''
           + statsCard('Mensajes entrada', String(summary.incoming || 0))
-          + statsCard('Mensajes salida', String(summary.outgoing || 0))
+          + statsCard('Enviados por Asisto', String(summary.outgoingAsisto || 0), 'Confirmados por el registro de envíos de Asisto')
+          + statsCard('Enviados manualmente', String(summary.outgoingManual || 0), 'Escritos desde WhatsApp por una persona')
+          + statsCard('Sin identificar', String(summary.outgoingUnknown || 0), 'Historial sin evidencia suficiente del origen')
+          + statsCard('Mensajes salida', String(summary.outgoing || 0), 'Total de salidas')
           + statsCard('Mensajes totales', String(summary.total || 0))
           + statsCard('Contactos', String(summary.contacts || 0))
           + statsCard('Último mensaje del rango', summary.lastAt ? fmtDate(summary.lastAt) : '-')
@@ -2696,7 +2703,7 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
         if(!statsTenant || !statsNumero) return;
         statsMeta.textContent = 'Cargando…';
         statsCards.innerHTML = '';
-        statsContactsBody.innerHTML = '<tr><td colspan="5" class="small">Cargando…</td></tr>';
+        statsContactsBody.innerHTML = '<tr><td colspan="7" class="small">Cargando…</td></tr>';
         statsPermissionsBody.innerHTML = '<tr><td colspan="5" class="small">Cargando…</td></tr>';
         return api('/api/wweb/stats?tenantId=' + encodeURIComponent(statsTenant) + '&numero=' + encodeURIComponent(statsNumero)
           + '&from=' + encodeURIComponent(statsFrom.value || '') + '&to=' + encodeURIComponent(statsTo.value || ''), { method:'GET' })
@@ -5489,6 +5496,108 @@ function mountAuthRoutes(app) {
   const wwebDashboardStatsCache = new Map();
   const WWEB_DASHBOARD_STATS_CACHE_MS = 15000;
 
+  function wwebComparableMessageText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  function wwebMessageOriginHint(doc) {
+    const hint = [doc?.source, doc?.origin, doc?.sentBy, doc?.meta?.from, doc?.meta?.source]
+      .map(value => String(value || '').trim().toLowerCase())
+      .filter(Boolean)
+      .join(' ');
+    if (/wweb_phone_operator|phone_operator|whatsapp_operator|manual|human/.test(hint)) return 'manual';
+    if (/asisto|automation|automatic|bot|api|campaign|template/.test(hint)) return 'asisto';
+    return '';
+  }
+
+  async function wwebClassifyOutgoingOrigins(db, { tenantId, numero, start, end }) {
+    const outgoingDocs = await db.collection('wa_wweb_message_log').aggregate([
+      ...wwebRealMessagePipeline({ tenantId, numero, direction: 'out', at: { $gte: start, $lt: end } }),
+      { $project: { contact: 1, body: 1, text: 1, messageId: 1, at: 1, source: 1, origin: 1, sentBy: 1, meta: 1 } },
+      { $sort: { at: 1 } }
+    ], { allowDiskUse: true }).toArray();
+
+    const windows = await db.collection('wa_api_message_windows').find({
+      tenantId: String(tenantId || '').toUpperCase(),
+      numeroFrom: String(numero || ''),
+      $or: [
+        { windowStartedAt: { $lt: end }, windowEndsAt: { $gte: start } },
+        { lastMessageAt: { $gte: start, $lt: end } },
+        { 'messages.at': { $gte: start, $lt: end } }
+      ]
+    }, { projection: { contact: 1, messages: 1, windowStartedAt: 1, lastMessageAt: 1 } })
+      .sort({ windowStartedAt: 1 })
+      .toArray();
+
+    const apiEntries = [];
+    for (const windowDoc of windows) {
+      for (const entry of (Array.isArray(windowDoc?.messages) ? windowDoc.messages : [])) {
+        const at = entry?.at || windowDoc?.lastMessageAt || windowDoc?.windowStartedAt || null;
+        const atMs = Date.parse(at || 0);
+        if (!Number.isFinite(atMs) || atMs < start.getTime() || atMs >= end.getTime()) continue;
+        apiEntries.push({
+          contact: String(entry?.contact || windowDoc?.contact || '').trim(),
+          text: wwebComparableMessageText(entry?.text || entry?.body || ''),
+          messageId: String(entry?.waMessageId || entry?.messageId || '').trim(),
+          atMs
+        });
+      }
+    }
+
+    const usedApiEntries = new Set();
+    const totals = { asisto: 0, manual: 0, unknown: 0 };
+    const contacts = new Map();
+    const bump = (contact, origin) => {
+      totals[origin]++;
+      const key = String(contact || '');
+      const row = contacts.get(key) || { asisto: 0, manual: 0, unknown: 0 };
+      row[origin]++;
+      contacts.set(key, row);
+    };
+
+    for (const doc of outgoingDocs) {
+      const explicitOrigin = wwebMessageOriginHint(doc);
+      if (explicitOrigin) {
+        bump(doc?.contact, explicitOrigin);
+        continue;
+      }
+
+      const messageId = String(doc?.messageId || '').trim();
+      const contact = String(doc?.contact || '').trim();
+      const text = wwebComparableMessageText(doc?.body || doc?.text || '');
+      const atMs = Date.parse(doc?.at || 0);
+      let bestIndex = -1;
+      let bestDistance = Infinity;
+      for (let index = 0; index < apiEntries.length; index++) {
+        if (usedApiEntries.has(index)) continue;
+        const api = apiEntries[index];
+        const idMatches = messageId && api.messageId && messageId === api.messageId;
+        const contentMatches = contact === api.contact && text && text === api.text;
+        if (!idMatches && !contentMatches) continue;
+        const distance = Number.isFinite(atMs) ? Math.abs(atMs - api.atMs) : Infinity;
+        if (!idMatches && distance > 10 * 60 * 1000) continue;
+        if (idMatches || distance < bestDistance) {
+          bestIndex = index;
+          bestDistance = distance;
+          if (idMatches) break;
+        }
+      }
+      if (bestIndex >= 0) {
+        usedApiEntries.add(bestIndex);
+        bump(contact, 'asisto');
+      } else if (contact && Number.isFinite(atMs)) {
+        // El agente observa todos los mensajes salientes del WhatsApp vinculado.
+        // Si no existe un envío canónico de Asisto que lo respalde, fue emitido
+        // directamente por una persona desde WhatsApp/Web/Desktop.
+        bump(contact, 'manual');
+      } else {
+        bump(contact, 'unknown');
+      }
+    }
+
+    return { totals, contacts };
+  }
+
   async function wwebBuildStatsMap(db, baseFilter, start, end) {
     const coll = db.collection('wa_wweb_message_log');
     const todayRows = await coll.aggregate([
@@ -5944,7 +6053,7 @@ function mountAuthRoutes(app) {
       const baseMatch = { tenantId, numero };
       const rangeMatch = { ...baseMatch, at: { $gte: start, $lt: end } };
 
-      const [summaryRows, contactRows, overallLast] = await Promise.all([
+      const [summaryRows, contactRows, overallLast, outgoingOrigins] = await Promise.all([
         coll.aggregate([
           ...wwebRealMessagePipeline(rangeMatch),
           { $group: {
@@ -5971,6 +6080,7 @@ function mountAuthRoutes(app) {
           { $limit: 1000 }
         ], { allowDiskUse: true }).toArray(),
         coll.find(baseMatch).sort({ at: -1 }).limit(1).toArray(),
+        wwebClassifyOutgoingOrigins(db, { tenantId, numero, start, end }),
       ]);
 
       const summary = summaryRows[0] || { incoming: 0, outgoing: 0, total: 0, contactsSet: [], firstAt: null, lastAt: null };
@@ -6011,6 +6121,9 @@ function mountAuthRoutes(app) {
         summary: {
           incoming: Number(summary.incoming || 0),
           outgoing: Number(summary.outgoing || 0),
+          outgoingAsisto: Number(outgoingOrigins?.totals?.asisto || 0),
+          outgoingManual: Number(outgoingOrigins?.totals?.manual || 0),
+          outgoingUnknown: Number(outgoingOrigins?.totals?.unknown || 0),
           total: Number(summary.total || 0),
           contacts: Array.isArray(summary.contactsSet) ? summary.contactsSet.filter(Boolean).length : 0,
           firstAt: summary.firstAt || null,
@@ -6023,14 +6136,21 @@ function mountAuthRoutes(app) {
         },
         permissionSummary,
         permissions,
-        contacts: (contactRows || []).map((r) => ({
-          contact: String(r._id || ''),
-          incoming: Number(r.incoming || 0),
-          outgoing: Number(r.outgoing || 0),
-          total: Number(r.total || 0),
-          firstAt: r.firstAt || null,
-          lastAt: r.lastAt || null,
-        })),
+        contacts: (contactRows || []).map((r) => {
+          const contact = String(r._id || '');
+          const origins = outgoingOrigins?.contacts?.get(contact) || {};
+          return {
+            contact,
+            incoming: Number(r.incoming || 0),
+            outgoing: Number(r.outgoing || 0),
+            outgoingAsisto: Number(origins.asisto || 0),
+            outgoingManual: Number(origins.manual || 0),
+            outgoingUnknown: Number(origins.unknown || 0),
+            total: Number(r.total || 0),
+            firstAt: r.firstAt || null,
+            lastAt: r.lastAt || null,
+          };
+        }),
       });
     } catch (e) {
       console.error("api/wweb/stats error:", e);
