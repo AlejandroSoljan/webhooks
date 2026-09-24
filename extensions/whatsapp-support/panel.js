@@ -60,6 +60,11 @@ async function run(fn) {
   finally { busy = false; document.querySelectorAll('button').forEach(button => button.disabled = false); if (pendingContextRefresh) { pendingContextRefresh = false; queueMicrotask(() => run(refresh)); } }
 }
 function option(select, value, label) { const item = document.createElement('option'); item.value = value; item.textContent = label; select.append(item); }
+function preferredStage(options, status, savedStageId) {
+  const matches = options.filter(row => norm(row.label) === norm(status));
+  if (matches.length === 1) return matches[0].id;
+  return options.some(row => row.id === savedStageId) ? savedStageId : '';
+}
 const definitions = [ ['subject','Nombre breve'], ['contact','Contacto de WhatsApp'], ['company','Empresa'], ['status','Estado en Asisto'], ['category','Categoría'], ['errorType','Error tipo'], ['channel','Vía de contacto'], ['description','Descripción'], ['companyId','ID de empresa en HubSpot (opcional)'], ['contactId','ID de contacto en HubSpot (opcional)'] ];
 function renderFields() {
   $('fields').replaceChildren();
@@ -194,8 +199,7 @@ async function prepareHubSpot() {
     stage.replaceChildren(); option(stage, '', 'Seleccionar…');
     const options = metadata.pipelines.find(p => p.id === pipeline.value)?.stages || [];
     options.forEach(row => option(stage, row.id, row.label));
-    const matches = options.filter(row => norm(row.label) === norm(current.fields.status));
-    stage.value = options.some(row => row.id === saved.stageId) ? saved.stageId : matches.length === 1 ? matches[0].id : '';
+    stage.value = preferredStage(options, current.fields.status, saved.stageId);
   }
   pipeline.onchange = stages; stages();
   for (const [field, title] of [['category','Categoría'],['errorType','Error tipo'],['channel','Vía de contacto']]) {

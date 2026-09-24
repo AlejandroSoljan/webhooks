@@ -7,6 +7,28 @@ const html = fs.readFileSync(require.resolve('../extensions/whatsapp-support/pan
 const source = fs.readFileSync(require.resolve('../extensions/whatsapp-support/panel.js'), 'utf8');
 const pause = () => new Promise(resolve => setTimeout(resolve, 35));
 
+test('the current task status takes precedence over the previously saved HubSpot stage', async () => {
+  const dom = new JSDOM(html, { url: 'chrome-extension://test/panel.html', runScripts: 'outside-only' });
+  const w = dom.window;
+  w.chrome = {
+    tabs: { query: async () => [{ id: 7 }] },
+    storage: { session: { get: async () => ({}) }, onChanged: { addListener() {} } },
+    runtime: { sendMessage: async message => {
+      if (message.action === 'SESSION') return { data: { tenantId: 'ALSO', userId: 'also', choices: {} } };
+      if (message.action === 'INDEX') return { data: { owner: 'ALSO:also', chats: [], knownChats: [] } };
+      throw Error(message.action);
+    } },
+  };
+  try {
+    w.eval(source); await pause();
+    const selected = w.eval(`preferredStage([
+      { id: 'new', label: 'Nuevo' },
+      { id: 'done', label: 'Cerrado RESUELTO' }
+    ], 'Nuevo', 'done')`);
+    assert.equal(selected, 'new');
+  } finally { dom.window.close(); }
+});
+
 test('switching chats clears the old task even when the new contact has no resolved jid', async () => {
   const dom = new JSDOM(html, { url: 'chrome-extension://test/panel.html', runScripts: 'outside-only' });
   const w = dom.window;
