@@ -1,4 +1,4 @@
-// Asisto | Turnero AWS | Fecha: 2026-09-14
+// Asisto | Version: 5.00.235 | Fecha: 2026-09-24
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoClient } = require('mongodb');
@@ -113,6 +113,8 @@ test('operator transfer controls stay contained inside each card', () => {
   assert.match(html, /localStorage\.setItem\('queueOperatorTheme:'\+T,theme\.value\)/);
   assert.match(html, /body\.admin\{width:100%;max-width:100vw;height:100vh;overflow:hidden\}/);
   assert.match(html, /\.admin\[data-theme="dark"\]/);
+  assert.match(html, /\.admin\[data-theme="dark"\] button\.secondary,\.admin\[data-theme="dark"\] \.operatorActions \.recallAction\{background:#fff!important;color:#0f172a!important;border-color:#fff!important\}/);
+  assert.match(html, /button\.secondary:disabled,[^}]+background:#f8fafc!important;color:#64748b!important;[^}]+opacity:1/);
   assert.match(html, /\.admin \.cards\{[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
   assert.match(html, /\.admin\.singleSectorMode \.cards\{grid-template-columns:minmax\(0,1fr\)\}/);
   assert.match(html, /MODE==='admin'&&selectedSector/);
