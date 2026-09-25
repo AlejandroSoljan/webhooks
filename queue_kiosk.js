@@ -6,7 +6,21 @@ function kiosk() {
     : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2) + '-' + Math.random().toString(36).slice(2);
   const dialog = $('ticketDialog');
   $('content').innerHTML = '<div class="layout"><section><div class="eyebrow">Paso 1 · Elegí tu sección</div><h1>¿En qué podemos<br>ayudarte hoy?</h1><p>Elegí dónde necesitás atención. Después llevá tu turno al celular.</p><div class="sectors" id="sectors"></div></section><aside class="mobile"><span class="pill">Más cómodo en tu celular</span><h2>Elegí tu sección.<br>Escaneá. Y listo.</h2><p>Te vamos a mostrar un QR exclusivo para guardar tu turno en el teléfono.</p><ol class="steps"><li>Seleccioná una sección.</li><li>Escaneá el QR de tu turno.</li><li>Seguí tu lugar desde el celular.</li></ol><div class="benefit">Recibí el llamado en tu celular<small>También podés llevarte un ticket impreso.</small></div><div id="promo"></div></aside></div>';
-  cfg.sectors.forEach(s => { const b = button('', () => s.kind === 'presence' ? autoservice(s) : reserve(s)); b.className = 'sector'; b.append(element('span', s.name), element('b', s.kind === 'presence' ? '⌁' : '›')); $('sectors').append(b); });
+  const sectionIcon = s => {
+    const id = String(s.id || '').toLowerCase(), name = String(s.name || '').toLowerCase();
+    if (s.kind === 'presence') return '<path d="M7 3H3v4M17 3h4v4M21 17v4h-4M3 17v4h4"/>';
+    if (id.includes('bulon') || name.includes('bulon')) return '<path d="m8 4 8 0 4 7-4 7H8l-4-7 4-7Z"/><circle cx="12" cy="11" r="3"/>';
+    if (id.includes('herraje') || name.includes('herraje')) return '<rect x="3" y="4" width="7" height="16" rx="1.5"/><rect x="14" y="4" width="7" height="16" rx="1.5"/><circle cx="7" cy="12" r=".8"/><circle cx="17" cy="12" r=".8"/>';
+    if (id.includes('servicio') || name.includes('servicio') || name.includes('técnico')) return '<path d="m5 4 15 15M19 4 4 19M8 7 5 4M16 7l3-3M8 16l-4 3M16 16l3 3"/>';
+    return '<path d="M14 6a4 4 0 0 0-5 5L3 17l4 4 6-6a4 4 0 0 0 5-5l-3 3-4-4 3-3Z"/>';
+  };
+  cfg.sectors.forEach(s => {
+    const b = button('', () => s.kind === 'presence' ? autoservice(s) : reserve(s)); b.className = 'sector';
+    const icon = element('span', undefined, 'sectorIcon'); icon.setAttribute('aria-hidden', 'true'); icon.innerHTML = '<svg viewBox="0 0 24 24">' + sectionIcon(s) + '</svg>';
+    const copy = element('span', undefined, 'sectorCopy'); copy.append(element('strong', s.name), element('small', s.kind === 'presence' ? 'Registrar ingreso' : 'Solicitar turno'));
+    const action = element('span', undefined, 'sectorAction'); action.setAttribute('aria-hidden', 'true'); action.innerHTML = '<svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg>';
+    b.append(icon, copy, action); $('sectors').append(b);
+  });
   $('promo').textContent = cfg.queuePromotion || '';
   async function autoservice(s) {
     if (busy) return;

@@ -133,6 +133,11 @@ test('display uses the louder friendly call chime and resumes sound by default',
 test('MCN kiosk exposes QR-only Autoservicio and focused display keeps other sections aside', () => {
   const kioskHtml = queuePage('MCN', 'kiosk');
   assert.match(kioskHtml, /s\.kind === 'presence' \? autoservice\(s\) : reserve\(s\)/);
+  assert.match(kioskHtml, /className = 'sector'/); assert.match(kioskHtml, /sectorIcon/); assert.match(kioskHtml, /sectorCopy/); assert.match(kioskHtml, /sectorAction/);
+  assert.match(kioskHtml, /Registrar ingreso/); assert.match(kioskHtml, /Solicitar turno/);
+  assert.match(kioskHtml, /\.kiosk \.sector:before\{[^}]*width:6px;background:#ed101c/);
+  assert.match(kioskHtml, /\.kiosk \.sectorIcon\{[^}]*background:#fff0f1;color:#ed101c/);
+  assert.match(kioskHtml, /\.kiosk \.sectorAction\{[^}]*border-radius:50%;background:#ed101c;color:#fff/);
   assert.match(kioskHtml, /Este QR registra tu visita al local y habilita la solicitud de turnos desde el celular durante 2 horas/);
   assert.doesNotMatch(kioskHtml, /id="themeMode"/);
   assert.match(kioskHtml, /No genera turno ni ticket impreso/);
