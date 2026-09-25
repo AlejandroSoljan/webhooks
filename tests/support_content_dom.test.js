@@ -80,7 +80,7 @@ test('a visible message without a WhatsApp DOM id is selectable and sends readab
     const request = calls.find(call => call.action === 'ASSIGN_MESSAGES');
     assert.match(request.messageIds[0], /^asisto-local-/);
     assert.equal(request.selectedMessages[0].text, 'Ahora sí');
-    assert.equal(request.selectedMessages[0].at, '2026-09-14T18:33:00.000Z');
+    assert.equal(request.selectedMessages[0].at, new Date('2026-09-14T15:33:00').toISOString());
   } finally { dom.window.close(); }
 });
 test('selection and its evidence survive scrolling, remounting and refreshes', async () => {
