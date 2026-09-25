@@ -160,6 +160,11 @@ test('MCN kiosk exposes QR-only Autoservicio and focused display keeps other sec
   assert.match(launcher, /--autoplay-policy=no-user-gesture-required/);
   assert.match(displayHtml, /Otras secciones/);
   assert.match(displayHtml, /focusedNumber/);
+  assert.match(displayHtml, /function sellerBadge\(name,cls=''/);
+  assert.match(displayHtml, /sellerBadge\(s\.current\.sellerName,'focusedSeller'\)/);
+  assert.match(displayHtml, /sellerBadge\(s\.current\.sellerName,'displaySeller'\)/);
+  assert.match(displayHtml, /title\.prepend\(uiIcon\('wrench'\)\)/);
+  assert.match(displayHtml, /\.sellerBadge:before\{[^}]*background:#ed101c/);
 });
 test('existing Android page renders cancellation, product discovery and a stable bottom menu', async () => {
   const app = express(); require('../customer_app_web').mountCustomerApp(app);
