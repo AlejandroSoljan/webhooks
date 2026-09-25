@@ -18,7 +18,7 @@ function kiosk() {
     const b = button('', () => s.kind === 'presence' ? autoservice(s) : reserve(s)); b.className = 'sector';
     const icon = element('span', undefined, 'sectorIcon'); icon.setAttribute('aria-hidden', 'true'); icon.innerHTML = '<svg viewBox="0 0 24 24">' + sectionIcon(s) + '</svg>';
     const copy = element('span', undefined, 'sectorCopy'); copy.append(element('strong', s.name), element('small', s.kind === 'presence' ? 'Registrar ingreso' : 'Solicitar turno'));
-    const action = element('span', undefined, 'sectorAction'); action.setAttribute('aria-hidden', 'true'); action.innerHTML = '<svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg>';
+    const action = element('span', undefined, 'sectorAction'); action.setAttribute('aria-hidden', 'true'); action.innerHTML = s.kind === 'presence' ? '<svg viewBox="0 0 24 24"><path d="M7 3H3v4M17 3h4v4M21 17v4h-4M3 17v4h4"/></svg>' : '<svg viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></svg>';
     b.append(icon, copy, action); $('sectors').append(b);
   });
   $('promo').textContent = cfg.queuePromotion || '';
