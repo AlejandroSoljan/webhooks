@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.232 | Fecha: 2026-09-24
+// Asisto | Version: 5.00.236 | Fecha: 2026-09-25
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -20,4 +20,12 @@ test('detalle por contacto conserva columnas de origen independientes', () => {
   assert.match(source, /<th>Salida Asisto<\/th>/);
   assert.match(source, /<th>Salida manual<\/th>/);
   assert.match(source, /<th>Sin identificar<\/th>/);
+});
+
+test('la tabla visible lista sólo contactos con envíos confirmados por API sin alterar el total estadístico', () => {
+  assert.match(source, /statsContactsRows = contacts\.filter\(function\(contact\)/);
+  assert.match(source, /Number\(contact && contact\.outgoingAsisto \|\| 0\) > 0/);
+  assert.match(source, /con envíos por API/);
+  assert.match(source, /contacts: Array\.isArray\(summary\.contactsSet\) \? summary\.contactsSet\.filter\(Boolean\)\.length : 0/);
+  assert.match(source, /contacts: \(contactRows \|\| \[\]\)\.map/);
 });

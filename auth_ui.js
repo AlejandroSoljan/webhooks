@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.186 | Fecha: 2026-09-22
+// Asisto | Version: 5.00.236 | Fecha: 2026-09-25
 const { fields: restaurantFields, validateRestaurantConfig } = require('./restaurant_config');
 // auth_ui.js
 // Login + sesiones firmadas + menú (/app) + administración de usuarios (/admin/users)
@@ -2387,7 +2387,7 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
             <div class="statsSectionHeader">
               <div>
                 <div class="cellMain">Contactos del rango</div>
-                <div class="small" id="statsContactsCount">0 registros</div>
+                <div class="small" id="statsContactsCount">0 contactos con envíos por API</div>
               </div>
               <div class="statsTableTools">
                 <input class="inp statsSearch" id="statsContactsSearch" type="search" placeholder="Buscar teléfono" />
@@ -2639,7 +2639,7 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
       function renderStatsContacts(){
         var result = statsPage(statsContactsRows, statsContactsSearch && statsContactsSearch.value, statsContactsPageSize && statsContactsPageSize.value, statsContactsPageIndex);
         statsContactsPageIndex = result.page;
-        if(statsContactsCount) statsContactsCount.textContent = result.total + ' registro' + (result.total === 1 ? '' : 's');
+        if(statsContactsCount) statsContactsCount.textContent = result.total + ' contacto' + (result.total === 1 ? '' : 's') + ' con envíos por API';
         if(statsContactsPageLabel) statsContactsPageLabel.textContent = 'Página ' + result.page + ' de ' + result.pages;
         if(statsContactsPrev) statsContactsPrev.disabled = result.page <= 1;
         if(statsContactsNext) statsContactsNext.disabled = result.page >= result.pages;
@@ -2692,7 +2692,13 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
           + statsCard('Fallos', String(permissionSummary.fallos || 0))
           + statsCard('Bloqueados/excluidos', String(permissionSummary.bloqueados || 0));
 
-        statsContactsRows = contacts;
+        // La tabla es operativa: muestra sólo destinatarios con envíos
+        // confirmados por la API de Asisto. El backend conserva contacts
+        // completo y summary.contacts continúa contando todas las personas
+        // que interactuaron para no perder información estadística.
+        statsContactsRows = contacts.filter(function(contact){
+          return Number(contact && contact.outgoingAsisto || 0) > 0;
+        });
         statsPermissionsRows = permissions;
         statsContactsPageIndex = 1;
         statsPermissionsPageIndex = 1;
