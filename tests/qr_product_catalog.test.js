@@ -25,6 +25,16 @@ test('un producto escaneado conserva su chat contextual sin mostrar el acceso al
   assert.doesNotMatch(html, /\.appNav a:last-child\{display:none\}/);
 });
 
+test('iPhone y navegadores internos usan lectura asistida si falta BarcodeDetector', () => {
+  const html = pageHtml({ tenant: 'MCN', code: '', branding: { companyName: 'Mecan' } });
+  const script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+  new vm.Script(script);
+  assert.match(script, /if\(!detector\)\{status\.textContent='Alineá el código y mantené el celular quieto/);
+  assert.match(script, /scanFallbackTimer=setInterval\(\(\)=>tryPrintedBarcode\(true\),2800\)/);
+  assert.match(script, /function tryPrintedBarcode\(retry=false\)/);
+  assert.doesNotMatch(script, /Este navegador no admite lectura automática/);
+});
+
 test('Manager consulta directamente código de barras sin descargar el catálogo', () => {
   const url = new URL(managerDirectLookupUrl('https://manager.example/v300/api/Api_Articulos/Consulta?key=x&campo=ID&valor=*', '236100016'));
   assert.equal(url.searchParams.get('campo'), 'OTRO');
