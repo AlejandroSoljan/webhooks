@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.244 | Fecha: 2026-09-25
+// Asisto | Version: 5.00.245 | Fecha: 2026-09-25
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -672,6 +672,8 @@ async function buildTokenSummary({
           billed_cost: 0,
           real_cost: 0,
           gross_margin: 0,
+          channels: [],
+          usage_types: [],
           billing_configured: row.billing_configured !== false
         };
         grouped.set(key, acc);
@@ -682,6 +684,8 @@ async function buildTokenSummary({
       acc.audio_output_tokens += Number(row.audio_output_tokens || 0);
       acc.total_tokens += Number(row.total_tokens || 0);
       acc.events += Number(row.events || 0);
+      acc.channels = [...new Set([...acc.channels, String(row.channelType || '').trim()].filter(Boolean))];
+      acc.usage_types = [...new Set([...acc.usage_types, String(row.botMode || '').trim()].filter(Boolean))];
       acc.billed_cost += Number(row.billed_cost || 0);
       if (isSuper) {
         acc.real_cost += Number(row.real_cost || 0);
@@ -800,6 +804,8 @@ async function buildTokenSummary({
         events: { $sum: 1 },
         last_at: { $max: "$createdAt" },
         models: { $addToSet: "$model" }
+        ,channels: { $addToSet: { $ifNull: ["$channelType", "$meta.channelType"] } }
+        ,usage_types: { $addToSet: { $ifNull: ["$meta.usageType", ""] } }
       }
     },
     { $sort: { _id: 1 } }
@@ -829,6 +835,8 @@ async function buildTokenSummary({
       total_tokens: Number(row.total_tokens || 0),
       events: Number(row.events || 0),
       models: (Array.isArray(row.models) ? row.models : []).filter(Boolean),
+      channels: (Array.isArray(row.channels) ? row.channels : []).filter(Boolean),
+      usage_types: (Array.isArray(row.usage_types) ? row.usage_types : []).filter(Boolean),
       
       last_at: row.last_at || null,
       billed_cost: calculateBillableCost(row, doc),
@@ -1546,7 +1554,7 @@ function renderTokenControlPage(user, tenants = []) {
             <label><input type="checkbox" name="tokenChannel" value="whatsapp" checked/>WhatsApp</label>
             <label><input type="checkbox" name="tokenChannel" value="qr_web" checked/>QR Web</label>
             <label><input type="checkbox" name="tokenChannel" value="api_messages" checked/>API Mensajes</label>
-            <label><input type="checkbox" name="tokenChannel" value="help_api" checked/>Ayuda API</label>
+            <label><input type="checkbox" name="tokenChannel" value="help_api" checked/>Ayuda de Manager</label>
           </div>
         </details>
         <button class="btn" type="button" id="btnReload">Actualizar</button>
@@ -1596,13 +1604,13 @@ function renderTokenControlPage(user, tenants = []) {
         <table>
           <thead>
             ${isSuper ? `<tr>
-                <th>Dominio</th><th>Entrada texto</th><th>Salida texto</th><th>Audio entrada</th><th>Audio salida</th><th>Total tokens</th><th>Eventos</th><th>Costo real</th><th>A cobrar</th><th>Margen IA</th><th>Último uso</th>
+                <th>Dominio</th><th>Servicio de origen</th><th>Entrada texto</th><th>Salida texto</th><th>Audio entrada</th><th>Audio salida</th><th>Total tokens</th><th>Eventos</th><th>Costo real</th><th>A cobrar</th><th>Margen IA</th><th>Último uso</th>
            </tr>` : `<tr>
-              <th>Dominio</th><th>Total tokens</th><th>Eventos</th><th>Último uso</th><th>Importe</th>
+              <th>Dominio</th><th>Servicio de origen</th><th>Total tokens</th><th>Eventos</th><th>Último uso</th><th>Importe</th>
             </tr>`}
           </thead>
           <tbody id="rows">
-            <tr><td colspan="${isSuper ? 11 : 5}" class="small">Cargando…</td></tr>
+            <tr><td colspan="${isSuper ? 12 : 6}" class="small">Cargando…</td></tr>
           </tbody>
         </table>
       </div>
@@ -1637,7 +1645,7 @@ function renderTokenControlPage(user, tenants = []) {
       <div class="sectionTitle">
         <div>
           <h2>Detalle por conversación</h2>
-          <div class="small">Pedidos: una fila por conversationId. Conversacionales: se separan por sesiones cuando corresponde. Ayuda API: una fila por cada consulta realizada, incluso si se resolvió sin IA o desde cache y consumió 0 tokens.</div>
+          <div class="small">Pedidos: una fila por conversationId. Conversacionales: se separan por sesiones cuando corresponde. Ayuda de Manager: una fila por cada consulta realizada, incluso si se resolvió sin IA o desde cache y consumió 0 tokens.</div>
         </div>
       </div>
       <div id="detailNote" class="small" style="margin-bottom:10px"></div>
@@ -1791,6 +1799,35 @@ function renderTokenControlPage(user, tenants = []) {
     if(Number.isFinite(tb)&&(!Number.isFinite(ta)||tb>ta))return b;
     return a;
   }
+  function serviceLabels(it){
+    const channels=(Array.isArray(it&&it.channels)?it.channels:[]).map(function(x){return String(x||'').toLowerCase();});
+    const usages=(Array.isArray(it&&it.usage_types)?it.usage_types:[]).map(function(x){return String(x||'').toLowerCase();});
+    const out=[];
+    const add=function(label){if(label&&!out.includes(label))out.push(label);};
+    if(channels.includes('help_api')||usages.some(function(x){return x.indexOf('ayuda_')===0;}))add('Ayuda de Manager');
+    if(channels.includes('whatsapp_tasks')||usages.some(function(x){return x.indexOf('task')>=0;}))add('Tareas de WhatsApp');
+    if(channels.includes('api_messages'))add('API Mensajes');
+    if(channels.includes('qr_web'))add('Web / QR');
+    if(channels.includes('whatsapp'))add('Chat de WhatsApp');
+    if(num(it&&it.audio_input_tokens)+num(it&&it.audio_output_tokens)>0)add('Audio / transcripción');
+    if(!out.length&&num(it&&it.total_tokens)>0)add('IA conversacional');
+    if(num(it&&it.real_messages)>0||num(it&&it.api_windows)>0)add('API Mensajes');
+    return out;
+  }
+  function servicesHtml(it){
+    const labels=serviceLabels(it);
+    return labels.length?'<div class="stack">'+labels.map(function(label){return '<span class="chip">'+esc(label)+'</span>';}).join('')+'</div>':'<span class="small">Sin consumo identificado</span>';
+  }
+  function channelLabel(it){
+    const channel=String(it&&it.channelType||'').toLowerCase();
+    const mode=String(it&&it.botMode||'').toLowerCase();
+    if(channel==='help_api'||mode==='ayuda')return 'Ayuda de Manager';
+    if(channel==='whatsapp_tasks'||mode==='tareas_whatsapp')return 'Tareas de WhatsApp';
+    if(channel==='api_messages')return 'API Mensajes';
+    if(channel==='qr_web')return 'Web / QR';
+    if(channel==='whatsapp')return 'Chat de WhatsApp';
+    return channel||'IA conversacional';
+  }
 
   function fmtOrderMoney(v){
     return new Intl.NumberFormat('es-AR', { style:'currency', currency:'ARS', maximumFractionDigits:0 }).format(num(v));
@@ -1880,6 +1917,7 @@ function renderTokenControlPage(user, tenants = []) {
           message_input_tokens:0,message_output_tokens:0,audio_input_tokens:0,audio_output_tokens:0,
           total_tokens:0,events:0,billed_cost:0,real_cost:0,gross_margin:0,
           billing_configured:true,last_at:null
+          ,channels:[],usage_types:[]
         };
         merged.set(key,it);
       }
@@ -1901,7 +1939,7 @@ function renderTokenControlPage(user, tenants = []) {
     if (!isSuper && kpiLastUse) kpiLastUse.textContent = fmtDate(newerDate(totals.last_at,apiTotals.last_at));
 
     if (!items.length) {
-      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">No hay consumos para los filtros seleccionados.</td></tr>';
+      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '6') + '" class="small">No hay consumos para los filtros seleccionados.</td></tr>';
       return;
     }
 
@@ -1918,6 +1956,7 @@ function renderTokenControlPage(user, tenants = []) {
         return '<tr>' +
           '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
           (company ? '<span class="small">' + esc(company) + '</span>' : '') + apiInfo + billingWarning + '</div></td>' +
+          '<td>' + servicesHtml(it) + '</td>' +
           '<td><b>' + fmtInt(it.total_tokens) + '</b></td>' +
           '<td>' + fmtInt(it.events) + '</td>' +
           '<td>' + esc(fmtDate(it.last_at)) + '</td>' +
@@ -1928,6 +1967,7 @@ function renderTokenControlPage(user, tenants = []) {
         '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
         (company ? '<span class="small">' + esc(company) + '</span>' : '') +
         (number ? '<span class="small">' + esc(number) + '</span>' : '') + apiInfo + billingWarning + '</div></td>' +
+        '<td>' + servicesHtml(it) + '</td>' +
         '<td>' + fmtInt(it.message_input_tokens) + '</td><td>' + fmtInt(it.message_output_tokens) + '</td>' +
         '<td>' + fmtInt(it.audio_input_tokens) + '</td><td>' + fmtInt(it.audio_output_tokens) + '</td>' +
         '<td><b>' + fmtInt(it.total_tokens) + '</b></td><td>' + fmtInt(it.events) + '</td>' +
@@ -1989,7 +2029,7 @@ function renderTokenControlPage(user, tenants = []) {
           '<td><div class="stack"><span class="pill">' + esc(it.tenantId || '') + '</span><span class="status ' + statusClass(status) + '">' + esc(status) + '</span></div></td>' +
           '<td><div class="stack">' + (client ? '<b>' + esc(client) + '</b>' : '<span class="small">Sin nombre</span>') +
           (waId ? '<span class="small">' + esc(waId) + '</span>' : '') +
-          '<span class="small">' + esc(it.channelType === 'qr_web' ? 'QR Web' : (it.channelType === 'help_api' ? 'Ayuda API' : (it.channelType === 'api_messages' ? 'API Mensajes' : 'WhatsApp'))) + '</span>' +
+          '<span class="small"><b>Servicio:</b> ' + esc(channelLabel(it)) + '</span>' +
           (isHelp && helpQuery ? '<span class="small"><b>Consulta:</b> ' + esc(helpQuery) + '</span>' : '') +
           (isHelp && helpWindow ? '<span class="small"><b>Ventana:</b> ' + esc(helpWindow) + '</span>' : '') +
           '</div></td>' +
@@ -2001,7 +2041,7 @@ function renderTokenControlPage(user, tenants = []) {
       return '<tr>' +
         '<td><div class="stack"><span class="pill">' + esc(it.tenantId || '') + '</span><span class="status ' + statusClass(status) + '">' + esc(status) + '</span></div></td>' +
         '<td><div class="stack">' + (client ? '<b>' + esc(client) + '</b>' : '<span class="small">Sin nombre</span>') +
-        (waId ? '<span class="small">' + esc(waId) + '</span>' : '') + '<span class="small">' + esc(it.channelType || '') + '</span></div></td>' +
+        (waId ? '<span class="small">' + esc(waId) + '</span>' : '') + '<span class="small"><b>Servicio:</b> ' + esc(channelLabel(it)) + '</span></div></td>' +
         '<td><div class="stack"><span class="mono">' + esc(shortId(it.conversationId)) + '</span>' + sessionInfo + orderInfo + orderTotal + '</div></td>' +
         '<td><div class="stack"><span>' + esc(fmtDate(it.first_at)) + '</span><span class="small">hasta ' + esc(fmtDate(it.last_at)) + '</span></div></td>' +
         '<td>' + fmtInt(it.message_input_tokens) + '</td><td>' + fmtInt(it.message_output_tokens) + '</td><td>' + fmtInt(audio) + '</td>' +

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.182 | Fecha: 2026-09-21
+// Asisto | Version: 5.00.245 | Fecha: 2026-09-25
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { JSDOM } = require('jsdom');
@@ -30,6 +30,8 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
     assert.deepEqual([...dom.window.document.getElementById('fTenant').options].map(option => option.value), ['', 'CARICO', 'MCN', 'RVL']);
     assert.equal(dom.window.document.getElementById('conversationDetailCard').hidden, true);
     assert.equal(dom.window.document.getElementById('apiMessagesCard').hidden, true);
+    assert.match(dom.window.document.body.textContent, /Servicio de origen/);
+    assert.match(dom.window.document.body.textContent, /Ayuda de Manager/);
 
     dom.window.document.getElementById('btnLoadConversations').click();
     await tick();
