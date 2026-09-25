@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.234 | Fecha: 2026-09-24
+// Asisto | Version: 5.00.237 | Fecha: 2026-09-25
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { canonicalOpenAiModel, textModelPrice, audioModelPrice } = require('../openai_model_pricing');
@@ -34,4 +34,20 @@ test('la tarifa configurada prevalece y un modelo ausente usa el costo base vige
     token_cost_chat_input_per_1k: 0.01,
     token_cost_chat_output_per_1k: 0.02
   }), 0.03);
+});
+
+test('el margen IA recalcula también el histórico desde el costo real', () => {
+  const usage = {
+    message_input_tokens: 1000,
+    message_output_tokens: 1000,
+    models: ['gpt-5.6-terra']
+  };
+  const tenant = {
+    monetizationConfigured: true,
+    billingEnabled: true,
+    aiMarkupPercent: 100
+  };
+
+  assert.equal(calculateEstimatedCost(usage, tenant), 0.014);
+  assert.equal(calculateBillableCost(usage, tenant), 0.028);
 });

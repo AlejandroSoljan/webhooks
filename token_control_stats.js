@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.234 | Fecha: 2026-09-24
+// Asisto | Version: 5.00.237 | Fecha: 2026-09-25
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -132,8 +132,8 @@ async function loadTenantCosts(db, tenantIds = []) {
 
   if (!ids.length) return new Map();
 
-  const rows = await db.collection("tenant_config")
-    .find({ _id: { $in: ids } }, {
+  const [rows, monetizationRows] = await Promise.all([
+    db.collection("tenant_config").find({ _id: { $in: ids } }, {
       projection: {
         _id: 1,
         nom_emp: 1,
@@ -151,9 +151,22 @@ async function loadTenantCosts(db, tenantIds = []) {
         token_charge_help_input_per_1k: 1,
         token_charge_help_output_per_1k: 1
       }
-    }).toArray();
+    }).toArray(),
+    db.collection("monetization_config").find({ _id: { $in: ids } }, {
+      projection: { _id: 1, billingEnabled: 1, aiMarkupPercent: 1 }
+    }).toArray()
+  ]);
 
-  return new Map(rows.map((doc) => [String(doc._id || ""), doc]));
+  const monetizationByTenant = new Map(monetizationRows.map((doc) => [String(doc._id || ""), doc]));
+  return new Map(rows.map((doc) => {
+    const monetization = monetizationByTenant.get(String(doc._id || ""));
+    return [String(doc._id || ""), {
+      ...doc,
+      monetizationConfigured: !!monetization,
+      billingEnabled: monetization?.billingEnabled === true,
+      aiMarkupPercent: Number(monetization?.aiMarkupPercent || 0)
+    }];
+  }));
 }
 
 function calculateCostWithRates(row, tenantDoc = {}, mode = "real") {
@@ -216,10 +229,18 @@ function calculateEstimatedCost(row, tenantDoc = {}) {
 }
 
 function calculateBillableCost(row, tenantDoc = {}) {
+  // Cuando el dominio activó el motor de facturación, el margen configurado
+  // se aplica sobre el costo real del modelo. Como el panel calcula desde los
+  // eventos originales, la corrección también alcanza cualquier rango histórico.
+  if (tenantDoc.monetizationConfigured && tenantDoc.billingEnabled === true) {
+    const markup = Math.max(0, Number(tenantDoc.aiMarkupPercent || 0));
+    return Number((calculateEstimatedCost(row, tenantDoc) * (1 + markup / 100)).toFixed(6));
+  }
   return calculateCostWithRates(row, tenantDoc, "charge");
 }
 
 function tenantChargeRatesConfigured(tenantDoc = {}) {
+  if (tenantDoc.monetizationConfigured && tenantDoc.billingEnabled === true) return true;
   return [
     "token_charge_chat_input_per_1k",
     "token_charge_chat_output_per_1k",
