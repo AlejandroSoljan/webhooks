@@ -17,13 +17,13 @@ async function linkReservedTicket() {
 }
 function setupTicketNotices() {
   if (!localStorage.asistoTicketId || el('ticketNotices')) return;
-  const box = document.createElement('div'); box.id = 'ticketNotices'; box.style.cssText = 'padding:18px;margin-top:18px;border-radius:14px;background:#eef7f2';
-  const message = document.createElement('p'); message.style.cssText = 'font-size:15px';
+  const box = document.createElement('div'); box.id = 'ticketNotices'; box.style.cssText = 'padding:11px 14px;margin-top:12px;border-radius:14px;background:#eef7f2';
+  const message = document.createElement('p'); message.style.cssText = 'font-size:13px;line-height:1.35;margin:0 0 9px';
   if (window.AsistoNative) {
     message.textContent = 'Tu turno está vinculado a Asisto. Permití las notificaciones de la app: te avisamos cuando faltan 2 turnos, 1 y cuando te llamen.'; box.append(message);
   } else {
     message.textContent = 'Tu turno está guardado en este celular. Mantené esta página abierta: te avisaremos cuando seas el próximo y cuando te llamen.';
-    const button = document.createElement('button'); button.className = 'action'; button.textContent = ticketAlertsEnabled ? 'Avisos automáticos activados' : 'Activar sonido y vibración'; button.disabled = ticketAlertsEnabled;
+    const button = document.createElement('button'); button.className = 'action ticketNoticeAction'; button.textContent = ticketAlertsEnabled ? 'Avisos automáticos activados' : 'Activar sonido y vibración'; button.disabled = ticketAlertsEnabled;
     button.onclick = async () => { const enabled = await enableTicketAlerts(); button.textContent = enabled ? 'Avisos activados' : 'No se pudo activar el sonido'; button.disabled = enabled; if (enabled) { localStorage.removeItem('asistoLastTicketAlert'); refreshTicket().catch(()=>{}); } };
     box.append(message, button);
   }
