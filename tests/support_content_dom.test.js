@@ -6,7 +6,7 @@ const { JSDOM } = require('jsdom');
 const source = fs.readFileSync(require.resolve('../extensions/whatsapp-support/content.js'), 'utf8');
 const matcher = fs.readFileSync(require.resolve('../extensions/whatsapp-support/matcher.js'), 'utf8');
 const pause = () => new Promise(resolve => setTimeout(resolve, 250));
-async function mount() {
+async function mount(serverMessages = []) {
   const dom = new JSDOM(`<div id="main"><header><span dir="auto">Tecnoaplicaciones Magali</span></header><div data-id="unrelated"></div><section id="messages">
     <div role="row" data-id="false_123@lid_AUDIO000001"><div class="message-in"><span data-icon="audio-play"></span></div></div>
     <div role="row" data-id="true_123@lid_AUDIO000002"><div class="message-out"><span data-icon="audio-play"></span></div></div>
@@ -17,7 +17,7 @@ async function mount() {
     calls.push(message);
     if (message.action === 'INDEX') return { data: { owner: 'ALSO:also', chats: [], knownChats: [] } };
     if (message.action === 'ACTIVE_CONTEXT') return { data: { jid: '999@lid', name: 'Otro contacto' } };
-    if (message.action === 'MESSAGES') return { data: { tasks: [], messages: [] } };
+    if (message.action === 'MESSAGES') return { data: { tasks: [], messages: serverMessages } };
     return { ok: true };
   } }, storage: { onChanged: { addListener() {} } } };
   w.alert = text => { throw new Error(text); };
@@ -138,5 +138,17 @@ test('an audio stays selected when its transcription appears after the click', a
     assert.equal(w.document.querySelector(`.asisto-message-control[data-asisto-message-id="${id}"] input`).checked, true);
     w.document.querySelector('.asisto-message-toolbar .primary').click(); await pause();
     assert.match(calls.find(call => call.action === 'ASSIGN_MESSAGES').selectedMessages[0].text, /período contable/);
+  } finally { dom.window.close(); }
+});
+test('an audio without a DOM id uses the Baileys id by duration and direction', async () => {
+  const { dom, w, calls } = await mount([{ waId: 'SERVER_AUDIO_ID', at: '2026-09-14T18:29:00.000Z', fromMe: false, audio: true, seconds: 34, assignments: [] }]);
+  try {
+    const row = w.document.querySelector('[data-id="false_123@lid_AUDIO000001"]');
+    row.removeAttribute('data-id'); row.querySelector('.message-in').append(w.document.createTextNode(' 0:34 15:29'));
+    await pause();
+    assert.equal(row.dataset.asistoMessageId, 'SERVER_AUDIO_ID');
+    w.document.querySelector('.asisto-message-control[data-asisto-message-id="SERVER_AUDIO_ID"] input').click();
+    w.document.querySelector('.asisto-message-toolbar .primary').click(); await pause();
+    assert.deepEqual([...calls.find(call => call.action === 'ASSIGN_MESSAGES').messageIds], ['SERVER_AUDIO_ID']);
   } finally { dom.window.close(); }
 });

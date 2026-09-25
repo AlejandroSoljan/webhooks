@@ -2,5 +2,5 @@
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $source = Join-Path $repo 'extensions/whatsapp-support'
-$destination = Join-Path $repo 'static/downloads/AsistoChrome-1.0.40.zip'
+$destination = Join-Path $repo 'static/downloads/AsistoChrome-1.0.41.zip'
 Compress-Archive -Path (Join-Path $source '*') -DestinationPath $destination -Force

@@ -96,7 +96,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     for (const task of tasks) for (const messageId of task.messageIds) {
       const list = assignments.get(messageId) || []; list.push({ draftId: task.id, shortId: task.shortId, subject: task.subject, status: task.status, ticketId: task.ticketId }); assignments.set(messageId, list);
     }
-    return { jid, tasks: tasks.map(({ messageIds, ...task }) => task), messages: rows.map(row => ({ waId: row.id, at: row.at, fromMe: !!row.fromMe, assignments: assignments.get(row._id) || [] })) };
+    return { jid, tasks: tasks.map(({ messageIds, ...task }) => task), messages: rows.map(row => ({ waId: row.id, at: row.at, fromMe: !!row.fromMe, audio: !!row.audio, seconds: row.audio?.seconds || 0, assignments: assignments.get(row._id) || [] })) };
   }));
   router.post('/messages/assign', route((req, s, scope) => s.assignMessages(scope, req.body)));
   router.get('/contact-control', route(async (req, s, scope) => {

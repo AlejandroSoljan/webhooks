@@ -162,6 +162,19 @@ test('missing audio provider fails closed, retries are bounded, local transcript
   await service.history(scope, '2026-09-01T10:30:00Z', '2026-09-01T12:00:00Z'); await service.runOne();
   assert.equal(calls, 1);
 });
+test('manual audio selection transcribes before creating its task context', async () => {
+  let calls = 0;
+  service.transcribe = { model: 'selection-fixture', run: async () => { calls++; return { text: 'No permite guardar el período contable', costUsd: 0.001 }; } };
+  await service.ingest(scope, message('selected-audio', 30, { text: '', raw: 'encrypted-audio', audio: { seconds: 9, bytes: 80, mimetype: 'audio/ogg' } }));
+  const saved = await service.assignMessages(scope, { jid: '123@s.whatsapp.net', messageIds: ['selected-audio'], destination: 'new' });
+  const draft = await service.col('drafts').findOne({ _id: saved.draftId });
+  const fields = vault.open(draft.fields, draft._id);
+  const stored = await service.col('messages').findOne({ ...scope, id: 'selected-audio' });
+  assert.equal(calls, 1);
+  assert.match(fields.description, /período contable/i);
+  assert.equal(vault.open(stored.payload, stored._id).transcribed, true);
+  assert.equal((await service.col('usage').findOne({ kind: 'transcription' })).result, 'ok');
+});
 test('queue repairs an insertion/enqueue crash', async () => {
   await service.ingest(scope, message('one'));
   await service.col('jobs').deleteMany({}); await service.col('messages').updateMany({}, { $set: { queued: false } });
