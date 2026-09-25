@@ -228,6 +228,12 @@ test('business administrators can save the seller list without duplicates', asyn
   const duplicate = await fetch(url + admin + '/sellers', { method: 'PUT', headers: { 'content-type': 'application/json', 'x-test-user': 'TEST' }, body: JSON.stringify({ sellers: [{ name: 'ALDANA' }, { name: 'aldana' }] }) });
   assert.equal(duplicate.status, 400);
 });
+test('operators see a permission message without leaving the queue screen', async () => {
+  const page = await fetch(url + '/ui/turnero/TEST', { headers: { 'x-test-user': 'TEST', 'x-test-role': 'operator' } });
+  const html = await page.text(); assert.equal(page.status, 200); assert.match(html, /onclick="showSellerPermission\(\)"/); assert.match(html, /Solo un administrador puede configurar los vendedores/);
+  const direct = await fetch(url + '/ui/turnero/TEST/vendedores', { redirect: 'manual', headers: { 'x-test-user': 'TEST', 'x-test-role': 'operator' } });
+  assert.equal(direct.status, 302); assert.equal(direct.headers.get('location'), '/ui/turnero/TEST?sellerPermission=1');
+});
 test('concurrent calls cannot skip a ticket; transfer preserves identity and joins end of destination queue', async () => {
   const waiting = await req(api + '/tickets', { sectorId: 'caja', installId: 'cash-client' });
   await db.collection('customer_app_devices').insertOne({ tenantId: 'TEST', installId: 'device-0', pushToken: 'mock' });

@@ -115,13 +115,13 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
   }));
   app.get('/ui/turnero/:tenant', wrap(async (req, res) => {
     const { t, db } = await scope(req); guard(req, t);
-    const isSuper = String(req.user?.role || '').toLowerCase() === 'superadmin';
+    const role = String(req.user?.role || '').toLowerCase(), isSuper = role === 'superadmin', canManageSellers = ['admin', 'superadmin'].includes(role);
     const tenants = isSuper ? await listStatsTenants(db, t) : [t];
-    res.type('html').send(queuePage(t, 'admin', { tenants, isSuper }));
+    res.type('html').send(queuePage(t, 'admin', { tenants, isSuper, canManageSellers }));
   }));
   app.get('/ui/turnero/:tenant/vendedores', wrap(async (req, res) => {
     const { t } = await scope(req); guard(req, t);
-    if (!['admin', 'superadmin'].includes(String(req.user?.role || '').toLowerCase())) fail(403, 'Solo un administrador puede configurar vendedores.');
+    if (!['admin', 'superadmin'].includes(String(req.user?.role || '').toLowerCase())) return res.redirect('/ui/turnero/' + encodeURIComponent(t) + '?sellerPermission=1');
     res.type('html').send(sellerSettingsPage(t));
   }));
   app.get('/api/customer-app-admin/:tenant/sellers', wrap(async (req, res) => {
