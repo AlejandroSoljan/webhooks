@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.242 | Fecha: 2026-09-25
+// Asisto | Version: 5.00.244 | Fecha: 2026-09-25
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -157,10 +157,14 @@ async function loadTenantCosts(db, tenantIds = []) {
     }).toArray()
   ]);
 
+  const tenantById = new Map(rows.map((doc) => [String(doc._id || ""), doc]));
   const monetizationByTenant = new Map(monetizationRows.map((doc) => [String(doc._id || ""), doc]));
-  return new Map(rows.map((doc) => {
-    const monetization = monetizationByTenant.get(String(doc._id || ""));
-    return [String(doc._id || ""), {
+  // Un dominio puede tener consumos históricos antes de que exista su tenant_config.
+  // No debe perder por eso la configuración de monetización ni quedar con cobro cero.
+  return new Map(ids.map((id) => {
+    const doc = tenantById.get(id) || { _id: id };
+    const monetization = monetizationByTenant.get(id);
+    return [id, {
       ...doc,
       monetizationConfigured: !!monetization,
       billingEnabled: monetization?.billingEnabled === true,
@@ -2244,6 +2248,7 @@ module.exports = {
   renderTokenControlPage,
   calculateEstimatedCost,
   calculateBillableCost,
+  loadTenantCosts,
   buildTokenSummary,
   buildTokenConversationSummary,
   buildApiMessageWindowBilling,

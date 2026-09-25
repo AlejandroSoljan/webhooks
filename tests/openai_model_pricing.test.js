@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { canonicalOpenAiModel, textModelPrice, audioModelPrice } = require('../openai_model_pricing');
-const { calculateEstimatedCost, calculateBillableCost } = require('../token_control_stats');
+const { calculateEstimatedCost, calculateBillableCost, loadTenantCosts } = require('../token_control_stats');
 
 test('precios oficiales se guardan por 1K tokens', () => {
   assert.deepEqual(textModelPrice('gpt-5.6-luna'), { input: 0.0002, output: 0.0012 });
@@ -50,4 +50,29 @@ test('el margen IA recalcula también el histórico desde el costo real', () => 
 
   assert.equal(calculateEstimatedCost(usage, tenant), 0.014);
   assert.equal(calculateBillableCost(usage, tenant), 0.028);
+});
+
+test('un dominio con consumos y monetización funciona aunque todavía no tenga tenant_config', async () => {
+  const db = {
+    collection(name) {
+      return {
+        find() {
+          return {
+            async toArray() {
+              return name === 'monetization_config'
+                ? [{ _id: 'NUEVO', billingEnabled: true, aiMarkupPercent: 100 }]
+                : [];
+            },
+          };
+        },
+      };
+    },
+  };
+  const costs = await loadTenantCosts(db, ['NUEVO']);
+  assert.deepEqual(costs.get('NUEVO'), {
+    _id: 'NUEVO',
+    monetizationConfigured: true,
+    billingEnabled: true,
+    aiMarkupPercent: 100,
+  });
 });
