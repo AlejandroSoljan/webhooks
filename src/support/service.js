@@ -366,6 +366,30 @@ class SupportService {
       await this.audit(scope, 'selected_messages_imported', jid);
     }
     if (rows.length !== waIds.length) fail('message_selection_not_found', 404);
+    // Manual selection must use the same server-side transcription path as the
+    // automatic queue.  Otherwise an audio selected from WhatsApp was added to
+    // the draft with an empty string and the summary ignored it completely.
+    // Cache the transcript on the message so later regrouping and evidence
+    // views reuse it instead of paying for another transcription.
+    for (const row of rows) {
+      if (!row.audio) continue;
+      const payload = this.vault.open(row.payload, row._id);
+      if (payload.transcribed) continue;
+      if (!this.transcribe) fail('transcription_provider_required', 422);
+      const attemptId = crypto.randomUUID(), started = Date.now();
+      await this.col('usage').insertOne({ _id: attemptId, ...scope, conversationId: jid, messageId: row._id, model: this.transcribe.model, kind: 'transcription', inputTokens: 0, outputTokens: 0, audioSeconds: row.audio.seconds, processingUnits: row.audio.seconds, costUsd: null, result: 'started', at: this.now() });
+      try {
+        const result = await this.transcribe.run(payload.raw, row.audio, { ...scope, jid, conversationId: input.destination || 'manual-selection', messageId: row._id });
+        payload.text = text(result.text, 50000); payload.transcribed = true;
+        const sealedPayload = this.vault.seal(payload, row._id);
+        await this.col('messages').updateOne({ _id: row._id, ...scope }, { $set: { payload: sealedPayload } });
+        row.payload = sealedPayload;
+        await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'ok', model: result.model || this.transcribe.model, durationMs: Date.now() - started, costUsd: result.costUsd ?? null } });
+      } catch (error) {
+        await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'error', error: error.code || 'transcription_failed', durationMs: Date.now() - started } });
+        throw error;
+      }
+    }
     const destination = input.destination === 'new' ? 'new' : text(input.destination, 64);
     let draft = destination === 'new' ? null : await this.col('drafts').findOne({ _id: destination, ...scope, jid: { $in: jids }, state: { $ne: 'merged' } });
     if (destination !== 'new' && !draft) fail('draft_not_found', 404);

@@ -1,4 +1,4 @@
-# Asisto | Version: 5.00.213 | Fecha: 2026-09-23
+# Asisto | Version: 5.00.240 | Fecha: 2026-09-25
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $source = Join-Path $repo 'desktop/support'
@@ -14,7 +14,7 @@ try {
   $extensionStage = Join-Path $stage 'Extension'
   New-Item -ItemType Directory -Path $extensionStage -Force | Out-Null
   Copy-Item -Path (Join-Path $extension '*') -Destination $extensionStage -Recurse -Force
-  Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path $destination 'AsistoTareas-5.00.213.zip') -Force
+  Compress-Archive -Path (Join-Path $stage '*') -DestinationPath (Join-Path $destination 'AsistoTareas-5.00.240.zip') -Force
 } finally {
   if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
 }

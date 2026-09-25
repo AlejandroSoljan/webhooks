@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.241 | Fecha: 2026-09-25
+// Asisto | Version: 5.00.242 | Fecha: 2026-09-25
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { canonicalOpenAiModel, textModelPrice, audioModelPrice } = require('../openai_model_pricing');

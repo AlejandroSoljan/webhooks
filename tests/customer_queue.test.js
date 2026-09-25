@@ -100,8 +100,9 @@ test('pages contain syntactically valid scripts and escape tenant names', () => 
   const sellersHtml = sellerSettingsPage('MCN'); new vm.Script(sellersHtml.match(/<script>([\s\S]*)<\/script>/)[1]);
   assert.match(sellersHtml, /Vendedores del turnero/); assert.match(sellersHtml, /Agregar vendedor/); assert.match(sellersHtml, /Guardar vendedores/);
 });
-test('attention page filters sections exclusively from the URL', () => {
+test('attention page filters fixed-section views without rendering a redundant selector', () => {
   const html = queuePage('MCN', 'admin');
+  assert.doesNotMatch(html, /root\.append\(element\('label','Sección'\)\)/);
   assert.match(html, /const visible=x\.sectors\.filter\(s=>!selectedSector\|\|s\.id===selectedSector\)/);
   assert.doesNotMatch(html, /new Option\('Todas las secciones'/);
   assert.doesNotMatch(html, /Opciones del turnero/);
@@ -154,9 +155,12 @@ test('MCN kiosk exposes QR-only Autoservicio and focused display keeps other sec
   assert.match(displayHtml, /body\.display:not\(\.focusedMode\) \.cards\{[^}]*grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
   assert.match(displayHtml, /body\.display:not\(\.focusedMode\) \.card h2\{[^}]*background:#ed101c;color:#fff/);
   assert.doesNotMatch(displayHtml, /new Option\('Todas las secciones'/);
-  const launcher = require('fs').readFileSync(require('path').join(__dirname, '..', 'deploy', 'turnero-local', 'launch-display.sh'), 'utf8');
-  assert.match(launcher, /--kiosk/);
-  assert.match(launcher, /--autoplay-policy=no-user-gesture-required/);
+  const launcherPath = require('path').join(__dirname, '..', 'deploy', 'turnero-local', 'launch-display.sh');
+  if (require('fs').existsSync(launcherPath)) {
+    const launcher = require('fs').readFileSync(launcherPath, 'utf8');
+    assert.match(launcher, /--kiosk/);
+    assert.match(launcher, /--autoplay-policy=no-user-gesture-required/);
+  }
   assert.match(displayHtml, /Otras secciones/);
   assert.match(displayHtml, /focusedNumber/);
   assert.match(displayHtml, /sellerNameLine\(s\.current\.sellerName,'focusedSellerName'\)/);

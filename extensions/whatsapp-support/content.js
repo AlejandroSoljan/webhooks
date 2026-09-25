@@ -13,6 +13,16 @@
     return +new Date(year, Number(match[4]) - 1, Number(match[3]), Number(match[1]), Number(match[2]));
   }
   const messageText = node => [...node.querySelectorAll('.selectable-text')].filter(element => !element.parentElement?.closest('.selectable-text')).map(element => element.innerText || element.textContent || '').join('\n').trim();
+  const isAudio = node => !!node.querySelector('audio, [data-icon*="audio"], [data-testid*="audio"], [data-icon="ptt-status"]');
+  const audioSeconds = node => {
+    if (!isAudio(node)) return 0;
+    const values = (node.textContent || '').match(/\b\d{1,2}:\d{2}\b/g) || [];
+    // WhatsApp renders the media duration before the message clock.
+    const value = values.length > 1 ? values[0] : '';
+    if (!value) return 0;
+    const [minutes, seconds] = value.split(':').map(Number), total = minutes * 60 + seconds;
+    return total > 0 && total <= 600 ? total : 0;
+  };
   const localId = value => { let first = 2166136261, second = 5381; for (const char of value) { first = Math.imul(first ^ char.charCodeAt(0), 16777619); second = Math.imul(second, 33) ^ char.charCodeAt(0); } return 'asisto-local-' + (first >>> 0).toString(36) + (second >>> 0).toString(36); };
   const snapshot = (node, id) => {
     const pre = node.matches('[data-pre-plain-text]') ? node : node.querySelector('[data-pre-plain-text]');
@@ -62,7 +72,10 @@
       let id = extractMessageId(idNode?.getAttribute('data-id'));
       const at = visibleMessageAt(node, pre), fromMe = node.classList.contains('message-out') || !!node.closest('.message-out') || !!node.querySelector('.message-out');
       if (!id) {
-        const match = (taskData.messages || []).find(row => !usedRows.has(row.waId) && row.fromMe === fromMe && Math.abs(+new Date(row.at) - at) < 60000);
+        const audio = isAudio(node), seconds = audioSeconds(node);
+        const matches = (taskData.messages || []).filter(row => !usedRows.has(row.waId) && row.fromMe === fromMe && (!audio || row.audio) && (Number.isFinite(at) ? Math.abs(+new Date(row.at) - at) < 90000 : audio && seconds && Math.abs(Number(row.seconds || 0) - seconds) <= 2));
+        matches.sort((left, right) => (Number.isFinite(at) ? Math.abs(+new Date(left.at) - at) - Math.abs(+new Date(right.at) - at) : Math.abs(Number(left.seconds || 0) - seconds) - Math.abs(Number(right.seconds || 0) - seconds)));
+        const match = matches[0];
         id = match?.waId || '';
       }
       if (!id && node.dataset.asistoJid === currentJid && node.dataset.asistoMessageId?.startsWith('asisto-local-')) id = node.dataset.asistoMessageId;
