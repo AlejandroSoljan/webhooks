@@ -74,6 +74,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         return { started: true };
       }
       case 'DISMISS': return api('/drafts/' + id + '/dismiss', { revision: message.revision }, session.csrf);
+      case 'DISCARD_CHANGES': return api('/drafts/' + id + '/discard-changes', { revision: message.revision }, session.csrf);
       case 'HUBSPOT': return api('/hubspot');
       case 'HUBSPOT_SEARCH': return api('/hubspot/search?type=' + encodeURIComponent(String(message.type || '')) + '&q=' + encodeURIComponent(String(message.query || '')));
       case 'CONNECT': return api('/hubspot/connect', { token: message.token }, session.csrf);

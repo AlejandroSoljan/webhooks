@@ -118,6 +118,18 @@ test('saved tasks stay available and new source messages restore their pending i
  assert.equal((await call('/index')).data.chats.length,0);
  assert.equal((await call('/messages?jid=123%40lid')).data.tasks[0].status,'discarded');
 });
+test('new source changes can be discarded without dismissing or modifying the saved HubSpot ticket',async()=>{
+ await service.col('drafts').updateOne({_id:id},{$set:{state:'needs_review',sourceChanged:true,reconciliationRequired:true,hubspot:{state:'saved',ticketId:'hs-88',portalId:'123',pendingFollowup:true,followupAction:'update'}}});
+ const result=await call('/drafts/'+id+'/discard-changes',{revision:1});
+ assert.equal(result.status,200);assert.equal(result.data.ticketId,'hs-88');assert.equal(result.data.revision,2);
+ const row=await service.col('drafts').findOne({_id:id});
+ assert.equal(row.state,'approved');assert.equal(row.hubspot.state,'saved');assert.equal(row.hubspot.ticketId,'hs-88');
+ assert.equal(row.hubspot.pendingFollowup,false);assert.equal(row.hubspot.followupAction,undefined);
+ assert.equal(row.sourceChanged,false);assert.equal(row.reconciliationRequired,false);
+ assert.equal(row.events.at(-1).action,'source_changes_discarded');assert.equal(writes.length,0);
+ assert.equal((await call('/index')).data.chats.length,0);
+ assert.equal((await call('/drafts/'+id+'/discard-changes',{revision:2})).status,409);
+});
 test('task can wait for the tenant HubSpot connection without losing its indicator',async()=>{
  await service.col('integrations').deleteMany({tenantId:scope.tenantId});
  assert.deepEqual((await call('/hubspot')).data,{configured:false});

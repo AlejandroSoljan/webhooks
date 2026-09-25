@@ -206,6 +206,19 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     await s.audit(scope, 'task_dismissed', row._id);
     return { dismissed: true, revision: row.revision + 1 };
   }));
+  router.post('/drafts/:id/discard-changes', route(async (req, s, scope) => {
+    const row = await rowFor(s, scope, req.params.id);
+    if (row.revision !== req.body.revision) fail('revision_conflict', 409);
+    if (row.hubspot?.state !== 'saved' || !row.hubspot?.ticketId) fail('hubspot_ticket_not_saved', 409);
+    if (!row.sourceChanged && !row.reconciliationRequired && !row.hubspot?.pendingFollowup) fail('no_source_changes', 409);
+    const result = await s.col('drafts').updateOne(
+      { _id: row._id, ...scope, revision: row.revision, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': 'saved', 'hubspot.ticketId': row.hubspot.ticketId },
+      { $set: { state: 'approved', sourceChanged: false, reconciliationRequired: false, 'hubspot.pendingFollowup': false, updatedAt: s.now() }, $unset: { 'hubspot.followupAction': '' }, $inc: { revision: 1 }, $push: { events: { action: 'source_changes_discarded', by: scope.userId, at: s.now() } } }
+    );
+    if (!result.matchedCount) fail('revision_conflict', 409);
+    await s.audit(scope, 'source_changes_discarded', row._id);
+    return { discarded: true, ticketId: row.hubspot.ticketId, revision: row.revision + 1 };
+  }));
   router.get('/hubspot', route(async (req, s, scope) => {
     const credential = await hubspotCredential(s, scope, env);
     if (!credential) return { configured: false };

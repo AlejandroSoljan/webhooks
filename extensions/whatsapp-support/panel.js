@@ -91,7 +91,9 @@ function renderFields() {
   }
   $('setup').textContent = current.hubspot?.ticketId ? 'Actualizar ticket en HubSpot' : 'Crear ticket en HubSpot';
   $('dismiss').hidden = !!current.hubspot?.ticketId || current.state === 'ignored';
-  $('reviewWarning').hidden = !current.sourceChanged && !current.reconciliationRequired;
+  const hasNewChanges = current.sourceChanged || current.reconciliationRequired || current.hubspot?.pendingFollowup;
+  $('discardChanges').hidden = !current.hubspot?.ticketId || !hasNewChanges;
+  $('reviewWarning').hidden = !hasNewChanges;
   $('editor').hidden = false; $('hubspot').hidden = true;
 }
 const companySuggestions = new Map();
@@ -231,6 +233,18 @@ $('dismiss').onclick = () => run(async () => {
   await api('DISMISS', { id: current.id, revision: current.revision });
   notice('Tarea desestimada.');
   await refresh();
+});
+$('discardChanges').onclick = () => run(async () => {
+  const result = await api('DISCARD_CHANGES', { id: current.id, revision: current.revision });
+  current.revision = result.revision;
+  current.state = 'approved';
+  current.sourceChanged = false;
+  current.reconciliationRequired = false;
+  current.hubspot.pendingFollowup = false;
+  delete current.hubspot.followupAction;
+  renderFields();
+  notice('Cambios nuevos descartados. El ticket existente se conserva sin modificaciones.');
+  setTimeout(() => run(refresh), 800);
 });
 function mappingReady() { return ['hubspot-owner','pipeline','stage','property-category','value-category','property-errorType','value-errorType','property-channel','value-channel'].every(id => $(id)?.value); }
 async function publishCurrent(alreadySaved = false) {
