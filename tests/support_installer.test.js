@@ -10,7 +10,7 @@ test('combined Windows installer includes Baileys and the Chrome extension witho
   const installer = fs.readFileSync(path.join(root, 'desktop/support/Instalar.ps1'), 'utf8');
   const builder = fs.readFileSync(path.join(root, 'scripts/build_support_desktop.ps1'), 'utf8');
   const panel = fs.readFileSync(path.join(root, 'src/support/panel.html'), 'utf8');
-  const archive = fs.readFileSync(path.join(root, 'static/downloads/AsistoTareas-5.00.227.zip'));
+  const archive = fs.readFileSync(path.join(root, 'static/downloads/AsistoTareas-5.00.228.zip'));
   const archiveText = archive.toString('latin1');
 
   assert.match(installer, /npm-cli\.js'\) ci --omit=dev --ignore-scripts/);
