@@ -5,7 +5,7 @@
   "main": "endpoint.js",
   "type": "commonjs",
   "scripts": {
-    "test": "node --test tests/*.test.js",
+    "test": "node --test --test-concurrency=1 tests/*.test.js",
     "start": "node endpoint.js",
     "dev": "nodemon endpoint.js",
     "support:migrate": "node scripts/migrate_support.js",

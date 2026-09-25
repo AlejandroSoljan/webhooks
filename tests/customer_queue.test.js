@@ -98,9 +98,9 @@ test('pages contain syntactically valid scripts and escape tenant names', () => 
   assert.match(queuePage('TEST', 'kiosk'), /Recibí el llamado en tu celular/);
   assert.match(queuePage('MCN', 'kiosk'), /Te avisaremos en el celular cuando sea tu turno/);
 });
-test('attention page only builds the section selector for the all-sections view', () => {
+test('attention page filters fixed-section views without rendering a redundant selector', () => {
   const html = queuePage('MCN', 'admin');
-  assert.match(html, /if\(!selectedSector\)\{root\.append\(element\('label','Sección'\)\)/);
+  assert.doesNotMatch(html, /root\.append\(element\('label','Sección'\)\)/);
   assert.match(html, /const visible=x\.sectors\.filter\(s=>!selectedSector\|\|s\.id===selectedSector\)/);
 });
 test('operator transfer controls stay contained inside each card', () => {
