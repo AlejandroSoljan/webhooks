@@ -5,11 +5,11 @@ const { MongoClient } = require('mongodb');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const express = require('express');
 const { mountQueue, presenceToken, validPresence } = require('../customer_queue');
-const { queuePage } = require('../queue_pages');
+const { queuePage, sellerSettingsPage } = require('../queue_pages');
 const vm = require('node:vm');
 let mongo, client, db, server, url, queue, sent = 0;
 const notifications = []; let rejectPush = false;
-const cfg = { businessName: 'Mecan', branchId: 'CENTRAL', queuePresence: 'open', sectors: [{ id: 'ferreteria', name: 'Ferretería', prefix: 'F' }, { id: 'caja', name: 'Caja', prefix: 'C' }] };
+const cfg = { businessName: 'Mecan', branchId: 'CENTRAL', queuePresence: 'open', sellers: [{ id: 'seller-aldana', name: 'ALDANA', active: true }], sectors: [{ id: 'ferreteria', name: 'Ferretería', prefix: 'F' }, { id: 'caja', name: 'Caja', prefix: 'C' }] };
 before(async () => {
   mongo = await MongoMemoryServer.create();
   client = new MongoClient(mongo.getUri());
@@ -78,7 +78,7 @@ test('temporary open tenant exposes operation and statistics without a session',
   cfg.queuePresence = 'open';
   for (const route of ['/customer-app/OPEN/kiosk', '/ui/turnero/OPEN']) assert.equal((await fetch(url + route, { redirect: 'manual' })).status, 200);
   const x = await req('/api/customer-app/OPEN/tickets', { sectorId: 'caja', installId: 'open-kiosk', source: 'kiosk' }); assert.equal(x.status, 200);
-  assert.equal((await req('/api/customer-app-admin/OPEN/sectors/caja/next', { expectedTicketId: null, desk: 'Caja abierta' })).status, 200);
+  assert.equal((await req('/api/customer-app-admin/OPEN/sectors/caja/next', { expectedTicketId: null, desk: 'Caja abierta', sellerId: 'seller-aldana' })).status, 200);
   const publicStatsPage = await fetch(url + '/ui/turnero/OPEN/estadisticas', { redirect: 'manual' });
   assert.equal(publicStatsPage.status, 200); assert.match(await publicStatsPage.text(), /Estadísticas de turnos/);
   assert.equal((await req('/api/customer-app-admin/OPEN/stats')).status, 200);
@@ -97,6 +97,8 @@ test('pages contain syntactically valid scripts and escape tenant names', () => 
   for (const mode of ['kiosk', 'display', 'admin']) { const html = queuePage('TEST', mode); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); if (mode === 'kiosk') assert.match(html, /id="dismissTicket"[^>]+aria-label="Cerrar y cancelar esta reserva"/); else { assert.match(html, /enableCallSound/); assert.match(html, /transferControls/); } }
   assert.match(queuePage('TEST', 'kiosk'), /Recibí el llamado en tu celular/);
   assert.match(queuePage('MCN', 'kiosk'), /Te avisaremos en el celular cuando sea tu turno/);
+  const sellersHtml = sellerSettingsPage('MCN'); new vm.Script(sellersHtml.match(/<script>([\s\S]*)<\/script>/)[1]);
+  assert.match(sellersHtml, /Vendedores del turnero/); assert.match(sellersHtml, /Agregar vendedor/); assert.match(sellersHtml, /Guardar vendedores/);
 });
 test('attention page filters sections exclusively from the URL', () => {
   const html = queuePage('MCN', 'admin');
@@ -208,12 +210,31 @@ test('unauthorized callers cannot operate another tenant or spoof kiosk access',
   assert.equal((await req(admin + '/sectors/ferreteria/next', { expectedTicketId: null }, 'OTHER')).status, 403);
   assert.equal((await req(api + '/tickets', { sectorId: 'caja', installId: 'intruder', source: 'kiosk' })).status, 401);
 });
+test('calling the next ticket requires a valid seller and records who attends it', async () => {
+  const tenantId = 'SELLER_REQUIRED', customer = '/api/customer-app/' + tenantId, operator = '/api/customer-app-admin/' + tenantId;
+  const waiting = await req(customer + '/tickets', { sectorId: 'ferreteria', installId: 'seller-required-phone' });
+  assert.equal(waiting.status, 200);
+  const missing = await req(operator + '/sectors/ferreteria/next', { expectedTicketId: null }, tenantId);
+  assert.equal(missing.status, 400); assert.match(missing.body.error, /vendedor activo/i);
+  const called = await req(operator + '/sectors/ferreteria/next', { expectedTicketId: null, sellerId: 'seller-aldana' }, tenantId);
+  assert.equal(called.status, 200); assert.equal(called.body.ticket.sellerName, 'ALDANA');
+  const stored = await db.collection('queue_tickets').findOne({ tenantId, installId: 'seller-required-phone' });
+  assert.equal(stored.sellerId, 'seller-aldana'); assert.equal(stored.history.at(-1).sellerName, 'ALDANA');
+});
+test('business administrators can save the seller list without duplicates', async () => {
+  const response = await fetch(url + admin + '/sellers', { method: 'PUT', headers: { 'content-type': 'application/json', 'x-test-user': 'TEST' }, body: JSON.stringify({ sellers: [{ name: 'ALDANA' }, { name: 'MBASUALDO' }] }) });
+  assert.equal(response.status, 200); const body = await response.json(); assert.deepEqual(body.sellers.map(item => item.name), ['ALDANA', 'MBASUALDO']);
+  const saved = await db.collection('customer_app_config').findOne({ tenantId: 'TEST' }); assert.deepEqual(saved.sellers.map(item => item.name), ['ALDANA', 'MBASUALDO']);
+  const duplicate = await fetch(url + admin + '/sellers', { method: 'PUT', headers: { 'content-type': 'application/json', 'x-test-user': 'TEST' }, body: JSON.stringify({ sellers: [{ name: 'ALDANA' }, { name: 'aldana' }] }) });
+  assert.equal(duplicate.status, 400);
+});
 test('concurrent calls cannot skip a ticket; transfer preserves identity and joins end of destination queue', async () => {
   const waiting = await req(api + '/tickets', { sectorId: 'caja', installId: 'cash-client' });
   await db.collection('customer_app_devices').insertOne({ tenantId: 'TEST', installId: 'device-0', pushToken: 'mock' });
-  const calls = await Promise.all([1, 2].map(() => req(admin + '/sectors/ferreteria/next', { expectedTicketId: null, desk: 'Puesto 1' }, 'TEST')));
+  const calls = await Promise.all([1, 2].map(() => req(admin + '/sectors/ferreteria/next', { expectedTicketId: null, desk: 'Puesto 1', sellerId: 'seller-aldana' }, 'TEST')));
   assert.deepEqual(calls.map(x => x.status).sort(), [200, 409]);
   const current = calls.find(x => x.status === 200).body.ticket; assert.equal(sent, 1);
+  assert.equal(current.sellerName, 'ALDANA');
   assert.equal((await req(admin + '/sectors/ferreteria/transfer', { expectedTicketId: current.id, destination: 'invalid' }, 'TEST')).status, 400);
   const moved = await req(admin + '/sectors/ferreteria/transfer', { expectedTicketId: current.id, destination: 'caja' }, 'TEST');
   assert.equal(moved.body.ticket.id, current.id); assert.equal(moved.body.ticket.displayNumber, current.displayNumber);
@@ -254,12 +275,12 @@ test('a customer can hold one active ticket in each section but not two in the s
   assert.equal(repeated.body.id, first.body.id);
 });
 test('finish and skip clear the section, and a late kiosk retry cannot issue a second ticket', async () => {
-  const next = await req(admin + '/sectors/ferreteria/next', { expectedTicketId: null }, 'TEST');
+  const next = await req(admin + '/sectors/ferreteria/next', { expectedTicketId: null, sellerId: 'seller-aldana' }, 'TEST');
   const doc = await db.collection('queue_tickets').findOne({ _id: new (require('mongodb').ObjectId)(next.body.ticket.id) });
   assert.equal((await req(admin + '/sectors/ferreteria/finish', { expectedTicketId: 'stale' }, 'TEST')).status, 409);
   assert.equal((await req(admin + '/sectors/ferreteria/finish', { expectedTicketId: next.body.ticket.id }, 'TEST')).status, 200);
   const retry = await req(api + '/tickets', { sectorId: 'ferreteria', installId: doc.installId, source: 'kiosk' }, 'TEST'); assert.equal(retry.body.id, next.body.ticket.id); assert.equal(retry.body.status, 'DONE');
-  const another = await req(admin + '/sectors/ferreteria/next', { expectedTicketId: null }, 'TEST');
+  const another = await req(admin + '/sectors/ferreteria/next', { expectedTicketId: null, sellerId: 'seller-aldana' }, 'TEST');
   const skipped = await req(admin + '/sectors/ferreteria/skip', { expectedTicketId: another.body.ticket.id }, 'TEST'); assert.equal(skipped.body.ticket.status, 'SKIPPED');
 });
 test('calling next finishes the current ticket and advances in one action', async () => {
@@ -267,17 +288,17 @@ test('calling next finishes the current ticket and advances in one action', asyn
   const b = await req('/api/customer-app/ADVANCE/tickets', { sectorId: 'ferreteria', installId: 'advance-b', presence: presenceToken('ADVANCE', 'test-secret') });
   assert.equal(a.status, 200); assert.equal(b.status, 200);
   const op = '/api/customer-app-admin/ADVANCE/sectors/ferreteria/next';
-  const first = await req(op, { expectedTicketId: null, desk: 'Mostrador 1' }, 'ADVANCE');
+  const first = await req(op, { expectedTicketId: null, desk: 'Mostrador 1', sellerId: 'seller-aldana' }, 'ADVANCE');
   assert.equal(first.status, 200); assert.equal(first.body.ticket.id, a.body.id);
-  const stale = await req(op, { expectedTicketId: null, desk: 'Mostrador 2' }, 'ADVANCE');
+  const stale = await req(op, { expectedTicketId: null, desk: 'Mostrador 2', sellerId: 'seller-aldana' }, 'ADVANCE');
   assert.equal(stale.status, 409);
-  const second = await req(op, { expectedTicketId: a.body.id, desk: 'Mostrador 1' }, 'ADVANCE');
+  const second = await req(op, { expectedTicketId: a.body.id, desk: 'Mostrador 1', sellerId: 'seller-aldana' }, 'ADVANCE');
   assert.equal(second.status, 200); assert.equal(second.body.ticket.id, b.body.id);
   const old = await db.collection('queue_tickets').findOne({ _id: new (require('mongodb').ObjectId)(a.body.id) });
   assert.equal(old.status, 'DONE'); assert.equal(old.history.at(-1).action, 'finish'); assert.equal(old.history.at(-1).reason, 'next');
   const state = await req('/api/customer-app/ADVANCE/queue');
   assert.equal(state.body.sectors[0].current.id, b.body.id);
-  assert.equal((await req(op, { expectedTicketId: b.body.id }, 'ADVANCE')).status, 409);
+  assert.equal((await req(op, { expectedTicketId: b.body.id, sellerId: 'seller-aldana' }, 'ADVANCE')).status, 409);
   const stillCurrent = await req('/api/customer-app/ADVANCE/tickets/' + b.body.id + '?installId=advance-b');
   assert.equal(stillCurrent.body.status, 'CALLED');
 });
@@ -350,7 +371,7 @@ test('push milestones 2, 1 and called are durable, current position includes the
   await Promise.all([queue.reconcileTenant(t), queue.reconcileTenant(t)]);
   const mine = () => notifications.filter(n => n.token === 'n3-token');
   assert.deepEqual(mine().map(n => n.title), ['Faltan 2 turnos para el tuyo']);
-  const action = (verb, expectedTicketId, sector = 'ferreteria', destination) => req(op + '/sectors/' + sector + '/' + verb, { expectedTicketId, destination }, t);
+  const action = (verb, expectedTicketId, sector = 'ferreteria', destination) => req(op + '/sectors/' + sector + '/' + verb, { expectedTicketId, destination, ...(verb === 'next' ? { sellerId: 'seller-aldana' } : {}) }, t);
   await action('next', null);
   assert.equal((await req(a + '/tickets/' + target.id + '?installId=n3')).body.peopleAhead, 2);
   assert.equal(mine().length, 1);

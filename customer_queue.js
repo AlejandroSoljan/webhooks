@@ -2,7 +2,7 @@
 const { ObjectId } = require('mongodb');
 const { createHmac, timingSafeEqual, randomBytes, createHash } = require('node:crypto');
 const QRCode = require('qrcode');
-const { queuePage } = require('./queue_pages');
+const { queuePage, sellerSettingsPage } = require('./queue_pages');
 const { createQueueNotifications } = require('./queue_notifications');
 const { mountQueueStats, listStatsTenants } = require('./queue_stats');
 const { createQueuePrinter } = require('./queue_printer');
@@ -60,7 +60,7 @@ function presencePayload(token, t, secret, now = Date.now()) {
 function validPresence(token, t, secret, now = Date.now()) { return !!presencePayload(token, t, secret, now); }
 function publicTicket(doc) {
   return { id: String(doc._id), displayNumber: doc.displayNumber, status: doc.status,
-    sectorId: doc.sectorId, sectorName: doc.sectorName, desk: doc.desk || '', calledAt: doc.calledAt || null, claimed: !!doc.claimedAt };
+    sectorId: doc.sectorId, sectorName: doc.sectorName, desk: doc.desk || '', sellerName: doc.sellerName || '', calledAt: doc.calledAt || null, claimed: !!doc.claimedAt };
 }
 function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey, firebaseSender, auth, printer = createQueuePrinter(), secret = process.env.QUEUE_PRESENCE_SECRET || '', publicBase = process.env.PUBLIC_BASE_URL || 'https://asistobot.com.ar', openTenants = (process.env.QUEUE_OPEN_TENANTS || '').split(',').map(tenant).filter(Boolean) }) {
   const wrap = fn => async (req, res) => {
@@ -118,6 +118,31 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     const isSuper = String(req.user?.role || '').toLowerCase() === 'superadmin';
     const tenants = isSuper ? await listStatsTenants(db, t) : [t];
     res.type('html').send(queuePage(t, 'admin', { tenants, isSuper }));
+  }));
+  app.get('/ui/turnero/:tenant/vendedores', wrap(async (req, res) => {
+    const { t } = await scope(req); guard(req, t);
+    if (!['admin', 'superadmin'].includes(String(req.user?.role || '').toLowerCase())) fail(403, 'Solo un administrador puede configurar vendedores.');
+    res.type('html').send(sellerSettingsPage(t));
+  }));
+  app.get('/api/customer-app-admin/:tenant/sellers', wrap(async (req, res) => {
+    const { t, cfg } = await scope(req); guard(req, t);
+    res.json({ sellers: (cfg.sellers || []).filter(seller => seller.active !== false) });
+  }));
+  app.put('/api/customer-app-admin/:tenant/sellers', wrap(async (req, res) => {
+    const { t, db } = await scope(req); guard(req, t);
+    if (!['admin', 'superadmin'].includes(String(req.user?.role || '').toLowerCase())) fail(403, 'Solo un administrador puede configurar vendedores.');
+    const source = Array.isArray(req.body?.sellers) ? req.body.sellers : [];
+    if (source.length > 100) fail(400, 'Podés configurar hasta 100 vendedores.');
+    const seen = new Set(), sellers = source.map((item, index) => {
+      const name = clean(item?.name, 80), key = name.toLocaleLowerCase('es');
+      if (!name) fail(400, `Completá el nombre del vendedor ${index + 1}.`);
+      if (seen.has(key)) fail(400, `El vendedor ${name} está repetido.`);
+      seen.add(key);
+      return { id: clean(item?.id, 60) || randomBytes(9).toString('base64url'), name, active: item?.active !== false };
+    });
+    await db.collection('customer_app_config').updateOne({ tenantId: t }, { $set: { sellers, updatedAt: new Date() } }, { upsert: true });
+    invalidateConfig(t);
+    res.json({ ok: true, sellers });
   }));
   app.get('/api/customer-app-admin/:tenant/presence', wrap(async (req, res) => {
     const { t, cfg } = await scope(req); guard(req, t);
@@ -347,20 +372,22 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
       if (req.body?.expectedTicketId !== (current ? String(current._id) : null)) fail(409, 'La atención cambió desde otra pantalla. Revisá el turno y reintentá.');
       const now = new Date(), who = clean(req.user?.username || req.user?.uid || 'operador-sin-login');
       if (action === 'next') {
+        const sellerId = clean(req.body?.sellerId, 60), seller = (cfg.sellers || []).find(item => item.active !== false && item.id === sellerId);
+        if (!seller) fail(400, 'Seleccioná un vendedor activo antes de llamar al siguiente turno.');
         const waiting = await tickets.findOne({ ...filter, status: 'WAITING' }, { sort: order });
         if (!waiting) fail(409, 'No hay turnos en espera para llamar.');
         if (current) {
-          await tickets.updateOne({ _id: current._id, status: 'CALLED' }, { $set: { status: 'DONE', updatedAt: now }, $push: { history: { action: 'finish', at: now, who, sectorId, desk: current.desk || '', reason: 'next' } } });
+          await tickets.updateOne({ _id: current._id, status: 'CALLED' }, { $set: { status: 'DONE', updatedAt: now }, $push: { history: { action: 'finish', at: now, who, sectorId, desk: current.desk || '', sellerId: current.sellerId || '', sellerName: current.sellerName || '', reason: 'next' } } });
         }
-        const doc = await tickets.findOneAndUpdate({ ...filter, _id: waiting._id, status: 'WAITING' }, { $set: { status: 'CALLED', desk: clean(req.body?.desk, 40), calledAt: now, updatedAt: now }, $push: { history: { action, at: now, who, sectorId, desk: clean(req.body?.desk, 40) } } }, { returnDocument: 'after' });
+        const doc = await tickets.findOneAndUpdate({ ...filter, _id: waiting._id, status: 'WAITING' }, { $set: { status: 'CALLED', desk: clean(req.body?.desk, 40), sellerId: seller.id, sellerName: seller.name, calledAt: now, updatedAt: now }, $push: { history: { action, at: now, who, sectorId, desk: clean(req.body?.desk, 40), sellerId: seller.id, sellerName: seller.name } } }, { returnDocument: 'after' });
         return { doc, notification: !!doc };
       }
       if (!current) fail(409, 'No hay un turno en atención.');
       const values = { updatedAt: now };
       if (action === 'recall') values.calledAt = now;
       if (action === 'finish' || action === 'skip') values.status = action === 'finish' ? 'DONE' : 'SKIPPED';
-      if (action === 'transfer') Object.assign(values, { status: 'WAITING', sectorId: destination.id, sectorName: destination.name, desk: '', calledAt: null, queuedAt: now });
-      const doc = await tickets.findOneAndUpdate({ _id: current._id, status: 'CALLED' }, { $set: values, $push: { history: { action, at: now, who, sectorId, desk: current.desk || '', ...(destination ? { destination: destination.id } : {}) } } }, { returnDocument: 'after' });
+      if (action === 'transfer') Object.assign(values, { status: 'WAITING', sectorId: destination.id, sectorName: destination.name, desk: '', sellerId: '', sellerName: '', calledAt: null, queuedAt: now });
+      const doc = await tickets.findOneAndUpdate({ _id: current._id, status: 'CALLED' }, { $set: values, $push: { history: { action, at: now, who, sectorId, desk: current.desk || '', sellerId: current.sellerId || '', sellerName: current.sellerName || '', ...(destination ? { destination: destination.id } : {}) } } }, { returnDocument: 'after' });
       return { doc, notification: action === 'recall' };
     });
     const notification = await reconcileBase(db, base) ? 'sent' : 'not_required';

@@ -33,6 +33,16 @@ const CUSTOMER_CONFIG_CACHE_MS = 30000;
 function clean(value, max = 80) { return String(value || "").trim().slice(0, max); }
 function tenant(value) { return clean(value, 60).toUpperCase().replace(/[^A-Z0-9_-]/g, ""); }
 function isMecanTenant(value) { return ['MCN', 'DEMO_FERRETERIA'].includes(tenant(value)); }
+function normalizedSellers(saved) {
+  const seen = new Set();
+  return (Array.isArray(saved?.sellers) ? saved.sellers : []).flatMap((item, index) => {
+    const name = clean(typeof item === 'string' ? item : item?.name, 80);
+    const key = name.toLocaleLowerCase('es');
+    if (!name || seen.has(key)) return [];
+    seen.add(key);
+    return [{ id: clean(item?.id, 60) || `seller-${index + 1}`, name, active: item?.active !== false }];
+  });
+}
 function normalizedSectors(saved, tenantId) {
   const sectors = Array.isArray(saved?.sectors) && saved.sectors.length ? saved.sectors : null;
   if (!isMecanTenant(tenantId)) return sectors || DEFAULT_SECTORS;
@@ -59,7 +69,7 @@ async function configFor(db, tenantId) {
   return { tenantId, businessName: saved?.businessName || behavior.qr_company_name || "Mecan", branchId: saved?.branchId || "CENTRAL", salesWhatsapp: saved?.salesWhatsapp || "5493462610000",
     branchName: saved?.branchName || behavior.app_branch_name || "Sucursal principal", branchAddress: saved?.branchAddress || behavior.app_branch_address || "Atención en el local", businessHours: schedule.configured ? schedule.todayLabel : (saved?.businessHours || behavior.app_business_hours || schedule.todayLabel), businessOpen: schedule.open, businessHoursConfigured: schedule.configured, estimatedWaitMinutes: Math.max(1,Number(saved?.estimatedWaitMinutes ?? behavior.app_estimated_wait_minutes ?? 5)||5),
     queuePresence: saved?.queuePresence === "qr" ? "qr" : "open", queuePromotion: clean(saved?.queuePromotion, 240), queueCounterResetDaily: tenantDoc?.queue_counter_reset_daily === undefined ? saved?.queueCounterResetDaily !== false : tenantDoc.queue_counter_reset_daily !== false,
-    sectors: normalizedSectors(saved, tenantId),
+    sectors: normalizedSectors(saved, tenantId), sellers: normalizedSellers(saved),
     banners: Array.isArray(saved?.banners) && saved.banners.length ? saved.banners : DEFAULT_BANNERS };})();customerConfigCache.set(tenantId,{at:Date.now(),pending});try{const value=await pending;customerConfigCache.set(tenantId,{at:Date.now(),value});return value}catch(error){customerConfigCache.delete(tenantId);throw error}
 }
 
@@ -100,7 +110,7 @@ function mountCustomerApp(app, { auth } = {}) {
   app.get('/.well-known/assetlinks.json', (_req, res) => res.sendFile(require('path').join(__dirname, 'static/turnero/assetlinks.json')));
   app.get('/customer-app/download/android', (_req, res) => res.download(require('path').join(__dirname, 'Asisto-1.1.7.apk'), 'Asisto-1.1.7.apk'));
   app.get("/customer-app/:tenant", (req, res) => { const t = tenant(req.params.tenant); if (!t) return res.status(400).send("Dominio inválido"); res.type("html").send(page(t)); });
-  app.get("/api/customer-app/:tenant/config", async (req, res) => { try { const t=tenant(req.params.tenant); res.json(await configFor(await getDb(), t)); } catch(e){ res.status(500).json({error:"No se pudo cargar la aplicación"}); } });
+  app.get("/api/customer-app/:tenant/config", async (req, res) => { try { const t=tenant(req.params.tenant),{ sellers: _privateSellers, ...publicConfig }=await configFor(await getDb(), t); res.json(publicConfig); } catch(e){ res.status(500).json({error:"No se pudo cargar la aplicación"}); } });
   app.post("/api/customer-app/:tenant/devices", async (req,res)=>{ try{const t=tenant(req.params.tenant),installId=clean(req.body.installId,120),pushToken=clean(req.body.pushToken,500),now=new Date(),userAgent=clean(req.get('user-agent'),300),platform=/android/i.test(userAgent)?'Android':(/iphone|ipad/i.test(userAgent)?'iOS':'Web'),deviceName=clean(req.body.deviceName||req.get('x-asisto-device-name'),100);if(!installId||!pushToken)return res.status(400).json({error:"Datos incompletos"});await (await getDb()).collection("customer_app_devices").updateOne({tenantId:t,installId},{$set:{pushToken,userAgent,platform,...(deviceName?{deviceName}:{}),updatedAt:now,lastSeenAt:now},$setOnInsert:{createdAt:now}},{upsert:true});await queue.reconcileTenant(t);res.json({ok:true})}catch(e){res.status(500).json({error:"No se pudo registrar el dispositivo"})} });
   return queue;
 }
