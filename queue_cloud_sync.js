@@ -58,6 +58,19 @@ async function mergeCounters(collection, incoming) {
   for (const counter of incoming) await collection.updateOne({ _id: counter._id }, { $max: { sequence: counter.sequence } }, { upsert: true });
   return incoming.length;
 }
+function revivePresenceSession(raw, tenantId) {
+  const expected = cleanTenant(tenantId), session = reviveDates(raw || {}), sessionId = String(session.sessionId || '').slice(0, 80);
+  if (!expected || cleanTenant(session.tenantId) !== expected || !sessionId) throw new Error('invalid_presence_session');
+  delete session._id; session.tenantId = expected; session.sessionId = sessionId; return session;
+}
+async function mergePresenceSessions(collection, incoming) {
+  let merged = 0;
+  for (const session of incoming) {
+    const filter = { tenantId: session.tenantId, sessionId: session.sessionId }, current = await collection.findOne(filter);
+    if (!current || preferred(current, session) === 'cloud') { await collection.replaceOne(filter, session, { upsert: true }); merged++; }
+  }
+  return merged;
+}
 
 const parseTenants = value => String(value || '').split(',').map(cleanTenant).filter(Boolean);
 const safeSecret = (actual, expected) => {
@@ -85,8 +98,8 @@ function mountQueueSyncEndpoint(app, { getDb, secret = process.env.QUEUE_SYNC_SE
     const tenantId = cleanTenant(req.body?.tenantId);
     if (!tenantId || !allowed.has(tenantId)) return res.status(403).json({ ok: false, error: 'tenant_not_allowed' });
       const rows = Array.isArray(req.body?.tickets) ? req.body.tickets : [];
-    const counterRows = Array.isArray(req.body?.counters) ? req.body.counters : [];
-    if (rows.length > 5000 || counterRows.length > 1000) return res.status(413).json({ ok: false, error: 'too_many_rows' });
+    const counterRows = Array.isArray(req.body?.counters) ? req.body.counters : [], presenceRows = Array.isArray(req.body?.presenceSessions) ? req.body.presenceSessions : [];
+    if (rows.length > 5000 || counterRows.length > 1000 || presenceRows.length > 5000) return res.status(413).json({ ok: false, error: 'too_many_rows' });
     try {
       const db = await getDb();
       const collection = db.collection('queue_tickets');
@@ -95,12 +108,15 @@ function mountQueueSyncEndpoint(app, { getDb, secret = process.env.QUEUE_SYNC_SE
       const counterCollection = db.collection('queue_counters');
       const incomingCounters = counterRows.map(row => reviveCounter(row, tenantId));
       await mergeCounters(counterCollection, incomingCounters);
+      const presenceCollection = db.collection('queue_presence_sessions'), incomingPresence = presenceRows.map(row => revivePresenceSession(row, tenantId));
+      const mergedPresence = await mergePresenceSessions(presenceCollection, incomingPresence);
       const filter = { tenantId };
       const since = req.body?.since ? new Date(req.body.since) : null;
       if (since && !Number.isNaN(+since)) filter.updatedAt = { $gte: since };
       const tickets = await collection.find(filter).limit(5000).toArray();
       const counters = await counterCollection.find({ _id: { $regex: '^' + tenantId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':' } }).limit(1000).toArray();
-      return res.json({ ok: true, merged, tickets, counters, serverTime: new Date().toISOString() });
+      const presenceSessions = await presenceCollection.find(filter).limit(5000).toArray();
+      return res.json({ ok: true, merged, mergedPresence, tickets, counters, presenceSessions, serverTime: new Date().toISOString() });
     } catch (error) {
       console.error('[QUEUE_SYNC_API] error:', error.message);
       return res.status(400).json({ ok: false, error: 'sync_failed' });
@@ -124,10 +140,11 @@ function startQueueCloudSync({ getDb, url = process.env.QUEUE_SYNC_URL, secret =
         if (!initial && since) filter.updatedAt = { $gte: since };
         const tickets = await db.collection('queue_tickets').find(filter).limit(5000).toArray();
         const counters = await db.collection('queue_counters').find({ _id: { $regex: '^' + tenantId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ':' } }).limit(1000).toArray();
+        const presenceSessions = await db.collection('queue_presence_sessions').find(filter).limit(5000).toArray();
         const response = await fetch(url, {
           method: 'POST',
           headers: { 'content-type': 'application/json', 'x-queue-sync-key': secret },
-          body: JSON.stringify({ tenantId, since: initial ? null : since?.toISOString(), tickets, counters }),
+          body: JSON.stringify({ tenantId, since: initial ? null : since?.toISOString(), tickets, counters, presenceSessions }),
           signal: AbortSignal.timeout(15000),
         });
         if (!response.ok) throw new Error(`http_${response.status}`);
@@ -137,6 +154,8 @@ function startQueueCloudSync({ getDb, url = process.env.QUEUE_SYNC_URL, secret =
         pulled += await mergeInto(db.collection('queue_tickets'), incoming);
         const incomingCounters = (Array.isArray(payload.counters) ? payload.counters : []).map(row => reviveCounter(row, tenantId));
         await mergeCounters(db.collection('queue_counters'), incomingCounters);
+        const incomingPresence = (Array.isArray(payload.presenceSessions) ? payload.presenceSessions : []).map(row => revivePresenceSession(row, tenantId));
+        pulled += await mergePresenceSessions(db.collection('queue_presence_sessions'), incomingPresence);
         pushed += Number(payload.merged || 0);
       }
       initial = false;
@@ -156,4 +175,4 @@ function startQueueCloudSync({ getDb, url = process.env.QUEUE_SYNC_URL, secret =
   return { enabled: true, run, stop: async () => { stopped = true; clearInterval(timer); } };
 }
 
-module.exports = { preferred, reviveTicket, reviveCounter, mergeInto, mergeCounters, mountQueueSyncEndpoint, startQueueCloudSync };
+module.exports = { preferred, reviveTicket, reviveCounter, revivePresenceSession, mergeInto, mergeCounters, mergePresenceSessions, mountQueueSyncEndpoint, startQueueCloudSync };

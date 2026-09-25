@@ -86,6 +86,8 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
       await db.collection('queue_tickets').createIndex({ tenantId: 1, branchId: 1, dayKey: 1, sectorId: 1, status: 1, queuedAt: 1, _id: 1 });
       await db.collection('queue_tickets').createIndex({ tenantId: 1, branchId: 1, dayKey: 1, installId: 1, status: 1 });
       await db.collection('queue_presence_events').createIndex({ tenantId: 1, sessionId: 1, installId: 1 }, { unique: true });
+      await db.collection('queue_presence_sessions').createIndex({ tenantId: 1, sessionId: 1 }, { unique: true });
+      await db.collection('queue_presence_sessions').createIndex({ tenantId: 1, dayKey: 1, createdAt: 1 });
     })().catch(e => { indexPromise = null; throw e; });
     return indexPromise;
   }
@@ -145,11 +147,13 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     res.json({ ok: true, sellers });
   }));
   app.get('/api/customer-app-admin/:tenant/presence', wrap(async (req, res) => {
-    const { t, cfg } = await scope(req); guard(req, t);
+    const { t, cfg, db } = await scope(req); guard(req, t);
     if (cfg.queuePresence === 'qr' && !secret) fail(503, 'Falta configurar la validación presencial.');
     const url = new URL('/customer-app/' + encodeURIComponent(t), publicBase);
     url.searchParams.set('view', 'turns');
     const sessionId = randomBytes(12).toString('base64url');
+    const now = new Date(), expiresAt = new Date(now.getTime() + 90000);
+    await db.collection('queue_presence_sessions').updateOne({ tenantId: t, sessionId }, { $setOnInsert: { tenantId: t, sessionId, dayKey: dayKey(), createdAt: now, expiresAt, status: 'PENDING', source: 'kiosk_autoservicio' }, $set: { updatedAt: now } }, { upsert: true });
     if (secret) url.searchParams.set('presence', presenceToken(t, secret, Date.now(), sessionId));
     res.json({ image: await QRCode.toDataURL(url.href, { width: 320, margin: 3, errorCorrectionLevel: 'M' }), expiresIn: 90, sessionId });
   }));
@@ -161,12 +165,14 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     await Promise.all([
       db.collection('customer_app_devices').updateOne({ tenantId: t, installId }, { $max: { queueAccessUntil: accessUntil }, $set: { lastSeenAt: now }, $setOnInsert: { createdAt: now, platform: 'Web' } }, { upsert: true }),
       db.collection('queue_presence_events').updateOne({ tenantId: t, sessionId: value.sid, installId }, { $setOnInsert: { tenantId: t, sessionId: value.sid, installId, checkedInAt: now, source: 'kiosk_autoservicio' } }, { upsert: true }),
+      db.collection('queue_presence_sessions').updateOne({ tenantId: t, sessionId: value.sid }, { $set: { status: 'QR', scannedAt: now, updatedAt: now }, $setOnInsert: { tenantId: t, sessionId: value.sid, dayKey: dayKey(), createdAt: now, expiresAt: now, source: 'kiosk_autoservicio' } }, { upsert: true }),
     ]);
     res.json({ ok: true, accessUntil });
   }));
   app.get('/api/customer-app/:tenant/presence/:sessionId/status', wrap(async (req, res) => {
     const { t, db } = await scope(req), sessionId = clean(req.params.sessionId, 80);
     const event = sessionId && await db.collection('queue_presence_events').findOne({ tenantId: t, sessionId }, { projection: { _id: 1 } });
+    if (event && sessionId) await db.collection('queue_presence_sessions').updateOne({ tenantId: t, sessionId }, { $set: { status: 'QR', scannedAt: new Date(), updatedAt: new Date() } });
     res.json({ checkedIn: !!event });
   }));
   app.get('/api/customer-app-admin/:tenant/presence/:sessionId/status', wrap(async (req, res) => {
@@ -180,6 +186,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
         if (response.ok) event = (await response.json()).checkedIn;
       } catch (_) {}
     }
+    if (event && sessionId) { const now = new Date(); await db.collection('queue_presence_sessions').updateOne({ tenantId: t, sessionId }, { $set: { status: 'QR', scannedAt: now, updatedAt: now } }); }
     res.json({ checkedIn: !!event });
   }));
   app.post('/api/customer-app-admin/:tenant/settings', wrap(async (req, res) => {

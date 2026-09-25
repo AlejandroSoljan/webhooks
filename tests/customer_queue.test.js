@@ -49,7 +49,10 @@ test('statistics reconstruct transfers and do not reset service time on recalls'
   const originStats = summarize(origins, cfg.sectors);
   assert.deepEqual([originStats.summary.qr, originStats.summary.printed, originStats.summary.mobile], [1, 1, 1]);
   assert.deepEqual([originStats.days[0].qr, originStats.days[0].printed, originStats.days[0].mobile], [1, 1, 1]);
+  const presenceStats = summarize([], cfg.sectors, [{ status: 'QR', scannedAt: at(2), expiresAt: at(3) }, { status: 'PENDING', expiresAt: at(3) }, { status: 'PENDING', expiresAt: at(59) }], at(30));
+  assert.deepEqual([presenceStats.summary.presenceQr, presenceStats.summary.presenceWithoutQr, presenceStats.summary.presencePending], [1, 1, 1]);
   new vm.Script(statsPage('TEST', '2026-09-14').match(/<script>([\s\S]*)<\/script>/)[1]);
+  assert.match(statsPage('TEST', '2026-09-14'), /Ingresos con QR/); assert.match(statsPage('TEST', '2026-09-14'), /Ingresos sin QR/);
 });
 test('queue statistics use the Asisto shell and superadmin can select a tenant', async () => {
   await db.collection('tenant_config').insertMany([{ _id: 'ALFA' }, { _id: 'BETA' }]);
@@ -276,10 +279,12 @@ test('Autoservicio records presence and enables web tickets for two hours', asyn
   cfg.queuePresence = 'qr';
   const sessionId = 'autoservicio-session';
   const token = presenceToken('TEST', 'test-secret', Date.now(), sessionId);
+  await db.collection('queue_presence_sessions').insertOne({ tenantId: 'TEST', sessionId, dayKey: '2026-09-14', status: 'PENDING', createdAt: new Date(), expiresAt: new Date(Date.now() + 90000), updatedAt: new Date() });
   const checkin = await req(api + '/presence/checkin', { installId: 'visitor-phone', presence: token });
   assert.equal(checkin.status, 200); assert.equal(checkin.body.ok, true);
   const event = await db.collection('queue_presence_events').findOne({ tenantId: 'TEST', sessionId, installId: 'visitor-phone' });
   assert.equal(event.source, 'kiosk_autoservicio');
+  const session = await db.collection('queue_presence_sessions').findOne({ tenantId: 'TEST', sessionId }); assert.equal(session.status, 'QR'); assert.ok(session.scannedAt);
   const publicStatus = await req(api + '/presence/' + sessionId + '/status'); assert.equal(publicStatus.body.checkedIn, true);
   const status = await req(admin + '/presence/' + sessionId + '/status', undefined, 'TEST'); assert.equal(status.body.checkedIn, true);
   const ticket = await req(api + '/tickets', { sectorId: 'caja', installId: 'visitor-phone' }); assert.equal(ticket.status, 200);
