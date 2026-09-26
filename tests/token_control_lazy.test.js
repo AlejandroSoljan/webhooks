@@ -15,7 +15,7 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
       const body = String(url).includes('/api/token-control/summary')
         ? { ok: true, items: [{ tenantId:'MSM',company:'Asisto Manager',total_tokens:100,events:2,billed_cost:2,real_cost:1,gross_margin:1,billing_configured:true,channels:['help_api'],usage_types:['ayuda_consulta'] }], totals: { total_tokens:100,billed_cost:2,real_cost:1,gross_margin:1 } }
         : String(url).includes('/api/monetization/summary')
-          ? { ok:true,items:[{tenantId:'MSM',eventKey:'catalog.code_lookup',name:'Lectura por código',group:'catalog',unit:'consulta',quantity:3,currency:'ARS',billedAmount:60}],byDomain:[{tenantId:'MSM',operations:3,billedAmount:{ARS:60}}],byType:[],totals:{byCurrency:{ARS:{billedAmount:60}}} }
+          ? { ok:true,items:[{tenantId:'MSM',eventKey:'catalog.code_lookup',name:'Lectura por código',group:'catalog',unit:'consulta',quantity:3,currency:'ARS',billedAmount:60},{tenantId:'MSM',eventKey:'whatsapp.api_sent',name:'Mensaje enviado por API',group:'whatsapp',unit:'mensaje',quantity:1,currency:'ARS',potentialAmount:20,billedAmount:20}],byDomain:[{tenantId:'MSM',operations:4,billedAmount:{ARS:80}}],byType:[],totals:{byCurrency:{ARS:{billedAmount:80}}} }
         : String(url).includes('/conversations')
           ? { ok: true, items: [], totals: {} }
           : { ok: true, enabled: true, items: [], realItems: [], byTenant: [{tenantId:'MSM',windows:1,messages:2,realMessages:2,byCurrency:{ARS:20}}], totals: {byCurrency:{ARS:20}} };
@@ -36,8 +36,9 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
     assert.match(dom.window.document.body.textContent, /Qué se cobrará por dominio/);
     assert.match(dom.window.document.body.textContent, /Detalle técnico/);
     assert.match(dom.window.document.getElementById('rows').textContent, /Ayuda de Manager/);
-    assert.match(dom.window.document.getElementById('rows').textContent, /API Mensajes/);
     assert.match(dom.window.document.getElementById('rows').textContent, /Lectura por código/);
+    assert.match(dom.window.document.getElementById('rows').textContent, /Mensajes enviados por API/);
+    assert.doesNotMatch(dom.window.document.getElementById('rows').textContent, /ventanas facturables/);
     const technicalButton=dom.window.document.querySelector('.technicalToggle');
     const technicalRow=dom.window.document.getElementById(technicalButton.dataset.target);
     assert.equal(technicalRow.hidden,true);

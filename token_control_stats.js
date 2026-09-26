@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.246 | Fecha: 2026-09-26
+// Asisto | Version: 5.00.247 | Fecha: 2026-09-26
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -1904,16 +1904,36 @@ function renderTokenControlPage(user, tenants = []) {
     Array.from(arguments).forEach(function(map){Object.keys(map||{}).forEach(function(currency){const key=String(currency||'ARS').toUpperCase();out[key]=num(out[key])+num(map[currency]);});});
     return out;
   }
+  function apiPerMessageBilling(it){
+    const item=(Array.isArray(it&&it.monetization_items)?it.monetization_items:[]).find(function(row){return String(row&&row.eventKey||'')==='whatsapp.api_sent';});
+    if(!item||num(item.quantity)<=0||num(it&&it.api_messages)<=0)return null;
+    const unit=num(item.potentialAmount)/num(item.quantity);
+    if(unit<=0)return null;
+    return {item:item,quantity:num(it.api_messages),unit:unit,currency:String(item.currency||'ARS').toUpperCase(),amount:unit*num(it.api_messages)};
+  }
+  function billingTotalMap(it){
+    const perMessage=apiPerMessageBilling(it);
+    const monetizationMap=Object.assign({},it&&it.monetization_amounts||{});
+    let apiMap=it&&it.api_amounts||{};
+    if(perMessage){
+      monetizationMap[perMessage.currency]=Math.max(0,num(monetizationMap[perMessage.currency])-num(perMessage.item.billedAmount))+num(perMessage.amount);
+      apiMap={};
+    }
+    return mergeAmountMaps(amountMapWithAi(it&&it.billed_cost,apiMap),monetizationMap);
+  }
   function billingConceptsHtml(it){
     const lines=[];
     if(num(it.total_tokens)>0){
       const labels=serviceLabels(it).join(', ')||'IA';
       lines.push('<div class="stack"><b>IA · '+esc(labels)+'</b><span class="small">'+fmtInt(it.events)+' operaciones</span><span class="money">'+esc(fmtMoney(it.billed_cost))+'</span></div>');
     }
-    if(num(it.api_windows)>0||num(it.api_messages)>0){
+    const perMessage=apiPerMessageBilling(it);
+    if(perMessage){
+      lines.push('<div class="stack"><b>Mensajes enviados por API</b><span class="small">'+fmtInt(perMessage.quantity)+' mensajes × '+esc(fmtCurrency(perMessage.unit,perMessage.currency))+'</span><span class="money">'+esc(fmtCurrency(perMessage.amount,perMessage.currency))+'</span></div>');
+    }else if(num(it.api_windows)>0||num(it.api_messages)>0){
       lines.push('<div class="stack"><b>API Mensajes</b><span class="small">'+fmtInt(it.api_messages)+' mensajes · '+fmtInt(it.api_windows)+' ventanas facturables</span><span class="money">'+esc(amountMapText(it.api_amounts||{}))+'</span></div>');
     }
-    (Array.isArray(it.monetization_items)?it.monetization_items:[]).filter(function(item){return String(item.group||'')!=='ai';}).forEach(function(item){
+    (Array.isArray(it.monetization_items)?it.monetization_items:[]).filter(function(item){return String(item.group||'')!=='ai'&&String(item.eventKey||'')!=='whatsapp.api_sent';}).forEach(function(item){
       const amount=num(item.billedAmount),currency=String(item.currency||'ARS');
       lines.push('<div class="stack"><b>'+esc(item.name||item.eventKey||'Consumo')+'</b><span class="small">'+fmtInt(item.quantity)+' '+esc(item.unit||'operaciones')+'</span><span class="money">'+(amount?esc(fmtCurrency(amount,currency)):'Sin cargo')+'</span></div>');
     });
@@ -1927,7 +1947,6 @@ function renderTokenControlPage(user, tenants = []) {
     const apiTotals = (apiJ&&apiJ.totals) || {};
     const monDomains=Array.isArray(monJ&&monJ.byDomain)?monJ.byDomain:[];
     const monItems=Array.isArray(monJ&&monJ.items)?monJ.items:[];
-    const monTotals=monJ&&monJ.totals||{};
 
     const merged=new Map();
     aiItems.forEach(function(it){
@@ -1950,9 +1969,7 @@ function renderTokenControlPage(user, tenants = []) {
     const items=Array.from(merged.values()).sort(function(a,b){return String(a.tenantId||'').localeCompare(String(b.tenantId||''));});
 
     kpiTokens.textContent = fmtInt(totals.total_tokens || 0);
-    const monTotalMap={};
-    Object.keys(monTotals.byCurrency||{}).forEach(function(currency){monTotalMap[currency]=num(monTotals.byCurrency[currency]&&monTotals.byCurrency[currency].billedAmount);});
-    const headlineMap=mergeAmountMaps(amountMapWithAi(totals.billed_cost||0,apiTotals.byCurrency||{}),monTotalMap);
+    const headlineMap=items.reduce(function(acc,item){return mergeAmountMaps(acc,billingTotalMap(item));},{});
     kpiBilledCost.innerHTML = '<div class="amountStack"><span class="main">'+esc(amountMapText(headlineMap))+'</span></div>';
     if (isSuper && kpiRealCost) kpiRealCost.textContent = fmtMoney(totals.real_cost || 0);
     if (isSuper && kpiMargin) kpiMargin.textContent = fmtMoney(totals.gross_margin || 0);
@@ -1970,7 +1987,7 @@ function renderTokenControlPage(user, tenants = []) {
       const needsReview=num(it.total_tokens)>0&&it.billing_configured===false;
       const state=needsReview?'<span class="status pending">REVISAR TARIFA</span>':'<span class="status active">LISTO</span>';
       const detailId='technical-'+String(it.tenantId||'').replace(/[^a-z0-9_-]/gi,'');
-      const totalMap=mergeAmountMaps(amountMapWithAi(it.billed_cost,it.api_amounts||{}),it.monetization_amounts||{});
+      const totalMap=billingTotalMap(it);
       const technical='<tr id="'+detailId+'" hidden><td colspan="'+(isSuper?'7':'5')+'"><div class="kpis detail"><div class="kpi"><div class="t">Entrada texto</div><div class="v">'+fmtInt(it.message_input_tokens)+'</div></div><div class="kpi"><div class="t">Salida texto</div><div class="v">'+fmtInt(it.message_output_tokens)+'</div></div><div class="kpi"><div class="t">Audio</div><div class="v">'+fmtInt(num(it.audio_input_tokens)+num(it.audio_output_tokens))+'</div></div><div class="kpi"><div class="t">Total tokens</div><div class="v">'+fmtInt(it.total_tokens)+'</div></div><div class="kpi"><div class="t">Eventos IA</div><div class="v">'+fmtInt(it.events)+'</div></div><div class="kpi"><div class="t">Último uso</div><div class="v" style="font-size:14px">'+esc(fmtDate(it.last_at))+'</div></div></div></td></tr>';
       if (!isSuper) {
         return '<tr>' +
