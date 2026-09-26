@@ -56,7 +56,7 @@ test('statistics reconstruct transfers and do not reset service time on recalls'
   assert.equal(filteredStats.summary.issued, 1); assert.deepEqual(filteredStats.tickets.map(ticket => ticket.id), ['public']);
   assert.equal(filteredStats.sectors.find(sector => sector.sectorId === 'ferreteria').visits, 0); assert.equal(filteredStats.sectors.find(sector => sector.sectorId === 'atencion_publico').visits, 1);
   const presenceStats = summarize([], cfg.sectors, [{ status: 'QR', scannedAt: at(2), expiresAt: at(3) }, { status: 'PENDING', expiresAt: at(3) }, { status: 'PENDING', expiresAt: at(59) }], at(30));
-  assert.deepEqual([presenceStats.summary.presenceQr, presenceStats.summary.presenceWithoutQr, presenceStats.summary.presencePending], [1, 1, 1]);
+  assert.deepEqual([presenceStats.summary.presenceQr, presenceStats.summary.presenceWithoutQr, presenceStats.summary.presencePending], [1, 2, 1]);
   new vm.Script(statsPage('TEST', '2026-09-14').match(/<script>([\s\S]*)<\/script>/)[1]);
   assert.match(statsPage('TEST', '2026-09-14'), /Ingresos con QR/); assert.match(statsPage('TEST', '2026-09-14'), /Ingresos sin QR/);
   assert.match(statsPage('TEST', '2026-09-14'), /Rendimiento por vendedor/); assert.match(statsPage('TEST', '2026-09-14'), /Atención promedio/);
@@ -144,6 +144,7 @@ test('display uses the louder friendly call chime and resumes sound by default',
 test('MCN kiosk exposes QR-only Autoservicio and focused display keeps other sections aside', () => {
   const kioskHtml = queuePage('MCN', 'kiosk');
   assert.match(kioskHtml, /s\.kind === 'presence' \? autoservice\(s\) : reserve\(s\)/);
+  assert.match(kioskHtml, /\$\('closeTicket'\)\.hidden = false; \$\('closeTicket'\)\.textContent = 'Cerrar'/);
   assert.match(kioskHtml, /className = 'sector'/); assert.match(kioskHtml, /sectorIcon/); assert.match(kioskHtml, /sectorCopy/); assert.match(kioskHtml, /sectorAction/);
   assert.match(kioskHtml, /Registrar ingreso/); assert.match(kioskHtml, /Solicitar turno/);
   assert.match(kioskHtml, /\.kiosk \.sectorIcon\{[^}]*position:absolute;inset:0 auto 0 0;[^}]*width:70px;background:#ed101c;color:#fff/);

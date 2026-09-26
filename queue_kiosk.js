@@ -33,7 +33,7 @@ function kiosk() {
       $('deliveryTitle').textContent = 'Registrá tu ingreso';
       $('deliveryMessage').textContent = 'Escaneá este QR con tu celular. No genera turno ni ticket impreso.';
       $('claimHelp').textContent = 'Este QR registra tu visita al local y habilita la solicitud de turnos desde el celular durante 2 horas.';
-      $('claimArea').hidden = false; $('printTicket').hidden = true; $('closeTicket').hidden = true;
+      $('claimArea').hidden = false; $('printTicket').hidden = true; $('closeTicket').hidden = false; $('closeTicket').textContent = 'Cerrar';
       $('deliveryStatus').textContent = 'Después podrás solicitar turnos desde la web durante 2 horas.';
       $('deliveryError').textContent = '';
       dialog.showModal(); ok();
@@ -44,6 +44,7 @@ function kiosk() {
           $('countdown').textContent = 'El QR se actualiza en ' + seconds + ' segundos.';
           if (status.checkedIn) {
             clearInterval(poll); $('claimArea').hidden = true; $('closeTicket').hidden = false;
+            $('closeTicket').textContent = 'Listo, gracias';
             $('deliveryTitle').textContent = 'Ingreso registrado';
             $('deliveryMessage').textContent = 'Ya podés solicitar turnos desde tu celular durante 2 horas.';
             $('deliveryStatus').textContent = '¡Bienvenido!'; $('countdown').textContent = '';
