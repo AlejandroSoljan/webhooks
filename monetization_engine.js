@@ -1,4 +1,5 @@
-// Asisto | Motor de medición y monetización por dominio.
+// Asisto | Version: 5.00.246 | Fecha: 2026-09-26
+// Motor de medición y monetización por dominio.
 const crypto = require('crypto');
 const { getDb } = require('./db');
 const { CATALOG, defaultConfig, normalizeConfig } = require('./monetization_config');
@@ -68,9 +69,10 @@ async function buildMonetizationSummary({ db, tenantId, from, to, isSuper = fals
     { $group: { _id: { tenantId: '$tenantId', eventKey: '$eventKey', currency: '$currency' }, name: { $first: '$name' }, group: { $first: '$group' }, unit: { $first: '$unit' }, quantity: { $sum: '$quantity' }, credits: { $sum: '$credits' }, creditAmount: { $sum: '$creditAmount' }, includedCredits: { $max: '$includedCredits' }, billingEnabled: { $max: '$billingEnabled' }, realCost: { $sum: '$realCost' }, potentialAmount: { $sum: '$potentialAmount' }, billedAmount: { $sum: '$billedAmount' }, lastAt: { $max: '$occurredAt' } } },
     { $sort: { '_id.tenantId': 1, quantity: -1 } }
   ], { allowDiskUse: true }).toArray();
-  const byDomain = new Map(), byType = new Map(), byCurrency = {};
+  const byDomain = new Map(), byType = new Map(), byCurrency = {}, allItems = [];
   for (const row of rows) {
     const item = { tenantId: row._id.tenantId, eventKey: row._id.eventKey, currency: row._id.currency || 'ARS', name: row.name, group: row.group, unit: row.unit, quantity: finite(row.quantity), credits: finite(row.credits), creditAmount: finite(row.creditAmount), includedCredits: finite(row.includedCredits), billingEnabled: row.billingEnabled===true, realCost: money(row.realCost), potentialAmount: money(row.potentialAmount), billedAmount: money(row.billedAmount), lastAt: row.lastAt };
+    allItems.push(item);
     const domain = byDomain.get(item.tenantId) || { tenantId: item.tenantId, operations: 0, credits: 0, creditAmount: 0, includedCredits: 0, realCost: 0, potentialAmount: {}, billedAmount: {}, lastAt: null };
     domain.operations += item.quantity; domain.credits += item.credits; domain.creditAmount += item.creditAmount; domain.includedCredits=Math.max(domain.includedCredits,item.includedCredits); domain.realCost += item.realCost;
     domain.potentialAmount[item.currency] = money(finite(domain.potentialAmount[item.currency]) + item.potentialAmount);
@@ -86,7 +88,7 @@ async function buildMonetizationSummary({ db, tenantId, from, to, isSuper = fals
     for(const currency of Object.keys(domain.billedAmount)) domain.billedAmount[currency]=money(Math.max(0,domain.billedAmount[currency]-domain.creditAmount*ratio));
   }
   for(const currency of Object.keys(byCurrency)) byCurrency[currency].billedAmount=money([...byDomain.values()].reduce((sum,domain)=>sum+finite(domain.billedAmount[currency]),0));
-  return { ok: true, filters: { tenantId: tenant || null, from: from || null, to: to || null }, totals: { operations: [...byDomain.values()].reduce((a,x)=>a+x.operations,0), credits: [...byDomain.values()].reduce((a,x)=>a+x.credits,0), includedCreditsApplied: money([...byDomain.values()].reduce((a,x)=>a+x.includedCreditsApplied,0)), realCost: money([...byDomain.values()].reduce((a,x)=>a+x.realCost,0)), byCurrency }, byDomain: [...byDomain.values()], byType: [...byType.values()] };
+  return { ok: true, filters: { tenantId: tenant || null, from: from || null, to: to || null }, totals: { operations: [...byDomain.values()].reduce((a,x)=>a+x.operations,0), credits: [...byDomain.values()].reduce((a,x)=>a+x.credits,0), includedCreditsApplied: money([...byDomain.values()].reduce((a,x)=>a+x.includedCreditsApplied,0)), realCost: money([...byDomain.values()].reduce((a,x)=>a+x.realCost,0)), byCurrency }, items: allItems, byDomain: [...byDomain.values()], byType: [...byType.values()] };
 }
 
 module.exports = { calculateEvent, recordMonetizationEvent, buildMonetizationSummary, loadConfig };

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.245 | Fecha: 2026-09-25
+// Asisto | Version: 5.00.246 | Fecha: 2026-09-26
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -1497,7 +1497,7 @@ function renderTokenControlPage(user, tenants = []) {
     .kpi .v{font-size:25px;font-weight:800;line-height:1.1}
     .dashboardGrid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(320px,.85fr);gap:12px}.chartCard{min-height:300px}.barChart{display:grid;gap:12px;margin-top:18px}.barRow{display:grid;grid-template-columns:minmax(120px,190px) minmax(120px,1fr) auto;gap:10px;align-items:center}.barLabel{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:700}.barTrack{height:12px;border-radius:99px;background:#e8eef5;overflow:hidden}.barFill{height:100%;border-radius:99px;background:linear-gradient(90deg,#10bfa9,#087d72);min-width:2px}.barValue{font-weight:800;font-variant-numeric:tabular-nums}.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px}.legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}.emptyChart{display:grid;place-items:center;min-height:190px;color:var(--muted);text-align:center}.currencyTotals{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.currencyTotals span{background:#e9f7f5;color:#07685f;border-radius:999px;padding:6px 10px;font-weight:800}
     .tableWrap{overflow:auto;border:1px solid var(--border);border-radius:14px}
-    table{width:100%;border-collapse:collapse;background:#fff;min-width:${isSuper ? '1280px' : '760px'}}
+    table{width:100%;border-collapse:collapse;background:#fff;min-width:${isSuper ? '940px' : '760px'}}
     th,td{padding:12px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle;font-size:14px}
     thead th{position:sticky;top:0;background:#f8fafc;color:var(--text);font-size:12px;text-transform:uppercase;letter-spacing:.04em;z-index:1}
     tbody tr:last-child td{border-bottom:none}
@@ -1506,11 +1506,13 @@ function renderTokenControlPage(user, tenants = []) {
     .status.completed{color:var(--ok);background:rgba(15,118,110,.08);border-color:rgba(15,118,110,.2)}
     .status.cancelled{color:var(--danger);background:rgba(180,35,24,.07);border-color:rgba(180,35,24,.18)}
     .status.pending{color:var(--warn);background:rgba(180,83,9,.08);border-color:rgba(180,83,9,.2)}
+    .status.active{color:var(--ok);background:rgba(15,118,110,.08);border-color:rgba(15,118,110,.2)}
     .status.closed{color:#475569;background:#f1f5f9;border-color:#cbd5e1}
     .tenantHead,.stack{display:flex;flex-direction:column;gap:4px}
     .money{color:var(--ok);font-weight:800;white-space:nowrap}
     .profit{color:var(--profit);font-weight:800;white-space:nowrap}
     .amountStack{display:flex;flex-direction:column;gap:3px;line-height:1.15}.amountStack .main{font-weight:850}.amountStack .sub{font-size:11px;color:var(--muted);font-weight:700}
+    .billingConcepts{display:grid;gap:9px;min-width:250px}.billingConcepts>.stack{padding-bottom:8px;border-bottom:1px dashed var(--border)}.billingConcepts>.stack:last-child{padding-bottom:0;border-bottom:0}
     .apiSummary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}.apiSummary .chip{border:1px solid var(--border);background:#f8fafc;border-radius:999px;padding:5px 9px;font-size:12px;color:#475569}.apiSummary .chip b{color:var(--text)}
     .sectionTitle{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px}
     .sectionTitle h2{margin:0;font-size:19px}
@@ -1594,23 +1596,23 @@ function renderTokenControlPage(user, tenants = []) {
     <div class="card">
       <div class="sectionTitle">
         <div>
-          <h2>Resumen por dominio</h2>
+          <h2>Qué se cobrará por dominio</h2>
           <div class="small">${isSuper
-            ? 'Costo real y margen corresponden a IA. A cobrar incluye IA y, cuando corresponda, ventanas valorizadas de API Mensajes.'
-            : 'Importe incluye IA y las ventanas valorizadas de API Mensajes. Si usan monedas distintas se muestran por separado.'}</div>
+            ? 'Cada concepto muestra su cantidad y su importe. Los tokens y demás datos técnicos quedan dentro de “Detalle técnico”.'
+            : 'Cada concepto muestra su cantidad y su importe. Los datos técnicos quedan dentro de “Detalle técnico”.'}</div>
         </div>
       </div>
       <div class="tableWrap">
         <table>
           <thead>
             ${isSuper ? `<tr>
-                <th>Dominio</th><th>Servicio de origen</th><th>Entrada texto</th><th>Salida texto</th><th>Audio entrada</th><th>Audio salida</th><th>Total tokens</th><th>Eventos</th><th>Costo real</th><th>A cobrar</th><th>Margen IA</th><th>Último uso</th>
+                <th>Cliente / dominio</th><th>Conceptos a cobrar</th><th>Costo real IA</th><th>Total previsto</th><th>Margen IA</th><th>Estado</th><th></th>
            </tr>` : `<tr>
-              <th>Dominio</th><th>Servicio de origen</th><th>Total tokens</th><th>Eventos</th><th>Último uso</th><th>Importe</th>
+              <th>Cliente / dominio</th><th>Conceptos a cobrar</th><th>Total previsto</th><th>Estado</th><th></th>
             </tr>`}
           </thead>
           <tbody id="rows">
-            <tr><td colspan="${isSuper ? 12 : 6}" class="small">Cargando…</td></tr>
+            <tr><td colspan="${isSuper ? 7 : 5}" class="small">Cargando…</td></tr>
           </tbody>
         </table>
       </div>
@@ -1730,6 +1732,8 @@ function renderTokenControlPage(user, tenants = []) {
   const btnLoadMessages = document.getElementById('btnLoadMessages');
   let loadSequence = 0;
   let lastTokenSummary = null;
+  let lastApiSummary = null;
+  let lastMonetizationSummary = null;
 
   function esc(s){
     return String(s||'').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]); });
@@ -1895,32 +1899,44 @@ function renderTokenControlPage(user, tenants = []) {
     return j || {};
   }
 
-  function renderDomainSummary(j,apiJ){
+  function mergeAmountMaps(){
+    const out={};
+    Array.from(arguments).forEach(function(map){Object.keys(map||{}).forEach(function(currency){const key=String(currency||'ARS').toUpperCase();out[key]=num(out[key])+num(map[currency]);});});
+    return out;
+  }
+  function billingConceptsHtml(it){
+    const lines=[];
+    if(num(it.total_tokens)>0){
+      const labels=serviceLabels(it).join(', ')||'IA';
+      lines.push('<div class="stack"><b>IA · '+esc(labels)+'</b><span class="small">'+fmtInt(it.events)+' operaciones</span><span class="money">'+esc(fmtMoney(it.billed_cost))+'</span></div>');
+    }
+    if(num(it.api_windows)>0||num(it.api_messages)>0){
+      lines.push('<div class="stack"><b>API Mensajes</b><span class="small">'+fmtInt(it.api_messages)+' mensajes · '+fmtInt(it.api_windows)+' ventanas facturables</span><span class="money">'+esc(amountMapText(it.api_amounts||{}))+'</span></div>');
+    }
+    (Array.isArray(it.monetization_items)?it.monetization_items:[]).filter(function(item){return String(item.group||'')!=='ai';}).forEach(function(item){
+      const amount=num(item.billedAmount),currency=String(item.currency||'ARS');
+      lines.push('<div class="stack"><b>'+esc(item.name||item.eventKey||'Consumo')+'</b><span class="small">'+fmtInt(item.quantity)+' '+esc(item.unit||'operaciones')+'</span><span class="money">'+(amount?esc(fmtCurrency(amount,currency)):'Sin cargo')+'</span></div>');
+    });
+    return lines.length?'<div class="billingConcepts">'+lines.join('')+'</div>':'<span class="small">Sin cargos en el período</span>';
+  }
+  function renderDomainSummary(j,apiJ,monJ){
     const aiItems = Array.isArray(j.items) ? j.items : [];
     const totals = j.totals || {};
 
     const apiTenants = Array.isArray(apiJ&&apiJ.byTenant) ? apiJ.byTenant : [];
     const apiTotals = (apiJ&&apiJ.totals) || {};
+    const monDomains=Array.isArray(monJ&&monJ.byDomain)?monJ.byDomain:[];
+    const monItems=Array.isArray(monJ&&monJ.items)?monJ.items:[];
+    const monTotals=monJ&&monJ.totals||{};
 
     const merged=new Map();
     aiItems.forEach(function(it){
-      merged.set(String(it.tenantId||''),Object.assign({},it,{api_amounts:{},api_windows:0,api_messages:0,real_messages:0}));
+      merged.set(String(it.tenantId||''),Object.assign({},it,{api_amounts:{},api_windows:0,api_messages:0,real_messages:0,monetization_amounts:{},monetization_items:[]}));
     });
+    function ensure(key,seed){let it=merged.get(key);if(!it){it={tenantId:key,company:seed&&seed.company||'',number:seed&&seed.number||'',message_input_tokens:0,message_output_tokens:0,audio_input_tokens:0,audio_output_tokens:0,total_tokens:0,events:0,billed_cost:0,real_cost:0,gross_margin:0,billing_configured:true,last_at:null,channels:[],usage_types:[],api_amounts:{},api_windows:0,api_messages:0,real_messages:0,monetization_amounts:{},monetization_items:[]};merged.set(key,it);}return it;}
     apiTenants.forEach(function(api){
       const key=String(api.tenantId||'');
-      let it=merged.get(key);
-      if(!it){
-        it={
-          tenantId:key,
-          company:api.company||'',
-          number:api.number||'',
-          message_input_tokens:0,message_output_tokens:0,audio_input_tokens:0,audio_output_tokens:0,
-          total_tokens:0,events:0,billed_cost:0,real_cost:0,gross_margin:0,
-          billing_configured:true,last_at:null
-          ,channels:[],usage_types:[]
-        };
-        merged.set(key,it);
-      }
+      let it=ensure(key,api);
       if(!it.company)it.company=api.company||'';
       if(!it.number)it.number=api.number||'';
       it.api_amounts=api.byCurrency||{};
@@ -1929,51 +1945,45 @@ function renderTokenControlPage(user, tenants = []) {
       it.real_messages=num(api.realMessages);
       it.last_at=newerDate(it.last_at,api.last_at);
     });
+    monDomains.forEach(function(domain){const key=String(domain.tenantId||'');const it=ensure(key);it.monetization_amounts=domain.billedAmount||{};it.monetization_operations=num(domain.operations);it.included_credits=num(domain.includedCreditsApplied);it.last_at=newerDate(it.last_at,domain.lastAt);});
+    monItems.forEach(function(item){const key=String(item.tenantId||'');const it=ensure(key);it.monetization_items.push(item);});
     const items=Array.from(merged.values()).sort(function(a,b){return String(a.tenantId||'').localeCompare(String(b.tenantId||''));});
 
     kpiTokens.textContent = fmtInt(totals.total_tokens || 0);
-    kpiBilledCost.innerHTML = amountStackHtml(totals.billed_cost || 0, apiTotals.byCurrency || {});
+    const monTotalMap={};
+    Object.keys(monTotals.byCurrency||{}).forEach(function(currency){monTotalMap[currency]=num(monTotals.byCurrency[currency]&&monTotals.byCurrency[currency].billedAmount);});
+    const headlineMap=mergeAmountMaps(amountMapWithAi(totals.billed_cost||0,apiTotals.byCurrency||{}),monTotalMap);
+    kpiBilledCost.innerHTML = '<div class="amountStack"><span class="main">'+esc(amountMapText(headlineMap))+'</span></div>';
     if (isSuper && kpiRealCost) kpiRealCost.textContent = fmtMoney(totals.real_cost || 0);
     if (isSuper && kpiMargin) kpiMargin.textContent = fmtMoney(totals.gross_margin || 0);
     if (!isSuper && kpiEvents) kpiEvents.textContent = fmtInt(totals.events || 0);
     if (!isSuper && kpiLastUse) kpiLastUse.textContent = fmtDate(newerDate(totals.last_at,apiTotals.last_at));
 
     if (!items.length) {
-      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '6') + '" class="small">No hay consumos para los filtros seleccionados.</td></tr>';
+      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '7' : '5') + '" class="small">No hay consumos para los filtros seleccionados.</td></tr>';
       return;
     }
 
     rowsEl.innerHTML = items.map(function(it){
      const company = String(it.company || '').trim();
       const number = String(it.number || '').trim();
-      const billingWarning = num(it.total_tokens)>0 && it.billing_configured === false
-        ? '<span class="small" style="color:#b45309">Tarifa comercial IA sin configurar</span>'
-        : '';
-      const apiInfo = num(it.real_messages)>0 || num(it.api_windows)>0
-        ? '<span class="small"><b>'+fmtInt(it.real_messages)+' WhatsApp totales</b>: '+fmtInt(it.api_messages)+' API + '+fmtInt(Math.max(0,num(it.real_messages)-num(it.api_messages)))+' otros · '+fmtInt(it.api_windows)+' ventanas facturables</span>'
-        : '';
+      const needsReview=num(it.total_tokens)>0&&it.billing_configured===false;
+      const state=needsReview?'<span class="status pending">REVISAR TARIFA</span>':'<span class="status active">LISTO</span>';
+      const detailId='technical-'+String(it.tenantId||'').replace(/[^a-z0-9_-]/gi,'');
+      const totalMap=mergeAmountMaps(amountMapWithAi(it.billed_cost,it.api_amounts||{}),it.monetization_amounts||{});
+      const technical='<tr id="'+detailId+'" hidden><td colspan="'+(isSuper?'7':'5')+'"><div class="kpis detail"><div class="kpi"><div class="t">Entrada texto</div><div class="v">'+fmtInt(it.message_input_tokens)+'</div></div><div class="kpi"><div class="t">Salida texto</div><div class="v">'+fmtInt(it.message_output_tokens)+'</div></div><div class="kpi"><div class="t">Audio</div><div class="v">'+fmtInt(num(it.audio_input_tokens)+num(it.audio_output_tokens))+'</div></div><div class="kpi"><div class="t">Total tokens</div><div class="v">'+fmtInt(it.total_tokens)+'</div></div><div class="kpi"><div class="t">Eventos IA</div><div class="v">'+fmtInt(it.events)+'</div></div><div class="kpi"><div class="t">Último uso</div><div class="v" style="font-size:14px">'+esc(fmtDate(it.last_at))+'</div></div></div></td></tr>';
       if (!isSuper) {
         return '<tr>' +
           '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
-          (company ? '<span class="small">' + esc(company) + '</span>' : '') + apiInfo + billingWarning + '</div></td>' +
-          '<td>' + servicesHtml(it) + '</td>' +
-          '<td><b>' + fmtInt(it.total_tokens) + '</b></td>' +
-          '<td>' + fmtInt(it.events) + '</td>' +
-          '<td>' + esc(fmtDate(it.last_at)) + '</td>' +
-          '<td class="money">' + amountStackHtml(it.billed_cost,it.api_amounts||{}) + '</td>' +
-        '</tr>';
+          (company ? '<span class="small">' + esc(company) + '</span>' : '') + '</div></td>' +
+          '<td>' + billingConceptsHtml(it) + '</td><td class="money"><b>'+esc(amountMapText(totalMap))+'</b></td><td>'+state+'</td><td><button class="btn2 technicalToggle" type="button" data-target="'+detailId+'">Detalle técnico</button></td></tr>'+technical;
       }
       return '<tr>' +
         '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
         (company ? '<span class="small">' + esc(company) + '</span>' : '') +
-        (number ? '<span class="small">' + esc(number) + '</span>' : '') + apiInfo + billingWarning + '</div></td>' +
-        '<td>' + servicesHtml(it) + '</td>' +
-        '<td>' + fmtInt(it.message_input_tokens) + '</td><td>' + fmtInt(it.message_output_tokens) + '</td>' +
-        '<td>' + fmtInt(it.audio_input_tokens) + '</td><td>' + fmtInt(it.audio_output_tokens) + '</td>' +
-        '<td><b>' + fmtInt(it.total_tokens) + '</b></td><td>' + fmtInt(it.events) + '</td>' +
-        '<td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money">' + amountStackHtml(it.billed_cost,it.api_amounts||{}) + '</td>' +
-        '<td class="profit">' + fmtMoney(it.gross_margin) + '</td><td>' + esc(fmtDate(it.last_at)) + '</td>' +
-      '</tr>';
+        (number ? '<span class="small">' + esc(number) + '</span>' : '') + '</div></td>' +
+        '<td>' + billingConceptsHtml(it) + '</td><td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money"><b>'+esc(amountMapText(totalMap))+'</b></td>' +
+        '<td class="profit">' + fmtMoney(it.gross_margin) + '</td><td>'+state+'</td><td><button class="btn2 technicalToggle" type="button" data-target="'+detailId+'">Detalle técnico</button></td></tr>'+technical;
     }).join('');
   }
 
@@ -2113,24 +2123,28 @@ function renderTokenControlPage(user, tenants = []) {
   async function load(){
     const sequence=++loadSequence;
     msgEl.textContent = '';
-    rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">Cargando…</td></tr>';
+    rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '7' : '5') + '" class="small">Cargando…</td></tr>';
     resetDetails();
 
     try{
       const summaryUrl = '/api/token-control/summary?' + buildQuery(false).toString();
       const monetizationQuery=new URLSearchParams();const selectedTenant=String(tenantEl.value||'').trim();if(selectedTenant)monetizationQuery.set('tenantId',selectedTenant);if(fromEl.value)monetizationQuery.set('from',fromEl.value);if(toEl.value)monetizationQuery.set('to',toEl.value);
+      const summaryQuery=buildQuery(false).toString();
       const result = await Promise.all([
         getJson(summaryUrl),
-        getJson('/api/monetization/summary?'+monetizationQuery.toString())
+        getJson('/api/monetization/summary?'+monetizationQuery.toString()),
+        getJson('/api/token-control/api-message-windows?'+summaryQuery+'&details=0')
       ]);
       if(sequence!==loadSequence)return;
       lastTokenSummary=result[0];
-      renderDomainSummary(lastTokenSummary,null);
-      renderMonetization(result[1]);
+      lastMonetizationSummary=result[1];
+      lastApiSummary=result[2];
+      renderDomainSummary(lastTokenSummary,lastApiSummary,lastMonetizationSummary);
+      renderMonetization(lastMonetizationSummary);
     } catch(e){
       if(sequence!==loadSequence)return;
       msgEl.textContent = e && e.message ? e.message : String(e);
-      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '5') + '" class="small">Error cargando datos.</td></tr>';
+      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '7' : '5') + '" class="small">Error cargando datos.</td></tr>';
     }
   }
 
@@ -2148,7 +2162,7 @@ function renderTokenControlPage(user, tenants = []) {
     if(apiMessageRows)apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Cargando…</td></tr>';
     if(realMessageRows)realMessageRows.innerHTML='<tr><td colspan="6" class="small">Cargando…</td></tr>';
     if(apiMessageSummary)apiMessageSummary.innerHTML='<span class="chip">Cargando…</span>';
-    try{const j=await getJson('/api/token-control/api-message-windows?'+buildQuery(true).toString());if(sequence!==loadSequence)return;renderApiMessageWindows(j,true);if(lastTokenSummary)renderDomainSummary(lastTokenSummary,j);btnLoadMessages.textContent='Actualizar detalle de envíos WhatsApp';}
+    try{const j=await getJson('/api/token-control/api-message-windows?'+buildQuery(true).toString());if(sequence!==loadSequence)return;lastApiSummary=j;renderApiMessageWindows(j,true);if(lastTokenSummary)renderDomainSummary(lastTokenSummary,lastApiSummary,lastMonetizationSummary);btnLoadMessages.textContent='Actualizar detalle de envíos WhatsApp';}
     catch(e){if(sequence!==loadSequence)return;if(realMessageRows)realMessageRows.innerHTML='<tr><td colspan="6" class="small">Error cargando mensajes enviados.</td></tr>';if(apiMessageRows)apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Error cargando ventanas API Mensajes.</td></tr>';btnLoadMessages.textContent='Reintentar detalle de envíos WhatsApp';}
     finally{if(sequence===loadSequence)btnLoadMessages.disabled=false;}
   }
@@ -2156,6 +2170,7 @@ function renderTokenControlPage(user, tenants = []) {
   btnReload.addEventListener('click', load);
   btnLoadConversations.addEventListener('click',loadConversationDetails);
   btnLoadMessages.addEventListener('click',loadMessageDetails);
+  rowsEl.addEventListener('click',function(event){const button=event.target&&event.target.closest&&event.target.closest('.technicalToggle');if(!button)return;const row=document.getElementById(button.getAttribute('data-target'));if(!row)return;row.hidden=!row.hidden;button.textContent=row.hidden?'Detalle técnico':'Ocultar detalle';});
   setupMulti('typeFilter','tokenType','Tipo IA');
   setupMulti('channelFilter','tokenChannel','Canal');
   if (isSuper && tenantEl) tenantEl.addEventListener('change', load);

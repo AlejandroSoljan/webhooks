@@ -12,26 +12,37 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
     const calls = [];
     dom.window.fetch = async url => {
       calls.push(String(url));
-      const body = String(url).includes('/summary')
-        ? { ok: true, items: [], totals: {} }
+      const body = String(url).includes('/api/token-control/summary')
+        ? { ok: true, items: [{ tenantId:'MSM',company:'Asisto Manager',total_tokens:100,events:2,billed_cost:2,real_cost:1,gross_margin:1,billing_configured:true,channels:['help_api'],usage_types:['ayuda_consulta'] }], totals: { total_tokens:100,billed_cost:2,real_cost:1,gross_margin:1 } }
+        : String(url).includes('/api/monetization/summary')
+          ? { ok:true,items:[{tenantId:'MSM',eventKey:'catalog.code_lookup',name:'Lectura por código',group:'catalog',unit:'consulta',quantity:3,currency:'ARS',billedAmount:60}],byDomain:[{tenantId:'MSM',operations:3,billedAmount:{ARS:60}}],byType:[],totals:{byCurrency:{ARS:{billedAmount:60}}} }
         : String(url).includes('/conversations')
           ? { ok: true, items: [], totals: {} }
-          : { ok: true, enabled: true, items: [], realItems: [], byTenant: [], totals: {} };
+          : { ok: true, enabled: true, items: [], realItems: [], byTenant: [{tenantId:'MSM',windows:1,messages:2,realMessages:2,byCurrency:{ARS:20}}], totals: {byCurrency:{ARS:20}} };
       return { ok: true, json: async () => body };
     };
     const script = [...dom.window.document.scripts].pop().textContent;
     dom.window.eval(script);
     await tick();
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3);
     assert.ok(calls.some(url => url.includes('/summary')));
     assert.ok(calls.some(url => url.includes('/api/monetization/summary')));
-    assert.ok(!calls.some(url => url.includes('/api-message-windows')));
+    assert.ok(calls.some(url => url.includes('/api-message-windows') && url.includes('details=0')));
+    assert.ok(!calls.some(url => url.includes('/api-message-windows') && !url.includes('details=0')));
     assert.ok(!calls.some(url => url.includes('/conversations')));
     assert.deepEqual([...dom.window.document.getElementById('fTenant').options].map(option => option.value), ['', 'CARICO', 'MCN', 'RVL']);
     assert.equal(dom.window.document.getElementById('conversationDetailCard').hidden, true);
     assert.equal(dom.window.document.getElementById('apiMessagesCard').hidden, true);
-    assert.match(dom.window.document.body.textContent, /Servicio de origen/);
-    assert.match(dom.window.document.body.textContent, /Ayuda de Manager/);
+    assert.match(dom.window.document.body.textContent, /Qué se cobrará por dominio/);
+    assert.match(dom.window.document.body.textContent, /Detalle técnico/);
+    assert.match(dom.window.document.getElementById('rows').textContent, /Ayuda de Manager/);
+    assert.match(dom.window.document.getElementById('rows').textContent, /API Mensajes/);
+    assert.match(dom.window.document.getElementById('rows').textContent, /Lectura por código/);
+    const technicalButton=dom.window.document.querySelector('.technicalToggle');
+    const technicalRow=dom.window.document.getElementById(technicalButton.dataset.target);
+    assert.equal(technicalRow.hidden,true);
+    technicalButton.click();
+    assert.equal(technicalRow.hidden,false);
 
     dom.window.document.getElementById('btnLoadConversations').click();
     await tick();
@@ -40,7 +51,7 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
 
     dom.window.document.getElementById('btnLoadMessages').click();
     await tick();
-    assert.equal(calls.filter(url => url.includes('/api-message-windows')).length, 1);
+    assert.equal(calls.filter(url => url.includes('/api-message-windows')).length, 2);
     assert.ok(calls.some(url => url.includes('/api-message-windows') && !url.includes('details=0')));
     assert.equal(dom.window.document.getElementById('apiMessagesCard').hidden, false);
   } finally { dom.window.close(); }
