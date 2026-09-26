@@ -1810,7 +1810,7 @@ function renderTokenControlPage(user, tenants = []) {
     root.innerHTML=rows.length?rows.map(function(x){const v=num(value(x));return '<div class="barRow"><div class="barLabel" title="'+esc(label(x))+'">'+esc(label(x))+'</div><div class="barTrack"><div class="barFill" style="width:'+Math.max(1,v/max*100).toFixed(1)+'%"></div></div><div class="barValue">'+fmtInt(v)+'</div></div>';}).join(''):'<div class="emptyChart">Todavía no hay consumos medidos para este período.</div>';
   }
   function renderMonetization(j){
-    const totals=j&&j.totals||{},currencies=totals.byCurrency||{};kpiMonOperations.textContent=fmtInt(totals.operations);kpiMonCredits.textContent=fmtInt(totals.credits);kpiMonReal.textContent=fmtMoney(totals.realCost);const keys=Object.keys(currencies);kpiMonBilled.textContent=keys.length===1?fmtCurrency(currencies[keys[0]].billedAmount,keys[0]):(keys.length?keys.length+' monedas':'$ 0');monCurrencies.innerHTML=keys.map(function(c){return '<span>'+esc(fmtCurrency(currencies[c].billedAmount,c))+'</span>';}).join('');renderBars(featureChart,j&&j.byType,function(x){return x.name||x.eventKey;},function(x){return x.quantity;});renderBars(domainChart,j&&j.byDomain,function(x){return x.tenantId;},function(x){return x.operations;});
+    const totals=j&&j.totals||{};kpiMonOperations.textContent=fmtInt(totals.operations);kpiMonCredits.textContent=fmtInt(totals.credits);kpiMonReal.textContent=fmtMoney(totals.realCost);renderBars(featureChart,j&&j.byType,function(x){return x.name||x.eventKey;},function(x){return x.quantity;});renderBars(domainChart,j&&j.byDomain,function(x){return x.tenantId;},function(x){return x.operations;});
   }
   function amountStackHtml(aiUsd,apiMap){
     const apiKeys=Object.keys(apiMap||{}).filter(function(c){return Math.abs(num(apiMap[c]))>0;});
@@ -2035,7 +2035,15 @@ function renderTokenControlPage(user, tenants = []) {
 
     kpiTokens.textContent = fmtInt(totals.total_tokens || 0);
     const headlineMap=items.reduce(function(acc,item){return mergeAmountMaps(acc,billingTotalMap(item));},{});
+    const nonAiMap=items.reduce(function(acc,item){
+      const itemMap=billingTotalMap(item);
+      if(num(item.billed_cost))itemMap.USD=num(itemMap.USD)-num(item.billed_cost);
+      return mergeAmountMaps(acc,itemMap);
+    },{});
+    Object.keys(nonAiMap).forEach(function(currency){if(Math.abs(num(nonAiMap[currency]))<0.0000005)delete nonAiMap[currency];});
     kpiBilledCost.innerHTML = '<div class="amountStack"><span class="main">'+esc(amountMapText(headlineMap))+'</span></div>';
+    kpiMonBilled.textContent=amountMapText(nonAiMap);
+    monCurrencies.innerHTML=Object.keys(nonAiMap).map(function(currency){return '<span>'+esc(fmtCurrency(nonAiMap[currency],currency))+'</span>';}).join('');
     if (isSuper && kpiRealCost) kpiRealCost.textContent = fmtMoney(totals.real_cost || 0);
     if (isSuper && kpiMargin) kpiMargin.textContent = fmtMoney(totals.gross_margin || 0);
     if (!isSuper && kpiEvents) kpiEvents.textContent = fmtInt(totals.events || 0);
