@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
-# Asisto | Dual MCN deployment v5.00.257 | 2026-09-26
+# Asisto | Dual MCN deployment v5.00.258 | 2026-09-26
 set -euo pipefail
 case "${1:-}" in
   aws) base=/opt/asisto/turnero; service=asisto-turnero ;;
   mecan) base=/opt/asisto/turnero-local; service=asisto-turnero-local ;;
   *) exit 2 ;;
 esac
-release="$base/releases/v5.00.257"
-previous="$base/releases/v5.00.256"
-commit=320acf7cffe14fe9034c5bfd5fda8d7b37358e1a
-files=(queue_pages.js queue_multi_operator.js HISTORIAL_CAMBIOS_BACKEND.txt)
+release="$base/releases/v5.00.258"
+previous="$base/releases/v5.00.257"
+commit=f7dfc2e24f88c64b3fb746a3c9e0a7691dbe5dcd
+files=(queue_pages.js HISTORIAL_CAMBIOS_BACKEND.txt)
 verify() {
   cd "$release"
   sha256sum -c <<'HASHES'
-9eeb15b46302df8c1cc2b6687bb41abdb2290342041e954c0198876e4725d5e9  queue_pages.js
-629ec52e7d992566bfaa5d7402233bc210c87c4aee8929cf84e0e3c8008c8680  queue_multi_operator.js
-cd9015f4ccafa5478adb436b48de493f9c4746cdb7b9155086ab7f4e0f56e840  HISTORIAL_CAMBIOS_BACKEND.txt
+b2849b735859c4efe7f9f5e4e2902ff9949b6445e8c239dba959cb0caa8b1ab7  queue_pages.js
+c2ac18d6c0bb54f8053d70e201f35e86dfa9cd490572caa4c96c45983a082087  HISTORIAL_CAMBIOS_BACKEND.txt
 HASHES
   for file in "${files[@]}"; do
     if [[ "$file" == *.js ]]; then node --check "$file"; fi
@@ -36,17 +35,17 @@ case "${2:-}" in
     ;;
   activate)
     test "$(readlink -f "$base/current")" = "$previous"
-    test ! -e "$base/next-v500257"
+    test ! -e "$base/next-v500258"
     verify
     rollback() {
-      ln -s "$previous" "$base/rollback-v500257"
-      mv -Tf "$base/rollback-v500257" "$base/current"
+      ln -s "$previous" "$base/rollback-v500258"
+      mv -Tf "$base/rollback-v500258" "$base/current"
       systemctl restart "$service"
       echo "ROLLED_BACK $previous" >&2
     }
     trap rollback ERR
-    ln -s "$release" "$base/next-v500257"
-    mv -Tf "$base/next-v500257" "$base/current"
+    ln -s "$release" "$base/next-v500258"
+    mv -Tf "$base/next-v500258" "$base/current"
     systemctl restart "$service"
     healthy=false
     for attempt in {1..20}; do
