@@ -1628,13 +1628,13 @@ function renderTokenControlPage(user, tenants = []) {
         <table>
           <thead>
             ${isSuper ? `<tr>
-                <th>Cliente / dominio</th><th>Conceptos a cobrar</th><th>Costo real IA</th><th>Total previsto</th><th>Margen IA</th><th>Estado</th><th></th>
+                <th>Cliente / dominio</th><th>Detalle por dominio</th><th>Conceptos a cobrar</th><th>Costo real IA</th><th>Total previsto</th><th>Margen IA</th><th>Estado</th><th></th>
            </tr>` : `<tr>
-              <th>Cliente / dominio</th><th>Conceptos a cobrar</th><th>Total previsto</th><th>Estado</th><th></th>
+              <th>Cliente / dominio</th><th>Detalle por dominio</th><th>Conceptos a cobrar</th><th>Total previsto</th><th>Estado</th><th></th>
             </tr>`}
           </thead>
           <tbody id="rows">
-            <tr><td colspan="${isSuper ? 7 : 5}" class="small">Cargando…</td></tr>
+            <tr><td colspan="${isSuper ? 8 : 6}" class="small">Cargando…</td></tr>
           </tbody>
         </table>
       </div>
@@ -1964,6 +1964,38 @@ function renderTokenControlPage(user, tenants = []) {
     });
     return lines.length?'<div class="billingConcepts">'+lines.join('')+'</div>':'<span class="small">Sin cargos en el período</span>';
   }
+  function domainDetailsHtml(it){
+    const domains=new Map();
+    function ensureDomain(tenantId){
+      const key=String(tenantId||it.tenantId||'').trim();
+      if(!domains.has(key))domains.set(key,{tenantId:key,labels:[],events:0,tokens:0,messages:0,windows:0,operations:0});
+      return domains.get(key);
+    }
+    (Array.isArray(it.service_sources)?it.service_sources:[]).forEach(function(source){
+      const row=ensureDomain(source.tenantId);
+      row.labels=[...new Set([...(row.labels||[]),...(source.labels||[])])];
+      row.events+=num(source.events);row.tokens+=num(source.total_tokens);
+    });
+    (Array.isArray(it.api_sources)?it.api_sources:[]).forEach(function(source){
+      const row=ensureDomain(source.tenantId);row.messages+=num(source.messages);row.windows+=num(source.windows);
+      if(!row.labels.includes('API Mensajes'))row.labels.push('API Mensajes');
+    });
+    (Array.isArray(it.monetization_items)?it.monetization_items:[]).forEach(function(item){
+      const row=ensureDomain(item.sourceTenantId||item.tenantId);row.operations+=num(item.quantity);
+      const label=String(item.name||item.eventKey||'Consumo');if(label&&!row.labels.includes(label))row.labels.push(label);
+    });
+    if(!domains.size)ensureDomain(it.tenantId);
+    return '<div class="billingConcepts domainDetails">'+Array.from(domains.values()).sort(function(a,b){
+      if(a.tenantId===String(it.tenantId||''))return -1;if(b.tenantId===String(it.tenantId||''))return 1;return a.tenantId.localeCompare(b.tenantId);
+    }).map(function(row){
+      const measures=[];
+      if(row.events)measures.push(fmtInt(row.events)+' operaciones IA');
+      if(row.messages)measures.push(fmtInt(row.messages)+' mensajes API');
+      if(row.windows)measures.push(fmtInt(row.windows)+' ventanas');
+      if(row.operations)measures.push(fmtInt(row.operations)+' consumos');
+      return '<div class="stack"><b>'+esc(row.tenantId)+'</b><span class="small">'+esc(row.labels.join(' · ')||'Sin consumo identificado')+'</span>'+(measures.length?'<span class="small">'+esc(measures.join(' · '))+'</span>':'')+'</div>';
+    }).join('')+'</div>';
+  }
   function renderDomainSummary(j,apiJ,monJ){
     const aiItems = Array.isArray(j.items) ? j.items : [];
     const totals = j.totals || {};
@@ -1983,7 +2015,7 @@ function renderTokenControlPage(user, tenants = []) {
       it.channels=[...new Set([...(it.channels||[]),...(source.channels||[])])];it.usage_types=[...new Set([...(it.usage_types||[]),...(source.usage_types||[])])];
       it.last_at=newerDate(it.last_at,source.last_at);if(source.billing_configured===false)it.billing_configured=false;
       if(sourceKey===key){it.company=source.company||it.company;it.number=source.number||it.number;}
-      it.service_sources.push({tenantId:sourceKey,labels:serviceLabels(source)});
+      it.service_sources.push({tenantId:sourceKey,labels:serviceLabels(source),events:num(source.events),total_tokens:num(source.total_tokens)});
     });
     apiTenants.forEach(function(api){
       const sourceKey=String(api.tenantId||''),key=ownerOf(sourceKey);
@@ -2010,7 +2042,7 @@ function renderTokenControlPage(user, tenants = []) {
     if (!isSuper && kpiLastUse) kpiLastUse.textContent = fmtDate(newerDate(totals.last_at,apiTotals.last_at));
 
     if (!items.length) {
-      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '7' : '5') + '" class="small">No hay consumos para los filtros seleccionados.</td></tr>';
+      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '8' : '6') + '" class="small">No hay consumos para los filtros seleccionados.</td></tr>';
       return;
     }
 
@@ -2021,18 +2053,18 @@ function renderTokenControlPage(user, tenants = []) {
       const state=needsReview?'<span class="status pending">REVISAR TARIFA</span>':'<span class="status active">LISTO</span>';
       const detailId='technical-'+String(it.tenantId||'').replace(/[^a-z0-9_-]/gi,'');
       const totalMap=billingTotalMap(it);
-      const technical='<tr id="'+detailId+'" hidden><td colspan="'+(isSuper?'7':'5')+'"><div class="kpis detail"><div class="kpi"><div class="t">Entrada texto</div><div class="v">'+fmtInt(it.message_input_tokens)+'</div></div><div class="kpi"><div class="t">Salida texto</div><div class="v">'+fmtInt(it.message_output_tokens)+'</div></div><div class="kpi"><div class="t">Audio</div><div class="v">'+fmtInt(num(it.audio_input_tokens)+num(it.audio_output_tokens))+'</div></div><div class="kpi"><div class="t">Total tokens</div><div class="v">'+fmtInt(it.total_tokens)+'</div></div><div class="kpi"><div class="t">Eventos IA</div><div class="v">'+fmtInt(it.events)+'</div></div><div class="kpi"><div class="t">Último uso</div><div class="v" style="font-size:14px">'+esc(fmtDate(it.last_at))+'</div></div></div></td></tr>';
+      const technical='<tr id="'+detailId+'" hidden><td colspan="'+(isSuper?'8':'6')+'"><div class="kpis detail"><div class="kpi"><div class="t">Entrada texto</div><div class="v">'+fmtInt(it.message_input_tokens)+'</div></div><div class="kpi"><div class="t">Salida texto</div><div class="v">'+fmtInt(it.message_output_tokens)+'</div></div><div class="kpi"><div class="t">Audio</div><div class="v">'+fmtInt(num(it.audio_input_tokens)+num(it.audio_output_tokens))+'</div></div><div class="kpi"><div class="t">Total tokens</div><div class="v">'+fmtInt(it.total_tokens)+'</div></div><div class="kpi"><div class="t">Eventos IA</div><div class="v">'+fmtInt(it.events)+'</div></div><div class="kpi"><div class="t">Último uso</div><div class="v" style="font-size:14px">'+esc(fmtDate(it.last_at))+'</div></div></div></td></tr>';
       if (!isSuper) {
         return '<tr>' +
           '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
           (company ? '<span class="small">' + esc(company) + '</span>' : '') + '</div></td>' +
-          '<td>' + billingConceptsHtml(it) + '</td><td class="money"><b>'+esc(amountMapText(totalMap))+'</b></td><td>'+state+'</td><td><button class="btn2 technicalToggle" type="button" data-target="'+detailId+'">Detalle técnico</button></td></tr>'+technical;
+          '<td>'+domainDetailsHtml(it)+'</td><td>' + billingConceptsHtml(it) + '</td><td class="money"><b>'+esc(amountMapText(totalMap))+'</b></td><td>'+state+'</td><td><button class="btn2 technicalToggle" type="button" data-target="'+detailId+'">Detalle técnico</button></td></tr>'+technical;
       }
       return '<tr>' +
         '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
         (company ? '<span class="small">' + esc(company) + '</span>' : '') +
         (number ? '<span class="small">' + esc(number) + '</span>' : '') + '</div></td>' +
-        '<td>' + billingConceptsHtml(it) + '</td><td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money"><b>'+esc(amountMapText(totalMap))+'</b></td>' +
+        '<td>'+domainDetailsHtml(it)+'</td><td>' + billingConceptsHtml(it) + '</td><td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money"><b>'+esc(amountMapText(totalMap))+'</b></td>' +
         '<td class="profit">' + fmtMoney(it.gross_margin) + '</td><td>'+state+'</td><td><button class="btn2 technicalToggle" type="button" data-target="'+detailId+'">Detalle técnico</button></td></tr>'+technical;
     }).join('');
   }
@@ -2173,7 +2205,7 @@ function renderTokenControlPage(user, tenants = []) {
   async function load(){
     const sequence=++loadSequence;
     msgEl.textContent = '';
-    rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '7' : '5') + '" class="small">Cargando…</td></tr>';
+    rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '8' : '6') + '" class="small">Cargando…</td></tr>';
     resetDetails();
 
     try{
@@ -2194,7 +2226,7 @@ function renderTokenControlPage(user, tenants = []) {
     } catch(e){
       if(sequence!==loadSequence)return;
       msgEl.textContent = e && e.message ? e.message : String(e);
-      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '7' : '5') + '" class="small">Error cargando datos.</td></tr>';
+      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '8' : '6') + '" class="small">Error cargando datos.</td></tr>';
     }
   }
 
