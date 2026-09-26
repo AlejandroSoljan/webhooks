@@ -34,6 +34,7 @@ function showSellerPermission(){let dialog=$('sellerPermissionDialog');if(!dialo
 ${kiosk.toString()}
 ${mode === 'admin' ? multiOperator.renderMultiSection.toString() : ''}
 ${mode === 'admin' ? multiOperator.chooseTransfer.toString() : ''}
+${mode === 'admin' ? multiOperator.compactOperatorToolbar.toString() : ''}
 ${mode === 'admin' ? operatorIssue.setupOperatorIssue.toString() : ''}
 if(MODE==='admin'){const style=document.createElement('style');style.textContent=${JSON.stringify(multiOperator.css)};document.head.append(style)}
 async function enableCallSound(){if(MODE==='kiosk')return false;try{audioCtx||=new AudioContext();await audioCtx.resume();const ready=audioCtx.state==='running';if(ready)localStorage.setItem('queueSoundEnabled:'+T,'1');const control=$('soundControl');if(control){control.textContent=ready?'Sonido de llamados activado':'Tocá para activar el sonido';control.disabled=ready}return ready}catch(_){return false}}
@@ -80,7 +81,7 @@ async function refresh(){
 async function act(s,action,destination,sellerId){if(busy)return;setBusy(true);try{await request(ADMIN+'/sectors/'+encodeURIComponent(s.id)+'/'+action,{method:'POST',body:JSON.stringify({destination,sellerId,desk:$('desk').value,expectedTicketId:s.current?.id||null,...(action==='next'?{expectedWaitingId:s.next?.[0]?.id||null}:{})})});await refresh()}catch(e){error(e)}finally{busy=false;await refresh()}}
 const standardRefresh=refresh;
 const originalSetupBoard=setupBoard;
-setupBoard=function(){originalSetupBoard();if(MODE==='admin')setupOperatorIssue();};
+setupBoard=function(){originalSetupBoard();if(MODE==='admin'){setupOperatorIssue();compactOperatorToolbar();}};
 refresh=async function(){
   if(MODE!=='display'||!selectedSector)return standardRefresh();
   try{
