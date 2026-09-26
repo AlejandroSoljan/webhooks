@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.247 | Fecha: 2026-09-26
+// Asisto | Version: 5.00.248 | Fecha: 2026-09-26
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
@@ -241,6 +241,24 @@ function calculateBillableCost(row, tenantDoc = {}) {
     return Number((calculateEstimatedCost(row, tenantDoc) * (1 + markup / 100)).toFixed(6));
   }
   return calculateCostWithRates(row, tenantDoc, "charge");
+}
+
+async function loadBillingOwners(db) {
+  const docs = await db.collection('tenant_config').find(
+    { consumption_domains: { $exists: true, $ne: [] } },
+    { projection: { _id: 1, consumption_domains: 1 } },
+  ).toArray();
+  const owners = {};
+  for (const doc of docs) {
+    const owner = String(doc?._id || '').trim();
+    if (!owner) continue;
+    owners[owner] = owner;
+    for (const child of (Array.isArray(doc.consumption_domains) ? doc.consumption_domains : [])) {
+      const tenant = String(child || '').trim();
+      if (tenant) owners[tenant] = owner;
+    }
+  }
+  return owners;
 }
 
 function tenantChargeRatesConfigured(tenantDoc = {}) {
@@ -621,6 +639,7 @@ async function buildTokenSummary({
   } = {}) {
   const db = await getDb();
   const tenantIds = await resolveUsageTenantIds(db, tenantId);
+  const billingOwners = await loadBillingOwners(db);
   const { match, safeTenant } = buildUsageMatch({ tenantId, tenantIds, from, to });
   const noTypes = String(types || "").trim().toLowerCase() === "none";
   const noChannels = String(channels || "").trim().toLowerCase() === "none";
@@ -630,6 +649,7 @@ async function buildTokenSummary({
   if (noTypes || noChannels) {
     return {
       ok: true,
+      billingOwners,
       filters: { tenantId: safeTenant || null, tenantIds, from: from || null, to: to || null, types: [], channels: [], isSuper: !!isSuper },
       items: [],
       totals: {
@@ -746,6 +766,7 @@ async function buildTokenSummary({
 
     return {
       ok: true,
+      billingOwners,
       filters: { tenantId: safeTenant || null, tenantIds, from: from || null, to: to || null, types: safeTypes, channels: safeChannels, isSuper: !!isSuper },
       items,
       totals
@@ -895,6 +916,7 @@ async function buildTokenSummary({
 
   return {
     ok: true,
+    billingOwners,
     filters: {
       tenantId: safeTenant || null,
       tenantIds,
@@ -1904,38 +1926,41 @@ function renderTokenControlPage(user, tenants = []) {
     Array.from(arguments).forEach(function(map){Object.keys(map||{}).forEach(function(currency){const key=String(currency||'ARS').toUpperCase();out[key]=num(out[key])+num(map[currency]);});});
     return out;
   }
-  function apiPerMessageBilling(it){
-    const item=(Array.isArray(it&&it.monetization_items)?it.monetization_items:[]).find(function(row){return String(row&&row.eventKey||'')==='whatsapp.api_sent';});
-    if(!item||num(item.quantity)<=0||num(it&&it.api_messages)<=0)return null;
-    const unit=num(item.potentialAmount)/num(item.quantity);
-    if(unit<=0)return null;
-    return {item:item,quantity:num(it.api_messages),unit:unit,currency:String(item.currency||'ARS').toUpperCase(),amount:unit*num(it.api_messages)};
+  function apiBillingResolution(it){
+    const items=Array.isArray(it&&it.monetization_items)?it.monetization_items:[],sources=Array.isArray(it&&it.api_sources)?it.api_sources:[];
+    const perMessage=[],legacyAmounts={};
+    sources.forEach(function(source){
+      const item=items.find(function(row){return String(row&&row.eventKey||'')==='whatsapp.api_sent'&&String(row.sourceTenantId||row.tenantId||'')===String(source.tenantId||'');});
+      const unit=item&&num(item.quantity)>0?num(item.potentialAmount)/num(item.quantity):0;
+      if(item&&unit>0&&num(source.messages)>0)perMessage.push({item:item,tenantId:String(source.tenantId||''),quantity:num(source.messages),unit:unit,currency:String(item.currency||'ARS').toUpperCase(),amount:unit*num(source.messages)});
+      else Object.assign(legacyAmounts,mergeAmountMaps(legacyAmounts,source.byCurrency||{}));
+    });
+    return {perMessage:perMessage,legacyAmounts:legacyAmounts};
   }
   function billingTotalMap(it){
-    const perMessage=apiPerMessageBilling(it);
+    const resolution=apiBillingResolution(it);
     const monetizationMap=Object.assign({},it&&it.monetization_amounts||{});
-    let apiMap=it&&it.api_amounts||{};
-    if(perMessage){
-      monetizationMap[perMessage.currency]=Math.max(0,num(monetizationMap[perMessage.currency])-num(perMessage.item.billedAmount))+num(perMessage.amount);
-      apiMap={};
-    }
-    return mergeAmountMaps(amountMapWithAi(it&&it.billed_cost,apiMap),monetizationMap);
+    resolution.perMessage.forEach(function(entry){monetizationMap[entry.currency]=Math.max(0,num(monetizationMap[entry.currency])-num(entry.item.billedAmount))+num(entry.amount);});
+    return mergeAmountMaps(amountMapWithAi(it&&it.billed_cost,resolution.legacyAmounts),monetizationMap);
   }
   function billingConceptsHtml(it){
     const lines=[];
     if(num(it.total_tokens)>0){
-      const labels=serviceLabels(it).join(', ')||'IA';
+      const sourceLabels=(Array.isArray(it.service_sources)?it.service_sources:[]).flatMap(function(source){return (source.labels||[]).map(function(label){return label+' ('+source.tenantId+')';});});
+      const labels=sourceLabels.join(', ')||serviceLabels(it).join(', ')||'IA';
       lines.push('<div class="stack"><b>IA · '+esc(labels)+'</b><span class="small">'+fmtInt(it.events)+' operaciones</span><span class="money">'+esc(fmtMoney(it.billed_cost))+'</span></div>');
     }
-    const perMessage=apiPerMessageBilling(it);
-    if(perMessage){
-      lines.push('<div class="stack"><b>Mensajes enviados por API</b><span class="small">'+fmtInt(perMessage.quantity)+' mensajes × '+esc(fmtCurrency(perMessage.unit,perMessage.currency))+'</span><span class="money">'+esc(fmtCurrency(perMessage.amount,perMessage.currency))+'</span></div>');
-    }else if(num(it.api_windows)>0||num(it.api_messages)>0){
+    const resolution=apiBillingResolution(it);
+    resolution.perMessage.forEach(function(entry){
+      lines.push('<div class="stack"><b>Mensajes enviados por API'+(entry.tenantId&&entry.tenantId!==String(it.tenantId||'')?' ('+esc(entry.tenantId)+')':'')+'</b><span class="small">'+fmtInt(entry.quantity)+' mensajes × '+esc(fmtCurrency(entry.unit,entry.currency))+'</span><span class="money">'+esc(fmtCurrency(entry.amount,entry.currency))+'</span></div>');
+    });
+    if(Object.keys(resolution.legacyAmounts).length&&(num(it.api_windows)>0||num(it.api_messages)>0)){
       lines.push('<div class="stack"><b>API Mensajes</b><span class="small">'+fmtInt(it.api_messages)+' mensajes · '+fmtInt(it.api_windows)+' ventanas facturables</span><span class="money">'+esc(amountMapText(it.api_amounts||{}))+'</span></div>');
     }
     (Array.isArray(it.monetization_items)?it.monetization_items:[]).filter(function(item){return String(item.group||'')!=='ai'&&String(item.eventKey||'')!=='whatsapp.api_sent';}).forEach(function(item){
       const amount=num(item.billedAmount),currency=String(item.currency||'ARS');
-      lines.push('<div class="stack"><b>'+esc(item.name||item.eventKey||'Consumo')+'</b><span class="small">'+fmtInt(item.quantity)+' '+esc(item.unit||'operaciones')+'</span><span class="money">'+(amount?esc(fmtCurrency(amount,currency)):'Sin cargo')+'</span></div>');
+      const source=String(item.sourceTenantId||'');
+      lines.push('<div class="stack"><b>'+esc(item.name||item.eventKey||'Consumo')+(source&&source!==String(it.tenantId||'')?' ('+esc(source)+')':'')+'</b><span class="small">'+fmtInt(item.quantity)+' '+esc(item.unit||'operaciones')+'</span><span class="money">'+(amount?esc(fmtCurrency(amount,currency)):'Sin cargo')+'</span></div>');
     });
     return lines.length?'<div class="billingConcepts">'+lines.join('')+'</div>':'<span class="small">Sin cargos en el período</span>';
   }
@@ -1947,25 +1972,33 @@ function renderTokenControlPage(user, tenants = []) {
     const apiTotals = (apiJ&&apiJ.totals) || {};
     const monDomains=Array.isArray(monJ&&monJ.byDomain)?monJ.byDomain:[];
     const monItems=Array.isArray(monJ&&monJ.items)?monJ.items:[];
+    const billingOwners=j&&j.billingOwners||{};
 
     const merged=new Map();
-    aiItems.forEach(function(it){
-      merged.set(String(it.tenantId||''),Object.assign({},it,{api_amounts:{},api_windows:0,api_messages:0,real_messages:0,monetization_amounts:{},monetization_items:[]}));
+    function ownerOf(key){return String(billingOwners[key]||key);}
+    function ensure(key,seed){let it=merged.get(key);if(!it){it={tenantId:key,company:seed&&seed.company||'',number:seed&&seed.number||'',message_input_tokens:0,message_output_tokens:0,audio_input_tokens:0,audio_output_tokens:0,total_tokens:0,events:0,billed_cost:0,real_cost:0,gross_margin:0,billing_configured:true,last_at:null,channels:[],usage_types:[],api_amounts:{},api_windows:0,api_messages:0,real_messages:0,api_sources:[],monetization_amounts:{},monetization_items:[],service_sources:[]};merged.set(key,it);}return it;}
+    aiItems.forEach(function(source){
+      const sourceKey=String(source.tenantId||''),key=ownerOf(sourceKey),it=ensure(key,sourceKey===key?source:null);
+      ['message_input_tokens','message_output_tokens','audio_input_tokens','audio_output_tokens','total_tokens','events','billed_cost','real_cost','gross_margin'].forEach(function(field){it[field]=num(it[field])+num(source[field]);});
+      it.channels=[...new Set([...(it.channels||[]),...(source.channels||[])])];it.usage_types=[...new Set([...(it.usage_types||[]),...(source.usage_types||[])])];
+      it.last_at=newerDate(it.last_at,source.last_at);if(source.billing_configured===false)it.billing_configured=false;
+      if(sourceKey===key){it.company=source.company||it.company;it.number=source.number||it.number;}
+      it.service_sources.push({tenantId:sourceKey,labels:serviceLabels(source)});
     });
-    function ensure(key,seed){let it=merged.get(key);if(!it){it={tenantId:key,company:seed&&seed.company||'',number:seed&&seed.number||'',message_input_tokens:0,message_output_tokens:0,audio_input_tokens:0,audio_output_tokens:0,total_tokens:0,events:0,billed_cost:0,real_cost:0,gross_margin:0,billing_configured:true,last_at:null,channels:[],usage_types:[],api_amounts:{},api_windows:0,api_messages:0,real_messages:0,monetization_amounts:{},monetization_items:[]};merged.set(key,it);}return it;}
     apiTenants.forEach(function(api){
-      const key=String(api.tenantId||'');
-      let it=ensure(key,api);
+      const sourceKey=String(api.tenantId||''),key=ownerOf(sourceKey);
+      let it=ensure(key,sourceKey===key?api:null);
       if(!it.company)it.company=api.company||'';
       if(!it.number)it.number=api.number||'';
-      it.api_amounts=api.byCurrency||{};
-      it.api_windows=num(api.windows);
-      it.api_messages=num(api.messages);
-      it.real_messages=num(api.realMessages);
+      it.api_amounts=mergeAmountMaps(it.api_amounts,api.byCurrency||{});
+      it.api_windows+=num(api.windows);
+      it.api_messages+=num(api.messages);
+      it.real_messages+=num(api.realMessages);
+      it.api_sources.push({tenantId:sourceKey,messages:num(api.messages),windows:num(api.windows),byCurrency:api.byCurrency||{}});
       it.last_at=newerDate(it.last_at,api.last_at);
     });
-    monDomains.forEach(function(domain){const key=String(domain.tenantId||'');const it=ensure(key);it.monetization_amounts=domain.billedAmount||{};it.monetization_operations=num(domain.operations);it.included_credits=num(domain.includedCreditsApplied);it.last_at=newerDate(it.last_at,domain.lastAt);});
-    monItems.forEach(function(item){const key=String(item.tenantId||'');const it=ensure(key);it.monetization_items.push(item);});
+    monDomains.forEach(function(domain){const sourceKey=String(domain.tenantId||''),key=ownerOf(sourceKey),it=ensure(key);it.monetization_amounts=mergeAmountMaps(it.monetization_amounts,domain.billedAmount||{});it.monetization_operations+=num(domain.operations);it.included_credits+=num(domain.includedCreditsApplied);it.last_at=newerDate(it.last_at,domain.lastAt);});
+    monItems.forEach(function(item){const sourceKey=String(item.tenantId||''),key=ownerOf(sourceKey),it=ensure(key);it.monetization_items.push(Object.assign({},item,{sourceTenantId:sourceKey,tenantId:key}));});
     const items=Array.from(merged.values()).sort(function(a,b){return String(a.tenantId||'').localeCompare(String(b.tenantId||''));});
 
     kpiTokens.textContent = fmtInt(totals.total_tokens || 0);
@@ -2321,6 +2354,7 @@ module.exports = {
   calculateEstimatedCost,
   calculateBillableCost,
   loadTenantCosts,
+  loadBillingOwners,
   buildTokenSummary,
   buildTokenConversationSummary,
   buildApiMessageWindowBilling,

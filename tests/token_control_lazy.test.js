@@ -13,7 +13,7 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
     dom.window.fetch = async url => {
       calls.push(String(url));
       const body = String(url).includes('/api/token-control/summary')
-        ? { ok: true, items: [{ tenantId:'MSM',company:'Asisto Manager',total_tokens:100,events:2,billed_cost:2,real_cost:1,gross_margin:1,billing_configured:true,channels:['help_api'],usage_types:['ayuda_consulta'] }], totals: { total_tokens:100,billed_cost:2,real_cost:1,gross_margin:1 } }
+        ? { ok: true, billingOwners:{MSM:'MSM',ALSO:'MSM'}, items: [{ tenantId:'MSM',company:'Asisto Manager',total_tokens:100,events:2,billed_cost:2,real_cost:1,gross_margin:1,billing_configured:true,channels:['help_api'],usage_types:['ayuda_consulta'] },{tenantId:'ALSO',company:'Also',total_tokens:50,events:1,billed_cost:1,real_cost:.5,gross_margin:.5,billing_configured:true,channels:['whatsapp_tasks'],usage_types:['tareas_whatsapp']}], totals: { total_tokens:150,billed_cost:3,real_cost:1.5,gross_margin:1.5 } }
         : String(url).includes('/api/monetization/summary')
           ? { ok:true,items:[{tenantId:'MSM',eventKey:'catalog.code_lookup',name:'Lectura por código',group:'catalog',unit:'consulta',quantity:3,currency:'ARS',billedAmount:60},{tenantId:'MSM',eventKey:'whatsapp.api_sent',name:'Mensaje enviado por API',group:'whatsapp',unit:'mensaje',quantity:1,currency:'ARS',potentialAmount:20,billedAmount:20}],byDomain:[{tenantId:'MSM',operations:4,billedAmount:{ARS:80}}],byType:[],totals:{byCurrency:{ARS:{billedAmount:80}}} }
         : String(url).includes('/conversations')
@@ -39,6 +39,8 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
     assert.match(dom.window.document.getElementById('rows').textContent, /Lectura por código/);
     assert.match(dom.window.document.getElementById('rows').textContent, /Mensajes enviados por API/);
     assert.doesNotMatch(dom.window.document.getElementById('rows').textContent, /ventanas facturables/);
+    assert.deepEqual([...dom.window.document.querySelectorAll('#rows > tr:not([hidden]) .pill')].map(node=>node.textContent),['MSM']);
+    assert.match(dom.window.document.getElementById('rows').textContent, /Tareas de WhatsApp \(ALSO\)/);
     const technicalButton=dom.window.document.querySelector('.technicalToggle');
     const technicalRow=dom.window.document.getElementById(technicalButton.dataset.target);
     assert.equal(technicalRow.hidden,true);
