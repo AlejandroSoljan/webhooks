@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.248 | Fecha: 2026-09-26
+// Asisto | Version: 5.00.262 | Fecha: 2026-09-26
 // token_control_stats.js
 // Panel y API para control de tokens por dominio, conversación y pedido completado.
  
