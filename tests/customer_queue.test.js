@@ -315,7 +315,7 @@ test('finish and skip clear the section, and a late kiosk retry cannot issue a s
   const another = await req(admin + '/sectors/ferreteria/next', { expectedTicketId: null, sellerId: 'seller-aldana' }, 'TEST');
   const skipped = await req(admin + '/sectors/ferreteria/skip', { expectedTicketId: another.body.ticket.id }, 'TEST'); assert.equal(skipped.body.ticket.status, 'SKIPPED');
 });
-test('calling next finishes the current ticket and advances in one action', async () => {
+test('calling next preserves open tickets and each ticket can be finished independently', async () => {
   const a = await req('/api/customer-app/ADVANCE/tickets', { sectorId: 'ferreteria', installId: 'advance-a', presence: presenceToken('ADVANCE', 'test-secret') });
   const b = await req('/api/customer-app/ADVANCE/tickets', { sectorId: 'ferreteria', installId: 'advance-b', presence: presenceToken('ADVANCE', 'test-secret') });
   assert.equal(a.status, 200); assert.equal(b.status, 200);
@@ -327,12 +327,31 @@ test('calling next finishes the current ticket and advances in one action', asyn
   const second = await req(op, { expectedTicketId: a.body.id, desk: 'Mostrador 1', sellerId: 'seller-aldana' }, 'ADVANCE');
   assert.equal(second.status, 200); assert.equal(second.body.ticket.id, b.body.id);
   const old = await db.collection('queue_tickets').findOne({ _id: new (require('mongodb').ObjectId)(a.body.id) });
-  assert.equal(old.status, 'DONE'); assert.equal(old.history.at(-1).action, 'finish'); assert.equal(old.history.at(-1).reason, 'next');
+  assert.equal(old.status, 'CALLED'); assert.equal(old.history.at(-1).action, 'next');
   const state = await req('/api/customer-app/ADVANCE/queue');
   assert.equal(state.body.sectors[0].current.id, b.body.id);
+  assert.equal(state.body.sectors[0].activeTickets.length, 2);
+  assert.equal((await req('/api/customer-app-admin/ADVANCE/sectors/ferreteria/finish', {expectedTicketId:a.body.id}, 'ADVANCE')).status,200);
+  assert.equal((await req('/api/customer-app-admin/ADVANCE/sectors/ferreteria/finish', {expectedTicketId:a.body.id}, 'ADVANCE')).status,409);
   assert.equal((await req(op, { expectedTicketId: b.body.id, sellerId: 'seller-aldana' }, 'ADVANCE')).status, 409);
   const stillCurrent = await req('/api/customer-app/ADVANCE/tickets/' + b.body.id + '?installId=advance-b');
   assert.equal(stillCurrent.body.status, 'CALLED');
+});
+test('five active tickets support independent transfer, recall, finish and absence', async () => {
+  const tenant='MULTI', base='/api/customer-app/'+tenant, op='/api/customer-app-admin/'+tenant+'/sectors/ferreteria/';
+  const ids=[];
+  for(let i=0;i<6;i++)ids.push((await req(base+'/tickets',{sectorId:'ferreteria',installId:'multi-'+i},tenant)).body.id);
+  for(let i=0;i<5;i++)assert.equal((await req(op+'next',{expectedWaitingId:ids[i],sellerId:'seller-aldana',desk:'Mostrador '+(i+1)},tenant)).status,200);
+  assert.equal((await req(op+'next',{expectedWaitingId:ids[4],sellerId:'seller-aldana'},tenant)).status,409);
+  let state=(await req(base+'/queue')).body.sectors[0];assert.equal(state.activeTickets.length,5);assert.equal(state.waiting,1);
+  const start=state.activeTickets.find(t=>t.id===ids[0]).serviceStartedAt;
+  assert.equal((await req(op+'recall',{expectedTicketId:ids[0]},tenant)).status,200);
+  assert.equal((await req(op+'transfer',{expectedTicketId:ids[1],destination:'caja'},tenant)).status,200);
+  assert.equal((await req(op+'skip',{expectedTicketId:ids[2]},tenant)).status,200);
+  assert.equal((await req(op+'finish',{expectedTicketId:ids[3]},tenant)).status,200);
+  state=(await req(base+'/queue')).body.sectors[0];assert.deepEqual(state.activeTickets.map(t=>t.id).sort(),[ids[0],ids[4]].sort());
+  assert.equal(state.activeTickets.find(t=>t.id===ids[0]).serviceStartedAt,start);
+  assert.equal((await req(op+'finish',{expectedTicketId:ids[1]},tenant)).status,409);
 });
 let reserved, claim;
 test('QR-first issuance reserves without joining the callable queue; a retry keeps its QR', async () => {

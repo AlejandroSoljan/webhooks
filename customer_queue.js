@@ -60,7 +60,7 @@ function presencePayload(token, t, secret, now = Date.now()) {
 function validPresence(token, t, secret, now = Date.now()) { return !!presencePayload(token, t, secret, now); }
 function publicTicket(doc) {
   return { id: String(doc._id), displayNumber: doc.displayNumber, status: doc.status,
-    sectorId: doc.sectorId, sectorName: doc.sectorName, desk: doc.desk || '', sellerName: doc.sellerName || '', calledAt: doc.calledAt || null, claimed: !!doc.claimedAt };
+    sectorId: doc.sectorId, sectorName: doc.sectorName, desk: doc.desk || '', sellerName: doc.sellerName || '', calledAt: doc.calledAt || null, serviceStartedAt: (doc.history || []).filter(h=>h.action==='next').at(-1)?.at || doc.calledAt || null, claimed: !!doc.claimedAt };
 }
 function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey, firebaseSender, auth, printer = createQueuePrinter(), secret = process.env.QUEUE_PRESENCE_SECRET || '', publicBase = process.env.PUBLIC_BASE_URL || 'https://asistobot.com.ar', openTenants = (process.env.QUEUE_OPEN_TENANTS || '').split(',').map(tenant).filter(Boolean) }) {
   const wrap = fn => async (req, res) => {
@@ -206,11 +206,12 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     const tickets = db.collection('queue_tickets');
     const sectors = await Promise.all(cfg.sectors.filter(s => s.kind !== 'presence').map(async s => {
       const filter = { ...base, sectorId: s.id };
-      const [current, waiting, next] = await Promise.all([
-        tickets.findOne({ ...filter, status: 'CALLED' }), tickets.countDocuments({ ...filter, status: 'WAITING' }),
-        tickets.find({ ...filter, status: 'WAITING' }).sort(order).limit(4).toArray(),
+      const [open, waiting, next] = await Promise.all([
+        tickets.find({ ...filter, status: 'CALLED' }).sort({ calledAt: -1, _id: -1 }).toArray(), tickets.countDocuments({ ...filter, status: 'WAITING' }),
+        tickets.find({ ...filter, status: 'WAITING' }).sort(order).limit(5).toArray(),
       ]);
-      return { ...s, waiting, estimatedMinutes: waiting * Math.max(1, Number(cfg.estimatedWaitMinutes) || 5), current: current ? publicTicket(current) : null, currentDisplay: current?.displayNumber || '', next: next.map(d => ({ displayNumber: d.displayNumber })) };
+      const current = open[0];
+      return { ...s, waiting, estimatedMinutes: waiting * Math.max(1, Number(cfg.estimatedWaitMinutes) || 5), activeTickets: open.map(publicTicket), current: current ? publicTicket(current) : null, currentDisplay: current?.displayNumber || '', next: next.map(d => ({ id: String(d._id), displayNumber: d.displayNumber })) };
     }));
     res.json({ sectors });
   });
@@ -375,17 +376,20 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     const destination = cfg.sectors.find(s => s.id === req.body?.destination);
     if (action === 'transfer' && (!destination || destination.id === sectorId)) fail(400, 'Elegí otra sección de destino.');
     const result = await serial(t, async () => {
-      const tickets = db.collection('queue_tickets'), filter = { ...base, sectorId }, current = await tickets.findOne({ ...filter, status: 'CALLED' });
-      if (req.body?.expectedTicketId !== (current ? String(current._id) : null)) fail(409, 'La atención cambió desde otra pantalla. Revisá el turno y reintentá.');
+      const tickets = db.collection('queue_tickets'), filter = { ...base, sectorId };
+      const target = req.body?.expectedTicketId;
+      const current = action === 'next'
+        ? await tickets.findOne({ ...filter, status: 'CALLED' }, { sort: { calledAt: -1, _id: -1 } })
+        : (ObjectId.isValid(target || '') ? await tickets.findOne({ ...filter, _id: new ObjectId(target), status: 'CALLED' }) : null);
+      if (action !== 'next' && !current) fail(409, 'Este turno ya no está en atención. Actualizá la pantalla.');
+      if (action === 'next' && !Object.hasOwn(req.body || {}, 'expectedWaitingId') && target !== (current ? String(current._id) : null)) fail(409, 'La cola cambió. Actualizá la pantalla.');
       const now = new Date(), who = clean(req.user?.username || req.user?.uid || 'operador-sin-login');
       if (action === 'next') {
         const sellerId = clean(req.body?.sellerId, 60), seller = (cfg.sellers || []).find(item => item.active !== false && item.id === sellerId);
         if (!seller) fail(400, 'Seleccioná un vendedor activo antes de llamar al siguiente turno.');
         const waiting = await tickets.findOne({ ...filter, status: 'WAITING' }, { sort: order });
         if (!waiting) fail(409, 'No hay turnos en espera para llamar.');
-        if (current) {
-          await tickets.updateOne({ _id: current._id, status: 'CALLED' }, { $set: { status: 'DONE', updatedAt: now }, $push: { history: { action: 'finish', at: now, who, sectorId, desk: current.desk || '', sellerId: current.sellerId || '', sellerName: current.sellerName || '', reason: 'next' } } });
-        }
+        if (Object.hasOwn(req.body || {}, 'expectedWaitingId') && req.body.expectedWaitingId !== String(waiting._id)) fail(409, 'Otro operador llamó ese turno. Revisá el siguiente.');
         const doc = await tickets.findOneAndUpdate({ ...filter, _id: waiting._id, status: 'WAITING' }, { $set: { status: 'CALLED', desk: clean(req.body?.desk, 40), sellerId: seller.id, sellerName: seller.name, calledAt: now, updatedAt: now }, $push: { history: { action, at: now, who, sectorId, desk: clean(req.body?.desk, 40), sellerId: seller.id, sellerName: seller.name } } }, { returnDocument: 'after' });
         return { doc, notification: !!doc };
       }
