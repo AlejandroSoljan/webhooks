@@ -50,6 +50,11 @@ test('statistics reconstruct transfers and do not reset service time on recalls'
   const originStats = summarize(origins, cfg.sectors);
   assert.deepEqual([originStats.summary.qr, originStats.summary.printed, originStats.summary.mobile], [1, 1, 1]);
   assert.deepEqual([originStats.days[0].qr, originStats.days[0].printed, originStats.days[0].mobile], [1, 1, 1]);
+  const abandoned = { _id: 'abandoned', displayNumber: 'F006', dayKey: '2026-09-14', status: 'RESERVED', source: 'kiosk', sectorId: 'ferreteria', sectorName: 'Ferretería', createdAt: at(0), history: [{ action: 'created', sectorId: 'ferreteria', at: at(0) }] };
+  const publicAttention = { _id: 'public', displayNumber: 'A001', dayKey: '2026-09-14', status: 'RESERVED', source: 'kiosk', sectorId: 'atencion_publico', sectorName: 'Atención al público', createdAt: at(1), history: [{ action: 'created', sectorId: 'atencion_publico', at: at(1) }] };
+  const filteredStats = summarize([abandoned, publicAttention], [...cfg.sectors, { id: 'atencion_publico', name: 'Atención al público', prefix: 'A' }]);
+  assert.equal(filteredStats.summary.issued, 1); assert.deepEqual(filteredStats.tickets.map(ticket => ticket.id), ['public']);
+  assert.equal(filteredStats.sectors.find(sector => sector.sectorId === 'ferreteria').visits, 0); assert.equal(filteredStats.sectors.find(sector => sector.sectorId === 'atencion_publico').visits, 1);
   const presenceStats = summarize([], cfg.sectors, [{ status: 'QR', scannedAt: at(2), expiresAt: at(3) }, { status: 'PENDING', expiresAt: at(3) }, { status: 'PENDING', expiresAt: at(59) }], at(30));
   assert.deepEqual([presenceStats.summary.presenceQr, presenceStats.summary.presenceWithoutQr, presenceStats.summary.presencePending], [1, 1, 1]);
   new vm.Script(statsPage('TEST', '2026-09-14').match(/<script>([\s\S]*)<\/script>/)[1]);

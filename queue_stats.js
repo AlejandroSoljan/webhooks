@@ -2,13 +2,16 @@ const branding = require('./queue_branding');
 const { statsPage: redesignedStatsPage } = require('./queue_stats_page');
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const time = value => value ? +new Date(value) : null;
+const normalizedSector = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+const isPublicAttention = doc => [doc.sectorId, doc.sectorName].some(value => ['atencion_al_publico', 'atencion_publico'].includes(normalizedSector(value)));
+const hasTicketDelivery = doc => doc.source !== 'kiosk' || doc.deliveryMode === 'print' || doc.deliveryMode === 'mobile' || (doc.history || []).some(h => ['claimed', 'linked_app', 'print_requested'].includes(h.action));
 // Reconstruct each section visit from the persistent event history, including older tickets.
 function ticketVisits(doc) {
   const history = doc.history || [];
   const initial = history.find(h => h.action === 'created');
   const activation = history.find(h => ['claimed', 'print_requested'].includes(h.action));
   const customerCancellation = history.find(h => h.action === 'customer_cancelled');
-  if (doc.status === 'RESERVED' || (doc.status === 'CANCELLED' && !activation && !customerCancellation)) return [];
+  if (!isPublicAttention(doc) && (doc.status === 'RESERVED' || (doc.status === 'CANCELLED' && !activation && !customerCancellation))) return [];
   let visit = { sectorId: initial?.sectorId || doc.sectorId, sellerId: '', sellerName: '', recalls: 0, queuedAt: time(activation?.at || doc.createdAt), calledAt: null, endedAt: null, outcome: 'WAITING' };
   const visits = [];
   for (const h of history) {
@@ -46,7 +49,8 @@ async function listStatsTenants(db, fallback) {
 }
 function summarize(rows, sectors, presenceSessions = [], now = new Date()) {
   const hasAction = (doc, action) => (doc.history || []).some(h => h.action === action);
-  const visits = rows.flatMap(doc => ticketVisits(doc).map(v => ({ ...v, day: doc.dayKey })));
+  const countedRows = rows.filter(doc => hasTicketDelivery(doc) || isPublicAttention(doc));
+  const visits = countedRows.flatMap(doc => ticketVisits(doc).map(v => ({ ...v, day: doc.dayKey })));
   const waits = visits.map(v => v.waitSeconds).filter(v => v !== null).sort((a, b) => a - b);
   const services = visits.map(v => v.serviceSeconds).filter(v => v !== null);
   const groups = new Map();
@@ -65,15 +69,15 @@ function summarize(rows, sectors, presenceSessions = [], now = new Date()) {
     }
   }
   const days = new Map();
-  for (const d of rows) { if (!days.has(d.dayKey)) days.set(d.dayKey, { day: d.dayKey, issued: 0, qr: 0, mobile: 0, printed: 0, finished: 0, expired: 0 }); const g = days.get(d.dayKey),origin=ticketOrigin(d); g.issued++; g.qr += Number(origin==='qr'); g.mobile += Number(origin==='mobile'); g.printed += Number(origin==='printed'); g.finished += Number(d.status === 'DONE'); g.expired += Number(d.status === 'CANCELLED' && !hasAction(d, 'customer_cancelled') && !hasAction(d, 'kiosk_closed')); }
+  for (const d of countedRows) { if (!days.has(d.dayKey)) days.set(d.dayKey, { day: d.dayKey, issued: 0, qr: 0, mobile: 0, printed: 0, finished: 0, expired: 0 }); const g = days.get(d.dayKey),origin=ticketOrigin(d); g.issued++; g.qr += Number(origin==='qr'); g.mobile += Number(origin==='mobile'); g.printed += Number(origin==='printed'); g.finished += Number(d.status === 'DONE'); g.expired += Number(d.status === 'CANCELLED' && !hasAction(d, 'customer_cancelled') && !hasAction(d, 'kiosk_closed')); }
   const hours = Array.from({ length: 24 }, (_, hour) => ({ hour, issued: 0 }));
-  for (const d of rows) if (d.createdAt) hours[Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hourCycle: 'h23' }).format(d.createdAt))].issued++;
+  for (const d of countedRows) if (d.createdAt) hours[Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hourCycle: 'h23' }).format(d.createdAt))].issued++;
   return {
-    summary: { issued: rows.length, activated: rows.filter(d => ticketVisits(d).length).length, finished: rows.filter(d => d.status === 'DONE').length, skipped: rows.filter(d => d.status === 'SKIPPED').length, customerCancelled: rows.filter(d => hasAction(d, 'customer_cancelled')).length, expired: rows.filter(d => d.status === 'CANCELLED' && !hasAction(d, 'customer_cancelled') && !hasAction(d, 'kiosk_closed')).length, waiting: rows.filter(d => d.status === 'WAITING').length, called: rows.filter(d => d.status === 'CALLED').length, transfers: visits.filter(v => v.outcome === 'transfer').length, qr: rows.filter(d => ticketOrigin(d) === 'qr').length, mobile: rows.filter(d => ticketOrigin(d) === 'mobile').length, printed: rows.filter(d => ticketOrigin(d) === 'printed').length, otherOrigin: rows.filter(d => !['qr','mobile','printed'].includes(ticketOrigin(d))).length, presenceQr: presenceSessions.filter(d => d.status === 'QR' || d.scannedAt).length, presenceWithoutQr: presenceSessions.filter(d => d.status !== 'QR' && !d.scannedAt && +new Date(d.expiresAt) <= +now).length, presencePending: presenceSessions.filter(d => d.status !== 'QR' && !d.scannedAt && +new Date(d.expiresAt) > +now).length, averageWaitSeconds: mean(waits), p90WaitSeconds: waits.length ? waits[Math.ceil(waits.length * .9) - 1] : null, averageServiceSeconds: mean(services), waitSamples: waits.length, serviceSamples: services.length },
+    summary: { issued: countedRows.length, activated: countedRows.filter(d => ticketVisits(d).length).length, finished: countedRows.filter(d => d.status === 'DONE').length, skipped: countedRows.filter(d => d.status === 'SKIPPED').length, customerCancelled: countedRows.filter(d => hasAction(d, 'customer_cancelled')).length, expired: countedRows.filter(d => d.status === 'CANCELLED' && !hasAction(d, 'customer_cancelled') && !hasAction(d, 'kiosk_closed')).length, waiting: countedRows.filter(d => d.status === 'WAITING').length, called: countedRows.filter(d => d.status === 'CALLED').length, transfers: visits.filter(v => v.outcome === 'transfer').length, qr: countedRows.filter(d => ticketOrigin(d) === 'qr').length, mobile: countedRows.filter(d => ticketOrigin(d) === 'mobile').length, printed: countedRows.filter(d => ticketOrigin(d) === 'printed').length, otherOrigin: countedRows.filter(d => !['qr','mobile','printed'].includes(ticketOrigin(d))).length, presenceQr: presenceSessions.filter(d => d.status === 'QR' || d.scannedAt).length, presenceWithoutQr: presenceSessions.filter(d => d.status !== 'QR' && !d.scannedAt && +new Date(d.expiresAt) <= +now).length, presencePending: presenceSessions.filter(d => d.status !== 'QR' && !d.scannedAt && +new Date(d.expiresAt) > +now).length, averageWaitSeconds: mean(waits), p90WaitSeconds: waits.length ? waits[Math.ceil(waits.length * .9) - 1] : null, averageServiceSeconds: mean(services), waitSamples: waits.length, serviceSamples: services.length },
     sectors: [...groups.values()].map(({ waits, services, ...g }) => ({ ...g, averageWaitSeconds: mean(waits), averageServiceSeconds: mean(services), waitSamples: waits.length, serviceSamples: services.length })),
     sellers: [...sellerGroups.values()].map(({ waits, services, ...seller }) => ({ ...seller, averageWaitSeconds: mean(waits), averageServiceSeconds: mean(services), waitSamples: waits.length, serviceSamples: services.length })).sort((a, b) => b.clients - a.clients || a.name.localeCompare(b.name, 'es')),
     days: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)), hours,
-    tickets: rows.map(d => ({ id: String(d._id), number: d.displayNumber, day: d.dayKey, status: d.status, source: ticketOrigin(d), createdAt: d.createdAt, visits: ticketVisits(d) })),
+    tickets: countedRows.map(d => ({ id: String(d._id), number: d.displayNumber, day: d.dayKey, status: d.status, source: ticketOrigin(d), createdAt: d.createdAt, visits: ticketVisits(d) })),
   };
 }
 function legacyStatsPage(tenant, today, { tenants = [tenant], isSuper = false } = {}) {
