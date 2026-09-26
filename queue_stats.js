@@ -9,13 +9,14 @@ function ticketVisits(doc) {
   const activation = history.find(h => ['claimed', 'print_requested'].includes(h.action));
   const customerCancellation = history.find(h => h.action === 'customer_cancelled');
   if (doc.status === 'RESERVED' || (doc.status === 'CANCELLED' && !activation && !customerCancellation)) return [];
-  let visit = { sectorId: initial?.sectorId || doc.sectorId, queuedAt: time(activation?.at || doc.createdAt), calledAt: null, endedAt: null, outcome: 'WAITING' };
+  let visit = { sectorId: initial?.sectorId || doc.sectorId, sellerId: '', sellerName: '', recalls: 0, queuedAt: time(activation?.at || doc.createdAt), calledAt: null, endedAt: null, outcome: 'WAITING' };
   const visits = [];
   for (const h of history) {
-    if (h.action === 'next') { visit.calledAt ??= time(h.at); visit.outcome = 'CALLED'; }
+    if (h.action === 'next') { visit.calledAt ??= time(h.at); visit.sellerId ||= h.sellerId || doc.sellerId || ''; visit.sellerName ||= h.sellerName || doc.sellerName || ''; visit.outcome = 'CALLED'; }
+    if (h.action === 'recall') visit.recalls++;
     if (['finish', 'skip', 'transfer', 'customer_cancelled'].includes(h.action)) {
       visit.endedAt = time(h.at); visit.outcome = h.action; visits.push(visit);
-      visit = h.action === 'transfer' ? { sectorId: h.destination, queuedAt: time(h.at), calledAt: null, endedAt: null, outcome: 'WAITING' } : null;
+      visit = h.action === 'transfer' ? { sectorId: h.destination, sellerId: '', sellerName: '', recalls: 0, queuedAt: time(h.at), calledAt: null, endedAt: null, outcome: 'WAITING' } : null;
       if (!visit) break;
     }
   }
@@ -49,6 +50,7 @@ function summarize(rows, sectors, presenceSessions = [], now = new Date()) {
   const waits = visits.map(v => v.waitSeconds).filter(v => v !== null).sort((a, b) => a - b);
   const services = visits.map(v => v.serviceSeconds).filter(v => v !== null);
   const groups = new Map();
+  const sellerGroups = new Map();
   for (const s of sectors) groups.set(s.id, { sectorId: s.id, name: s.name, visits: 0, finished: 0, skipped: 0, transfers: 0, waits: [], services: [] });
   for (const v of visits) {
     if (!groups.has(v.sectorId)) groups.set(v.sectorId, { sectorId: v.sectorId, name: v.sectorId, visits: 0, finished: 0, skipped: 0, transfers: 0, waits: [], services: [] });
@@ -56,6 +58,11 @@ function summarize(rows, sectors, presenceSessions = [], now = new Date()) {
     g.finished += Number(v.outcome === 'finish'); g.skipped += Number(v.outcome === 'skip'); g.transfers += Number(v.outcome === 'transfer');
     if (v.waitSeconds !== null) g.waits.push(v.waitSeconds);
     if (v.serviceSeconds !== null) g.services.push(v.serviceSeconds);
+    if (v.sellerName) {
+      const key = v.sellerId || v.sellerName.toLocaleLowerCase('es');
+      if (!sellerGroups.has(key)) sellerGroups.set(key, { sellerId: v.sellerId, name: v.sellerName, clients: 0, finished: 0, skipped: 0, transfers: 0, recalls: 0, waits: [], services: [] });
+      const seller = sellerGroups.get(key); seller.clients++; seller.finished += Number(v.outcome === 'finish'); seller.skipped += Number(v.outcome === 'skip'); seller.transfers += Number(v.outcome === 'transfer'); seller.recalls += Number(v.recalls || 0); if (v.waitSeconds !== null) seller.waits.push(v.waitSeconds); if (v.serviceSeconds !== null) seller.services.push(v.serviceSeconds);
+    }
   }
   const days = new Map();
   for (const d of rows) { if (!days.has(d.dayKey)) days.set(d.dayKey, { day: d.dayKey, issued: 0, qr: 0, mobile: 0, printed: 0, finished: 0, expired: 0 }); const g = days.get(d.dayKey),origin=ticketOrigin(d); g.issued++; g.qr += Number(origin==='qr'); g.mobile += Number(origin==='mobile'); g.printed += Number(origin==='printed'); g.finished += Number(d.status === 'DONE'); g.expired += Number(d.status === 'CANCELLED' && !hasAction(d, 'customer_cancelled') && !hasAction(d, 'kiosk_closed')); }
@@ -64,6 +71,7 @@ function summarize(rows, sectors, presenceSessions = [], now = new Date()) {
   return {
     summary: { issued: rows.length, activated: rows.filter(d => ticketVisits(d).length).length, finished: rows.filter(d => d.status === 'DONE').length, skipped: rows.filter(d => d.status === 'SKIPPED').length, customerCancelled: rows.filter(d => hasAction(d, 'customer_cancelled')).length, expired: rows.filter(d => d.status === 'CANCELLED' && !hasAction(d, 'customer_cancelled') && !hasAction(d, 'kiosk_closed')).length, waiting: rows.filter(d => d.status === 'WAITING').length, called: rows.filter(d => d.status === 'CALLED').length, transfers: visits.filter(v => v.outcome === 'transfer').length, qr: rows.filter(d => ticketOrigin(d) === 'qr').length, mobile: rows.filter(d => ticketOrigin(d) === 'mobile').length, printed: rows.filter(d => ticketOrigin(d) === 'printed').length, otherOrigin: rows.filter(d => !['qr','mobile','printed'].includes(ticketOrigin(d))).length, presenceQr: presenceSessions.filter(d => d.status === 'QR' || d.scannedAt).length, presenceWithoutQr: presenceSessions.filter(d => d.status !== 'QR' && !d.scannedAt && +new Date(d.expiresAt) <= +now).length, presencePending: presenceSessions.filter(d => d.status !== 'QR' && !d.scannedAt && +new Date(d.expiresAt) > +now).length, averageWaitSeconds: mean(waits), p90WaitSeconds: waits.length ? waits[Math.ceil(waits.length * .9) - 1] : null, averageServiceSeconds: mean(services), waitSamples: waits.length, serviceSamples: services.length },
     sectors: [...groups.values()].map(({ waits, services, ...g }) => ({ ...g, averageWaitSeconds: mean(waits), averageServiceSeconds: mean(services), waitSamples: waits.length, serviceSamples: services.length })),
+    sellers: [...sellerGroups.values()].map(({ waits, services, ...seller }) => ({ ...seller, averageWaitSeconds: mean(waits), averageServiceSeconds: mean(services), waitSamples: waits.length, serviceSamples: services.length })).sort((a, b) => b.clients - a.clients || a.name.localeCompare(b.name, 'es')),
     days: [...days.values()].sort((a, b) => a.day.localeCompare(b.day)), hours,
     tickets: rows.map(d => ({ id: String(d._id), number: d.displayNumber, day: d.dayKey, status: d.status, source: ticketOrigin(d), createdAt: d.createdAt, visits: ticketVisits(d) })),
   };

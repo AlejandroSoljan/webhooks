@@ -32,11 +32,12 @@ test('statistics reconstruct transfers and do not reset service time on recalls'
   const at = seconds => new Date(Date.UTC(2026, 8, 14, 12, 0, seconds));
   const doc = { _id: 'stats', displayNumber: 'F001', dayKey: '2026-09-14', status: 'DONE', createdAt: at(0), history: [
     { action: 'created', sectorId: 'ferreteria', at: at(0) }, { action: 'claimed', at: at(30) },
-    { action: 'next', at: at(90) }, { action: 'recall', at: at(100) },
-    { action: 'transfer', destination: 'caja', at: at(150) }, { action: 'next', at: at(270) }, { action: 'finish', at: at(450) },
+    { action: 'next', at: at(90), sellerId: 'seller-aldana', sellerName: 'ALDANA' }, { action: 'recall', at: at(100) },
+    { action: 'transfer', destination: 'caja', at: at(150) }, { action: 'next', at: at(270), sellerId: 'seller-mbasualdo', sellerName: 'MBASUALDO' }, { action: 'finish', at: at(450) },
   ] };
   assert.deepEqual(ticketVisits(doc).map(v => [v.sectorId, v.waitSeconds, v.serviceSeconds]), [['ferreteria', 60, 60], ['caja', 120, 180]]);
   const x = summarize([doc], cfg.sectors); assert.equal(x.summary.transfers, 1); assert.equal(x.summary.issued, 1); assert.equal(x.summary.averageWaitSeconds, 90); assert.equal(x.summary.averageServiceSeconds, 120);
+  assert.deepEqual(x.sellers.map(seller => [seller.name, seller.clients, seller.finished, seller.transfers, seller.recalls, seller.averageServiceSeconds]), [['ALDANA', 1, 0, 1, 1, 60], ['MBASUALDO', 1, 1, 0, 0, 180]]);
   assert.deepEqual(ticketVisits({ status: 'CANCELLED', history: [] }), []);
   const cancelled = { _id: 'cancelled', displayNumber: 'F002', dayKey: '2026-09-14', status: 'CANCELLED', source: 'mobile', sectorId: 'ferreteria', createdAt: at(0), history: [{ action: 'created', sectorId: 'ferreteria', at: at(0) }, { action: 'customer_cancelled', sectorId: 'ferreteria', at: at(30) }] };
   const cancellationStats = summarize([cancelled], cfg.sectors); assert.equal(cancellationStats.summary.customerCancelled, 1); assert.equal(cancellationStats.summary.expired, 0); assert.equal(ticketVisits(cancelled)[0].outcome, 'customer_cancelled');
@@ -53,6 +54,7 @@ test('statistics reconstruct transfers and do not reset service time on recalls'
   assert.deepEqual([presenceStats.summary.presenceQr, presenceStats.summary.presenceWithoutQr, presenceStats.summary.presencePending], [1, 1, 1]);
   new vm.Script(statsPage('TEST', '2026-09-14').match(/<script>([\s\S]*)<\/script>/)[1]);
   assert.match(statsPage('TEST', '2026-09-14'), /Ingresos con QR/); assert.match(statsPage('TEST', '2026-09-14'), /Ingresos sin QR/);
+  assert.match(statsPage('TEST', '2026-09-14'), /Rendimiento por vendedor/); assert.match(statsPage('TEST', '2026-09-14'), /Atención promedio/);
 });
 test('queue statistics use the Asisto shell and superadmin can select a tenant', async () => {
   await db.collection('tenant_config').insertMany([{ _id: 'ALFA' }, { _id: 'BETA' }]);
