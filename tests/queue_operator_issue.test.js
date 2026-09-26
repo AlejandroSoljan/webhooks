@@ -9,6 +9,7 @@ test('operator issues independently and retries the same ticket after printer fa
   w.element=(tag,text,cls)=>{const e=w.document.createElement(tag);if(text)e.textContent=text;if(cls)e.className=cls;return e};w.button=(label,fn,cls)=>{const e=w.element('button',label,cls);e.onclick=fn;return e};
   w.request=async(url,options)=>{calls.push({url,body:JSON.parse(options.body)});return {id:'t1',displayNumber:'F001',sectorName:'Ferretería',createdAt:new Date().toISOString(),claimUrl:'https://example.test/qr'}};
   let attempts=0;w.fetch=async()=>({ok:++attempts>1});w.refresh=()=>{};
+  Object.defineProperty(w.crypto,'randomUUID',{value:undefined}); // HTTP LAN does not expose randomUUID.
   w.eval('('+setupOperatorIssue.toString()+')()');
   w.document.querySelector('.operatorNewTicket').click();const select=w.$('operatorIssueSection');assert.equal(select.options.length,2);select.value='fer';select.dispatchEvent(new w.Event('change'));
   const submit=[...w.document.querySelectorAll('button')].find(e=>e.textContent==='Emitir e imprimir');await submit.onclick();

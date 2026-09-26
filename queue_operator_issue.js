@@ -2,6 +2,7 @@
 function setupOperatorIssue() {
   const style=element('style');style.textContent='.operatorNewTicket{align-self:flex-end;margin:12px 0;min-height:46px;padding:12px 20px;background:#e00000!important;color:#fff;border-radius:10px}#operatorIssueDialog{width:min(560px,92vw);text-align:left;max-height:90vh;overflow:auto}#operatorIssueDialog select{width:100%}#operatorIssueDialog [role="status"]{overflow-wrap:anywhere}#operatorIssueDialog button[hidden]{display:none!important}';document.head.append(style);
   let ticket=null, issueId=null, printId=null, running=false, printed=false;
+  const requestId=()=>typeof globalThis.crypto?.randomUUID==='function'?globalThis.crypto.randomUUID():Date.now().toString(36)+'-'+Math.random().toString(36).slice(2)+'-'+Math.random().toString(36).slice(2);
   const dialog=element('dialog',undefined,'sellerDialog'),title=element('h2','Nuevo turno'),description=element('p','Elegí la sección y emití un ticket impreso. Los turnos en atención no se modifican.'),label=element('label','Sección'),select=element('select'),status=element('p'),actions=element('div',undefined,'sellerDialogActions');
   dialog.id='operatorIssueDialog';title.id='operatorIssueTitle';dialog.setAttribute('aria-labelledby',title.id);select.id='operatorIssueSection';label.htmlFor=select.id;status.setAttribute('role','status');
   select.append(new Option('Elegí una sección',''));
@@ -10,7 +11,7 @@ function setupOperatorIssue() {
   function update(){select.disabled=running||!!issueId;close.disabled=running;submit.disabled=running||!select.value;submit.hidden=printed;again.hidden=!printed;submit.textContent=running?'Procesando…':ticket?'Reintentar impresión':'Emitir e imprimir';}
   async function emit(){
     if(running||!select.value||printed)return;
-    running=true;issueId=issueId||crypto.randomUUID();printId=printId||crypto.randomUUID();update();status.textContent='Preparando el ticket…';
+    running=true;issueId=issueId||requestId();printId=printId||requestId();update();status.textContent='Preparando el ticket…';
     try{
       if(!ticket)ticket=await request(API+'/tickets',{method:'POST',body:JSON.stringify({sectorId:select.value,installId:issueId,source:'kiosk',delivery:'qr_or_print'})});
       const x=await request(ADMIN+'/tickets/'+encodeURIComponent(ticket.id)+'/print',{method:'POST',body:JSON.stringify({printRequestId:printId,clientPrinter:'local_http'})});
