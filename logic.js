@@ -712,6 +712,21 @@ function modelUsesMaxCompletionTokens(modelName) {
   return m.startsWith("gpt-5");
 }
 
+function modelSupportsCustomTemperature(modelName) {
+  const m = String(modelName || "").trim().toLowerCase();
+  // Los modelos GPT-5.6 expuestos por Chat Completions aceptan solamente
+  // la temperatura predeterminada (1). Omitir el campo deja que OpenAI use
+  // ese valor y evita `unsupported_value`.
+  return !m.startsWith("gpt-5.6");
+}
+
+function applyModelTemperature(payload, modelName, temperature) {
+  if (modelSupportsCustomTemperature(modelName)) {
+    payload.temperature = temperature;
+  }
+  return payload;
+}
+
 function applyModelTokenLimit(payload, modelName, limit) {
   const n = Number(limit);
   if (!Number.isFinite(n) || n <= 0) return payload;
@@ -2448,15 +2463,15 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
     const payload = {
       model,
       messages: sanitizeMessages(messages),
-      temperature,
       response_format: botMode === "conversacional"
         ? buildStrictConversationalResponseFormat(leadCaptureEnabled)
         : buildStrictPedidoResponseFormat()
     };
+    applyModelTemperature(payload, model, temperature);
     applyModelTokenLimit(payload, model, maxTokens);
     console.log("[openai] request.meta =>", {
       model,
-      temperature,
+      temperature: Object.prototype.hasOwnProperty.call(payload, "temperature") ? temperature : null,
       token_limit_param: maxTokens
         ? (modelUsesMaxCompletionTokens(model) ? "max_completion_tokens" : "max_tokens")
         : null,
@@ -2596,9 +2611,9 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
         const followupPayload = {
           model,
           messages: actionMessages,
-          temperature,
           response_format: buildStrictConversationalResponseFormat(leadCaptureEnabled)
         };
+        applyModelTemperature(followupPayload, model, temperature);
         applyModelTokenLimit(followupPayload, model, maxTokens);
 
         const followupResponse = await axios.post(
@@ -2653,9 +2668,9 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
         const finalPayload = {
           model,
           messages: finalMessages,
-          temperature,
           response_format: buildStrictConversationalResponseFormat(leadCaptureEnabled)
         };
+        applyModelTemperature(finalPayload, model, temperature);
         applyModelTokenLimit(finalPayload, model, maxTokens);
         const finalResponse = await axios.post(
           "https://api.openai.com/v1/chat/completions",
