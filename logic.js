@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.250 | Fecha: 2026-09-28
+// Asisto | Version: 5.00.251 | Fecha: 2026-09-28
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
 // Incluye logs completos de OpenAI (payload y response).
@@ -1376,7 +1376,8 @@ async function classifyManagerRequestExternal({ tenantId, text, history = [], be
           "Sólo elegí una herramienta Manager cuando el cliente realmente solicite información o un documento disponible allí.",
           "Acciones: none; document (sale=factura/comprobante de venta, receipt=recibo, statement=resumen/saldo/cuenta corriente); orders (pedidos, productos, entrega, dirección, horario o estado).",
           "Si no especifica un documento particular, latest debe ser true. Conservá números de comprobante y punto de venta si aparecen.",
-          'Respondé sólo JSON: {"action":"none|document|orders","documentKind":"sale|receipt|statement","latest":false,"pointOfSale":"","number":"","detail":false,"delivery":false,"history":false,"latestOnly":true,"confidence":0}',
+          "Para resúmenes de cuenta conservá el período que pida el cliente. Usá periodMode=relative_months para expresiones como 'últimos dos meses', relative_days para días, date_range para fechas explícitas y default si no indicó período. Las fechas deben ser YYYY-MM-DD.",
+          'Respondé sólo JSON: {"action":"none|document|orders","documentKind":"sale|receipt|statement","latest":false,"pointOfSale":"","number":"","periodMode":"default|relative_months|relative_days|date_range","relativeMonths":0,"relativeDays":0,"fromDate":"","toDate":"","detail":false,"delivery":false,"history":false,"latestOnly":true,"confidence":0}',
           behaviorText ? `Comportamiento del dominio:\n${behaviorText.slice(0, 12000)}` : "",
         ].filter(Boolean).join("\n\n"),
       },
