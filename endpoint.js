@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.252 | Fecha: 2026-09-28
+// Asisto | Version: 5.00.253 | Fecha: 2026-09-28
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -10394,6 +10394,21 @@ function apiChatCabReadMediaFromBody(body = {}) {
   };
 }
 
+async function recordTransferReceiptAnalysisEvent({ tenantId, messageId, kind, mime, analysis, channelType }) {
+  if (!analysis?.json) return { recorded: false, reason: "analysis_not_completed" };
+  return recordMonetizationEvent({
+    tenantId,
+    eventKey: "ai.transfer_receipt_analysis",
+    sourceId: `${String(messageId || crypto.randomUUID())}:transfer-receipt-analysis`,
+    metadata: {
+      kind: String(kind || ""),
+      mime: String(mime || ""),
+      channelType: String(channelType || "whatsapp"),
+      identifiedAsTransfer: isTransferReceiptAnalysis(analysis.json),
+    },
+  });
+}
+
 
 
 function apiChatCabReadTenantId(req) {
@@ -10901,6 +10916,8 @@ const aiOpts = {
             console.error("Imagen/análisis WWeb:", e?.message || e);
           }
         }
+        await recordTransferReceiptAnalysisEvent({ tenantId: tenant, messageId: msg.id, kind, mime, analysis: img, channelType })
+          .catch(error => console.warn("[monetization] transfer receipt image:", error?.message || error));
         text = img?.userText || caption || "[imagen recibida]";
         if (img?.json) msg.__media.analysis = img.json;
       } else if (kind === "document") {
@@ -10908,6 +10925,8 @@ const aiOpts = {
         if (transferReceiptAnalysisEnabled && buf && buf.length && /pdf|image/i.test(mime)) {
           analysis = await analyzeDocumentExternal({ buffer: buf, mime, filename, purpose: "payment-proof", ...aiOpts });
         }
+        await recordTransferReceiptAnalysisEvent({ tenantId: tenant, messageId: msg.id, kind, mime, analysis, channelType })
+          .catch(error => console.warn("[monetization] transfer receipt document:", error?.message || error));
         text = analysis?.userText || (caption ? `${caption}\n[archivo: ${filename}]` : `[archivo: ${filename}]`);
         if (analysis?.json) msg.__media.analysis = analysis.json;
       } else if (kind === "video") {
@@ -10947,6 +10966,8 @@ const aiOpts = {
             ...aiOpts
           });
         }
+        await recordTransferReceiptAnalysisEvent({ tenantId: tenant, messageId: msg.id, kind: "image", mime: info.mime_type, analysis: img, channelType })
+          .catch(error => console.warn("[monetization] transfer receipt image:", error?.message || error));
 
         // Texto que alimenta al modelo conversacional
         text = img?.userText || "[imagen recibida]";
@@ -10974,6 +10995,8 @@ const aiOpts = {
           console.warn("Documento/análisis:", e?.message || e);
         }
       }
+      await recordTransferReceiptAnalysisEvent({ tenantId: tenant, messageId: msg.id, kind: "document", mime: docMime, analysis, channelType })
+        .catch(error => console.warn("[monetization] transfer receipt document:", error?.message || error));
       text = analysis?.userText || (cap ? `${cap}\n[archivo: ${fn}]` : `[archivo: ${fn}]`);
       msg.__media = { kind: "document", filename: fn, mime: docMime, analysis: analysis?.json || null };
     } else if (msg.type === "video" && msg.video?.id) {

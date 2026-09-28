@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.246 | Fecha: 2026-09-26
+// Asisto | Version: 5.00.253 | Fecha: 2026-09-28
 // Motor de medición y monetización por dominio.
 const crypto = require('crypto');
 const { getDb } = require('./db');

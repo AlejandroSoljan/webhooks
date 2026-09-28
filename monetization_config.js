@@ -1,9 +1,9 @@
-// Asisto | Version: 5.00.198 | Fecha: 2026-09-22
+// Asisto | Version: 5.00.253 | Fecha: 2026-09-28
 const { getDb } = require('./db');
 
 const CATALOG = Object.freeze([
   ['whatsapp','whatsapp.sent','Mensaje WhatsApp enviado','mensaje'],['whatsapp','whatsapp.api_sent','Mensaje enviado por API','mensaje'],['whatsapp','whatsapp.confirmation','Confirmación o documento enviado','mensaje'],['whatsapp','whatsapp.session_month','Sesión WhatsApp activa','mes'],
-  ['ai','ai.response','Respuesta conversacional con IA','respuesta'],['ai','ai.audio_transcription','Audio transcripto','audio'],['ai','ai.photo_identification','Fotografía analizada','imagen'],['ai','ai.summary','Resumen o clasificación con IA','proceso'],
+  ['ai','ai.response','Respuesta conversacional con IA','respuesta'],['ai','ai.audio_transcription','Audio transcripto','audio'],['ai','ai.photo_identification','Fotografía analizada','imagen'],['ai','ai.transfer_receipt_analysis','Comprobante de transferencia analizado','análisis'],['ai','ai.summary','Resumen o clasificación con IA','proceso'],
   ['catalog','catalog.qr_read','Lectura de QR','lectura'],['catalog','catalog.code_lookup','Lectura por código de barras o SKU','consulta'],['catalog','catalog.price_lookup','Consulta de precio','consulta'],['catalog','catalog.stock_lookup','Consulta de disponibilidad','consulta'],['catalog','catalog.sync','Sincronización de catálogo','sincronización'],
   ['queue','queue.ticket','Turno emitido','turno'],['queue','queue.printed','Turno impreso','turno'],['queue','queue.notification','Notificación de turno','notificación'],['queue','queue.screen_month','Pantalla de llamados','mes'],['queue','queue.branch_month','Sucursal de turnero','mes'],
   ['restaurant','restaurant.order','Pedido confirmado','pedido'],['restaurant','restaurant.waiter_call','Llamado a mozo','llamado'],['restaurant','restaurant.bill_request','Solicitud de cuenta','solicitud'],['restaurant','restaurant.table_month','Mesa o QR activo','mes'],['restaurant','restaurant.kitchen_order','Comanda enviada','comanda'],

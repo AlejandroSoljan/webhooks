@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.252 | Fecha: 2026-09-28
+// Asisto | Version: 5.00.253 | Fecha: 2026-09-28
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
 // Incluye logs completos de OpenAI (payload y response).

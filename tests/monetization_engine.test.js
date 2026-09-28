@@ -25,3 +25,11 @@ test('no calcula funcionalidades desactivadas', () => {
   assert.equal(result.enabled, false);
   assert.equal(result.potentialAmount, 0);
 });
+
+test('calcula el análisis de comprobante como servicio independiente', () => {
+  const config = defaultConfig('SDG');
+  config.items['ai.transfer_receipt_analysis'] = { enabled: true, mode: 'fixed', credits: 0, unitPrice: 35 };
+  const result = calculateEvent(config, 'ai.transfer_receipt_analysis', 1);
+  assert.equal(result.enabled, true);
+  assert.equal(result.potentialAmount, 35);
+});

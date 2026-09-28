@@ -10,6 +10,7 @@ test('el catálogo inicial activa únicamente QR y código de barras o SKU', () 
   assert.equal(config.tenantId, 'MCN');
   assert.equal(config.billingEnabled, false);
   assert.ok(CATALOG.length >= 40);
+  assert.equal(CATALOG.find(item => item.key === 'ai.transfer_receipt_analysis')?.name, 'Comprobante de transferencia analizado');
 });
 
 test('normaliza tarifas y descarta funcionalidades inventadas', () => {
@@ -30,6 +31,7 @@ test('el panel contiene el catálogo completo y JavaScript válido', () => {
   const html = renderPage();
   assert.match(html, /Lectura de QR/);
   assert.match(html, /Lectura por código de barras o SKU/);
+  assert.match(html, /Comprobante de transferencia analizado/);
   assert.match(html, /Configuración guardada/);
   assert.match(html, /price\.oninput/);
   new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]);
