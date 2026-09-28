@@ -2688,6 +2688,47 @@ async function closeInactiveConversationForContact(tenantId, waId, minutes) {
   return Number(result?.modifiedCount || 0) > 0;
 }
 
+async function closeBehaviorInactiveConversations() {
+  try {
+    const db = await getDb();
+    const configs = await db.collection("settings").find(
+      { _id: { $regex: /^behavior:/ }, conversation_inactivity_minutes: { $gt: 0 } },
+      { projection: { tenantId: 1, conversation_inactivity_minutes: 1 } }
+    ).toArray();
+    for (const cfg of configs) {
+      const tenantId = String(cfg?.tenantId || cfg?._id || "").replace(/^behavior:/, "").trim();
+      const ttl = behaviorMinutes(cfg?.conversation_inactivity_minutes, 0);
+      if (!tenantId || !ttl) continue;
+      const now = new Date();
+      const cutoff = new Date(now.getTime() - ttl * 60 * 1000);
+      const result = await db.collection("conversations").updateMany(
+        {
+          tenantId,
+          finalized: { $ne: true },
+          status: { $nin: ["COMPLETED", "CANCELLED"] },
+          updatedAt: { $lt: cutoff }
+        },
+        {
+          $set: {
+            finalized: true,
+            status: "COMPLETED",
+            closedAt: now,
+            closedReason: "inactivity_timeout",
+            manualOpen: false,
+            updatedAt: now
+          },
+          $unset: { manualPauseUntil: "", manualPauseReason: "" }
+        }
+      );
+      if (Number(result?.modifiedCount || 0) > 0) {
+        console.log(`[conversations] cerradas por inactividad tenant=${tenantId} total=${result.modifiedCount} minutos=${ttl}`);
+      }
+    }
+  } catch (e) {
+    console.warn("[conversations] barrido de inactividad falló:", e?.message || e);
+  }
+}
+
 // ------- helper para validar que el pedido esté completo antes de cerrar -------
 function isPedidoCompleto(p) {
   try {
@@ -12337,6 +12378,12 @@ if (require.main === module) {
   const server = app.listen(PORT, () => {
     console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
   });
+
+  const inactivitySweepTimer = setInterval(() => {
+    closeBehaviorInactiveConversations().catch(() => {});
+  }, 60 * 1000);
+  if (typeof inactivitySweepTimer.unref === "function") inactivitySweepTimer.unref();
+  setTimeout(() => closeBehaviorInactiveConversations().catch(() => {}), 10 * 1000).unref?.();
 
   let closing = false;
   async function shutdown(signal) {
