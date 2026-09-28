@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.249 | Fecha: 2026-09-28
+// Asisto | Version: 5.00.250 | Fecha: 2026-09-28
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -10622,6 +10622,46 @@ async function handleApiChatCabProcesarMensajePost(req, res) {
 app.post("/api/ext/wweb/chatgpt/process", handleApiChatCabProcesarMensajePost);
 app.post("/v200/api/Api_Chat_Cab/ProcesarMensajePost", handleApiChatCabProcesarMensajePost);
 app.post("/api-chat-cab/procesar-mensaje", handleApiChatCabProcesarMensajePost);
+
+app.post("/api/ext/wweb/manager/intent", async (req, res) => {
+  try {
+    const body = req.body || {};
+    let tenantId = apiChatCabReadTenantId(req).toUpperCase();
+    const from = apiChatCabCleanDigits(body.Tel_Origen || body.tel_origen || body.from || "");
+    const to = apiChatCabCleanDigits(body.Tel_Destino || body.tel_destino || body.to || "");
+    const text = String(body.Mensaje ?? body.mensaje ?? body.text ?? "").trim();
+    if (!tenantId || !from || !to || !text) return res.status(400).json({ ok: false, error: "tenant_from_to_text_required" });
+    const runtime = await getRuntimeByWwebPhone(tenantId, to);
+    if (!runtime || normalizeWhatsappTransport(runtime.whatsappTransport || "api") !== "wweb" || normalizeWwebBotLogicMode(runtime.wwebBotLogicMode || "api") !== "chatgpt") {
+      return res.status(409).json({ ok: false, error: "manager_intent_not_available" });
+    }
+    tenantId = String(runtime.tenantId || tenantId).trim().toUpperCase();
+    const db = await getDb();
+    const tenantConfig = await db.collection("tenant_config").findOne(
+      { $or: [{ _id: tenantId }, { tenantId }, { tenantid: tenantId }] },
+      { projection: { manager_ai_enabled: 1, manager_ia_habilitada: 1, wweb_ai_manager_enabled: 1 } }
+    );
+    const managerEnabled = [tenantConfig?.manager_ai_enabled, tenantConfig?.manager_ia_habilitada, tenantConfig?.wweb_ai_manager_enabled]
+      .some(value => value === true || ["1", "true", "yes", "si", "sí", "on"].includes(String(value || "").trim().toLowerCase()));
+    if (!managerEnabled) return res.json({ ok: true, intent: { action: "none" } });
+    const behaviorText = await loadBehaviorTextFromMongo(tenantId);
+    const variants = wwebOperatorPhoneVariants(from);
+    const conv = await db.collection("conversations").findOne(
+      { tenantId, $or: [{ waId: { $in: variants } }, { from: { $in: variants } }] },
+      { sort: { updatedAt: -1, createdAt: -1 }, projection: { _id: 1 } }
+    );
+    const history = conv?._id ? await db.collection("messages").find(
+      { tenantId, conversationId: conv._id, type: "text" },
+      { projection: { role: 1, content: 1 } }
+    ).sort({ createdAt: -1 }).limit(8).toArray() : [];
+    history.reverse();
+    const intent = await require("./logic").classifyManagerRequestExternal({ tenantId, text, history, behaviorText });
+    return res.json({ ok: true, intent });
+  } catch (e) {
+    console.error("[MANAGER_INTENT]", e?.message || e);
+    return res.status(500).json({ ok: false, error: "manager_intent_failed" });
+  }
+});
 
 // Retrocompatible: acepta VERIFY_TOKEN de .env como siempre,
 // y además acepta cualquier verifyToken guardado en tenant_channels.

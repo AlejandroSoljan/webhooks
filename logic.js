@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.249 | Fecha: 2026-09-28
+// Asisto | Version: 5.00.250 | Fecha: 2026-09-28
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
 // Incluye logs completos de OpenAI (payload y response).
@@ -1355,6 +1355,57 @@ async function analyzeDocumentExternal({ buffer, mime, filename = "archivo.pdf",
     console.warn("[vision] analyzeDocumentExternal error:", e?.message || e);
     return { json: null, userText: `[archivo: ${filename}]`, error: String(e?.message || "document_analysis_failed") };
   }
+}
+
+async function classifyManagerRequestExternal({ tenantId, text, history = [], behaviorText = "" } = {}) {
+  const client = getOpenAIClient(requireOpenAiApiKey("conversacional"));
+  if (!client) throw new Error("openai_not_configured");
+  const tenantAiCfg = await loadTenantAiConfigFromMongo(tenantId);
+  const model = String(tenantAiCfg.chatModel || CHAT_MODEL).trim();
+  const recent = (Array.isArray(history) ? history : []).slice(-8)
+    .map(item => `${item.role === "assistant" ? "Asistente" : "Cliente"}: ${String(item.content || "").slice(0, 800)}`)
+    .join("\n");
+  const payload = {
+    model,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: [
+          "Interpretá libremente la intención del cliente según el comportamiento configurado; no dependas de frases literales ni palabras obligatorias.",
+          "Sólo elegí una herramienta Manager cuando el cliente realmente solicite información o un documento disponible allí.",
+          "Acciones: none; document (sale=factura/comprobante de venta, receipt=recibo, statement=resumen/saldo/cuenta corriente); orders (pedidos, productos, entrega, dirección, horario o estado).",
+          "Si no especifica un documento particular, latest debe ser true. Conservá números de comprobante y punto de venta si aparecen.",
+          'Respondé sólo JSON: {"action":"none|document|orders","documentKind":"sale|receipt|statement","latest":false,"pointOfSale":"","number":"","detail":false,"delivery":false,"history":false,"latestOnly":true,"confidence":0}',
+          behaviorText ? `Comportamiento del dominio:\n${behaviorText.slice(0, 12000)}` : "",
+        ].filter(Boolean).join("\n\n"),
+      },
+      { role: "user", content: `${recent ? `Contexto reciente:\n${recent}\n\n` : ""}Mensaje actual:\n${String(text || "")}` },
+    ],
+  };
+  applyModelTokenLimit(payload, model, 350);
+  const resp = await client.chat.completions.create(payload);
+  try {
+    const usage = parseTokenUsagePair(resp?.usage, "message");
+    await recordTokenUsage({
+      tenantId,
+      kind: "message",
+      provider: "openai",
+      model: resp?.model || model,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      totalTokens: usage.totalTokens,
+      waId: "manager-intent",
+      channelType: "whatsapp",
+      meta: { purpose: "manager_intent" },
+    });
+  } catch {}
+  const content = resp?.choices?.[0]?.message?.content || "{}";
+  let parsed = {};
+  try { parsed = JSON.parse(content); } catch {}
+  const action = ["document", "orders"].includes(String(parsed.action || "").toLowerCase())
+    ? String(parsed.action).toLowerCase() : "none";
+  return { ...parsed, action };
 }
 
 
@@ -3148,6 +3199,7 @@ module.exports = {
   transcribeAudioExternal,
   analyzeImageExternal,
   analyzeDocumentExternal,
+  classifyManagerRequestExternal,
   // cache público
   putInCache,
   getFromCache,
