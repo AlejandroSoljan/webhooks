@@ -1,7 +1,7 @@
-# Asisto | Version: 5.00.240 | Fecha: 2026-09-25
+# Asisto | Version: 5.00.254 | Fecha: 2026-09-28
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:LOCALAPPDATA 'AsistoSupport'
-$release = Join-Path $root 'app-5.00.240'
+$release = Join-Path $root 'app-5.00.254'
 $arch = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
 $runtime = Join-Path $root "node-v24.12.0-win-$arch"
 $node = Join-Path $runtime 'node.exe'
@@ -101,12 +101,22 @@ if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'Extension')) {
   Write-Host 'Tambien quedo el acceso directo Extension Asisto en el Escritorio.'
 }
 if ($pairing.state -eq 'pending') {
+  $authorizationUrl = "https://asistobot.com.ar/ui/support?device=$($pairing.code)"
+  $authorizationFile = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Autorizar Asisto.txt'
+  @(
+    'ASISTO - AUTORIZAR ESTA PC'
+    "Codigo: $($pairing.code)"
+    "Enlace: $authorizationUrl"
+    'Ingresa con el usuario de Asisto que utilizara esta PC y confirma la autorizacion.'
+  ) | Set-Content -LiteralPath $authorizationFile -Encoding UTF8
   Write-Host "Agente registrado correctamente. Codigo de esta PC: $($pairing.code)"
-  Write-Host 'Ingresa a Asisto con el usuario correcto y usa Sesiones WhatsApp Web > Vincular / reconectar.'
+  Write-Host 'Se abrira Asisto para autorizar esta PC con el usuario correcto.'
+  Write-Host "Si el navegador no abre, usa: $authorizationUrl"
+  Start-Process $authorizationUrl
 } else {
   Write-Host 'Agente operativo y autorizado. Ingresa a Sesiones WhatsApp Web para ver o reconectar WhatsApp.'
+  Start-Process 'https://asistobot.com.ar/ui/support'
 }
-Write-Host 'El agente no abre el navegador automaticamente.'
 Write-Host 'Luego el agente iniciara automaticamente al ingresar a Windows.'
 Write-Host "Perfil instalado: $profile"
 Write-Host "Diagnostico: $(Join-Path $profile 'logs')"
