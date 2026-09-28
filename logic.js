@@ -1313,6 +1313,47 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
   }
 }
 
+async function analyzeDocumentExternal({ buffer, mime, filename = "archivo.pdf", purpose = "generic", aiKeyKind, tenantId, visionModel, visionMaxTokens, channelType } = {}) {
+  try {
+    if (!Buffer.isBuffer(buffer) || !buffer.length) return { json: null, userText: `[archivo: ${filename}]` };
+    const routedApiKey = requireOpenAiApiKey(aiKeyKind || (String(channelType || "").toLowerCase() === "qr_web" ? "conversacional" : "pedidos"));
+    const client = getOpenAIClient(routedApiKey);
+    if (!client) throw new Error("openai_not_configured");
+    const tenantAiCfg = await loadTenantAiConfigFromMongo(tenantId);
+    const model = String(visionModel || tenantAiCfg.visionModel || VISION_MODEL || CHAT_MODEL).trim();
+    const maxTokensNum = Number(visionMaxTokens);
+    const maxTokens = Number.isFinite(maxTokensNum) && maxTokensNum > 0 ? Math.trunc(maxTokensNum) : 500;
+    const prompt = purpose === "payment-proof"
+      ? "Revisá este archivo y determiná si es un comprobante de pago o transferencia. Extraé únicamente los datos visibles (monto, moneda, fecha, referencia u operación, entidad, emisor y destinatario). No confirmes acreditación. Respondé exclusivamente JSON e incluí is_transfer_receipt=true o false."
+      : "Describí brevemente el archivo y extraé su texto principal. Respondé exclusivamente JSON.";
+    const payload = {
+      model,
+      response_format: { type: "json_object" },
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: prompt },
+          { type: "file", file: { filename, file_data: `data:${mime || "application/pdf"};base64,${buffer.toString("base64")}` } }
+        ]
+      }]
+    };
+    applyModelTokenLimit(payload, model, maxTokens);
+    const resp = await client.chat.completions.create(payload);
+    const content = resp?.choices?.[0]?.message?.content || "";
+    let json = null;
+    try { json = JSON.parse(content); } catch {}
+    const looksTransfer = json?.is_transfer_receipt === true || json?.es_comprobante_transferencia === true;
+    const summary = String(json?.summary || json?.resumen || json?.text || "").trim();
+    const userText = looksTransfer
+      ? `El usuario envió un archivo que fue identificado como comprobante de pago/transferencia. Datos visibles: ${summary || content.slice(0, 800)}`
+      : `El usuario envió un archivo que no fue identificado como comprobante de transferencia. ${summary || ""}`.trim();
+    return { json, userText };
+  } catch (e) {
+    console.warn("[vision] analyzeDocumentExternal error:", e?.message || e);
+    return { json: null, userText: `[archivo: ${filename}]`, error: String(e?.message || "document_analysis_failed") };
+  }
+}
+
 
 
 
@@ -3103,6 +3144,7 @@ module.exports = {
   downloadMediaBuffer,
   transcribeAudioExternal,
   analyzeImageExternal,
+  analyzeDocumentExternal,
   // cache público
   putInCache,
   getFromCache,

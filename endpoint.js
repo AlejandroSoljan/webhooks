@@ -1089,6 +1089,8 @@ app.post('/api/ext/wweb/agent/operator-message', wwebAgentJson, requireWwebAgent
     }
 
     const db = await getDb();
+    const behaviorConfig = await loadBehaviorConfigFromMongo(tenantId);
+    const operatorPauseMinutes = behaviorMinutes(behaviorConfig?.operator_pause_minutes, 0);
     const waVariants = wwebOperatorPhoneVariants(customerPhone);
     let conv = await db.collection('conversations').findOne(
       {
@@ -1166,7 +1168,12 @@ app.post('/api/ext/wweb/agent/operator-message', wwebAgentJson, requireWwebAgent
         lastAssistantTs: now,
         updatedAt: now,
         lastOperatorMessageAt: now,
-        lastOperatorMessageSource: 'wweb_phone_operator'
+        lastOperatorMessageSource: 'wweb_phone_operator',
+        ...(operatorPauseMinutes > 0 ? {
+          manualOpen: true,
+          manualPauseUntil: new Date(now.getTime() + operatorPauseMinutes * 60 * 1000),
+          manualPauseReason: 'operator_message'
+        } : {})
       }
     };
 
@@ -1807,7 +1814,7 @@ const {
   hydratePricesFromCatalog,
   putInCache, getFromCache, getMediaInfo, downloadMediaBuffer, transcribeAudioExternal,
   DEFAULT_TENANT_ID, setAssistantPedidoSnapshot, replaceLastAssistantHistory, calcularDistanciaKm,
-  geocodeAddress, reverseGeocode, getStoreCoords, pickEnvioProductByDistance,clearEndedFlag,analyzeImageExternal,
+  geocodeAddress, reverseGeocode, getStoreCoords, pickEnvioProductByDistance,clearEndedFlag,analyzeImageExternal,analyzeDocumentExternal,
   ensureEnvioSmart,hasContext,
 } = require("./logic");
 
@@ -2654,6 +2661,31 @@ async function closeConversation(convId, status = "COMPLETED", extra = {}) {
   } catch (e) {
     console.error("closeConversation error:", e?.message || e);
   }
+}
+
+function behaviorMinutes(value, fallback = 0, max = 1440) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.max(1, Math.min(max, Math.trunc(n)));
+}
+
+async function closeInactiveConversationForContact(tenantId, waId, minutes) {
+  const ttl = behaviorMinutes(minutes, 0);
+  if (!ttl) return false;
+  const db = await getDb();
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - ttl * 60 * 1000);
+  const result = await db.collection("conversations").updateMany(
+    {
+      tenantId: String(tenantId || TENANT_ID || DEFAULT_TENANT_ID || "default"),
+      waId: String(waId),
+      finalized: { $ne: true },
+      status: { $nin: ["COMPLETED", "CANCELLED"] },
+      updatedAt: { $lt: cutoff }
+    },
+    { $set: { finalized: true, status: "COMPLETED", closedAt: now, closedReason: "inactivity_timeout", updatedAt: now } }
+  );
+  return Number(result?.modifiedCount || 0) > 0;
 }
 
 // ------- helper para validar que el pedido esté completo antes de cerrar -------
@@ -10713,6 +10745,8 @@ const aiOpts = {
     const msgType = msg.type;
     let inboundLocation = null;
 
+    const transferReceiptAnalysisEnabled = behaviorConfig?.transfer_receipt_analysis_enabled === true;
+
     // Normalización del texto según tipo de mensaje
     const wwebInlineMedia = (msg && msg.__wwebMedia && typeof msg.__wwebMedia === "object") ? msg.__wwebMedia : null;
     if (msg.type === "text" && msg.text?.body) {
@@ -10766,7 +10800,7 @@ const aiOpts = {
         }
       } else if (kind === "image") {
         let img = null;
-        if (isOrderBot && publicUrl && orderFeatureEnabled(orderConfig, "transferReceiptAnalysis")) {
+        if (publicUrl && ((isOrderBot && orderFeatureEnabled(orderConfig, "transferReceiptAnalysis")) || transferReceiptAnalysisEnabled)) {
           try {
             img = await analyzeImageExternal({
               publicImageUrl: publicUrl,
@@ -10781,7 +10815,12 @@ const aiOpts = {
         text = img?.userText || caption || "[imagen recibida]";
         if (img?.json) msg.__media.analysis = img.json;
       } else if (kind === "document") {
-        text = caption ? `${caption}\n[archivo: ${filename}]` : `[archivo: ${filename}]`;
+        let analysis = null;
+        if (transferReceiptAnalysisEnabled && buf && buf.length && /pdf|image/i.test(mime)) {
+          analysis = await analyzeDocumentExternal({ buffer: buf, mime, filename, purpose: "payment-proof", ...aiOpts });
+        }
+        text = analysis?.userText || (caption ? `${caption}\n[archivo: ${filename}]` : `[archivo: ${filename}]`);
+        if (analysis?.json) msg.__media.analysis = analysis.json;
       } else if (kind === "video") {
         text = caption || "[video]";
       } else if (kind === "sticker") {
@@ -10811,7 +10850,7 @@ const aiOpts = {
         const publicImageUrl = `${req.protocol}://${req.get("host")}/cache/media/${id}`;
 
         let img = null;
-        if (isOrderBot && orderFeatureEnabled(orderConfig, "transferReceiptAnalysis")) {
+        if ((isOrderBot && orderFeatureEnabled(orderConfig, "transferReceiptAnalysis")) || transferReceiptAnalysisEnabled) {
           img = await analyzeImageExternal({
             publicImageUrl,
             mime: info.mime_type,
@@ -10832,12 +10871,22 @@ const aiOpts = {
     }
 
     else if (msg.type === "document" && msg.document?.id) {
-      // Documento/archivo (no analizamos; solo registramos para el panel)
       const fn = String(msg.document?.filename || msg.document?.file_name || "archivo").trim() || "archivo";
       const cap = String(msg.document?.caption || "").trim();
-      text = cap ? cap : `[archivo: ${fn}]`;
-      if (cap) text += `\n[archivo: ${fn}]`;
-      msg.__media = { kind: "document", filename: fn, mime: msg.document?.mime_type || null };
+      const docMime = String(msg.document?.mime_type || "application/octet-stream");
+      let analysis = null;
+      let docBuf = null;
+      if (transferReceiptAnalysisEnabled && /pdf|image/i.test(docMime)) {
+        try {
+          const info = await getMediaInfo(msg.document.id, channelOpts);
+          docBuf = await downloadMediaBuffer(info.url, channelOpts);
+          analysis = await analyzeDocumentExternal({ buffer: docBuf, mime: info.mime_type || docMime, filename: fn, purpose: "payment-proof", ...aiOpts });
+        } catch (e) {
+          console.warn("Documento/análisis:", e?.message || e);
+        }
+      }
+      text = analysis?.userText || (cap ? `${cap}\n[archivo: ${fn}]` : `[archivo: ${fn}]`);
+      msg.__media = { kind: "document", filename: fn, mime: docMime, analysis: analysis?.json || null };
     } else if (msg.type === "video" && msg.video?.id) {
       const cap = String(msg.video?.caption || "").trim();
       text = cap ? cap : "[video]";
@@ -10891,6 +10940,11 @@ const aiOpts = {
     let conv = null;
      try {
        // Guardamos el canal/telefono por el que entró el mensaje para poder verlo en Admin UI
+       await closeInactiveConversationForContact(
+         tenant,
+         from,
+         behaviorConfig?.conversation_inactivity_minutes
+       );
        conv = await upsertConversation(from, {
          channelType,
          phoneNumberId: channelOpts?.phoneNumberId || null,
@@ -10984,8 +11038,23 @@ console.log("[convId] "+ convId);
 
     // 🧑‍💻 Si la conversación está en modo manual, no respondemos automáticamente
     if (conv && conv.manualOpen) {
-      console.log("[webhook] conversación en modo manualOpen=true; se omite respuesta automática.");
-      return res.sendStatus(200);
+      const pauseUntilMs = new Date(conv.manualPauseUntil || 0).getTime();
+      if (!Number.isFinite(pauseUntilMs) || pauseUntilMs <= 0 || pauseUntilMs > Date.now()) {
+        console.log("[webhook] conversación en pausa manual; se omite respuesta automática.");
+        return res.sendStatus(200);
+      }
+      try {
+        const db = await getDb();
+        await db.collection("conversations").updateOne(
+          { _id: conv._id, tenantId: tenant },
+          { $set: { manualOpen: false, updatedAt: new Date() }, $unset: { manualPauseUntil: "", manualPauseReason: "" } }
+        );
+        conv.manualOpen = false;
+        delete conv.manualPauseUntil;
+      } catch (e) {
+        console.warn("[webhook] no se pudo liberar pausa manual vencida:", e?.message || e);
+        return res.sendStatus(200);
+      }
    }
 
     // ✅ Si el pedido ya fue confirmado y estamos dentro de la ventana configurada,
