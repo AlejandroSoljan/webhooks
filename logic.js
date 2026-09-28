@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.251 | Fecha: 2026-09-28
+// Asisto | Version: 5.00.252 | Fecha: 2026-09-28
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
 // Incluye logs completos de OpenAI (payload y response).
@@ -339,6 +339,12 @@ function buildNowBlock() {
  */
 const _behaviorCache = new Map();
 
+function normalizeBehaviorBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (typeof value === "boolean") return value;
+  return ["1", "true", "yes", "si", "sí", "on"].includes(String(value).trim().toLowerCase());
+}
+
 async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
   const key = String(tenantId);
   const cached = _behaviorCache.get(key);
@@ -359,8 +365,12 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
     doc.leadCaptureEnabled ??
     process.env.LEAD_CAPTURE_ENABLED ??
     false;
- const lead_capture_enabled = leadCaptureRaw === true ||
+  const lead_capture_enabled = leadCaptureRaw === true ||
     ["1", "true", "yes", "si", "sí", "on"].includes(String(leadCaptureRaw || "").trim().toLowerCase());
+  const transfer_receipt_analysis_enabled = normalizeBehaviorBoolean(
+    doc.transfer_receipt_analysis_enabled ?? doc.transferReceiptAnalysisEnabled,
+    false
+  );
 
   const externalApiEnabledRaw =
     doc.external_api_enabled ??
@@ -448,6 +458,7 @@ async function loadBehaviorConfigFromMongo(tenantId = DEFAULT_TENANT_ID) {
     history_mode,
     bot_mode,
     lead_capture_enabled,
+    transfer_receipt_analysis_enabled,
     external_api_enabled,
     external_api_action_name,
     external_api_description,
@@ -3174,6 +3185,7 @@ module.exports = {
   loadBehaviorConfigFromMongo,
   invalidateBehaviorCache,
   normalizeBotMode,
+  normalizeBehaviorBoolean,
   invalidateTenantAiConfigCache,
   // control de consumo IA (reutilizado también por la herramienta Ayuda)
   recordTokenUsage,

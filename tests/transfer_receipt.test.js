@@ -5,6 +5,15 @@ const {
   isTransferReceiptAnalysis,
   buildTransferReceiptAcknowledgement,
 } = require("../transfer_receipt");
+const { normalizeBehaviorBoolean } = require("../logic");
+
+test("habilitación de visión conserva booleanos y valores configurados en Mongo", () => {
+  assert.equal(normalizeBehaviorBoolean(true), true);
+  assert.equal(normalizeBehaviorBoolean("true"), true);
+  assert.equal(normalizeBehaviorBoolean("sí"), true);
+  assert.equal(normalizeBehaviorBoolean(false), false);
+  assert.equal(normalizeBehaviorBoolean(undefined), false);
+});
 
 test("reconoce flags booleanos y textuales de comprobante", () => {
   assert.equal(isTransferReceiptAnalysis({ is_transfer_receipt: true }), true);
