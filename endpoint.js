@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.183 | Fecha: 2026-09-22
+// Asisto | Version: 5.00.249 | Fecha: 2026-09-28
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -22,6 +22,10 @@ const { ObjectId } = require("mongodb");
 const { getDb, closeDb } = require("./db");
 const { resolveCanonicalTenantId, resolveCanonicalLockId } = require("./tenant_aliases");
 const { domainStatusGroupIds, documentTenantId } = require("./domain_status_group");
+const {
+  isTransferReceiptAnalysis,
+  buildTransferReceiptAcknowledgement,
+} = require("./transfer_receipt");
 const {
   getRuntimeByPhoneNumberId,
   getRuntimeByInstagramAccountId,
@@ -2460,6 +2464,10 @@ function manualTextLooksLikeAmountNotice(text) {
 function isInboundTransferReceiptMedia(msg) {
   const t = String(msg?.type || "").trim().toLowerCase();
   return t === "image" || t === "document";
+}
+
+function isAnalyzedTransferReceipt(msg) {
+  return isInboundTransferReceiptMedia(msg) && isTransferReceiptAnalysis(msg?.__media?.analysis);
 }
 
 // Parseo tolerante de filtro "entregado":
@@ -11124,6 +11132,31 @@ console.log("[convId] "+ convId);
       }
     } catch (e) {
       console.warn("[post-completion] polite followup error:", e?.message || e);
+    }
+
+    // Un comprobante reconocido no vuelve al modelo conversacional: respondemos
+    // de forma determinística para evitar dudas o mezclarlo con trámites previos.
+    if (!isOrderBot && transferReceiptAnalysisEnabled && convId && isAnalyzedTransferReceipt(msg)) {
+      const receiptReply = buildTransferReceiptAcknowledgement(tenant);
+      await require("./logic").sendChannelMessage(from, receiptReply, channelOpts);
+      try {
+        await saveMessageDoc({
+          tenantId: tenant,
+          conversationId: convId,
+          waId: from,
+          role: "assistant",
+          content: receiptReply,
+          type: "text",
+          meta: {
+            model: "backend-transfer-receipt",
+            kind: "transfer-receipt-acknowledgement",
+            analysis: msg?.__media?.analysis || null,
+          },
+        });
+      } catch (e) {
+        console.error("saveMessage(assistant transfer receipt):", e?.message || e);
+      }
+      return res.sendStatus(200);
     }
 
 

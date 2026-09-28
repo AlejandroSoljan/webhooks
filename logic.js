@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.149 | Fecha: 2026-09-17
+// Asisto | Version: 5.00.249 | Fecha: 2026-09-28
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
 // Incluye logs completos de OpenAI (payload y response).
@@ -36,6 +36,7 @@ const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || "";
 
 const { getDb } = require("./db");
 const { ObjectId } = require("mongodb");
+const { isTransferReceiptAnalysis } = require("./transfer_receipt");
 // ================== OpenAI client (para fallback STT) ==================
 let openai = null;
 const openaiByKey = new Map();
@@ -1219,15 +1220,16 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
       "No inventes códigos ni variantes; si no es legible, usá string vacío.",
       'Respondé exclusivamente JSON: {"barcode":"","brand":"","model":"","name":"","visible_text":"","confidence":0}'
     ].join("\n") : [
-      "Sos un asistente que analiza imágenes y extrae texto/datos clave.",
-      "Si la imagen parece un comprobante de pago/transferencia:",
-      "- Extraé monto, moneda, fecha, referencia/operación, banco/app, emisor/recipiente si aparecen.",
-      "- NO afirmes que el pago está confirmado.",
-      "Respondé exclusivamente en JSON."
+      "Clasificá la imagen usando únicamente lo que se ve.",
+      "Marcá is_transfer_receipt=true cuando sea un comprobante, captura o constancia bancaria/de billetera de una transferencia o pago, aunque no puedas verificar su acreditación.",
+      "Marcá is_transfer_receipt=false solamente cuando la imagen no sea un comprobante de pago o transferencia.",
+      "Extraé monto, moneda, fecha, referencia/operación, banco/app, emisor y destinatario si aparecen.",
+      "No afirmes que el dinero fue acreditado ni que el pago está confirmado.",
+      'Respondé exclusivamente JSON con este esquema: {"is_transfer_receipt":true,"amount":"","currency":"","date":"","reference":"","bank":"","sender":"","recipient":"","summary":"","confidence":0}'
     ].join("\n");
 
     const user = purpose === "payment-proof"
-      ? "Analizá esta imagen que probablemente sea un comprobante de pago o transferencia. Extraé los datos visibles."
+      ? "Determiná si esta imagen es un comprobante de pago o transferencia y completá el JSON requerido con los datos visibles."
       : (purpose === "product-identification" ? "Identificá este producto y transcribí cualquier código de barras visible." : "Describí brevemente la imagen y extraé cualquier texto visible.");
 
     const routedApiKey = requireOpenAiApiKey(aiKeyKind || (String(channelType || '').toLowerCase() === 'qr_web' ? 'conversacional' : 'pedidos'));
@@ -1294,9 +1296,10 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
       if (bank) parts.push(`entidad ${bank}`);
 
       const compact = parts.length ? parts.join(", ") : "datos no legibles";
-      const userText =
-        `El usuario envió una imagen de comprobante de pago/transferencia. ` +
-        `Lectura preliminar: ${compact}.`;
+      const looksTransfer = isTransferReceiptAnalysis(json);
+      const userText = looksTransfer
+        ? `El usuario envió una imagen identificada como comprobante de pago/transferencia. Lectura preliminar: ${compact}.`
+        : `El usuario envió una imagen que no fue identificada como comprobante de pago/transferencia. Lectura preliminar: ${compact}.`;
 
       return { json, userText };
     }
@@ -1324,7 +1327,7 @@ async function analyzeDocumentExternal({ buffer, mime, filename = "archivo.pdf",
     const maxTokensNum = Number(visionMaxTokens);
     const maxTokens = Number.isFinite(maxTokensNum) && maxTokensNum > 0 ? Math.trunc(maxTokensNum) : 500;
     const prompt = purpose === "payment-proof"
-      ? "Revisá este archivo y determiná si es un comprobante de pago o transferencia. Extraé únicamente los datos visibles (monto, moneda, fecha, referencia u operación, entidad, emisor y destinatario). No confirmes acreditación. Respondé exclusivamente JSON e incluí is_transfer_receipt=true o false."
+      ? 'Revisá este archivo usando únicamente su contenido visible. Marcá is_transfer_receipt=true cuando sea un comprobante, captura o constancia bancaria/de billetera de una transferencia o pago, aunque no puedas verificar su acreditación; usá false solamente si no lo es. No confirmes acreditación. Respondé exclusivamente JSON con este esquema: {"is_transfer_receipt":true,"amount":"","currency":"","date":"","reference":"","bank":"","sender":"","recipient":"","summary":"","confidence":0}'
       : "Describí brevemente el archivo y extraé su texto principal. Respondé exclusivamente JSON.";
     const payload = {
       model,
@@ -1342,7 +1345,7 @@ async function analyzeDocumentExternal({ buffer, mime, filename = "archivo.pdf",
     const content = resp?.choices?.[0]?.message?.content || "";
     let json = null;
     try { json = JSON.parse(content); } catch {}
-    const looksTransfer = json?.is_transfer_receipt === true || json?.es_comprobante_transferencia === true;
+    const looksTransfer = isTransferReceiptAnalysis(json);
     const summary = String(json?.summary || json?.resumen || json?.text || "").trim();
     const userText = looksTransfer
       ? `El usuario envió un archivo que fue identificado como comprobante de pago/transferencia. Datos visibles: ${summary || content.slice(0, 800)}`
