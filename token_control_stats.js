@@ -937,9 +937,29 @@ async function buildTokenTimeline({ tenantId = "", from = "", to = "", types = "
   const { match, safeTenant } = buildUsageMatch({ tenantId, tenantIds, from, to });
   const safeTypes = parseCsvFilter(types, ["pedidos", "conversacional", "ayuda", "tareas_whatsapp"]);
   const safeChannels = parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages", "help_api"]);
+  const hourly = /^\d{4}-\d{2}-\d{2}$/.test(String(from)) && String(from) === String(to);
+  const bucketFormat = hourly ? "%Y-%m-%dT%H:00" : "%Y-%m-%d";
+  const localBucket = (value) => {
+    const date = new Date(value || 0);
+    if (!Number.isFinite(date.getTime())) return "";
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Argentina/Buenos_Aires", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23"
+    }).formatToParts(date).filter(part => part.type !== "literal").map(part => [part.type, part.value]));
+    const day = `${parts.year}-${parts.month}-${parts.day}`;
+    return hourly ? `${day}T${parts.hour}:00` : day;
+  };
+  const timelineResult = (grouped) => {
+    if (hourly) {
+      for (let hour = 0; hour < 24; hour += 1) {
+        const key = `${from}T${String(hour).padStart(2, "0")}:00`;
+        if (!grouped.has(key)) grouped.set(key, { date: key, tokens: 0, billed: 0 });
+      }
+    }
+    return { ok: true, granularity: hourly ? "hour" : "day", filters: { tenantId: safeTenant || null, from: from || null, to: to || null }, items: [...grouped.values()].sort((a, b) => a.date.localeCompare(b.date)).map(row => ({ ...row, billed: Number(row.billed.toFixed(6)) })) };
+  };
 
   if (String(types).toLowerCase() === "none" || String(channels).toLowerCase() === "none") {
-    return { ok: true, filters: { tenantId: safeTenant || null, from: from || null, to: to || null }, items: [] };
+    return timelineResult(new Map());
   }
 
   // Los filtros por tipo/canal dependen de la conversación vinculada. En ese caso
@@ -948,20 +968,20 @@ async function buildTokenTimeline({ tenantId = "", from = "", to = "", types = "
     const detail = await buildTokenConversationSummary({ tenantId, from, to, types, channels, limit: 5000, isSuper });
     const grouped = new Map();
     for (const row of (detail.items || [])) {
-      const date = String(row.last_at || row.first_at || '').slice(0, 10);
+      const date = localBucket(row.last_at || row.first_at);
       if (!date) continue;
       const acc = grouped.get(date) || { date, tokens: 0, billed: 0 };
       acc.tokens += Number(row.total_tokens || 0);
       acc.billed += Number(row.billed_cost || 0);
       grouped.set(date, acc);
     }
-    return { ok: true, filters: { tenantId: safeTenant || null, from: from || null, to: to || null }, items: [...grouped.values()].sort((a, b) => a.date.localeCompare(b.date)).map(row => ({ ...row, billed: Number(row.billed.toFixed(6)) })) };
+    return timelineResult(grouped);
   }
 
   const rows = await db.collection("ai_token_usage_log").aggregate([
     { $match: match },
     { $group: {
-      _id: { date: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: "America/Argentina/Buenos_Aires" } }, tenantId: "$tenantId" },
+      _id: { date: { $dateToString: { format: bucketFormat, date: "$createdAt", timezone: "America/Argentina/Buenos_Aires" } }, tenantId: "$tenantId" },
       message_input_tokens: { $sum: { $cond: [{ $eq: ["$kind", "message"] }, { $ifNull: ["$inputTokens", 0] }, 0] } },
       message_output_tokens: { $sum: { $cond: [{ $eq: ["$kind", "message"] }, { $ifNull: ["$outputTokens", 0] }, 0] } },
       help_input_tokens: { $sum: { $cond: [{ $eq: [{ $ifNull: ["$channelType", "$meta.channelType"] }, "help_api"] }, { $ifNull: ["$inputTokens", 0] }, 0] } },
@@ -988,7 +1008,7 @@ async function buildTokenTimeline({ tenantId = "", from = "", to = "", types = "
     acc.billed += calculateBillableCost(row, cfg.get(tenantKey) || {});
     byDate.set(date, acc);
   }
-  return { ok: true, filters: { tenantId: safeTenant || null, from: from || null, to: to || null }, items: [...byDate.values()].map(row => ({ ...row, billed: Number(row.billed.toFixed(6)) })) };
+  return timelineResult(byDate);
 }
 function normalizeStatus(conv, order) {
   const raw = String(
@@ -1891,6 +1911,7 @@ function renderTokenControlPage(user, tenants = []) {
   function renderTimeline(j){
     if(!domainChart)return;
     const rows=(j&&Array.isArray(j.items)?j.items:[]).slice().sort(function(a,b){return String(a.date).localeCompare(String(b.date));});
+    const hourly=String(j&&j.granularity||'')==='hour';
     if(!rows.length){domainChart.innerHTML='<div class="emptyChart">Todavía no hay consumos de IA para este período.</div>';return;}
     const width=720,height=205,left=48,right=16,top=15,bottom=30,plotW=width-left-right,plotH=height-top-bottom;
     const maxTokens=Math.max(1,...rows.map(function(x){return num(x.tokens);}));
@@ -1902,10 +1923,11 @@ function renderTokenControlPage(user, tenants = []) {
     const tokenPath=path(function(row){return yToken(row.tokens);}),billPath=path(function(row){return yBill(row.billed);});
     const grid=[0,.25,.5,.75,1].map(function(p){const y=top+plotH*p;return '<line class="timelineGrid" x1="'+left+'" y1="'+y+'" x2="'+(width-right)+'" y2="'+y+'"/>';}).join('');
     const step=Math.max(1,Math.ceil(rows.length/5));
-    const labels=rows.map(function(row,i){if(i%step&&i!==rows.length-1)return '';const d=String(row.date||'');return '<text class="axisLabel" text-anchor="middle" x="'+x(i)+'" y="'+(height-7)+'">'+esc(d.slice(8,10)+'/'+d.slice(5,7))+'</text>';}).join('');
+    const labels=rows.map(function(row,i){if(i%step&&i!==rows.length-1)return '';const d=String(row.date||''),label=hourly?d.slice(11,16):(d.slice(8,10)+'/'+d.slice(5,7));return '<text class="axisLabel" text-anchor="middle" x="'+x(i)+'" y="'+(height-7)+'">'+esc(label)+'</text>';}).join('');
     const points=rows.map(function(row,i){const title=esc(String(row.date)+' · '+fmtInt(row.tokens)+' tokens · '+fmtMoney(row.billed));return '<circle class="timelinePoint tokens" cx="'+x(i)+'" cy="'+yToken(row.tokens)+'" r="3"><title>'+title+'</title></circle><circle class="timelinePoint billing" cx="'+x(i)+'" cy="'+yBill(row.billed)+'" r="3"><title>'+title+'</title></circle>';}).join('');
     const totalTokens=rows.reduce(function(sum,row){return sum+num(row.tokens);},0),totalBilled=rows.reduce(function(sum,row){return sum+num(row.billed);},0);
-    domainChart.innerHTML='<svg viewBox="0 0 '+width+' '+height+'" role="img" aria-label="Evolución de tokens y cobro de IA">'+grid+'<path class="timelineTokens" d="'+tokenPath+'"/><path class="timelineBilling" d="'+billPath+'"/>'+points+labels+'</svg><div class="timelineSummary"><span>Total: <b>'+fmtInt(totalTokens)+' tokens</b></span><span>Cobro IA: <b>'+fmtMoney(totalBilled)+'</b></span><span>'+esc(rows[0].date)+' a '+esc(rows[rows.length-1].date)+'</span></div>';
+    const period=hourly?('Detalle horario del '+String(rows[0].date).slice(0,10)):(rows[0].date+' a '+rows[rows.length-1].date);
+    domainChart.innerHTML='<svg viewBox="0 0 '+width+' '+height+'" role="img" aria-label="Evolución de tokens y cobro de IA">'+grid+'<path class="timelineTokens" d="'+tokenPath+'"/><path class="timelineBilling" d="'+billPath+'"/>'+points+labels+'</svg><div class="timelineSummary"><span>Total: <b>'+fmtInt(totalTokens)+' tokens</b></span><span>Cobro IA: <b>'+fmtMoney(totalBilled)+'</b></span><span>'+esc(period)+'</span></div>';
   }
   function amountStackHtml(aiUsd,apiMap){
     const apiKeys=Object.keys(apiMap||{}).filter(function(c){return Math.abs(num(apiMap[c]))>0;});
