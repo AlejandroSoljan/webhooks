@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.253 | Fecha: 2026-09-28
+// Asisto | Version: 5.00.267 | Fecha: 2026-09-29
 // logic.js
 // Lógica de negocio (sin Express): GPT, STT, helpers y comportamiento desde Mongo (multi-tenant)
 // Incluye logs completos de OpenAI (payload y response).
@@ -6,6 +6,7 @@
 const axios = require("axios");
 const OpenAI = require("openai");
 const { requireOpenAiApiKey } = require("./ai_key_router");
+const { audioModelPrice } = require("./openai_model_pricing");
 let toFile = null;
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || "";
@@ -1179,9 +1180,9 @@ async function transcribeAudioExternal({ publicAudioUrl, buffer, mime, openaiApi
     const text = (r.text || "").trim();
     const usageInfo = parseTokenUsagePair(r.usage || null, "audio");
     const audioSeconds = Number(audioDurationSeconds);
-    const whisperRate = Number(process.env.TOKEN_COST_WHISPER_PER_MINUTE);
-    const costPerMinute = Number.isFinite(whisperRate) && whisperRate > 0 ? whisperRate : 0.006;
-    const costUsd = model === "whisper-1" && Number.isFinite(audioSeconds) && audioSeconds > 0
+    const configuredAudioRate = Number(process.env.TOKEN_COST_AUDIO_PER_MINUTE || (model === "whisper-1" ? process.env.TOKEN_COST_WHISPER_PER_MINUTE : NaN));
+    const costPerMinute = Number.isFinite(configuredAudioRate) && configuredAudioRate > 0 ? configuredAudioRate : audioModelPrice(model)?.usd;
+    const costUsd = Number.isFinite(costPerMinute) && Number.isFinite(audioSeconds) && audioSeconds > 0
       ? Number(((audioSeconds / 60) * costPerMinute).toFixed(6)) : null;
     await recordTokenUsage({
       tenantId,

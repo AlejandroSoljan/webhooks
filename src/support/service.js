@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.177 | Fecha: 2026-09-20
+// Asisto | Version: 5.00.267 | Fecha: 2026-09-29
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupTasks, analyze, ANALYZER_VERSION, GROUPING_VERSION, text, range } = require('./core');
 
@@ -9,6 +9,80 @@ class SupportService {
   col(name) { return this.db.collection(`support_${name}`); }
   async audit(scope, action, recordId, outcome = 'ok') {
     await this.col('audit').insertOne({ ...scope, action, recordId, outcome, at: this.now() });
+  }
+  audioFingerprint(row, payload) {
+    if (/^[a-f0-9]{64}$/i.test(row.audio?.fingerprint || '')) return row.audio.fingerprint.toLowerCase();
+    if (!payload.raw) return '';
+    try {
+      const raw = JSON.parse(payload.raw);
+      const pending = [raw];
+      while (pending.length) {
+        const value = pending.pop();
+        if (!value || typeof value !== 'object') continue;
+        if (value.audioMessage?.fileSha256) {
+          const source = value.audioMessage.fileSha256;
+          const bytes = source?.type === 'Buffer' && Array.isArray(source.data) ? Buffer.from(source.data)
+            : typeof source === 'string' ? Buffer.from(source, 'base64') : null;
+          if (bytes?.length) return crypto.createHash('sha256').update(bytes).digest('hex');
+        }
+        pending.push(...Object.values(value));
+      }
+    } catch { /* A legacy provider fixture or malformed raw payload has no reusable fingerprint. */ }
+    return '';
+  }
+  async transcribeMessage(scope, row, payload, context, check = async () => {}) {
+    if (payload.transcribed) return payload;
+    if (!this.transcribe) fail('transcription_provider_required', 422);
+    const fingerprint = this.audioFingerprint(row, payload);
+    const cacheId = fingerprint ? scopedId(scope, 'transcript', fingerprint) : '';
+    const applyCached = async cached => {
+      const saved = this.vault.open(cached.payload, cacheId);
+      payload.text = text(saved.text, 50000); payload.transcribed = true;
+      const sealed = this.vault.seal(payload, row._id);
+      await check();
+      await this.col('messages').updateOne({ _id: row._id, ...scope }, { $set: { payload: sealed, ...(fingerprint ? { 'audio.fingerprint': fingerprint } : {}) } });
+      row.payload = sealed;
+      await this.audit(scope, 'transcription_reused', row._id);
+      return payload;
+    };
+    let claim = null;
+    if (cacheId) {
+      const cached = await this.col('transcripts').findOne({ _id: cacheId, ...scope, state: 'done' });
+      if (cached) return applyCached(cached);
+      claim = crypto.randomUUID();
+      try {
+        await this.col('transcripts').insertOne({ _id: cacheId, ...scope, fingerprint, state: 'processing', claim, leaseUntil: new Date(+this.now() + 120000), createdAt: this.now(), updatedAt: this.now() });
+      } catch (error) {
+        if (error.code !== 11000) throw error;
+        for (;;) {
+          const current = await this.col('transcripts').findOne({ _id: cacheId, ...scope });
+          if (current?.state === 'done') return applyCached(current);
+          if (!current || current.state !== 'processing' || current.leaseUntil <= this.now()) {
+            const taken = await this.col('transcripts').updateOne({ _id: cacheId, ...scope, state: { $ne: 'done' }, $or: [{ state: { $ne: 'processing' } }, { leaseUntil: { $lte: this.now() } }] }, { $set: { state: 'processing', claim, leaseUntil: new Date(+this.now() + 120000), updatedAt: this.now() } });
+            if (taken.modifiedCount) break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 250));
+        }
+      }
+    }
+    const attemptId = crypto.randomUUID(), started = Date.now();
+    const units = { inputTokens: 0, outputTokens: 0, audioSeconds: row.audio.seconds, processingUnits: row.audio.seconds, costUsd: null };
+    await this.col('usage').insertOne({ _id: attemptId, ...scope, conversationId: context.jid, messageId: row._id, model: this.transcribe.model, kind: 'transcription', ...units, result: 'started', at: this.now() });
+    try {
+      const result = await this.transcribe.run(payload.raw, row.audio, { ...scope, ...context, messageId: row._id });
+      payload.text = text(result.text, 50000); payload.transcribed = true;
+      await check();
+      const sealed = this.vault.seal(payload, row._id);
+      await this.col('messages').updateOne({ _id: row._id, ...scope }, { $set: { payload: sealed, ...(fingerprint ? { 'audio.fingerprint': fingerprint } : {}) } });
+      row.payload = sealed;
+      if (cacheId) await this.col('transcripts').updateOne({ _id: cacheId, ...scope, claim }, { $set: { state: 'done', payload: this.vault.seal({ text: payload.text }, cacheId), model: result.model || this.transcribe.model, updatedAt: this.now() }, $unset: { claim: '', leaseUntil: '', error: '' } });
+      await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'ok', model: result.model || this.transcribe.model, durationMs: Date.now() - started, costUsd: result.costUsd ?? null } });
+      return payload;
+    } catch (error) {
+      if (cacheId) await this.col('transcripts').updateOne({ _id: cacheId, ...scope, claim }, { $set: { state: 'failed', error: error.code || 'transcription_failed', updatedAt: this.now() }, $unset: { claim: '', leaseUntil: '' } });
+      await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'error', error: error.code || 'transcription_failed', durationMs: Date.now() - started } });
+      throw error;
+    }
   }
   async config(scope) {
     const [tenant, user] = await Promise.all([
@@ -222,20 +296,7 @@ class SupportService {
       await check();
       const payload = this.vault.open(row.payload, row._id);
       if (row.audio && !payload.transcribed) {
-        if (!this.transcribe) fail('transcription_provider_required', 422);
-        const attemptId = crypto.randomUUID(), started = Date.now();
-        const units = { inputTokens: 0, outputTokens: 0, audioSeconds: row.audio.seconds, processingUnits: row.audio.seconds, costUsd: null };
-        await this.col('usage').insertOne({ _id: attemptId, ...scope, conversationId: job.jid, messageId: row._id, model: this.transcribe.model, kind: 'transcription', ...units, result: 'started', at: this.now() });
-        try {
-          const result = await this.transcribe.run(payload.raw, row.audio, { ...scope, jid: job.jid, conversationId: job._id, messageId: row._id });
-          payload.text = text(result.text, 50000); payload.transcribed = true;
-          await check();
-          await this.col('messages').updateOne({ _id: row._id, ...scope }, { $set: { payload: this.vault.seal(payload, row._id) } });
-          await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'ok', model: result.model || this.transcribe.model, durationMs: Date.now() - started, costUsd: result.costUsd ?? null } });
-        } catch (e) {
-          await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'error', error: e.code || 'transcription_failed', durationMs: Date.now() - started } });
-          throw e;
-        }
+        await this.transcribeMessage(scope, row, payload, { jid: job.jid, conversationId: job._id }, check);
       }
       decoded.push({ ...row, text: payload.text });
     }
@@ -375,20 +436,7 @@ class SupportService {
       if (!row.audio) continue;
       const payload = this.vault.open(row.payload, row._id);
       if (payload.transcribed) continue;
-      if (!this.transcribe) fail('transcription_provider_required', 422);
-      const attemptId = crypto.randomUUID(), started = Date.now();
-      await this.col('usage').insertOne({ _id: attemptId, ...scope, conversationId: jid, messageId: row._id, model: this.transcribe.model, kind: 'transcription', inputTokens: 0, outputTokens: 0, audioSeconds: row.audio.seconds, processingUnits: row.audio.seconds, costUsd: null, result: 'started', at: this.now() });
-      try {
-        const result = await this.transcribe.run(payload.raw, row.audio, { ...scope, jid, conversationId: input.destination || 'manual-selection', messageId: row._id });
-        payload.text = text(result.text, 50000); payload.transcribed = true;
-        const sealedPayload = this.vault.seal(payload, row._id);
-        await this.col('messages').updateOne({ _id: row._id, ...scope }, { $set: { payload: sealedPayload } });
-        row.payload = sealedPayload;
-        await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'ok', model: result.model || this.transcribe.model, durationMs: Date.now() - started, costUsd: result.costUsd ?? null } });
-      } catch (error) {
-        await this.col('usage').updateOne({ _id: attemptId }, { $set: { result: 'error', error: error.code || 'transcription_failed', durationMs: Date.now() - started } });
-        throw error;
-      }
+      await this.transcribeMessage(scope, row, payload, { jid, conversationId: input.destination || 'manual-selection' });
     }
     const destination = input.destination === 'new' ? 'new' : text(input.destination, 64);
     let draft = destination === 'new' ? null : await this.col('drafts').findOne({ _id: destination, ...scope, jid: { $in: jids }, state: { $ne: 'merged' } });
