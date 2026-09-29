@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.265 | Fecha: 2026-09-29
+// Asisto | Version: 5.00.268 | Fecha: 2026-09-29
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');

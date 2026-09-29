@@ -1,5 +1,5 @@
 @echo off
-rem Asisto | Version: 5.00.265 | Fecha: 2026-09-29
+rem Asisto | Version: 5.00.268 | Fecha: 2026-09-29
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Instalar.ps1"
 set "ASISTO_EXIT=%ERRORLEVEL%"
 echo.
