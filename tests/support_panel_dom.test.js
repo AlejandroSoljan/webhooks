@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.148 | Fecha: 2026-09-16
+// Asisto | Version: 5.00.265 | Fecha: 2026-09-29
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -57,5 +57,37 @@ test('switching chats clears the old task even when the new contact has no resol
     assert.equal(w.document.querySelector('#editor').hidden, true);
     assert.match(w.document.querySelector('#notice').textContent, /CONFORMA SRL Romina/);
     assert.equal(calls.filter(call => call.action === 'DRAFTS').length, 1);
+  } finally { dom.window.close(); }
+});
+
+test('refreshing the same contact preserves unsaved ticket fields and the selected task', async () => {
+  const dom = new JSDOM(html, { url: 'chrome-extension://test/panel.html', runScripts: 'outside-only' });
+  const w = dom.window;
+  let listener, selected = { jid: '111@lid', name: 'Cliente', refreshAt: 1 };
+  let detailCalls = 0;
+  w.chrome = {
+    tabs: { query: async () => [{ id: 7 }] },
+    storage: { session: { get: async () => ({ 'selection-7': selected }) }, onChanged: { addListener: fn => { listener = fn; } } },
+    runtime: { sendMessage: async message => {
+      if (message.action === 'SESSION') return { data: { tenantId: 'ALSO', userId: 'also', username: 'Alejandro', choices: {} } };
+      if (message.action === 'INDEX') return { data: { owner: 'ALSO:also', chats: [{ jid: '111@lid', name: 'Cliente', count: 2 }], knownChats: [] } };
+      if (message.action === 'DRAFTS') return { data: [{ id: 'first', subject: 'Primera', status: 'pending' }, { id: 'second', subject: 'Segunda', status: 'pending' }] };
+      if (message.action === 'DETAIL') { detailCalls += 1; return { data: { id: message.id, revision: detailCalls + 1, fields: { subject: message.id === 'first' ? 'Primera del servidor' : 'Segunda del servidor' }, source: {}, state: 'pending' } }; }
+      throw Error(message.action);
+    } },
+  };
+  try {
+    w.eval(source); await pause();
+    const second = [...w.document.querySelectorAll('#tasks button')].find(button => button.dataset.id === 'second');
+    second.click(); await pause();
+    const subject = w.document.querySelector('#field-subject');
+    subject.value = 'Cambio todavía no guardado';
+    subject.dispatchEvent(new w.Event('input', { bubbles: true }));
+    selected = { jid: '111@lid', name: 'Cliente', refreshAt: 2 };
+    listener({ 'selection-7': { newValue: selected } }, 'session');
+    await pause();
+    assert.equal(w.document.querySelector('#field-subject').value, 'Cambio todavía no guardado');
+    assert.equal(w.document.querySelector('#tasks button.selected').dataset.id, 'second');
+    assert.match(w.document.querySelector('#notice').textContent, /Conservamos los cambios/);
   } finally { dom.window.close(); }
 });

@@ -1,8 +1,9 @@
-// Asisto | Version: 5.00.130 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.265 | Fecha: 2026-09-29
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, companyTimer, companyGeneration = 0;
 let consumedOpenAt = null;
 let pendingContextRefresh = false;
+const unsavedEdits = new Map();
 let controlTimer, controlGeneration = 0;
 async function loadContactControl() {
   const generation = ++controlGeneration;
@@ -66,14 +67,23 @@ function preferredStage(options, status, savedStageId) {
   return options.some(row => row.id === savedStageId) ? savedStageId : '';
 }
 const definitions = [ ['subject','Nombre breve'], ['contact','Contacto de WhatsApp'], ['company','Empresa'], ['status','Estado en Asisto'], ['category','Categoría'], ['errorType','Error tipo'], ['channel','Vía de contacto'], ['description','Descripción'], ['companyId','ID de empresa en HubSpot (opcional)'], ['contactId','ID de contacto en HubSpot (opcional)'] ];
+function editorFields() {
+  return Object.fromEntries(definitions.map(([key]) => [key, $('field-' + key)?.value || '']));
+}
+function rememberEditorDraft() {
+  if (!current?.id || $('editor').hidden || !$('field-subject')) return;
+  unsavedEdits.set(current.id, { fields: editorFields() });
+}
 function renderFields() {
   $('fields').replaceChildren();
+  const staged = unsavedEdits.get(current.id);
+  const displayedFields = staged?.fields || current.fields;
   for (const [key, title] of definitions) {
     const label = document.createElement('label'); label.textContent = title;
     const values = session.choices?.[key];
     const input = document.createElement(values ? 'select' : key === 'description' ? 'textarea' : 'input'); input.id = 'field-' + key;
     if (values) { for (const value of values) option(input, value, value); }
-    input.value = current.fields[key] || ''; input.maxLength = key === 'description' ? 100000 : 200;
+    input.value = displayedFields[key] || ''; input.maxLength = key === 'description' ? 100000 : 200;
     if (key === 'company') {
       input.setAttribute('list', 'hubspot-company-options'); input.placeholder = 'Escribí para buscar en HubSpot'; input.autocomplete = 'off';
       const list = document.createElement('datalist'); list.id = 'hubspot-company-options'; label.append(input, list); $('fields').append(label);
@@ -114,11 +124,13 @@ async function loadCompanySuggestions(query) {
 function selectSuggestedCompany(value) {
   const match = companySuggestions.get(norm(value)); if (!match) return;
   $('field-company').value = match.name; $('field-companyId').value = match.id; current.fields.company = match.name; current.fields.companyId = match.id;
+  rememberEditorDraft();
 }
 async function detail(id) {
   const generation = ++selectionGeneration;
   const next = await api('DETAIL', { id }); if (generation !== selectionGeneration) return;
   current = next; renderFields(); notice('');
+  if (unsavedEdits.has(id)) notice('Conservamos los cambios que todavía no guardaste.');
   document.querySelectorAll('#tasks button').forEach(button => button.classList.toggle('selected', button.dataset.id === id));
 }
 async function selectContact(jid, draftId = '') {
@@ -136,8 +148,10 @@ async function selectContact(jid, draftId = '') {
   else notice('Este contacto no tiene tareas pendientes.');
 }
 async function refresh() {
+  rememberEditorDraft();
   const generation = selectionGeneration;
   const previous = $('contacts').value;
+  const previousDraft = current?.id || '';
   $('connectionState').textContent = 'Comprobando conexión…';
   owner = ''; current = null; $('editor').hidden = true; $('connect').hidden = true; $('tasks').replaceChildren(); $('contacts').replaceChildren(); $('account').textContent = 'Consultando sesión…';
   try { session = await api('SESSION'); }
@@ -156,16 +170,18 @@ async function refresh() {
   if (generation !== selectionGeneration) return;
   const jid = selected ? selected.jid : previous;
   if (jid && !seen.has(jid)) { const known = (index.knownChats || []).find(chat => chat.jid === jid || chat.aliases?.includes(jid)); option($('contacts'), jid, known?.name || selected?.name || jid); seen.add(jid); }
-  const requestedDraft = selected?.refreshAt !== consumedOpenAt ? selected?.draftId : '';
+  const explicitlyRequestedDraft = selected?.refreshAt !== consumedOpenAt ? selected?.draftId : '';
+  const requestedDraft = explicitlyRequestedDraft || (jid === previous ? previousDraft : '');
   consumedOpenAt = selected?.refreshAt;
   if (seen.has(jid)) { $('contacts').value = jid; await selectContact(jid, requestedDraft); }
   else notice(selected?.name ? 'Conversación actual: ' + selected.name + '. Todavía no se pudo vincular este contacto con sus tareas.' : index.chats.length ? 'Elegí un contacto o pulsá su icono en WhatsApp Web.' : 'Todavía no hay tareas detectadas. Procesá las conversaciones desde Asisto.');
 }
 async function save() {
-  const fields = Object.fromEntries(definitions.map(([key]) => [key, $('field-' + key).value]));
+  const fields = editorFields();
   const action = current.sourceChanged || current.reconciliationRequired ? 'RECONCILE' : 'SAVE';
   const saved = await api(action, { id: current.id, revision: current.revision, fields });
   current.revision = saved.revision; Object.assign(current.fields, saved.fields || fields); current.sourceChanged = false; current.reconciliationRequired = false;
+  unsavedEdits.delete(current.id);
   if (saved.fields) { $('field-subject').value = saved.fields.subject || ''; $('field-description').value = saved.fields.description || ''; }
   $('reviewWarning').hidden = true; notice(action === 'RECONCILE' ? 'Mensajes nuevos incorporados al resumen.' : 'Cambios guardados en Asisto.');
 }
@@ -228,6 +244,8 @@ $('refresh').onclick = () => run(refresh);
 $('contactControl').ontoggle = () => { if ($('contactControl').open) run(loadContactControl); };
 $('controlSearch').oninput = () => { clearTimeout(controlTimer); controlTimer = setTimeout(() => loadContactControl().catch(error => notice('No se pudieron cargar los contactos.', true)), 300); };
 $('contacts').onchange = () => run(() => selectContact($('contacts').value));
+$('editor').addEventListener('input', event => { if (event.target?.id?.startsWith('field-')) rememberEditorDraft(); });
+$('editor').addEventListener('change', event => { if (event.target?.id?.startsWith('field-')) rememberEditorDraft(); });
 $('editor').onsubmit = event => { event.preventDefault(); run(save); };
 $('dismiss').onclick = () => run(async () => {
   await api('DISMISS', { id: current.id, revision: current.revision });
@@ -266,8 +284,8 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'session' || !Object.keys(changes).some(key => key.startsWith('selection-'))) return;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); tabId = tab?.id;
   if (!changes['selection-' + tabId]) return;
-  ++selectionGeneration;
-  current = null; $('contacts').value = ''; $('tasks').replaceChildren(); $('editor').hidden = true; $('hubspot').hidden = true;
+  rememberEditorDraft(); ++selectionGeneration;
+  $('hubspot').hidden = true;
   notice(changes['selection-' + tabId].newValue?.name ? 'Cargando ' + changes['selection-' + tabId].newValue.name + '…' : 'Identificando conversación…');
   if (busy) pendingContextRefresh = true;
   else run(refresh);
