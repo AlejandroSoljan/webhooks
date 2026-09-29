@@ -18,16 +18,19 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
           ? { ok:true,items:[{tenantId:'MSM',eventKey:'catalog.code_lookup',name:'Lectura por código',group:'catalog',unit:'consulta',quantity:3,currency:'ARS',billedAmount:60},{tenantId:'MSM',eventKey:'whatsapp.api_sent',name:'Mensaje enviado por API',group:'whatsapp',unit:'mensaje',quantity:1,currency:'ARS',potentialAmount:20,billedAmount:20}],byDomain:[{tenantId:'MSM',operations:4,billedAmount:{ARS:80}}],byType:[],totals:{byCurrency:{ARS:{billedAmount:80}}} }
         : String(url).includes('/conversations')
           ? { ok: true, items: [], totals: {} }
+        : String(url).includes('/timeline')
+          ? { ok: true, items: [{ date:'2026-09-24',tokens:60,billed:1.2 },{ date:'2026-09-25',tokens:90,billed:1.8 }] }
           : { ok: true, enabled: true, items: [], realItems: [], byTenant: [{tenantId:'MSM',windows:1,messages:2,realMessages:2,byCurrency:{ARS:20}}], totals: {byCurrency:{ARS:20}} };
       return { ok: true, json: async () => body };
     };
     const script = [...dom.window.document.scripts].pop().textContent;
     dom.window.eval(script);
     await tick();
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 4);
     assert.ok(calls.some(url => url.includes('/summary')));
     assert.ok(calls.some(url => url.includes('/api/monetization/summary')));
     assert.ok(calls.some(url => url.includes('/api-message-windows') && url.includes('details=0')));
+    assert.ok(calls.some(url => url.includes('/api/token-control/timeline')));
     assert.ok(!calls.some(url => url.includes('/api-message-windows') && !url.includes('details=0')));
     assert.ok(!calls.some(url => url.includes('/conversations')));
     assert.deepEqual([...dom.window.document.getElementById('fTenant').options].map(option => option.value), ['', 'CARICO', 'MCN', 'RVL']);
@@ -35,6 +38,8 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
     assert.equal(dom.window.document.getElementById('apiMessagesCard').hidden, true);
     assert.match(dom.window.document.body.textContent, /Qué se cobrará por dominio/);
     assert.match(dom.window.document.body.textContent, /Detalle técnico/);
+    assert.match(dom.window.document.body.textContent, /Evolución del consumo/);
+    assert.match(dom.window.document.getElementById('domainChart').textContent, /150 tokens/);
     assert.match(dom.window.document.getElementById('rows').textContent, /Ayuda de Manager/);
     assert.match(dom.window.document.getElementById('rows').textContent, /Lectura por código/);
     assert.match(dom.window.document.getElementById('rows').textContent, /Mensajes enviados por API/);

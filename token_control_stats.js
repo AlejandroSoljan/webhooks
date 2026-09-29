@@ -930,6 +930,66 @@ async function buildTokenSummary({
     totals
   };
 }
+
+async function buildTokenTimeline({ tenantId = "", from = "", to = "", types = "", channels = "", isSuper = false } = {}) {
+  const db = await getDb();
+  const tenantIds = await resolveUsageTenantIds(db, tenantId);
+  const { match, safeTenant } = buildUsageMatch({ tenantId, tenantIds, from, to });
+  const safeTypes = parseCsvFilter(types, ["pedidos", "conversacional", "ayuda", "tareas_whatsapp"]);
+  const safeChannels = parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages", "help_api"]);
+
+  if (String(types).toLowerCase() === "none" || String(channels).toLowerCase() === "none") {
+    return { ok: true, filters: { tenantId: safeTenant || null, from: from || null, to: to || null }, items: [] };
+  }
+
+  // Los filtros por tipo/canal dependen de la conversación vinculada. En ese caso
+  // reutilizamos el detalle relacionado para que la línea coincida con el reporte.
+  if (safeTypes.length || safeChannels.length) {
+    const detail = await buildTokenConversationSummary({ tenantId, from, to, types, channels, limit: 5000, isSuper });
+    const grouped = new Map();
+    for (const row of (detail.items || [])) {
+      const date = String(row.last_at || row.first_at || '').slice(0, 10);
+      if (!date) continue;
+      const acc = grouped.get(date) || { date, tokens: 0, billed: 0 };
+      acc.tokens += Number(row.total_tokens || 0);
+      acc.billed += Number(row.billed_cost || 0);
+      grouped.set(date, acc);
+    }
+    return { ok: true, filters: { tenantId: safeTenant || null, from: from || null, to: to || null }, items: [...grouped.values()].sort((a, b) => a.date.localeCompare(b.date)).map(row => ({ ...row, billed: Number(row.billed.toFixed(6)) })) };
+  }
+
+  const rows = await db.collection("ai_token_usage_log").aggregate([
+    { $match: match },
+    { $group: {
+      _id: { date: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: "America/Argentina/Buenos_Aires" } }, tenantId: "$tenantId" },
+      message_input_tokens: { $sum: { $cond: [{ $eq: ["$kind", "message"] }, { $ifNull: ["$inputTokens", 0] }, 0] } },
+      message_output_tokens: { $sum: { $cond: [{ $eq: ["$kind", "message"] }, { $ifNull: ["$outputTokens", 0] }, 0] } },
+      help_input_tokens: { $sum: { $cond: [{ $eq: [{ $ifNull: ["$channelType", "$meta.channelType"] }, "help_api"] }, { $ifNull: ["$inputTokens", 0] }, 0] } },
+      help_output_tokens: { $sum: { $cond: [{ $eq: [{ $ifNull: ["$channelType", "$meta.channelType"] }, "help_api"] }, { $ifNull: ["$outputTokens", 0] }, 0] } },
+      tasks_ws_input_tokens: taskTokenSum(TASKS_WS_MODEL_PATTERN, "$inputTokens", { $ifNull: ["$channelType", "$meta.channelType"] }),
+      tasks_ws_output_tokens: taskTokenSum(TASKS_WS_MODEL_PATTERN, "$outputTokens", { $ifNull: ["$channelType", "$meta.channelType"] }),
+      tasks_ws_luna_input_tokens: taskTokenSum(/^gpt-5\.6-luna(?:-|$)/, "$inputTokens", { $ifNull: ["$channelType", "$meta.channelType"] }),
+      tasks_ws_luna_output_tokens: taskTokenSum(/^gpt-5\.6-luna(?:-|$)/, "$outputTokens", { $ifNull: ["$channelType", "$meta.channelType"] }),
+      audio_input_tokens: { $sum: { $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$inputTokens", 0] }, 0] } },
+      audio_output_tokens: { $sum: { $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$outputTokens", 0] }, 0] } },
+      audio_cost_usd: audioCostSum(),
+      total_tokens: { $sum: { $ifNull: ["$totalTokens", 0] } },
+      models: { $addToSet: "$model" }
+    } },
+    { $sort: { "_id.date": 1 } }
+  ]).toArray();
+  const cfg = await loadTenantCosts(db, rows.map(row => String(row._id?.tenantId || '')));
+  const byDate = new Map();
+  for (const row of rows) {
+    const date = String(row._id?.date || '');
+    const tenantKey = String(row._id?.tenantId || '');
+    const acc = byDate.get(date) || { date, tokens: 0, billed: 0 };
+    acc.tokens += Number(row.total_tokens || 0);
+    acc.billed += calculateBillableCost(row, cfg.get(tenantKey) || {});
+    byDate.set(date, acc);
+  }
+  return { ok: true, filters: { tenantId: safeTenant || null, from: from || null, to: to || null }, items: [...byDate.values()].map(row => ({ ...row, billed: Number(row.billed.toFixed(6)) })) };
+}
 function normalizeStatus(conv, order) {
   const raw = String(
     order?.estado ||
@@ -1520,6 +1580,7 @@ function renderTokenControlPage(user, tenants = []) {
     .dashboardGrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}.chartCard{min-height:300px}.barChart{display:grid;gap:12px;margin-top:18px}.barRow{display:grid;grid-template-columns:minmax(120px,190px) minmax(120px,1fr) auto;gap:10px;align-items:center}.barLabel{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:700}.barTrack{height:12px;border-radius:99px;background:#e8eef5;overflow:hidden}.barFill{height:100%;border-radius:99px;background:linear-gradient(90deg,#10bfa9,#087d72);min-width:2px}.barValue{font-weight:800;font-variant-numeric:tabular-nums}.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px}.legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}.emptyChart{display:grid;place-items:center;min-height:190px;color:var(--muted);text-align:center}.currencyTotals{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.currencyTotals span{background:#e9f7f5;color:#07685f;border-radius:999px;padding:6px 10px;font-weight:800}
     .healthStrip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.healthItem{display:flex;gap:11px;align-items:center;background:#fff;border:1px solid var(--border);border-radius:14px;padding:13px 14px}.healthIcon{width:34px;height:34px;display:grid;place-items:center;border-radius:10px;background:#e9f7f5;color:var(--ok);font-weight:900}.healthItem.warn .healthIcon{background:#fff7ed;color:var(--warn)}.healthItem.danger .healthIcon{background:#fef2f2;color:var(--danger)}.healthItem b{display:block;font-size:14px}.healthItem span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
     .billingChart{display:grid;gap:14px;margin-top:15px}.billingRow{display:grid;grid-template-columns:minmax(90px,130px) 1fr auto;gap:12px;align-items:center}.billingBars{display:grid;gap:5px}.billingTrack{height:10px;border-radius:99px;background:#e8eef5;overflow:hidden}.billingFill{height:100%;min-width:2px;border-radius:99px}.billingFill.cost{background:#94a3b8}.billingFill.charge{background:linear-gradient(90deg,#10bfa9,#087d72)}.billingAmounts{text-align:right;font-size:12px;line-height:1.5;white-space:nowrap}.marginBadge{display:inline-flex;padding:3px 8px;border-radius:999px;background:#dcfce7;color:#166534;font-size:11px;font-weight:800}.marginBadge.negative{background:#fee2e2;color:#991b1b}
+    .timelineChart{min-height:220px;margin-top:8px;display:grid;place-items:stretch}.timelineChart svg{width:100%;height:230px;overflow:visible}.timelineGrid{stroke:#e2e8f0;stroke-width:1}.timelineTokens{fill:none;stroke:#2563eb;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.timelineBilling{fill:none;stroke:#0f9488;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.timelinePoint.tokens{fill:#2563eb}.timelinePoint.billing{fill:#0f9488}.axisLabel{fill:#64748b;font-size:11px}.timelineSummary{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:6px;color:var(--muted);font-size:12px}.timelineSummary b{color:var(--text)}
     .tableWrap{overflow:auto;border:1px solid var(--border);border-radius:14px}
     table{width:100%;border-collapse:collapse;background:#fff;min-width:${isSuper ? '940px' : '760px'}}
     th,td{padding:12px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle;font-size:14px}
@@ -1618,7 +1679,7 @@ function renderTokenControlPage(user, tenants = []) {
 
     <div class="dashboardGrid">
       <div class="card chartCard"><div class="sectionTitle"><div><h2>Consumo por funcionalidad</h2><div class="small">Cantidad de operaciones del período.</div></div></div><div class="barChart" id="featureChart"><div class="emptyChart">Todavía no hay consumos medidos.</div></div></div>
-      <div class="card chartCard"><div class="sectionTitle"><div><h2>Costo vs. cobro de IA por cliente</h2><div class="small">Comparación directa en dólares y margen aplicado. Los mensajes API se detallan aparte en la tabla.</div></div><div class="legend"><span><i style="background:#94a3b8"></i>Costo real</span><span><i style="background:#0f9488"></i>A cobrar</span></div></div><div class="billingChart" id="domainChart"><div class="emptyChart">Todavía no hay consumos de IA para este período.</div></div></div>
+      <div class="card chartCard"><div class="sectionTitle"><div><h2>Evolución del consumo</h2><div class="small">Tokens utilizados e importe de IA a cobrar durante el rango seleccionado.</div></div><div class="legend"><span><i style="background:#2563eb"></i>Tokens</span><span><i style="background:#0f9488"></i>Cobro IA (USD)</span></div></div><div class="timelineChart" id="domainChart"><div class="emptyChart">Todavía no hay consumos de IA para este período.</div></div></div>
     </div>
 
     <div class="card">
@@ -1827,14 +1888,24 @@ function renderTokenControlPage(user, tenants = []) {
     const card=function(kind,icon,title,detail){return '<div class="healthItem '+kind+'"><div class="healthIcon">'+icon+'</div><div><b>'+esc(title)+'</b><span>'+esc(detail)+'</span></div></div>';};
     billingHealth.innerHTML=card(disabled?'danger':'','✓',configured+' clientes listos',disabled?'Hay '+disabled+' con tarifa pendiente.':'Configuración de cobro completa.')+card(negative?'danger':'','%',negative?negative+' márgenes negativos':'Sin márgenes negativos',negative?'Requieren corrección antes de facturar.':'El cobro de IA cubre el costo real.')+card('','≡',fmtInt(rows.length)+' clientes en el reporte','El detalle técnico queda oculto hasta solicitarlo.');
   }
-  function renderBillingChart(items){
+  function renderTimeline(j){
     if(!domainChart)return;
-    const rows=(items||[]).filter(function(x){return num(x.real_cost)>0||num(x.billed_cost)>0;}).sort(function(a,b){return num(b.billed_cost)-num(a.billed_cost);}).slice(0,10);
-    const max=Math.max(1,...rows.map(function(x){return Math.max(num(x.real_cost),num(x.billed_cost));}));
-    domainChart.innerHTML=rows.length?rows.map(function(x){
-      const cost=num(x.real_cost),charge=num(x.billed_cost),margin=charge-cost,pct=cost>0?margin/cost*100:0;
-      return '<div class="billingRow"><div class="barLabel" title="'+esc(x.tenantId)+'">'+esc(x.tenantId)+'</div><div class="billingBars"><div class="billingTrack" title="Costo real '+esc(fmtMoney(cost))+'"><div class="billingFill cost" style="width:'+Math.max(1,cost/max*100).toFixed(1)+'%"></div></div><div class="billingTrack" title="A cobrar '+esc(fmtMoney(charge))+'"><div class="billingFill charge" style="width:'+Math.max(1,charge/max*100).toFixed(1)+'%"></div></div></div><div class="billingAmounts">'+esc(fmtMoney(cost))+' / '+esc(fmtMoney(charge))+'<br><span class="marginBadge '+(margin<0?'negative':'')+'">Margen '+pct.toFixed(0)+'%</span></div></div>';
-    }).join(''):'<div class="emptyChart">Todavía no hay consumos de IA para este período.</div>';
+    const rows=(j&&Array.isArray(j.items)?j.items:[]).slice().sort(function(a,b){return String(a.date).localeCompare(String(b.date));});
+    if(!rows.length){domainChart.innerHTML='<div class="emptyChart">Todavía no hay consumos de IA para este período.</div>';return;}
+    const width=720,height=205,left=48,right=16,top=15,bottom=30,plotW=width-left-right,plotH=height-top-bottom;
+    const maxTokens=Math.max(1,...rows.map(function(x){return num(x.tokens);}));
+    const maxBilled=Math.max(0.000001,...rows.map(function(x){return num(x.billed);}));
+    const x=function(i){return left+(rows.length===1?plotW/2:i*plotW/(rows.length-1));};
+    const yToken=function(v){return top+plotH-(num(v)/maxTokens*plotH);};
+    const yBill=function(v){return top+plotH-(num(v)/maxBilled*plotH);};
+    const path=function(getY){return rows.map(function(row,i){return (i?'L':'M')+x(i).toFixed(1)+' '+getY(row).toFixed(1);}).join(' ');};
+    const tokenPath=path(function(row){return yToken(row.tokens);}),billPath=path(function(row){return yBill(row.billed);});
+    const grid=[0,.25,.5,.75,1].map(function(p){const y=top+plotH*p;return '<line class="timelineGrid" x1="'+left+'" y1="'+y+'" x2="'+(width-right)+'" y2="'+y+'"/>';}).join('');
+    const step=Math.max(1,Math.ceil(rows.length/5));
+    const labels=rows.map(function(row,i){if(i%step&&i!==rows.length-1)return '';const d=String(row.date||'');return '<text class="axisLabel" text-anchor="middle" x="'+x(i)+'" y="'+(height-7)+'">'+esc(d.slice(8,10)+'/'+d.slice(5,7))+'</text>';}).join('');
+    const points=rows.map(function(row,i){const title=esc(String(row.date)+' · '+fmtInt(row.tokens)+' tokens · '+fmtMoney(row.billed));return '<circle class="timelinePoint tokens" cx="'+x(i)+'" cy="'+yToken(row.tokens)+'" r="3"><title>'+title+'</title></circle><circle class="timelinePoint billing" cx="'+x(i)+'" cy="'+yBill(row.billed)+'" r="3"><title>'+title+'</title></circle>';}).join('');
+    const totalTokens=rows.reduce(function(sum,row){return sum+num(row.tokens);},0),totalBilled=rows.reduce(function(sum,row){return sum+num(row.billed);},0);
+    domainChart.innerHTML='<svg viewBox="0 0 '+width+' '+height+'" role="img" aria-label="Evolución de tokens y cobro de IA">'+grid+'<path class="timelineTokens" d="'+tokenPath+'"/><path class="timelineBilling" d="'+billPath+'"/>'+points+labels+'</svg><div class="timelineSummary"><span>Total: <b>'+fmtInt(totalTokens)+' tokens</b></span><span>Cobro IA: <b>'+fmtMoney(totalBilled)+'</b></span><span>'+esc(rows[0].date)+' a '+esc(rows[rows.length-1].date)+'</span></div>';
   }
   function amountStackHtml(aiUsd,apiMap){
     const apiKeys=Object.keys(apiMap||{}).filter(function(c){return Math.abs(num(apiMap[c]))>0;});
@@ -2058,7 +2129,6 @@ function renderTokenControlPage(user, tenants = []) {
     const items=Array.from(merged.values()).sort(function(a,b){return String(a.tenantId||'').localeCompare(String(b.tenantId||''));});
 
     renderBillingHealth(items);
-    renderBillingChart(items);
 
     kpiTokens.textContent = fmtInt(totals.total_tokens || 0);
     const headlineMap=items.reduce(function(acc,item){return mergeAmountMaps(acc,billingTotalMap(item));},{});
@@ -2250,7 +2320,8 @@ function renderTokenControlPage(user, tenants = []) {
       const result = await Promise.all([
         getJson(summaryUrl),
         getJson('/api/monetization/summary?'+monetizationQuery.toString()),
-        getJson('/api/token-control/api-message-windows?'+summaryQuery+'&details=0')
+        getJson('/api/token-control/api-message-windows?'+summaryQuery+'&details=0'),
+        getJson('/api/token-control/timeline?'+summaryQuery)
       ]);
       if(sequence!==loadSequence)return;
       lastTokenSummary=result[0];
@@ -2258,6 +2329,7 @@ function renderTokenControlPage(user, tenants = []) {
       lastApiSummary=result[2];
       renderDomainSummary(lastTokenSummary,lastApiSummary,lastMonetizationSummary);
       renderMonetization(lastMonetizationSummary);
+      renderTimeline(result[3]);
     } catch(e){
       if(sequence!==loadSequence)return;
       msgEl.textContent = e && e.message ? e.message : String(e);
@@ -2364,6 +2436,28 @@ function mountTokenControlRoutes(app, auth) {
     }
   });
 
+  app.get("/api/token-control/timeline", requireAuth, requireTokenControlAccess, async (req, res) => {
+    try {
+      const role = String(req.user?.role || "").toLowerCase();
+      const isSuper = role === "superadmin";
+      const tenantId = isSuper
+        ? String(req.query?.tenantId || "").trim()
+        : (typeof auth.resolveTenantId === "function" ? auth.resolveTenantId(req) : String(req.user?.tenantId || "").trim());
+      const data = await buildTokenTimeline({
+        tenantId,
+        from: String(req.query?.from || "").trim(),
+        to: String(req.query?.to || "").trim(),
+        types: String(req.query?.types || "").trim(),
+        channels: String(req.query?.channels || "").trim(),
+        isSuper
+      });
+      return res.json(data);
+    } catch (e) {
+      console.error("[token-control] timeline error:", e);
+      return res.status(500).json({ ok: false, error: "internal" });
+    }
+  });
+
   app.get("/api/token-control/conversations", requireAuth, requireTokenControlAccess, async (req, res) => {
     try {
       const role = String(req.user?.role || "").toLowerCase();
@@ -2423,6 +2517,7 @@ module.exports = {
   loadTenantCosts,
   loadBillingOwners,
   buildTokenSummary,
+  buildTokenTimeline,
   buildTokenConversationSummary,
   buildApiMessageWindowBilling,
   buildUsageMatch,
