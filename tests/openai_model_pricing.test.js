@@ -9,6 +9,8 @@ test('precios oficiales se guardan por 1K tokens', () => {
   assert.deepEqual(textModelPrice('gpt-5.6-terra'), { input: 0.002, output: 0.012 });
   assert.deepEqual(textModelPrice('gpt-5.4'), { input: 0.0025, output: 0.015 });
   assert.deepEqual(textModelPrice('gpt-5.4-mini'), { input: 0.00075, output: 0.0045 });
+  assert.deepEqual(textModelPrice('gpt-4o-mini'), { input: 0.00015, output: 0.0006 });
+  assert.deepEqual(textModelPrice('gpt-4o-mini-2024-07-18'), { input: 0.00015, output: 0.0006 });
 });
 
 test('snapshots usan el precio de su modelo y audio conserva unidad por minuto', () => {

@@ -1,7 +1,7 @@
-// Asisto | Version: 5.00.233 | Fecha: 2026-09-24
+// Asisto | Version: 5.00.263 | Fecha: 2026-09-28
 
 const OPENAI_PRICING_SOURCE = 'https://developers.openai.com/api/docs/pricing';
-const OPENAI_PRICING_VERIFIED_AT = '2026-09-24';
+const OPENAI_PRICING_VERIFIED_AT = '2026-09-28';
 
 // Valores oficiales Standard de OpenAI convertidos de USD por 1M a USD por 1K.
 const TEXT_MODEL_PRICES_PER_1K = Object.freeze({
@@ -13,7 +13,8 @@ const TEXT_MODEL_PRICES_PER_1K = Object.freeze({
   'gpt-5.6-luna': { input: 0.0002, output: 0.0012 },
   'gpt-5.4': { input: 0.0025, output: 0.015 },
   'gpt-5.4-mini': { input: 0.00075, output: 0.0045 },
-  'gpt-5.4-nano': { input: 0.0002, output: 0.00125 }
+  'gpt-5.4-nano': { input: 0.0002, output: 0.00125 },
+  'gpt-4o-mini': { input: 0.00015, output: 0.0006 }
 });
 
 const AUDIO_MODEL_PRICES = Object.freeze({

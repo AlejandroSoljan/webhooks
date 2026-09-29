@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.177 | Fecha: 2026-09-20
+// Asisto | Version: 5.00.263 | Fecha: 2026-09-28
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { asistoTitleAnalyzer } = require('../src/support/title_analyzer');
@@ -32,7 +32,7 @@ test('tenant AI uses its dedicated tasks model and returns one metered summary',
   assert.equal(result.totalTokens, 50);
 });
 
-test('tasks default to mini without inheriting the conversational model', async () => {
+test('tasks default to gpt-4o-mini without inheriting the conversational model', async () => {
   let request;
   const analyzer = asistoTitleAnalyzer({ OPENAI_API_KEY_TAREAS_WS: 'fixture-key', CHAT_MODEL: 'expensive-conversational-model' }, {
     runtimeFor: async () => ({}), configFor: async () => ({ CHAT_MODEL: 'another-conversational-model' }),
@@ -42,5 +42,5 @@ test('tasks default to mini without inheriting the conversational model', async 
     } } } }),
   });
   await analyzer.run([{ fromMe:false, text:'No imprime' }], { tenantId:'ALSO' });
-  assert.equal(request.model, 'gpt-5.4-mini');
+  assert.equal(request.model, 'gpt-4o-mini');
 });
