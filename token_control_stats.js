@@ -1517,7 +1517,9 @@ function renderTokenControlPage(user, tenants = []) {
     .kpi{background:#fff;border:1px solid var(--border);border-radius:14px;padding:14px}
     .kpi .t{font-size:12px;color:var(--muted);margin-bottom:6px}
     .kpi .v{font-size:25px;font-weight:800;line-height:1.1}
-    .dashboardGrid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(320px,.85fr);gap:12px}.chartCard{min-height:300px}.barChart{display:grid;gap:12px;margin-top:18px}.barRow{display:grid;grid-template-columns:minmax(120px,190px) minmax(120px,1fr) auto;gap:10px;align-items:center}.barLabel{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:700}.barTrack{height:12px;border-radius:99px;background:#e8eef5;overflow:hidden}.barFill{height:100%;border-radius:99px;background:linear-gradient(90deg,#10bfa9,#087d72);min-width:2px}.barValue{font-weight:800;font-variant-numeric:tabular-nums}.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px}.legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}.emptyChart{display:grid;place-items:center;min-height:190px;color:var(--muted);text-align:center}.currencyTotals{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.currencyTotals span{background:#e9f7f5;color:#07685f;border-radius:999px;padding:6px 10px;font-weight:800}
+    .dashboardGrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}.chartCard{min-height:300px}.barChart{display:grid;gap:12px;margin-top:18px}.barRow{display:grid;grid-template-columns:minmax(120px,190px) minmax(120px,1fr) auto;gap:10px;align-items:center}.barLabel{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:700}.barTrack{height:12px;border-radius:99px;background:#e8eef5;overflow:hidden}.barFill{height:100%;border-radius:99px;background:linear-gradient(90deg,#10bfa9,#087d72);min-width:2px}.barValue{font-weight:800;font-variant-numeric:tabular-nums}.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px}.legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}.emptyChart{display:grid;place-items:center;min-height:190px;color:var(--muted);text-align:center}.currencyTotals{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.currencyTotals span{background:#e9f7f5;color:#07685f;border-radius:999px;padding:6px 10px;font-weight:800}
+    .healthStrip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.healthItem{display:flex;gap:11px;align-items:center;background:#fff;border:1px solid var(--border);border-radius:14px;padding:13px 14px}.healthIcon{width:34px;height:34px;display:grid;place-items:center;border-radius:10px;background:#e9f7f5;color:var(--ok);font-weight:900}.healthItem.warn .healthIcon{background:#fff7ed;color:var(--warn)}.healthItem.danger .healthIcon{background:#fef2f2;color:var(--danger)}.healthItem b{display:block;font-size:14px}.healthItem span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+    .billingChart{display:grid;gap:14px;margin-top:15px}.billingRow{display:grid;grid-template-columns:minmax(90px,130px) 1fr auto;gap:12px;align-items:center}.billingBars{display:grid;gap:5px}.billingTrack{height:10px;border-radius:99px;background:#e8eef5;overflow:hidden}.billingFill{height:100%;min-width:2px;border-radius:99px}.billingFill.cost{background:#94a3b8}.billingFill.charge{background:linear-gradient(90deg,#10bfa9,#087d72)}.billingAmounts{text-align:right;font-size:12px;line-height:1.5;white-space:nowrap}.marginBadge{display:inline-flex;padding:3px 8px;border-radius:999px;background:#dcfce7;color:#166534;font-size:11px;font-weight:800}.marginBadge.negative{background:#fee2e2;color:#991b1b}
     .tableWrap{overflow:auto;border:1px solid var(--border);border-radius:14px}
     table{width:100%;border-collapse:collapse;background:#fff;min-width:${isSuper ? '940px' : '760px'}}
     th,td{padding:12px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle;font-size:14px}
@@ -1542,7 +1544,7 @@ function renderTokenControlPage(user, tenants = []) {
     .warnBox{padding:10px 12px;border-radius:12px;background:#fffbeb;color:#92400e;border:1px solid #fde68a;font-size:13px}
     #msg{min-height:20px}
     @media (max-width:1100px){.kpis,.kpis.detail{grid-template-columns:repeat(2,minmax(0,1fr))}.dashboardGrid{grid-template-columns:1fr}}
-    @media (max-width:760px){.kpis,.kpis.detail{grid-template-columns:1fr}}
+    @media (max-width:760px){.kpis,.kpis.detail,.healthStrip{grid-template-columns:1fr}.billingRow{grid-template-columns:90px 1fr}.billingAmounts{grid-column:2;text-align:left}}
   </style>
 </head>
 <body>
@@ -1600,6 +1602,10 @@ function renderTokenControlPage(user, tenants = []) {
       <div class="kpi"><div class="t">Último uso</div><div class="v" id="kpiLastUse" style="font-size:16px">-</div></div>`}
     </div>
 
+    <div class="healthStrip" id="billingHealth">
+      <div class="healthItem"><div class="healthIcon">✓</div><div><b>Revisando configuración</b><span>Calculando el estado de facturación.</span></div></div>
+    </div>
+
     <div class="card">
       <div class="sectionTitle"><div><h2>Consumos monetizables</h2><div class="small">Operaciones registradas con la tarifa vigente de cada dominio. Los cargos sólo se aplican cuando “Cobrar consumos” está habilitado.</div></div></div>
       <div class="kpis detail">
@@ -1612,7 +1618,7 @@ function renderTokenControlPage(user, tenants = []) {
 
     <div class="dashboardGrid">
       <div class="card chartCard"><div class="sectionTitle"><div><h2>Consumo por funcionalidad</h2><div class="small">Cantidad de operaciones del período.</div></div></div><div class="barChart" id="featureChart"><div class="emptyChart">Todavía no hay consumos medidos.</div></div></div>
-      <div class="card chartCard"><div class="sectionTitle"><div><h2>Comparativa por dominio</h2><div class="small">Operaciones registradas por cada dominio.</div></div></div><div class="barChart" id="domainChart"><div class="emptyChart">Todavía no hay consumos medidos.</div></div></div>
+      <div class="card chartCard"><div class="sectionTitle"><div><h2>Costo vs. cobro de IA por cliente</h2><div class="small">Comparación directa en dólares y margen aplicado. Los mensajes API se detallan aparte en la tabla.</div></div><div class="legend"><span><i style="background:#94a3b8"></i>Costo real</span><span><i style="background:#0f9488"></i>A cobrar</span></div></div><div class="billingChart" id="domainChart"><div class="emptyChart">Todavía no hay consumos de IA para este período.</div></div></div>
     </div>
 
     <div class="card">
@@ -1748,7 +1754,7 @@ function renderTokenControlPage(user, tenants = []) {
   const kpiCompleted = document.getElementById('kpiCompleted');
   const kpiAvgConversation = document.getElementById('kpiAvgConversation');
   const kpiAvgBilled = document.getElementById('kpiAvgBilled');
-  const kpiMonOperations=document.getElementById('kpiMonOperations'),kpiMonCredits=document.getElementById('kpiMonCredits'),kpiMonReal=document.getElementById('kpiMonReal'),kpiMonBilled=document.getElementById('kpiMonBilled'),monCurrencies=document.getElementById('monCurrencies'),featureChart=document.getElementById('featureChart'),domainChart=document.getElementById('domainChart');
+  const kpiMonOperations=document.getElementById('kpiMonOperations'),kpiMonCredits=document.getElementById('kpiMonCredits'),kpiMonReal=document.getElementById('kpiMonReal'),kpiMonBilled=document.getElementById('kpiMonBilled'),monCurrencies=document.getElementById('monCurrencies'),featureChart=document.getElementById('featureChart'),domainChart=document.getElementById('domainChart'),billingHealth=document.getElementById('billingHealth');
   const btnReload = document.getElementById('btnReload');
   const btnLoadConversations = document.getElementById('btnLoadConversations');
   const btnLoadMessages = document.getElementById('btnLoadMessages');
@@ -1810,7 +1816,25 @@ function renderTokenControlPage(user, tenants = []) {
     root.innerHTML=rows.length?rows.map(function(x){const v=num(value(x));return '<div class="barRow"><div class="barLabel" title="'+esc(label(x))+'">'+esc(label(x))+'</div><div class="barTrack"><div class="barFill" style="width:'+Math.max(1,v/max*100).toFixed(1)+'%"></div></div><div class="barValue">'+fmtInt(v)+'</div></div>';}).join(''):'<div class="emptyChart">Todavía no hay consumos medidos para este período.</div>';
   }
   function renderMonetization(j){
-    const totals=j&&j.totals||{};kpiMonOperations.textContent=fmtInt(totals.operations);kpiMonCredits.textContent=fmtInt(totals.credits);kpiMonReal.textContent=fmtMoney(totals.realCost);renderBars(featureChart,j&&j.byType,function(x){return x.name||x.eventKey;},function(x){return x.quantity;});renderBars(domainChart,j&&j.byDomain,function(x){return x.tenantId;},function(x){return x.operations;});
+    const totals=j&&j.totals||{};kpiMonOperations.textContent=fmtInt(totals.operations);kpiMonCredits.textContent=fmtInt(totals.credits);kpiMonReal.textContent=fmtMoney(totals.realCost);renderBars(featureChart,j&&j.byType,function(x){return x.name||x.eventKey;},function(x){return x.quantity;});
+  }
+  function renderBillingHealth(items){
+    if(!billingHealth)return;
+    const rows=Array.isArray(items)?items:[];
+    const disabled=rows.filter(function(x){return num(x.total_tokens)>0&&x.billing_configured===false;}).length;
+    const negative=rows.filter(function(x){return num(x.gross_margin)<-0.0000005;}).length;
+    const configured=Math.max(0,rows.length-disabled);
+    const card=function(kind,icon,title,detail){return '<div class="healthItem '+kind+'"><div class="healthIcon">'+icon+'</div><div><b>'+esc(title)+'</b><span>'+esc(detail)+'</span></div></div>';};
+    billingHealth.innerHTML=card(disabled?'danger':'','✓',configured+' clientes listos',disabled?'Hay '+disabled+' con tarifa pendiente.':'Configuración de cobro completa.')+card(negative?'danger':'','%',negative?negative+' márgenes negativos':'Sin márgenes negativos',negative?'Requieren corrección antes de facturar.':'El cobro de IA cubre el costo real.')+card('','≡',fmtInt(rows.length)+' clientes en el reporte','El detalle técnico queda oculto hasta solicitarlo.');
+  }
+  function renderBillingChart(items){
+    if(!domainChart)return;
+    const rows=(items||[]).filter(function(x){return num(x.real_cost)>0||num(x.billed_cost)>0;}).sort(function(a,b){return num(b.billed_cost)-num(a.billed_cost);}).slice(0,10);
+    const max=Math.max(1,...rows.map(function(x){return Math.max(num(x.real_cost),num(x.billed_cost));}));
+    domainChart.innerHTML=rows.length?rows.map(function(x){
+      const cost=num(x.real_cost),charge=num(x.billed_cost),margin=charge-cost,pct=cost>0?margin/cost*100:0;
+      return '<div class="billingRow"><div class="barLabel" title="'+esc(x.tenantId)+'">'+esc(x.tenantId)+'</div><div class="billingBars"><div class="billingTrack" title="Costo real '+esc(fmtMoney(cost))+'"><div class="billingFill cost" style="width:'+Math.max(1,cost/max*100).toFixed(1)+'%"></div></div><div class="billingTrack" title="A cobrar '+esc(fmtMoney(charge))+'"><div class="billingFill charge" style="width:'+Math.max(1,charge/max*100).toFixed(1)+'%"></div></div></div><div class="billingAmounts">'+esc(fmtMoney(cost))+' / '+esc(fmtMoney(charge))+'<br><span class="marginBadge '+(margin<0?'negative':'')+'">Margen '+pct.toFixed(0)+'%</span></div></div>';
+    }).join(''):'<div class="emptyChart">Todavía no hay consumos de IA para este período.</div>';
   }
   function amountStackHtml(aiUsd,apiMap){
     const apiKeys=Object.keys(apiMap||{}).filter(function(c){return Math.abs(num(apiMap[c]))>0;});
@@ -2032,6 +2056,9 @@ function renderTokenControlPage(user, tenants = []) {
     monDomains.forEach(function(domain){const sourceKey=String(domain.tenantId||''),key=ownerOf(sourceKey),it=ensure(key);it.monetization_amounts=mergeAmountMaps(it.monetization_amounts,domain.billedAmount||{});it.monetization_operations+=num(domain.operations);it.included_credits+=num(domain.includedCreditsApplied);it.last_at=newerDate(it.last_at,domain.lastAt);});
     monItems.forEach(function(item){const sourceKey=String(item.tenantId||''),key=ownerOf(sourceKey),it=ensure(key);it.monetization_items.push(Object.assign({},item,{sourceTenantId:sourceKey,tenantId:key}));});
     const items=Array.from(merged.values()).sort(function(a,b){return String(a.tenantId||'').localeCompare(String(b.tenantId||''));});
+
+    renderBillingHealth(items);
+    renderBillingChart(items);
 
     kpiTokens.textContent = fmtInt(totals.total_tokens || 0);
     const headlineMap=items.reduce(function(acc,item){return mergeAmountMaps(acc,billingTotalMap(item));},{});
