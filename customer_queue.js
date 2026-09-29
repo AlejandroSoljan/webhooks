@@ -110,7 +110,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     const current = await db.collection('queue_tickets').findOne({ tenantId: doc.tenantId, branchId: doc.branchId, dayKey: doc.dayKey, sectorId: doc.sectorId, status: 'CALLED' });
     return { ...publicTicket(doc), peopleAhead: ahead, estimatedMinutes: ahead * 5, currentDisplay: current?.displayNumber || '—', createdAt: doc.createdAt };
   }
-  for (const mode of ['kiosk', 'display']) app.get('/customer-app/:tenant/' + mode, wrap(async (req, res) => {
+  for (const mode of ['kiosk', 'display']) app.get(mode === 'display' ? ['/customer-app/:tenant/display', '/ui/turnero/:tenant/display'] : '/customer-app/:tenant/kiosk', wrap(async (req, res) => {
     const t = tenant(req.params.tenant);
     if (mode === 'kiosk' && !isOpen(t) && !allowed(req, t)) return res.redirect('/login?to=' + encodeURIComponent(req.originalUrl));
     res.type('html').send(queuePage(t, mode));
