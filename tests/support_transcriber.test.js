@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.149 | Fecha: 2026-09-17
+// Asisto | Version: 5.00.267 | Fecha: 2026-09-29
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { asistoTranscriber } = require('../src/support/transcriber');
@@ -17,6 +17,7 @@ test('support uses the exclusive tareas WS key and the existing Asisto usage pat
   assert.equal(call.buffer.toString(), 'audio-fixture');
   assert.equal(call.transcriptionTimeoutMs, 60000);
   assert.equal(call.audioDurationSeconds, 5);
+  assert.equal(call.transcribeModel, 'gpt-4o-mini-transcribe');
   assert.equal(result.text, 'Manager no abre'); assert.equal(result.model, 'whisper-1');
   assert.equal(result.costUsd, 0.0005);
   await assert.rejects(() => provider.run('', {}, {}), /authentication_required/);

@@ -1,5 +1,14 @@
-// Asisto | Version: 5.00.065 | Fecha: 2026-09-08
+// Asisto | Version: 5.00.267 | Fecha: 2026-09-29
+const crypto = require('node:crypto');
 const { scopedId, fail } = require('./core');
+
+function audioFingerprint(value) {
+  if (!value) return '';
+  const bytes = Buffer.isBuffer(value) ? value
+    : value?.type === 'Buffer' && Array.isArray(value.data) ? Buffer.from(value.data)
+      : typeof value === 'string' ? Buffer.from(value, 'base64') : null;
+  return bytes?.length ? crypto.createHash('sha256').update(bytes).digest('hex') : '';
+}
 
 async function encryptedAuth(service, scope, baileys, assertOwner) {
   const col = service.col('auth');
@@ -55,7 +64,7 @@ function normalizeMessage(raw, baileys) {
   const content = msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.documentMessage?.caption || '';
   if (!content && !audio) return null;
   return { id: raw.key.id, jid, fromMe: !!raw.key.fromMe, name: raw.pushName || '', at: new Date(Number(raw.messageTimestamp) * 1000), text: content,
-    audio: audio ? { seconds: Number(audio.seconds || 0), mimetype: audio.mimetype || 'audio/ogg', bytes: Number(audio.fileLength || 0) } : null,
+    audio: audio ? { seconds: Number(audio.seconds || 0), mimetype: audio.mimetype || 'audio/ogg', bytes: Number(audio.fileLength || 0), fingerprint: audioFingerprint(audio.fileSha256) } : null,
     raw: audio ? JSON.stringify(raw, baileys.BufferJSON.replacer) : null };
 }
 
@@ -156,4 +165,4 @@ function localTranscriber(env = process.env, { loadBaileys = () => import('@whis
     return { text: result.text, costUsd: 0 };
   } };
 }
-module.exports = { encryptedAuth, normalizeMessage, BaileysSessions, localTranscriber, downloadAudio };
+module.exports = { encryptedAuth, normalizeMessage, BaileysSessions, localTranscriber, downloadAudio, audioFingerprint };

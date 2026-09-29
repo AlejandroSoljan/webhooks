@@ -1,17 +1,18 @@
-// Asisto | Version: 5.00.077 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.267 | Fecha: 2026-09-29
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const { MongoClient, ObjectId } = require('mongodb');
 const express = require('express');
 const { EventEmitter } = require('node:events');
+const crypto = require('node:crypto');
 
 const { migrate } = require('../src/support/migration');
 const { createVault } = require('../src/support/crypto');
 const { SupportService } = require('../src/support/service');
 
 const { createRouter, mountSupport } = require('../src/support/routes');
-const { encryptedAuth, BaileysSessions } = require('../src/support/baileys');
+const { encryptedAuth, BaileysSessions, normalizeMessage } = require('../src/support/baileys');
 const { scopedId, hash } = require('../src/support/core');
 let mongo, connection, db, service, now;
 const scope = { tenantId: 'tenant-a', userId: new ObjectId().toHexString() };
@@ -174,6 +175,39 @@ test('manual audio selection transcribes before creating its task context', asyn
   assert.match(fields.description, /período contable/i);
   assert.equal(vault.open(stored.payload, stored._id).transcribed, true);
   assert.equal((await service.col('usage').findOne({ kind: 'transcription' })).result, 'ok');
+});
+test('forwarded audio reuses one encrypted transcript per user', async () => {
+  let calls = 0;
+  service.transcribe = { model: 'selection-fixture', run: async () => { calls++; return { text: 'Actualizar el sistema del cliente', costUsd: 0.001 }; } };
+  const fingerprint = crypto.createHash('sha256').update(Buffer.from('same-whatsapp-audio')).digest('hex');
+  const audio = { seconds: 12, bytes: 100, mimetype: 'audio/ogg', fingerprint };
+  await processMessages([
+    message('forwarded-one', 10, { text: '', raw: 'first-copy', audio }),
+    message('forwarded-two', 20, { text: '', raw: 'second-copy', audio }),
+  ]);
+  assert.equal(calls, 1);
+  assert.equal(await service.col('usage').countDocuments({ kind: 'transcription', result: 'ok' }), 1);
+  assert.equal(await service.col('transcripts').countDocuments({ ...scope, state: 'done' }), 1);
+  assert.equal(await service.col('audit').countDocuments({ ...scope, action: 'transcription_reused' }), 1);
+  const stored = await service.col('messages').find({ ...scope, id: { $in: ['forwarded-one', 'forwarded-two'] } }).toArray();
+  assert.equal(stored.every(row => vault.open(row.payload, row._id).text === 'Actualizar el sistema del cliente'), true);
+
+  await service.ingest(other, message('foreign-copy', 30, { text: '', raw: 'third-copy', audio }));
+  now = new Date(+now + 180001); await service.runOne();
+  assert.equal(calls, 2);
+  assert.equal(await service.col('transcripts').countDocuments({ state: 'done' }), 2);
+});
+
+test('Baileys stores a stable content fingerprint without persisting it in clear text', async () => {
+  const b = await import('@whiskeysockets/baileys');
+  const fileSha256 = Buffer.from('whatsapp-content-hash');
+  const normalized = normalizeMessage({
+    key: { remoteJid: '123@s.whatsapp.net', id: 'audio-hash' },
+    messageTimestamp: Date.parse('2026-09-01T11:00:00Z') / 1000,
+    message: { audioMessage: { seconds: 3, fileLength: 20, mimetype: 'audio/ogg', fileSha256 } },
+  }, b);
+  assert.equal(normalized.audio.fingerprint, crypto.createHash('sha256').update(fileSha256).digest('hex'));
+  assert.equal(normalized.audio.fingerprint.includes(fileSha256.toString('hex')), false);
 });
 test('queue repairs an insertion/enqueue crash', async () => {
   await service.ingest(scope, message('one'));
