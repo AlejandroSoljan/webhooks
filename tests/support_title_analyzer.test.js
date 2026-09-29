@@ -1,7 +1,15 @@
-// Asisto | Version: 5.00.263 | Fecha: 2026-09-28
+// Asisto | Version: 5.00.264 | Fecha: 2026-09-28
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { asistoTitleAnalyzer } = require('../src/support/title_analyzer');
+const { asistoTitleAnalyzer, resolveTasksModel } = require('../src/support/title_analyzer');
+
+test('ALSO, DEMJG and SANA migrate the former tasks model without replacing another explicit override', () => {
+  for (const tenantId of ['ALSO', 'demjg', 'SANA']) {
+    assert.equal(resolveTasksModel({ openai: { tasks_model: 'gpt-5.4-mini' } }, {}, tenantId), 'gpt-4o-mini');
+  }
+  assert.equal(resolveTasksModel({ openai: { tasks_model: 'fixture-custom-model' } }, {}, 'ALSO'), 'fixture-custom-model');
+  assert.equal(resolveTasksModel({ openai: { tasks_model: 'gpt-5.4-mini' } }, {}, 'OTHER'), 'gpt-5.4-mini');
+});
 
 test('overlong model output does not block subsequent task processing', async () => {
   const analyzer = asistoTitleAnalyzer({ OPENAI_API_KEY_TAREAS_WS: 'fixture-key' }, {

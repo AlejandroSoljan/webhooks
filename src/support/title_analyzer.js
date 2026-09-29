@@ -1,7 +1,25 @@
-// Asisto | Version: 5.00.263 | Fecha: 2026-09-28
+// Asisto | Version: 5.00.264 | Fecha: 2026-09-28
 const OpenAI = require('openai');
 const { fail, text } = require('./core');
 const { resolveOpenAiApiKey } = require('../../ai_key_router');
+
+const COST_OPTIMIZED_TASK_TENANTS = new Set(['ALSO', 'DEMJG', 'SANA']);
+
+function resolveTasksModel(config, env, tenantId) {
+  const configured = String(
+    config?.openai?.tasks_model ||
+    config?.openai?.tasksModel ||
+    config?.tareas_ws_model ||
+    ''
+  ).trim();
+  // These tenants explicitly opted into the less expensive model. Transparently
+  // migrate only the former default, while preserving any other future override.
+  if (COST_OPTIMIZED_TASK_TENANTS.has(String(tenantId || '').trim().toUpperCase()) &&
+      (!configured || /^gpt-5\.4-mini(?:-\d{4}-\d{2}-\d{2})?$/i.test(configured))) {
+    return 'gpt-4o-mini';
+  }
+  return configured || String(env.SUPPORT_TASK_MODEL || '').trim() || 'gpt-4o-mini';
+}
 
 function asistoTitleAnalyzer(env = process.env, { runtimeFor = tenantId => require('../../tenant_runtime').getRuntimeByTenantId(tenantId), configFor = async tenantId => (await require('../../db').getDb()).collection('tenant_config').findOne({ _id: tenantId }), clientFor = key => new OpenAI({ apiKey: key }) } = {}) {
   return { async run(messages, context) {
@@ -10,13 +28,7 @@ function asistoTitleAnalyzer(env = process.env, { runtimeFor = tenantId => requi
     if (!apiKey) fail('task_title_provider_required', 422);
     // Tareas WhatsApp tiene una carga breve y estructurada. Su modelo se
     // configura aparte para no alterar pedidos, ayuda ni el bot conversacional.
-    const model = String(
-      config?.openai?.tasks_model ||
-      config?.openai?.tasksModel ||
-      config?.tareas_ws_model ||
-      env.SUPPORT_TASK_MODEL ||
-      'gpt-4o-mini'
-    );
+    const model = resolveTasksModel(config, env, context.tenantId);
     const transcript = messages.map(m => `${m.fromMe ? 'OPERADOR' : 'CLIENTE'}: ${m.text}`).join('\n').slice(-30000);
     const response = await clientFor(apiKey).chat.completions.create({
       model,
@@ -44,4 +56,4 @@ function asistoTitleAnalyzer(env = process.env, { runtimeFor = tenantId => requi
     return { subject, description, model, inputTokens: Number(usage.prompt_tokens ?? usage.input_tokens ?? 0) || 0, outputTokens: Number(usage.completion_tokens ?? usage.output_tokens ?? 0) || 0, totalTokens: Number(usage.total_tokens || 0) || 0 };
   } };
 }
-module.exports = { asistoTitleAnalyzer };
+module.exports = { asistoTitleAnalyzer, resolveTasksModel };
