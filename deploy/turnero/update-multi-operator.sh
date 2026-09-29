@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
-# Asisto | Dual MCN deployment v5.00.258 | 2026-09-26
+# Asisto | Dual MCN deployment v5.00.266 | 2026-09-29
 set -euo pipefail
 case "${1:-}" in
   aws) base=/opt/asisto/turnero; service=asisto-turnero ;;
   mecan) base=/opt/asisto/turnero-local; service=asisto-turnero-local ;;
   *) exit 2 ;;
 esac
-release="$base/releases/v5.00.258"
-previous="$base/releases/v5.00.257"
-commit=f7dfc2e24f88c64b3fb746a3c9e0a7691dbe5dcd
-files=(queue_pages.js HISTORIAL_CAMBIOS_BACKEND.txt)
+release="$base/releases/v5.00.266"
+previous="$base/releases/v5.00.258"
+commit=3e1087b93ee3ed55f23a4a771d8705c845c35e10
+files=(customer_queue.js queue_pages.js queue_dual_display.js HISTORIAL_CAMBIOS_BACKEND.txt)
 verify() {
   cd "$release"
   sha256sum -c <<'HASHES'
-b2849b735859c4efe7f9f5e4e2902ff9949b6445e8c239dba959cb0caa8b1ab7  queue_pages.js
-c2ac18d6c0bb54f8053d70e201f35e86dfa9cd490572caa4c96c45983a082087  HISTORIAL_CAMBIOS_BACKEND.txt
+e3c77c5679460b703b62aa7281a8fb561926b289ae953b8836b7c60a2c3b9f9d  customer_queue.js
+02cdda6a27f083dc0329fcb552b551b8b44f74603f5a3d0a3e6eecac92313a43  queue_pages.js
+f8f6b28d05c5c1f392ed2cd7e97a10fa0247c74560556ddd73c45b6f34dbb383  queue_dual_display.js
+a500299ceed567ac3b63ef1e7babcccac9704822a32969d5464164b5310e974a  HISTORIAL_CAMBIOS_BACKEND.txt
 HASHES
   for file in "${files[@]}"; do
     if [[ "$file" == *.js ]]; then node --check "$file"; fi
@@ -35,17 +37,17 @@ case "${2:-}" in
     ;;
   activate)
     test "$(readlink -f "$base/current")" = "$previous"
-    test ! -e "$base/next-v500258"
+    test ! -e "$base/next-v500266"
     verify
     rollback() {
-      ln -s "$previous" "$base/rollback-v500258"
-      mv -Tf "$base/rollback-v500258" "$base/current"
+      ln -s "$previous" "$base/rollback-v500266"
+      mv -Tf "$base/rollback-v500266" "$base/current"
       systemctl restart "$service"
       echo "ROLLED_BACK $previous" >&2
     }
     trap rollback ERR
-    ln -s "$release" "$base/next-v500258"
-    mv -Tf "$base/next-v500258" "$base/current"
+    ln -s "$release" "$base/next-v500266"
+    mv -Tf "$base/next-v500266" "$base/current"
     systemctl restart "$service"
     healthy=false
     for attempt in {1..20}; do
