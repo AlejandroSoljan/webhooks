@@ -15,11 +15,12 @@ test('agent scoped upserts avoid duplicate tenant/phone paths, and followup work
       const insert = { tenantId: 'wrong', [numberField]: 'wrong', createdAt: new Date() };
       if (collection === 'wa_locks' || collection === 'wa_wweb_policies') insert.tenantid = 'wrong';
       for (let i = 0; i < 2; i++) {
-        const update = scopeUpdate(collection, { $set: { state: 'online' }, $setOnInsert: insert }, 'ALSO', '123');
+        const update = scopeUpdate(collection, { $set: { state: 'online', ...(collection === 'wa_locks' ? { lastSeenAt: new Date(0) } : {}) }, $setOnInsert: insert }, 'ALSO', '123');
         await db.collection(collection).updateOne({ _id: 'fixture' }, update, { upsert: true });
       }
       const row = await db.collection(collection).findOne({ _id: 'fixture' });
       assert.equal(row.tenantId, 'ALSO'); assert.equal(row[numberField], '123'); assert.ok(row.createdAt);
+      if (collection === 'wa_locks') assert.ok(+row.lastSeenAt > 0, 'wa_locks must use server time for lastSeenAt');
     }
     const followup = fs.readFileSync(require.resolve('../conversation_followup_panel'), 'utf8');
     const tenants = vm.runInNewContext('(' + followup.slice(followup.indexOf('async function followupTenantIds('), followup.indexOf('async function runAutoCloseSweep(')).trim() + ')');

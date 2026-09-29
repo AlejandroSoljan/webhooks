@@ -855,6 +855,11 @@ function wwebAgentScopeUpdate(collection, update, tenantId, numero) {
       delete out.$setOnInsert.numero;
       if (!Object.keys(out.$setOnInsert).length) delete out.$setOnInsert;
     }
+
+    // La actividad del panel debe usar el reloj autoritativo del servidor.
+    // Una PC cliente desfasada no debe quedar marcada como inactiva aunque
+    // continúe enviando heartbeats normalmente.
+    if (collection === 'wa_locks') ensureSet().lastSeenAt = new Date();
   }
   if (collection === 'wa_wweb_message_log') Object.assign(ensureSet(), { tenantId: tenant, numero: phone });
   if (collection === 'wa_api_mensajes_confirmaciones') Object.assign(ensureSet(), { tenantId: tenant, numeroFrom: phone });
