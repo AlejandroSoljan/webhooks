@@ -19,7 +19,7 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
         : String(url).includes('/conversations')
           ? { ok: true, items: [], totals: {} }
         : String(url).includes('/timeline')
-          ? { ok: true, items: [{ date:'2026-09-24',tokens:60,billed:1.2 },{ date:'2026-09-25',tokens:90,billed:1.8 }] }
+          ? { ok: true, items: [{ date:'2026-09-24',tokens:60,billed:1.2,messages:4 },{ date:'2026-09-25',tokens:90,billed:1.8,messages:6 }] }
           : { ok: true, enabled: true, items: [], realItems: [], byTenant: [{tenantId:'MSM',windows:1,messages:2,realMessages:2,byCurrency:{ARS:20}}], totals: {byCurrency:{ARS:20}} };
       return { ok: true, json: async () => body };
     };
@@ -40,6 +40,7 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
     assert.match(dom.window.document.body.textContent, /Detalle técnico/);
     assert.match(dom.window.document.body.textContent, /Evolución del consumo/);
     assert.match(dom.window.document.getElementById('domainChart').textContent, /150 tokens/);
+    assert.match(dom.window.document.getElementById('domainChart').textContent, /10 mensajes/);
     assert.match(dom.window.document.getElementById('rows').textContent, /Ayuda de Manager/);
     assert.match(dom.window.document.getElementById('rows').textContent, /Lectura por código/);
     assert.match(dom.window.document.getElementById('rows').textContent, /Mensajes enviados por API/);

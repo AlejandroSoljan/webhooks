@@ -947,6 +947,8 @@ async function buildTokenTimeline({ tenantId = "", from = "", to = "", types = "
   const { match, safeTenant } = buildUsageMatch({ tenantId, tenantIds, from, to });
   const safeTypes = parseCsvFilter(types, ["pedidos", "conversacional", "ayuda", "tareas_whatsapp"]);
   const safeChannels = parseCsvFilter(channels, ["whatsapp", "qr_web", "api_messages", "help_api"]);
+  const noTypes = String(types || "").trim().toLowerCase() === "none";
+  const noChannels = String(channels || "").trim().toLowerCase() === "none";
   const hourly = /^\d{4}-\d{2}-\d{2}$/.test(String(from)) && String(from) === String(to);
   const bucketFormat = hourly ? "%Y-%m-%dT%H:00" : "%Y-%m-%d";
   const localBucket = (value) => {
@@ -958,18 +960,55 @@ async function buildTokenTimeline({ tenantId = "", from = "", to = "", types = "
     const day = `${parts.year}-${parts.month}-${parts.day}`;
     return hourly ? `${day}T${parts.hour}:00` : day;
   };
-  const timelineResult = (grouped) => {
+  const loadMessageTimeline = async () => {
+    const grouped = new Map();
+    if (noChannels || (safeChannels.length && !safeChannels.includes("api_messages"))) return grouped;
+    const messageMatch = {};
+    if (tenantIds.length > 1) messageMatch.tenantId = { $in: tenantIds };
+    else if (tenantIds.length === 1) messageMatch.tenantId = tenantIds[0];
+    else if (safeTenant) messageMatch.tenantId = safeTenant;
+    const entryAt = { $ifNull: ["$messages.at", { $ifNull: ["$lastMessageAt", "$windowStartedAt"] }] };
+    const dateRange = {};
+    const fromDate = parseDateStart(from), toDate = parseDateEnd(to);
+    if (fromDate) dateRange.$gte = fromDate;
+    if (toDate) dateRange.$lte = toDate;
+    const pipeline = [
+      { $match: messageMatch },
+      { $unwind: "$messages" },
+      { $set: {
+        __entryAt: entryAt,
+        __entryKey: { $concat: ["$tenantId", ":", { $ifNull: ["$numeroFrom", ""] }, ":", { $ifNull: ["$contact", ""] }, ":", { $ifNull: ["$messages.text", ""] }] }
+      } },
+      ...(Object.keys(dateRange).length ? [{ $match: { __entryAt: dateRange } }] : []),
+      { $setWindowFields: { partitionBy: "$__entryKey", sortBy: { __entryAt: 1 }, output: { __previousAt: { $shift: { output: "$__entryAt", by: -1, default: null } } } } },
+      { $match: { $expr: { $or: [
+        { $eq: ["$__previousAt", null] },
+        { $gt: [{ $subtract: [{ $toLong: "$__entryAt" }, { $toLong: "$__previousAt" }] }, 10000] }
+      ] } } },
+      { $group: { _id: { $dateToString: { format: bucketFormat, date: "$__entryAt", timezone: "America/Argentina/Buenos_Aires" } }, messages: { $sum: 1 } } },
+      { $sort: { _id: 1 } }
+    ];
+    const rows = await db.collection("wa_api_message_windows").aggregate(pipeline, { allowDiskUse: true }).toArray();
+    rows.forEach(row => grouped.set(String(row._id || ""), Number(row.messages || 0)));
+    return grouped;
+  };
+  const timelineResult = (grouped, messagesByDate = new Map()) => {
+    for (const [date, messages] of messagesByDate.entries()) {
+      const row = grouped.get(date) || { date, tokens: 0, billed: 0, messages: 0 };
+      row.messages = Number(row.messages || 0) + Number(messages || 0);
+      grouped.set(date, row);
+    }
     if (hourly) {
       for (let hour = 0; hour < 24; hour += 1) {
         const key = `${from}T${String(hour).padStart(2, "0")}:00`;
-        if (!grouped.has(key)) grouped.set(key, { date: key, tokens: 0, billed: 0 });
+        if (!grouped.has(key)) grouped.set(key, { date: key, tokens: 0, billed: 0, messages: 0 });
       }
     }
-    return { ok: true, granularity: hourly ? "hour" : "day", filters: { tenantId: safeTenant || null, from: from || null, to: to || null }, items: [...grouped.values()].sort((a, b) => a.date.localeCompare(b.date)).map(row => ({ ...row, billed: Number(row.billed.toFixed(6)) })) };
+    return { ok: true, granularity: hourly ? "hour" : "day", filters: { tenantId: safeTenant || null, from: from || null, to: to || null }, items: [...grouped.values()].sort((a, b) => a.date.localeCompare(b.date)).map(row => ({ ...row, messages: Number(row.messages || 0), billed: Number(row.billed.toFixed(6)) })) };
   };
 
-  if (String(types).toLowerCase() === "none" || String(channels).toLowerCase() === "none") {
-    return timelineResult(new Map());
+  if (noTypes || noChannels) {
+    return timelineResult(new Map(), await loadMessageTimeline());
   }
 
   // Los filtros por tipo/canal dependen de la conversación vinculada. En ese caso
@@ -985,7 +1024,7 @@ async function buildTokenTimeline({ tenantId = "", from = "", to = "", types = "
       acc.billed += Number(row.billed_cost || 0);
       grouped.set(date, acc);
     }
-    return timelineResult(grouped);
+    return timelineResult(grouped, await loadMessageTimeline());
   }
 
   const rows = await db.collection("ai_token_usage_log").aggregate([
@@ -1018,7 +1057,7 @@ async function buildTokenTimeline({ tenantId = "", from = "", to = "", types = "
     acc.billed += calculateBillableCost(row, cfg.get(tenantKey) || {});
     byDate.set(date, acc);
   }
-  return timelineResult(byDate);
+  return timelineResult(byDate, await loadMessageTimeline());
 }
 function normalizeStatus(conv, order) {
   const raw = String(
@@ -1610,7 +1649,7 @@ function renderTokenControlPage(user, tenants = []) {
     .dashboardGrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}.chartCard{min-height:300px}.barChart{display:grid;gap:12px;margin-top:18px}.barRow{display:grid;grid-template-columns:minmax(120px,190px) minmax(120px,1fr) auto;gap:10px;align-items:center}.barLabel{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;font-weight:700}.barTrack{height:12px;border-radius:99px;background:#e8eef5;overflow:hidden}.barFill{height:100%;border-radius:99px;background:linear-gradient(90deg,#10bfa9,#087d72);min-width:2px}.barValue{font-weight:800;font-variant-numeric:tabular-nums}.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:12px}.legend i{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}.emptyChart{display:grid;place-items:center;min-height:190px;color:var(--muted);text-align:center}.currencyTotals{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.currencyTotals span{background:#e9f7f5;color:#07685f;border-radius:999px;padding:6px 10px;font-weight:800}
     .healthStrip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.healthItem{display:flex;gap:11px;align-items:center;background:#fff;border:1px solid var(--border);border-radius:14px;padding:13px 14px}.healthIcon{width:34px;height:34px;display:grid;place-items:center;border-radius:10px;background:#e9f7f5;color:var(--ok);font-weight:900}.healthItem.warn .healthIcon{background:#fff7ed;color:var(--warn)}.healthItem.danger .healthIcon{background:#fef2f2;color:var(--danger)}.healthItem b{display:block;font-size:14px}.healthItem span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
     .billingChart{display:grid;gap:14px;margin-top:15px}.billingRow{display:grid;grid-template-columns:minmax(90px,130px) 1fr auto;gap:12px;align-items:center}.billingBars{display:grid;gap:5px}.billingTrack{height:10px;border-radius:99px;background:#e8eef5;overflow:hidden}.billingFill{height:100%;min-width:2px;border-radius:99px}.billingFill.cost{background:#94a3b8}.billingFill.charge{background:linear-gradient(90deg,#10bfa9,#087d72)}.billingAmounts{text-align:right;font-size:12px;line-height:1.5;white-space:nowrap}.marginBadge{display:inline-flex;padding:3px 8px;border-radius:999px;background:#dcfce7;color:#166534;font-size:11px;font-weight:800}.marginBadge.negative{background:#fee2e2;color:#991b1b}
-    .timelineChart{min-height:220px;margin-top:8px;display:grid;place-items:stretch}.timelineChart svg{width:100%;height:230px;overflow:visible}.timelineGrid{stroke:#e2e8f0;stroke-width:1}.timelineTokens{fill:none;stroke:#2563eb;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.timelineBilling{fill:none;stroke:#0f9488;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.timelinePoint.tokens{fill:#2563eb}.timelinePoint.billing{fill:#0f9488}.axisLabel{fill:#64748b;font-size:11px}.timelineSummary{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:6px;color:var(--muted);font-size:12px}.timelineSummary b{color:var(--text)}
+    .timelineChart{min-height:220px;margin-top:8px;display:grid;place-items:stretch}.timelineChart svg{width:100%;height:230px;overflow:visible}.timelineGrid{stroke:#e2e8f0;stroke-width:1}.timelineTokens,.timelineBilling,.timelineMessages{fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.timelineTokens{stroke:#2563eb}.timelineBilling{stroke:#0f9488}.timelineMessages{stroke:#f59e0b}.timelinePoint.tokens{fill:#2563eb}.timelinePoint.billing{fill:#0f9488}.timelinePoint.messages{fill:#f59e0b}.axisLabel{fill:#64748b;font-size:11px}.timelineSummary{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:6px;color:var(--muted);font-size:12px}.timelineSummary b{color:var(--text)}
     .tableWrap{overflow:auto;border:1px solid var(--border);border-radius:14px}
     table{width:100%;border-collapse:collapse;background:#fff;min-width:${isSuper ? '940px' : '760px'}}
     th,td{padding:12px 10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:middle;font-size:14px}
@@ -1709,7 +1748,7 @@ function renderTokenControlPage(user, tenants = []) {
 
     <div class="dashboardGrid">
       <div class="card chartCard"><div class="sectionTitle"><div><h2>Consumo por funcionalidad</h2><div class="small">Cantidad de operaciones del período.</div></div></div><div class="barChart" id="featureChart"><div class="emptyChart">Todavía no hay consumos medidos.</div></div></div>
-      <div class="card chartCard"><div class="sectionTitle"><div><h2>Evolución del consumo</h2><div class="small">Tokens utilizados e importe de IA a cobrar durante el rango seleccionado.</div></div><div class="legend"><span><i style="background:#2563eb"></i>Tokens</span><span><i style="background:#0f9488"></i>Cobro IA (USD)</span></div></div><div class="timelineChart" id="domainChart"><div class="emptyChart">Todavía no hay consumos de IA para este período.</div></div></div>
+      <div class="card chartCard"><div class="sectionTitle"><div><h2>Evolución del consumo</h2><div class="small">Tokens, cobro de IA y mensajes de WhatsApp enviados durante el rango seleccionado.</div></div><div class="legend"><span><i style="background:#2563eb"></i>Tokens</span><span><i style="background:#0f9488"></i>Cobro IA (USD)</span><span><i style="background:#f59e0b"></i>Mensajes WhatsApp</span></div></div><div class="timelineChart" id="domainChart"><div class="emptyChart">Todavía no hay consumos para este período.</div></div></div>
     </div>
 
     <div class="card">
@@ -1922,22 +1961,24 @@ function renderTokenControlPage(user, tenants = []) {
     if(!domainChart)return;
     const rows=(j&&Array.isArray(j.items)?j.items:[]).slice().sort(function(a,b){return String(a.date).localeCompare(String(b.date));});
     const hourly=String(j&&j.granularity||'')==='hour';
-    if(!rows.length){domainChart.innerHTML='<div class="emptyChart">Todavía no hay consumos de IA para este período.</div>';return;}
+    if(!rows.length){domainChart.innerHTML='<div class="emptyChart">Todavía no hay consumos para este período.</div>';return;}
     const width=720,height=205,left=48,right=16,top=15,bottom=30,plotW=width-left-right,plotH=height-top-bottom;
     const maxTokens=Math.max(1,...rows.map(function(x){return num(x.tokens);}));
     const maxBilled=Math.max(0.000001,...rows.map(function(x){return num(x.billed);}));
+    const maxMessages=Math.max(1,...rows.map(function(x){return num(x.messages);}));
     const x=function(i){return left+(rows.length===1?plotW/2:i*plotW/(rows.length-1));};
     const yToken=function(v){return top+plotH-(num(v)/maxTokens*plotH);};
     const yBill=function(v){return top+plotH-(num(v)/maxBilled*plotH);};
+    const yMessage=function(v){return top+plotH-(num(v)/maxMessages*plotH);};
     const path=function(getY){return rows.map(function(row,i){return (i?'L':'M')+x(i).toFixed(1)+' '+getY(row).toFixed(1);}).join(' ');};
-    const tokenPath=path(function(row){return yToken(row.tokens);}),billPath=path(function(row){return yBill(row.billed);});
+    const tokenPath=path(function(row){return yToken(row.tokens);}),billPath=path(function(row){return yBill(row.billed);}),messagePath=path(function(row){return yMessage(row.messages);});
     const grid=[0,.25,.5,.75,1].map(function(p){const y=top+plotH*p;return '<line class="timelineGrid" x1="'+left+'" y1="'+y+'" x2="'+(width-right)+'" y2="'+y+'"/>';}).join('');
     const step=Math.max(1,Math.ceil(rows.length/5));
     const labels=rows.map(function(row,i){if(i%step&&i!==rows.length-1)return '';const d=String(row.date||''),label=hourly?d.slice(11,16):(d.slice(8,10)+'/'+d.slice(5,7));return '<text class="axisLabel" text-anchor="middle" x="'+x(i)+'" y="'+(height-7)+'">'+esc(label)+'</text>';}).join('');
-    const points=rows.map(function(row,i){const title=esc(String(row.date)+' · '+fmtInt(row.tokens)+' tokens · '+fmtMoney(row.billed));return '<circle class="timelinePoint tokens" cx="'+x(i)+'" cy="'+yToken(row.tokens)+'" r="3"><title>'+title+'</title></circle><circle class="timelinePoint billing" cx="'+x(i)+'" cy="'+yBill(row.billed)+'" r="3"><title>'+title+'</title></circle>';}).join('');
-    const totalTokens=rows.reduce(function(sum,row){return sum+num(row.tokens);},0),totalBilled=rows.reduce(function(sum,row){return sum+num(row.billed);},0);
+    const points=rows.map(function(row,i){const title=esc(String(row.date)+' · '+fmtInt(row.tokens)+' tokens · '+fmtMoney(row.billed)+' · '+fmtInt(row.messages)+' mensajes');return '<circle class="timelinePoint tokens" cx="'+x(i)+'" cy="'+yToken(row.tokens)+'" r="3"><title>'+title+'</title></circle><circle class="timelinePoint billing" cx="'+x(i)+'" cy="'+yBill(row.billed)+'" r="3"><title>'+title+'</title></circle><circle class="timelinePoint messages" cx="'+x(i)+'" cy="'+yMessage(row.messages)+'" r="3"><title>'+title+'</title></circle>';}).join('');
+    const totalTokens=rows.reduce(function(sum,row){return sum+num(row.tokens);},0),totalBilled=rows.reduce(function(sum,row){return sum+num(row.billed);},0),totalMessages=rows.reduce(function(sum,row){return sum+num(row.messages);},0);
     const period=hourly?('Detalle horario del '+String(rows[0].date).slice(0,10)):(rows[0].date+' a '+rows[rows.length-1].date);
-    domainChart.innerHTML='<svg viewBox="0 0 '+width+' '+height+'" role="img" aria-label="Evolución de tokens y cobro de IA">'+grid+'<path class="timelineTokens" d="'+tokenPath+'"/><path class="timelineBilling" d="'+billPath+'"/>'+points+labels+'</svg><div class="timelineSummary"><span>Total: <b>'+fmtInt(totalTokens)+' tokens</b></span><span>Cobro IA: <b>'+fmtMoney(totalBilled)+'</b></span><span>'+esc(period)+'</span></div>';
+    domainChart.innerHTML='<svg viewBox="0 0 '+width+' '+height+'" role="img" aria-label="Evolución de tokens, cobro de IA y mensajes de WhatsApp">'+grid+'<path class="timelineTokens" d="'+tokenPath+'"/><path class="timelineBilling" d="'+billPath+'"/><path class="timelineMessages" d="'+messagePath+'"/>'+points+labels+'</svg><div class="timelineSummary"><span>Total: <b>'+fmtInt(totalTokens)+' tokens</b></span><span>Cobro IA: <b>'+fmtMoney(totalBilled)+'</b></span><span>WhatsApp: <b>'+fmtInt(totalMessages)+' mensajes</b></span><span>'+esc(period)+'</span></div>';
   }
   function amountStackHtml(aiUsd,apiMap){
     const apiKeys=Object.keys(apiMap||{}).filter(function(c){return Math.abs(num(apiMap[c]))>0;});
