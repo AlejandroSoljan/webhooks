@@ -21,10 +21,11 @@
     let rows = data.activity;
     if (data.period === 'today') rows = rows.slice(0, new Date(Date.parse(data.generatedAt) - 10800000).getUTCHours() + 1);
     const width = 720, height = 220, left = 40, right = 16, top = 12, bottom = 32, baseline = height - bottom;
-    const max = Math.max(4, ...rows.flatMap(r => [r.sent, r.received]));
+    const series = data.isSuperadmin ? [['received','#1687ff'],['sent','#0cc5ab']] : [['sent','#0cc5ab']];
+    const max = Math.max(4, ...rows.flatMap(r => series.map(([key]) => Number(r[key] || 0))));
     const step = Math.max(1, Math.ceil(max / 4)), ceiling = step * 4;
     const x = i => left + i * (width-left-right) / Math.max(1, rows.length-1), y = v => baseline - v * (baseline-top) / ceiling;
-    const chart = svg('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': 'Mensajes enviados y recibidos por ' + (['7d','month','30d'].includes(data.period) ? 'día' : 'hora'), class: 'opsLineChart' });
+    const chart = svg('svg', { viewBox: `0 0 ${width} ${height}`, role: 'img', 'aria-label': (data.isSuperadmin ? 'Mensajes enviados y recibidos' : 'Mensajes enviados por Asisto') + ' por ' + (['7d','month','30d'].includes(data.period) ? 'día' : 'hora'), class: 'opsLineChart' });
     for (let i=0;i<=4;i++) {
       const yy=y(i*step); chart.append(svg('line',{x1:left,y1:yy,x2:width-right,y2:yy,stroke:'#e8eff6'}));
       const t=svg('text',{x:left-10,y:yy+4,'text-anchor':'end'});t.textContent=number(i*step);chart.append(t);
@@ -32,15 +33,15 @@
     rows.forEach((r,i) => {
       if (i % Math.max(1, Math.ceil(rows.length/7)) === 0 || i === rows.length-1) { const t=svg('text',{x:x(i),y:height-9,'text-anchor':'middle'}); t.textContent=r.label;chart.append(t); }
     });
-    for (const [key,color] of [['received','#1687ff'],['sent','#0cc5ab']]) {
+    for (const [key,color] of series) {
       const points = rows.map((r,i)=>`${x(i)},${y(r[key])}`).join(' ');
       if (rows.length > 1) chart.append(svg('polygon',{points:`${left},${baseline} ${points} ${x(rows.length-1)},${baseline}`,fill:color,'fill-opacity':'.12'}));
       chart.append(svg('polyline',{points,fill:'none',stroke:color,'stroke-width':2.4,'stroke-linejoin':'round'}));
       rows.forEach((r,i)=>{const point=svg('circle',{cx:x(i),cy:y(r[key]),r:3,fill:color});const tip=svg('title');tip.textContent=`${r.label}: ${number(r[key])} ${key==='sent'?'enviados':'recibidos'}`;point.append(tip);chart.append(point);});
     }
     const details=node('details','','opsChartData');details.append(node('summary','Ver valores del gráfico'));
-    const table=node('table'); const head=node('tr'); ['Período','Enviados','Recibidos'].forEach(t=>head.append(node('th',t)));table.append(head);
-    rows.forEach(r=>{const tr=node('tr');[r.label,number(r.sent),number(r.received)].forEach(t=>tr.append(node('td',t)));table.append(tr);});details.append(table);
+    const table=node('table'); const head=node('tr'); (data.isSuperadmin ? ['Período','Enviados','Recibidos'] : ['Período','Enviados por Asisto']).forEach(t=>head.append(node('th',t)));table.append(head);
+    rows.forEach(r=>{const tr=node('tr');(data.isSuperadmin ? [r.label,number(r.sent),number(r.received)] : [r.label,number(r.sent)]).forEach(t=>tr.append(node('td',t)));table.append(tr);});details.append(table);
     el('opsActivity').replaceChildren(chart,details);
   }
   function renderConnections(data) {
@@ -74,7 +75,7 @@
     el('opsMetrics').replaceChildren();el('opsNotices').replaceChildren();
     const pendingAvailable=metrics.review && metrics.contacts;
     const pendingValue=pendingAvailable?metrics.review.value+metrics.contacts.value:null;
-    const cards=[features.whatsapp&&['sent','WhatsApp enviados','whatsapp','green','Envíos registrados · no solicitudes API'],features.orders&&['orders',data.period==='today'||!data.period?'Pedidos de hoy':'Pedidos del período','cart','teal','Pedidos confirmados'],features.followup&&['attention','Pendientes de atención','clock','amber',pendingAvailable?`${number(metrics.review.value)} por revisar · ${number(metrics.contacts.value)} por contactar`:'Pendientes acumulados'],features.tokens&&['tokens','Consumo IA','chip','teal',data.period==='today'||!data.period?'Tokens utilizados hoy':'Tokens utilizados en el período']].filter(Boolean);
+    const cards=[features.whatsapp&&['sent',data.isSuperadmin?'WhatsApp enviados':'Enviados por Asisto','whatsapp','green',data.isSuperadmin?'Todos los mensajes salientes registrados':'Sólo API y funciones de Asisto; excluye envíos manuales'],features.orders&&['orders',data.period==='today'||!data.period?'Pedidos de hoy':'Pedidos del período','cart','teal','Pedidos confirmados'],features.followup&&['attention','Pendientes de atención','clock','amber',pendingAvailable?`${number(metrics.review.value)} por revisar · ${number(metrics.contacts.value)} por contactar`:'Pendientes acumulados'],features.tokens&&['tokens','Consumo IA','chip','teal',data.period==='today'||!data.period?'Tokens utilizados hoy':'Tokens utilizados en el período']].filter(Boolean);
     cards.forEach(([key,title,type,color,detail])=>{
       const m=key==='attention'?(pendingAvailable?{value:pendingValue,href:metrics.review.href}:null):metrics[key];
       const failed=key==='attention'?['review','contacts'].some(k=>data.unavailable.includes(k)):data.unavailable.includes(key);

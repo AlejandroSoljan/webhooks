@@ -1601,6 +1601,7 @@ async function buildTokenConversationSummary({
 function renderTokenControlPage(user, tenants = []) {
   const isSuper = String(user?.role || "").toLowerCase() === "superadmin";
   const tenant = String(user?.tenantId || "").trim();
+  const todayYmd = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const tenantOptions = [...new Set((tenants || []).map(value => String(value || '').trim().toUpperCase()).filter(Boolean))].sort();
   return `<!doctype html>
 <html lang="es">
@@ -1690,8 +1691,8 @@ function renderTokenControlPage(user, tenants = []) {
     <div class="card">
       <div class="row">
         ${isSuper ? `<label>Dominio<select id="fTenant"><option value="">Todos los dominios</option>${tenantOptions.map(value => `<option value="${esc(value)}">${esc(value)}</option>`).join('')}</select></label>` : `<label>Dominio<input id="fTenant" value="${esc(tenant)}" readonly/></label>`}
-        <label>Desde<input id="fFrom" type="date"/></label>
-        <label>Hasta<input id="fTo" type="date"/></label>
+        <label>Desde<input id="fFrom" type="date" value="${todayYmd}"/></label>
+        <label>Hasta<input id="fTo" type="date" value="${todayYmd}"/></label>
         
         <details class="multiFilter" id="typeFilter">
           <summary>Tipo IA: Todos</summary>
@@ -1778,7 +1779,7 @@ function renderTokenControlPage(user, tenants = []) {
 
     <div class="row" id="detailActions">
       <button class="btn2" type="button" id="btnLoadConversations">Ver detalle de consumos</button>
-      <button class="btn2" type="button" id="btnLoadMessages">Ver detalle de envíos WhatsApp</button>
+      ${isSuper ? `<button class="btn2" type="button" id="btnLoadMessages">Ver detalle de envíos WhatsApp</button>` : ``}
       <span class="small">Los detalles se consultan únicamente cuando los necesitás.</span>
     </div>
 
@@ -2431,7 +2432,7 @@ function renderTokenControlPage(user, tenants = []) {
 
   btnReload.addEventListener('click', load);
   btnLoadConversations.addEventListener('click',loadConversationDetails);
-  btnLoadMessages.addEventListener('click',loadMessageDetails);
+  if(btnLoadMessages) btnLoadMessages.addEventListener('click',loadMessageDetails);
   rowsEl.addEventListener('click',function(event){const button=event.target&&event.target.closest&&event.target.closest('.technicalToggle');if(!button)return;const row=document.getElementById(button.getAttribute('data-target'));if(!row)return;row.hidden=!row.hidden;button.textContent=row.hidden?'Detalle técnico':'Ocultar detalle';});
   setupMulti('typeFilter','tokenType','Tipo IA');
   setupMulti('channelFilter','tokenChannel','Canal');
@@ -2571,7 +2572,7 @@ function mountTokenControlRoutes(app, auth) {
         types: String(req.query?.types || "").trim(),
         channels: String(req.query?.channels || "").trim(),
         limit: req.query?.limit,
-        includeDetails: String(req.query?.details ?? '1') !== '0'
+        includeDetails: isSuper && String(req.query?.details ?? '1') !== '0'
       });
       return res.json(data);
     } catch (e) {

@@ -2334,7 +2334,7 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
                 <th>Dueño</th>
                 <th>Tiempos</th>
                 <th>Política</th>
-                <th>Permisos</th>
+                <th>${isSuper ? 'Permisos' : 'Métricas'}</th>
                 <th style="width:230px">Acciones</th>
               </tr>
             </thead>
@@ -2401,22 +2401,19 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
                 <thead>
                   <tr>
                     <th>Teléfono</th>
-                    <th>Entrada</th>
-                    <th>Salida Asisto</th>
-                    <th>Salida manual</th>
-                    <th>Sin identificar</th>
-                    <th>Total</th>
-                    <th>Último mensaje</th>
+                    ${isSuper ? `<th>Entrada</th>` : ``}
+                    <th>Enviados por Asisto</th>
+                    ${isSuper ? `<th>Salida manual</th><th>Sin identificar</th><th>Total</th><th>Último mensaje</th>` : ``}
                   </tr>
                 </thead>
                 <tbody id="statsContactsBody">
-                  <tr><td colspan="7" class="small">Sin datos.</td></tr>
+                  <tr><td colspan="${isSuper ? 7 : 2}" class="small">Sin datos.</td></tr>
                 </tbody>
               </table>
             </div>
             <div class="statsPager"><button class="btn2" id="statsContactsPrev" type="button">Anterior</button><span class="small" id="statsContactsPage"></span><button class="btn2" id="statsContactsNext" type="button">Siguiente</button></div>
           </div>
-          <div class="card" style="margin-top:12px; padding:10px 12px">
+          <div class="card" style="margin-top:12px; padding:10px 12px" ${isSuper ? '' : 'hidden'}>
             <div class="statsSectionHeader">
               <div>
                 <div class="cellMain">Permisos y exclusiones del rango</div>
@@ -2644,6 +2641,7 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
         if(statsContactsPrev) statsContactsPrev.disabled = result.page <= 1;
         if(statsContactsNext) statsContactsNext.disabled = result.page >= result.pages;
         statsContactsBody.innerHTML = result.rows.length ? result.rows.map(function(c){
+          if(!IS_SUPER) return '<tr><td class="mono">' + escapeHtml(c.contact || '-') + '</td><td>' + escapeHtml(String(c.outgoingAsisto || 0)) + '</td></tr>';
           return '<tr>'
             + '<td class="mono">' + escapeHtml(c.contact || '-') + '</td>'
             + '<td>' + escapeHtml(String(c.incoming || 0)) + '</td>'
@@ -2653,7 +2651,7 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
             + '<td>' + escapeHtml(String(c.total || 0)) + '</td>'
             + '<td>' + escapeHtml(c.lastAt ? fmtDate(c.lastAt) : '-') + '</td>'
             + '</tr>';
-        }).join('') : '<tr><td colspan="7" class="small">No hay contactos para este filtro.</td></tr>';
+        }).join('') : '<tr><td colspan="' + (IS_SUPER ? '7' : '2') + '" class="small">No hay contactos para este filtro.</td></tr>';
       }
       function renderStatsPermissions(){
         var result = statsPage(statsPermissionsRows, statsPermissionsSearch && statsPermissionsSearch.value, statsPermissionsPageSize && statsPermissionsPageSize.value, statsPermissionsPageIndex);
@@ -2673,8 +2671,8 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
         var permissionSummary = data && data.permissionSummary ? data.permissionSummary : {};
         var permissions = Array.isArray(data && data.permissions) ? data.permissions : [];
         statsMeta.textContent = 'Rango: ' + (data.from || '-') + ' a ' + (data.to || '-')
-          + ' · Último mensaje global: ' + (overall.lastMessageAt ? fmtDate(overall.lastMessageAt) : '-');
-        statsCards.innerHTML = ''
+          + (IS_SUPER ? (' · Último mensaje global: ' + (overall.lastMessageAt ? fmtDate(overall.lastMessageAt) : '-')) : '');
+        statsCards.innerHTML = IS_SUPER ? (''
           + statsCard('Mensajes entrada', String(summary.incoming || 0))
           + statsCard('Enviados por Asisto', String(summary.outgoingAsisto || 0), 'Confirmados por el registro de envíos de Asisto')
           + statsCard('Enviados manualmente', String(summary.outgoingManual || 0), 'Escritos desde WhatsApp por una persona')
@@ -2683,8 +2681,9 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
           + statsCard('Mensajes totales', String(summary.total || 0))
           + statsCard('Contactos', String(summary.contacts || 0))
           + statsCard('Último mensaje del rango', summary.lastAt ? fmtDate(summary.lastAt) : '-')
-          + statsCard('Inactividad actual', overall.inactivityLabel || fmtDurationMs(overall.inactivityMs || 0));
-        statsCards.innerHTML += ''
+          + statsCard('Inactividad actual', overall.inactivityLabel || fmtDurationMs(overall.inactivityMs || 0)))
+          : statsCard('Enviados por Asisto', String(summary.outgoingAsisto || 0), 'Envíos generados por API o funciones de Asisto');
+        if(IS_SUPER) statsCards.innerHTML += ''
           + statsCard('Permisos solicitados', String(permissionSummary.solicitados || 0))
           + statsCard('OK', String(permissionSummary.ok || 0))
           + statsCard('BAJA', String(permissionSummary.baja || 0))
@@ -2709,14 +2708,14 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
         if(!statsTenant || !statsNumero) return;
         statsMeta.textContent = 'Cargando…';
         statsCards.innerHTML = '';
-        statsContactsBody.innerHTML = '<tr><td colspan="7" class="small">Cargando…</td></tr>';
+        statsContactsBody.innerHTML = '<tr><td colspan="' + (IS_SUPER ? '7' : '2') + '" class="small">Cargando…</td></tr>';
         statsPermissionsBody.innerHTML = '<tr><td colspan="5" class="small">Cargando…</td></tr>';
         return api('/api/wweb/stats?tenantId=' + encodeURIComponent(statsTenant) + '&numero=' + encodeURIComponent(statsNumero)
           + '&from=' + encodeURIComponent(statsFrom.value || '') + '&to=' + encodeURIComponent(statsTo.value || ''), { method:'GET' })
           .then(renderStats)
           .catch(function(e){
             statsMeta.textContent = 'Error: ' + (e.message || e);
-            statsContactsBody.innerHTML = '<tr><td colspan="5" class="small">Error cargando estadísticas.</td></tr>';
+            statsContactsBody.innerHTML = '<tr><td colspan="' + (IS_SUPER ? '7' : '2') + '" class="small">Error cargando estadísticas.</td></tr>';
           });
       }
       function openStats(tenant, numero){
@@ -2862,17 +2861,18 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
 
         var statsToday = lock.statsToday || { incoming:0, outgoing:0, contacts:0 };
         var permissionToday = lock.permissionToday || { solicitados:0, ok:0, baja:0, ignorados:0, fallos:0, bloqueados:0 };
-        var permissionHtml = '<div class="cellSub"><b>Sol/OK:</b> '+escapeHtml(String(permissionToday.solicitados||0))+' / '+escapeHtml(String(permissionToday.ok||0))+'</div>'
+        var permissionHtml = IS_SUPER ? ('<div class="cellSub"><b>Sol/OK:</b> '+escapeHtml(String(permissionToday.solicitados||0))+' / '+escapeHtml(String(permissionToday.ok||0))+'</div>'
           + '<div class="cellSub"><b>Baja/Ign.:</b> '+escapeHtml(String(permissionToday.baja||0))+' / '+escapeHtml(String(permissionToday.ignorados||0))+'</div>'
           + '<div class="cellSub"><b>Fallos/Bloq.:</b> '+escapeHtml(String(permissionToday.fallos||0))+' / '+escapeHtml(String(permissionToday.bloqueados||0))+'</div>'
-          + (CAN_VIEW_STATS ? '<button class="btn2" style="margin-top:6px" type="button" data-action="stats" data-tenant="'+escapeHtml(tenantId)+'" data-numero="'+escapeHtml(numero)+'">Métricas</button>' : '');
+          + (CAN_VIEW_STATS ? '<button class="btn2" style="margin-top:6px" type="button" data-action="stats" data-tenant="'+escapeHtml(tenantId)+'" data-numero="'+escapeHtml(numero)+'">Métricas</button>' : ''))
+          : (CAN_VIEW_STATS ? '<button class="btn2" type="button" data-action="stats" data-tenant="'+escapeHtml(tenantId)+'" data-numero="'+escapeHtml(numero)+'">Ver envíos de Asisto</button>' : '');
         var timesHtml = ''
           + '<div class="cellSub"><b>Inicio:</b> ' + escapeHtml(fmtDate(lock.startedAt) || '-') + '</div>'
           + '<div class="cellSub"><b>Heartbeat:</b> ' + escapeHtml(fmtDate(lock.lastSeenAt) || '-') + '</div>'
-          + '<div class="cellSub"><b>Hoy E/S:</b> ' + escapeHtml(String(statsToday.incoming || 0)) + ' / ' + escapeHtml(String(statsToday.outgoing || 0)) + '</div>'
+          + (IS_SUPER ? ('<div class="cellSub"><b>Hoy E/S:</b> ' + escapeHtml(String(statsToday.incoming || 0)) + ' / ' + escapeHtml(String(statsToday.outgoing || 0)) + '</div>'
           + '<div class="cellSub"><b>Contactos hoy:</b> ' + escapeHtml(String(statsToday.contacts || 0)) + '</div>'
           + '<div class="cellSub"><b>Últ. msg:</b> ' + escapeHtml(fmtDate(lock.lastMessageAt) || '-') + '</div>'
-          + '<div class="cellSub"><b>Inactividad:</b> ' + escapeHtml(lock.inactivityLabel || '-') + '</div>';
+          + '<div class="cellSub"><b>Inactividad:</b> ' + escapeHtml(lock.inactivityLabel || '-') + '</div>') : '');
 
 
 
@@ -5671,6 +5671,7 @@ function mountAuthRoutes(app) {
   app.get("/api/wweb/locks", requireAuth, requireWwebAccess, async (req, res) => {
     try {
       const db = await getDb();
+      const isSuper = String(req.user?.role || "").toLowerCase() === "superadmin";
       const scope = await resolveWwebTenantScope(db, req.user);
       const filter = wwebTenantFilter(scope);
 
@@ -5713,7 +5714,7 @@ function mountAuthRoutes(app) {
         const stats = statsMap.get(key) || { incoming: 0, outgoing: 0, contacts: 0, lastMessageAt: null };
         const permissionToday = permissionStatsMap.get(key) || { solicitados:0, ok:0, baja:0, ignorados:0, fallos:0, bloqueados:0 };
         const inactivityMs = stats.lastMessageAt ? Math.max(0, now.getTime() - new Date(stats.lastMessageAt).getTime()) : null;
-        return {
+        const item = {
           _id: String(l._id),
           source: String(l.source || ''),
           tenantId: tid,
@@ -5726,19 +5727,22 @@ function mountAuthRoutes(app) {
           lastQrAt: l.lastQrAt || null,
           hasQr: !!l.lastQrDataUrl,
           policy,
-          statsToday: {
-            incoming: Number(stats.incoming || 0),
-            outgoing: Number(stats.outgoing || 0),
-            contacts: Number(stats.contacts || 0),
-          },
-          permissionToday,
-          lastMessageAt: stats.lastMessageAt || null,
-          inactivityMs,
-          inactivityLabel: inactivityMs == null ? '' : wwebHumanizeMs(inactivityMs),
           runtimeVersion: l.runtimeVersion || l.currentVersion || '',
           desiredTag: l.desiredTag || l.targetTag || '',
           autoUpdateSource: l.autoUpdateSource || '',
         };
+        if (isSuper) {
+          item.permissionToday = permissionToday;
+          item.statsToday = {
+            incoming: Number(stats.incoming || 0),
+            outgoing: Number(stats.outgoing || 0),
+            contacts: Number(stats.contacts || 0),
+          };
+          item.lastMessageAt = stats.lastMessageAt || null;
+          item.inactivityMs = inactivityMs;
+          item.inactivityLabel = inactivityMs == null ? '' : wwebHumanizeMs(inactivityMs);
+        }
+        return item;
       }).sort((a, b) => {
         const ta = String(a?.tenantId || '').toLowerCase();
         const tb = String(b?.tenantId || '').toLowerCase();
@@ -6117,6 +6121,34 @@ function mountAuthRoutes(app) {
         });
       }
 
+      const publicContacts = (contactRows || []).map((r) => {
+        const contact = String(r._id || '');
+        const origins = outgoingOrigins?.contacts?.get(contact) || {};
+        if (!isSuper) return { contact, outgoingAsisto: Number(origins.asisto || 0) };
+        return {
+          contact,
+          incoming: Number(r.incoming || 0),
+          outgoing: Number(r.outgoing || 0),
+          outgoingAsisto: Number(origins.asisto || 0),
+          outgoingManual: Number(origins.manual || 0),
+          outgoingUnknown: Number(origins.unknown || 0),
+          total: Number(r.total || 0),
+          firstAt: r.firstAt || null,
+          lastAt: r.lastAt || null,
+        };
+      }).filter((r) => isSuper || r.outgoingAsisto > 0);
+      const publicSummary = isSuper ? {
+        incoming: Number(summary.incoming || 0),
+        outgoing: Number(summary.outgoing || 0),
+        outgoingAsisto: Number(outgoingOrigins?.totals?.asisto || 0),
+        outgoingManual: Number(outgoingOrigins?.totals?.manual || 0),
+        outgoingUnknown: Number(outgoingOrigins?.totals?.unknown || 0),
+        total: Number(summary.total || 0),
+        contacts: Array.isArray(summary.contactsSet) ? summary.contactsSet.filter(Boolean).length : 0,
+        firstAt: summary.firstAt || null,
+        lastAt: summary.lastAt || null,
+      } : { outgoingAsisto: Number(outgoingOrigins?.totals?.asisto || 0) };
+
       return res.status(200).json({
         ok: true,
         tenantId,
@@ -6124,39 +6156,15 @@ function mountAuthRoutes(app) {
         from,
         to,
         range: { start, end },
-        summary: {
-          incoming: Number(summary.incoming || 0),
-          outgoing: Number(summary.outgoing || 0),
-          outgoingAsisto: Number(outgoingOrigins?.totals?.asisto || 0),
-          outgoingManual: Number(outgoingOrigins?.totals?.manual || 0),
-          outgoingUnknown: Number(outgoingOrigins?.totals?.unknown || 0),
-          total: Number(summary.total || 0),
-          contacts: Array.isArray(summary.contactsSet) ? summary.contactsSet.filter(Boolean).length : 0,
-          firstAt: summary.firstAt || null,
-          lastAt: summary.lastAt || null,
-        },
-        overall: {
+        summary: publicSummary,
+        overall: isSuper ? {
           lastMessageAt: lastOverall?.at || null,
           inactivityMs,
           inactivityLabel: inactivityMs == null ? '' : wwebHumanizeMs(inactivityMs),
-        },
-        permissionSummary,
-        permissions,
-        contacts: (contactRows || []).map((r) => {
-          const contact = String(r._id || '');
-          const origins = outgoingOrigins?.contacts?.get(contact) || {};
-          return {
-            contact,
-            incoming: Number(r.incoming || 0),
-            outgoing: Number(r.outgoing || 0),
-            outgoingAsisto: Number(origins.asisto || 0),
-            outgoingManual: Number(origins.manual || 0),
-            outgoingUnknown: Number(origins.unknown || 0),
-            total: Number(r.total || 0),
-            firstAt: r.firstAt || null,
-            lastAt: r.lastAt || null,
-          };
-        }),
+        } : {},
+        permissionSummary: isSuper ? permissionSummary : {},
+        permissions: isSuper ? permissions : [],
+        contacts: publicContacts,
       });
     } catch (e) {
       console.error("api/wweb/stats error:", e);

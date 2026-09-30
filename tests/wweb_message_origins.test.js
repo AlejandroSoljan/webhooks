@@ -17,9 +17,10 @@ test('estadísticas separan salidas de Asisto, manuales y sin identificar', () =
 });
 
 test('detalle por contacto conserva columnas de origen independientes', () => {
-  assert.match(source, /<th>Salida Asisto<\/th>/);
+  assert.match(source, /<th>Enviados por Asisto<\/th>/);
   assert.match(source, /<th>Salida manual<\/th>/);
   assert.match(source, /<th>Sin identificar<\/th>/);
+  assert.match(source, /if\(!IS_SUPER\) return '<tr><td class="mono">'/);
 });
 
 test('la tabla visible lista sólo contactos con envíos confirmados por API sin alterar el total estadístico', () => {
@@ -27,5 +28,6 @@ test('la tabla visible lista sólo contactos con envíos confirmados por API sin
   assert.match(source, /Number\(contact && contact\.outgoingAsisto \|\| 0\) > 0/);
   assert.match(source, /con envíos por API/);
   assert.match(source, /contacts: Array\.isArray\(summary\.contactsSet\) \? summary\.contactsSet\.filter\(Boolean\)\.length : 0/);
-  assert.match(source, /contacts: \(contactRows \|\| \[\]\)\.map/);
+  assert.match(source, /const publicContacts = \(contactRows \|\| \[\]\)\.map/);
+  assert.match(source, /if \(!isSuper\) return \{ contact, outgoingAsisto:/);
 });

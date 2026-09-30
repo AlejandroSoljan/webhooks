@@ -44,6 +44,74 @@ function configBool(value, fallback = false) {
   return ['1', 'true', 'yes', 'si', 'sí', 'on', 'habilitado', 'enabled'].includes(String(value).trim().toLowerCase());
 }
 
+function comparableMessageText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function asistoOriginHint(doc) {
+  const hint = [doc?.source, doc?.origin, doc?.sentBy, doc?.meta?.from, doc?.meta?.source]
+    .map(value => String(value || '').trim().toLowerCase()).filter(Boolean).join(' ');
+  if (/wweb_phone_operator|phone_operator|whatsapp_operator|manual|human/.test(hint)) return 'manual';
+  if (/asisto|automation|automatic|bot|api|campaign|template/.test(hint)) return 'asisto';
+  return '';
+}
+
+async function asistoMessageActivity(db, { filter, start, end, daily, messagePipeline }) {
+  const logs = await db.collection('wa_wweb_message_log').aggregate([
+    ...messagePipeline({ ...filter, direction: 'out', at: { $gte: start, $lt: end } }),
+    { $project: { tenantId: 1, numero: 1, contact: 1, body: 1, text: 1, messageId: 1, at: 1, source: 1, origin: 1, sentBy: 1, meta: 1 } },
+    { $sort: { at: 1 } },
+  ], { maxTimeMS: 10000 }).toArray();
+  const windowFilter = {
+    ...(filter.tenantId ? { tenantId: String(filter.tenantId).toUpperCase() } : {}),
+    $or: [
+      { windowStartedAt: { $lt: end }, windowEndsAt: { $gte: start } },
+      { lastMessageAt: { $gte: start, $lt: end } },
+      { 'messages.at': { $gte: start, $lt: end } },
+    ],
+  };
+  const windows = await db.collection('wa_api_message_windows').find(windowFilter, { projection: { tenantId: 1, numeroFrom: 1, contact: 1, messages: 1, windowStartedAt: 1, lastMessageAt: 1 }, maxTimeMS: 10000 }).toArray();
+  const apiEntries = [];
+  for (const windowDoc of windows) for (const entry of (Array.isArray(windowDoc.messages) ? windowDoc.messages : [])) {
+    const at = entry?.at || windowDoc.lastMessageAt || windowDoc.windowStartedAt;
+    const atMs = Date.parse(at || 0);
+    if (!Number.isFinite(atMs) || atMs < +start || atMs >= +end) continue;
+    apiEntries.push({
+      tenantId: String(windowDoc.tenantId || '').toUpperCase(), numero: String(windowDoc.numeroFrom || ''),
+      contact: String(entry?.contact || windowDoc.contact || '').trim(), text: comparableMessageText(entry?.text || entry?.body || ''),
+      messageId: String(entry?.waMessageId || entry?.messageId || '').trim(), atMs,
+    });
+  }
+  const used = new Set(), totals = new Map();
+  for (const doc of logs) {
+    const explicit = asistoOriginHint(doc);
+    if (explicit === 'manual') continue;
+    let confirmed = explicit === 'asisto';
+    if (!confirmed) {
+      const messageId = String(doc.messageId || '').trim(), contact = String(doc.contact || '').trim();
+      const text = comparableMessageText(doc.body || doc.text || ''), atMs = Date.parse(doc.at || 0);
+      let best = -1, distance = Infinity;
+      for (let i = 0; i < apiEntries.length; i++) {
+        if (used.has(i)) continue;
+        const api = apiEntries[i];
+        if (String(doc.tenantId || '').toUpperCase() !== api.tenantId || String(doc.numero || '') !== api.numero) continue;
+        const idMatch = messageId && api.messageId && messageId === api.messageId;
+        const contentMatch = contact === api.contact && text && text === api.text;
+        if (!idMatch && !contentMatch) continue;
+        const delta = Number.isFinite(atMs) ? Math.abs(atMs - api.atMs) : Infinity;
+        if (!idMatch && delta > 600000) continue;
+        if (idMatch || delta < distance) { best = i; distance = delta; if (idMatch) break; }
+      }
+      if (best >= 0) { used.add(best); confirmed = true; }
+    }
+    if (!confirmed) continue;
+    const date = new Date(doc.at);
+    const bucket = daily ? argentinaDay(date).day : String(new Date(+date - 10800000).getUTCHours()).padStart(2, '0');
+    totals.set(bucket, (totals.get(bucket) || 0) + 1);
+  }
+  return totals;
+}
+
 function dashboardFeatures(config, behavior = {}, channels = []) {
   // A missing tenant document is treated as legacy/unclassified, so an old
   // installation never loses information merely because its config is incomplete.
@@ -77,6 +145,7 @@ async function loadDashboard(db, { user, tenant, access, messagePipeline, now = 
   const filter = tenant ? { tenantId: tenant } : {};
   const today = { $gte: start, $lt: end };
   const metrics = [], sessions = [], unavailable = [];
+  const isSuperadmin = String(user?.role || '').toLowerCase() === 'superadmin';
   const [tenantConfig, behavior, tenantChannels] = tenant ? await Promise.all([
     db.collection('tenant_config').findOne({ _id: tenant }, { maxTimeMS: 1800 }),
     db.collection('settings').findOne({ _id: 'behavior:' + tenant }, { projection: { bot_mode: 1, botMode: 1, lead_capture_enabled: 1, leadCaptureEnabled: 1 }, maxTimeMS: 1800 }),
@@ -108,7 +177,15 @@ async function loadDashboard(db, { user, tenant, access, messagePipeline, now = 
       const policyMap = new Map(policies.map(p => [p.tenantId + ':' + p.numero, p]));
       sessions.push(...locks.slice(0, 500).map(lock => sessionRow(lock, policyMap.get(lock.tenantId + ':' + lock.numero), 'WhatsApp', now)));
     });
-    metric('sent', 'WhatsApp enviados', 'Envíos registrados · no solicitudes API. Criterio de deduplicado de Sesiones, no confirmación de entrega.', '/admin/wweb', async () => {
+    metric('sent', isSuperadmin ? 'WhatsApp enviados' : 'Enviados por Asisto', isSuperadmin ? 'Todos los mensajes salientes registrados.' : 'Sólo mensajes enviados por API o funciones de Asisto; excluye envíos manuales.', '/admin/wweb', async () => {
+      if (!isSuperadmin) {
+        const totals = await asistoMessageActivity(db, { filter, start, end, daily, messagePipeline });
+        activity = Array.from({ length: daily ? Math.round((end - start) / 86400000) : 24 }, (_, i) => {
+          const bucket = daily ? argentinaDay(new Date(+start + i * 86400000)).day : String(i).padStart(2, '0');
+          return { label: daily ? bucket.slice(8) + '/' + bucket.slice(5, 7) : bucket, sent: totals.get(bucket) || 0 };
+        });
+        return activity.reduce((sum, row) => sum + row.sent, 0);
+      }
       const rows = await aggregate('wa_wweb_message_log', [
         ...messagePipeline({ ...filter, direction: { $in: ['out', 'in'] }, at: today }),
         { $group: { _id: { bucket: { $dateToString: { date: '$at', timezone: 'America/Argentina/Buenos_Aires', format: daily ? '%Y-%m-%d' : '%H' } }, direction: '$direction' }, n: { $sum: 1 } } },
@@ -159,7 +236,7 @@ async function loadDashboard(db, { user, tenant, access, messagePipeline, now = 
     metric.label = metric.label.replace(/hoy/g, 'del período');
     metric.detail = metric.detail.replace(/de hoy/g, 'del período seleccionado');
   }
-  return { tenant, day, period, fromDay, toDay, generatedAt: now.toISOString(), metrics, activity, sessions, sessionsTruncated, unavailable, access, features };
+  return { tenant, day, period, fromDay, toDay, generatedAt: now.toISOString(), metrics, activity, sessions, sessionsTruncated, unavailable, access, features, isSuperadmin };
 }
 
 function mountOperationsDashboard(app, { requireAuth, getDb, getAccess, messagePipeline }) {
@@ -201,7 +278,7 @@ function dashboardHtml(user) {
     <div class="opsControls">${user.role === 'superadmin' ? '<label class="opsSelect"><span class="srOnly">Dominio</span><select id="opsTenant"><option value="">Todos los dominios</option></select></label>' : ''}<label class="opsSelect"><span class="srOnly">Período</span><select id="opsPeriod"><option value="today">Hoy</option><option value="yesterday">Ayer</option><option value="7d">Últimos 7 días</option><option value="month">Mes corriente</option><option value="30d">Últimos 30 días</option></select></label><button type="button" id="opsRefresh" aria-label="Actualizar indicadores" title="Actualizar indicadores">↻</button></div></header>
     <div id="opsNotices" role="status" aria-live="polite"></div>
     <div id="opsMetrics" class="opsMetrics" aria-label="Indicadores principales"></div>
-    <div class="opsColumns" id="opsMessagingRow"><section class="opsBox opsActivity" id="opsActivityBox"><div class="opsBoxHeading"><h2>Actividad de mensajes</h2><div class="opsChartLegend"><span><i class="mint"></i>Enviados</span><span><i class="blue"></i>Recibidos</span></div></div><div id="opsActivity"></div></section>
+    <div class="opsColumns" id="opsMessagingRow"><section class="opsBox opsActivity" id="opsActivityBox"><div class="opsBoxHeading"><h2>Actividad de mensajes</h2><div class="opsChartLegend"><span><i class="mint"></i>${user.role === 'superadmin' ? 'Enviados' : 'Enviados por Asisto'}</span>${user.role === 'superadmin' ? '<span><i class="blue"></i>Recibidos</span>' : ''}</div></div><div id="opsActivity"></div></section>
     <section class="opsBox" id="opsConnectionsBox"><h2>Estado de conexiones</h2><div id="opsConnectionChart"></div></section></div>
     <div class="opsColumns" id="opsAttentionRow"><section class="opsBox" id="opsAlertsBox"><div class="opsBoxHeading"><h2>Necesita tu atención</h2><button class="opsTextButton" id="opsShowAlerts" type="button" hidden>Ver todas</button></div><div id="opsAlerts" class="opsAlerts"></div></section>
     <section class="opsBox" id="opsPendingBox"><h2>Pendientes</h2><div id="opsPending"></div></section></div>

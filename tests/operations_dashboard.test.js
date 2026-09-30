@@ -60,11 +60,11 @@ test('production-shaped data: tenant isolation, dedupe, day, permissions and own
     await db.collection('tenant_config').insertOne({ _id: 'NEA', services: ['Pedidos', 'Conversacional', 'Tareas WhatsApp', 'Lead'] });
     await db.collection('settings').insertOne({ _id: 'behavior:NEA', bot_mode: 'conversacional', lead_capture_enabled: true });
     await db.collection('wa_wweb_message_log').insertMany([
-      { tenantId: 'NEA', numero: '1', contact: '2', body: 'Factura', direction: 'out', at: now },
-      { tenantId: 'NEA', numero: '1', contact: '2', body: 'Factura', direction: 'out', at: new Date(+now + 1000), messageId: 'modern-id' },
+      { tenantId: 'NEA', numero: '1', contact: '2', body: 'Factura', direction: 'out', at: now, source: 'asisto' },
+      { tenantId: 'NEA', numero: '1', contact: '2', body: 'Factura', direction: 'out', at: new Date(+now + 1000), messageId: 'modern-id', source: 'asisto' },
       { tenantId: 'NEA', numero: '1', contact: '2', body: 'OK', direction: 'in', at: now },
       { tenantId: 'RVL', numero: '1', direction: 'out', at: now },
-      { tenantId: 'NEA', numero: '1', direction: 'out', at: new Date('2026-09-17T02:59:59Z') },
+      { tenantId: 'NEA', numero: '1', direction: 'out', at: new Date('2026-09-17T02:59:59Z'), source: 'asisto' },
     ]);
     await db.collection('wa_locks').insertMany([{ tenantId: 'NEA', numero: '1', state: 'online', lastSeenAt: now, secret: 'never' }, { tenantId: 'RVL', numero: '3', state: 'online', lastSeenAt: now }]);
     await db.collection('wa_wweb_policies').insertOne({ tenantId: 'NEA', numero: '1', paused: true });
@@ -78,13 +78,13 @@ test('production-shaped data: tenant isolation, dedupe, day, permissions and own
     const values = Object.fromEntries(data.metrics.map(m => [m.key, m.value]));
     assert.equal(values.sent, 1); assert.equal(values.leads, 1); assert.equal(values.tokens, 42); assert.equal(values.orders, 1); assert.equal(values.tasks, 1); assert.equal(values.contacts, 1);
     assert.equal(data.activity.length, 24);
-    assert.deepEqual(data.activity[23], { label: '23', sent: 1, received: 1 });
+    assert.deepEqual(data.activity[23], { label: '23', sent: 1 });
     assert.equal(data.activity.reduce((n, r) => n + r.sent, 0), values.sent);
     const weekly = await loadDashboard(db, { user, tenant: 'NEA', now, messagePipeline, access: ['wweb'], period: '7d' });
     assert.deepEqual(weekly.unavailable, []);
     assert.equal(weekly.activity.length, 7);
-    assert.deepEqual(weekly.activity[5], { label: '16/09', sent: 1, received: 0 });
-    assert.deepEqual(weekly.activity[6], { label: '17/09', sent: 1, received: 1 });
+    assert.deepEqual(weekly.activity[5], { label: '16/09', sent: 1 });
+    assert.deepEqual(weekly.activity[6], { label: '17/09', sent: 1 });
     assert.equal(weekly.metrics.find(m => m.key === 'sent').value, 2);
     for (const [period, size] of [['month', 17], ['30d', 30]]) {
       const longer = await loadDashboard(db, { user, tenant: 'NEA', now, messagePipeline, access: ['wweb'], period });
