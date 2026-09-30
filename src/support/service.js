@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.267 | Fecha: 2026-09-29
+// Asisto | Version: 5.00.271 | Fecha: 2026-09-30
 const crypto = require('node:crypto');
 const { fail, scopedId, hash, settings, excluded, groupTasks, analyze, ANALYZER_VERSION, GROUPING_VERSION, text, range } = require('./core');
 
@@ -118,14 +118,20 @@ class SupportService {
     const _id = scopedId(scope, 'message', message.jid, message.id, !!message.fromMe);
     const { text: content = '', raw = null, ...metadata } = message;
     const contentTooLarge = String(content).length > 20000;
-    const doc = { _id, ...scope, ...metadata, historical, contentTooLarge, payload: this.vault.seal({ text: contentTooLarge ? '' : String(content), raw }, _id), queued: false, receivedAt: this.now() };
+    // Baileys reports messages recovered after a short disconnection as
+    // history. Keep recent catch-up messages in the semi-automatic flow; old
+    // history still requires an explicit period request.
+    const ageMs = +this.now() - +message.at;
+    const catchup = historical && ageMs >= -300000 && ageMs <= 24 * 86400000;
+    const doc = { _id, ...scope, ...metadata, historical, catchup, contentTooLarge, payload: this.vault.seal({ text: contentTooLarge ? '' : String(content), raw }, _id), queued: false, receivedAt: this.now() };
     await this.col('messages').updateOne({ _id, ...scope }, { $setOnInsert: doc }, { upsert: true });
-    await this.enqueueMessage(scope, { ...message, historical }, config.inactivityMs);
+    await this.enqueueMessage(scope, { ...message, historical, catchup }, config.inactivityMs);
     await this.col('messages').updateOne({ _id, ...scope }, { $set: { queued: true } });
     return { id: _id };
   }
   async enqueueMessage(scope, message, delay) {
-    if (!message.historical) return this.enqueue(scope, message.jid, delay);
+    if (!message.historical || message.catchup) await this.enqueue(scope, message.jid, delay);
+    if (!message.historical) return;
     const requests = await this.col('history_requests').find({ ...scope, 'dates.start': { $lte: message.at }, 'dates.end': { $gt: message.at }, expiresAt: { $gt: this.now() } }).toArray();
     for (const request of requests) await this.enqueue(scope, message.jid, 1000, request.dates);
   }
@@ -184,7 +190,7 @@ class SupportService {
   }
   async repairUnassigned(scope) {
     const config = await this.config(scope);
-    const candidates = await this.col('messages').find({ ...scope, historical: false, assignmentRecoveryV1: { $ne: true }, receivedAt: { $lte: new Date(+this.now() - config.inactivityMs) } }, { projection: { jid: 1, name: 1, at: 1 } }).sort({ at: -1 }).limit(100).toArray();
+    const candidates = await this.col('messages').find({ ...scope, $or: [{ historical: false }, { catchup: true }], assignmentRecoveryV1: { $ne: true }, receivedAt: { $lte: new Date(+this.now() - config.inactivityMs) } }, { projection: { jid: 1, name: 1, at: 1 } }).sort({ at: -1 }).limit(100).toArray();
     if (!candidates.length) return false;
     const candidateIds = candidates.map(row => row._id);
     const drafts = await this.col('drafts').find({ ...scope, state: { $ne: 'merged' }, messageIds: { $in: candidateIds } }, { projection: { messageIds: 1 } }).toArray();
@@ -289,7 +295,7 @@ class SupportService {
     const whatsappContact = await this.col('contacts').findOne({ _id: scopedId(scope, 'contact', job.jid), ...scope });
     const rows = (await this.col('messages').find({ ...scope, jid: job.jid }).sort({ at: 1, _id: 1 }).limit(5001).toArray()).map(row => ({ ...row, name: whatsappContact?.name || row.name }));
     if (rows.length > 5000) fail('conversation_requires_pagination', 422);
-    const eligible = rows.filter(m => !excluded(m, config) && (job.dates ? m.at >= job.dates.start && m.at < job.dates.end : !m.historical));
+    const eligible = rows.filter(m => !excluded(m, config) && (job.dates ? m.at >= job.dates.start && m.at < job.dates.end : !m.historical || m.catchup));
     const decoded = [];
     // Group on the actual text, including cached audio transcriptions.
     for (const row of eligible) {

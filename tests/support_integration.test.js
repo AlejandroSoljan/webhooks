@@ -378,10 +378,10 @@ test('incomplete setup leaves the panel visible and operations blocked without c
     assert.equal((await fetch(base + '/api/support/session', { method: 'POST' })).status, 503);
   } finally { await new Promise(resolve => server.close(resolve)); }
 });
-test('unassigned live messages recover once without resetting failed jobs or importing unrequested history', async () => {
+test('unassigned live messages recover once without resetting failed jobs or importing old unrequested history', async () => {
   await service.ingest(scope, message('live'));
   await service.ingest(other, message('foreign'));
-  await service.ingest(scope, message('history', 30), { historical: true });
+  await service.ingest(scope, message('history', 30, { at: new Date(+now - 25 * 86400000) }), { historical: true });
   await service.col('jobs').deleteMany({});
   assert.equal(await service.repairUnassigned(scope), false);
   now = new Date(+now + 180001);
@@ -395,6 +395,18 @@ test('unassigned live messages recover once without resetting failed jobs or imp
   await service.col('jobs').updateMany(scope, { $set: { state: 'failed', attempts: 3 } });
   assert.equal(await service.repairUnassigned(scope), false);
   assert.equal((await service.col('jobs').findOne(scope)).attempts, 3);
+});
+test('recent Baileys catch-up history enters the live task flow after a short disconnection', async () => {
+  await service.ingest(scope, message('catchup', 0, { text: 'Necesito cambiar los precios porque no aparecen artículos.' }), { historical: true });
+  assert.equal(await service.col('jobs').countDocuments(scope), 1);
+  const stored = await service.col('messages').findOne({ ...scope, id: 'catchup' });
+  assert.equal(stored.historical, true);
+  assert.equal(stored.catchup, true);
+  now = new Date(+now + 180001);
+  await service.runOne(async () => {}, scope);
+  const [draft] = await service.listDrafts(scope);
+  assert.equal(draft.messageIds.includes(stored._id), true);
+  assert.match(draft.source.description, /cambiar los precios/);
 });
 test('AI task analysis creates a title and operational summary under the dedicated token-control type', async () => {
   service.titleAnalyzer = { run: async () => ({ subject: 'Corregir impresión de facturas', description: 'El cliente informa que la factura no se imprime. Queda pendiente revisar la configuración de impresión.', model: 'fixture-ai', inputTokens: 40, outputTokens: 8, totalTokens: 48 }) };
@@ -469,9 +481,9 @@ test('more history keeps a non-excluded conversation available for review', asyn
 test('history requested before sync processes later messages only within the selected period and owner', async () => {
   const from = '2026-09-01T10:00:00Z', to = '2026-09-01T12:00:00Z';
   assert.equal((await service.history(scope, from, to)).messages, 0);
-  await service.ingest(scope, message('older', -7200), { historical: true });
+  await service.ingest(scope, message('older', -7200, { at: new Date(+now - 25 * 86400000) }), { historical: true });
   assert.equal(await service.col('jobs').countDocuments(scope), 0);
-  await service.ingest(other, message('other-history'), { historical: true });
+  await service.ingest(other, message('other-history', 0, { at: new Date(+now - 25 * 86400000) }), { historical: true });
   assert.equal(await service.col('jobs').countDocuments(other), 0);
   await service.ingest(scope, message('in-range'), { historical: true });
   now = new Date(+now + 1001); await service.runOne();
