@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.264 | Fecha: 2026-09-28
+// Asisto | Version: 5.00.270 | Fecha: 2026-09-30
 const OpenAI = require('openai');
 const { fail, text } = require('./core');
 const { resolveOpenAiApiKey } = require('../../ai_key_router');
@@ -33,7 +33,7 @@ function asistoTitleAnalyzer(env = process.env, { runtimeFor = tenantId => requi
     const response = await clientFor(apiKey).chat.completions.create({
       model,
       messages: [
-        { role: 'system', content: 'Analizá una conversación de soporte y respondé únicamente JSON válido con {"subject":"...","description":"..."}. subject: nombre concreto de la tarea, máximo 80 caracteres; no copies una frase textual ni incluyas nombres, saludos o fechas. description: resumen operativo breve, sin copiar la conversación; explicá el problema o pedido, el contexto relevante, lo realizado y lo que queda pendiente. No inventes datos. Máximo 700 caracteres.' },
+        { role: 'system', content: 'Analizá una conversación cronológica de soporte y respondé únicamente JSON válido con {"subject":"...","description":"..."}. subject: nombre concreto de la tarea, máximo 80 caracteres; no copies una frase textual ni incluyas nombres, saludos o fechas. description: resumen operativo breve, sin copiar la conversación; explicá el problema o pedido, el contexto relevante, lo realizado y sólo lo que realmente queda pendiente al final. Los mensajes más recientes prevalecen sobre pasos anteriores: si después se confirma "ya está", "listo", "resuelto", una solución equivalente, o el cliente agradece sin formular otro pedido, indicá que quedó resuelto y no digas que se espera respuesta. No inventes datos. Máximo 700 caracteres.' },
         { role: 'user', content: transcript },
       ],
       response_format: { type: 'json_object' },

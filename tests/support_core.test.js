@@ -196,6 +196,22 @@ test('non-excluded conversations are documented without a keyword or speaker gat
   assert.equal(analyze([outgoing('Necesitás configurar Manager')]).result, 'draft');
   assert.equal(analyze([incoming('Necesito un reporte de stock por depósito')]).result, 'draft');
 });
+test('latest completion closes the task and a later unresolved request reopens it', () => {
+  const row = (id, minutes, text, fromMe) => ({ _id: id, at: new Date(1700000000000 + minutes * 60000), text, fromMe });
+  const resolved = [
+    row('request', 0, 'Sigo sin solucionar la renovación del certificado', false),
+    row('reply', 1, 'Lo reviso y te confirmo', true),
+    row('done', 10, 'Ya está renovado el certificado', true),
+  ];
+  assert.equal(analyze(resolved).status, 'Cerrado RESUELTO');
+  assert.equal(analyze([...resolved, row('new', 11, 'Todavía no funciona, ¿podés revisarlo?', false)]).status, 'En Proceso');
+});
+test('a final customer thanks closes the exchange unless it still expresses waiting', () => {
+  const row = (id, minutes, text, fromMe) => ({ _id: id, at: new Date(1700000000000 + minutes * 60000), text, fromMe });
+  const base = [row('request', 0, 'No puedo imprimir la factura', false), row('reply', 1, 'Corregí la configuración de impresión', true)];
+  assert.equal(analyze([...base, row('thanks', 2, 'Muchas gracias!', false)]).status, 'Cerrado RESUELTO');
+  assert.equal(analyze([...base, row('waiting', 2, 'Gracias, quedo a la espera', false)]).status, 'En Proceso');
+});
 test('task categories use the existing HubSpot taxonomy', () => {
   for (const [text, expected] of [
     ['Necesito revisar el servidor virtual', 'Soporte Servidor Virtual'],

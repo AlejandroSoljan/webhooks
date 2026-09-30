@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.083 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.270 | Fecha: 2026-09-30
 const crypto = require('node:crypto');
 
 const TASK_CHOICES = Object.freeze({
@@ -81,8 +81,23 @@ function groupTasks(messages, inactivityMs = 180000) {
   }
   return groups;
 }
+function conversationResolved(messages) {
+  const ordered = [...messages].sort((a, b) => +a.at - +b.at || a._id.localeCompare(b._id));
+  const unresolved = /(?:quedo|seguimos|sigue|todavia|aun|falta|pendiente|esper(?:o|ando)|avisame|decime|confirmame|pasame|enviame|mandame|cuando puedas|no (?:esta|funciona|puedo)|\?)/;
+  const explicit = /(?:^|\b)(?:ya (?:esta|quedo|funciona)|quedo (?:listo|resuelto|solucionado|renovado|actualizado)|esta (?:listo|resuelto|solucionado|renovado|actualizado)|listo|resuelto|solucionado|finalizado|completado|renovado|actualizado)(?:\b|$)/;
+  let resolvedAt = -1;
+  for (let index = 0; index < ordered.length; index++) {
+    const input = normalize(ordered[index].text);
+    if (explicit.test(input) && !unresolved.test(input)) resolvedAt = index;
+  }
+  const last = ordered.at(-1), lastText = normalize(last?.text);
+  const thanks = last && !last.fromMe && /^(?:muchas )?gracias(?:[!., ]|$)/.test(lastText) && !unresolved.test(lastText);
+  if (thanks && ordered.slice(0, -1).some(message => message.fromMe && normalize(message.text).length > 2)) resolvedAt = ordered.length - 1;
+  if (resolvedAt < 0) return false;
+  return !ordered.slice(resolvedAt + 1).some(message => unresolved.test(normalize(message.text)));
+}
 // Every non-excluded exchange is documented. Categories are reviewable HubSpot labels.
-const ANALYZER_VERSION = 'support-task-groups-v8-semantic';
+const ANALYZER_VERSION = 'support-task-groups-v9-final-state';
 const GROUPING_VERSION = 'support-task-semantic-v2';
 function analyze(messages) {
   const transcript = messages.map(m => `${m.at.toISOString()} ${m.fromMe ? 'Operador' : 'Contacto'}: ${m.text}`).join('\n');
@@ -125,6 +140,6 @@ function analyze(messages) {
     : /error|problema|no (puedo|funciona|imprime|abre)|falla/.test(incoming) ? 'Error software'
     : /consulta|necesit|como |posibilidad|totaliz/.test(incoming) ? 'Consulta / Capacitacion' : 'No es error';
   const subject = totals ? 'Totalizador' + (/gasto/.test(incoming) ? ' de gastos' : '') + ' por cuenta' + (period ? ' y período' : '') : /stock|inventario|cereal/.test(incoming) ? (/venta/.test(incoming) ? 'Consulta sobre stock y carga de ventas' : 'Consulta sobre stock') : accounting ? 'Consulta sobre reportes contables' : messages.find(m => !m.fromMe && /manager/i.test(m.text))?.text.slice(0, 120) || messages.find(m => !m.fromMe && m.text.trim())?.text.slice(0, 120) || 'Consulta de soporte';
-  return { result: 'draft', subject, description, category, errorType, status: guidance || promisedVideo ? 'En Proceso' : 'Nuevo', channel: 'WhatsApp', confidence: 'needs_review' };
+  return { result: 'draft', subject, description, category, errorType, status: conversationResolved(messages) ? 'Cerrado RESUELTO' : guidance || promisedVideo ? 'En Proceso' : 'Nuevo', channel: 'WhatsApp', confidence: 'needs_review' };
 }
-module.exports = { SupportError, fail, scopeOf, hash, scopedId, text, range, normalize, settings, excluded, groupMessages, groupTasks, analyze, ANALYZER_VERSION, GROUPING_VERSION, TASK_CHOICES };
+module.exports = { SupportError, fail, scopeOf, hash, scopedId, text, range, normalize, settings, excluded, groupMessages, groupTasks, conversationResolved, analyze, ANALYZER_VERSION, GROUPING_VERSION, TASK_CHOICES };

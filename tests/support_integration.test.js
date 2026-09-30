@@ -209,6 +209,16 @@ test('Baileys stores a stable content fingerprint without persisting it in clear
   assert.equal(normalized.audio.fingerprint, crypto.createHash('sha256').update(fileSha256).digest('hex'));
   assert.equal(normalized.audio.fingerprint.includes(fileSha256.toString('hex')), false);
 });
+test('Baileys preserves an image without caption as task evidence', async () => {
+  const b = await import('@whiskeysockets/baileys');
+  const normalized = normalizeMessage({
+    key: { remoteJid: '123@s.whatsapp.net', id: 'image-only' },
+    messageTimestamp: Date.parse('2026-09-30T12:00:00Z') / 1000,
+    message: { imageMessage: { mimetype: 'image/png', fileLength: 321 } },
+  }, b);
+  assert.equal(normalized.text, '[Imagen recibida sin texto]');
+  assert.deepEqual(normalized.image, { mimetype: 'image/png', bytes: 321, hasCaption: false });
+});
 test('queue repairs an insertion/enqueue crash', async () => {
   await service.ingest(scope, message('one'));
   await service.col('jobs').deleteMany({}); await service.col('messages').updateMany({}, { $set: { queued: false } });

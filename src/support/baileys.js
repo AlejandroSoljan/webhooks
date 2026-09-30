@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.267 | Fecha: 2026-09-29
+// Asisto | Version: 5.00.270 | Fecha: 2026-09-30
 const crypto = require('node:crypto');
 const { scopedId, fail } = require('./core');
 
@@ -61,10 +61,12 @@ function normalizeMessage(raw, baileys) {
   const msg = baileys.normalizeMessageContent(raw.message);
   if (!msg) return null;
   const audio = msg.audioMessage;
-  const content = msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.documentMessage?.caption || '';
+  const image = msg.imageMessage;
+  const content = msg.conversation || msg.extendedTextMessage?.text || image?.caption || msg.documentMessage?.caption || (image ? '[Imagen recibida sin texto]' : '');
   if (!content && !audio) return null;
   return { id: raw.key.id, jid, fromMe: !!raw.key.fromMe, name: raw.pushName || '', at: new Date(Number(raw.messageTimestamp) * 1000), text: content,
     audio: audio ? { seconds: Number(audio.seconds || 0), mimetype: audio.mimetype || 'audio/ogg', bytes: Number(audio.fileLength || 0), fingerprint: audioFingerprint(audio.fileSha256) } : null,
+    image: image ? { mimetype: image.mimetype || 'image/jpeg', bytes: Number(image.fileLength || 0), hasCaption: !!image.caption } : null,
     raw: audio ? JSON.stringify(raw, baileys.BufferJSON.replacer) : null };
 }
 
