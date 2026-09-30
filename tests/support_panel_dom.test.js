@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.268 | Fecha: 2026-09-29
+// Asisto | Version: 5.00.269 | Fecha: 2026-09-29
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -85,9 +85,41 @@ test('refreshing the same contact preserves unsaved ticket fields and the select
     subject.dispatchEvent(new w.Event('input', { bubbles: true }));
     selected = { jid: '111@lid', name: 'Cliente', refreshAt: 2 };
     listener({ 'selection-7': { newValue: selected } }, 'session');
+    assert.equal(w.document.querySelector('#editor').hidden, false, 'refresh keeps the current editor visible while loading');
+    assert.equal(w.document.querySelector('#field-subject').value, 'Cambio todavía no guardado');
     await pause();
     assert.equal(w.document.querySelector('#field-subject').value, 'Cambio todavía no guardado');
     assert.equal(w.document.querySelector('#tasks button.selected').dataset.id, 'second');
     assert.match(w.document.querySelector('#notice').textContent, /Conservamos los cambios/);
+  } finally { dom.window.close(); }
+});
+
+test('editing while a slow save is in flight never loses the newer value', async () => {
+  const dom = new JSDOM(html, { url: 'chrome-extension://test/panel.html', runScripts: 'outside-only' });
+  const w = dom.window; let releaseSave;
+  const heldSave = new Promise(resolve => { releaseSave = resolve; });
+  w.chrome = {
+    tabs: { query: async () => [{ id: 7 }] },
+    storage: { session: { get: async () => ({ 'selection-7': { jid: '111@lid', name: 'Cliente', refreshAt: 1 } }) }, onChanged: { addListener() {} } },
+    runtime: { sendMessage: async message => {
+      if (message.action === 'SESSION') return { data: { tenantId: 'ALSO', userId: 'also', username: 'Alejandro', choices: {} } };
+      if (message.action === 'INDEX') return { data: { owner: 'ALSO:also', chats: [{ jid: '111@lid', name: 'Cliente', count: 1 }], knownChats: [] } };
+      if (message.action === 'DRAFTS') return { data: [{ id: 'first', subject: 'Primera', status: 'pending' }] };
+      if (message.action === 'DETAIL') return { data: { id: 'first', revision: 1, fields: { subject: 'Primera' }, source: {}, state: 'pending' } };
+      if (message.action === 'SAVE') { await heldSave; return { data: { revision: 2, fields: message.fields } }; }
+      throw Error(message.action);
+    } },
+  };
+  try {
+    w.eval(source); await pause();
+    const subject = w.document.querySelector('#field-subject');
+    subject.value = 'Primer cambio'; subject.dispatchEvent(new w.Event('input', { bubbles: true }));
+    w.document.querySelector('#editor').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.match(w.document.querySelector('#saveState').textContent, /Guardando/);
+    subject.value = 'Cambio hecho mientras guardaba'; subject.dispatchEvent(new w.Event('input', { bubbles: true }));
+    releaseSave(); await pause();
+    assert.equal(subject.value, 'Cambio hecho mientras guardaba');
+    assert.match(w.document.querySelector('#saveState').textContent, /sin guardar/i);
   } finally { dom.window.close(); }
 });

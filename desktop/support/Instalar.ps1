@@ -1,7 +1,7 @@
-# Asisto | Version: 5.00.268 | Fecha: 2026-09-29
+# Asisto | Version: 5.00.269 | Fecha: 2026-09-29
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:LOCALAPPDATA 'AsistoSupport'
-$release = Join-Path $root 'app-5.00.268'
+$release = Join-Path $root 'app-5.00.269'
 $arch = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
 $runtime = Join-Path $root "node-v24.12.0-win-$arch"
 $node = Join-Path $runtime 'node.exe'

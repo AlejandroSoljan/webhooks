@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.130 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.269 | Fecha: 2026-09-29
 const BASE = 'https://asistobot.com.ar/api/support/extension';
 const LOCAL = 'http://127.0.0.1:17658/extension-session';
 async function request(path, token, body, grant) {
@@ -32,7 +32,12 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     return true;
   }
   if (message.action === 'SET_CONTEXT' && fromWhatsApp) {
-    chrome.storage.session.set({ ['selection-' + sender.tab.id]: { jid: String(message.jid || ''), name: String(message.name || ''), refreshAt: Date.now() } }).then(() => reply({ ok: true }), () => reply({ error: 'context_failed' }));
+    const key = 'selection-' + sender.tab.id;
+    chrome.storage.session.get(key).then(stored => {
+      const previous = stored[key], jid = String(message.jid || ''), name = String(message.name || ''), draftId = String(message.draftId || '');
+      if (message.refresh !== true && previous?.jid === jid && previous?.name === name && !draftId) return { unchanged: true };
+      return chrome.storage.session.set({ [key]: { jid, name, draftId, refreshAt: Date.now() } }).then(() => ({ unchanged: false }));
+    }).then(result => reply({ ok: true, ...result }), () => reply({ error: 'context_failed' }));
     return true;
   }
   if (fromWhatsApp && !['INDEX', 'CONTACT', 'CONTACTS', 'MESSAGES', 'ASSIGN_MESSAGES', 'ACTIVE_CONTEXT'].includes(message.action)) return false;

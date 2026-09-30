@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.130 | Fecha: 2026-09-12
+// Asisto | Version: 5.00.269 | Fecha: 2026-09-29
 (() => {
   let chats = [], knownChats = [], owner = '', timer, stopped = false, currentJid = '', currentName = '', taskData = { tasks: [], messages: [] }, anchorId = '';
   const remembered = new Map(), addressBook = [], selected = new Map(), controls = new Map();
@@ -107,12 +107,15 @@
       }
       const { holder, check } = control; control.node = node;
       const rowAssignments = row?.assignments || [];
-      check.checked = selected.has(id) || rowAssignments.length > 0;
+      // Checked means "selected for the next action". Existing assignments
+      // use the indeterminate state so they never look selected forever.
+      check.checked = selected.has(id);
+      check.indeterminate = rowAssignments.length > 0 && !check.checked;
       check.classList.toggle('assigned', rowAssignments.length > 0);
       check.title = rowAssignments.length ? rowAssignments.map(assignment => `${statusLabel(assignment.status)} · ${assignment.subject || assignment.shortId}`).join('\n') : 'Seleccionar este mensaje para una tarea';
       check.setAttribute('aria-label', check.title);
-      check.onchange = event => { event.stopPropagation(); anchorId = id; if (check.checked) selected.set(id, snapshot(node, id)); else selected.delete(id); renderToolbar(); };
-      check.onclick = event => { event.stopPropagation(); if (rowAssignments.length && !selected.has(id)) { event.preventDefault(); anchorId = id; selected.set(id, snapshot(node, id)); check.checked = true; renderToolbar(); } };
+      check.onchange = event => { event.stopPropagation(); anchorId = id; if (check.checked) selected.set(id, snapshot(node, id)); else selected.delete(id); check.indeterminate = rowAssignments.length > 0 && !check.checked; renderToolbar(); };
+      check.onclick = event => { event.stopPropagation(); };
       const badges = JSON.stringify(rowAssignments);
       if (control.badges !== badges) { holder.querySelectorAll('.asisto-message-assignment').forEach(badge => badge.remove());
       for (const assignment of rowAssignments) {
@@ -160,7 +163,7 @@
       for (const node of messageNodes()) improveSelection(node, node.dataset.asistoMessageId);
       const selectedMessages = [...selected.values()];
       const request = { action: 'ASSIGN_MESSAGES', jid: currentJid, messageIds: [...selected.keys()], selectedMessages, destination: destination.value, existingAction: action.value };
-      chrome.runtime.sendMessage({ action: 'OPEN', jid: currentJid, name: currentName }).catch(() => {});
+      chrome.runtime.sendMessage({ action: 'OPEN', jid: currentJid, name: currentName, draftId: destination.value === 'new' ? '' : destination.value }).catch(() => {});
       assign.disabled = true; assign.textContent = 'Preparando tarea…';
       let response; try { response = await chrome.runtime.sendMessage(request); } catch { response = { error: 'No se pudo comunicar con Asisto. Volvé a intentar.' }; } finally { assign.disabled = false; }
       if (response?.error === 'message_already_assigned' && confirm('Uno o más mensajes ya pertenecen a otra tarea. ¿Querés reasignarlos?')) response = await chrome.runtime.sendMessage({ ...request, reassign: true });
@@ -170,7 +173,7 @@
         return;
       }
       if (currentJid !== request.jid) return;
-      selected.clear(); renderToolbar(); await refreshTasks(); chrome.runtime.sendMessage({ action: 'SET_CONTEXT', jid: currentJid, name: currentName }).catch(() => {});
+      selected.clear(); renderToolbar(); await refreshTasks(); chrome.runtime.sendMessage({ action: 'SET_CONTEXT', jid: currentJid, name: currentName, draftId: response.data?.draftId || '', refresh: true }).catch(() => {});
     };
     const feedback = document.createElement('span'); feedback.className = 'asisto-message-feedback'; feedback.setAttribute('role', 'alert');
     bar.append(title, all, none, from, destination, action, assign, feedback);

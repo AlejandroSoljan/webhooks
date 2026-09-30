@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.144 | Fecha: 2026-09-16
+// Asisto | Version: 5.00.269 | Fecha: 2026-09-29
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -150,5 +150,33 @@ test('an audio without a DOM id uses the Baileys id by duration and direction', 
     w.document.querySelector('.asisto-message-control[data-asisto-message-id="SERVER_AUDIO_ID"] input').click();
     w.document.querySelector('.asisto-message-toolbar .primary').click(); await pause();
     assert.deepEqual([...calls.find(call => call.action === 'ASSIGN_MESSAGES').messageIds], ['SERVER_AUDIO_ID']);
+  } finally { dom.window.close(); }
+});
+test('an assigned message is visually distinct and can still be selected and deselected', async () => {
+  const assigned = [{ waId: 'TEXT0000001', at: '2026-09-14T15:33:00.000Z', fromMe: false, audio: false, assignments: [{ draftId: 'draft-1', shortId: '1', subject: 'Revisar factura', status: 'pending' }] }];
+  const { dom, w } = await mount(assigned);
+  try {
+    const check = w.document.querySelector('.asisto-message-control[data-asisto-message-id="TEXT0000001"] input');
+    assert.equal(check.checked, false);
+    assert.equal(check.indeterminate, true);
+    check.click(); await pause();
+    assert.equal(check.checked, true);
+    assert.equal(check.indeterminate, false);
+    assert.match(w.document.querySelector('.asisto-message-toolbar strong').textContent, /1 seleccionados/);
+    check.click(); await pause();
+    assert.equal(check.checked, false);
+    assert.equal(check.indeterminate, true);
+    assert.equal(w.document.querySelector('.asisto-message-toolbar'), null);
+  } finally { dom.window.close(); }
+});
+
+test('successful assignment requests one explicit panel refresh for the saved draft', async () => {
+  const { dom, w, calls } = await mount();
+  try {
+    w.document.querySelectorAll('.asisto-message-control input')[2].click();
+    w.document.querySelector('.asisto-message-toolbar .primary').click(); await pause();
+    const refresh = calls.find(call => call.action === 'SET_CONTEXT' && call.refresh === true);
+    assert.ok(refresh);
+    assert.equal(refresh.jid, '123@lid');
   } finally { dom.window.close(); }
 });

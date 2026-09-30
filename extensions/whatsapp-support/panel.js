@@ -1,6 +1,6 @@
-// Asisto | Version: 5.00.268 | Fecha: 2026-09-29
+// Asisto | Version: 5.00.269 | Fecha: 2026-09-29
 const $ = id => document.getElementById(id);
-let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, companyTimer, companyGeneration = 0;
+let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, refreshGeneration = 0, companyTimer, companyGeneration = 0;
 let consumedOpenAt = null;
 let pendingContextRefresh = false;
 const unsavedEdits = new Map();
@@ -15,11 +15,20 @@ async function loadContactControl() {
     const label = document.createElement('label'), check = document.createElement('input'), name = document.createElement('span');
     label.className = 'contact-control-row'; check.type = 'checkbox'; check.checked = !row.excluded; check.disabled = row.locked;
     name.textContent = row.name + (row.locked ? ' · Excluido por el dominio' : row.excluded ? ' · Sin control de tareas' : '');
-    check.onchange = () => run(async () => {
+    check.onchange = async () => {
+      const excluded = !check.checked;
       check.disabled = true;
-      try { await api('SET_CONTACT_CONTROL', { jid: row.jid, excluded: !check.checked }); await chrome.storage.session.set({ contactControlUpdated: Date.now() }); await refresh(); await loadContactControl(); notice(check.checked ? 'Control de tareas activado para ' + row.name + '.' : 'No se analizarán tareas de ' + row.name + '.'); }
-      catch (error) { check.checked = !row.excluded; check.disabled = row.locked; throw error; }
-    });
+      name.textContent = row.name + (excluded ? ' · Guardando…' : ' · Activando…');
+      try {
+        await api('SET_CONTACT_CONTROL', { jid: row.jid, excluded });
+        row.excluded = excluded; name.textContent = row.name + (row.locked ? ' · Excluido por el dominio' : excluded ? ' · Sin control de tareas' : '');
+        await chrome.storage.session.set({ contactControlUpdated: Date.now() });
+        notice(excluded ? 'No se analizarán tareas de ' + row.name + '.' : 'Control de tareas activado para ' + row.name + '.');
+      } catch (error) {
+        check.checked = !excluded; name.textContent = row.name + (row.locked ? ' · Excluido por el dominio' : row.excluded ? ' · Sin control de tareas' : '');
+        notice(errors[error.message] || 'No se pudo guardar el cambio.', true);
+      } finally { check.disabled = row.locked; }
+    };
     label.append(check, name); $('controlResults').append(label);
   }
 }
@@ -49,6 +58,7 @@ const errors = {
   invalid_hubspot_owner: 'Elegí el usuario responsable del ticket en HubSpot.', hubspot_ticket_schema_incomplete: 'HubSpot no devolvió propietarios, pipelines o propiedades obligatorias del ticket.',
 };
 function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }
+function saveState(message = '', state = '') { $('saveState').textContent = message; $('saveState').className = 'save-state' + (state ? ' ' + state : ''); }
 async function api(action, values = {}) {
   const response = await chrome.runtime.sendMessage({ action, owner, ...values });
   if (response?.error) throw new Error(response.error);
@@ -56,9 +66,10 @@ async function api(action, values = {}) {
 }
 async function run(fn) {
   if (busy) return; busy = true;
+  document.body.setAttribute('aria-busy', 'true'); $('contacts').disabled = true;
   document.querySelectorAll('button').forEach(button => button.disabled = true);
   try { await fn(); } catch (error) { notice(errors[error.message] || 'No se pudo completar la operación (' + error.message + ').', true); }
-  finally { busy = false; document.querySelectorAll('button').forEach(button => button.disabled = false); if (pendingContextRefresh) { pendingContextRefresh = false; queueMicrotask(() => run(refresh)); } }
+  finally { busy = false; document.body.removeAttribute('aria-busy'); $('contacts').disabled = false; document.querySelectorAll('button').forEach(button => button.disabled = false); if (pendingContextRefresh) { pendingContextRefresh = false; queueMicrotask(() => run(refresh)); } }
 }
 function option(select, value, label) { const item = document.createElement('option'); item.value = value; item.textContent = label; select.append(item); }
 function preferredStage(options, status, savedStageId) {
@@ -73,6 +84,7 @@ function editorFields() {
 function rememberEditorDraft() {
   if (!current?.id || $('editor').hidden || !$('field-subject')) return;
   unsavedEdits.set(current.id, { fields: editorFields() });
+  saveState('Cambios sin guardar', 'dirty');
 }
 function renderFields() {
   $('fields').replaceChildren();
@@ -105,6 +117,7 @@ function renderFields() {
   $('discardChanges').hidden = !current.hubspot?.ticketId || !hasNewChanges;
   $('reviewWarning').hidden = !hasNewChanges;
   $('editor').hidden = false; $('hubspot').hidden = true;
+  saveState(staged ? 'Cambios sin guardar' : '', staged ? 'dirty' : '');
 }
 const companySuggestions = new Map();
 async function loadCompanySuggestions(query) {
@@ -148,41 +161,51 @@ async function selectContact(jid, draftId = '') {
   else notice('Este contacto no tiene tareas pendientes.');
 }
 async function refresh() {
-  rememberEditorDraft();
-  const generation = selectionGeneration;
+  const generation = ++refreshGeneration, contextGeneration = selectionGeneration;
   const previous = $('contacts').value;
   const previousDraft = current?.id || '';
   $('connectionState').textContent = 'Comprobando conexión…';
-  owner = ''; current = null; $('editor').hidden = true; $('connect').hidden = true; $('tasks').replaceChildren(); $('contacts').replaceChildren(); $('account').textContent = 'Consultando sesión…';
-  try { session = await api('SESSION'); }
+  let nextSession;
+  try { nextSession = await api('SESSION'); }
   catch (error) { $('connectionState').textContent = 'Sin conexión con Asisto'; $('account').textContent = 'Sesión no disponible'; throw error; }
-  if (generation !== selectionGeneration) return;
-  owner = session.tenantId + ':' + session.userId;
+  if (generation !== refreshGeneration || contextGeneration !== selectionGeneration) return;
+  const nextOwner = nextSession.tenantId + ':' + nextSession.userId;
+  const index = await api('INDEX');
+  if (generation !== refreshGeneration || contextGeneration !== selectionGeneration) return;
+  if (index.owner !== nextOwner) throw new Error('account_changed');
+  const selected = tabId ? (await chrome.storage.session.get('selection-' + tabId))['selection-' + tabId] : null;
+  if (generation !== refreshGeneration || contextGeneration !== selectionGeneration) return;
+  session = nextSession; owner = nextOwner;
   $('connectionState').textContent = 'Conectado a Asisto';
   $('account').textContent = session.tenantId + ' · ' + session.username;
-  const index = await api('INDEX');
-  if (generation !== selectionGeneration) return;
-  if (index.owner !== owner) throw new Error('account_changed');
+  $('contacts').replaceChildren();
   option($('contacts'), '', 'Elegí un contacto');
   const seen = new Set();
   for (const chat of index.chats) { if (seen.has(chat.jid)) continue; seen.add(chat.jid); option($('contacts'), chat.jid, (chat.name || chat.jid) + ' · ' + chat.count); }
-  const selected = tabId ? (await chrome.storage.session.get('selection-' + tabId))['selection-' + tabId] : null;
-  if (generation !== selectionGeneration) return;
   const jid = selected ? selected.jid : previous;
   if (jid && !seen.has(jid)) { const known = (index.knownChats || []).find(chat => chat.jid === jid || chat.aliases?.includes(jid)); option($('contacts'), jid, known?.name || selected?.name || jid); seen.add(jid); }
   const explicitlyRequestedDraft = selected?.refreshAt !== consumedOpenAt ? selected?.draftId : '';
   const requestedDraft = explicitlyRequestedDraft || (jid === previous ? previousDraft : '');
   consumedOpenAt = selected?.refreshAt;
   if (seen.has(jid)) { $('contacts').value = jid; await selectContact(jid, requestedDraft); }
-  else notice(selected?.name ? 'Conversación actual: ' + selected.name + '. Todavía no se pudo vincular este contacto con sus tareas.' : index.chats.length ? 'Elegí un contacto o pulsá su icono en WhatsApp Web.' : 'Todavía no hay tareas detectadas. Procesá las conversaciones desde Asisto.');
+  else {
+    current = null; $('editor').hidden = true; $('hubspot').hidden = true; $('tasks').replaceChildren(); $('contacts').value = '';
+    notice(selected?.name ? 'Conversación actual: ' + selected.name + '. Todavía no se pudo vincular este contacto con sus tareas.' : index.chats.length ? 'Elegí un contacto o pulsá su icono en WhatsApp Web.' : 'Todavía no hay tareas detectadas. Procesá las conversaciones desde Asisto.');
+  }
 }
 async function save() {
-  const fields = editorFields();
+  const selectedId = current.id, fields = editorFields(), serialized = JSON.stringify(fields);
   const action = current.sourceChanged || current.reconciliationRequired ? 'RECONCILE' : 'SAVE';
-  const saved = await api(action, { id: current.id, revision: current.revision, fields });
+  saveState('Guardando…', 'saving');
+  let saved;
+  try { saved = await api(action, { id: current.id, revision: current.revision, fields }); }
+  catch (error) { unsavedEdits.set(selectedId, { fields: editorFields() }); saveState('No se guardó. Tus cambios siguen acá.', 'dirty'); throw error; }
+  if (current?.id !== selectedId) return;
   current.revision = saved.revision; Object.assign(current.fields, saved.fields || fields); current.sourceChanged = false; current.reconciliationRequired = false;
-  unsavedEdits.delete(current.id);
-  if (saved.fields) { $('field-subject').value = saved.fields.subject || ''; $('field-description').value = saved.fields.description || ''; }
+  const changedWhileSaving = JSON.stringify(editorFields()) !== serialized;
+  if (changedWhileSaving) { unsavedEdits.set(current.id, { fields: editorFields() }); saveState('Hay cambios nuevos sin guardar', 'dirty'); }
+  else { unsavedEdits.delete(current.id); saveState('Guardado', 'saved'); }
+  if (saved.fields && !changedWhileSaving) { $('field-subject').value = saved.fields.subject || ''; $('field-description').value = saved.fields.description || ''; }
   $('reviewWarning').hidden = true; notice(action === 'RECONCILE' ? 'Mensajes nuevos incorporados al resumen.' : 'Cambios guardados en Asisto.');
 }
 function selectField(container, id, title, options, value = '') {
@@ -260,6 +283,7 @@ $('discardChanges').onclick = () => run(async () => {
   current.reconciliationRequired = false;
   current.hubspot.pendingFollowup = false;
   delete current.hubspot.followupAction;
+  unsavedEdits.delete(current.id);
   renderFields();
   notice('Cambios nuevos descartados. El ticket existente se conserva sin modificaciones.');
   setTimeout(() => run(refresh), 800);
@@ -284,7 +308,7 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'session' || !Object.keys(changes).some(key => key.startsWith('selection-'))) return;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); tabId = tab?.id;
   if (!changes['selection-' + tabId]) return;
-  rememberEditorDraft(); ++selectionGeneration;
+  ++selectionGeneration;
   $('hubspot').hidden = true;
   notice(changes['selection-' + tabId].newValue?.name ? 'Cargando ' + changes['selection-' + tabId].newValue.name + '…' : 'Identificando conversación…');
   if (busy) pendingContextRefresh = true;

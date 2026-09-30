@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.268 | Fecha: 2026-09-29
+// Asisto | Version: 5.00.269 | Fecha: 2026-09-29
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -11,7 +11,7 @@ test('combined Windows installer includes Baileys and the Chrome extension witho
   const launcher = fs.readFileSync(path.join(root, 'desktop/support/Instalar.cmd'), 'utf8');
   const builder = fs.readFileSync(path.join(root, 'scripts/build_support_desktop.ps1'), 'utf8');
   const panel = fs.readFileSync(path.join(root, 'src/support/panel.html'), 'utf8');
-  const archive = fs.readFileSync(path.join(root, 'static/downloads/AsistoTareas-5.00.268.zip'));
+  const archive = fs.readFileSync(path.join(root, 'static/downloads/AsistoTareas-5.00.269.zip'));
   const archiveText = archive.toString('latin1');
 
   assert.match(installer, /npm-cli\.js'\) ci --omit=dev --ignore-scripts/);

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.080 | Fecha: 2026-09-09
+// Asisto | Version: 5.00.269 | Fecha: 2026-09-29
 const { test, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
@@ -408,8 +408,10 @@ test('background restricts WhatsApp messages, exposes the active chat and forces
  assert.equal(listener({action:'PUBLISH',id},sender,()=>{}),false);assert.equal(calls.length,0);
  const index=await new Promise(resolve=>listener({action:'INDEX'},sender,resolve));assert.ok(!JSON.stringify(index).includes('private-grant'));
  await new Promise(resolve=>listener({action:'OPEN',jid:'123@lid',name:'Juan'},sender,resolve));assert.equal(opened[0].tabId,7);assert.equal(selections[0]['selection-7'].jid,'123@lid');assert.equal(selections[0]['selection-7'].refreshAt,101);
+ const unchanged=await new Promise(resolve=>listener({action:'SET_CONTEXT',jid:'123@lid',name:'Juan'},sender,resolve));assert.equal(unchanged.unchanged,true);assert.equal(selections.length,1);
+ const forced=await new Promise(resolve=>listener({action:'SET_CONTEXT',jid:'123@lid',name:'Juan',draftId:'draft-new',refresh:true},sender,resolve));assert.equal(forced.unchanged,false);assert.equal(selections.at(-1)['selection-7'].draftId,'draft-new');
  const active=await new Promise(resolve=>listener({action:'ACTIVE_CONTEXT'},sender,resolve));assert.equal(active.data.jid,'123@lid');
- await new Promise(resolve=>listener({action:'OPEN',jid:'123@lid',name:'Juan'},sender,resolve));assert.equal(selections[1]['selection-7'].refreshAt,102);
+ await new Promise(resolve=>listener({action:'OPEN',jid:'123@lid',name:'Juan'},sender,resolve));assert.equal(selections.at(-1)['selection-7'].refreshAt,103);
  await new Promise(resolve=>listener({action:'SAVE',id,revision:1,fields:{}},{id:extensionId,url:chrome.runtime.getURL('panel.html')},resolve));
  const save=calls.at(-1);assert.equal(save.options.headers['X-Asisto-Extension'],'private-grant');assert.equal(save.options.credentials,'omit');assert.equal(save.options.headers.Authorization,'Bearer '+'A'.repeat(43));assert.match(save.url,/^https:\/\/asistobot\.com\.ar\/api\/support\/extension\//);
  assert.equal(typeof action,'function');
