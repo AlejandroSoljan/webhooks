@@ -1,9 +1,18 @@
-// Asisto | Version: 5.00.269 | Fecha: 2026-09-29
+// Asisto | Version: 5.00.272 | Fecha: 2026-09-30
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, refreshGeneration = 0, companyTimer, companyGeneration = 0;
 let consumedOpenAt = null;
 let pendingContextRefresh = false;
 const unsavedEdits = new Map();
+const draftStorageKey = id => 'editor-draft-' + id;
+function persistEditorDraft(id, draft) {
+  if (!id) return;
+  Promise.resolve(chrome.storage.session.set?.({ [draftStorageKey(id)]: { ...draft, savedAt: Date.now() } })).catch(() => {});
+}
+function removePersistedDraft(id) {
+  if (!id) return;
+  Promise.resolve(chrome.storage.session.remove?.(draftStorageKey(id))).catch(() => {});
+}
 let controlTimer, controlGeneration = 0;
 async function loadContactControl() {
   const generation = ++controlGeneration;
@@ -83,7 +92,8 @@ function editorFields() {
 }
 function rememberEditorDraft() {
   if (!current?.id || $('editor').hidden || !$('field-subject')) return;
-  unsavedEdits.set(current.id, { fields: editorFields() });
+  const draft = { fields: editorFields() };
+  unsavedEdits.set(current.id, draft); persistEditorDraft(current.id, draft);
   saveState('Cambios sin guardar', 'dirty');
 }
 function renderFields() {
@@ -142,6 +152,10 @@ function selectSuggestedCompany(value) {
 async function detail(id) {
   const generation = ++selectionGeneration;
   const next = await api('DETAIL', { id }); if (generation !== selectionGeneration) return;
+  if (!unsavedEdits.has(id)) {
+    const stored = await chrome.storage.session.get(draftStorageKey(id)); if (generation !== selectionGeneration) return;
+    if (stored[draftStorageKey(id)]?.fields) unsavedEdits.set(id, { fields: stored[draftStorageKey(id)].fields });
+  }
   current = next; renderFields(); notice('');
   if (unsavedEdits.has(id)) notice('Conservamos los cambios que todavía no guardaste.');
   document.querySelectorAll('#tasks button').forEach(button => button.classList.toggle('selected', button.dataset.id === id));
@@ -187,7 +201,12 @@ async function refresh() {
   const explicitlyRequestedDraft = selected?.refreshAt !== consumedOpenAt ? selected?.draftId : '';
   const requestedDraft = explicitlyRequestedDraft || (jid === previous ? previousDraft : '');
   consumedOpenAt = selected?.refreshAt;
-  if (seen.has(jid)) { $('contacts').value = jid; await selectContact(jid, requestedDraft); }
+  const keepDirtyEditor = jid === previous && current?.id && unsavedEdits.has(current.id) && (!explicitlyRequestedDraft || explicitlyRequestedDraft === current.id);
+  if (seen.has(jid)) {
+    $('contacts').value = jid;
+    if (keepDirtyEditor) notice('Hay cambios sin guardar. La actualización no reemplazó tu edición.');
+    else await selectContact(jid, requestedDraft);
+  }
   else {
     current = null; $('editor').hidden = true; $('hubspot').hidden = true; $('tasks').replaceChildren(); $('contacts').value = '';
     notice(selected?.name ? 'Conversación actual: ' + selected.name + '. Todavía no se pudo vincular este contacto con sus tareas.' : index.chats.length ? 'Elegí un contacto o pulsá su icono en WhatsApp Web.' : 'Todavía no hay tareas detectadas. Procesá las conversaciones desde Asisto.');
@@ -195,16 +214,26 @@ async function refresh() {
 }
 async function save() {
   const selectedId = current.id, fields = editorFields(), serialized = JSON.stringify(fields);
-  const action = current.sourceChanged || current.reconciliationRequired ? 'RECONCILE' : 'SAVE';
+  let action = current.sourceChanged || current.reconciliationRequired ? 'RECONCILE' : 'SAVE';
   saveState('Guardando…', 'saving');
   let saved;
-  try { saved = await api(action, { id: current.id, revision: current.revision, fields }); }
+  try {
+    try { saved = await api(action, { id: selectedId, revision: current.revision, fields }); }
+    catch (error) {
+      if (error.message !== 'revision_conflict') throw error;
+      const latest = await api('DETAIL', { id: selectedId });
+      if (current?.id !== selectedId) return;
+      current = latest;
+      action = latest.sourceChanged || latest.reconciliationRequired ? 'RECONCILE' : 'SAVE';
+      saved = await api(action, { id: selectedId, revision: latest.revision, fields });
+    }
+  }
   catch (error) { unsavedEdits.set(selectedId, { fields: editorFields() }); saveState('No se guardó. Tus cambios siguen acá.', 'dirty'); throw error; }
   if (current?.id !== selectedId) return;
   current.revision = saved.revision; Object.assign(current.fields, saved.fields || fields); current.sourceChanged = false; current.reconciliationRequired = false;
   const changedWhileSaving = JSON.stringify(editorFields()) !== serialized;
   if (changedWhileSaving) { unsavedEdits.set(current.id, { fields: editorFields() }); saveState('Hay cambios nuevos sin guardar', 'dirty'); }
-  else { unsavedEdits.delete(current.id); saveState('Guardado', 'saved'); }
+  else { unsavedEdits.delete(current.id); removePersistedDraft(current.id); saveState('Guardado', 'saved'); }
   if (saved.fields && !changedWhileSaving) { $('field-subject').value = saved.fields.subject || ''; $('field-description').value = saved.fields.description || ''; }
   $('reviewWarning').hidden = true; notice(action === 'RECONCILE' ? 'Mensajes nuevos incorporados al resumen.' : 'Cambios guardados en Asisto.');
 }

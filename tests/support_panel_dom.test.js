@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.269 | Fecha: 2026-09-29
+// Asisto | Version: 5.00.272 | Fecha: 2026-09-30
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -90,7 +90,39 @@ test('refreshing the same contact preserves unsaved ticket fields and the select
     await pause();
     assert.equal(w.document.querySelector('#field-subject').value, 'Cambio todavía no guardado');
     assert.equal(w.document.querySelector('#tasks button.selected').dataset.id, 'second');
-    assert.match(w.document.querySelector('#notice').textContent, /Conservamos los cambios/);
+    assert.equal(detailCalls, 2, 'a soft refresh does not reload the dirty editor from the server');
+    assert.match(w.document.querySelector('#notice').textContent, /no reemplazó tu edición/);
+  } finally { dom.window.close(); }
+});
+test('a revision conflict reloads only the revision and retries the users fields', async () => {
+  const dom = new JSDOM(html, { url: 'chrome-extension://test/panel.html', runScripts: 'outside-only' });
+  const w = dom.window; const saves = [];
+  w.chrome = {
+    tabs: { query: async () => [{ id: 7 }] },
+    storage: { session: { get: async () => ({ 'selection-7': { jid: '111@lid', name: 'Cliente', refreshAt: 1 } }), set: async () => {}, remove: async () => {} }, onChanged: { addListener() {} } },
+    runtime: { sendMessage: async message => {
+      if (message.action === 'SESSION') return { data: { tenantId: 'ALSO', userId: 'also', username: 'Alejandro', choices: {} } };
+      if (message.action === 'INDEX') return { data: { owner: 'ALSO:also', chats: [{ jid: '111@lid', name: 'Cliente', count: 1 }], knownChats: [] } };
+      if (message.action === 'DRAFTS') return { data: [{ id: 'first', subject: 'Original', status: 'pending' }] };
+      if (message.action === 'DETAIL') return { data: { id: 'first', revision: saves.length ? 2 : 1, fields: { subject: 'Original del servidor' }, source: {}, state: 'pending', sourceChanged: saves.length > 0 } };
+      if (message.action === 'SAVE') { saves.push(message); return { error: 'revision_conflict' }; }
+      if (message.action === 'RECONCILE') { saves.push(message); return { data: { revision: 3, fields: message.fields } }; }
+      throw Error(message.action);
+    } },
+  };
+  try {
+    w.eval(source); await pause();
+    const subject = w.document.querySelector('#field-subject');
+    subject.value = 'Mi cambio'; subject.dispatchEvent(new w.Event('input', { bubbles: true }));
+    w.document.querySelector('#editor').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+    await pause();
+    assert.equal(saves.length, 2);
+    assert.equal(saves[0].fields.subject, 'Mi cambio');
+    assert.equal(saves[1].action, 'RECONCILE');
+    assert.equal(saves[1].revision, 2);
+    assert.equal(saves[1].fields.subject, 'Mi cambio');
+    assert.equal(subject.value, 'Mi cambio');
+    assert.match(w.document.querySelector('#saveState').textContent, /Guardado/);
   } finally { dom.window.close(); }
 });
 
