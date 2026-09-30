@@ -434,7 +434,17 @@ async function buildApiMessageWindowBilling({
   // cantidad de ventanas facturables del API. Versiones anteriores podían
   // registrar el mismo evento como "chat" y "text" con algunos segundos de
   // diferencia, por eso se deduplica por contenido dentro de 10 segundos.
-  const realMatch = { direction: 'out' };
+  const realMatch = {
+    direction: 'out',
+    // Baileys puede registrar eventos salientes de sincronización como chat
+    // sin cuerpo. No son mensajes visibles para el destinatario. Sí se
+    // conservan los archivos sin epígrafe, porque el contenido es el medio.
+    $or: [
+      { body: { $regex: /\S/ } },
+      { hasMedia: true },
+      { messageType: { $in: ['media', 'document', 'image', 'video', 'audio'] } }
+    ]
+  };
   if (safeTenant) realMatch.tenantId = safeTenant;
   const realAt = {};
   const realFrom = parseDateStart(from);
