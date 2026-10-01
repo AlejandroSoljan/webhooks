@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.272 | Fecha: 2026-09-30
+// Asisto | Version: 5.00.273 | Fecha: 2026-10-01
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, refreshGeneration = 0, companyTimer, companyGeneration = 0;
 let consumedOpenAt = null;
@@ -63,6 +63,7 @@ const errors = {
   hubspot_companies_forbidden: 'HubSpot rechazó la lectura de empresas para el token cargado en Render.',
   hubspot_contacts_forbidden: 'HubSpot rechazó la lectura de contactos para el token cargado en Render.',
   hubspot_tickets_forbidden: 'HubSpot rechazó la creación del ticket para el token cargado en Render.',
+  hubspot_ticket_search_incomplete: 'La empresa tiene demasiados tickets abiertos para comprobar duplicados. La tarea quedó guardada; revisá los tickets abiertos antes de reintentar.',
   hubspot_reference_ticket_has_no_owner: 'El ticket de referencia de HubSpot no tiene un propietario asignado.',
   invalid_hubspot_owner: 'Elegí el usuario responsable del ticket en HubSpot.', hubspot_ticket_schema_incomplete: 'HubSpot no devolvió propietarios, pipelines o propiedades obligatorias del ticket.',
 };
@@ -121,7 +122,7 @@ function renderFields() {
   if (/^\d+$/.test(String(current.hubspot?.portalId || '')) && /^\d+$/.test(String(current.hubspot?.ticketId || ''))) {
     const link = document.createElement('a'); link.href = `https://app.hubspot.com/contacts/${current.hubspot.portalId}/record/0-5/${current.hubspot.ticketId}/`; link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Abrir ticket ' + current.hubspot.ticketId; $('taskState').replaceChildren(link);
   }
-  $('setup').textContent = current.hubspot?.ticketId ? 'Actualizar ticket en HubSpot' : 'Crear ticket en HubSpot';
+  $('save').textContent = current.hubspot?.ticketId ? 'Actualizar ticket en HubSpot' : 'Crear ticket en HubSpot';
   $('dismiss').hidden = !!current.hubspot?.ticketId || current.state === 'ignored';
   const hasNewChanges = current.sourceChanged || current.reconciliationRequired || current.hubspot?.pendingFollowup;
   $('discardChanges').hidden = !current.hubspot?.ticketId || !hasNewChanges;
@@ -212,7 +213,7 @@ async function refresh() {
     notice(selected?.name ? 'Conversación actual: ' + selected.name + '. Todavía no se pudo vincular este contacto con sus tareas.' : index.chats.length ? 'Elegí un contacto o pulsá su icono en WhatsApp Web.' : 'Todavía no hay tareas detectadas. Procesá las conversaciones desde Asisto.');
   }
 }
-async function save() {
+async function save({ hubSpotPending = false } = {}) {
   const selectedId = current.id, fields = editorFields(), serialized = JSON.stringify(fields);
   let action = current.sourceChanged || current.reconciliationRequired ? 'RECONCILE' : 'SAVE';
   saveState('Guardando…', 'saving');
@@ -233,9 +234,9 @@ async function save() {
   current.revision = saved.revision; Object.assign(current.fields, saved.fields || fields); current.sourceChanged = false; current.reconciliationRequired = false;
   const changedWhileSaving = JSON.stringify(editorFields()) !== serialized;
   if (changedWhileSaving) { unsavedEdits.set(current.id, { fields: editorFields() }); saveState('Hay cambios nuevos sin guardar', 'dirty'); }
-  else { unsavedEdits.delete(current.id); removePersistedDraft(current.id); saveState('Guardado', 'saved'); }
+  else { unsavedEdits.delete(current.id); removePersistedDraft(current.id); saveState(hubSpotPending ? 'Cambios protegidos; enviando a HubSpot…' : 'Guardado temporalmente en Asisto', 'saved'); }
   if (saved.fields && !changedWhileSaving) { $('field-subject').value = saved.fields.subject || ''; $('field-description').value = saved.fields.description || ''; }
-  $('reviewWarning').hidden = true; notice(action === 'RECONCILE' ? 'Mensajes nuevos incorporados al resumen.' : 'Cambios guardados en Asisto.');
+  $('reviewWarning').hidden = true; notice(action === 'RECONCILE' ? 'Mensajes nuevos incorporados al resumen.' : hubSpotPending ? 'Cambios protegidos mientras se registran en HubSpot.' : 'Cambios guardados temporalmente en Asisto.');
 }
 function selectField(container, id, title, options, value = '') {
   const label = document.createElement('label'); label.textContent = title;
@@ -250,6 +251,7 @@ async function prepareHubSpot() {
     current.revision = queued.revision; current.hubspot = { state: 'awaiting_configuration' };
     $('taskState').textContent = 'Pendiente de HubSpot';
     await api('MANUAL_HUBSPOT', { id: current.id, revision: current.revision, fields: current.fields });
+    saveState('Cambios protegidos; HubSpot está procesando el ticket…', 'saving');
     notice('HubSpot está completando y guardando el ticket en una pestaña del navegador.');
     return;
   }
@@ -290,6 +292,7 @@ async function prepareHubSpot() {
     property.onchange = values; values();
   }
   $('hubspot').hidden = false; $('ticket').replaceChildren(); $('hubspot').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  saveState('Cambios protegidos; falta completar la configuración de HubSpot.', 'dirty');
   notice('Completá cualquier selección pendiente y pulsá Crear ticket en HubSpot.');
 }
 $('refresh').onclick = () => run(refresh);
@@ -298,7 +301,7 @@ $('controlSearch').oninput = () => { clearTimeout(controlTimer); controlTimer = 
 $('contacts').onchange = () => run(() => selectContact($('contacts').value));
 $('editor').addEventListener('input', event => { if (event.target?.id?.startsWith('field-')) rememberEditorDraft(); });
 $('editor').addEventListener('change', event => { if (event.target?.id?.startsWith('field-')) rememberEditorDraft(); });
-$('editor').onsubmit = event => { event.preventDefault(); run(save); };
+$('editor').onsubmit = event => { event.preventDefault(); run(saveAndPublish); };
 $('dismiss').onclick = () => run(async () => {
   await api('DISMISS', { id: current.id, revision: current.revision });
   notice('Tarea desestimada.');
@@ -328,10 +331,20 @@ async function publishCurrent(alreadySaved = false) {
   const result = await api('PUBLISH', { id: current.id, revision: current.revision, mapping }); current.revision = result.revision; current.hubspot = result;
   await chrome.storage.local.set({ ['mapping:' + session.tenantId + ':' + session.userId + ':' + connection.portalId]: mapping });
   notice(result.matched ? 'Ya existía un ticket abierto similar. Conversación vinculada al ticket ' + result.ticketId + '.' : 'Ticket ' + result.ticketId + ' guardado en HubSpot.'); $('taskState').textContent = 'Ticket ' + result.ticketId;
+  saveState('Guardado en HubSpot', 'saved');
   $('ticket').replaceChildren(); if (result.portalId) { const link = document.createElement('a'); link.href = 'https://app.hubspot.com/contacts/' + encodeURIComponent(result.portalId) + '/record/0-5/' + encodeURIComponent(result.ticketId); link.textContent = 'Abrir ticket en HubSpot'; link.target = '_blank'; link.rel = 'noopener noreferrer'; $('ticket').append(link); }
   setTimeout(() => run(refresh), 800);
 }
-$('setup').onclick = () => run(async () => { await save(); await prepareHubSpot(); if (connection?.configured && mappingReady()) await publishCurrent(true); });
+async function saveAndPublish() {
+  await save({ hubSpotPending: true });
+  try {
+    await prepareHubSpot();
+    if (connection?.configured && mappingReady()) await publishCurrent(true);
+  } catch (error) {
+    saveState('Cambios protegidos en Asisto; pendiente de guardar en HubSpot.', 'dirty');
+    throw error;
+  }
+}
 $('publish').onclick = () => run(() => publishCurrent());
 chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'session' || !Object.keys(changes).some(key => key.startsWith('selection-'))) return;

@@ -114,8 +114,7 @@ test('a revision conflict reloads only the revision and retries the users fields
     w.eval(source); await pause();
     const subject = w.document.querySelector('#field-subject');
     subject.value = 'Mi cambio'; subject.dispatchEvent(new w.Event('input', { bubbles: true }));
-    w.document.querySelector('#editor').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
-    await pause();
+    await w.eval('save()');
     assert.equal(saves.length, 2);
     assert.equal(saves[0].fields.subject, 'Mi cambio');
     assert.equal(saves[1].action, 'RECONCILE');
@@ -146,12 +145,64 @@ test('editing while a slow save is in flight never loses the newer value', async
     w.eval(source); await pause();
     const subject = w.document.querySelector('#field-subject');
     subject.value = 'Primer cambio'; subject.dispatchEvent(new w.Event('input', { bubbles: true }));
-    w.document.querySelector('#editor').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+    const savePromise = w.eval('save()');
     await new Promise(resolve => setTimeout(resolve, 5));
     assert.match(w.document.querySelector('#saveState').textContent, /Guardando/);
     subject.value = 'Cambio hecho mientras guardaba'; subject.dispatchEvent(new w.Event('input', { bubbles: true }));
-    releaseSave(); await pause();
+    releaseSave(); await savePromise;
     assert.equal(subject.value, 'Cambio hecho mientras guardaba');
     assert.match(w.document.querySelector('#saveState').textContent, /sin guardar/i);
+  } finally { dom.window.close(); }
+});
+
+test('the editor exposes one primary HubSpot action and no local-only save action', () => {
+  const dom = new JSDOM(html);
+  try {
+    const primary = dom.window.document.querySelector('#save');
+    assert.equal(primary.type, 'submit');
+    assert.match(primary.textContent, /HubSpot/);
+    assert.equal(dom.window.document.querySelector('#setup'), null);
+    assert.doesNotMatch(dom.window.document.body.textContent, /Guardar cambios/);
+  } finally { dom.window.close(); }
+});
+
+test('the primary action saves the edited short name and then publishes it to HubSpot', async () => {
+  const dom = new JSDOM(html, { url: 'chrome-extension://test/panel.html', runScripts: 'outside-only' });
+  const w = dom.window; const calls = [];
+  const mapping = { ownerId: '12', pipelineId: 'support', stageId: 'new', fields: {
+    category: { property: 'category', value: 'remote' }, errorType: { property: 'error_type', value: 'update' }, channel: { property: 'channel', value: 'whatsapp' },
+  } };
+  const enumeration = (name, label, value, optionLabel) => ({ name, label, type: 'enumeration', modificationMetadata: {}, options: [{ value, label: optionLabel }] });
+  w.HTMLElement.prototype.scrollIntoView = () => {};
+  w.chrome = {
+    tabs: { query: async () => [{ id: 7 }] },
+    storage: {
+      session: { get: async () => ({ 'selection-7': { jid: '111@lid', name: 'Cliente', refreshAt: 1 } }), set: async () => {}, remove: async () => {} },
+      local: { get: async () => ({ 'mapping:ALSO:also:7009289': mapping }), set: async () => {} },
+      onChanged: { addListener() {} },
+    },
+    runtime: { sendMessage: async message => {
+      calls.push(message);
+      if (message.action === 'SESSION') return { data: { tenantId: 'ALSO', userId: 'also', username: 'Alejandro', choices: {} } };
+      if (message.action === 'INDEX') return { data: { owner: 'ALSO:also', chats: [{ jid: '111@lid', name: 'Cliente', count: 1 }], knownChats: [] } };
+      if (message.action === 'DRAFTS') return { data: [{ id: 'first', subject: 'Original', status: 'pending' }] };
+      if (message.action === 'DETAIL') return { data: { id: 'first', revision: 1, fields: { subject: 'Original', company: 'Empresa', companyId: '44', category: 'Soporte Remoto', errorType: 'Actualización', channel: 'WhatsApp' }, source: {}, state: 'pending', hubspot: {} } };
+      if (message.action === 'SAVE') return { data: { revision: 2, fields: message.fields } };
+      if (message.action === 'HUBSPOT') return { data: { configured: true, portalId: '7009289', preferredOwnerId: '12', metadata: { owners: [{ id: '12', firstName: 'Alejandro' }], pipelines: [{ id: 'support', label: 'Pipeline de asistencia', stages: [{ id: 'new', label: 'Nuevo' }] }], properties: [enumeration('category', 'Categoría', 'remote', 'Soporte Remoto'), enumeration('error_type', 'Error tipo', 'update', 'Actualización'), enumeration('channel', 'Vía de contacto', 'whatsapp', 'WhatsApp')] } } };
+      if (message.action === 'PUBLISH') return { data: { revision: 3, ticketId: '99', portalId: '7009289' } };
+      throw Error(message.action);
+    } },
+  };
+  try {
+    w.eval(source); await pause();
+    const subject = w.document.querySelector('#field-subject');
+    subject.value = 'Nombre breve corregido'; subject.dispatchEvent(new w.Event('input', { bubbles: true }));
+    w.document.querySelector('#editor').dispatchEvent(new w.Event('submit', { bubbles: true, cancelable: true }));
+    await pause();
+    const saveCall = calls.find(call => call.action === 'SAVE');
+    const publishCall = calls.find(call => call.action === 'PUBLISH');
+    assert.equal(saveCall.fields.subject, 'Nombre breve corregido');
+    assert.equal(publishCall.revision, 2);
+    assert.match(w.document.querySelector('#saveState').textContent, /Guardado en HubSpot/);
   } finally { dom.window.close(); }
 });

@@ -138,6 +138,18 @@ test('HubSpot duplicate detection matches only similar open tickets for the same
  const match = await client.findSimilarOpenTicket({ subject: 'Verificar versión de Windows para actualizar el sistema', description: 'Se debe confirmar la versión instalada antes de actualizar.' }, metadata, 'company-1');
  assert.equal(match.id, 'similar');
 });
+test('HubSpot duplicate detection searches only tickets without a close date', async () => {
+  const bodies = [];
+  const client = new HubSpotContract('fake', async (url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ results: [] }) };
+  });
+  await client.findSimilarOpenTicket({ subject: 'Revisar impresión', description: 'No imprime' }, { pipelines: [] }, 'company-1');
+  assert.deepEqual(bodies[0].filterGroups[0].filters, [
+    { propertyName: 'associations.company', operator: 'EQ', value: 'company-1' },
+    { propertyName: 'closed_date', operator: 'NOT_HAS_PROPERTY' },
+  ]);
+});
 test('local audio gateway receives bounded bytes and download uses abort signal without sender URL', async () => {
   let downloads = 0;
   const gateway = localTranscriber({ SUPPORT_TRANSCRIBER_URL: 'http://127.0.0.1:8090/transcribe', SUPPORT_TRANSCRIBER_MODEL: 'fixture' }, {

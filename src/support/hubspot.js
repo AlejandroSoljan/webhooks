@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.130 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.273 | Fecha: 2026-10-01
 const { fail, text, SupportError } = require('./core');
 const DUPLICATE_STOP_WORDS = new Set(['para','como','esta','este','esto','desde','hasta','sobre','tiene','tener','porque','pero','donde','cuando','ticket','whatsapp','contacto','empresa']);
 const normalizedLabel = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -68,12 +68,15 @@ class HubSpotContract {
     }
     return { companyId: company.id, company: company.properties.name || '', contactId: contact?.id || '', contact: contact ? [contact.properties.firstname, contact.properties.lastname].filter(Boolean).join(' ') : '' };
   }
-  async companyTickets(companyId) {
+  async companyTickets(companyId, { openOnly = false } = {}) {
     const results = [];
     let after;
     do {
       const page = await this.request('/crm/v3/objects/tickets/search', {
-        filterGroups: [{ filters: [{ propertyName: 'associations.company', operator: 'EQ', value: text(companyId) }] }],
+        filterGroups: [{ filters: [
+          { propertyName: 'associations.company', operator: 'EQ', value: text(companyId) },
+          ...(openOnly ? [{ propertyName: 'closed_date', operator: 'NOT_HAS_PROPERTY' }] : []),
+        ] }],
         properties: ['subject', 'content', 'hs_pipeline', 'hs_pipeline_stage', 'createdate', 'closed_date'], limit: 100, ...(after ? { after } : {}),
       });
       results.push(...page.results); after = page.paging?.next?.after;
@@ -92,7 +95,10 @@ class HubSpotContract {
     if (!companyId) return null;
     const closedStages = new Set(metadata.pipelines.flatMap(pipeline => pipeline.stages || []).filter(stage => stage.metadata?.isClosed === true || stage.metadata?.isClosed === 'true').map(stage => String(stage.id)));
     const subject = duplicateWords(fields.subject), complete = duplicateWords(`${fields.subject || ''} ${fields.description || ''}`);
-    const tickets = await this.companyTickets(companyId);
+    // Duplicate prevention only needs active tickets. Large customers can
+    // have thousands of historical tickets; scanning those must not block a
+    // legitimate new ticket after the users edits were already saved.
+    const tickets = await this.companyTickets(companyId, { openOnly: true });
     const matches = tickets.filter(ticket => !ticket.properties?.closed_date && !closedStages.has(String(ticket.properties?.hs_pipeline_stage || ''))).map(ticket => {
       const titleMatch = containment(subject, duplicateWords(ticket.properties?.subject));
       const fullMatch = containment(complete, duplicateWords(`${ticket.properties?.subject || ''} ${ticket.properties?.content || ''}`));
