@@ -1806,13 +1806,9 @@ function mountQrProductWeb(app) {
         : '';
       const safeParts = [narrativeReply, catalogPricesBlock, commercialBlock, unresolvedNotice].filter(Boolean);
       const reply = safeParts.join('\n\n') || 'No pude generar información adicional en este momento.';
-      const capturedLead = await upsertQrContactLead(db, {
-        tenant,
-        conversationId: convId,
-        waId,
-        lead: parsedReply.lead,
-        userText: visibleUserText,
-      });
+      // La captura de leads queda reservada al formulario de la página de
+      // inicio. QR Web mantiene la conversación sin crear un lead.
+      const capturedLead = null;
       await saveQrMessage(db, {
         tenant,
         conversationId: convId,

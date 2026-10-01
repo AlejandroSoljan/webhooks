@@ -2407,11 +2407,10 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
     ? String(opts.behaviorTextOverride || '').trim()
     : cfg.text;
   const botMode = normalizeBotMode(opts.botModeOverride || cfg.bot_mode || "pedidos");
-  const leadCaptureEnabled = botMode === "conversacional" && (
-    opts.leadCaptureOverride !== undefined
-      ? opts.leadCaptureOverride === true
-      : cfg.lead_capture_enabled === true
-  );
+  // Los leads comerciales se originan únicamente en el formulario público
+  // de /login. Los bots pueden seguir conversando, pero no piden ni extraen
+  // datos para crear registros en la colección leads.
+  const leadCaptureEnabled = false;
   const disabledExternalActionTypes = new Set(
     (Array.isArray(opts.disabledExternalActionTypes) ? opts.disabledExternalActionTypes : [])
       .map(value => normalizeConversationalExternalActionType(value))

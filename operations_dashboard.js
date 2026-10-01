@@ -220,7 +220,7 @@ async function loadDashboard(db, { user, tenant, access, messagePipeline, now = 
     metric('contacts', 'Contactos pendientes', 'Acumulado con “volver a contactar” y sin estado resuelto o descartado.', scopedLink('/ui/followup'), () => count('conversation_followups', { ...filter, pendingContact: true, workflowStatus: { $nin: ['resolved', 'discarded'] } }));
   }
   if (access.includes('admin') && features.orders) metric('orders', 'Pedidos registrados hoy', 'Pedidos definitivos con estado COMPLETED y fecha de creación de hoy.', scopedLink('/ui/admin'), () => count('orders', { ...filter, createdAt: today, $or: [{ status: 'COMPLETED' }, { estado: 'COMPLETED' }] }));
-  if (access.includes('leads') && features.leads) metric('leads', 'Leads nuevos hoy', tenant ? 'Leads asignados a este dominio. No incluye formularios generales sin dominio.' : 'Incluye formularios generales de Asisto sin dominio asignado.', '/admin/leads', () => count('leads', { ...filter, createdAt: today }));
+  if (access.includes('leads') && features.leads) metric('leads', 'Leads nuevos hoy', 'Contactos recibidos desde el formulario de la página de inicio.', '/admin/leads', () => count('leads', { ...filter, page: '/login', createdAt: today }));
   if (access.includes('token_control') && features.tokens) metric('tokens', 'Tokens IA de hoy', 'Suma de totalTokens registrados. El costo se consulta en Consumos y facturación.', scopedLink('/ui/token_control'), async () => {
     const rows = await aggregate('ai_token_usage_log', [{ $match: { ...filter, createdAt: today } }, { $group: { _id: null, n: { $sum: { $ifNull: ['$totalTokens', 0] } } } }]);
     return rows[0]?.n || 0;

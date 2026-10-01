@@ -9076,7 +9076,7 @@ app.get("/comportamiento-ui.js", (_req, res) => {
             document.getElementById('botMode').value = (j.bot_mode || 'pedidos');
             document.getElementById('chatModel').value = j.chat_model || '';
             document.getElementById('historyMode').value = (j.history_mode || 'standard');
-            document.getElementById('leadCaptureEnabled').checked = j.lead_capture_enabled === true;
+            document.getElementById('leadCaptureEnabled').checked = false;
             document.getElementById('helpEnabled').checked = j.help_enabled !== false;
             document.getElementById('helpAgent').value = j.help_agent || 'MANAGER';
             document.getElementById('helpModel').value = j.help_model || 'gpt-5.6-luna';
@@ -9293,10 +9293,10 @@ app.get("/comportamiento", async (req, res) => {
       </div>
       <div class="row" style="margin-top:8px">
         <label>
-          <input id="leadCaptureEnabled" type="checkbox" />
-          Capturar leads / solicitudes de cotización automáticamente
+          <input id="leadCaptureEnabled" type="checkbox" disabled />
+          Captura automática de leads desactivada
         </label>
-        <span class="hint">Solo se aplica al modo Conversacional. Los pedidos no usan esta opción.</span>
+        <span class="hint">Los leads se registran únicamente desde el formulario de la página de inicio.</span>
       </div>
 
       <div class="externalCard" style="margin-top:18px">
@@ -9789,7 +9789,7 @@ app.get("/api/behavior", async (req, res) => {
       chat_model: cfg.chat_model || "",
       history_mode: cfg.history_mode,
       bot_mode: normalizeBotMode(cfg.bot_mode),
-      lead_capture_enabled: cfg.lead_capture_enabled === true,
+      lead_capture_enabled: false,
       external_actions: publicBehaviorExternalActions(cfg.external_actions || []),
 
       // Campos históricos: se conservan para clientes/versiones anteriores.
@@ -9876,8 +9876,7 @@ app.post("/api/behavior", async (req, res) => {
     const chat_model = chatModelRaw;
     const history_mode = String(req.body?.history_mode || "").trim() || "standard";
     const bot_mode = normalizeBotMode(req.body?.bot_mode || req.body?.botMode || "pedidos");
-    const leadCaptureRaw = req.body?.lead_capture_enabled ?? req.body?.leadCaptureEnabled ?? false;
-    const lead_capture_enabled = behaviorBool(leadCaptureRaw, false);
+    const lead_capture_enabled = false;
     const db = await require("./db").getDb();
     const _id = `behavior:${tenant}`;
     const existing = await db.collection("settings").findOne({ _id }) || {};
@@ -11485,18 +11484,9 @@ if (debounceMs > 0 && msg.type === "text") {
 
         await require("./logic").sendChannelMessage(from, conversationalText, channelOpts);
 
-        let capturedLead = null;
-        if (behaviorConfig?.lead_capture_enabled === true && conversationalPayload?.lead?.capture === true) {
-          capturedLead = await upsertConversationalLead({
-            tenant,
-            convId,
-            from,
-            sessionFrom,
-            channelType,
-            lead: conversationalPayload.lead,
-            userText: text
-          });
-        }
+        // La colección de leads se alimenta exclusivamente desde el
+        // formulario público de /login, no desde conversaciones del bot.
+        const capturedLead = null;
 
 
         if (convId) {
@@ -11512,7 +11502,7 @@ if (debounceMs > 0 && msg.type === "text") {
                 model: "gpt",
                 kind: "conversational",
                 botMode: effectiveBotMode,
-               leadCapture: behaviorConfig?.lead_capture_enabled === true,
+               leadCapture: false,
                 leadId: capturedLead?._id ? String(capturedLead._id) : null
               }
             });

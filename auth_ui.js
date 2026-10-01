@@ -3440,7 +3440,7 @@ function mountAuthRoutes(app) {
       const skip = Number.isFinite(skipRaw) ? Math.max(skipRaw, 0) : 0;
 
       const q = String(req.query?.q || "").trim();
-      const filter = {};
+      const filter = { page: "/login" };
       if (q) {
         const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
         filter.$or = [{ name: rx }, { email: rx }, { company: rx }, { phone: rx }, { message: rx }];
@@ -3472,7 +3472,7 @@ function mountAuthRoutes(app) {
 
       const db = await getDb();
       const item = await db.collection("leads").findOne(
-        { _id: new ObjectId(id) },
+        { _id: new ObjectId(id), page: "/login" },
         { projection: { name: 1, email: 1, company: 1, phone: 1, message: 1, createdAt: 1, ip: 1, ua: 1, page: 1 } }
       );
      if (!item) return res.status(404).json({ ok: false, error: "not_found" });
@@ -5288,6 +5288,7 @@ function mountAuthRoutes(app) {
 
       const filter = q
         ? {
+            page: "/login",
             $or: [
               { name: { $regex: q, $options: "i" } },
               { email: { $regex: q, $options: "i" } },
@@ -5302,7 +5303,7 @@ function mountAuthRoutes(app) {
               { "quote.cargo": { $regex: q, $options: "i" } },
             ],
           }
-        : {};
+        : { page: "/login" };
 
       const leads = await db.collection("leads").find(filter).sort({ createdAt: -1 }).limit(limit).toArray();
 
@@ -5324,7 +5325,7 @@ function mountAuthRoutes(app) {
               <div style="display:flex; align-items:flex-end; justify-content:space-between; gap:10px; flex-wrap:wrap">
                 <div>
                   <h2 style="margin:0 0 6px">Leads</h2>
-                  <div class="small">Contactos del formulario y leads capturados por bots conversacionales (colección <code>leads</code>).</div>
+                  <div class="small">Contactos recibidos desde el formulario de la página de inicio.</div>
                 </div>
                 <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
                   <form method="GET" action="/admin/leads" style="display:flex; gap:8px; align-items:center; margin:0">

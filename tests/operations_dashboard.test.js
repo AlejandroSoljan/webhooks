@@ -68,7 +68,7 @@ test('production-shaped data: tenant isolation, dedupe, day, permissions and own
     ]);
     await db.collection('wa_locks').insertMany([{ tenantId: 'NEA', numero: '1', state: 'online', lastSeenAt: now, secret: 'never' }, { tenantId: 'RVL', numero: '3', state: 'online', lastSeenAt: now }]);
     await db.collection('wa_wweb_policies').insertOne({ tenantId: 'NEA', numero: '1', paused: true });
-    await db.collection('leads').insertMany([{ createdAt: now }, { tenantId: 'NEA', createdAt: now }, { tenantId: 'RVL', createdAt: now }]);
+    await db.collection('leads').insertMany([{ page: '/login', createdAt: now }, { tenantId: 'NEA', page: '/login', createdAt: now }, { tenantId: 'RVL', source: 'bot_conversacional', createdAt: now }]);
     await db.collection('ai_token_usage_log').insertMany([{ tenantId: 'NEA', createdAt: now, totalTokens: 42 }, { tenantId: 'RVL', createdAt: now, totalTokens: 999 }]);
     await db.collection('orders').insertMany([{ tenantId: 'NEA', status: 'COMPLETED', createdAt: now }, { tenantId: 'NEA', status: 'DRAFT', createdAt: now }]);
     await db.collection('support_drafts').insertMany([{ tenantId: 'NEA', userId: 'u1', state: 'pending' }, { tenantId: 'NEA', userId: 'u2', state: 'pending' }, { tenantId: 'NEA', userId: 'u1', state: 'ignored' }]);
@@ -95,7 +95,7 @@ test('production-shaped data: tenant isolation, dedupe, day, permissions and own
     assert.equal(data.sessions.length, 1); assert.equal(data.sessions[0].state, 'paused');
     assert.equal(JSON.stringify(data).includes('never'), false);
     const global = await loadDashboard(db, { user: { ...user, role: 'superadmin' }, tenant: '', access: ['leads'], now });
-    assert.equal(global.metrics[0].value, 3);
+    assert.equal(global.metrics[0].value, 2);
     const empty = await loadDashboard(db, { user, tenant: 'NEA', access: [], now });
     assert.equal(empty.metrics.length, 0); assert.equal(empty.sessions.length, 0);
     assert.equal(empty.activity, null);
