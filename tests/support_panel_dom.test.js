@@ -206,3 +206,26 @@ test('the primary action saves the edited short name and then publishes it to Hu
     assert.match(w.document.querySelector('#saveState').textContent, /Guardado en HubSpot/);
   } finally { dom.window.close(); }
 });
+
+test('a stale WhatsApp reference to a dismissed task opens the current pending task instead', async () => {
+  const dom = new JSDOM(html, { url: 'chrome-extension://test/panel.html', runScripts: 'outside-only' });
+  const w = dom.window; const details = [];
+  w.chrome = {
+    tabs: { query: async () => [{ id: 7 }] },
+    storage: { session: { get: async () => ({ 'selection-7': { jid: '111@lid', name: 'Cliente', draftId: 'dismissed', refreshAt: 1 } }) }, onChanged: { addListener() {} } },
+    runtime: { sendMessage: async message => {
+      if (message.action === 'SESSION') return { data: { tenantId: 'ALSO', userId: 'also', username: 'Alejandro', choices: {} } };
+      if (message.action === 'INDEX') return { data: { owner: 'ALSO:also', chats: [{ jid: '111@lid', name: 'Cliente', count: 1 }], knownChats: [] } };
+      if (message.action === 'DRAFTS') return { data: [{ id: 'pending', subject: 'Tarea vigente', status: 'pending' }] };
+      if (message.action === 'DETAIL') { details.push(message.id); return { data: { id: message.id, revision: 1, fields: { subject: 'Tarea vigente' }, source: {}, state: 'pending' } }; }
+      throw Error(message.action);
+    } },
+  };
+  try {
+    w.eval(source); await pause();
+    assert.deepEqual(details, ['pending']);
+    assert.equal(w.document.querySelector('#tasks button.selected').dataset.id, 'pending');
+    assert.equal(w.document.querySelector('#dismiss').hidden, false);
+    assert.equal(w.document.querySelector('#save').hidden, false);
+  } finally { dom.window.close(); }
+});

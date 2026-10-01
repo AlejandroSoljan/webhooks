@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.273 | Fecha: 2026-10-01
+// Asisto | Version: 5.00.274 | Fecha: 2026-10-01
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, refreshGeneration = 0, companyTimer, companyGeneration = 0;
 let consumedOpenAt = null;
@@ -123,6 +123,7 @@ function renderFields() {
     const link = document.createElement('a'); link.href = `https://app.hubspot.com/contacts/${current.hubspot.portalId}/record/0-5/${current.hubspot.ticketId}/`; link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Abrir ticket ' + current.hubspot.ticketId; $('taskState').replaceChildren(link);
   }
   $('save').textContent = current.hubspot?.ticketId ? 'Actualizar ticket en HubSpot' : 'Crear ticket en HubSpot';
+  $('save').hidden = current.state === 'ignored';
   $('dismiss').hidden = !!current.hubspot?.ticketId || current.state === 'ignored';
   const hasNewChanges = current.sourceChanged || current.reconciliationRequired || current.hubspot?.pendingFollowup;
   $('discardChanges').hidden = !current.hubspot?.ticketId || !hasNewChanges;
@@ -171,7 +172,7 @@ async function selectContact(jid, draftId = '') {
     const button = document.createElement('button'); button.textContent = task.subject + ' · ' + ({ pending: 'Pendiente', saved: 'HubSpot', discarded: 'Desestimada' }[task.status] || task.status); button.dataset.id = task.id;
     button.onclick = () => run(() => detail(task.id)); $('tasks').append(button);
   }
-  if (draftId) await detail(draftId);
+  if (draftId && pending.some(task => task.id === draftId)) await detail(draftId);
   else if (pending.length) await detail(pending[0].id);
   else notice('Este contacto no tiene tareas pendientes.');
 }
