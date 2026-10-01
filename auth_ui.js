@@ -2403,11 +2403,12 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
                     <th>Teléfono</th>
                     ${isSuper ? `<th>Entrada</th>` : ``}
                     <th>Enviados por Asisto</th>
-                    ${isSuper ? `<th>Salida manual</th><th>Sin identificar</th><th>Total</th><th>Último mensaje</th>` : ``}
+                    ${isSuper ? `<th>Salida manual</th><th>Sin identificar</th><th>Total</th>` : ``}
+                    <th>Último envío Asisto</th>
                   </tr>
                 </thead>
                 <tbody id="statsContactsBody">
-                  <tr><td colspan="${isSuper ? 7 : 2}" class="small">Sin datos.</td></tr>
+                  <tr><td colspan="${isSuper ? 7 : 3}" class="small">Sin datos.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -2641,7 +2642,7 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
         if(statsContactsPrev) statsContactsPrev.disabled = result.page <= 1;
         if(statsContactsNext) statsContactsNext.disabled = result.page >= result.pages;
         statsContactsBody.innerHTML = result.rows.length ? result.rows.map(function(c){
-          if(!IS_SUPER) return '<tr><td class="mono">' + escapeHtml(c.contact || '-') + '</td><td>' + escapeHtml(String(c.outgoingAsisto || 0)) + '</td></tr>';
+          if(!IS_SUPER) return '<tr><td class="mono">' + escapeHtml(c.contact || '-') + '</td><td>' + escapeHtml(String(c.outgoingAsisto || 0)) + '</td><td>' + escapeHtml(c.lastAsistoAt ? fmtDate(c.lastAsistoAt) : '-') + '</td></tr>';
           return '<tr>'
             + '<td class="mono">' + escapeHtml(c.contact || '-') + '</td>'
             + '<td>' + escapeHtml(String(c.incoming || 0)) + '</td>'
@@ -2649,9 +2650,9 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
             + '<td>' + escapeHtml(String(c.outgoingManual || 0)) + '</td>'
             + '<td>' + escapeHtml(String(c.outgoingUnknown || 0)) + '</td>'
             + '<td>' + escapeHtml(String(c.total || 0)) + '</td>'
-            + '<td>' + escapeHtml(c.lastAt ? fmtDate(c.lastAt) : '-') + '</td>'
+            + '<td>' + escapeHtml(c.lastAsistoAt ? fmtDate(c.lastAsistoAt) : '-') + '</td>'
             + '</tr>';
-        }).join('') : '<tr><td colspan="' + (IS_SUPER ? '7' : '2') + '" class="small">No hay contactos para este filtro.</td></tr>';
+        }).join('') : '<tr><td colspan="' + (IS_SUPER ? '7' : '3') + '" class="small">No hay contactos para este filtro.</td></tr>';
       }
       function renderStatsPermissions(){
         var result = statsPage(statsPermissionsRows, statsPermissionsSearch && statsPermissionsSearch.value, statsPermissionsPageSize && statsPermissionsPageSize.value, statsPermissionsPageIndex);
@@ -2697,7 +2698,7 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
         // que interactuaron para no perder información estadística.
         statsContactsRows = contacts.filter(function(contact){
           return Number(contact && contact.outgoingAsisto || 0) > 0;
-        });
+        }).sort(function(a,b){ return Date.parse(b && b.lastAsistoAt || 0) - Date.parse(a && a.lastAsistoAt || 0); });
         statsPermissionsRows = permissions;
         statsContactsPageIndex = 1;
         statsPermissionsPageIndex = 1;
@@ -2708,14 +2709,14 @@ function wwebSessionsAdminPage({ user, deviceCode = '' }) {
         if(!statsTenant || !statsNumero) return;
         statsMeta.textContent = 'Cargando…';
         statsCards.innerHTML = '';
-        statsContactsBody.innerHTML = '<tr><td colspan="' + (IS_SUPER ? '7' : '2') + '" class="small">Cargando…</td></tr>';
+        statsContactsBody.innerHTML = '<tr><td colspan="' + (IS_SUPER ? '7' : '3') + '" class="small">Cargando…</td></tr>';
         statsPermissionsBody.innerHTML = '<tr><td colspan="5" class="small">Cargando…</td></tr>';
         return api('/api/wweb/stats?tenantId=' + encodeURIComponent(statsTenant) + '&numero=' + encodeURIComponent(statsNumero)
           + '&from=' + encodeURIComponent(statsFrom.value || '') + '&to=' + encodeURIComponent(statsTo.value || ''), { method:'GET' })
           .then(renderStats)
           .catch(function(e){
             statsMeta.textContent = 'Error: ' + (e.message || e);
-            statsContactsBody.innerHTML = '<tr><td colspan="' + (IS_SUPER ? '7' : '2') + '" class="small">Error cargando estadísticas.</td></tr>';
+            statsContactsBody.innerHTML = '<tr><td colspan="' + (IS_SUPER ? '7' : '3') + '" class="small">Error cargando estadísticas.</td></tr>';
           });
       }
       function openStats(tenant, numero){
@@ -5554,18 +5555,22 @@ function mountAuthRoutes(app) {
     const usedApiEntries = new Set();
     const totals = { asisto: 0, manual: 0, unknown: 0 };
     const contacts = new Map();
-    const bump = (contact, origin) => {
+    const bump = (contact, origin, at) => {
       totals[origin]++;
       const key = String(contact || '');
       const row = contacts.get(key) || { asisto: 0, manual: 0, unknown: 0 };
       row[origin]++;
+      if (origin === 'asisto') {
+        const value = at ? new Date(at) : null;
+        if (value && Number.isFinite(value.getTime()) && (!row.lastAsistoAt || value > new Date(row.lastAsistoAt))) row.lastAsistoAt = value;
+      }
       contacts.set(key, row);
     };
 
     for (const doc of outgoingDocs) {
       const explicitOrigin = wwebMessageOriginHint(doc);
       if (explicitOrigin) {
-        bump(doc?.contact, explicitOrigin);
+        bump(doc?.contact, explicitOrigin, doc?.at);
         continue;
       }
 
@@ -5591,14 +5596,14 @@ function mountAuthRoutes(app) {
       }
       if (bestIndex >= 0) {
         usedApiEntries.add(bestIndex);
-        bump(contact, 'asisto');
+        bump(contact, 'asisto', doc?.at);
       } else if (contact && Number.isFinite(atMs)) {
         // El agente observa todos los mensajes salientes del WhatsApp vinculado.
         // Si no existe un envío canónico de Asisto que lo respalde, fue emitido
         // directamente por una persona desde WhatsApp/Web/Desktop.
-        bump(contact, 'manual');
+        bump(contact, 'manual', doc?.at);
       } else {
-        bump(contact, 'unknown');
+        bump(contact, 'unknown', doc?.at);
       }
     }
 
@@ -6125,7 +6130,7 @@ function mountAuthRoutes(app) {
       const publicContacts = (contactRows || []).map((r) => {
         const contact = String(r._id || '');
         const origins = outgoingOrigins?.contacts?.get(contact) || {};
-        if (!isSuper) return { contact, outgoingAsisto: Number(origins.asisto || 0) };
+        if (!isSuper) return { contact, outgoingAsisto: Number(origins.asisto || 0), lastAsistoAt: origins.lastAsistoAt || null };
         return {
           contact,
           incoming: Number(r.incoming || 0),
@@ -6133,11 +6138,13 @@ function mountAuthRoutes(app) {
           outgoingAsisto: Number(origins.asisto || 0),
           outgoingManual: Number(origins.manual || 0),
           outgoingUnknown: Number(origins.unknown || 0),
+          lastAsistoAt: origins.lastAsistoAt || null,
           total: Number(r.total || 0),
           firstAt: r.firstAt || null,
           lastAt: r.lastAt || null,
         };
-      }).filter((r) => isSuper || r.outgoingAsisto > 0);
+      }).filter((r) => isSuper || r.outgoingAsisto > 0)
+        .sort((a, b) => new Date(b.lastAsistoAt || 0).getTime() - new Date(a.lastAsistoAt || 0).getTime());
       const publicSummary = isSuper ? {
         incoming: Number(summary.incoming || 0),
         outgoing: Number(summary.outgoing || 0),

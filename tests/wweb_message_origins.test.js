@@ -30,4 +30,6 @@ test('la tabla visible lista sólo contactos con envíos confirmados por API sin
   assert.match(source, /contacts: Array\.isArray\(summary\.contactsSet\) \? summary\.contactsSet\.filter\(Boolean\)\.length : 0/);
   assert.match(source, /const publicContacts = \(contactRows \|\| \[\]\)\.map/);
   assert.match(source, /if \(!isSuper\) return \{ contact, outgoingAsisto:/);
+  assert.match(source, /Último envío Asisto/);
+  assert.match(source, /Date\.parse\(b && b\.lastAsistoAt/);
 });
