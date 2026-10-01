@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.274 | Fecha: 2026-10-01
+// Asisto | Version: 5.00.275 | Fecha: 2026-10-01
 const { fail, text, SupportError } = require('./core');
 const DUPLICATE_STOP_WORDS = new Set(['para','como','esta','este','esto','desde','hasta','sobre','tiene','tener','porque','pero','donde','cuando','ticket','whatsapp','contacto','empresa']);
 const normalizedLabel = value => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase().replace(/\s+/g, ' ');

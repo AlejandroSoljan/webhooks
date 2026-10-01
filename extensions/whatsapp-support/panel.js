@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.274 | Fecha: 2026-10-01
+// Asisto | Version: 5.00.275 | Fecha: 2026-10-01
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, refreshGeneration = 0, companyTimer, companyGeneration = 0;
 let consumedOpenAt = null;

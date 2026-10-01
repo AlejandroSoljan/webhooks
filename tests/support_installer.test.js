@@ -25,7 +25,7 @@ test('combined Windows installer includes Baileys and the Chrome extension witho
   assert.match(launcher, /Esta ventana permanecera abierta/);
   assert.match(launcher, /pause/);
   assert.match(builder, /extensions\/whatsapp-support/);
-  assert.match(panel, /AsistoTareas-5\.00\.274\.zip/);
+  assert.match(panel, /AsistoTareas-5\.00\.275\.zip/);
   assert.match(archiveText, /Extension[\\/]manifest\.json/);
   assert.match(archiveText, /agent\.cjs/);
   assert.doesNotMatch(archiveText, /node_modules/);

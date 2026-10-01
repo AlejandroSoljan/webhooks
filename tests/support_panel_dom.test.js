@@ -158,6 +158,9 @@ test('editing while a slow save is in flight never loses the newer value', async
 test('the editor exposes one primary HubSpot action and no local-only save action', () => {
   const dom = new JSDOM(html);
   try {
+    const logo = dom.window.document.querySelector('.brand img');
+    assert.equal(logo.getAttribute('src'), 'manager-logo.png');
+    assert.equal(logo.getAttribute('alt'), 'Manager');
     const primary = dom.window.document.querySelector('#save');
     assert.equal(primary.type, 'submit');
     assert.match(primary.textContent, /HubSpot/);
