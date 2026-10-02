@@ -18,7 +18,7 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `ASISTO_OPENAI_API_KEY` | [fleteros_viajes_panel.js:1000](../../fleteros_viajes_panel.js#L1000) |
 | `AUDIO_CACHE_TTL_MS` | [logic.js:29](../../logic.js#L29) |
 | `AUTH_COOKIE_NAME` | [auth_ui.js:27](../../auth_ui.js#L27) |
-| `AUTH_COOKIE_SECRET` | [auth_ui.js:28](../../auth_ui.js#L28) |
+| `AUTH_COOKIE_SECRET` | [auth_ui.js:28](../../auth_ui.js#L28); [src/support/crypto.js:31](../../src/support/crypto.js#L31); [src/support/crypto.js:43](../../src/support/crypto.js#L43) |
 | `AUTO_UPDATE_BRANCH` | [app_asisto_ws.js:187](../../app_asisto_ws.js#L187) |
 | `AUTO_UPDATE_CHECK_EVERY_MS` | [app_asisto_ws.js:188](../../app_asisto_ws.js#L188) |
 | `AUTO_UPDATE_ENABLED` | [app_asisto_ws.js:184](../../app_asisto_ws.js#L184) |
@@ -38,9 +38,9 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `CLIENT_PHONE_ACCESS_MAX_NUMBERS` | [client_phone_access.js:11](../../client_phone_access.js#L11) |
 | `COMPORTAMIENTO` | [logic.js:358](../../logic.js#L358) |
 | `DB_NAME` | [src/script/migrate_products_tenant.js:7](../../src/script/migrate_products_tenant.js#L7) |
-| `DEFAULT_CITY` | [endpoint.js:11871](../../endpoint.js#L11871); [endpoint.js:12291](../../endpoint.js#L12291); [logic.js:1531](../../logic.js#L1531); [logic.js:3089](../../logic.js#L3089); [src/whatsapp/webhook.routes.js:532](../../src/whatsapp/webhook.routes.js#L532); [src/whatsapp/webhook.routes.js:646](../../src/whatsapp/webhook.routes.js#L646) |
-| `DEFAULT_COUNTRY` | [endpoint.js:11873](../../endpoint.js#L11873); [endpoint.js:12293](../../endpoint.js#L12293); [logic.js:1533](../../logic.js#L1533); [logic.js:3091](../../logic.js#L3091); [src/whatsapp/webhook.routes.js:534](../../src/whatsapp/webhook.routes.js#L534); [src/whatsapp/webhook.routes.js:648](../../src/whatsapp/webhook.routes.js#L648) |
-| `DEFAULT_PROVINCE` | [endpoint.js:11872](../../endpoint.js#L11872); [endpoint.js:12292](../../endpoint.js#L12292); [logic.js:1532](../../logic.js#L1532); [logic.js:3090](../../logic.js#L3090); [src/whatsapp/webhook.routes.js:533](../../src/whatsapp/webhook.routes.js#L533); [src/whatsapp/webhook.routes.js:647](../../src/whatsapp/webhook.routes.js#L647) |
+| `DEFAULT_CITY` | [endpoint.js:11873](../../endpoint.js#L11873); [endpoint.js:12293](../../endpoint.js#L12293); [logic.js:1531](../../logic.js#L1531); [logic.js:3089](../../logic.js#L3089); [src/whatsapp/webhook.routes.js:532](../../src/whatsapp/webhook.routes.js#L532); [src/whatsapp/webhook.routes.js:646](../../src/whatsapp/webhook.routes.js#L646) |
+| `DEFAULT_COUNTRY` | [endpoint.js:11875](../../endpoint.js#L11875); [endpoint.js:12295](../../endpoint.js#L12295); [logic.js:1533](../../logic.js#L1533); [logic.js:3091](../../logic.js#L3091); [src/whatsapp/webhook.routes.js:534](../../src/whatsapp/webhook.routes.js#L534); [src/whatsapp/webhook.routes.js:648](../../src/whatsapp/webhook.routes.js#L648) |
+| `DEFAULT_PROVINCE` | [endpoint.js:11874](../../endpoint.js#L11874); [endpoint.js:12294](../../endpoint.js#L12294); [logic.js:1532](../../logic.js#L1532); [logic.js:3090](../../logic.js#L3090); [src/whatsapp/webhook.routes.js:533](../../src/whatsapp/webhook.routes.js#L533); [src/whatsapp/webhook.routes.js:647](../../src/whatsapp/webhook.routes.js#L647) |
 | `DEFAULT_TENANT` | [src/script/migrate_products_tenant.js:8](../../src/script/migrate_products_tenant.js#L8) |
 | `DEMO_RODAVEN_API_KEY` | [demo_catalog_api.js:155](../../demo_catalog_api.js#L155); [demo_catalog_api.js:169](../../demo_catalog_api.js#L169) |
 | `DEMO_RODAVEN_DATA_FILE` | [demo_catalog_api.js:43](../../demo_catalog_api.js#L43) |
@@ -72,8 +72,14 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `HELP_WEB_SIGNING_SECRET` | [help_tool.js:34](../../help_tool.js#L34) |
 | `HELP_WEB_TOKEN_TTL_MS` | [help_tool.js:35](../../help_tool.js#L35) |
 | `HISTORY_MODE` | [logic.js:361](../../logic.js#L361) |
+| `HUBSPOT_PORTAL_ID` | [src/support/hubspot_config.js:10](../../src/support/hubspot_config.js#L10) |
+| `HUBSPOT_PRIVATE_APP_TOKEN` | [src/support/hubspot_config.js:8](../../src/support/hubspot_config.js#L8) |
+| `HUBSPOT_TENANT_ID` | [src/support/hubspot_config.js:7](../../src/support/hubspot_config.js#L7) |
 | `INSTANCE_ID` | [app_asisto_ws.js:438](../../app_asisto_ws.js#L438); [telegram_runtime.js:15](../../telegram_runtime.js#L15) |
 | `LEAD_CAPTURE_ENABLED` | [logic.js:367](../../logic.js#L367) |
+| `LEAD_NOTIFY_WWEB_FROM` | [lead_notification.js:10](../../lead_notification.js#L10) |
+| `LEAD_NOTIFY_WWEB_TENANT` | [lead_notification.js:9](../../lead_notification.js#L9) |
+| `LEAD_NOTIFY_WWEB_TO` | [lead_notification.js:11](../../lead_notification.js#L11) |
 | `LEASE_MS` | [app_asisto_ws.js:173](../../app_asisto_ws.js#L173) |
 | `MANAGER_API_KEY` | [fleteros_viajes_panel.js:30](../../fleteros_viajes_panel.js#L30) |
 | `MANAGER_API_URL` | [fleteros_viajes_panel.js:28](../../fleteros_viajes_panel.js#L28) |
@@ -83,10 +89,15 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `MONGO_URI` | [app_asisto_ws.js:54](../../app_asisto_ws.js#L54); [src/script/migrate_products_tenant.js:6](../../src/script/migrate_products_tenant.js#L6) |
 | `MONGODB_DBNAME` | [db.js:99](../../db.js#L99) |
 | `MONGODB_FULL_IDLE_DISCONNECT_MS` | [db.js:20](../../db.js#L20) |
-| `MONGODB_URI` | [db.js:86](../../db.js#L86); [db.js:133](../../db.js#L133) |
-| `NODE_ENV` | [auth_ui.js:226](../../auth_ui.js#L226); [endpoint.js:10714](../../endpoint.js#L10714); [src/whatsapp/webhook.routes.js:79](../../src/whatsapp/webhook.routes.js#L79) |
+| `MONGODB_URI` | [db.js:86](../../db.js#L86); [db.js:133](../../db.js#L133); [src/support/config.js:17](../../src/support/config.js#L17) |
+| `MP_SUBSCRIPTIONS_ACCESS_TOKEN` | [mercadopago_subscriptions.js:13](../../mercadopago_subscriptions.js#L13) |
+| `MP_SUBSCRIPTIONS_MODE` | [mercadopago_subscriptions.js:12](../../mercadopago_subscriptions.js#L12) |
+| `MP_SUBSCRIPTIONS_PUBLIC_URL` | [mercadopago_subscriptions.js:16](../../mercadopago_subscriptions.js#L16) |
+| `MP_SUBSCRIPTIONS_TEST_PAYER_ID` | [mercadopago_subscriptions.js:15](../../mercadopago_subscriptions.js#L15) |
+| `MP_SUBSCRIPTIONS_WEBHOOK_SECRET` | [mercadopago_subscriptions.js:14](../../mercadopago_subscriptions.js#L14) |
+| `NODE_ENV` | [auth_ui.js:226](../../auth_ui.js#L226); [endpoint.js:10716](../../endpoint.js#L10716); [src/whatsapp/webhook.routes.js:79](../../src/whatsapp/webhook.routes.js#L79) |
 | `NUMERO` | [app_asisto_ws.js:53](../../app_asisto_ws.js#L53); [telegram_runtime.js:356](../../telegram_runtime.js#L356) |
-| `OPENAI_API_KEY` | [fleteros_viajes_panel.js:1000](../../fleteros_viajes_panel.js#L1000); [logic.js:12](../../logic.js#L12) |
+| `OPENAI_API_KEY` | [fleteros_viajes_panel.js:1000](../../fleteros_viajes_panel.js#L1000); [logic.js:12](../../logic.js#L12); [src/support/crypto.js:45](../../src/support/crypto.js#L45) |
 | `OPENAI_CPE_MODEL` | [fleteros_viajes_panel.js:1004](../../fleteros_viajes_panel.js#L1004) |
 | `OPENAI_MAX_TOKENS` | [logic.js:16](../../logic.js#L16) |
 | `OPENAI_TEMPERATURE` | [logic.js:15](../../logic.js#L15) |
@@ -94,8 +105,8 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `OPENAI_VISION_FALLBACK_MODEL` | [logic.js:1262](../../logic.js#L1262) |
 | `ORDER_CONFIG_CACHE_TTL_MS` | [order_config.js:9](../../order_config.js#L9) |
 | `PHONE_NUMBER_ID` | [logic.js:22](../../logic.js#L22); [wa_inbox_panel.js:19](../../wa_inbox_panel.js#L19) |
-| `PORT` | [endpoint.js:12458](../../endpoint.js#L12458); [endpoint.js:12466](../../endpoint.js#L12466); [server.js:6](../../server.js#L6) |
-| `PUBLIC_BASE_URL` | [auth_ui.js:24](../../auth_ui.js#L24); [customer_queue.js:65](../../customer_queue.js#L65); [endpoint.js:1853](../../endpoint.js#L1853); [restaurant.js:30](../../restaurant.js#L30); [restaurant.js:178](../../restaurant.js#L178); [restaurant.js:227](../../restaurant.js#L227); [restaurant.js:237](../../restaurant.js#L237) |
+| `PORT` | [endpoint.js:12460](../../endpoint.js#L12460); [endpoint.js:12468](../../endpoint.js#L12468); [server.js:6](../../server.js#L6) |
+| `PUBLIC_BASE_URL` | [auth_ui.js:24](../../auth_ui.js#L24); [customer_queue.js:65](../../customer_queue.js#L65); [endpoint.js:1855](../../endpoint.js#L1855); [restaurant.js:30](../../restaurant.js#L30); [restaurant.js:178](../../restaurant.js#L178); [restaurant.js:227](../../restaurant.js#L227); [restaurant.js:237](../../restaurant.js#L237); [src/support/config.js:8](../../src/support/config.js#L8) |
 | `QR_CONFIG_CACHE_MS` | [qr_product_web.js:29](../../qr_product_web.js#L29) |
 | `QR_PRODUCT_API_MAX_CONCURRENT` | [qr_product_web.js:32](../../qr_product_web.js#L32) |
 | `QR_PRODUCT_API_QUEUE_MAX` | [qr_product_web.js:33](../../qr_product_web.js#L33) |
@@ -117,11 +128,19 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `STORE_LAT` | [logic.js:34](../../logic.js#L34) |
 | `STORE_LNG` | [logic.js:35](../../logic.js#L35) |
 | `STORE_TZ` | [help_tool.js:31](../../help_tool.js#L31); [logic.js:26](../../logic.js#L26) |
+| `SUPPORT_ACTIVE_KEY` | [src/support/crypto.js:36](../../src/support/crypto.js#L36); [src/support/crypto.js:37](../../src/support/crypto.js#L37) |
+| `SUPPORT_ENABLED` | [src/support/config.js:13](../../src/support/config.js#L13) |
+| `SUPPORT_ENCRYPTION_KEYS` | [src/support/crypto.js:36](../../src/support/crypto.js#L36); [src/support/crypto.js:37](../../src/support/crypto.js#L37) |
 | `SUPPORT_HUBSPOT_ENABLED` | [src/support/routes.js:16](../../src/support/routes.js#L16) |
+| `SUPPORT_PUBLIC_ORIGIN` | [src/support/config.js:8](../../src/support/config.js#L8) |
+| `SUPPORT_TASK_MODEL` | [src/support/title_analyzer.js:21](../../src/support/title_analyzer.js#L21) |
+| `SUPPORT_TRANSCRIBER_MODEL` | [src/support/baileys.js:162](../../src/support/baileys.js#L162); [src/support/transcriber.js:12](../../src/support/transcriber.js#L12) |
+| `SUPPORT_TRANSCRIBER_TOKEN` | [src/support/baileys.js:164](../../src/support/baileys.js#L164) |
+| `SUPPORT_TRANSCRIBER_URL` | [src/support/baileys.js:159](../../src/support/baileys.js#L159); [src/support/baileys.js:160](../../src/support/baileys.js#L160); [src/support/transcriber.js:11](../../src/support/transcriber.js#L11) |
 | `TELEGRAM_BOT_TOKEN` | [telegram_runtime.js:354](../../telegram_runtime.js#L354) |
 | `TELEGRAM_BOT_USERNAME` | [telegram_runtime.js:355](../../telegram_runtime.js#L355) |
 | `TENANT_AI_CONFIG_CACHE_TTL_MS` | [logic.js:17](../../logic.js#L17) |
-| `TENANT_ID` | [app_asisto_ws.js:52](../../app_asisto_ws.js#L52); [bot_test_panel.js:21](../../bot_test_panel.js#L21); [bot_test_panel.js:47](../../bot_test_panel.js#L47); [client_phone_access.js:194](../../client_phone_access.js#L194); [client_phone_access.js:195](../../client_phone_access.js#L195); [client_phone_access.js:198](../../client_phone_access.js#L198); [client_phone_access.js:203](../../client_phone_access.js#L203); [conversation_followup_panel.js:15](../../conversation_followup_panel.js#L15); [conversation_followup_panel.js:68](../../conversation_followup_panel.js#L68); [endpoint.js:41](../../endpoint.js#L41); [endpoint.js:1843](../../endpoint.js#L1843); [fleteros_viajes_panel.js:23](../../fleteros_viajes_panel.js#L23); [fleteros_viajes_panel.js:55](../../fleteros_viajes_panel.js#L55); [fleteros_viajes_panel.js:3017](../../fleteros_viajes_panel.js#L3017); [logic.js:32](../../logic.js#L32); [order_config_panel.js:30](../../order_config_panel.js#L30); [order_config_panel.js:31](../../order_config_panel.js#L31); [restaurant.js:23](../../restaurant.js#L23); [restaurant.js:222](../../restaurant.js#L222); [restaurant.js:232](../../restaurant.js#L232); [restaurant.js:258](../../restaurant.js#L258); [restaurant.js:266](../../restaurant.js#L266); [restaurant_operations.js:160](../../restaurant_operations.js#L160); [telegram_runtime.js:353](../../telegram_runtime.js#L353); [wa_inbox_panel.js:17](../../wa_inbox_panel.js#L17); [wa_inbox_panel.js:33](../../wa_inbox_panel.js#L33) |
+| `TENANT_ID` | [app_asisto_ws.js:52](../../app_asisto_ws.js#L52); [bot_test_panel.js:21](../../bot_test_panel.js#L21); [bot_test_panel.js:47](../../bot_test_panel.js#L47); [client_phone_access.js:194](../../client_phone_access.js#L194); [client_phone_access.js:195](../../client_phone_access.js#L195); [client_phone_access.js:198](../../client_phone_access.js#L198); [client_phone_access.js:203](../../client_phone_access.js#L203); [conversation_followup_panel.js:15](../../conversation_followup_panel.js#L15); [conversation_followup_panel.js:68](../../conversation_followup_panel.js#L68); [endpoint.js:41](../../endpoint.js#L41); [endpoint.js:1845](../../endpoint.js#L1845); [fleteros_viajes_panel.js:23](../../fleteros_viajes_panel.js#L23); [fleteros_viajes_panel.js:55](../../fleteros_viajes_panel.js#L55); [fleteros_viajes_panel.js:3017](../../fleteros_viajes_panel.js#L3017); [logic.js:32](../../logic.js#L32); [order_config_panel.js:30](../../order_config_panel.js#L30); [order_config_panel.js:31](../../order_config_panel.js#L31); [restaurant.js:23](../../restaurant.js#L23); [restaurant.js:222](../../restaurant.js#L222); [restaurant.js:232](../../restaurant.js#L232); [restaurant.js:258](../../restaurant.js#L258); [restaurant.js:266](../../restaurant.js#L266); [restaurant_operations.js:160](../../restaurant_operations.js#L160); [telegram_runtime.js:353](../../telegram_runtime.js#L353); [wa_inbox_panel.js:17](../../wa_inbox_panel.js#L17); [wa_inbox_panel.js:33](../../wa_inbox_panel.js#L33) |
 | `TENANT_RUNTIME_CACHE_TTL_MS` | [tenant.js:9](../../tenant.js#L9); [tenant_runtime.js:10](../../tenant_runtime.js#L10) |
 | `TG_ACTION_POLL_MS` | [telegram_runtime.js:19](../../telegram_runtime.js#L19) |
 | `TG_API` | [telegram_runtime.js:358](../../telegram_runtime.js#L358) |
@@ -149,10 +168,10 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `VISION_MODEL` | [logic.js:14](../../logic.js#L14) |
 | `WA_INBOX_UPLOAD_MAX_BYTES` | [wa_inbox_panel.js:21](../../wa_inbox_panel.js#L21) |
 | `WHATSAPP_ACCESS_TOKEN` | [logic.js:31](../../logic.js#L31); [wa_inbox_panel.js:20](../../wa_inbox_panel.js#L20) |
-| `WHATSAPP_APP_SECRET` | [endpoint.js:1833](../../endpoint.js#L1833); [endpoint.js:10713](../../endpoint.js#L10713); [src/whatsapp/webhook.routes.js:78](../../src/whatsapp/webhook.routes.js#L78) |
+| `WHATSAPP_APP_SECRET` | [endpoint.js:1835](../../endpoint.js#L1835); [endpoint.js:10715](../../endpoint.js#L10715); [src/whatsapp/webhook.routes.js:78](../../src/whatsapp/webhook.routes.js#L78) |
 | `WHATSAPP_TOKEN` | [logic.js:31](../../logic.js#L31); [wa_inbox_panel.js:20](../../wa_inbox_panel.js#L20) |
 | `WHATSAPP_VERIFY_TOKEN` | [endpoint.js:11](../../endpoint.js#L11) |
 | `WHISPER_MODEL` | [logic.js:30](../../logic.js#L30) |
-| `WWEB_AGENT_JSON_LIMIT` | [endpoint.js:685](../../endpoint.js#L685) |
-| `WWEB_API_KEY` | [endpoint.js:12](../../endpoint.js#L12); [help_tool.js:28](../../help_tool.js#L28); [wweb_phone_access.js:60](../../wweb_phone_access.js#L60) |
+| `WWEB_AGENT_JSON_LIMIT` | [endpoint.js:687](../../endpoint.js#L687) |
+| `WWEB_API_KEY` | [endpoint.js:12](../../endpoint.js#L12); [help_tool.js:28](../../help_tool.js#L28); [src/support/crypto.js:44](../../src/support/crypto.js#L44); [wweb_phone_access.js:60](../../wweb_phone_access.js#L60) |
 | `WWEB_CONTROL_API_TIMEOUT_MS` | [wweb_control_client.js:58](../../wweb_control_client.js#L58) |

@@ -17,6 +17,10 @@ for (const f of files) {
     routes.push(`| ${m[1].toUpperCase()} | \`${esc(m[3])}\` | ${ref(f,line(m.index))} | \`${esc(tail).replace(/`/g,'').slice(0,110)}\` |`);
   }
   for (const m of text.matchAll(/\bprocess\.env\.([A-Z][A-Z0-9_]+)/g)) add(env, m[1], ref(f,line(m.index)));
+  // Dependency-injected environment objects retain explicit variable names.
+  if (/\benv\s*=\s*process\.env\b/.test(text)) {
+    for (const m of text.matchAll(/\benv\.([A-Z][A-Z0-9_]+)/g)) add(env, m[1], ref(f,line(m.index)));
+  }
   for (const m of text.matchAll(/\.collection\(\s*['"]([^'"]+)['"]\s*\)/g)) add(collections,m[1],ref(f,line(m.index)));
 }
 fs.mkdirSync(out,{recursive:true});

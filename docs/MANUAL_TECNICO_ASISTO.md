@@ -244,7 +244,7 @@ Con monetización habilitada, `aiMarkupPercent` aplica recargo al costo calculad
 
 API Mensajes puede tener valorización legacy por ventana y medición por mensaje. El reporte reconcilia conceptos; no sumar dos veces ambos registros. Revisar cantidad, tarifa y origen antes de emitir un cobro.
 
-**Mercado Pago para suscripciones está pendiente de implementación.** Este panel calcula importes, no crea débitos automáticos. Para desarrollarlo deben definirse cierre mensual, instantánea de consumos/tarifas/cotización, vencimiento, consentimiento de suscripción, verificación de notificaciones, idempotencia y estados de pago. El importe final debe recalcularse en servidor; nunca confiar en el total enviado por el navegador. Mantener cobros pendientes, aprobados, rechazados, reembolsados y conciliación como registros independientes del consumo.
+**Mercado Pago: primera etapa de preparación y pruebas disponible** en `/admin/billing`, sólo superadmin. Guarda configuración por titular y agrupa dominios asociados; incluye adhesión, consulta, cancelación y verificación de pagos exclusivamente con cuentas de prueba. No existen débitos productivos habilitados ni cierre de facturas. Consultar [manual de suscripciones](suscripciones-mercadopago.md) para APIs, variables, pruebas y pendientes. Antes de cobros reales deben completarse liquidación mensual inmutable, cotización congelada, consentimiento, conciliación de períodos y programación segura del importe variable. Nunca confiar en el total enviado por el navegador.
 
 ## 14. APIs y ejemplos
 

@@ -1786,6 +1786,7 @@ function renderTokenControlPage(user, tenants = []) {
         <div class="small">${isSuper ? 'Vista administrativa: costo real IA e importe final a cobrar.' : 'Consumo del dominio e importe.'}</div>
       </div>
       <div class="small">${isSuper ? 'Superadmin' : esc(String(user?.role || 'usuario'))} · dominio: <b>${esc(tenant)}</b></div>
+      ${isSuper ? `<a class="btn2" href="/admin/billing">Suscripciones y cobros · preparación</a>` : ``}
     </div>
 
     <div class="card">
