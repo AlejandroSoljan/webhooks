@@ -2227,9 +2227,10 @@ function renderTokenControlPage(user, tenants = []) {
     const perMessage=[],legacyAmounts={};
     sources.forEach(function(source){
       const item=items.find(function(row){return String(row&&row.eventKey||'')==='whatsapp.api_sent'&&String(row.sourceTenantId||row.tenantId||'')===String(source.tenantId||'');});
-      const unit=item&&num(item.quantity)>0?num(item.potentialAmount)/num(item.quantity):0;
-      if(item&&unit>0&&num(source.messages)>0)perMessage.push({item:item,tenantId:String(source.tenantId||''),quantity:num(source.messages),unit:unit,currency:String(item.currency||'ARS').toUpperCase(),amount:unit*num(source.messages)});
-      else Object.assign(legacyAmounts,mergeAmountMaps(legacyAmounts,source.byCurrency||{}));
+      // The persisted windows are authoritative, including historical tariffs.
+      // Remove the overlapping metering charge, never price every message again.
+      if(item)perMessage.push({item:item,currency:String(item.currency||'ARS').toUpperCase(),amount:0});
+      Object.assign(legacyAmounts,mergeAmountMaps(legacyAmounts,source.byCurrency||{}));
     });
     return {perMessage:perMessage,legacyAmounts:legacyAmounts};
   }
@@ -2253,11 +2254,8 @@ function renderTokenControlPage(user, tenants = []) {
       lines.push('<div class="stack"><b>IA · '+esc(labels)+'</b><span class="small">'+fmtInt(it.events)+' operaciones</span><span class="money">'+esc(fmtMoney(it.billed_cost))+'</span></div>');
     }
     const resolution=apiBillingResolution(it);
-    resolution.perMessage.forEach(function(entry){
-      lines.push('<div class="stack"><b>Mensajes enviados por API'+(entry.tenantId&&entry.tenantId!==String(it.tenantId||'')?' ('+esc(entry.tenantId)+')':'')+'</b><span class="small">'+fmtInt(entry.quantity)+' mensajes × '+esc(fmtCurrency(entry.unit,entry.currency))+'</span><span class="money">'+esc(fmtCurrency(entry.amount,entry.currency))+'</span></div>');
-    });
     if(Object.keys(resolution.legacyAmounts).length&&(num(it.api_windows)>0||num(it.api_messages)>0)){
-      lines.push('<div class="stack"><b>API Mensajes</b><span class="small">'+fmtInt(it.api_messages)+' mensajes · '+fmtInt(it.api_windows)+' ventanas facturables</span><span class="money">'+esc(amountMapText(it.api_amounts||{}))+'</span></div>');
+      lines.push('<div class="stack"><b>API Mensajes · cobro por ventana</b><span class="small">'+fmtInt(it.api_messages)+' mensajes · '+fmtInt(it.api_windows)+' ventanas facturables</span><span class="money">'+esc(amountMapText(resolution.legacyAmounts))+'</span></div>');
     }
     (Array.isArray(it.monetization_items)?it.monetization_items:[]).filter(function(item){return String(item.group||'')!=='ai'&&String(item.eventKey||'')!=='whatsapp.api_sent';}).forEach(function(item){
       const amount=num(item.billedAmount),currency=String(item.currency||'ARS');
