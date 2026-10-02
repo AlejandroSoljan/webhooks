@@ -46,11 +46,11 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
     assert.match(dom.window.document.getElementById('domainChart').textContent, /10 mensajes/);
     assert.match(dom.window.document.getElementById('rows').textContent, /Ayuda de Manager/);
     assert.match(dom.window.document.getElementById('rows').textContent, /Lectura por código/);
-    assert.match(dom.window.document.getElementById('rows').textContent, /Mensajes enviados por API/);
-    assert.doesNotMatch(dom.window.document.getElementById('rows').textContent, /ventanas facturables/);
+    assert.match(dom.window.document.getElementById('rows').textContent, /API Mensajes · cobro por ventana/);
+    assert.match(dom.window.document.getElementById('rows').textContent, /2 mensajes · 1 ventanas facturables/);
     assert.deepEqual([...dom.window.document.querySelectorAll('#rows > tr:not([hidden]) .pill')].map(node=>node.textContent),['MSM']);
     assert.match(dom.window.document.getElementById('rows').textContent, /Tareas de WhatsApp \(ALSO\)/);
-    assert.match(dom.window.document.getElementById('rows').textContent, /4\.600,00/);
+    assert.match(dom.window.document.getElementById('rows').textContent, /4\.580,00/);
     const technicalButton=dom.window.document.querySelector('.technicalToggle');
     const technicalRow=dom.window.document.getElementById(technicalButton.dataset.target);
     assert.equal(technicalRow.hidden,true);
