@@ -20,17 +20,20 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
           ? { ok: true, items: [], totals: {} }
         : String(url).includes('/timeline')
           ? { ok: true, items: [{ date:'2026-09-24',tokens:60,billed:1.2,messages:4 },{ date:'2026-09-25',tokens:90,billed:1.8,messages:6 }] }
+        : String(url).includes('/exchange-rate')
+          ? { ok:true,pair:'USD/ARS',rate:1500,quotedDate:'2026-10-01',source:'BCRA',stale:false }
           : { ok: true, enabled: true, items: [], realItems: [], byTenant: [{tenantId:'MSM',windows:1,messages:2,realMessages:2,byCurrency:{ARS:20}}], totals: {byCurrency:{ARS:20}} };
       return { ok: true, json: async () => body };
     };
     const script = [...dom.window.document.scripts].pop().textContent;
     dom.window.eval(script);
     await tick();
-    assert.equal(calls.length, 4);
+    assert.equal(calls.length, 5);
     assert.ok(calls.some(url => url.includes('/summary')));
     assert.ok(calls.some(url => url.includes('/api/monetization/summary')));
     assert.ok(calls.some(url => url.includes('/api-message-windows') && url.includes('details=0')));
     assert.ok(calls.some(url => url.includes('/api/token-control/timeline')));
+    assert.ok(calls.some(url => url.includes('/api/token-control/exchange-rate')));
     assert.ok(!calls.some(url => url.includes('/api-message-windows') && !url.includes('details=0')));
     assert.ok(!calls.some(url => url.includes('/conversations')));
     assert.deepEqual([...dom.window.document.getElementById('fTenant').options].map(option => option.value), ['', 'CARICO', 'MCN', 'RVL']);
@@ -47,6 +50,7 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
     assert.doesNotMatch(dom.window.document.getElementById('rows').textContent, /ventanas facturables/);
     assert.deepEqual([...dom.window.document.querySelectorAll('#rows > tr:not([hidden]) .pill')].map(node=>node.textContent),['MSM']);
     assert.match(dom.window.document.getElementById('rows').textContent, /Tareas de WhatsApp \(ALSO\)/);
+    assert.match(dom.window.document.getElementById('rows').textContent, /4\.600,00/);
     const technicalButton=dom.window.document.querySelector('.technicalToggle');
     const technicalRow=dom.window.document.getElementById(technicalButton.dataset.target);
     assert.equal(technicalRow.hidden,true);

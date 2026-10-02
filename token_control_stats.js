@@ -20,6 +20,8 @@ const TASKS_WS_COST_INPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_TASKS
 const TASKS_WS_COST_OUTPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_TASKS_WS_OUTPUT_PER_1K) || 0.015;
 const TASKS_WS_LUNA_INPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_TASKS_WS_LUNA_INPUT_PER_1K) || 0.0002;
 const TASKS_WS_LUNA_OUTPUT_PER_1K = toPositiveNumber(process.env.TOKEN_COST_TASKS_WS_LUNA_OUTPUT_PER_1K) || 0.0012;
+const OFFICIAL_USD_RATE_CACHE_MS = 30 * 60 * 1000;
+let officialUsdRateCache = null;
 
 
 function esc(s) {
@@ -41,6 +43,68 @@ function parseDateEnd(raw) {
   const s = String(raw || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
   return new Date(`${s}T23:59:59.999Z`);
+}
+
+function parseBuenosAiresRange(from = "", to = "") {
+  const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || "").trim());
+  const start = validDate(from) ? new Date(`${String(from).trim()}T00:00:00.000-03:00`) : null;
+  let end = null;
+  if (validDate(to)) {
+    const nextDay = new Date(`${String(to).trim()}T00:00:00.000-03:00`);
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+    end = nextDay;
+  }
+  return { start, end };
+}
+
+async function loadOfficialUsdArsRate(db) {
+  const now = Date.now();
+  if (officialUsdRateCache && now - officialUsdRateCache.cachedAt < OFFICIAL_USD_RATE_CACHE_MS) {
+    return officialUsdRateCache.value;
+  }
+  try {
+    const response = await fetch("https://api.bcra.gob.ar/estadisticascambiarias/v1.0/Cotizaciones", {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(6000)
+    });
+    if (!response.ok) throw new Error(`BCRA HTTP ${response.status}`);
+    const payload = await response.json();
+    const usd = (payload?.results?.detalle || []).find((item) => String(item?.codigoMoneda || "").toUpperCase() === "USD");
+    const rate = Number(usd?.tipoCotizacion || 0);
+    if (!Number.isFinite(rate) || rate <= 0) throw new Error("Cotización USD inválida");
+    const value = {
+      ok: true,
+      pair: "USD/ARS",
+      rate,
+      quotedDate: String(payload?.results?.fecha || ""),
+      source: "BCRA",
+      fetchedAt: new Date().toISOString(),
+      stale: false
+    };
+    await db.collection("exchange_rates").updateOne(
+      { _id: "BCRA_USD_ARS" },
+      { $set: { ...value, updatedAt: new Date() } },
+      { upsert: true }
+    );
+    officialUsdRateCache = { cachedAt: now, value };
+    return value;
+  } catch (error) {
+    const saved = await db.collection("exchange_rates").findOne({ _id: "BCRA_USD_ARS" });
+    if (Number(saved?.rate || 0) > 0) {
+      const value = {
+        ok: true,
+        pair: "USD/ARS",
+        rate: Number(saved.rate),
+        quotedDate: String(saved.quotedDate || ""),
+        source: String(saved.source || "BCRA"),
+        fetchedAt: saved.fetchedAt || saved.updatedAt || null,
+        stale: true
+      };
+      officialUsdRateCache = { cachedAt: now, value };
+      return value;
+    }
+    return { ok: false, pair: "USD/ARS", rate: 0, source: "BCRA", error: String(error?.message || error) };
+  }
 }
 
 function toPositiveNumber(v) {
@@ -951,15 +1015,13 @@ async function buildTokenTimeline({ tenantId = "", from = "", to = "", types = "
   const noChannels = String(channels || "").trim().toLowerCase() === "none";
   const hourly = /^\d{4}-\d{2}-\d{2}$/.test(String(from)) && String(from) === String(to);
   const bucketFormat = hourly ? "%Y-%m-%dT%H:00" : "%Y-%m-%d";
-  const localBucket = (value) => {
-    const date = new Date(value || 0);
-    if (!Number.isFinite(date.getTime())) return "";
-    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
-      timeZone: "America/Argentina/Buenos_Aires", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hourCycle: "h23"
-    }).formatToParts(date).filter(part => part.type !== "literal").map(part => [part.type, part.value]));
-    const day = `${parts.year}-${parts.month}-${parts.day}`;
-    return hourly ? `${day}T${parts.hour}:00` : day;
-  };
+  const filteredTypes = safeTypes.length && safeTypes.length < 4 ? safeTypes : [];
+  const filteredChannels = safeChannels.length && safeChannels.length < 4 ? safeChannels : [];
+  const localRange = parseBuenosAiresRange(from, to);
+  const localCreatedAt = {};
+  if (localRange.start) localCreatedAt.$gte = localRange.start;
+  if (localRange.end) localCreatedAt.$lt = localRange.end;
+  if (Object.keys(localCreatedAt).length) match.createdAt = localCreatedAt;
   const loadMessageTimeline = async () => {
     const grouped = new Map();
     if (noChannels || (safeChannels.length && !safeChannels.includes("api_messages"))) return grouped;
@@ -969,9 +1031,8 @@ async function buildTokenTimeline({ tenantId = "", from = "", to = "", types = "
     else if (safeTenant) messageMatch.tenantId = safeTenant;
     const entryAt = { $ifNull: ["$messages.at", { $ifNull: ["$lastMessageAt", "$windowStartedAt"] }] };
     const dateRange = {};
-    const fromDate = parseDateStart(from), toDate = parseDateEnd(to);
-    if (fromDate) dateRange.$gte = fromDate;
-    if (toDate) dateRange.$lte = toDate;
+    if (localRange.start) dateRange.$gte = localRange.start;
+    if (localRange.end) dateRange.$lt = localRange.end;
     const pipeline = [
       { $match: messageMatch },
       { $unwind: "$messages" },
@@ -1011,26 +1072,59 @@ async function buildTokenTimeline({ tenantId = "", from = "", to = "", types = "
     return timelineResult(new Map(), await loadMessageTimeline());
   }
 
-  // Los filtros por tipo/canal dependen de la conversación vinculada. En ese caso
-  // reutilizamos el detalle relacionado para que la línea coincida con el reporte.
-  if (safeTypes.length || safeChannels.length) {
-    const detail = await buildTokenConversationSummary({ tenantId, from, to, types, channels, limit: 5000, isSuper });
-    const grouped = new Map();
-    for (const row of (detail.items || [])) {
-      const date = localBucket(row.last_at || row.first_at);
-      if (!date) continue;
-      const acc = grouped.get(date) || { date, tokens: 0, billed: 0 };
-      acc.tokens += Number(row.total_tokens || 0);
-      acc.billed += Number(row.billed_cost || 0);
-      grouped.set(date, acc);
-    }
-    return timelineResult(grouped, await loadMessageTimeline());
-  }
-
-  const rows = await db.collection("ai_token_usage_log").aggregate([
+  const usagePipeline = [
     { $match: match },
+    { $set: {
+      __channelType: { $toLower: { $ifNull: [{ $ifNull: ["$channelType", "$meta.channelType"] }, "whatsapp"] } },
+      __conversationObjectId: { $convert: {
+        input: { $ifNull: ["$conversationId", "$meta.conversationId"] },
+        to: "objectId", onError: null, onNull: null
+      } }
+    } },
+    ...(filteredTypes.length ? [
+      { $lookup: {
+        from: "conversations",
+        localField: "__conversationObjectId",
+        foreignField: "_id",
+        as: "__conversation"
+      } },
+      { $set: {
+        __botMode: { $toLower: { $ifNull: [
+          { $ifNull: ["$botMode", "$meta.botMode"] },
+          { $ifNull: [{ $arrayElemAt: ["$__conversation.botMode", 0] }, "pedidos"] }
+        ] } }
+      } },
+      { $set: {
+        __usageType: { $switch: {
+          branches: [
+            { case: { $or: [{ $eq: ["$__channelType", "whatsapp_tasks"] }, { $eq: ["$__botMode", "tareas_whatsapp"] }] }, then: "tareas_whatsapp" },
+            { case: { $or: [{ $eq: ["$__channelType", "help_api"] }, { $eq: ["$__botMode", "ayuda"] }] }, then: "ayuda" },
+            { case: { $and: [{ $eq: ["$__botMode", "conversacional"] }, { $ne: ["$__channelType", "help_api"] }] }, then: "conversacional" }
+          ],
+          default: "pedidos"
+        } }
+      } },
+      { $match: { __usageType: { $in: filteredTypes } } }
+    ] : []),
+    ...(filteredChannels.length ? [
+      { $set: {
+        __channelGroup: { $switch: {
+          branches: [
+            { case: { $eq: ["$__channelType", "help_api"] }, then: "help_api" },
+            { case: { $eq: ["$__channelType", "qr_web"] }, then: "qr_web" },
+            { case: { $eq: ["$__channelType", "api_messages"] }, then: "api_messages" }
+          ],
+          default: "whatsapp"
+        } }
+      } },
+      { $match: { __channelGroup: { $in: filteredChannels } } }
+    ] : []),
     { $group: {
-      _id: { date: { $dateToString: { format: bucketFormat, date: "$createdAt", timezone: "America/Argentina/Buenos_Aires" } }, tenantId: "$tenantId" },
+      _id: {
+        date: { $dateToString: { format: bucketFormat, date: "$createdAt", timezone: "America/Argentina/Buenos_Aires" } },
+        tenantId: "$tenantId",
+        model: { $ifNull: ["$model", ""] }
+      },
       message_input_tokens: { $sum: { $cond: [{ $eq: ["$kind", "message"] }, { $ifNull: ["$inputTokens", 0] }, 0] } },
       message_output_tokens: { $sum: { $cond: [{ $eq: ["$kind", "message"] }, { $ifNull: ["$outputTokens", 0] }, 0] } },
       help_input_tokens: { $sum: { $cond: [{ $eq: [{ $ifNull: ["$channelType", "$meta.channelType"] }, "help_api"] }, { $ifNull: ["$inputTokens", 0] }, 0] } },
@@ -1042,17 +1136,19 @@ async function buildTokenTimeline({ tenantId = "", from = "", to = "", types = "
       audio_input_tokens: { $sum: { $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$inputTokens", 0] }, 0] } },
       audio_output_tokens: { $sum: { $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$outputTokens", 0] }, 0] } },
       audio_cost_usd: audioCostSum(),
-      total_tokens: { $sum: { $ifNull: ["$totalTokens", 0] } },
-      models: { $addToSet: "$model" }
+      total_tokens: { $sum: { $ifNull: ["$totalTokens", 0] } }
     } },
     { $sort: { "_id.date": 1 } }
-  ]).toArray();
+  ];
+  const rows = await db.collection("ai_token_usage_log").aggregate(usagePipeline, { allowDiskUse: true }).toArray();
   const cfg = await loadTenantCosts(db, rows.map(row => String(row._id?.tenantId || '')));
   const byDate = new Map();
   for (const row of rows) {
     const date = String(row._id?.date || '');
     const tenantKey = String(row._id?.tenantId || '');
     const acc = byDate.get(date) || { date, tokens: 0, billed: 0 };
+    row.model = String(row._id?.model || '');
+    row.models = row.model ? [row.model] : [];
     acc.tokens += Number(row.total_tokens || 0);
     acc.billed += calculateBillableCost(row, cfg.get(tenantKey) || {});
     byDate.set(date, acc);
@@ -1601,7 +1697,11 @@ async function buildTokenConversationSummary({
 function renderTokenControlPage(user, tenants = []) {
   const isSuper = String(user?.role || "").toLowerCase() === "superadmin";
   const tenant = String(user?.tenantId || "").trim();
-  const todayYmd = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const todayParts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires', year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date()).filter(part => part.type !== 'literal').map(part => [part.type, part.value]));
+  const todayYmd = `${todayParts.year}-${todayParts.month}-${todayParts.day}`;
+  const monthStartYmd = `${todayParts.year}-${todayParts.month}-01`;
   const tenantOptions = [...new Set((tenants || []).map(value => String(value || '').trim().toUpperCase()).filter(Boolean))].sort();
   return `<!doctype html>
 <html lang="es">
@@ -1683,7 +1783,7 @@ function renderTokenControlPage(user, tenants = []) {
     <div class="toolbar">
       <div>
         <h1 style="margin:0 0 4px">Control de Consumos</h1>
-        <div class="small">${isSuper ? 'Vista administrativa: costo real IA, importe a cobrar y margen IA.' : 'Consumo del dominio e importe.'}</div>
+        <div class="small">${isSuper ? 'Vista administrativa: costo real IA e importe final a cobrar.' : 'Consumo del dominio e importe.'}</div>
       </div>
       <div class="small">${isSuper ? 'Superadmin' : esc(String(user?.role || 'usuario'))} · dominio: <b>${esc(tenant)}</b></div>
     </div>
@@ -1691,7 +1791,7 @@ function renderTokenControlPage(user, tenants = []) {
     <div class="card">
       <div class="row">
         ${isSuper ? `<label>Dominio<select id="fTenant"><option value="">Todos los dominios</option>${tenantOptions.map(value => `<option value="${esc(value)}">${esc(value)}</option>`).join('')}</select></label>` : `<label>Dominio<input id="fTenant" value="${esc(tenant)}" readonly/></label>`}
-        <label>Desde<input id="fFrom" type="date" value="${todayYmd}"/></label>
+        <label>Desde<input id="fFrom" type="date" value="${monthStartYmd}"/></label>
         <label>Hasta<input id="fTo" type="date" value="${todayYmd}"/></label>
         
         <details class="multiFilter" id="typeFilter">
@@ -1726,8 +1826,7 @@ function renderTokenControlPage(user, tenants = []) {
       </div>
       ${isSuper ? `
       <div class="kpi"><div class="t">Costo real</div><div class="v money" id="kpiRealCost">US$ 0</div></div>
-      <div class="kpi"><div class="t">Importe a cobrar</div><div class="v money" id="kpiBilledCost">US$ 0</div></div>
-      <div class="kpi"><div class="t">Margen IA</div><div class="v profit" id="kpiMargin">US$ 0</div></div>` : `
+      <div class="kpi"><div class="t">Importe a cobrar</div><div class="v money" id="kpiBilledCost">US$ 0</div></div>` : `
       <div class="kpi"><div class="t">Eventos</div><div class="v" id="kpiEvents">0</div></div>
       <div class="kpi"><div class="t">Importe</div><div class="v money" id="kpiBilledCost">US$ 0</div></div>
       <div class="kpi"><div class="t">Último uso</div><div class="v" id="kpiLastUse" style="font-size:16px">-</div></div>`}
@@ -1749,7 +1848,7 @@ function renderTokenControlPage(user, tenants = []) {
 
     <div class="dashboardGrid">
       <div class="card chartCard"><div class="sectionTitle"><div><h2>Consumo por funcionalidad</h2><div class="small">Cantidad de operaciones del período.</div></div></div><div class="barChart" id="featureChart"><div class="emptyChart">Todavía no hay consumos medidos.</div></div></div>
-      <div class="card chartCard"><div class="sectionTitle"><div><h2>Evolución del consumo</h2><div class="small">Tokens, cobro de IA y mensajes de WhatsApp enviados durante el rango seleccionado.</div></div><div class="legend"><span><i style="background:#2563eb"></i>Tokens</span><span><i style="background:#0f9488"></i>Cobro IA (USD)</span><span><i style="background:#f59e0b"></i>Mensajes WhatsApp</span></div></div><div class="timelineChart" id="domainChart"><div class="emptyChart">Todavía no hay consumos para este período.</div></div></div>
+      <div class="card chartCard"><div class="sectionTitle"><div><h2>Evolución del consumo</h2><div class="small">Eventos ubicados en su hora real. Cada serie usa su propia escala; pasá por un punto para ver el valor exacto.</div></div><div class="legend"><span><i style="background:#2563eb"></i>Tokens</span><span><i style="background:#0f9488"></i>Cobro IA (USD)</span><span><i style="background:#f59e0b"></i>Mensajes WhatsApp</span></div></div><div class="timelineChart" id="domainChart"><div class="emptyChart">Todavía no hay consumos para este período.</div></div></div>
     </div>
 
     <div class="card">
@@ -1757,21 +1856,22 @@ function renderTokenControlPage(user, tenants = []) {
         <div>
           <h2>Qué se cobrará por dominio</h2>
           <div class="small">${isSuper
-            ? 'Cada concepto muestra su cantidad y su importe. Los tokens y demás datos técnicos quedan dentro de “Detalle técnico”.'
+            ? 'El total final se expresa en pesos usando la cotización oficial del BCRA. Los datos técnicos quedan dentro de “Detalle técnico”.'
             : 'Cada concepto muestra su cantidad y su importe. Los datos técnicos quedan dentro de “Detalle técnico”.'}</div>
+          <div class="small" id="exchangeRateNote">Consultando cotización oficial…</div>
         </div>
       </div>
       <div class="tableWrap">
         <table>
           <thead>
             ${isSuper ? `<tr>
-                <th>Cliente / dominio</th><th>Detalle por dominio</th><th>Conceptos a cobrar</th><th>Costo real IA</th><th>Total previsto</th><th>Margen IA</th><th>Estado</th><th></th>
+                <th>Cliente / dominio</th><th>Detalle por dominio</th><th>Conceptos a cobrar</th><th>Costo real IA</th><th>Total a cobrar en pesos</th><th>Estado</th><th></th>
            </tr>` : `<tr>
-              <th>Cliente / dominio</th><th>Detalle por dominio</th><th>Conceptos a cobrar</th><th>Total previsto</th><th>Estado</th><th></th>
+              <th>Cliente / dominio</th><th>Detalle por dominio</th><th>Conceptos a cobrar</th><th>Total a cobrar en pesos</th><th>Estado</th><th></th>
             </tr>`}
           </thead>
           <tbody id="rows">
-            <tr><td colspan="${isSuper ? 8 : 6}" class="small">Cargando…</td></tr>
+            <tr><td colspan="${isSuper ? 7 : 6}" class="small">Cargando…</td></tr>
           </tbody>
         </table>
       </div>
@@ -1814,7 +1914,7 @@ function renderTokenControlPage(user, tenants = []) {
         <table>
           <thead>
             ${isSuper ? `<tr>
-                 <th>Dominio / estado</th><th>Cliente</th><th>Conversación</th><th>Período</th><th>Entrada</th><th>Salida</th><th>Audios</th><th>Total tokens</th><th>Eventos</th><th>Costo real</th><th>A cobrar</th><th>Margen IA</th>
+                 <th>Dominio / estado</th><th>Cliente</th><th>Conversación</th><th>Período</th><th>Entrada</th><th>Salida</th><th>Audios</th><th>Total tokens</th><th>Eventos</th><th>Costo real</th><th>A cobrar</th>
           </tr>` : `<tr>
               <th>Dominio / estado</th><th>Cliente</th><th>Período</th><th>Total tokens</th><th>Eventos</th><th>Importe</th>
             </tr>`}
@@ -1878,7 +1978,7 @@ function renderTokenControlPage(user, tenants = []) {
   const kpiTokens = document.getElementById('kpiTokens');
   const kpiRealCost = document.getElementById('kpiRealCost');
   const kpiBilledCost = document.getElementById('kpiBilledCost');
-  const kpiMargin = document.getElementById('kpiMargin');
+  const exchangeRateNote = document.getElementById('exchangeRateNote');
   const kpiEvents = document.getElementById('kpiEvents');
   const kpiLastUse = document.getElementById('kpiLastUse');
   const kpiConversations = document.getElementById('kpiConversations');
@@ -1893,6 +1993,7 @@ function renderTokenControlPage(user, tenants = []) {
   let lastTokenSummary = null;
   let lastApiSummary = null;
   let lastMonetizationSummary = null;
+  let lastExchangeRate = null;
 
   function esc(s){
     return String(s||'').replace(/[&<>"']/g, function(c){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]); });
@@ -1953,10 +2054,9 @@ function renderTokenControlPage(user, tenants = []) {
     if(!billingHealth)return;
     const rows=Array.isArray(items)?items:[];
     const disabled=rows.filter(function(x){return num(x.total_tokens)>0&&x.billing_configured===false;}).length;
-    const negative=rows.filter(function(x){return num(x.gross_margin)<-0.0000005;}).length;
     const configured=Math.max(0,rows.length-disabled);
     const card=function(kind,icon,title,detail){return '<div class="healthItem '+kind+'"><div class="healthIcon">'+icon+'</div><div><b>'+esc(title)+'</b><span>'+esc(detail)+'</span></div></div>';};
-    billingHealth.innerHTML=card(disabled?'danger':'','✓',configured+' clientes listos',disabled?'Hay '+disabled+' con tarifa pendiente.':'Configuración de cobro completa.')+card(negative?'danger':'','%',negative?negative+' márgenes negativos':'Sin márgenes negativos',negative?'Requieren corrección antes de facturar.':'El cobro de IA cubre el costo real.')+card('','≡',fmtInt(rows.length)+' clientes en el reporte','El detalle técnico queda oculto hasta solicitarlo.');
+    billingHealth.innerHTML=card(disabled?'danger':'','✓',configured+' clientes listos',disabled?'Hay '+disabled+' con tarifa pendiente.':'Configuración de cobro completa.')+card('','≡',fmtInt(rows.length)+' clientes en el reporte','El detalle técnico queda oculto hasta solicitarlo.');
   }
   function renderTimeline(j){
     if(!domainChart)return;
@@ -2112,6 +2212,11 @@ function renderTokenControlPage(user, tenants = []) {
     resolution.perMessage.forEach(function(entry){monetizationMap[entry.currency]=Math.max(0,num(monetizationMap[entry.currency])-num(entry.item.billedAmount))+num(entry.amount);});
     return mergeAmountMaps(amountMapWithAi(it&&it.billed_cost,resolution.legacyAmounts),monetizationMap);
   }
+  function billingTotalArs(it,fx){
+    const amounts=billingTotalMap(it),rate=num(fx&&fx.rate);
+    if(rate<=0)return null;
+    return num(amounts.ARS)+(num(amounts.USD)*rate);
+  }
   function billingConceptsHtml(it){
     const lines=[];
     if(num(it.total_tokens)>0){
@@ -2165,7 +2270,7 @@ function renderTokenControlPage(user, tenants = []) {
       return '<div class="stack"><b>'+esc(row.tenantId)+'</b><span class="small">'+esc(row.labels.join(' · ')||'Sin consumo identificado')+'</span>'+(measures.length?'<span class="small">'+esc(measures.join(' · '))+'</span>':'')+'</div>';
     }).join('')+'</div>';
   }
-  function renderDomainSummary(j,apiJ,monJ){
+  function renderDomainSummary(j,apiJ,monJ,fxJ){
     const aiItems = Array.isArray(j.items) ? j.items : [];
     const totals = j.totals || {};
 
@@ -2202,6 +2307,12 @@ function renderTokenControlPage(user, tenants = []) {
     monItems.forEach(function(item){const sourceKey=String(item.tenantId||''),key=ownerOf(sourceKey),it=ensure(key);it.monetization_items.push(Object.assign({},item,{sourceTenantId:sourceKey,tenantId:key}));});
     const items=Array.from(merged.values()).sort(function(a,b){return String(a.tenantId||'').localeCompare(String(b.tenantId||''));});
 
+    if(exchangeRateNote){
+      exchangeRateNote.textContent=fxJ&&fxJ.ok
+        ?('Cotización usada: USD 1 = '+fmtCurrency(fxJ.rate,'ARS')+' · '+String(fxJ.source||'BCRA')+' · '+String(fxJ.quotedDate||'sin fecha')+(fxJ.stale?' · último valor disponible':''))
+        :'No se pudo obtener la cotización oficial. El total en pesos queda pendiente.';
+    }
+
     renderBillingHealth(items);
 
     kpiTokens.textContent = fmtInt(totals.total_tokens || 0);
@@ -2216,12 +2327,11 @@ function renderTokenControlPage(user, tenants = []) {
     kpiMonBilled.textContent=amountMapText(nonAiMap);
     monCurrencies.innerHTML=Object.keys(nonAiMap).map(function(currency){return '<span>'+esc(fmtCurrency(nonAiMap[currency],currency))+'</span>';}).join('');
     if (isSuper && kpiRealCost) kpiRealCost.textContent = fmtMoney(totals.real_cost || 0);
-    if (isSuper && kpiMargin) kpiMargin.textContent = fmtMoney(totals.gross_margin || 0);
     if (!isSuper && kpiEvents) kpiEvents.textContent = fmtInt(totals.events || 0);
     if (!isSuper && kpiLastUse) kpiLastUse.textContent = fmtDate(newerDate(totals.last_at,apiTotals.last_at));
 
     if (!items.length) {
-      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '8' : '6') + '" class="small">No hay consumos para los filtros seleccionados.</td></tr>';
+      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '7' : '6') + '" class="small">No hay consumos para los filtros seleccionados.</td></tr>';
       return;
     }
 
@@ -2232,19 +2342,21 @@ function renderTokenControlPage(user, tenants = []) {
       const state=needsReview?'<span class="status pending">REVISAR TARIFA</span>':'<span class="status active">LISTO</span>';
       const detailId='technical-'+String(it.tenantId||'').replace(/[^a-z0-9_-]/gi,'');
       const totalMap=billingTotalMap(it);
-      const technical='<tr id="'+detailId+'" hidden><td colspan="'+(isSuper?'8':'6')+'"><div class="kpis detail"><div class="kpi"><div class="t">Entrada texto</div><div class="v">'+fmtInt(it.message_input_tokens)+'</div></div><div class="kpi"><div class="t">Salida texto</div><div class="v">'+fmtInt(it.message_output_tokens)+'</div></div><div class="kpi"><div class="t">Audio</div><div class="v">'+fmtInt(num(it.audio_input_tokens)+num(it.audio_output_tokens))+'</div></div><div class="kpi"><div class="t">Total tokens</div><div class="v">'+fmtInt(it.total_tokens)+'</div></div><div class="kpi"><div class="t">Eventos IA</div><div class="v">'+fmtInt(it.events)+'</div></div><div class="kpi"><div class="t">Último uso</div><div class="v" style="font-size:14px">'+esc(fmtDate(it.last_at))+'</div></div></div></td></tr>';
+      const totalArs=billingTotalArs(it,fxJ);
+      const totalArsHtml=totalArs===null?'<span class="status pending">COTIZACIÓN PENDIENTE</span>':('<b>'+esc(fmtCurrency(totalArs,'ARS'))+'</b><span class="small">'+esc(amountMapText(totalMap))+'</span>');
+      const technical='<tr id="'+detailId+'" hidden><td colspan="'+(isSuper?'7':'6')+'"><div class="kpis detail"><div class="kpi"><div class="t">Entrada texto</div><div class="v">'+fmtInt(it.message_input_tokens)+'</div></div><div class="kpi"><div class="t">Salida texto</div><div class="v">'+fmtInt(it.message_output_tokens)+'</div></div><div class="kpi"><div class="t">Audio</div><div class="v">'+fmtInt(num(it.audio_input_tokens)+num(it.audio_output_tokens))+'</div></div><div class="kpi"><div class="t">Total tokens</div><div class="v">'+fmtInt(it.total_tokens)+'</div></div><div class="kpi"><div class="t">Eventos IA</div><div class="v">'+fmtInt(it.events)+'</div></div><div class="kpi"><div class="t">Último uso</div><div class="v" style="font-size:14px">'+esc(fmtDate(it.last_at))+'</div></div></div></td></tr>';
       if (!isSuper) {
         return '<tr>' +
           '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
           (company ? '<span class="small">' + esc(company) + '</span>' : '') + '</div></td>' +
-          '<td>'+domainDetailsHtml(it)+'</td><td>' + billingConceptsHtml(it) + '</td><td class="money"><b>'+esc(amountMapText(totalMap))+'</b></td><td>'+state+'</td><td><button class="btn2 technicalToggle" type="button" data-target="'+detailId+'">Detalle técnico</button></td></tr>'+technical;
+          '<td>'+domainDetailsHtml(it)+'</td><td>' + billingConceptsHtml(it) + '</td><td class="money"><div class="amountStack">'+totalArsHtml+'</div></td><td>'+state+'</td><td><button class="btn2 technicalToggle" type="button" data-target="'+detailId+'">Detalle técnico</button></td></tr>'+technical;
       }
       return '<tr>' +
         '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
         (company ? '<span class="small">' + esc(company) + '</span>' : '') +
         (number ? '<span class="small">' + esc(number) + '</span>' : '') + '</div></td>' +
-        '<td>'+domainDetailsHtml(it)+'</td><td>' + billingConceptsHtml(it) + '</td><td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money"><b>'+esc(amountMapText(totalMap))+'</b></td>' +
-        '<td class="profit">' + fmtMoney(it.gross_margin) + '</td><td>'+state+'</td><td><button class="btn2 technicalToggle" type="button" data-target="'+detailId+'">Detalle técnico</button></td></tr>'+technical;
+        '<td>'+domainDetailsHtml(it)+'</td><td>' + billingConceptsHtml(it) + '</td><td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money"><div class="amountStack">'+totalArsHtml+'</div></td>' +
+        '<td>'+state+'</td><td><button class="btn2 technicalToggle" type="button" data-target="'+detailId+'">Detalle técnico</button></td></tr>'+technical;
     }).join('');
   }
 
@@ -2263,7 +2375,7 @@ function renderTokenControlPage(user, tenants = []) {
      : 'Todos los consumos del rango seleccionado tienen conversación asociada.';
 
     if (!items.length) {
-      detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '12' : '6') + '" class="small">No hay conversaciones con tokens para los filtros seleccionados.</td></tr>';
+      detailRowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '11' : '6') + '" class="small">No hay conversaciones con tokens para los filtros seleccionados.</td></tr>';
       return;
     }
 
@@ -2317,7 +2429,7 @@ function renderTokenControlPage(user, tenants = []) {
         '<td><div class="stack"><span>' + esc(fmtDate(it.first_at)) + '</span><span class="small">hasta ' + esc(fmtDate(it.last_at)) + '</span></div></td>' +
         '<td>' + fmtInt(it.message_input_tokens) + '</td><td>' + fmtInt(it.message_output_tokens) + '</td><td>' + fmtInt(audio) + '</td>' +
         '<td><b>' + fmtInt(it.total_tokens) + '</b></td><td>' + fmtInt(it.events) + '</td>' +
-        '<td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money">' + fmtMoney(it.billed_cost) + '</td><td class="profit">' + fmtMoney(it.gross_margin) + '</td>' +
+        '<td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money">' + fmtMoney(it.billed_cost) + '</td>' +
 
       '</tr>';
     }).join('');
@@ -2384,7 +2496,7 @@ function renderTokenControlPage(user, tenants = []) {
   async function load(){
     const sequence=++loadSequence;
     msgEl.textContent = '';
-    rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '8' : '6') + '" class="small">Cargando…</td></tr>';
+    rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '7' : '6') + '" class="small">Cargando…</td></tr>';
     resetDetails();
 
     try{
@@ -2395,28 +2507,30 @@ function renderTokenControlPage(user, tenants = []) {
         getJson(summaryUrl),
         getJson('/api/monetization/summary?'+monetizationQuery.toString()),
         getJson('/api/token-control/api-message-windows?'+summaryQuery+'&details=0'),
-        getJson('/api/token-control/timeline?'+summaryQuery)
+        getJson('/api/token-control/timeline?'+summaryQuery),
+        getJson('/api/token-control/exchange-rate')
       ]);
       if(sequence!==loadSequence)return;
       lastTokenSummary=result[0];
       lastMonetizationSummary=result[1];
       lastApiSummary=result[2];
-      renderDomainSummary(lastTokenSummary,lastApiSummary,lastMonetizationSummary);
+      lastExchangeRate=result[4];
+      renderDomainSummary(lastTokenSummary,lastApiSummary,lastMonetizationSummary,lastExchangeRate);
       renderMonetization(lastMonetizationSummary);
       renderTimeline(result[3]);
     } catch(e){
       if(sequence!==loadSequence)return;
       msgEl.textContent = e && e.message ? e.message : String(e);
-      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '8' : '6') + '" class="small">Error cargando datos.</td></tr>';
+      rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '7' : '6') + '" class="small">Error cargando datos.</td></tr>';
     }
   }
 
   async function loadConversationDetails(){
     const sequence=loadSequence;btnLoadConversations.disabled=true;btnLoadConversations.textContent='Cargando detalle…';
-    detailRowsEl.innerHTML='<tr><td colspan="'+(isSuper?'12':'6')+'" class="small">Cargando…</td></tr>';
+    detailRowsEl.innerHTML='<tr><td colspan="'+(isSuper?'11':'6')+'" class="small">Cargando…</td></tr>';
     conversationDetailCard.hidden=false;if(conversationKpis)conversationKpis.hidden=false;
     try{const j=await getJson('/api/token-control/conversations?'+buildQuery(true).toString());if(sequence!==loadSequence)return;renderConversationSummary(j);btnLoadConversations.textContent='Actualizar detalle de consumos';}
-    catch(e){if(sequence!==loadSequence)return;detailRowsEl.innerHTML='<tr><td colspan="'+(isSuper?'12':'6')+'" class="small">Error cargando detalle por conversación.</td></tr>';btnLoadConversations.textContent='Reintentar detalle de consumos';}
+    catch(e){if(sequence!==loadSequence)return;detailRowsEl.innerHTML='<tr><td colspan="'+(isSuper?'11':'6')+'" class="small">Error cargando detalle por conversación.</td></tr>';btnLoadConversations.textContent='Reintentar detalle de consumos';}
     finally{if(sequence===loadSequence)btnLoadConversations.disabled=false;}
   }
 
@@ -2425,7 +2539,7 @@ function renderTokenControlPage(user, tenants = []) {
     if(apiMessageRows)apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Cargando…</td></tr>';
     if(realMessageRows)realMessageRows.innerHTML='<tr><td colspan="6" class="small">Cargando…</td></tr>';
     if(apiMessageSummary)apiMessageSummary.innerHTML='<span class="chip">Cargando…</span>';
-    try{const j=await getJson('/api/token-control/api-message-windows?'+buildQuery(true).toString());if(sequence!==loadSequence)return;lastApiSummary=j;renderApiMessageWindows(j,true);if(lastTokenSummary)renderDomainSummary(lastTokenSummary,lastApiSummary,lastMonetizationSummary);btnLoadMessages.textContent='Actualizar detalle de envíos WhatsApp';}
+    try{const j=await getJson('/api/token-control/api-message-windows?'+buildQuery(true).toString());if(sequence!==loadSequence)return;lastApiSummary=j;renderApiMessageWindows(j,true);if(lastTokenSummary)renderDomainSummary(lastTokenSummary,lastApiSummary,lastMonetizationSummary,lastExchangeRate);btnLoadMessages.textContent='Actualizar detalle de envíos WhatsApp';}
     catch(e){if(sequence!==loadSequence)return;if(realMessageRows)realMessageRows.innerHTML='<tr><td colspan="6" class="small">Error cargando mensajes enviados.</td></tr>';if(apiMessageRows)apiMessageRows.innerHTML='<tr><td colspan="8" class="small">Error cargando ventanas API Mensajes.</td></tr>';btnLoadMessages.textContent='Reintentar detalle de envíos WhatsApp';}
     finally{if(sequence===loadSequence)btnLoadMessages.disabled=false;}
   }
@@ -2507,6 +2621,17 @@ function mountTokenControlRoutes(app, auth) {
     } catch (e) {
       console.error("[token-control] summary error:", e);
       return res.status(500).json({ ok: false, error: "internal" });
+    }
+  });
+
+  app.get("/api/token-control/exchange-rate", requireAuth, requireTokenControlAccess, async (_req, res) => {
+    try {
+      const db = await getDb();
+      const data = await loadOfficialUsdArsRate(db);
+      return res.json(data);
+    } catch (e) {
+      console.error("[token-control] exchange-rate error:", e);
+      return res.json({ ok: false, error: "exchange_rate_unavailable" });
     }
   });
 
@@ -2592,6 +2717,7 @@ module.exports = {
   loadBillingOwners,
   buildTokenSummary,
   buildTokenTimeline,
+  loadOfficialUsdArsRate,
   buildTokenConversationSummary,
   buildApiMessageWindowBilling,
   buildUsageMatch,
