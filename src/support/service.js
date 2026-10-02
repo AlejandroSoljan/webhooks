@@ -277,8 +277,12 @@ class SupportService {
       if (!r.matchedCount) fail('job_lease_lost', 409);
     };
     try {
-      await this.process(scope, job, check);
+      const deferredUntil = await this.process(scope, job, check);
       await check();
+      if (deferredUntil instanceof Date) {
+        await this.col('jobs').updateOne(filter, { $set: { state: 'pending', dueAt: deferredUntil, attempts: 0 }, $unset: { error: '', completedAt: '' } });
+        return true;
+      }
       await this.col('jobs').updateOne(filter, { $set: { state: 'done', completedAt: this.now() }, $unset: { error: '' } });
     } catch (error) {
       const code = error.code || 'processing_failed';
@@ -296,6 +300,12 @@ class SupportService {
     const rows = (await this.col('messages').find({ ...scope, jid: job.jid }).sort({ at: 1, _id: 1 }).limit(5001).toArray()).map(row => ({ ...row, name: whatsappContact?.name || row.name }));
     if (rows.length > 5000) fail('conversation_requires_pagination', 422);
     const eligible = rows.filter(m => !excluded(m, config) && (job.dates ? m.at >= job.dates.start && m.at < job.dates.end : !m.historical || m.catchup));
+    // A queued job can become due before the last received message has settled.
+    // Keep it pending instead of silently completing without creating a draft.
+    if (!job.dates && eligible.length) {
+      const readyAt = Math.max(...eligible.map(row => +new Date(row.receivedAt) || 0)) + config.inactivityMs;
+      if (readyAt > +this.now()) return new Date(readyAt);
+    }
     const decoded = [];
     // Group on the actual text, including cached audio transcriptions.
     for (const row of eligible) {

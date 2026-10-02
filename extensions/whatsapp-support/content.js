@@ -196,8 +196,12 @@
   function update() {
     if (stopped) return; observer.disconnect(); const targets = [...document.querySelectorAll('#pane-side [role="row"], #pane-side [role="listitem"], #main header')], retained = new Set();
     for (const target of targets) {
-      if (target.closest('[data-asisto-owned]')) continue; const label = target.querySelector('span[title][dir="auto"], span[title]') || (target.matches('#main header') ? target.querySelector('span[dir="auto"]') : null); if (!label) continue;
-      const jid = extractJid(target.getAttribute('data-id') || target.querySelector('[data-id]')?.getAttribute('data-id')) || (target.matches('#main header') ? [...document.querySelectorAll('#main [data-id]')].map(node => extractJid(node.getAttribute('data-id'))).find(Boolean) || '' : ''), name = label.getAttribute('title') || label.textContent.trim();
+      if (target.closest('[data-asisto-owned]')) continue;
+      const placeholder = value => /(?:haz|hac[eé]) clic aqu[ií]|click here|informaci[oó]n (?:del|de) contacto|contact info/i.test(value || '');
+      const labels = [...target.querySelectorAll('span[dir="auto"], span[title]')].filter(node => !node.closest('[data-asisto-owned]'));
+      const label = labels.find(node => node.matches('[dir="auto"]') && (node.textContent || '').trim() && !placeholder(node.textContent)) || labels.find(node => !placeholder(node.getAttribute('title')) && !placeholder(node.textContent));
+      if (!label) continue;
+      const jid = extractJid(target.getAttribute('data-id') || target.querySelector('[data-id]')?.getAttribute('data-id')) || (target.matches('#main header') ? [...document.querySelectorAll('#main [data-id]')].map(node => extractJid(node.getAttribute('data-id'))).find(Boolean) || '' : ''), name = (label.textContent || '').trim() || label.getAttribute('title') || '';
       if (jid && name && remembered.get(jid) !== name) { remembered.set(jid, name); chrome.runtime.sendMessage({ action: 'CONTACT', jid, name }).then(result => { if (result?.data?.saved) refresh(); else if (result?.error) remembered.delete(jid); }).catch(() => {}); }
       const match = AsistoMatch.matchContact(chats, { jid, name }), known = AsistoMatch.matchContact(knownChats, { jid, name }); let button = target.querySelector('.asisto-task-badge');
       const localContact = AsistoMatch.matchContact(addressBook.map(contact => ({ jid: contact.aliases[0], aliases: contact.aliases, name: contact.name, count: 0 })), { jid, name });

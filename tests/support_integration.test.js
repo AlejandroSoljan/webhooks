@@ -396,6 +396,19 @@ test('unassigned live messages recover once without resetting failed jobs or imp
   assert.equal(await service.repairUnassigned(scope), false);
   assert.equal((await service.col('jobs').findOne(scope)).attempts, 3);
 });
+
+test('an early live job stays pending until its newest message settles', async () => {
+  await service.ingest(scope, message('early'));
+  await service.enqueue(scope, '123@s.whatsapp.net', 0);
+  await service.runOne();
+  const job = await service.col('jobs').findOne(scope);
+  assert.equal(job.state, 'pending');
+  assert.equal(+job.dueAt, +now + 180000);
+  assert.equal(await service.col('drafts').countDocuments(scope), 0);
+  now = new Date(+now + 180001);
+  await service.runOne();
+  assert.equal(await service.col('drafts').countDocuments(scope), 1);
+});
 test('recent Baileys catch-up history enters the live task flow after a short disconnection', async () => {
   await service.ingest(scope, message('catchup', 0, { text: 'Necesito cambiar los precios porque no aparecen artículos.' }), { historical: true });
   assert.equal(await service.col('jobs').countDocuments(scope), 1);

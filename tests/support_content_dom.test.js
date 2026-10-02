@@ -77,6 +77,16 @@ test('changing the visible chat clears the previous selection and publishes its 
     assert.equal(calls.some(call => call.action === 'ACTIVE_CONTEXT'), false);
   } finally { dom.window.close(); }
 });
+
+test('contact help tooltip never replaces the visible chat name', async () => {
+  const { dom, w, calls } = await mount();
+  try {
+    const header = w.document.querySelector('header');
+    header.innerHTML = '<span title="haz clic aquí para ver la información de contacto"></span><span dir="auto" title="haz clic aquí para ver la información de contacto">Cliente nuevo</span>';
+    await pause();
+    assert.equal(calls.filter(call => call.action === 'SET_CONTEXT').at(-1).name, 'Cliente nuevo');
+  } finally { dom.window.close(); }
+});
 test('a new header appearing before its messages does not retain the former contact', async () => {
   const { dom, w, calls } = await mount();
   try {
