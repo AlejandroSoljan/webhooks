@@ -177,7 +177,7 @@ Ruta pública `/qr/:tenant?codigo=SKU`, también `/qr/:tenant/:codigo`. API de p
 
 Configurar fuente comercial, autenticación, mapeo de código/precio/stock e identidad del comercio. Los precios y disponibilidad provienen del catálogo/API del comercio, no de inferencias de IA. Probar SKU existente, inexistente y barras duplicadas.
 
-`qr_product_catalog` mantiene espejo por tenant y origen. Revisar [catálogo](product_catalog.md) y `qr_product_catalog.js` para vigencia y renovación. Importación inicial: validar un archivo con `scripts/import_product_catalog.js`; la opción `--apply` escribe. Confirmar fecha de observación, dominio y origen antes de aplicar. No reemplazar precios actuales con una exportación antigua.
+`qr_product_catalog` mantiene espejo por tenant y origen. Revisar [catálogo](product_catalog.md), `product_catalog.js` y `product_catalog_sync.js` para vigencia y renovación. Importación inicial: validar un archivo con `scripts/import_product_catalog.js`; la opción `--apply` escribe. Confirmar fecha de observación, dominio y origen antes de aplicar. No reemplazar precios actuales con una exportación antigua.
 
 ## 9. Turnero y pantallas
 
@@ -195,7 +195,7 @@ Configurar secciones, vendedores/puestos y acceso; verificar servicio escritor p
 
 Validar emisión → reclamación/impresión → espera → llamado → finalización. Probar audio de televisión, pantalla completa y resolución real. El navegador puede requerir gesto para habilitar sonido. Probar impresora física, falta de papel y reimpresión del mismo ticket. Verificar que el QR use un origen accesible desde el celular.
 
-Para app/notificaciones, comprobar dispositivo, permisos y entrega real; un token registrado no prueba recepción. [Historia operativa del turnero](turnero_aws.md) contiene referencias de releases anteriores; reglas actuales: `customer_queue.js`, `src/queue` y tests de cola.
+Para app/notificaciones, comprobar dispositivo, permisos y entrega real; un token registrado no prueba recepción. [Historia operativa del turnero](turnero_aws.md) contiene referencias de releases anteriores; consultar `customer_queue.js` y sus módulos importados para las reglas actuales.
 
 ## 10. Restaurante
 
@@ -228,7 +228,7 @@ Probar importación, nombre de contacto, selección de mensajes, borrador, edici
 | Seguimiento | Conversaciones, clasificación y revisión de estado; revisar efecto de reclasificar con IA | `conversation_followup_panel.js` |
 | Fleteros | Configuración del cliente, viajes y acciones según panel; validar viaje de prueba y alcance | `fleteros_viajes_panel.js` |
 | Notificaciones app | Dispositivos y avisos del dominio; comprobar permisos y entrega | `customer_notifications.js` |
-| Acceso web | Auditoría de sesiones/visitas y permisos | `web_access_panel.js` si está presente; inventario enlazado |
+| Acceso web | Auditoría de sesiones/visitas y permisos | `web_access_stats.js` |
 
 Para módulos sin contrato externo publicado, usar las pantallas existentes y el handler del catálogo antes de automatizar. No deducir parámetros de una URL solamente.
 
