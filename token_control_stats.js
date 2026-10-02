@@ -2214,8 +2214,9 @@ function renderTokenControlPage(user, tenants = []) {
   }
   function billingTotalArs(it,fx){
     const amounts=billingTotalMap(it),rate=num(fx&&fx.rate);
-    if(rate<=0)return null;
-    return num(amounts.ARS)+(num(amounts.USD)*rate);
+    if(Object.keys(amounts).some(function(c){return c!=='ARS'&&c!=='USD'&&num(amounts[c])!==0;}))return null;
+    if(num(amounts.USD)!==0&&rate<=0)return null;
+    return Math.round((num(amounts.ARS)+(num(amounts.USD)*rate))*100)/100;
   }
   function billingConceptsHtml(it){
     const lines=[];
@@ -2317,13 +2318,16 @@ function renderTokenControlPage(user, tenants = []) {
 
     kpiTokens.textContent = fmtInt(totals.total_tokens || 0);
     const headlineMap=items.reduce(function(acc,item){return mergeAmountMaps(acc,billingTotalMap(item));},{});
+    const domainArsTotals=items.map(function(item){return billingTotalArs(item,fxJ);});
+    const grandTotalArs=domainArsTotals.some(function(value){return value===null;})?null:domainArsTotals.reduce(function(sum,value){return sum+Math.round(value*100);},0)/100;
+    const grandTotalHtml=grandTotalArs===null?'<span class="status pending">COTIZACIÓN PENDIENTE</span>':'<b>'+esc(fmtCurrency(grandTotalArs,'ARS'))+'</b>';
     const nonAiMap=items.reduce(function(acc,item){
       const itemMap=billingTotalMap(item);
       if(num(item.billed_cost))itemMap.USD=num(itemMap.USD)-num(item.billed_cost);
       return mergeAmountMaps(acc,itemMap);
     },{});
     Object.keys(nonAiMap).forEach(function(currency){if(Math.abs(num(nonAiMap[currency]))<0.0000005)delete nonAiMap[currency];});
-    kpiBilledCost.innerHTML = '<div class="amountStack"><span class="main">'+esc(amountMapText(headlineMap))+'</span></div>';
+    kpiBilledCost.innerHTML = '<div class="amountStack"><span class="main">'+grandTotalHtml+'</span><span class="small">'+esc(amountMapText(headlineMap))+'</span></div>';
     kpiMonBilled.textContent=amountMapText(nonAiMap);
     monCurrencies.innerHTML=Object.keys(nonAiMap).map(function(currency){return '<span>'+esc(fmtCurrency(nonAiMap[currency],currency))+'</span>';}).join('');
     if (isSuper && kpiRealCost) kpiRealCost.textContent = fmtMoney(totals.real_cost || 0);
@@ -2358,6 +2362,7 @@ function renderTokenControlPage(user, tenants = []) {
         '<td>'+domainDetailsHtml(it)+'</td><td>' + billingConceptsHtml(it) + '</td><td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money"><div class="amountStack">'+totalArsHtml+'</div></td>' +
         '<td>'+state+'</td><td><button class="btn2 technicalToggle" type="button" data-target="'+detailId+'">Detalle técnico</button></td></tr>'+technical;
     }).join('');
+    rowsEl.innerHTML+='<tr class="billingTotals" style="background:var(--bg);font-weight:700"><td colspan="3">TOTAL DEL PERÍODO · '+fmtInt(items.length)+' clientes</td>'+(isSuper?'<td class="money">'+fmtMoney(items.reduce(function(sum,item){return sum+num(item.real_cost);},0))+'</td>':'')+'<td class="money"><div class="amountStack">'+grandTotalHtml+'<span class="small">'+esc(amountMapText(headlineMap))+'</span></div></td><td colspan="2"></td></tr>';
   }
 
   function renderConversationSummary(j){
