@@ -2226,6 +2226,7 @@ function renderTokenControlPage(user, tenants = []) {
     const items=Array.isArray(it&&it.monetization_items)?it.monetization_items:[],sources=Array.isArray(it&&it.api_sources)?it.api_sources:[];
     const perMessage=[],legacyAmounts={};
     sources.forEach(function(source){
+      if(num(source.windows)<=0)return; // No window evidence: retain existing metering, never erase a charge.
       const item=items.find(function(row){return String(row&&row.eventKey||'')==='whatsapp.api_sent'&&String(row.sourceTenantId||row.tenantId||'')===String(source.tenantId||'');});
       // The persisted windows are authoritative, including historical tariffs.
       // Remove the overlapping metering charge, never price every message again.

@@ -17,4 +17,7 @@ test('window charges replace duplicate per-message metering, preserving other ch
   assert.equal(result.ARS,1740); assert.equal(result.USD,2);
   input.api_sources[0].byCurrency.ARS = 1400;
   assert.equal(context.billingTotalMap(input).ARS,1500); // historical tariffs, not count × current price
+  input.api_sources[0].windows=0;
+  input.api_sources[0].byCurrency={};
+  assert.equal(context.billingTotalMap(input).ARS,2220); // no evidence cannot zero historical charges
 });
