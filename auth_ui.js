@@ -4357,6 +4357,8 @@ function mountAuthRoutes(app) {
 
         function fieldHelpDescription(name){
           const raw = String(name || '').trim();
+          if (raw === 'api_mensajes_limite_unidad') return 'clientes: cuenta destinatarios distintos por día y emisor (agente 4.05.17 o superior). mensajes: cuenta cada envío automático.';
+          if (raw === 'api_mensajes_limite_diario') return 'Máximo diario según api_mensajes_limite_unidad. Con clientes, los envíos repetidos al mismo destinatario no consumen nuevos cupos. 0: sin límite.';
           if (!raw) return 'Ingresá el nombre del campo para consultar su función.';
           if (fieldHelp[raw]) return fieldHelp[raw];
           const lower = raw.toLowerCase();
