@@ -2,6 +2,7 @@
 (() => {
   let chats = [], knownChats = [], owner = '', timer, stopped = false, currentJid = '', currentName = '', taskData = { tasks: [], messages: [] }, anchorId = '';
   const remembered = new Map(), addressBook = [], selected = new Map(), controls = new Map();
+  let assignmentBusy = false, messageRequest = 0;
   const extractJid = value => ((value || '').match(/(?:^|_)([0-9]+@(?:s\.whatsapp\.net|c\.us|lid))(?:_|$)/)?.[1] || '').replace('@c.us', '@s.whatsapp.net');
   const extractMessageId = value => {
     const raw = String(value || '');
@@ -132,8 +133,8 @@
   }
   function positionControls() {
     const top = document.querySelector('#main')?.getBoundingClientRect().top || 0;
-    for (const control of controls.values()) if (control.node?.isConnected) {
-      const rect = control.node.getBoundingClientRect();
+    const positions = [...controls.values()].filter(control => control.node?.isConnected).map(control => ({ control, rect: control.node.getBoundingClientRect() }));
+    for (const { control, rect } of positions) {
       control.holder.style.top = Math.max(4, rect.top - top + rect.height / 2 - 11) + 'px';
     }
   }
@@ -144,7 +145,7 @@
     for (const task of tasks) add(task.id, `${task.subject} · ${statusLabel(task.status)}${task.ticketId ? ' #' + task.ticketId : ''}`);
     select.value = pending.length === 1 ? pending[0].id : pending.length === 0 ? 'new' : '';
   }
-  function renderToolbar(nodes = messageNodes()) {
+  function renderToolbar(nodes = [...controls.values()].map(control => control.node).filter(node => node?.isConnected)) {
     let bar = document.querySelector('.asisto-message-toolbar'); if (!selected.size) { bar?.remove(); return; }
     if (!bar) { bar = document.createElement('div'); bar.className = 'asisto-message-toolbar'; bar.dataset.asistoOwned = '1'; const main = document.querySelector('#main'), footer = main?.querySelector('footer'); if (footer) footer.parentElement.insertBefore(bar, footer); else main?.append(bar); }
     const previousDestination = bar.querySelector('select')?.value, previousAction = bar.querySelectorAll('select')[1]?.value;
@@ -156,7 +157,8 @@
     const action = document.createElement('select'); [['','Acción sobre ticket'],['followup','Agregar seguimiento'],['update','Actualizar ticket existente']].forEach(([value,label]) => { const item=document.createElement('option'); item.value=value; item.textContent=label; action.append(item); });
     if (previousAction) action.value = previousAction;
     destination.onchange = () => { action.hidden = !(taskData.tasks || []).find(task => task.id === destination.value)?.ticketId; }; destination.onchange();
-    const assign = document.createElement('button'); assign.className = 'primary'; assign.textContent = destination.value === 'new' ? 'Crear tarea con seleccionados' : 'Actualizar tarea con seleccionados'; destination.onchange = () => { action.hidden = !(taskData.tasks || []).find(task => task.id === destination.value)?.ticketId; assign.textContent = destination.value === 'new' ? 'Crear tarea con seleccionados' : 'Actualizar tarea con seleccionados'; }; destination.onchange(); assign.onclick = async () => {
+    const assign = document.createElement('button'); assign.className = 'primary'; assign.disabled = assignmentBusy; destination.onchange = () => { action.hidden = !(taskData.tasks || []).find(task => task.id === destination.value)?.ticketId; assign.textContent = assignmentBusy ? 'Preparando tarea…' : destination.value === 'new' ? 'Crear tarea con seleccionados' : 'Actualizar tarea con seleccionados'; }; destination.onchange(); assign.onclick = async () => {
+      if (assignmentBusy) return;
       if (!currentJid) return alert('Todavía no se pudo identificar este contacto. Esperá a que se cargue su información y volvé a intentar.');
       if (!selected.size) return alert('Seleccioná al menos un mensaje.'); if (!destination.value) return alert('Elegí la tarea de destino.');
       const saved = (taskData.tasks || []).find(task => task.id === destination.value)?.ticketId; if (saved && !action.value) return alert('Elegí si querés agregar un seguimiento o actualizar el ticket existente.');
@@ -164,22 +166,31 @@
       const selectedMessages = [...selected.values()];
       const request = { action: 'ASSIGN_MESSAGES', jid: currentJid, messageIds: [...selected.keys()], selectedMessages, destination: destination.value, existingAction: action.value };
       chrome.runtime.sendMessage({ action: 'OPEN', jid: currentJid, name: currentName, draftId: destination.value === 'new' ? '' : destination.value }).catch(() => {});
-      assign.disabled = true; assign.textContent = 'Preparando tarea…';
-      let response; try { response = await chrome.runtime.sendMessage(request); } catch { response = { error: 'No se pudo comunicar con Asisto. Volvé a intentar.' }; } finally { assign.disabled = false; }
-      if (response?.error === 'message_already_assigned' && confirm('Uno o más mensajes ya pertenecen a otra tarea. ¿Querés reasignarlos?')) response = await chrome.runtime.sendMessage({ ...request, reassign: true });
+      assignmentBusy = true; assign.disabled = true; assign.textContent = 'Preparando tarea…';
+      let response;
+      try {
+        response = await chrome.runtime.sendMessage(request);
+        if (response?.error === 'message_already_assigned' && currentJid === request.jid && confirm('Uno o más mensajes ya pertenecen a otra tarea. ¿Querés reasignarlos?')) response = await chrome.runtime.sendMessage({ ...request, reassign: true });
+      } catch { response = { error: 'No se pudo comunicar con Asisto. Volvé a intentar.' }; }
+      finally { assignmentBusy = false; }
+      if (currentJid !== request.jid) { renderToolbar(); return; }
       if (response?.error) {
-        assign.textContent = destination.value === 'new' ? 'Crear tarea con seleccionados' : 'Actualizar tarea con seleccionados';
-        feedback.textContent = response.error === 'message_selection_not_found' ? 'No se pudo guardar esta selección. Los tildes siguen marcados para que puedas reintentar.' : 'Asisto: ' + response.error;
+        renderToolbar();
+        const liveFeedback = document.querySelector('.asisto-message-feedback');
+        if (liveFeedback) liveFeedback.textContent = response.error === 'message_selection_not_found' ? 'No se pudo guardar esta selección. Los tildes siguen marcados para que puedas reintentar.' : 'Asisto: ' + response.error;
         return;
       }
       if (currentJid !== request.jid) return;
-      selected.clear(); renderToolbar(); await refreshTasks(); chrome.runtime.sendMessage({ action: 'SET_CONTEXT', jid: currentJid, name: currentName, draftId: response.data?.draftId || '', refresh: true }).catch(() => {});
+      for (const message of selectedMessages) if (selected.get(message.id) === message) selected.delete(message.id);
+      renderMessageControls(); renderToolbar();
+      chrome.runtime.sendMessage({ action: 'SET_CONTEXT', jid: currentJid, name: currentName, draftId: response.data?.draftId || '', refresh: true }).catch(() => {});
+      refreshTasks().catch(() => {});
     };
     const feedback = document.createElement('span'); feedback.className = 'asisto-message-feedback'; feedback.setAttribute('role', 'alert');
     bar.append(title, all, none, from, destination, action, assign, feedback);
   }
   async function refreshTasks() {
-    if (!currentJid) return; const requestedJid = currentJid; const response = await chrome.runtime.sendMessage({ action: 'MESSAGES', jid: requestedJid }); if (!response?.data || currentJid !== requestedJid) return; taskData = response.data;
+    if (!currentJid) return; const requestedJid = currentJid, generation = ++messageRequest; const response = await chrome.runtime.sendMessage({ action: 'MESSAGES', jid: requestedJid }); if (!response?.data || currentJid !== requestedJid || generation !== messageRequest) return; taskData = response.data;
     renderMessageControls();
   }
   function update() {

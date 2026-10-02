@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.275 | Fecha: 2026-10-01
+// Asisto | Version: 5.00.276 | Fecha: 2026-10-01
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, refreshGeneration = 0, companyTimer, companyGeneration = 0;
 let consumedOpenAt = null;
@@ -238,6 +238,7 @@ async function save({ hubSpotPending = false } = {}) {
   else { unsavedEdits.delete(current.id); removePersistedDraft(current.id); saveState(hubSpotPending ? 'Cambios protegidos; enviando a HubSpot…' : 'Guardado temporalmente en Asisto', 'saved'); }
   if (saved.fields && !changedWhileSaving) { $('field-subject').value = saved.fields.subject || ''; $('field-description').value = saved.fields.description || ''; }
   $('reviewWarning').hidden = true; notice(action === 'RECONCILE' ? 'Mensajes nuevos incorporados al resumen.' : hubSpotPending ? 'Cambios protegidos mientras se registran en HubSpot.' : 'Cambios guardados temporalmente en Asisto.');
+  return !changedWhileSaving;
 }
 function selectField(container, id, title, options, value = '') {
   const label = document.createElement('label'); label.textContent = title;
@@ -305,6 +306,7 @@ $('editor').addEventListener('change', event => { if (event.target?.id?.startsWi
 $('editor').onsubmit = event => { event.preventDefault(); run(saveAndPublish); };
 $('dismiss').onclick = () => run(async () => {
   await api('DISMISS', { id: current.id, revision: current.revision });
+  unsavedEdits.delete(current.id); removePersistedDraft(current.id);
   notice('Tarea desestimada.');
   await refresh();
 });
@@ -328,7 +330,8 @@ async function publishCurrent(alreadySaved = false) {
   if (!mapping.ownerId) throw new Error('invalid_hubspot_owner');
   if (!mapping.pipelineId || !mapping.stageId) throw new Error('invalid_pipeline_stage');
   if (!$('field-companyId').value) throw new Error('hubspot_company_required');
-  if (!alreadySaved) await save();
+  if (!alreadySaved && !await save()) return;
+  if (unsavedEdits.has(current.id)) { saveState('Hay cambios nuevos sin guardar. Pulsá Guardar en HubSpot para enviarlos.', 'dirty'); return; }
   const result = await api('PUBLISH', { id: current.id, revision: current.revision, mapping }); current.revision = result.revision; current.hubspot = result;
   await chrome.storage.local.set({ ['mapping:' + session.tenantId + ':' + session.userId + ':' + connection.portalId]: mapping });
   notice(result.matched ? 'Ya existía un ticket abierto similar. Conversación vinculada al ticket ' + result.ticketId + '.' : 'Ticket ' + result.ticketId + ' guardado en HubSpot.'); $('taskState').textContent = 'Ticket ' + result.ticketId;
@@ -337,7 +340,7 @@ async function publishCurrent(alreadySaved = false) {
   setTimeout(() => run(refresh), 800);
 }
 async function saveAndPublish() {
-  await save({ hubSpotPending: true });
+  if (!await save({ hubSpotPending: true })) return;
   try {
     await prepareHubSpot();
     if (connection?.configured && mappingReady()) await publishCurrent(true);

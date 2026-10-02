@@ -24,6 +24,29 @@ async function mount(serverMessages = []) {
   w.eval(matcher); w.eval(source); await pause();
   return { dom, w, calls };
 }
+
+test('slow assignment blocks duplicate sends and preserves newly selected messages', async () => {
+  const { dom, w, calls } = await mount();
+  try {
+    const original = w.chrome.runtime.sendMessage;
+    let finish;
+    w.chrome.runtime.sendMessage = message => message.action === 'ASSIGN_MESSAGES'
+      ? (calls.push(message), new Promise(resolve => { finish = resolve; })) : original(message);
+    const checks = w.document.querySelectorAll('.asisto-message-control input');
+    checks[0].click();
+    w.document.querySelector('.asisto-message-toolbar .primary').click();
+    checks[1].click();
+    const submit = w.document.querySelector('.asisto-message-toolbar .primary');
+    assert.equal(submit.disabled, true);
+    submit.click();
+    assert.equal(calls.filter(call => call.action === 'ASSIGN_MESSAGES').length, 1);
+    finish({ data: { draftId: 'created' } }); await pause();
+    assert.equal(checks[1].checked, true);
+    assert.equal(checks[0].checked, false);
+    assert.match(w.document.querySelector('.asisto-message-toolbar strong').textContent, /1 seleccionados/);
+    assert.equal(w.document.querySelector('.asisto-message-toolbar .primary').disabled, false);
+  } finally { dom.window.close(); }
+});
 test('nested composer shows selection actions and every message type has one aligned control', async () => {
   const { dom, w, calls } = await mount();
   try {
