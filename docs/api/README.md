@@ -3,6 +3,8 @@
 
 Esta carpeta centraliza la documentación de integración de las APIs de Asisto.
 
+Entrada general para instalación, configuración por cliente y operación actual en AWS: [Manual técnico de Asisto](../MANUAL_TECNICO_ASISTO.md). Incluye un [inventario de rutas con referencias al código](../manual-tecnico/rutas.md) y el procedimiento para mantenerlo actualizado.
+
 ## Ayuda
 
 - [API de Ayuda — manual completo](MANUAL_API_AYUDA.md): modos inteligente y contextual.
