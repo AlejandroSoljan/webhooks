@@ -34,7 +34,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/admin/telegram` | [telegram_runtime.js:2255](../../telegram_runtime.js#L2255) | `, auth.requireAuth, auth.requireAdmin, async (_req, res) => {` |
 | GET | `/admin/tenant-config` | [auth_ui.js:4979](../../auth_ui.js#L4979) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | GET | `/admin/ticket/:convId` | [endpoint.js:7522](../../endpoint.js#L7522) | `, async (req, res) => {` |
-| GET | `/admin/token-control` | [token_control_stats.js:2589](../../token_control_stats.js#L2589) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/admin/token-control` | [token_control_stats.js:2616](../../token_control_stats.js#L2616) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
 | GET | `/admin/users` | [auth_ui.js:3719](../../auth_ui.js#L3719) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | GET | `/admin/web-access` | [web_access_stats.js:508](../../web_access_stats.js#L508) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | GET | `/admin/wweb` | [auth_ui.js:5434](../../auth_ui.js#L5434) | `, requireAuth, (req, res, next) => hasAccess(req.user, 'wweb', 'support') ? next() : res.status(403).send('403` |
@@ -121,11 +121,13 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/api/tg/chats` | [telegram_runtime.js:2310](../../telegram_runtime.js#L2310) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
 | GET | `/api/tg/stats` | [telegram_runtime.js:2295](../../telegram_runtime.js#L2295) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
 | GET | `/api/tg/status` | [telegram_runtime.js:2263](../../telegram_runtime.js#L2263) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
-| GET | `/api/token-control/api-message-windows` | [token_control_stats.js:2691](../../token_control_stats.js#L2691) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
-| GET | `/api/token-control/conversations` | [token_control_stats.js:2666](../../token_control_stats.js#L2666) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
-| GET | `/api/token-control/exchange-rate` | [token_control_stats.js:2633](../../token_control_stats.js#L2633) | `, requireAuth, requireTokenControlAccess, async (_req, res) => {` |
-| GET | `/api/token-control/summary` | [token_control_stats.js:2610](../../token_control_stats.js#L2610) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
-| GET | `/api/token-control/timeline` | [token_control_stats.js:2644](../../token_control_stats.js#L2644) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/api/token-control/api-message-windows` | [token_control_stats.js:2718](../../token_control_stats.js#L2718) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/api/token-control/conversations` | [token_control_stats.js:2693](../../token_control_stats.js#L2693) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/api/token-control/exchange-rate` | [token_control_stats.js:2660](../../token_control_stats.js#L2660) | `, requireAuth, requireTokenControlAccess, async (_req, res) => {` |
+| GET | `/api/token-control/media/:id/content` | [token_control_media.js:65](../../token_control_media.js#L65) | `, auth.requireAuth, superOnly, wrap(async (req, res) => {` |
+| GET | `/api/token-control/media/:id` | [token_control_media.js:60](../../token_control_media.js#L60) | `, auth.requireAuth, superOnly, wrap(async (req, res) => {` |
+| GET | `/api/token-control/summary` | [token_control_stats.js:2637](../../token_control_stats.js#L2637) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/api/token-control/timeline` | [token_control_stats.js:2671](../../token_control_stats.js#L2671) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
 | GET | `/api/web-access/summary` | [web_access_stats.js:517](../../web_access_stats.js#L517) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | GET | `/api/wweb/history` | [auth_ui.js:6184](../../auth_ui.js#L6184) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
 | GET | `/api/wweb/history` | [endpoint.js:1794](../../endpoint.js#L1794) | `, async (req, res) => {` |
@@ -285,6 +287,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/api/tg/reload` | [telegram_runtime.js:2342](../../telegram_runtime.js#L2342) | `, auth.requireAuth, auth.requireAdmin, async (_req, res) => {` |
 | POST | `/api/tg/restart` | [telegram_runtime.js:2378](../../telegram_runtime.js#L2378) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
 | POST | `/api/tg/start` | [telegram_runtime.js:2364](../../telegram_runtime.js#L2364) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
+| POST | `/api/token-control/messages/:id/media` | [token_control_media.js:33](../../token_control_media.js#L33) | `, auth.requireAuth, superOnly, wrap(async (req, res) => {` |
 | POST | `/api/wweb/action` | [auth_ui.js:6217](../../auth_ui.js#L6217) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
 | POST | `/api/wweb/delete-session` | [auth_ui.js:5888](../../auth_ui.js#L5888) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | POST | `/api/wweb/policy` | [auth_ui.js:5941](../../auth_ui.js#L5941) | `, requireAuth, requireWwebAccess, async (req, res) => {` |

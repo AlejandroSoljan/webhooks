@@ -234,6 +234,12 @@ Para módulos sin contrato externo publicado, usar las pantallas existentes y el
 
 ## 13. Consumos y facturación
 
+### Audios e imágenes del detalle de WhatsApp
+
+El detalle de envíos reales permite a superadmin solicitar notas de voz (`ptt`/`audio`) e imágenes (`image`). Botones “Escuchar audio” y “Ver imagen”: recuperan el archivo bajo demanda desde la sesión; las imágenes se amplían en una pestaña privada y los audios ofrecen controles de reproducción. No generan transcripciones ni consumos de IA. Requiere agente WhatsApp **4.05.16 o posterior instalado**, no sólo publicado; los agentes anteriores muestran aviso de actualización.
+
+APIs protegidas exclusivamente para superadmin: `POST /api/token-control/messages/:id/media` (header `X-Asisto-Media: 1`, ID Mongo del registro), `GET /api/token-control/media/:id` (estado) y `GET /api/token-control/media/:id/content` (binario con soporte Range). No admiten URLs ni rutas de archivos del navegador. La acción `read_message_media` se encola para el `lockId` exacto; verifica contacto y dirección. Excluye vista única, formatos activos y archivos mayores a 5 MiB. Mantiene la copia en `wa_wweb_actions.result` durante 15 minutos mediante `mediaExpiresAt` y TTL; el endpoint rechaza inmediatamente expirados aunque la limpieza de Mongo tarde. Usa `no-store`, validación de firma binaria/MIME y acceso privado también al abrir una imagen ampliada. Borrar el registro original revoca su acceso. Los registros históricos no contienen los binarios: si el agente/WhatsApp ya no dispone del mensaje, se informa archivo no disponible. No garantiza recuperar archivos antiguos ni archiva automáticamente todos los nuevos adjuntos. Despliegue del backend y actualización de agentes son pasos diferentes; verificar versión reportada antes de afirmar disponibilidad de recuperación.
+
 Control de Consumos abre el mes en curso: día 1 a hoy. Si se selecciona un día, la evolución es horaria. El gráfico usa eventos por fecha real y agrupa tarifa por modelo; tokens, USD y mensajes tienen escalas independientes. Comparar valores del punto, no alturas entre series.
 
 La tabla agrupa por titular, conserva detalle del dominio origen y suma al pie. El resumen superior y el pie suman importes en pesos redondeados por cliente a centavos. El desglose USD/ARS permanece visible.

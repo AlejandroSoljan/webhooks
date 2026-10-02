@@ -506,7 +506,7 @@ async function buildApiMessageWindowBilling({
     $or: [
       { body: { $regex: /\S/ } },
       { hasMedia: true },
-      { messageType: { $in: ['media', 'document', 'image', 'video', 'audio'] } }
+      { messageType: { $in: ['media', 'document', 'image', 'video', 'audio', 'ptt'] } }
     ]
   };
   if (safeTenant) realMatch.tenantId = safeTenant;
@@ -584,7 +584,8 @@ async function buildApiMessageWindowBilling({
     return {
       id: messageId || String(doc?._id || realIndex), tenantId, numeroFrom, contact,
       messageType, text,
-      hasMedia: /^(?:media|document|image|video|audio)$/i.test(messageType),
+      hasMedia: /^(?:media|document|image|video|audio|ptt)$/i.test(messageType),
+      mediaLogId: /^(?:image|audio|ptt)$/i.test(messageType) && doc.messageId ? String(doc._id) : null,
       at, apiMessage: !!apiEntry, apiType: apiEntry?.messageType || null
     };
   });
@@ -1975,6 +1976,31 @@ function renderTokenControlPage(user, tenants = []) {
   const apiMessageSummary = document.getElementById('apiMessageSummary');
   const apiMessageRows = document.getElementById('apiMessageRows');
   const realMessageRows = document.getElementById('realMessageRows');
+  if(realMessageRows)realMessageRows.addEventListener('click',async function(event){
+    const button=event.target.closest('[data-media-log]');if(!button)return;
+    const box=button.parentElement,note=box.querySelector('[role="status"]'),id=button.dataset.mediaLog;
+    button.disabled=true;note.textContent=' Recuperando desde WhatsApp…';
+    try{
+      const started=await fetch('/api/token-control/messages/'+encodeURIComponent(id)+'/media',{method:'POST',headers:{'X-Asisto-Media':'1'},credentials:'same-origin'});
+      if(!started.ok)throw Error('unavailable');
+      const initial=await started.json();
+      if(initial.status==='requires_update'){note.textContent=' Requiere actualizar el agente de esta sesión a 4.05.16 o superior.';button.disabled=false;return;}
+      let result;
+      for(let attempt=0;attempt<30;attempt++){
+        if(!box.isConnected)return;
+        const response=await fetch('/api/token-control/media/'+encodeURIComponent(id),{credentials:'same-origin'});
+        if(!response.ok)throw Error('unavailable');result=await response.json();
+        if(result.status!=='pending')break;
+        await new Promise(resolve=>setTimeout(resolve,2000));
+      }
+      if(result?.status!=='ready')throw Error('unavailable');
+      const failed=function(){box.replaceChildren(document.createTextNode('Archivo no disponible o formato no reproducible.'));};
+      if(result.kind==='image'){
+        const link=document.createElement('a'),img=document.createElement('img');link.href=result.url;link.target='_blank';link.rel='noopener';
+        img.src=result.url;img.alt='Imagen del mensaje. Tocar para ampliar.';img.style.cssText='max-width:240px;max-height:180px;object-fit:contain;display:block';img.addEventListener('error',failed);link.append(img);box.replaceChildren(link);
+      }else{const audio=document.createElement('audio');audio.controls=true;audio.preload='none';audio.src=result.url;audio.style.cssText='max-width:100%;width:280px';audio.addEventListener('error',failed);box.replaceChildren(audio);}
+    }catch{note.textContent=' Archivo no disponible: puede haber vencido o la sesión necesitar actualizarse.';button.disabled=false;}
+  });
   const msgEl = document.getElementById('msg');
   const kpiTokens = document.getElementById('kpiTokens');
   const kpiRealCost = document.getElementById('kpiRealCost');
@@ -2464,7 +2490,7 @@ function renderTokenControlPage(user, tenants = []) {
         '<td><div class="stack"><b>'+esc(it.contact||'-')+'</b>'+(it.numeroFrom?'<span class="small">Desde: '+esc(it.numeroFrom)+'</span>':'')+'</div></td>'+
         '<td>'+esc(fmtDate(it.at))+'</td><td>'+esc(type)+'</td>'+
         '<td><span class="status '+(it.apiMessage?'active':'pending')+'">'+(it.apiMessage?'API MENSAJES':'FUERA DE API')+'</span></td>'+
-        '<td style="white-space:pre-wrap;max-width:460px">'+esc(it.text||'(sin texto)')+'</td></tr>';
+        '<td style="white-space:pre-wrap;max-width:460px">'+esc(it.text||(['ptt','audio'].includes(it.messageType)?'Nota de voz':it.messageType==='image'?'Imagen':'(sin texto)'))+(it.mediaLogId?'<div class="messageMedia"><button type="button" class="btn2" data-media-log="'+esc(it.mediaLogId)+'">'+(it.messageType==='image'?'Ver imagen':'Escuchar audio')+'</button><span class="small" role="status"></span></div>':'')+'</td></tr>';
     }).join(''):'<tr><td colspan="6" class="small">No hay mensajes enviados para los filtros seleccionados.</td></tr>';
 
     if(!items.length){
@@ -2576,6 +2602,7 @@ function userCanAccessTokenControl(user) {
 function mountTokenControlRoutes(app, auth) {
   if (!app || app.__tokenControlRoutesMounted) return;
   app.__tokenControlRoutesMounted = true;
+  require('./token_control_media').mountTokenMediaRoutes(app, auth);
 
   const requireAuth = auth.requireAuth;
   const requireTokenControlAccess = (req, res, next) => {
