@@ -1769,6 +1769,7 @@ function renderTokenControlPage(user, tenants = []) {
     .profit{color:var(--profit);font-weight:800;white-space:nowrap}
     .amountStack{display:flex;flex-direction:column;gap:3px;line-height:1.15}.amountStack .main{font-weight:850}.amountStack .sub{font-size:11px;color:var(--muted);font-weight:700}
     .billingConcepts{display:grid;gap:9px;min-width:250px}.billingConcepts>.stack{padding-bottom:8px;border-bottom:1px dashed var(--border)}.billingConcepts>.stack:last-child{padding-bottom:0;border-bottom:0}
+    section.billingConcepts{padding:12px 0;border-bottom:1px solid var(--border)}section.billingConcepts:first-child{padding-top:0}section.billingConcepts:last-child{border-bottom:0}
     .apiSummary{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}.apiSummary .chip{border:1px solid var(--border);background:#f8fafc;border-radius:999px;padding:5px 9px;font-size:12px;color:#475569}.apiSummary .chip b{color:var(--text)}
     .sectionTitle{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:10px}
     .sectionTitle h2{margin:0;font-size:19px}
@@ -2248,6 +2249,22 @@ function renderTokenControlPage(user, tenants = []) {
     return Math.round((num(amounts.ARS)+(num(amounts.USD)*rate))*100)/100;
   }
   function billingConceptsHtml(it){
+    const domains=new Map();
+    function domain(key){
+      key=String(key||it.tenantId||'');
+      if(!domains.has(key))domains.set(key,{tenantId:key,total_tokens:0,events:0,billed_cost:0,service_sources:[],api_sources:[],api_messages:0,api_windows:0,monetization_items:[],monetization_amounts:{}});
+      return domains.get(key);
+    }
+    (it.service_sources||[]).forEach(function(source){const row=domain(source.tenantId);row.service_sources.push(source);row.total_tokens+=num(source.total_tokens);row.events+=num(source.events);row.billed_cost+=num(source.billed_cost);});
+    (it.api_sources||[]).forEach(function(source){if(!num(source.windows)&&!num(source.messages))return;const row=domain(source.tenantId);row.api_sources.push(source);row.api_messages+=num(source.messages);row.api_windows+=num(source.windows);});
+    (it.monetization_sources||[]).forEach(function(source){const row=domain(source.tenantId);row.monetization_amounts=mergeAmountMaps(row.monetization_amounts,source.billedAmount||{});});
+    (it.monetization_items||[]).forEach(function(item){domain(item.sourceTenantId||item.tenantId).monetization_items.push(item);});
+    if(!domains.size)return '<span class="small">Sin cargos en el período</span>';
+    return Array.from(domains.values()).sort(function(a,b){if(a.tenantId===it.tenantId)return -1;if(b.tenantId===it.tenantId)return 1;return a.tenantId.localeCompare(b.tenantId);}).map(function(row){
+      return '<section class="billingConcepts"><b>Dominio '+esc(row.tenantId)+'</b>'+billingDomainConceptsHtml(row)+'<div class="money">Subtotal '+esc(row.tenantId)+': '+esc(amountMapText(billingTotalMap(row)))+'</div></section>';
+    }).join('');
+  }
+  function billingDomainConceptsHtml(it){
     const lines=[];
     if(num(it.total_tokens)>0){
       const sourceLabels=(Array.isArray(it.service_sources)?it.service_sources:[]).flatMap(function(source){return (source.labels||[]).map(function(label){return label+' ('+source.tenantId+')';});});
@@ -2316,7 +2333,7 @@ function renderTokenControlPage(user, tenants = []) {
       it.channels=[...new Set([...(it.channels||[]),...(source.channels||[])])];it.usage_types=[...new Set([...(it.usage_types||[]),...(source.usage_types||[])])];
       it.last_at=newerDate(it.last_at,source.last_at);if(source.billing_configured===false)it.billing_configured=false;
       if(sourceKey===key){it.company=source.company||it.company;it.number=source.number||it.number;}
-      it.service_sources.push({tenantId:sourceKey,labels:serviceLabels(source),events:num(source.events),total_tokens:num(source.total_tokens)});
+      it.service_sources.push({tenantId:sourceKey,labels:serviceLabels(source),events:num(source.events),total_tokens:num(source.total_tokens),billed_cost:num(source.billed_cost)});
     });
     apiTenants.forEach(function(api){
       const sourceKey=String(api.tenantId||''),key=ownerOf(sourceKey);
@@ -2330,7 +2347,7 @@ function renderTokenControlPage(user, tenants = []) {
       it.api_sources.push({tenantId:sourceKey,messages:num(api.messages),windows:num(api.windows),byCurrency:api.byCurrency||{}});
       it.last_at=newerDate(it.last_at,api.last_at);
     });
-    monDomains.forEach(function(domain){const sourceKey=String(domain.tenantId||''),key=ownerOf(sourceKey),it=ensure(key);it.monetization_amounts=mergeAmountMaps(it.monetization_amounts,domain.billedAmount||{});it.monetization_operations+=num(domain.operations);it.included_credits+=num(domain.includedCreditsApplied);it.last_at=newerDate(it.last_at,domain.lastAt);});
+    monDomains.forEach(function(domain){const sourceKey=String(domain.tenantId||''),key=ownerOf(sourceKey),it=ensure(key);(it.monetization_sources||(it.monetization_sources=[])).push({tenantId:sourceKey,billedAmount:domain.billedAmount||{}});it.monetization_amounts=mergeAmountMaps(it.monetization_amounts,domain.billedAmount||{});it.monetization_operations+=num(domain.operations);it.included_credits+=num(domain.includedCreditsApplied);it.last_at=newerDate(it.last_at,domain.lastAt);});
     monItems.forEach(function(item){const sourceKey=String(item.tenantId||''),key=ownerOf(sourceKey),it=ensure(key);it.monetization_items.push(Object.assign({},item,{sourceTenantId:sourceKey,tenantId:key}));});
     const items=Array.from(merged.values()).sort(function(a,b){return String(a.tenantId||'').localeCompare(String(b.tenantId||''));});
 
