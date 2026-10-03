@@ -10678,7 +10678,10 @@ app.post("/api/ext/wweb/manager/intent", async (req, res) => {
     const behaviorText = await loadBehaviorTextFromMongo(tenantId);
     const currentConversation = await upsertConversation(from, {}, tenantId);
     const paused = currentConversation?.manualOpen && (!currentConversation.manualPauseUntil || new Date(currentConversation.manualPauseUntil).getTime() > Date.now());
-    if (paused) return res.json({ ok: true, intent: { action: 'paused' } });
+    if (paused) {
+      if (body.PauseOnly !== true) await saveMessageDoc({tenantId, conversationId:currentConversation._id, waId:from, role:'user', content:text, type:'text', meta:{from:'manager_paused'}});
+      return res.json({ ok: true, intent: { action: 'paused' } });
+    }
     if (body.PauseOnly === true) return res.json({ ok: true, intent: { action: 'none' } });
     const variants = wwebOperatorPhoneVariants(from);
     const conv = await db.collection("conversations").findOne(
