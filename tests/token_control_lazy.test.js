@@ -53,11 +53,14 @@ test('control de consumos carga totales primero y detalles sólo al pedirlos', a
     assert.match(dom.window.document.getElementById('rows').textContent, /4\.580,00/);
     const breakdown=dom.window.document.querySelectorAll('#rows section.billingConcepts');
     assert.equal(breakdown.length,2);
-    assert.match(breakdown[0].textContent,/Dominio MSM/);
-    assert.match(breakdown[0].textContent,/Subtotal MSM:/);
+    assert.equal(breakdown[0].closest('tr').dataset.billingDomain,'MSM');
+    assert.match(breakdown[0].textContent,/Subtotal:/);
     assert.doesNotMatch(breakdown[0].textContent,/Tareas de WhatsApp/);
-    assert.match(breakdown[1].textContent,/Dominio ALSO/);
-    assert.match(breakdown[1].textContent,/Subtotal ALSO:.*1,00/);
+    assert.equal(breakdown[1].closest('tr').dataset.billingDomain,'ALSO');
+    assert.match(breakdown[1].textContent,/Subtotal:.*1,00/);
+    assert.equal(breakdown[1].closest('td').previousElementSibling.querySelector('b').textContent,'ALSO');
+    assert.equal(dom.window.document.querySelector('#rows .pill').closest('td').rowSpan,2);
+    assert.doesNotMatch(breakdown[1].textContent,/Dominio ALSO/);
     assert.doesNotMatch(breakdown[1].textContent,/Lectura por código|ventanas facturables/);
     const technicalButton=dom.window.document.querySelector('.technicalToggle');
     const technicalRow=dom.window.document.getElementById(technicalButton.dataset.target);

@@ -2261,7 +2261,7 @@ function renderTokenControlPage(user, tenants = []) {
     (it.monetization_items||[]).forEach(function(item){domain(item.sourceTenantId||item.tenantId).monetization_items.push(item);});
     if(!domains.size)return '<span class="small">Sin cargos en el período</span>';
     return Array.from(domains.values()).sort(function(a,b){if(a.tenantId===it.tenantId)return -1;if(b.tenantId===it.tenantId)return 1;return a.tenantId.localeCompare(b.tenantId);}).map(function(row){
-      return '<section class="billingConcepts"><b>Dominio '+esc(row.tenantId)+'</b>'+billingDomainConceptsHtml(row)+'<div class="money">Subtotal '+esc(row.tenantId)+': '+esc(amountMapText(billingTotalMap(row)))+'</div></section>';
+      return '<section class="billingConcepts" data-domain="'+esc(row.tenantId)+'"><b>Dominio '+esc(row.tenantId)+'</b>'+billingDomainConceptsHtml(row)+'<div class="money">Subtotal: '+esc(amountMapText(billingTotalMap(row)))+'</div></section>';
     }).join('');
   }
   function billingDomainConceptsHtml(it){
@@ -2281,6 +2281,32 @@ function renderTokenControlPage(user, tenants = []) {
       lines.push('<div class="stack"><b>'+esc(item.name||item.eventKey||'Consumo')+(source&&source!==String(it.tenantId||'')?' ('+esc(source)+')':'')+'</b><span class="small">'+fmtInt(item.quantity)+' '+esc(item.unit||'operaciones')+'</span><span class="money">'+(amount?esc(fmtCurrency(amount,currency)):'Sin cargo')+'</span></div>');
     });
     return lines.length?'<div class="billingConcepts">'+lines.join('')+'</div>':'<span class="small">Sin cargos en el período</span>';
+  }
+  function alignBillingDomainRows(){
+    Array.from(rowsEl.children).filter(function(row){return !row.hidden;}).forEach(function(row){
+      const cells=Array.from(row.cells);
+      if(cells.length<3)return;
+      const details=Array.from(cells[1].querySelectorAll('.domainDetails > .stack'));
+      const sections=Array.from(cells[2].querySelectorAll('section[data-domain]'));
+      if(!sections.length)return;
+      const count=sections.length;
+      cells.forEach(function(cell,index){if(index!==1&&index!==2)cell.rowSpan=count;});
+      const anchor=row.nextSibling;
+      sections.forEach(function(section,index){
+        const target=index===0?row:document.createElement('tr');
+        const detailCell=index===0?cells[1]:document.createElement('td');
+        const conceptCell=index===0?cells[2]:document.createElement('td');
+        const detail=details.find(function(node){return node.querySelector('b')?.textContent===section.dataset.domain;});
+        detailCell.replaceChildren();
+        if(detail)detailCell.appendChild(detail);
+        else {const title=document.createElement('b');title.textContent=section.dataset.domain;detailCell.appendChild(title);}
+        section.querySelector(':scope > b')?.remove();
+        conceptCell.replaceChildren(section);
+        detailCell.style.verticalAlign='top';conceptCell.style.verticalAlign='top';
+        target.dataset.billingDomain=section.dataset.domain;
+        if(index){target.append(detailCell,conceptCell);rowsEl.insertBefore(target,anchor);}
+      });
+    });
   }
   function domainDetailsHtml(it){
     const domains=new Map();
@@ -2405,6 +2431,7 @@ function renderTokenControlPage(user, tenants = []) {
         '<td>'+domainDetailsHtml(it)+'</td><td>' + billingConceptsHtml(it) + '</td><td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money"><div class="amountStack">'+totalArsHtml+'</div></td>' +
         '<td>'+state+'</td><td><button class="btn2 technicalToggle" type="button" data-target="'+detailId+'">Detalle técnico</button></td></tr>'+technical;
     }).join('');
+    alignBillingDomainRows();
     rowsEl.innerHTML+='<tr class="billingTotals" style="background:var(--bg);font-weight:700"><td colspan="3">TOTAL DEL PERÍODO · '+fmtInt(items.length)+' clientes</td>'+(isSuper?'<td class="money">'+fmtMoney(items.reduce(function(sum,item){return sum+num(item.real_cost);},0))+'</td>':'')+'<td class="money"><div class="amountStack">'+grandTotalHtml+'<span class="small">'+esc(amountMapText(headlineMap))+'</span></div></td><td colspan="2"></td></tr>';
   }
 
