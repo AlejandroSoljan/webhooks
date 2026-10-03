@@ -38,9 +38,9 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `CLIENT_PHONE_ACCESS_MAX_NUMBERS` | [client_phone_access.js:11](../../client_phone_access.js#L11) |
 | `COMPORTAMIENTO` | [logic.js:358](../../logic.js#L358) |
 | `DB_NAME` | [src/script/migrate_products_tenant.js:7](../../src/script/migrate_products_tenant.js#L7) |
-| `DEFAULT_CITY` | [endpoint.js:11894](../../endpoint.js#L11894); [endpoint.js:12314](../../endpoint.js#L12314); [logic.js:1534](../../logic.js#L1534); [logic.js:3092](../../logic.js#L3092); [src/whatsapp/webhook.routes.js:532](../../src/whatsapp/webhook.routes.js#L532); [src/whatsapp/webhook.routes.js:646](../../src/whatsapp/webhook.routes.js#L646) |
-| `DEFAULT_COUNTRY` | [endpoint.js:11896](../../endpoint.js#L11896); [endpoint.js:12316](../../endpoint.js#L12316); [logic.js:1536](../../logic.js#L1536); [logic.js:3094](../../logic.js#L3094); [src/whatsapp/webhook.routes.js:534](../../src/whatsapp/webhook.routes.js#L534); [src/whatsapp/webhook.routes.js:648](../../src/whatsapp/webhook.routes.js#L648) |
-| `DEFAULT_PROVINCE` | [endpoint.js:11895](../../endpoint.js#L11895); [endpoint.js:12315](../../endpoint.js#L12315); [logic.js:1535](../../logic.js#L1535); [logic.js:3093](../../logic.js#L3093); [src/whatsapp/webhook.routes.js:533](../../src/whatsapp/webhook.routes.js#L533); [src/whatsapp/webhook.routes.js:647](../../src/whatsapp/webhook.routes.js#L647) |
+| `DEFAULT_CITY` | [endpoint.js:11897](../../endpoint.js#L11897); [endpoint.js:12317](../../endpoint.js#L12317); [logic.js:1534](../../logic.js#L1534); [logic.js:3092](../../logic.js#L3092); [src/whatsapp/webhook.routes.js:532](../../src/whatsapp/webhook.routes.js#L532); [src/whatsapp/webhook.routes.js:646](../../src/whatsapp/webhook.routes.js#L646) |
+| `DEFAULT_COUNTRY` | [endpoint.js:11899](../../endpoint.js#L11899); [endpoint.js:12319](../../endpoint.js#L12319); [logic.js:1536](../../logic.js#L1536); [logic.js:3094](../../logic.js#L3094); [src/whatsapp/webhook.routes.js:534](../../src/whatsapp/webhook.routes.js#L534); [src/whatsapp/webhook.routes.js:648](../../src/whatsapp/webhook.routes.js#L648) |
+| `DEFAULT_PROVINCE` | [endpoint.js:11898](../../endpoint.js#L11898); [endpoint.js:12318](../../endpoint.js#L12318); [logic.js:1535](../../logic.js#L1535); [logic.js:3093](../../logic.js#L3093); [src/whatsapp/webhook.routes.js:533](../../src/whatsapp/webhook.routes.js#L533); [src/whatsapp/webhook.routes.js:647](../../src/whatsapp/webhook.routes.js#L647) |
 | `DEFAULT_TENANT` | [src/script/migrate_products_tenant.js:8](../../src/script/migrate_products_tenant.js#L8) |
 | `DEMO_RODAVEN_API_KEY` | [demo_catalog_api.js:155](../../demo_catalog_api.js#L155); [demo_catalog_api.js:169](../../demo_catalog_api.js#L169) |
 | `DEMO_RODAVEN_DATA_FILE` | [demo_catalog_api.js:43](../../demo_catalog_api.js#L43) |
@@ -95,7 +95,7 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `MP_SUBSCRIPTIONS_PUBLIC_URL` | [mercadopago_subscriptions.js:16](../../mercadopago_subscriptions.js#L16) |
 | `MP_SUBSCRIPTIONS_TEST_PAYER_ID` | [mercadopago_subscriptions.js:15](../../mercadopago_subscriptions.js#L15) |
 | `MP_SUBSCRIPTIONS_WEBHOOK_SECRET` | [mercadopago_subscriptions.js:14](../../mercadopago_subscriptions.js#L14) |
-| `NODE_ENV` | [auth_ui.js:226](../../auth_ui.js#L226); [endpoint.js:10737](../../endpoint.js#L10737); [src/whatsapp/webhook.routes.js:79](../../src/whatsapp/webhook.routes.js#L79) |
+| `NODE_ENV` | [auth_ui.js:226](../../auth_ui.js#L226); [endpoint.js:10740](../../endpoint.js#L10740); [src/whatsapp/webhook.routes.js:79](../../src/whatsapp/webhook.routes.js#L79) |
 | `NUMERO` | [app_asisto_ws.js:53](../../app_asisto_ws.js#L53); [telegram_runtime.js:356](../../telegram_runtime.js#L356) |
 | `OPENAI_API_KEY` | [fleteros_viajes_panel.js:1000](../../fleteros_viajes_panel.js#L1000); [logic.js:12](../../logic.js#L12); [src/support/crypto.js:45](../../src/support/crypto.js#L45) |
 | `OPENAI_CPE_MODEL` | [fleteros_viajes_panel.js:1004](../../fleteros_viajes_panel.js#L1004) |
@@ -105,7 +105,7 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `OPENAI_VISION_FALLBACK_MODEL` | [logic.js:1264](../../logic.js#L1264) |
 | `ORDER_CONFIG_CACHE_TTL_MS` | [order_config.js:9](../../order_config.js#L9) |
 | `PHONE_NUMBER_ID` | [logic.js:22](../../logic.js#L22); [wa_inbox_panel.js:19](../../wa_inbox_panel.js#L19) |
-| `PORT` | [endpoint.js:12481](../../endpoint.js#L12481); [endpoint.js:12489](../../endpoint.js#L12489); [server.js:6](../../server.js#L6) |
+| `PORT` | [endpoint.js:12484](../../endpoint.js#L12484); [endpoint.js:12492](../../endpoint.js#L12492); [server.js:6](../../server.js#L6) |
 | `PUBLIC_BASE_URL` | [auth_ui.js:24](../../auth_ui.js#L24); [customer_queue.js:65](../../customer_queue.js#L65); [endpoint.js:1856](../../endpoint.js#L1856); [restaurant.js:30](../../restaurant.js#L30); [restaurant.js:178](../../restaurant.js#L178); [restaurant.js:227](../../restaurant.js#L227); [restaurant.js:237](../../restaurant.js#L237); [src/support/config.js:8](../../src/support/config.js#L8) |
 | `QR_CONFIG_CACHE_MS` | [qr_product_web.js:29](../../qr_product_web.js#L29) |
 | `QR_PRODUCT_API_MAX_CONCURRENT` | [qr_product_web.js:32](../../qr_product_web.js#L32) |
@@ -168,7 +168,7 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `VISION_MODEL` | [logic.js:14](../../logic.js#L14) |
 | `WA_INBOX_UPLOAD_MAX_BYTES` | [wa_inbox_panel.js:21](../../wa_inbox_panel.js#L21) |
 | `WHATSAPP_ACCESS_TOKEN` | [logic.js:31](../../logic.js#L31); [wa_inbox_panel.js:20](../../wa_inbox_panel.js#L20) |
-| `WHATSAPP_APP_SECRET` | [endpoint.js:1836](../../endpoint.js#L1836); [endpoint.js:10736](../../endpoint.js#L10736); [src/whatsapp/webhook.routes.js:78](../../src/whatsapp/webhook.routes.js#L78) |
+| `WHATSAPP_APP_SECRET` | [endpoint.js:1836](../../endpoint.js#L1836); [endpoint.js:10739](../../endpoint.js#L10739); [src/whatsapp/webhook.routes.js:78](../../src/whatsapp/webhook.routes.js#L78) |
 | `WHATSAPP_TOKEN` | [logic.js:31](../../logic.js#L31); [wa_inbox_panel.js:20](../../wa_inbox_panel.js#L20) |
 | `WHATSAPP_VERIFY_TOKEN` | [endpoint.js:11](../../endpoint.js#L11) |
 | `WHISPER_MODEL` | [logic.js:30](../../logic.js#L30) |

@@ -34,7 +34,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/admin/telegram` | [telegram_runtime.js:2255](../../telegram_runtime.js#L2255) | `, auth.requireAuth, auth.requireAdmin, async (_req, res) => {` |
 | GET | `/admin/tenant-config` | [auth_ui.js:4981](../../auth_ui.js#L4981) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | GET | `/admin/ticket/:convId` | [endpoint.js:7523](../../endpoint.js#L7523) | `, async (req, res) => {` |
-| GET | `/admin/token-control` | [token_control_stats.js:2615](../../token_control_stats.js#L2615) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/admin/token-control` | [token_control_stats.js:2632](../../token_control_stats.js#L2632) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
 | GET | `/admin/users` | [auth_ui.js:3719](../../auth_ui.js#L3719) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | GET | `/admin/web-access` | [web_access_stats.js:508](../../web_access_stats.js#L508) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | GET | `/admin/wweb` | [auth_ui.js:5436](../../auth_ui.js#L5436) | `, requireAuth, (req, res, next) => hasAccess(req.user, 'wweb', 'support') ? next() : res.status(403).send('403` |
@@ -121,13 +121,13 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/api/tg/chats` | [telegram_runtime.js:2310](../../telegram_runtime.js#L2310) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
 | GET | `/api/tg/stats` | [telegram_runtime.js:2295](../../telegram_runtime.js#L2295) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
 | GET | `/api/tg/status` | [telegram_runtime.js:2263](../../telegram_runtime.js#L2263) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
-| GET | `/api/token-control/api-message-windows` | [token_control_stats.js:2717](../../token_control_stats.js#L2717) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
-| GET | `/api/token-control/conversations` | [token_control_stats.js:2692](../../token_control_stats.js#L2692) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
-| GET | `/api/token-control/exchange-rate` | [token_control_stats.js:2659](../../token_control_stats.js#L2659) | `, requireAuth, requireTokenControlAccess, async (_req, res) => {` |
+| GET | `/api/token-control/api-message-windows` | [token_control_stats.js:2734](../../token_control_stats.js#L2734) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/api/token-control/conversations` | [token_control_stats.js:2709](../../token_control_stats.js#L2709) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/api/token-control/exchange-rate` | [token_control_stats.js:2676](../../token_control_stats.js#L2676) | `, requireAuth, requireTokenControlAccess, async (_req, res) => {` |
 | GET | `/api/token-control/media/:id/content` | [token_control_media.js:65](../../token_control_media.js#L65) | `, auth.requireAuth, superOnly, wrap(async (req, res) => {` |
 | GET | `/api/token-control/media/:id` | [token_control_media.js:60](../../token_control_media.js#L60) | `, auth.requireAuth, superOnly, wrap(async (req, res) => {` |
-| GET | `/api/token-control/summary` | [token_control_stats.js:2636](../../token_control_stats.js#L2636) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
-| GET | `/api/token-control/timeline` | [token_control_stats.js:2670](../../token_control_stats.js#L2670) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/api/token-control/summary` | [token_control_stats.js:2653](../../token_control_stats.js#L2653) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/api/token-control/timeline` | [token_control_stats.js:2687](../../token_control_stats.js#L2687) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
 | GET | `/api/web-access/summary` | [web_access_stats.js:517](../../web_access_stats.js#L517) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | GET | `/api/wweb/history` | [auth_ui.js:6186](../../auth_ui.js#L6186) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
 | GET | `/api/wweb/history` | [endpoint.js:1795](../../endpoint.js#L1795) | `, async (req, res) => {` |
@@ -193,7 +193,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/ui/turnero/:tenant/vendedores` | [customer_queue.js:124](../../customer_queue.js#L124) | `, wrap(async (req, res) => {` |
 | GET | `/ui/turnero/:tenant` | [customer_queue.js:118](../../customer_queue.js#L118) | `, wrap(async (req, res) => {` |
 | GET | `/usage` | [src/support/routes.js:72](../../src/support/routes.js#L72) | `, route((req, s, scope) => s.col('usage').find(scope).sort({ at: -1 }).limit(100).toArray()));` |
-| GET | `/webhook` | [endpoint.js:10710](../../endpoint.js#L10710) | `, async (req, res) => {` |
+| GET | `/webhook` | [endpoint.js:10713](../../endpoint.js#L10713) | `, async (req, res) => {` |
 | GET | `/webhook` | [src/whatsapp/webhook.routes.js:52](../../src/whatsapp/webhook.routes.js#L52) | `, async (req, res) => {` |
 | GET | `/webhooks/mercadopago/subscriptions/return` | [billing_subscriptions.js:119](../../billing_subscriptions.js#L119) | `, (_req, res) => res.type('html').send('<!doctype html><html lang="es"><meta charset="utf-8"><title>Asisto · M` |
 | PATCH | `/api/customer-notifications/:tenant/devices/:installId` | [customer_notifications.js:17](../../customer_notifications.js#L17) | `,requireAuth,notificationJson,async(req,res)=>{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,` |
@@ -323,7 +323,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/session` | [src/support/routes.js:52](../../src/support/routes.js#L52) | `, route(async (req, s, scope) => {` |
 | POST | `/start` | [src/support/devices.js:65](../../src/support/devices.js#L65) | `, route(async (req, s) => {` |
 | POST | `/v200/api/Api_Chat_Cab/ProcesarMensajePost` | [endpoint.js:10654](../../endpoint.js#L10654) | `, handleApiChatCabProcesarMensajePost);` |
-| POST | `/webhook` | [endpoint.js:12479](../../endpoint.js#L12479) | `, handleWebhookPost);` |
+| POST | `/webhook` | [endpoint.js:12482](../../endpoint.js#L12482) | `, handleWebhookPost);` |
 | POST | `/webhook` | [src/whatsapp/webhook.routes.js:76](../../src/whatsapp/webhook.routes.js#L76) | `, async (req, res) => {` |
 | POST | `/webhooks/mercadopago/subscriptions` | [billing_subscriptions.js:120](../../billing_subscriptions.js#L120) | `, express.json({ limit: '16kb' }), async (req, res) => {` |
 | POST | `/work` | [src/support/devices.js:174](../../src/support/devices.js#L174) | `, route(async (req, s) => {` |
