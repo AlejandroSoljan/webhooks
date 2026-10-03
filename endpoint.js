@@ -1127,7 +1127,8 @@ app.post('/api/ext/wweb/agent/operator-message', wwebAgentJson, requireWwebAgent
     }
 
     if (!conv) {
-      return res.json({ ok: true, ignored: true, reason: 'conversation_not_found' });
+      conv = await upsertConversation(customerPhone, {}, tenantId);
+      if (!conv) throw new Error('operator_conversation_unavailable');
     }
 
     const convId = conv._id;
@@ -10632,6 +10633,15 @@ async function handleApiChatCabProcesarMensajePost(req, res) {
     return res.status(500).json([{ cod_error: String(fakeRes.statusCode), msj_error: "Error procesando mensaje" }]);
   }
 
+  // An operator may have taken over while the model was generating.
+  const pauseDb = await getDb();
+  const latestConversation = await pauseDb.collection('conversations').findOne(
+    { tenantId, waId: { $in: wwebOperatorPhoneVariants(from) } },
+    { sort: { updatedAt: -1 }, projection: { manualOpen: 1, manualPauseUntil: 1 } }
+  );
+  if (latestConversation?.manualOpen && (!latestConversation.manualPauseUntil || new Date(latestConversation.manualPauseUntil).getTime() > Date.now())) {
+    return res.json({ ok: true, ignored: true, reason: 'operator_pause' });
+  }
   const replies = fakeReq.asistoReturnReplies
     .map((r) => String(r?.text || "").trim())
     .filter(Boolean)
@@ -10666,6 +10676,13 @@ app.post("/api/ext/wweb/manager/intent", async (req, res) => {
       .some(value => value === true || ["1", "true", "yes", "si", "sí", "on"].includes(String(value || "").trim().toLowerCase()));
     if (!managerEnabled) return res.json({ ok: true, intent: { action: "none" } });
     const behaviorText = await loadBehaviorTextFromMongo(tenantId);
+    const currentConversation = await upsertConversation(from, {}, tenantId);
+    const paused = currentConversation?.manualOpen && (!currentConversation.manualPauseUntil || new Date(currentConversation.manualPauseUntil).getTime() > Date.now());
+    if (paused) {
+      if (body.PauseOnly !== true) await saveMessageDoc({tenantId, conversationId:currentConversation._id, waId:from, role:'user', content:text, type:'text', meta:{from:'manager_paused'}});
+      return res.json({ ok: true, intent: { action: 'paused' } });
+    }
+    if (body.PauseOnly === true) return res.json({ ok: true, intent: { action: 'none' } });
     const variants = wwebOperatorPhoneVariants(from);
     const conv = await db.collection("conversations").findOne(
       { tenantId, $or: [{ waId: { $in: variants } }, { from: { $in: variants } }] },
@@ -10676,7 +10693,14 @@ app.post("/api/ext/wweb/manager/intent", async (req, res) => {
       { projection: { role: 1, content: 1 } }
     ).sort({ createdAt: -1 }).limit(8).toArray() : [];
     history.reverse();
-    const intent = await require("./logic").classifyManagerRequestExternal({ tenantId, text, history, behaviorText });
+    const toolResult = body.ToolResult && typeof body.ToolResult === 'object' ? body.ToolResult : null;
+    const intent = await require("./logic").classifyManagerRequestExternal({ tenantId, text, history, behaviorText, toolResult });
+    const afterModel = await db.collection('conversations').findOne({ _id: currentConversation._id, tenantId });
+    if (afterModel?.manualOpen && (!afterModel.manualPauseUntil || new Date(afterModel.manualPauseUntil).getTime() > Date.now())) return res.json({ ok: true, intent: { action: 'paused' } });
+    if (intent.action === 'reply' && intent.replyText) {
+      await saveMessageDoc({tenantId, conversationId:currentConversation._id, waId:from, role:'user', content:text, type:'text'});
+      await saveMessageDoc({tenantId, conversationId:currentConversation._id, waId:from, role:'assistant', content:String(intent.replyText), type:'text', meta:{from:'manager_tool'}});
+    }
     return res.json({ ok: true, intent });
   } catch (e) {
     console.error("[MANAGER_INTENT]", e?.message || e);
