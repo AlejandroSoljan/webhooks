@@ -148,6 +148,10 @@ No ejecutar `Consulta_no_enviados` como prueba de conectividad: puede reservar o
 
 ## 6. IA, pedidos y atención
 
+Corrección 5.00.278: el cargador conserva `operator_pause_minutes` y `conversation_inactivity_minutes` del comportamiento por empresa. Un mensaje manual crea la conversación si todavía no existe, registra el mensaje y aplica la pausa configurada. El gateway vuelve a comprobar la pausa después de generar respuestas. El agente 4.05.18 consulta `PauseOnly` antes de entregar documentos de Manager y reconoce `action=paused`.
+
+La clasificación de Manager ofrece herramientas de lectura: modificar un pedido debe continuar al asistente y sus acciones externas según el comportamiento. `ToolResult` permite devolver el resultado ODBC a la IA para redactar `replyText` en contexto; no otorga capacidades de escritura. Los cambios de productos requieren una acción configurada o atención humana. Las reglas comerciales de cada empresa siguen en su comportamiento.
+
 El asistente combina configuración de dominio, canal, fuentes y reglas. Configurar Comportamiento, Horarios, Productos y Reglas de pedidos según el módulo; validar consultas fuera de horario, información inexistente y traspaso a atención manual.
 
 Las claves seleccionadas por `ai_key_router.js` son independientes:
