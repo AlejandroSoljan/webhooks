@@ -3,6 +3,7 @@
 const express = require('express');
 const auth = require('./auth_ui');
 const { getDb, closeDb } = require('./db');
+const { expirePreviousDays } = require('./queue_expiration');
 const { mountCustomerApp } = require('./customer_app_web');
 const { mountQueueSyncEndpoint, startQueueCloudSync } = require('./queue_cloud_sync');
 const app = express();
@@ -18,6 +19,7 @@ const notifications = setInterval(async () => {
   reconciling = true;
   try {
     const db = await getDb();
+    await expirePreviousDays(db);
     const tenants = await db.collection('queue_tickets').aggregate([{ $match: { dayKey: require('./customer_app_web').dayKey(), status: { $in: ['WAITING', 'CALLED'] } } }, { $group: { _id: '$tenantId' } }]).toArray();
     for (const tenant of tenants) await queue.reconcileTenant(tenant._id);
   } catch (e) { console.error('[queue] notification sweep:', e.message); }

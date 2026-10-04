@@ -2,6 +2,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const { ObjectId } = require('mongodb');
+const { expireIncomingTicket } = require('./queue_expiration');
 
 const cleanTenant = value => String(value || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 60);
 const stamp = doc => +new Date(doc?.updatedAt || doc?.createdAt || 0) || 0;
@@ -9,6 +10,8 @@ const historySize = doc => Array.isArray(doc?.history) ? doc.history.length : 0;
 const counterPrefix = tenantId => cleanTenant(tenantId) + ':';
 
 function preferred(local, cloud) {
+  if (local.expiryReason === 'day_end' && ['RESERVED', 'WAITING', 'CALLED'].includes(cloud.status)) return 'local';
+  if (cloud.expiryReason === 'day_end' && ['RESERVED', 'WAITING', 'CALLED'].includes(local.status)) return 'cloud';
   const delta = stamp(local) - stamp(cloud);
   if (delta) return delta > 0 ? 'local' : 'cloud';
   return historySize(local) >= historySize(cloud) ? 'local' : 'cloud';
@@ -33,7 +36,7 @@ function reviveTicket(raw, tenantId) {
   const ticket = reviveDates(raw);
   ticket._id = new ObjectId(String(raw._id));
   ticket.tenantId = expected;
-  return ticket;
+  return expireIncomingTicket(ticket);
 }
 
 async function mergeInto(collection, incoming) {

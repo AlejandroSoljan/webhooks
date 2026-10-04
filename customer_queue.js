@@ -3,6 +3,7 @@ const { ObjectId } = require('mongodb');
 const { createHmac, timingSafeEqual, randomBytes, createHash } = require('node:crypto');
 const QRCode = require('qrcode');
 const { queuePage, sellerSettingsPage } = require('./queue_pages');
+const { expirePreviousDays, isPreviousDay } = require('./queue_expiration');
 const { createQueueNotifications } = require('./queue_notifications');
 const { mountQueueStats, listStatsTenants } = require('./queue_stats');
 const { createQueuePrinter } = require('./queue_printer');
@@ -60,7 +61,7 @@ function presencePayload(token, t, secret, now = Date.now()) {
 function validPresence(token, t, secret, now = Date.now()) { return !!presencePayload(token, t, secret, now); }
 function publicTicket(doc) {
   return { id: String(doc._id), displayNumber: doc.displayNumber, status: doc.status,
-    sectorId: doc.sectorId, sectorName: doc.sectorName, desk: doc.desk || '', sellerName: doc.sellerName || '', calledAt: doc.calledAt || null, serviceStartedAt: (doc.history || []).filter(h=>h.action==='next').at(-1)?.at || doc.calledAt || null, claimed: !!doc.claimedAt };
+    sectorId: doc.sectorId, sectorName: doc.sectorName, desk: doc.desk || '', sellerName: doc.sellerName || '', calledAt: doc.calledAt || null, serviceStartedAt: (doc.history || []).filter(h=>h.action==='next').at(-1)?.at || doc.calledAt || null, claimed: !!doc.claimedAt, expiryReason: doc.expiryReason || '' };
 }
 function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey, firebaseSender, auth, printer = createQueuePrinter(), secret = process.env.QUEUE_PRESENCE_SECRET || '', publicBase = process.env.PUBLIC_BASE_URL || 'https://asistobot.com.ar', openTenants = (process.env.QUEUE_OPEN_TENANTS || '').split(',').map(tenant).filter(Boolean) }) {
   const wrap = fn => async (req, res) => {
@@ -71,8 +72,17 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     const t = tenant(req.params.tenant);
     if (!t) fail(400, 'Dominio inválido');
     const db = await getDb(), cfg = await configFor(db, t);
+    await ensureDay(db, t);
     return { t, db, cfg, base: { tenantId: t, branchId: cfg.branchId, dayKey: dayKey() } };
   };
+  const checkedDays = new Map();
+  async function ensureDay(db, t) {
+    const today = dayKey();
+    if (checkedDays.get(t)?.day === today) return checkedDays.get(t).pending;
+    const pending = expirePreviousDays(db, today, t).catch(e => { checkedDays.delete(t); throw e; });
+    checkedDays.set(t, { day: today, pending });
+    return pending;
+  }
   const isOpen = t => openTenants.includes(t);
   const guard = (req, t) => { if (!isOpen(t) && !allowed(req, t)) fail(req.user?.uid ? 403 : 401, 'Iniciá sesión con un usuario del comercio.'); };
   const { reconcile } = createQueueNotifications({ firebaseSender, publicBase });
@@ -350,8 +360,12 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     if (!ObjectId.isValid(req.params.id)) fail(404, 'Turno inexistente');
     await prepare(db);
     const installId = clean(req.query.installId);
-    const doc = installId && await db.collection('queue_tickets').findOne({ _id: new ObjectId(req.params.id), tenantId: t, $or: [{ installId }, { linkedInstallIds: installId }] });
+    let doc = installId && await db.collection('queue_tickets').findOne({ _id: new ObjectId(req.params.id), tenantId: t, $or: [{ installId }, { linkedInstallIds: installId }] });
     if (!doc) fail(404, 'Turno inexistente');
+    if (isPreviousDay(doc, dayKey())) {
+      await expirePreviousDays(db, dayKey(), t);
+      doc = await db.collection('queue_tickets').findOne({ _id: doc._id });
+    }
     res.json(await view(db, doc));
   }));
   app.post('/api/customer-app/:tenant/tickets/:id/cancel', wrap(async (req, res) => {
