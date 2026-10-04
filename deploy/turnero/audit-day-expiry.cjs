@@ -20,5 +20,7 @@ const {getDb,closeDb}=req('./db');
  }else{
   console.log('MCN_EXPIRED '+await db.collection('queue_tickets').countDocuments({tenantId:'MCN',expiryReason:'day_end',status:'SKIPPED'}));
   if(rows.length)throw Error('Prior-day open tickets remain');
+  const sample=await db.collection('queue_tickets').findOne({tenantId:'MCN',expiryReason:'day_end',status:'SKIPPED',installId:{$type:'string'}});
+  if(sample){const r=await fetch('http://127.0.0.1:3102/api/customer-app/MCN/tickets/'+sample._id+'?installId='+encodeURIComponent(sample.installId));const body=await r.json();if(!r.ok||body.status!=='SKIPPED'||body.expiryReason!=='day_end')throw Error('Phone API verification failed');console.log('PHONE_API_EXPIRED_OK');}
  }
  await closeDb();})().catch(e=>{console.error(e.message);process.exitCode=1;closeDb()});
