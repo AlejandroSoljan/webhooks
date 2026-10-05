@@ -39,6 +39,7 @@ test('objective grouping merges untouched drafts and caches unchanged evidence',
   await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});
   await processMessages([message('access',0,{text:'Necesito recuperar acceso'}),message('invoice',240,{text:'Necesito facturar'})],owner);
   assert.equal(await service.col('drafts').countDocuments({...owner,state:'pending'}),2);
+  await service.col('drafts').updateMany(owner,{$push:{events:{action:'changed_source_summarized_ai',at:now}}});
   let calls=0;
   service.titleAnalyzer={group:async rows=>{calls++;return {groups:[rows.map((_,i)=>i)],model:'fixture',inputTokens:10,outputTokens:5,totalTokens:15};},run:async()=>({subject:'Recuperar acceso y facturar',description:'Se revisó el acceso para completar la facturación.',model:'fixture',inputTokens:5,outputTokens:3,totalTokens:8})};
   await service.enqueue(owner,'123@s.whatsapp.net',0); await service.runOne();

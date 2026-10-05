@@ -361,7 +361,7 @@ class SupportService {
       const ownedIds = new Set(existing.flatMap(row => row.messageIds || []));
       if (savedIds.size && ids.every(id => ownedIds.has(id))) continue;
       if (existing.some(row => ['sending', 'uncertain'].includes(row.hubspot?.state))) fail('hubspot_delivery_in_progress', 409);
-      const untouched = row => !row.hubspot?.ticketId && row.events?.every(event => ['generated', 'source_changed', 'tasks_merged'].includes(event.action)) === true;
+      const untouched = row => !row.hubspot?.ticketId && row.events?.every(event => !event.by && ['generated', 'source_changed', 'tasks_merged', 'changed_source_summarized_ai'].includes(event.action)) === true;
       const splittingLegacy = existing.length === 1 && existing[0].groupingVersion !== GROUPING_VERSION && untouched(existing[0]) && existing[0].messageIds.some(id => !ids.includes(id));
       // A narrower historical request must not shrink a consolidated task.
       if (!splittingLegacy && existing.length === 1 && existing[0].analyzerVersion === ANALYZER_VERSION && existing[0].groupingVersion === GROUPING_VERSION && ids.every(id => existing[0].messageIds.includes(id))) continue;
