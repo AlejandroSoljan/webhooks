@@ -4,6 +4,8 @@ Edición 1 — 02/10/2026. Base de código documentada: `00c5ea7`. Destinatarios
 
 ## Índice
 
+Actualización SDG (2026-10-04): imágenes y PDF habilitados por `transfer_receipt_analysis_enabled` se leen como documentos generales (pedidos, productos, facturas, capturas o transferencias). Se conserva la leyenda del cliente y los datos extraídos para que el motor conversacional aplique el comportamiento y el historial. No se usa el acuse fijo de transferencia para SDG; sólo se pregunta por información imprescindible o intención ambigua, sin afirmar pagos acreditados ni acciones no realizadas. La lectura usa por defecto hasta 1800 tokens de salida, respetando un límite configurado. Los otros dominios y la identificación de productos no cambian. Se mantiene el evento de consumo existente `ai.transfer_receipt_analysis` por compatibilidad; su nombre histórico no implica que todo archivo sea una transferencia. Pruebas: `tests/media_interpretation.test.js` y `tests/transfer_receipt.test.js`.
+
 1. [Arquitectura y ubicaciones](#1-arquitectura-y-ubicaciones)
 2. [Instalación y publicación](#2-instalación-y-publicación)
 3. [Alta de un cliente](#3-alta-de-un-cliente)

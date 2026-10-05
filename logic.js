@@ -38,6 +38,7 @@ const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY || "";
 const { getDb } = require("./db");
 const { ObjectId } = require("mongodb");
 const { isTransferReceiptAnalysis } = require("./transfer_receipt");
+const { usesContextualMedia, mediaExtractionPrompt, mediaBehaviorPolicy, mediaEvidenceText } = require("./media_interpretation");
 // ================== OpenAI client (para fallback STT) ==================
 let openai = null;
 const openaiByKey = new Map();
@@ -1228,7 +1229,8 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
       return { json: null, userText: "[imagen]" };
     }
 
-    const system = purpose === "product-identification" ? [
+    const contextualMedia = usesContextualMedia(tenantId, purpose);
+    const system = contextualMedia ? mediaExtractionPrompt : purpose === "product-identification" ? [
       "Identificá el producto usando únicamente datos visibles en la foto.",
       "Leé códigos EAN/UPC, marca, modelo, nombre y texto del envase.",
       "No inventes códigos ni variantes; si no es legible, usá string vacío.",
@@ -1242,7 +1244,7 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
       'Respondé exclusivamente JSON con este esquema: {"is_transfer_receipt":true,"amount":"","currency":"","date":"","reference":"","bank":"","sender":"","recipient":"","summary":"","confidence":0}'
     ].join("\n");
 
-    const user = purpose === "payment-proof"
+    const user = contextualMedia ? "Leé y extraé el contenido de esta imagen para continuar la conversación del cliente." : purpose === "payment-proof"
       ? "Determiná si esta imagen es un comprobante de pago o transferencia y completá el JSON requerido con los datos visibles."
       : (purpose === "product-identification" ? "Identificá este producto y transcribí cualquier código de barras visible." : "Describí brevemente la imagen y extraé cualquier texto visible.");
 
@@ -1258,7 +1260,7 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
       CHAT_MODEL
     ).trim();
     const maxTokensNum = Number(visionMaxTokens);
-    const maxTokens = Number.isFinite(maxTokensNum) && maxTokensNum > 0 ? Math.trunc(maxTokensNum) : 500;
+    const maxTokens = Number.isFinite(maxTokensNum) && maxTokensNum > 0 ? Math.trunc(maxTokensNum) : (contextualMedia ? 1800 : 500);
 
 
     const fallbackModel = String(process.env.OPENAI_VISION_FALLBACK_MODEL || "gpt-4.1-mini").trim();
@@ -1295,6 +1297,7 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
     let json = null;
     try { json = JSON.parse(content); } catch {}
 
+    if (contextualMedia) return { json, userText: mediaEvidenceText(json) };
     // Armamos un texto "usable" como input del chat principal
     if (purpose === "payment-proof") {
       const amount = json?.amount ?? json?.monto ?? null;
@@ -1331,6 +1334,7 @@ async function analyzeImageExternal({ publicImageUrl, mime, purpose = "generic",
 }
 
 async function analyzeDocumentExternal({ buffer, mime, filename = "archivo.pdf", purpose = "generic", aiKeyKind, tenantId, visionModel, visionMaxTokens, channelType } = {}) {
+  const contextualMedia = usesContextualMedia(tenantId, purpose);
   try {
     if (!Buffer.isBuffer(buffer) || !buffer.length) return { json: null, userText: `[archivo: ${filename}]` };
     const routedApiKey = requireOpenAiApiKey(aiKeyKind || (String(channelType || "").toLowerCase() === "qr_web" ? "conversacional" : "pedidos"));
@@ -1339,8 +1343,8 @@ async function analyzeDocumentExternal({ buffer, mime, filename = "archivo.pdf",
     const tenantAiCfg = await loadTenantAiConfigFromMongo(tenantId);
     const model = String(visionModel || tenantAiCfg.visionModel || VISION_MODEL || CHAT_MODEL).trim();
     const maxTokensNum = Number(visionMaxTokens);
-    const maxTokens = Number.isFinite(maxTokensNum) && maxTokensNum > 0 ? Math.trunc(maxTokensNum) : 500;
-    const prompt = purpose === "payment-proof"
+    const maxTokens = Number.isFinite(maxTokensNum) && maxTokensNum > 0 ? Math.trunc(maxTokensNum) : (contextualMedia ? 1800 : 500);
+    const prompt = contextualMedia ? mediaExtractionPrompt : purpose === "payment-proof"
       ? 'Revisá este archivo usando únicamente su contenido visible. Marcá is_transfer_receipt=true cuando sea un comprobante, captura o constancia bancaria/de billetera de una transferencia o pago, aunque no puedas verificar su acreditación; usá false solamente si no lo es. No confirmes acreditación. Respondé exclusivamente JSON con este esquema: {"is_transfer_receipt":true,"amount":"","currency":"","date":"","reference":"","bank":"","sender":"","recipient":"","summary":"","confidence":0}'
       : "Describí brevemente el archivo y extraé su texto principal. Respondé exclusivamente JSON.";
     const payload = {
@@ -1359,6 +1363,7 @@ async function analyzeDocumentExternal({ buffer, mime, filename = "archivo.pdf",
     const content = resp?.choices?.[0]?.message?.content || "";
     let json = null;
     try { json = JSON.parse(content); } catch {}
+    if (contextualMedia) return { json, userText: mediaEvidenceText(json) };
     const looksTransfer = isTransferReceiptAnalysis(json);
     const summary = String(json?.summary || json?.resumen || json?.text || "").trim();
     const userText = looksTransfer
@@ -2491,6 +2496,7 @@ async function getGPTReply(tenantId, from, userMessage, opts = {}) {
     externalApiBlock,
     storeHoursBlock,
     "[COMPORTAMIENTO]\n" + baseText + catalogText,
+    usesContextualMedia(tenantId) ? mediaBehaviorPolicy : "",
     // Mantener el bloque variable al final ayuda al prompt caching: el prefijo
     // estático (comportamiento + reglas) permanece idéntico entre turnos.
     buildNowBlock()

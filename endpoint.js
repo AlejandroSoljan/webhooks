@@ -10880,6 +10880,7 @@ const aiOpts = {
     let inboundLocation = null;
 
     const transferReceiptAnalysisEnabled = behaviorConfig?.transfer_receipt_analysis_enabled === true;
+    const contextualMediaEnabled = String(tenant).trim().toUpperCase() === 'SDG';
 
     // Normalización del texto según tipo de mensaje
     const wwebInlineMedia = (msg && msg.__wwebMedia && typeof msg.__wwebMedia === "object") ? msg.__wwebMedia : null;
@@ -10948,7 +10949,7 @@ const aiOpts = {
         }
         await recordTransferReceiptAnalysisEvent({ tenantId: tenant, messageId: msg.id, kind, mime, analysis: img, channelType })
           .catch(error => console.warn("[monetization] transfer receipt image:", error?.message || error));
-        text = img?.userText || caption || "[imagen recibida]";
+        text = contextualMediaEnabled ? ([caption, img?.userText].filter(Boolean).join('\n') || "[imagen recibida]") : (img?.userText || caption || "[imagen recibida]");
         if (img?.json) msg.__media.analysis = img.json;
       } else if (kind === "document") {
         let analysis = null;
@@ -10957,7 +10958,7 @@ const aiOpts = {
         }
         await recordTransferReceiptAnalysisEvent({ tenantId: tenant, messageId: msg.id, kind, mime, analysis, channelType })
           .catch(error => console.warn("[monetization] transfer receipt document:", error?.message || error));
-        text = analysis?.userText || (caption ? `${caption}\n[archivo: ${filename}]` : `[archivo: ${filename}]`);
+        text = contextualMediaEnabled ? [caption, analysis?.userText || `[archivo: ${filename}]`].filter(Boolean).join('\n') : (analysis?.userText || (caption ? `${caption}\n[archivo: ${filename}]` : `[archivo: ${filename}]`));
         if (analysis?.json) msg.__media.analysis = analysis.json;
       } else if (kind === "video") {
         text = caption || "[video]";
@@ -11000,7 +11001,7 @@ const aiOpts = {
           .catch(error => console.warn("[monetization] transfer receipt image:", error?.message || error));
 
         // Texto que alimenta al modelo conversacional
-        text = img?.userText || "[imagen recibida]";
+        text = contextualMediaEnabled ? [msg.image?.caption, img?.userText || "[imagen recibida]"].filter(Boolean).join('\n') : (img?.userText || "[imagen recibida]");
 
         // enriquecemos meta para admin/debug
         msg.__media = { cacheId: id, publicUrl: publicImageUrl, mime: info.mime_type, analysis: img?.json || null };
@@ -11027,7 +11028,7 @@ const aiOpts = {
       }
       await recordTransferReceiptAnalysisEvent({ tenantId: tenant, messageId: msg.id, kind: "document", mime: docMime, analysis, channelType })
         .catch(error => console.warn("[monetization] transfer receipt document:", error?.message || error));
-      text = analysis?.userText || (cap ? `${cap}\n[archivo: ${fn}]` : `[archivo: ${fn}]`);
+      text = contextualMediaEnabled ? [cap, analysis?.userText || `[archivo: ${fn}]`].filter(Boolean).join('\n') : (analysis?.userText || (cap ? `${cap}\n[archivo: ${fn}]` : `[archivo: ${fn}]`));
       msg.__media = { kind: "document", filename: fn, mime: docMime, analysis: analysis?.json || null };
     } else if (msg.type === "video" && msg.video?.id) {
       const cap = String(msg.video?.caption || "").trim();
@@ -11229,7 +11230,7 @@ console.log("[convId] "+ convId);
 
     // Un comprobante reconocido no vuelve al modelo conversacional: respondemos
     // de forma determinística para evitar dudas o mezclarlo con trámites previos.
-    if (!isOrderBot && transferReceiptAnalysisEnabled && convId && isAnalyzedTransferReceipt(msg)) {
+    if (!contextualMediaEnabled && !isOrderBot && transferReceiptAnalysisEnabled && convId && isAnalyzedTransferReceipt(msg)) {
       const receiptReply = buildTransferReceiptAcknowledgement(tenant);
       await require("./logic").sendChannelMessage(from, receiptReply, channelOpts);
       try {
@@ -11260,7 +11261,7 @@ console.log("[convId] "+ convId);
     // ==============================
     try {
       const flowStatus = normalizeTransferFlowStatus(conv?.transferFlowStatus || "");
-      const inboundReceipt = isInboundTransferReceiptMedia(msg);
+      const inboundReceipt = contextualMediaEnabled ? isAnalyzedTransferReceipt(msg) : isInboundTransferReceiptMedia(msg);
 
     if (isOrderBot && orderFeatureEnabled(orderConfig, "paymentTransferFlow") && orderFeatureEnabled(orderConfig, "transferReceiptAnalysis") && convId && inboundReceipt && flowStatus === "PENDIENTE_COMPROBANTE_TRANSFERENCIA") {
         const pedidoPrev = await loadLastPedidoSnapshot(tenant, convId);
