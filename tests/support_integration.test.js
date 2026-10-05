@@ -34,6 +34,37 @@ async function processMessages(messages, owner = scope) {
   return service.listDrafts(owner);
 }
 
+test('objective grouping merges untouched drafts and caches unchanged evidence', async () => {
+  const owner = {...scope,tenantId:'ALSO'};
+  await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});
+  await processMessages([message('access',0,{text:'Necesito recuperar acceso'}),message('invoice',240,{text:'Necesito facturar'})],owner);
+  assert.equal(await service.col('drafts').countDocuments({...owner,state:'pending'}),2);
+  let calls=0;
+  service.titleAnalyzer={group:async rows=>{calls++;return {groups:[rows.map((_,i)=>i)],model:'fixture',inputTokens:10,outputTokens:5,totalTokens:15};},run:async()=>({subject:'Recuperar acceso y facturar',description:'Se revisó el acceso para completar la facturación.',model:'fixture',inputTokens:5,outputTokens:3,totalTokens:8})};
+  await service.enqueue(owner,'123@s.whatsapp.net',0); await service.runOne();
+  assert.equal(await service.col('drafts').countDocuments({...owner,state:'pending'}),1);
+  assert.equal(await service.col('drafts').countDocuments({...owner,state:'merged'}),1);
+  await service.enqueue(owner,'123@s.whatsapp.net',0); await service.runOne();
+  assert.equal(calls,1);
+  assert.equal(await db.collection('ai_token_usage_log').countDocuments({...owner,'meta.source':'support_task_grouping'}),1);
+});
+
+test('AI regrouping preserves multiple human-edited tasks and rejects incomplete evidence', async () => {
+  const owner = {...scope,tenantId:'ALSO'};
+  await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});
+  await processMessages([message('access',0,{text:'Necesito recuperar acceso'}),message('invoice',240,{text:'Necesito facturar'})],owner);
+  await service.col('drafts').updateMany(owner,{$push:{events:{action:'edited',by:owner.userId,at:now}}});
+  const before = await service.col('drafts').find(owner).sort({_id:1}).toArray();
+  service.titleAnalyzer={group:async()=>({groups:[[0,1]],model:'fixture',inputTokens:10,outputTokens:5,totalTokens:15})};
+  await service.enqueue(owner,'123@s.whatsapp.net',0); await service.runOne();
+  assert.deepEqual(await service.col('drafts').find(owner).sort({_id:1}).toArray(),before);
+  await service.col('contacts').updateMany(owner,{$unset:{taskGrouping:''}});
+  service.titleAnalyzer.group=async()=>({groups:[[0]],model:'fixture',inputTokens:10,outputTokens:5,totalTokens:15});
+  await service.enqueue(owner,'123@s.whatsapp.net',0); await service.runOne();
+  assert.deepEqual(await service.col('drafts').find(owner).sort({_id:1}).toArray(),before);
+  assert.equal((await service.col('jobs').findOne(owner)).error,'task_grouping_invalid');
+});
+
 test('regrouping preserves human dismissals and repairs automatic resurrection', async () => {
   const [draft] = await processMessages([message('dismissed')]);
   await service.col('drafts').updateOne({ _id: draft._id }, { $set: { state: 'needs_review', sourceChanged: true, groupingVersion: 'old' }, $push: { events: { action: 'dismissed_from_extension', by: scope.userId, at: now } } });

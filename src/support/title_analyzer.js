@@ -22,7 +22,23 @@ function resolveTasksModel(config, env, tenantId) {
 }
 
 function asistoTitleAnalyzer(env = process.env, { runtimeFor = tenantId => require('../../tenant_runtime').getRuntimeByTenantId(tenantId), configFor = async tenantId => (await require('../../db').getDb()).collection('tenant_config').findOne({ _id: tenantId }), clientFor = key => new OpenAI({ apiKey: key }) } = {}) {
-  return { async run(messages, context) {
+  return { async group(messages, context) {
+    const config = await configFor(context.tenantId);
+    const apiKey = resolveOpenAiApiKey('tareas_ws', env);
+    if (!apiKey) fail('task_title_provider_required', 422);
+    const model = resolveTasksModel(config, env, context.tenantId);
+    const transcript = messages.map((m, index) => ({ index, at: m.at, role: m.fromMe ? 'OPERADOR' : 'CLIENTE', text: m.text }));
+    // Never silently cut off older context or omit evidence.
+    if (messages.length > 500 || JSON.stringify(transcript).length > 100000) fail('conversation_window_too_large', 422);
+    const response = await clientFor(apiKey).chat.completions.create({ model,
+      messages: [{ role: 'system', content: require('./task_grouping').PROMPT }, { role: 'user', content: JSON.stringify(transcript) }],
+      response_format: { type: 'json_object' }, max_completion_tokens: 2500,
+    });
+    let groups = null;
+    try { groups = JSON.parse(response?.choices?.[0]?.message?.content || '').groups; } catch {}
+    const usage = response?.usage || {};
+    return { groups, model, inputTokens: Number(usage.prompt_tokens || 0), outputTokens: Number(usage.completion_tokens || 0), totalTokens: Number(usage.total_tokens || 0) };
+  }, async run(messages, context) {
     const [runtime, config] = await Promise.all([runtimeFor(context.tenantId), configFor(context.tenantId)]);
     const apiKey = resolveOpenAiApiKey('tareas_ws', env);
     if (!apiKey) fail('task_title_provider_required', 422);

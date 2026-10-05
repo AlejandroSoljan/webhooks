@@ -1,6 +1,14 @@
 <!-- Asisto | Version: 5.00.178 | Fecha: 2026-09-20 -->
 # Tickets desde WhatsApp: agente personal en cada PC
 
+## Agrupación por objetivo (2026-10-05)
+
+ALSO, DEMJG y SANA usan el modelo configurado de Tareas WhatsApp (por defecto gpt-4o-mini) para agrupar la conversación elegible completa por problema u objetivo antes de generar títulos. Las transcripciones se reutilizan. Pasos de facturación, precios, filtros y códigos no se separan por una pausa o por decir «también»/«además»; sólo solicitudes independientes justifican varias tareas. La salida debe asignar cada mensaje exactamente una vez, sin índices inventados: una salida inválida deja los borradores intactos y el trabajo sujeto a reintentos limitados.
+
+Se conserva una caché por contacto/usuario y huella de evidencia en `support_contacts.taskGrouping`. La clasificación se registra en `ai_token_usage_log` como `whatsapp_task_summary`, fuente `support_task_grouping`; no agrega una llamada si los mensajes no cambiaron. Límite explícito: 500 mensajes / 100.000 caracteres serializados por análisis, sin truncado silencioso. Conversaciones mayores requieren un período acotado.
+
+Se mantiene la protección existente de ediciones, descartes y envíos HubSpot: sólo borradores automáticos compatibles se consolidan. Varias tareas editadas no se fusionan automáticamente. No se escriben tickets en HubSpot por reagrupar. Otros dominios conservan la agrupación anterior. La agrupación nueva se aplica al procesar mensajes/períodos; no hay reprocesamiento masivo automático. Pruebas: `support_task_grouping`, `support_title_analyzer`, `support_integration`.
+
 ## Arquitectura acordada
 
 **Baileys corre en la PC de cada usuario, en un proceso propio.** Render aloja el panel y la API de Asisto; no inicia sockets de WhatsApp ni un worker compartido. Se retiraron el supervisor y el comando del worker de servidor introducidos en 5.00.052. Las integraciones preexistentes continúan independientes.

@@ -1,5 +1,6 @@
 // Asisto | Version: 5.00.271 | Fecha: 2026-09-30
 const crypto = require('node:crypto');
+const taskGrouping = require('./task_grouping');
 const { fail, scopedId, hash, settings, excluded, groupTasks, analyze, ANALYZER_VERSION, GROUPING_VERSION, text, range } = require('./core');
 
 class SupportService {
@@ -326,7 +327,24 @@ class SupportService {
       await this.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision, 'hubspot.state': { $nin: ['sending', 'uncertain', 'saved'] } }, { $set: { state: 'ignored', sourceChanged: false, reconciliationRequired: false, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'dismissal_restored', at: this.now() } } });
     }
     const dismissedIds = new Set(dismissed.filter(row => !row.hubspot?.ticketId && !row.events.slice(row.events.findLastIndex(event => event.action === 'dismissed_from_extension') + 1).some(event => event.by)).flatMap(row => row.messageIds || []));
-    for (const detectedGroup of groupTasks(decoded.filter(message => !dismissedIds.has(message._id)), config.inactivityMs)) {
+    const groupingMessages = decoded.filter(message => !dismissedIds.has(message._id));
+    let detectedGroups;
+    if (groupingMessages.length && taskGrouping.enabled(scope.tenantId) && this.titleAnalyzer?.group) {
+      const key = hash([taskGrouping.VERSION, ...groupingMessages.map(m => [m._id, m.text, m.at, m.fromMe])]);
+      const cached = whatsappContact?.taskGrouping;
+      let groups = cached?.key === key ? cached.groups : null;
+      if (!groups) {
+        await check();
+        const result = await this.titleAnalyzer.group(groupingMessages, { ...scope, jid: job.jid, jobId: job._id });
+        await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: job.jid, waId: job.jid, kind: 'message', provider: 'openai', model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, totalTokens: result.totalTokens || result.inputTokens + result.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'support_task_grouping' }, createdAt: this.now() });
+        groups = result.groups;
+        taskGrouping.validateGroups(groups, groupingMessages);
+        await check();
+        await this.col('contacts').updateOne({ _id: scopedId(scope, 'contact', job.jid), ...scope }, { $set: { taskGrouping: { key, groups } }, $setOnInsert: { jid: job.jid, name: groupingMessages.find(m => !m.fromMe && m.name)?.name || '' } }, { upsert: true });
+      }
+      detectedGroups = taskGrouping.validateGroups(groups, groupingMessages);
+    } else detectedGroups = groupTasks(groupingMessages, config.inactivityMs);
+    for (const detectedGroup of detectedGroups) {
       let group = detectedGroup.filter(message => !dismissedIds.has(message._id));
       if (!group.length) continue;
       if (!job.dates && +group.at(-1).receivedAt + config.inactivityMs > +this.now()) continue;
