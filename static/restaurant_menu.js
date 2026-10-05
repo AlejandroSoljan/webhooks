@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.184 | Fecha: 2026-09-21
+// Asisto | Version: 5.00.281 | Fecha: 2026-10-05
 (() => {
   const base = document.body.dataset.base;
   const $ = id => document.getElementById(id);
@@ -303,13 +303,16 @@
     if (!response.ok) throw Error('No se pudo cargar la carta.');
     return response.json();
   }).then(result => {
-    features = result.features || {}; visitPolicy=result.visitPolicy || null; configLoaded = true; $('deviceAccess').hidden=!visitPolicy;
+    features = result.features || {};
+    const needsVisit=(result.ordersEnabled!==false && features.guestOrders!==false) || ['callWaiter','requestBill','guestNotifications','orderTracking'].some(flag=>features[flag]!==false);
+    visitPolicy=needsVisit ? result.visitPolicy || null : null; configLoaded = true; $('deviceAccess').hidden=!visitPolicy;
     items = (result.items || []).map(item => features.showImages === false ? { ...item, imagen:'' } : item);
     ordersEnabled = result.ordersEnabled !== false && features.guestOrders !== false;
     $('pedido').hidden = !ordersEnabled;
+    if(!ordersEnabled) document.querySelector('.intro h2').textContent='Nuestra carta';
     for (const [id, flag] of [['call','callWaiter'],['bill','requestBill'],['guestAiSection','guestAi'],['guestAccount','orderTracking'],['guestPayment','mercadoPago']]) $(id).hidden = features[flag] === false;
     document.querySelector('.guest-notifications').hidden = features.guestNotifications === false;
-    $('openHelp').hidden = ['callWaiter','requestBill','guestAi','guestNotifications'].every(flag => features[flag] === false);
+    $('openHelp').hidden = ['callWaiter','requestBill','guestNotifications'].every(flag => features[flag] === false);
     $('openAccount').hidden = !ordersEnabled && features.orderTracking === false && features.mercadoPago === false;
     $('openAccount').dataset.open = 'cartDialog';
     document.querySelectorAll('[data-nav-order-label]').forEach(el=>el.textContent=ordersEnabled?'Mi pedido':'Mi cuenta');

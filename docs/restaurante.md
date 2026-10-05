@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.164 | Fecha: 2026-09-19 -->
+<!-- Asisto | Version: 5.00.281 | Fecha: 2026-10-05 -->
 # Restaurante RES
 
 ## Cierre de mesa (5.00.164)
@@ -121,3 +121,9 @@ El botón de avisos del panel solicita permiso de notificaciones del navegador. 
 Las consultas de IA usan `OPENAI_API_KEY_CONVERSACIONAL` y el modelo `restaurant_ai_model` de `tenant_config`. La carta se vuelve a leer para cada consulta. La respuesta tiene la instrucción de usar solo los datos cargados y remitir al personal cuando falte información de alergias. Hay límites básicos de solicitudes por mesa. La toma de pedidos guarda comandas para el operario; no procesa pagos ni confirma preparación automáticamente.
 
 Antes de entregar los QR: revisar precios, composición y contaminación cruzada; configurar la clave de IA; desplegar la versión del servidor que incluye `restaurant.js`; crear un usuario RES con acceso `resto` (y `productos` si edita el menú); comprobar un pedido completo desde una mesa de prueba.
+
+## Carta de consulta sin habilitación (5.00.281)
+
+Mantener `restaurant_enabled: true`. Desactivar `restaurant_orders_enabled`, `restaurant_call_waiter_enabled`, `restaurant_request_bill_enabled`, `restaurant_guest_notifications_enabled`, `restaurant_order_tracking_enabled`, `restaurant_mercadopago_enabled` y `restaurant_split_bill_enabled`. El cliente ve solo Carta en la navegación, sin nombre, habilitación ni registro/polling de escaneos. `restaurant_guest_ai_enabled` puede permanecer activo: se consulta desde el atajo de IA de la carta, sin mostrar Mozo. Imágenes, logo y artículos conservan su configuración.
+
+RES2 utiliza este perfil; RES conserva pedidos y operación. Verificación: navegación y ausencia de llamadas a /scan, /visitors y /account en prueba de interfaz. No cambia el contrato de autorización de los endpoints ni se habilitan pedidos al ocultar controles.

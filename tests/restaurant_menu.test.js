@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.173 | Fecha: 2026-09-19
+// Asisto | Version: 5.00.281 | Fecha: 2026-10-05
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -176,4 +176,15 @@ test('celular espera habilitación sin código y conserva el pedido hasta que el
  const $=id=>w.document.getElementById(id);assert.equal($('visitCode'),null);assert.match($('deviceState').textContent,/Esperando habilitación para realizar pedidos/);assert.equal($('deviceHint').hidden,true);assert.doesNotMatch(w.document.body.textContent,/El personal ya ve/);
  w.document.querySelector('[data-add]').click();await $('order').onclick();assert.equal(sent.length,0);assert.match($('cart').textContent,/Pasta/);
  approved=true;await $('order').onclick();assert.equal(sent.length,1);assert.match(sent[0].visitToken,/^[a-f0-9]{64}$/);assert.match($('deviceState').textContent,/habilitado/);
+});
+
+test('carta de consulta muestra solo Carta, mantiene IA y no registra escaneos',async t=>{
+ const w=new JSDOM(renderRestaurantPage({tenant:'RES2',token:'catalog',name:'Resto',table:'1'}),{runScripts:'outside-only',pretendToBeVisual:true,url:'https://example.test'}).window;t.after(()=>w.close());
+ w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
+ const requests=[];w.fetch=async(url)=>{requests.push(url);return {ok:true,json:async()=>({ordersEnabled:false,visitPolicy:{operatorApproval:true},features:{guestOrders:false,callWaiter:false,requestBill:false,guestNotifications:false,orderTracking:false,mercadoPago:false,splitBill:false,guestAi:true},items:[{id:'p',nombre:'Pasta',precio:500,disponible:true}]})};};
+ w.eval(fs.readFileSync(path.join(__dirname,'../static/restaurant_menu.js'),'utf8'));await new Promise(r=>setTimeout(r,0));
+ const d=w.document;assert.equal(d.querySelector('#deviceAccess').hidden,true);assert.equal(d.querySelector('#openAccount').hidden,true);assert.equal(d.querySelector('#openHelp').hidden,true);assert.equal(d.querySelector('#aiShortcut').hidden,false);assert.equal(d.querySelector('[data-add]'),null);
+ assert.equal(d.querySelector('.intro h2').textContent,'Nuestra carta');assert.ok(requests.every(url=>url.endsWith('/menu')));
+ d.querySelector('#aiShortcut').click();assert.equal(d.querySelector('#helpDialog').open,true);assert.equal(d.querySelector('#guestAiSection').hidden,false);
+ assert.ok([...d.querySelectorAll('[data-order-nav],[data-help-nav]')].every(el=>el.hidden));
 });
