@@ -29,13 +29,13 @@ test('todo dominio con tokens calcula costo real desde el modelo registrado', ()
   assert.equal(calculateBillableCost(usage, {}), 0);
 });
 
-test('la tarifa configurada prevalece y un modelo ausente usa el costo base vigente', () => {
+test('un modelo ausente no inventa costos a partir de tarifas del dominio', () => {
   const usage = { message_input_tokens: 1000, message_output_tokens: 1000 };
-  assert.equal(calculateEstimatedCost(usage, {}), 0.0014);
+  assert.equal(calculateEstimatedCost(usage, {}), null);
   assert.equal(calculateEstimatedCost(usage, {
     token_cost_chat_input_per_1k: 0.01,
     token_cost_chat_output_per_1k: 0.02
-  }), 0.03);
+  }), null);
 });
 
 test('el margen IA recalcula también el histórico desde el costo real', () => {

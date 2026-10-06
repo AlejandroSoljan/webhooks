@@ -7,6 +7,7 @@ const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
 const { listMonetizationTenants } = require('./monetization_config');
 const { textModelPrice } = require('./openai_model_pricing');
+const { costExpression, costGroupFields } = require('./provider_cost');
 
 // Tarifas reales por defecto para Ayuda cuando usa gpt-5.6-luna.
 // Se expresan por 1K tokens para mantener el mismo esquema del panel.
@@ -293,7 +294,11 @@ function calculateCostWithRates(row, tenantDoc = {}, mode = "real") {
 }
 
 function calculateEstimatedCost(row, tenantDoc = {}) {
-  return calculateCostWithRates(row, tenantDoc, "real");
+  if (Number.isFinite(row.provider_cost_usd)) return Number(row.provider_cost_usd.toFixed(6));
+  const models = [...new Set([row.model, ...(row.models || [])].filter(Boolean))];
+  const rate = models.length === 1 ? textModelPrice(models[0]) : null;
+  if (!rate) return null;
+  return Number(((Number(row.message_input_tokens || 0) * rate.input + Number(row.message_output_tokens || 0) * rate.output) / 1000 + Number(row.audio_cost_usd || 0)).toFixed(6));
 }
 
 function calculateBillableCost(row, tenantDoc = {}) {
@@ -896,6 +901,7 @@ async function buildTokenSummary({
           }
         },
         audio_cost_usd: audioCostSum(),
+        ...costGroupFields(),
         total_tokens: { $sum: { $ifNull: ["$totalTokens", 0] } },
         events: { $sum: 1 },
         last_at: { $max: "$createdAt" },
@@ -918,6 +924,8 @@ async function buildTokenSummary({
     const tenantKey = String(row._id || "");
     const doc = cfgByTenant.get(tenantKey) || {};
     const item = {
+      cost_status: Number(row.unpriced_events || 0) ? 'incomplete' : 'estimated',
+      unpriced_events: Number(row.unpriced_events || 0),
       tenantId: tenantKey,
 
       company: String(doc.nom_emp || "").trim(),
@@ -947,12 +955,12 @@ async function buildTokenSummary({
       item.real_cost = calculateEstimatedCost(row, doc);
       item.gross_margin = Number((item.billed_cost - item.real_cost).toFixed(6));
       const officialPrices = item.models.map(textModelPrice).filter(Boolean);
-      item.cost_chat_input_per_1k = toPositiveNumber(doc.token_cost_chat_input_per_1k) || (officialPrices.length ? Math.max(...officialPrices.map(price => price.input)) : DEFAULT_HELP_COST_INPUT_PER_1K);
-      item.cost_chat_output_per_1k = toPositiveNumber(doc.token_cost_chat_output_per_1k) || (officialPrices.length ? Math.max(...officialPrices.map(price => price.output)) : DEFAULT_HELP_COST_OUTPUT_PER_1K);
-      item.cost_audio_input_per_1k = toPositiveNumber(doc.token_cost_audio_input_per_1k);
-      item.cost_audio_output_per_1k = toPositiveNumber(doc.token_cost_audio_output_per_1k);
-      item.cost_help_input_per_1k = toPositiveNumber(doc.token_cost_help_input_per_1k) || DEFAULT_HELP_COST_INPUT_PER_1K;
-      item.cost_help_output_per_1k = toPositiveNumber(doc.token_cost_help_output_per_1k) || DEFAULT_HELP_COST_OUTPUT_PER_1K;
+      item.cost_chat_input_per_1k = officialPrices.length === 1 ? officialPrices[0].input : null;
+      item.cost_chat_output_per_1k = officialPrices.length === 1 ? officialPrices[0].output : null;
+      item.cost_audio_input_per_1k = null;
+      item.cost_audio_output_per_1k = null;
+      item.cost_help_input_per_1k = null;
+      item.cost_help_output_per_1k = null;
     }
 
     return item;
@@ -1137,6 +1145,7 @@ async function buildTokenTimeline({ tenantId = "", from = "", to = "", types = "
       audio_input_tokens: { $sum: { $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$inputTokens", 0] }, 0] } },
       audio_output_tokens: { $sum: { $cond: [{ $eq: ["$kind", "audio"] }, { $ifNull: ["$outputTokens", 0] }, 0] } },
       audio_cost_usd: audioCostSum(),
+      ...costGroupFields(),
       total_tokens: { $sum: { $ifNull: ["$totalTokens", 0] } }
     } },
     { $sort: { "_id.date": 1 } }
@@ -1274,6 +1283,7 @@ async function buildTokenConversationSummary({
                 }
               },
               audio_cost_usd: audioCostSum(),
+              ...costGroupFields(),
               total_tokens: { $sum: { $ifNull: ["$totalTokens", 0] } },
               events: { $sum: 1 },
               first_at: { $min: "$createdAt" },
@@ -1416,6 +1426,7 @@ async function buildTokenConversationSummary({
           outputTokens: 1,
           totalTokens: 1,
           costUsd: 1,
+          providerCost: costExpression(),
           provider: 1,
           model: 1,
           createdAt: 1
@@ -1443,6 +1454,8 @@ async function buildTokenConversationSummary({
       audio_input_tokens: 0,
       audio_output_tokens: 0,
       audio_cost_usd: 0,
+      provider_cost_usd: 0,
+      unpriced_events: 0,
       total_tokens: 0,
       events: 0,
       first_at: null,
@@ -1451,6 +1464,8 @@ async function buildTokenConversationSummary({
     };
     const modelSet = new Set();
     for (const ev of events) {
+      if (Number.isFinite(ev.providerCost)) out.provider_cost_usd += ev.providerCost;
+      else out.unpriced_events += 1;
       const kind = String(ev.kind || "").toLowerCase();
       const input = Number(ev.inputTokens || 0);
       const output = Number(ev.outputTokens || 0);
@@ -1561,6 +1576,8 @@ async function buildTokenConversationSummary({
     ).trim();
 
     const item = {
+      cost_status: Number(row.unpriced_events || 0) ? 'incomplete' : 'estimated',
+      unpriced_events: Number(row.unpriced_events || 0),
       tenantId: tenantKey,
       company: String(tenantDoc.nom_emp || "").trim(),
       conversationId,
@@ -1828,7 +1845,7 @@ function renderTokenControlPage(user, tenants = []) {
         <div class="v" id="kpiTokens">0</div>
       </div>
       ${isSuper ? `
-      <div class="kpi"><div class="t">Costo real</div><div class="v money" id="kpiRealCost">US$ 0</div></div>
+      <div class="kpi"><div class="t">Costo proveedor estimado</div><div class="v money" id="kpiRealCost">US$ 0</div></div>
       <div class="kpi"><div class="t">Importe a cobrar</div><div class="v money" id="kpiBilledCost">US$ 0</div></div>` : `
       <div class="kpi"><div class="t">Eventos</div><div class="v" id="kpiEvents">0</div></div>
       <div class="kpi"><div class="t">Importe</div><div class="v money" id="kpiBilledCost">US$ 0</div></div>
@@ -1868,7 +1885,7 @@ function renderTokenControlPage(user, tenants = []) {
         <table>
           <thead>
             ${isSuper ? `<tr>
-                <th>Cliente / dominio</th><th>Detalle por dominio</th><th>Conceptos a cobrar</th><th>Costo real IA</th><th>Total a cobrar en pesos</th><th>Estado</th><th></th>
+                <th>Cliente / dominio</th><th>Detalle por dominio</th><th>Conceptos a cobrar</th><th>Costo proveedor estimado</th><th>Total a cobrar en pesos</th><th>Estado</th><th></th>
            </tr>` : `<tr>
               <th>Cliente / dominio</th><th>Detalle por dominio</th><th>Conceptos a cobrar</th><th>Total a cobrar en pesos</th><th>Estado</th><th></th>
             </tr>`}
@@ -1917,7 +1934,7 @@ function renderTokenControlPage(user, tenants = []) {
         <table>
           <thead>
             ${isSuper ? `<tr>
-                 <th>Dominio / estado</th><th>Cliente</th><th>Conversación</th><th>Período</th><th>Entrada</th><th>Salida</th><th>Audios</th><th>Total tokens</th><th>Eventos</th><th>Costo real</th><th>A cobrar</th>
+                 <th>Dominio / estado</th><th>Cliente</th><th>Conversación</th><th>Período</th><th>Entrada</th><th>Salida</th><th>Audios</th><th>Total tokens</th><th>Eventos</th><th>Costo proveedor estimado</th><th>A cobrar</th>
           </tr>` : `<tr>
               <th>Dominio / estado</th><th>Cliente</th><th>Período</th><th>Total tokens</th><th>Eventos</th><th>Importe</th>
             </tr>`}
@@ -2355,7 +2372,7 @@ function renderTokenControlPage(user, tenants = []) {
     function ensure(key,seed){let it=merged.get(key);if(!it){it={tenantId:key,company:seed&&seed.company||'',number:seed&&seed.number||'',message_input_tokens:0,message_output_tokens:0,audio_input_tokens:0,audio_output_tokens:0,total_tokens:0,events:0,billed_cost:0,real_cost:0,gross_margin:0,billing_configured:true,last_at:null,channels:[],usage_types:[],api_amounts:{},api_windows:0,api_messages:0,real_messages:0,api_sources:[],monetization_amounts:{},monetization_items:[],service_sources:[]};merged.set(key,it);}return it;}
     aiItems.forEach(function(source){
       const sourceKey=String(source.tenantId||''),key=ownerOf(sourceKey),it=ensure(key,sourceKey===key?source:null);
-      ['message_input_tokens','message_output_tokens','audio_input_tokens','audio_output_tokens','total_tokens','events','billed_cost','real_cost','gross_margin'].forEach(function(field){it[field]=num(it[field])+num(source[field]);});
+      ['message_input_tokens','message_output_tokens','audio_input_tokens','audio_output_tokens','total_tokens','events','unpriced_events','billed_cost','real_cost','gross_margin'].forEach(function(field){it[field]=num(it[field])+num(source[field]);});
       it.channels=[...new Set([...(it.channels||[]),...(source.channels||[])])];it.usage_types=[...new Set([...(it.usage_types||[]),...(source.usage_types||[])])];
       it.last_at=newerDate(it.last_at,source.last_at);if(source.billing_configured===false)it.billing_configured=false;
       if(sourceKey===key){it.company=source.company||it.company;it.number=source.number||it.number;}
@@ -2428,7 +2445,7 @@ function renderTokenControlPage(user, tenants = []) {
         '<td><div class="tenantHead"><span class="pill">' + esc(it.tenantId || '') + '</span>' +
         (company ? '<span class="small">' + esc(company) + '</span>' : '') +
         (number ? '<span class="small">' + esc(number) + '</span>' : '') + '</div></td>' +
-        '<td>'+domainDetailsHtml(it)+'</td><td>' + billingConceptsHtml(it) + '</td><td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money"><div class="amountStack">'+totalArsHtml+'</div></td>' +
+        '<td>'+domainDetailsHtml(it)+'</td><td>' + billingConceptsHtml(it) + '</td><td class="money">' + fmtMoney(it.real_cost)+(it.unpriced_events?'<div class="small">Incompleto: '+fmtInt(it.unpriced_events)+' eventos sin tarifa</div>':'') + '</td><td class="money"><div class="amountStack">'+totalArsHtml+'</div></td>' +
         '<td>'+state+'</td><td><button class="btn2 technicalToggle" type="button" data-target="'+detailId+'">Detalle técnico</button></td></tr>'+technical;
     }).join('');
     alignBillingDomainRows();
@@ -2504,7 +2521,7 @@ function renderTokenControlPage(user, tenants = []) {
         '<td><div class="stack"><span>' + esc(fmtDate(it.first_at)) + '</span><span class="small">hasta ' + esc(fmtDate(it.last_at)) + '</span></div></td>' +
         '<td>' + fmtInt(it.message_input_tokens) + '</td><td>' + fmtInt(it.message_output_tokens) + '</td><td>' + fmtInt(audio) + '</td>' +
         '<td><b>' + fmtInt(it.total_tokens) + '</b></td><td>' + fmtInt(it.events) + '</td>' +
-        '<td class="money">' + fmtMoney(it.real_cost) + '</td><td class="money">' + fmtMoney(it.billed_cost) + '</td>' +
+        '<td class="money">' + fmtMoney(it.real_cost)+(it.unpriced_events?'<div class="small">Incompleto: '+fmtInt(it.unpriced_events)+' eventos sin tarifa</div>':'') + '</td><td class="money">' + fmtMoney(it.billed_cost) + '</td>' +
 
       '</tr>';
     }).join('');
