@@ -3,6 +3,20 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { validateGroups, enabled } = require('../src/support/task_grouping');
 const { asistoTitleAnalyzer } = require('../src/support/title_analyzer');
+const { incrementalInput } = require('../src/support/task_grouping');
+test('incremental grouping retains old memberships and sends only bounded context plus new messages', () => {
+  const rows=Array.from({length:41},(_,i)=>({_id:String(i),text:'x'.repeat(1000),at:new Date(i),fromMe:false}));
+  const sig=rows.map(r=>r._id);
+  const cached={signatures:sig.slice(0,40),groups:[Array.from({length:40},(_,i)=>i)]};
+  const units=incrementalInput(rows,cached,sig,[{messageIds:['0'],text:'Resolver facturación'}]);
+  assert.equal(units.length,2);
+  assert.equal(units[0].indices.length,40);
+  assert.match(units[0].text,/Resolver facturación/);
+  assert.ok(units[0].text.length<1500);
+  assert.equal(units[1].text,rows[40].text);
+  assert.equal(incrementalInput(rows,cached,['changed',...sig.slice(1)]),null);
+  assert.equal(incrementalInput(rows,{},sig),null);
+});
 const messages = ['No puedo ingresar', 'Ya ingresé, necesito facturar', 'También revisar el precio', 'Otra vez el código se borra'].map((text,i) => ({_id: String(i), text, at:new Date(1000*i), fromMe:false}));
 test('complete independent objectives can include non-adjacent messages', () => {
   assert.deepEqual(validateGroups([[0,3],[1,2]], messages).map(g => g.map(m=>m._id)), [['0','3'],['1','2']]);

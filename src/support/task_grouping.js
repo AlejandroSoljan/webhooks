@@ -22,3 +22,19 @@ function validateGroups(groups, messages) {
   return groups.map(group => [...group].sort((a,b) => a-b).map(index => messages[index])).sort((a,b) => +a[0].at - +b[0].at);
 }
 module.exports = { VERSION, enabled, PROMPT, validateGroups };
+
+// Reuse only evidence whose content and order remain unchanged. Corrections or
+// a different historical window require a fresh full analysis.
+function incrementalInput(messages, cached, signatures, summaries = []) {
+  const previous = cached?.signatures;
+  if (!Array.isArray(previous) || !previous.length || previous.length > signatures.length || !previous.every((value,i) => value === signatures[i])) return null;
+  try { validateGroups(cached.groups, messages.slice(0, previous.length)); } catch { return null; }
+  const units = cached.groups.map(indices => {
+    const last = messages[indices.at(-1)];
+    const summary = summaries.find(row => indices.some(i => row.messageIds.includes(messages[i]._id)));
+    return { ...last, text: `[TAREA EXISTENTE: bloque indivisible, no separar]\n${summary?.text || ''}\nContexto reciente:\n${indices.slice(-2).map(i => `${messages[i].fromMe ? 'OPERADOR' : 'CLIENTE'}: ${messages[i].text.slice(-600)}`).join('\n')}`, indices };
+  });
+  for (let i=previous.length;i<messages.length;i++) units.push({...messages[i],indices:[i]});
+  return units;
+}
+module.exports.incrementalInput = incrementalInput;

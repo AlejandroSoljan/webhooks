@@ -332,15 +332,21 @@ class SupportService {
     if (groupingMessages.length && taskGrouping.enabled(scope.tenantId) && this.titleAnalyzer?.group) {
       const key = hash([taskGrouping.VERSION, ...groupingMessages.map(m => [m._id, m.text, m.at, m.fromMe])]);
       const cached = whatsappContact?.taskGrouping;
+      const signatures = groupingMessages.map(m => hash([m._id, m.text, m.at, m.fromMe]));
       let groups = cached?.key === key ? cached.groups : null;
       if (!groups) {
         await check();
-        const result = await this.titleAnalyzer.group(groupingMessages, { ...scope, jid: job.jid, jobId: job._id });
+        const prior = await this.col('drafts').find({ ...scope, jid: job.jid, state: { $nin: ['merged', 'ignored'] } }).toArray();
+        const summaries = prior.map(row => { const fields = this.vault.open(row.fields, row._id); return { messageIds: row.messageIds || [], text: `${fields.subject || ''}: ${fields.description || ''}`.slice(0, 1000) }; });
+        const units = taskGrouping.incrementalInput(groupingMessages, cached, signatures, summaries);
+        const input = units || groupingMessages;
+        const result = await this.titleAnalyzer.group(input, { ...scope, jid: job.jid, jobId: job._id });
         await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: job.jid, waId: job.jid, kind: 'message', provider: 'openai', model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, totalTokens: result.totalTokens || result.inputTokens + result.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'support_task_grouping' }, createdAt: this.now() });
-        groups = result.groups;
+        taskGrouping.validateGroups(result.groups, input);
+        groups = units ? result.groups.map(group => group.flatMap(i => units[i].indices).sort((a,b) => a-b)) : result.groups;
         taskGrouping.validateGroups(groups, groupingMessages);
         await check();
-        await this.col('contacts').updateOne({ _id: scopedId(scope, 'contact', job.jid), ...scope }, { $set: { taskGrouping: { key, groups } }, $setOnInsert: { jid: job.jid, name: groupingMessages.find(m => !m.fromMe && m.name)?.name || '' } }, { upsert: true });
+        await this.col('contacts').updateOne({ _id: scopedId(scope, 'contact', job.jid), ...scope }, { $set: { taskGrouping: { key, groups, signatures } }, $setOnInsert: { jid: job.jid, name: groupingMessages.find(m => !m.fromMe && m.name)?.name || '' } }, { upsert: true });
       }
       detectedGroups = taskGrouping.validateGroups(groups, groupingMessages);
     } else detectedGroups = groupTasks(groupingMessages, config.inactivityMs);
