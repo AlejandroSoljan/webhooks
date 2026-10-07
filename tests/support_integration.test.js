@@ -106,6 +106,30 @@ test('ALSO new messages cannot attach automatically to a saved ticket even when 
   assert.deepEqual(await service.col('drafts').findOne({_id:draft._id}),before);
 });
 
+test('fragmented generated follow-ups consolidate while saved human edits remain intact', async () => {
+  const owner={...scope,tenantId:'ALSO'};
+  await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});
+  const [saved]=await processMessages([message('old',0)],owner);
+  await service.col('drafts').updateOne({_id:saved._id},{$set:{state:'approved',hubspot:{state:'saved',ticketId:'123'}}});
+  const before=await service.col('drafts').findOne({_id:saved._id});
+  const rows=[message('send',300,{text:'No salen los comprobantes'}),message('check',600,{text:'Revisá números inválidos',fromMe:true}),message('data',900,{text:'Cliente ejemplo, sistema DEMO'})];
+  await processMessages(rows,owner);
+  service.titleAnalyzer={group:async input=>({groups:[input.map((_,i)=>i)],model:'fixture',inputTokens:1,outputTokens:1}),run:async input=>{assert.equal(input.length,3);return {subject:'Resolver envío de comprobantes',description:'Prueba parcial. Sin confirmación de resolución.',model:'fixture',inputTokens:1,outputTokens:1};}};
+  await service.enqueue(owner,'123@s.whatsapp.net',0);await service.runOne();
+  assert.equal(await service.col('drafts').countDocuments({...owner,state:'pending'}),1);
+  assert.equal((await service.col('drafts').findOne({...owner,state:'pending'})).messageIds.length,3);
+  assert.deepEqual(await service.col('drafts').findOne({_id:saved._id}),before);
+});
+
+test('automatic out-of-office notification alone never creates an actionable task', async () => {
+  const owner={...scope,tenantId:'ALSO'};
+  await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});
+  service.titleAnalyzer={group:async()=>({groups:[[0]],model:'fixture',inputTokens:1,outputTokens:1}),run:async()=>{throw Error('must not summarize automatic notice');}};
+  await processMessages([message('auto',0,{fromMe:true,text:'ESTE ES UN MENSAJE AUTOMATICO\nEstoy fuera de mi horario laboral (Lunes a Viernes)'})],owner);
+  assert.equal(await service.col('drafts').countDocuments({...owner,state:'pending'}),0);
+  assert.equal((await service.col('drafts').findOne(owner)).state,'ignored');
+});
+
 test('migration is repeatable and unique message identity isolates both users and tenants', async () => {
   await migrate(db);
   await Promise.all([service.ingest(scope, message('one')), service.ingest(other, message('one')), service.ingest(foreign, message('one'))]);

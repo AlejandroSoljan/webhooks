@@ -351,7 +351,7 @@ class SupportService {
         groups = units ? result.groups.map(group => group.flatMap(i => units[i].indices).sort((a,b) => a-b)) : result.groups;
         taskGrouping.validateGroups(groups, groupingMessages);
         await check();
-        await this.col('contacts').updateOne({ _id: scopedId(scope, 'contact', job.jid), ...scope }, { $set: { taskGrouping: { key, groups, signatures } }, $setOnInsert: { jid: job.jid, name: groupingMessages.find(m => !m.fromMe && m.name)?.name || '' } }, { upsert: true });
+        await this.col('contacts').updateOne({ _id: scopedId(scope, 'contact', job.jid), ...scope }, { $set: { taskGrouping: { version: taskGrouping.VERSION, key, groups, signatures } }, $setOnInsert: { jid: job.jid, name: groupingMessages.find(m => !m.fromMe && m.name)?.name || '' } }, { upsert: true });
       }
       detectedGroups = taskGrouping.validateGroups(groups, groupingMessages);
     } else detectedGroups = groupTasks(groupingMessages, config.inactivityMs);
@@ -409,7 +409,10 @@ class SupportService {
         existing = []; edited = [];
       }
       if (edited.length === 1) existing.sort((a, b) => Number(b._id === edited[0]._id) - Number(a._id === edited[0]._id));
-      const started = Date.now(), result = analyze(group), evidenceDescription = result.description;
+      const started = Date.now(), result = analyze(group, { strictResolution: taskGrouping.enabled(scope.tenantId) }), evidenceDescription = result.description;
+      if (taskGrouping.enabled(scope.tenantId) && group.every(taskGrouping.automaticNotice)) {
+        result.result = 'ignored'; result.reason = 'automatic_notice_only';
+      }
       let aiSummaryHash = null;
       if (result.result === 'draft' && this.titleAnalyzer) {
         const title = await this.titleAnalyzer.run(group, { ...scope, jid: job.jid, jobId: job._id });
