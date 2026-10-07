@@ -128,6 +128,11 @@ test('automatic out-of-office notification alone never creates an actionable tas
   await processMessages([message('auto',0,{fromMe:true,text:'ESTE ES UN MENSAJE AUTOMATICO\nEstoy fuera de mi horario laboral (Lunes a Viernes)'})],owner);
   assert.equal(await service.col('drafts').countDocuments({...owner,state:'pending'}),0);
   assert.equal((await service.col('drafts').findOne(owner)).state,'ignored');
+  // A legacy draft with the same fingerprint must also be repaired, not
+  // skipped as unchanged. No human edits are present in this fixture.
+  await service.col('drafts').updateMany(owner,{$set:{state:'pending'}});
+  await service.enqueue(owner,'123@s.whatsapp.net',0); await service.runOne();
+  assert.equal((await service.col('drafts').findOne(owner)).state,'ignored');
 });
 
 test('migration is repeatable and unique message identity isolates both users and tenants', async () => {
