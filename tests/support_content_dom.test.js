@@ -25,6 +25,22 @@ async function mount(serverMessages = []) {
   return { dom, w, calls };
 }
 
+test('replacing WhatsApp main keeps selection controls usable without pending tasks', async () => {
+  const { dom, w, calls } = await mount();
+  try {
+    const old = w.document.querySelector('#main'), replacement = old.cloneNode(true);
+    replacement.querySelectorAll('[data-asisto-owned]').forEach(node => node.remove());
+    old.replaceWith(replacement); await pause();
+    const checks = replacement.querySelectorAll('.asisto-message-control input');
+    assert.equal(checks.length, 3);
+    checks[2].click(); await pause();
+    const bar = replacement.querySelector('.asisto-message-toolbar');
+    assert.equal(bar.querySelector('select').value, 'new');
+    bar.querySelector('.primary').click(); await pause();
+    assert.equal(calls.find(call => call.action === 'ASSIGN_MESSAGES').destination, 'new');
+  } finally { dom.window.close(); }
+});
+
 test('slow assignment blocks duplicate sends and preserves newly selected messages', async () => {
   const { dom, w, calls } = await mount();
   try {

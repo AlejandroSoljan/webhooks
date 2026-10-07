@@ -107,6 +107,9 @@
         control = { holder, check, badges: '' }; controls.set(id, control);
       }
       const { holder, check } = control; control.node = node;
+      // WhatsApp replaces #main while retaining the same conversation IDs.
+      // Reattach cached controls instead of keeping invisible detached inputs.
+      if (main && holder.parentElement !== main) main.append(holder);
       const rowAssignments = row?.assignments || [];
       // Checked means "selected for the next action". Existing assignments
       // use the indeterminate state so they never look selected forever.

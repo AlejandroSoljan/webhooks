@@ -128,6 +128,12 @@ La bandeja muestra por defecto borradores para revisar. El selector Mostrar perm
 Ejemplo de referencia: un cliente pide un totalizador de gastos por cuenta y período y recibe orientación sobre sumas y saldos e interfaz contable. Se documenta como Soporte Remoto / Consulta / Capacitacion, En Proceso. La promesa de enviar un video no acredita envío ni cierre resuelto.
 
 Las pausas de inactividad sólo controlan cuándo procesar. La agrupación reúne solicitudes, respuestas y confirmaciones tardías; una nueva solicitud explícita de otro tema inicia otro grupo. Los fragmentos generados se consolidan sin borrarlos (estado merged y vínculo al borrador principal). Si hay varias ediciones humanas incompatibles, se conserva todo y se exige reconciliación. Los contactos se sincronizan desde la agenda/nombre de perfil de WhatsApp por usuario, con alias LID/PN, sin usar el nombre propio de mensajes salientes. Se rellenan contactos vacíos; los nombres manuales existentes se conservan.
+## Detección y selección (5.00.286 / extensión 1.0.52)
+
+ALSO, DEMJG y SANA excluyen la evidencia ya registrada en HubSpot antes de agrupar solicitudes nuevas. La exclusión no cambia tickets ni ediciones existentes; la asignación manual sigue disponible. Evita enviar historia ya atendida al agrupador y reduce su consumo. Los descartes humanos se conservan. Un fallo de agrupación sigue siendo un error, nunca una autorización para inventar tareas.
+
+La extensión vuelve a conectar los casilleros cuando WhatsApp reemplaza el contenedor del chat. Seleccionar y crear una tarea manual no exige tareas pendientes previas. Pruebas de DOM cubren reconstrucción del chat y creación manual sin tareas; integración comprueba que evidencia guardada no llega al agrupador ni se modifica.
+
 # Recuperación de procesamiento en vivo (5.00.277)
 
 Un trabajo que se ejecuta antes de completar la inactividad del último mensaje se reprograma para esa fecha y permanece pendiente. No se contabiliza como terminado sin analizar la conversación. La extensión toma el nombre visible del contacto y descarta los textos de ayuda del encabezado de WhatsApp. Se verifica mediante pruebas de ejecución anticipada y encabezados con tooltip.

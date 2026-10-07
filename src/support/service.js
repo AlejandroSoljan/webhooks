@@ -327,7 +327,12 @@ class SupportService {
       await this.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision, 'hubspot.state': { $nin: ['sending', 'uncertain', 'saved'] } }, { $set: { state: 'ignored', sourceChanged: false, reconciliationRequired: false, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'dismissal_restored', at: this.now() } } });
     }
     const dismissedIds = new Set(dismissed.filter(row => !row.hubspot?.ticketId && !row.events.slice(row.events.findLastIndex(event => event.action === 'dismissed_from_extension') + 1).some(event => event.by)).flatMap(row => row.messageIds || []));
-    const groupingMessages = decoded.filter(message => !dismissedIds.has(message._id));
+    // Already registered evidence is immutable in automatic detection. Exclude
+    // it BEFORE grouping, not only afterwards: old tickets must not dominate or
+    // invalidate the analysis of a new request. Manual assignment is separate.
+    const registered = taskGrouping.enabled(scope.tenantId) ? await this.col('drafts').find({ ...scope, jid: job.jid, state: { $ne: 'merged' }, $or: [{ 'hubspot.ticketId': { $exists: true, $nin: ['', null] } }, { 'hubspot.state': 'saved' }] }).toArray() : [];
+    const registeredIds = new Set(registered.flatMap(row => row.messageIds || []));
+    const groupingMessages = decoded.filter(message => !dismissedIds.has(message._id) && !registeredIds.has(message._id));
     let detectedGroups;
     if (groupingMessages.length && taskGrouping.enabled(scope.tenantId) && this.titleAnalyzer?.group) {
       const key = hash([taskGrouping.VERSION, ...groupingMessages.map(m => [m._id, m.text, m.at, m.fromMe])]);

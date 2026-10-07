@@ -96,7 +96,7 @@ test('ALSO new messages cannot attach automatically to a saved ticket even when 
   const [draft]=await processMessages([message('saved')],owner);
   await service.col('drafts').updateOne({_id:draft._id},{$set:{state:'approved',hubspot:{state:'saved',ticketId:'123',savedAt:now}}});
   const before=await service.col('drafts').findOne({_id:draft._id});
-  service.titleAnalyzer={group:async rows=>({groups:[rows.map((_,i)=>i)],model:'fixture',inputTokens:1,outputTokens:1,totalTokens:2}),run:async()=>({subject:'Registrar movimientos de caja',description:'Nueva consulta de caja.',model:'fixture',inputTokens:1,outputTokens:1,totalTokens:2})};
+  service.titleAnalyzer={group:async rows=>{assert.ok(rows.every(row=>row._id!==before.messageIds[0]),'saved evidence must not reach grouping');return {groups:[rows.map((_,i)=>i)],model:'fixture',inputTokens:1,outputTokens:1,totalTokens:2};},run:async()=>({subject:'Registrar movimientos de caja',description:'Nueva consulta de caja.',model:'fixture',inputTokens:1,outputTokens:1,totalTokens:2})};
   await processMessages([message('cash',300,{text:'Necesito registrar un ingreso de dinero en caja'})],owner);
   assert.deepEqual(await service.col('drafts').findOne({_id:draft._id}),before);
   const pending=await service.col('drafts').findOne({...owner,state:'pending'});
