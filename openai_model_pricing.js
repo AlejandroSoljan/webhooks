@@ -5,9 +5,10 @@ const OPENAI_PRICING_VERIFIED_AT = '2026-09-28';
 
 // Valores oficiales Standard de OpenAI convertidos de USD por 1M a USD por 1K.
 const TEXT_MODEL_PRICES_PER_1K = Object.freeze({
-  'gpt-6-astra': { input: 0.005, output: 0.025 },
+  // Standard, verified 2026-10-07 on official model pages; not Batch/Flex.
+  'gpt-6-astra': { input: 0.010, output: 0.050 },
   'gpt-6-sol': { input: 0.001, output: 0.005 },
-  'gpt-6-luna': { input: 0.00005, output: 0.00025 },
+  'gpt-6-luna': { input: 0.0001, output: 0.0005 },
   'gpt-5.6-sol': { input: 0.004, output: 0.020 },
   'gpt-5.6-terra': { input: 0.002, output: 0.012 },
   'gpt-5.6-luna': { input: 0.0002, output: 0.0012 },

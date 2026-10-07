@@ -5,6 +5,8 @@ const { canonicalOpenAiModel, textModelPrice, audioModelPrice } = require('../op
 const { calculateEstimatedCost, calculateBillableCost, loadTenantCosts } = require('../token_control_stats');
 
 test('precios oficiales se guardan por 1K tokens', () => {
+  assert.deepEqual(textModelPrice('gpt-6-astra'), { input: 0.010, output: 0.050 });
+  assert.deepEqual(textModelPrice('gpt-6-luna'), { input: 0.0001, output: 0.0005 });
   assert.deepEqual(textModelPrice('gpt-5.6-luna'), { input: 0.0002, output: 0.0012 });
   assert.deepEqual(textModelPrice('gpt-5.6-terra'), { input: 0.002, output: 0.012 });
   assert.deepEqual(textModelPrice('gpt-5.4'), { input: 0.0025, output: 0.015 });
