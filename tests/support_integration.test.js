@@ -90,6 +90,22 @@ test('analyzer upgrades cannot reopen saved evidence but new messages still prod
   assert.equal(changed.hubspot.ticketId, '123');
   assert.equal(changed.sourceChanged, true);
 });
+test('ALSO new messages cannot attach automatically to a saved ticket even when AI merges topics', async () => {
+  const owner={...scope,tenantId:'ALSO'};
+  await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});
+  const [draft]=await processMessages([message('saved')],owner);
+  await service.col('drafts').updateOne({_id:draft._id},{$set:{state:'approved',hubspot:{state:'saved',ticketId:'123',savedAt:now}}});
+  const before=await service.col('drafts').findOne({_id:draft._id});
+  service.titleAnalyzer={group:async rows=>({groups:[rows.map((_,i)=>i)],model:'fixture',inputTokens:1,outputTokens:1,totalTokens:2}),run:async()=>({subject:'Registrar movimientos de caja',description:'Nueva consulta de caja.',model:'fixture',inputTokens:1,outputTokens:1,totalTokens:2})};
+  await processMessages([message('cash',300,{text:'Necesito registrar un ingreso de dinero en caja'})],owner);
+  assert.deepEqual(await service.col('drafts').findOne({_id:draft._id}),before);
+  const pending=await service.col('drafts').findOne({...owner,state:'pending'});
+  assert.ok(pending);assert.equal(pending.messageIds.length,1);assert.equal(pending.hubspot,undefined);
+  await processMessages([message('thanks',600,{text:'Gracias',fromMe:false})],owner);
+  assert.equal(await service.col('drafts').countDocuments({...owner,state:'pending'}),1);
+  assert.deepEqual(await service.col('drafts').findOne({_id:draft._id}),before);
+});
+
 test('migration is repeatable and unique message identity isolates both users and tenants', async () => {
   await migrate(db);
   await Promise.all([service.ingest(scope, message('one')), service.ingest(other, message('one')), service.ingest(foreign, message('one'))]);

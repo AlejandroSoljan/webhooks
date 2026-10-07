@@ -359,6 +359,17 @@ class SupportService {
       if (group.some(m => m.contentTooLarge)) fail('message_too_large', 422);
       if (ids.length > 500 || group.reduce((n, m) => n + m.text.length, 0) > 100000) fail('conversation_window_too_large', 422);
       let existing = await this.col('drafts').find({ ...scope, jid: job.jid, state: { $ne: 'merged' }, messageIds: { $in: ids } }).sort({ createdAt: 1, _id: 1 }).toArray();
+      // A model suggestion is not authorization to modify an existing ticket.
+      // Keep saved evidence immutable; only explicit user assignment may update it.
+      if (taskGrouping.enabled(scope.tenantId)) {
+        if (existing.some(row => ['sending', 'uncertain'].includes(row.hubspot?.state))) fail('hubspot_delivery_in_progress', 409);
+        const protectedRows = existing.filter(row => row.hubspot?.ticketId || row.hubspot?.state === 'saved');
+        const protectedIds = new Set(protectedRows.flatMap(row => row.messageIds || []));
+        group = group.filter(message => !protectedIds.has(message._id));
+        ids = group.map(message => message._id);
+        if (!ids.length) continue;
+        existing = existing.filter(row => !protectedRows.includes(row) && row.messageIds.some(id => ids.includes(id)));
+      }
       // Replaying already saved evidence is not a new follow-up, even if
       // grouping now spans several tickets or an analyzer version changed.
       const savedIds = new Set(existing.filter(row => row.hubspot?.state === 'saved').flatMap(row => row.messageIds || []));
