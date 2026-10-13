@@ -1,5 +1,9 @@
 # Manual técnico de Asisto
 
+### Administración de usuarios — corrección v5.00.288
+
+Los modales de alta/edición se montan directamente en el cuerpo del documento, por encima de encabezado y navegación. Al abrirlos se cierra el menú móvil y se enfoca el primer campo. Cerrar, Cancelar, fondo y Escape conservan su comportamiento; no se cambian validaciones, credenciales ni permisos. Verificación: `node --test tests/users_modal.test.js tests/admin_navigation.test.js`. La corrección corresponde al panel central AWS, no al servicio local exclusivo del turnero.
+
 Edición 1 — 02/10/2026. Base de código documentada: `00c5ea7`. Destinatarios: instalación, soporte, configuración de clientes e integradores. Documentación de operación, no autorización para intervenir un cliente.
 
 ## Índice

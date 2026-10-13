@@ -1839,9 +1839,9 @@ function usersAdminPage({ user, users, msg, err }) {
       .usersFieldRow label{font-size:13px;color:#475467;margin:0;}
       .usersFieldRow input,.usersFieldRow select{width:100%;}
       .usersHint{margin-top:6px;padding:10px 12px;border-radius:12px;background:#f8fafc;border:1px solid rgba(148,163,184,.2);}
-      .usersModal{position:fixed; inset:0; z-index:80; display:flex; align-items:center; justify-content:center; padding:16px;}
+      .usersModal{position:fixed; inset:0; z-index:3000; isolation:isolate; display:flex; align-items:center; justify-content:center; padding:16px;}
       .usersModal[hidden]{display:none !important;}
-      .usersModalBackdrop{position:absolute; inset:0; background:rgba(0,0,0,.55);}
+      .usersModalBackdrop{position:absolute; inset:0; z-index:-1; background:rgba(0,0,0,.55);}
       .usersModalCard{position:relative;width:min(820px, 96vw);max-height:calc(100vh - 32px);overflow:auto;background:#fff;color:#0b1726;border-radius:18px;padding:18px;box-shadow:0 20px 60px rgba(0,0,0,.35);}
       .usersModalHeader{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:14px;}
       .usersModalTitle{margin:0; font-size:22px;}
@@ -2093,8 +2093,13 @@ function usersAdminPage({ user, users, msg, err }) {
       function openModal(which){
         const modal = which === "edit" ? editModal : createModal;
         if (!modal) return;
+        // Keep the dialog outside layout stacking contexts and above navigation.
+        document.body.appendChild(modal);
+        document.body.classList.remove("drawerOpen");
         modal.hidden = false;
         document.body.classList.add("usersModalOpen");
+        const firstInput = modal.querySelector('input:not([type="hidden"]):not([disabled])');
+        if (firstInput) firstInput.focus();
       }
 
       function closeModal(which){
