@@ -6,7 +6,7 @@ const { JSDOM } = require('jsdom');
 const { mountAuthRoutes, protectRoutes, appShell } = require('../auth_ui');
 const { navigationGroups, configurationState } = require('../admin_navigation');
 
-const superadmin = { uid: 'test', username: 'Prueba', tenantId: 'DEMO', role: 'superadmin', allowedPages: [] };
+const superadmin = { uid: 'test', username: 'Prueba', tenantId: 'DEMO', role: 'superadmin' };
 const existingKeys = ['admin', 'followup', 'bot_test', 'inbox', 'fleteros', 'productos', 'resto', 'horarios', 'comportamiento', 'notifications', 'queue_kiosk', 'queue_attention', 'queue_display', 'queue_stats', 'leads', 'wweb', 'canales', 'client_access', 'telegram', 'users', 'tenant_config', 'order_config', 'web_access', 'token_control', 'monetization'];
 
 async function withPanel(user, fn) {
@@ -29,6 +29,17 @@ test('groups preserve every authorized screen exactly once, including future scr
   const grouped = navigationGroups(items).flatMap(group => group.items.map(item => item.key));
   assert.deepEqual(grouped.sort(), [...existingKeys, 'future'].sort());
   assert.equal(navigationGroups([{ key: 'home' }]).length, 0);
+});
+
+test('superadmin unchecked screens disappear from navigation but remain accessible by URL', async () => {
+  await withPanel({ ...superadmin, allowedPages: ['comportamiento'] }, async get => {
+    const home = await get('/app');
+    assert.equal(home.document.querySelector('.sidebar a[href="/admin/users"]'), null);
+    assert.equal(home.document.querySelector('.sidebar a[href="/ui/token_control"]'), null);
+    assert.ok(home.document.querySelector('.sidebar a[href="/app"]'));
+    assert.equal((await get('/ui/token_control')).status, 200);
+    assert.equal((await get('/ui/configuracion?seccion=tenant_config')).status, 200);
+  });
 });
 
 test('superadmin home exposes all original screens and advanced APIs', async () => {

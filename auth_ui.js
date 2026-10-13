@@ -1398,7 +1398,7 @@ ${shell ? '<link rel="stylesheet" href="/static/admin_shell.css?v=5.00.174">' : 
 }
 
 // ===== App layout (sidebar + content) =====
-function getNavItemsForUser(user) {
+function getNavItemsForUser(user, { includeHidden = false } = {}) {
   const isAdmin = user && (user.role === "admin" || user.role === "superadmin");
   const items = [{ key: "home", title: "Inicio", href: "/app" }];
 
@@ -1430,6 +1430,9 @@ function getNavItemsForUser(user) {
   if (hasAccess(user, "token_control")) items.push({ key: "token_control", title: "Control de Tokens", href: "/ui/token_control" });
   if (String(user?.role || '').toLowerCase() === 'superadmin') items.push({ key: "monetization", title: "Monetización", href: "/ui/monetization" });
 
+  if (!includeHidden && user?.role === 'superadmin' && Array.isArray(user.allowedPages)) {
+    return items.filter(it => it.key === 'home' || user.allowedPages.includes(it.key) || (it.key === 'wweb' && user.allowedPages.includes('support')));
+  }
   return items;
 }
 
@@ -1712,7 +1715,7 @@ function appMenuPage({ user, routes }) {
 }
 
 function configurationPage({ user, requestedSection, rawQuery }) {
-  const state = configurationState(getNavItemsForUser(user), user, requestedSection, rawQuery);
+  const state = configurationState(getNavItemsForUser(user, { includeHidden: user?.role === 'superadmin' }), user, requestedSection, rawQuery);
   if (!state) return null;
   const { section, sections, src, query } = state;
   return appShell({
@@ -2058,6 +2061,7 @@ function usersAdminPage({ user, users, msg, err }) {
         { key: "queue_stats", title: "Estadísticas del turnero" },
       ];
       const IS_SUPER = ${isSuper ? "true" : "false"};
+      ACCESS_PAGES.push({ key: 'monetization', title: 'Monetización' });
       const USERS = ${JSON.stringify(userItems).replace(/</g, '\\u003c')};
       const ROLE_OPTIONS_SUPER = ["user", "admin", "superadmin"];
       const ROLE_OPTIONS_ADMIN = ["user", "admin"];
@@ -2214,7 +2218,7 @@ function usersAdminPage({ user, users, msg, err }) {
         fillEditRoleOptions(userData.role || 'user');
 
         const selfLocked = !!userData.isSelf;
-        buildPermissionCheckboxes(editPermGrid, userData.currentPages || [], selfLocked);
+        buildPermissionCheckboxes(editPermGrid, userData.currentPages || [], selfLocked && !IS_SUPER);
         installPermissionSync(editForm);
         syncDefaultPageSelect(editForm, userData.defaultPage || '/app');
 
@@ -2222,16 +2226,18 @@ function usersAdminPage({ user, users, msg, err }) {
           editLockInput.checked = !!userData.locked;
           editLockInput.disabled = !userData.canEditLock;
         }
-        editTenantInput.readOnly = !userData.canEditTenant;
-        editRoleSelect.disabled = !userData.canEditRole;
-        editSubmit.disabled = selfLocked;
+        editTenantInput.readOnly = selfLocked || !userData.canEditTenant;
+        editRoleSelect.disabled = selfLocked || !userData.canEditRole;
+        editSubmit.disabled = selfLocked && !IS_SUPER;
         deleteBtn.disabled = selfLocked;
         resetForm.querySelector('input[name="newPassword"]').value = '';
 
         if (selfLocked) {
-          editHint.innerHTML = 'No se permite cambiar tu propio rol, dominio, bloqueo ni accesos desde esta pantalla. Podés resetear tu contraseña abajo.';
+          editHint.textContent = IS_SUPER
+            ? 'Elegí las pantallas visibles en tu menú. Esto no quita permisos de superadmin: las pantallas ocultas siguen accesibles por URL. Inicio siempre queda visible; podés volver a /admin/users para cambiar esta selección. Tu rol, dominio y bloqueo no se modifican.'
+            : 'No se permite cambiar tu propio rol, dominio, bloqueo ni accesos desde esta pantalla. Podés resetear tu contraseña abajo.';
         } else {
-          editHint.innerHTML = 'Actualizá los accesos del usuario y elegí su ventana de inicio. Si marcás <strong>Usuarios</strong>, el selector incluirá <strong>Sesiones de usuarios</strong>.';
+          editHint.innerHTML = 'Elegí las pantallas y la ventana de inicio. Para superadmin, las casillas sólo ocultan opciones del menú; no restringen permisos ni acceso por URL.';
         }
       }
 
@@ -3811,7 +3817,7 @@ function mountAuthRoutes(app) {
       const allowedPages = normalizeAllowedPages(req.body?.allowedPages);
 
       if (!ObjectId.isValid(userId)) return res.redirect("/admin/users?err=" + encodeURIComponent("userId inválido."));
-      if (String(req.user?.uid) === userId) {
+      if (String(req.user?.uid) === userId && req.user?.role !== 'superadmin') {
         return res.redirect("/admin/users?err=" + encodeURIComponent("No se permite editar tu propio rol/dominio/bloqueo."));
       }
 
@@ -3819,6 +3825,15 @@ function mountAuthRoutes(app) {
 
       const actorRole = String(req.user?.role || "");
       const actorTenant = String(req.user?.tenantId || "default");
+
+      if (String(req.user?.uid) === userId && actorRole === 'superadmin') {
+        const finalDefaultPage = normalizeDefaultPage({ role: actorRole, tenantId: actorTenant, allowedPages }, defaultPage);
+        await db.collection('users').updateOne(
+          { _id: new ObjectId(userId), role: 'superadmin' },
+          { $set: { allowedPages, defaultPage: finalDefaultPage, updatedAt: new Date() } }
+        );
+        return res.redirect('/admin/users?msg=' + encodeURIComponent('Pantallas visibles actualizadas. Tus permisos no cambiaron.'));
+      }
 
       const target = await db.collection("users").findOne(
         { _id: new ObjectId(userId) },

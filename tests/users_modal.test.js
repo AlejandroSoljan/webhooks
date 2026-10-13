@@ -45,6 +45,7 @@ test('user dialog escapes layout, closes the drawer, accepts input and closes/re
 test('isolated create endpoint saves every role and rejects duplicates/invalid data; admin cannot elevate', async () => {
   const express = require('express');
   const records = [];
+  const updates = [];
   const filename = require.resolve('../auth_ui');
   const fixture = new Module(filename, module);
   fixture.filename = filename;
@@ -52,17 +53,18 @@ test('isolated create endpoint saves every role and rejects duplicates/invalid d
   const originalRequire = fixture.require.bind(fixture);
   fixture.require = id => id === './db' ? { getDb: async () => ({ collection: () => ({
     findOne: async query => records.find(r => r.username === query.username),
-    insertOne: async record => records.push(record)
+    insertOne: async record => records.push(record),
+    updateOne: async (filter, update) => { updates.push({filter, update}); return {matchedCount:1}; }
   }) }) } : originalRequire(id);
   fixture._compile(fs.readFileSync(filename, 'utf8'), filename);
   const app = express();
   let actorRole = 'superadmin';
-  app.use((req, res, next) => { req.user = { uid: 'fixture', role: actorRole, tenantId: 'TEST' }; next(); });
+  app.use((req, res, next) => { req.user = { uid: '000000000000000000000001', role: actorRole, tenantId: 'TEST' }; next(); });
   fixture.exports.mountAuthRoutes(app);
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
-  const post = async data => {
-    const res = await fetch('http://127.0.0.1:' + server.address().port + '/admin/users/create', {
+  const post = async (data, action = 'create') => {
+    const res = await fetch('http://127.0.0.1:' + server.address().port + '/admin/users/' + action, {
       method: 'POST', redirect: 'manual', body: new URLSearchParams(data)
     });
     assert.equal(res.status, 302);
@@ -80,7 +82,12 @@ test('isolated create endpoint saves every role and rejects duplicates/invalid d
     assert.match(await post({ username: 'bad name', password: 'test-only-password' }), /inválido/);
     assert.match(await post({ username: 'validname', password: '1' }), /muy corta/);
     assert.equal(records.length, 3);
+    assert.match(await post({userId:'000000000000000000000001', role:'user', tenantId:'OTHER', isLocked:'1', allowedPages:'comportamiento', defaultPage:'/app'}, 'update'), /Pantallas visibles/);
+    assert.deepEqual(Object.keys(updates[0].update.$set).sort(), ['allowedPages','defaultPage','updatedAt']);
+    assert.deepEqual(updates[0].update.$set.allowedPages, ['comportamiento']);
     actorRole = 'admin';
+    assert.match(await post({userId:'000000000000000000000001',allowedPages:'users'},'update'), /No se permite/);
+    assert.equal(updates.length, 1);
     assert.match(await post({ username: 'fixture_admin_scope', password: 'test-only-password', tenantId: 'OTHER', role: 'superadmin' }), /Usuario creado/);
     assert.equal(records.at(-1).role, 'admin');
     assert.equal(records.at(-1).tenantId, 'TEST');

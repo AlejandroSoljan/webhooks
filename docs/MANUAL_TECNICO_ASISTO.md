@@ -1,5 +1,9 @@
 # Manual técnico de Asisto
 
+### Pantallas visibles de superadmin — v5.00.290
+
+Para superadmin, `allowedPages` selecciona las opciones visibles del menú y accesos de Inicio; no restringe permisos ni rutas directas. Sin el campo se conserva el menú completo; una lista vacía deja Inicio. El acceso WhatsApp Web también aparece con soporte habilitado. Puede autoeditar pantallas y página inicial desde `/admin/users`, aunque oculte Usuarios: la ruta directa continúa habilitada. El servidor no acepta cambios propios de rol, dominio ni bloqueo en esa operación. Para admin/user se conservan las restricciones de acceso anteriores. Las casillas existentes de superadmins comienzan a controlar la navegación; no se migran documentos.
+
 ### Roles de usuarios — v5.00.289
 
 Alta y edición presentan opciones de rol visibles (radios), sin desplegable nativo. Se envía el mismo campo `role`; superadmin puede elegir los tres roles y admin sólo user/admin. Continúan las restricciones de dominio y autoedición. Pruebas de alta con base simulada verifican persistencia, hash de contraseña, duplicados, validaciones y prohibición de elevar a superadmin. No generan cuentas en AWS.
