@@ -1,5 +1,9 @@
 # Manual técnico de Asisto
 
+### Selector de dominio del Asistente IA — v5.00.291
+
+`/comportamiento` muestra un selector ordenado por identificador de `tenant_config` para superadmin; los demás roles conservan su dominio fijo. Cambiar la selección carga una página nueva con `?tenant=...`, evitando guardar los datos del dominio anterior en el nuevo. Si hubo edición, solicita confirmación antes de descartarla. El diseño conserva las funciones y permisos existentes, incluida la advertencia de configuración global de MANAGER. Pruebas: `tests/behavior_ui_helpers.test.js` y `tests/behavior_pause_config.test.js`.
+
 ### Pantallas visibles de superadmin — v5.00.290
 
 Para superadmin, `allowedPages` selecciona las opciones visibles del menú y accesos de Inicio; no restringe permisos ni rutas directas. Sin el campo se conserva el menú completo; una lista vacía deja Inicio. El acceso WhatsApp Web también aparece con soporte habilitado. Puede autoeditar pantallas y página inicial desde `/admin/users`, aunque oculte Usuarios: la ruta directa continúa habilitada. El servidor no acepta cambios propios de rol, dominio ni bloqueo en esa operación. Para admin/user se conservan las restricciones de acceso anteriores. Las casillas existentes de superadmins comienzan a controlar la navegación; no se migran documentos.

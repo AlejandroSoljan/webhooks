@@ -9227,6 +9227,16 @@ app.get("/comportamiento-ui.js", (_req, res) => {
         }
         document.getElementById('btnSave').addEventListener('click',save);
         document.getElementById('btnReload').addEventListener('click',load);
+        var selectedDomain = document.getElementById('tenant').value;
+        var behaviorDirty = false;
+        document.addEventListener('input', function(e){ if(e.target.id !== 'tenant') behaviorDirty = true; });
+        document.getElementById('tenant').addEventListener('change', function(){
+          if(behaviorDirty && !confirm('Hay cambios sin guardar. ¿Cambiar de dominio y descartarlos?')) {
+            this.value = selectedDomain;
+            return;
+          }
+          location.href = '/comportamiento?tenant=' + encodeURIComponent(this.value);
+        });
       
         load();
       
@@ -9238,6 +9248,11 @@ app.get("/comportamiento", async (req, res) => {
   try {
     const tenant = resolveTenantId(req);
     const cfg = await loadBehaviorConfigFromMongo(tenant);
+    const canSelectDomain = req.user?.role === 'superadmin';
+    const domains = canSelectDomain
+      ? await (await require('./db').getDb()).collection('tenant_config').find({}, { projection: { _id: 1 } }).toArray()
+      : [];
+    const domainOptions = require('./behavior_ui_helpers').domainOptions(domains, tenant);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html><html><head><meta charset="utf-8" />
       <title>Comportamiento del Bot (${tenant})</title>
@@ -9260,12 +9275,22 @@ app.get("/comportamiento", async (req, res) => {
       .addBtn{background:#0f766e;color:#fff;border:0;border-radius:7px;padding:8px 11px;cursor:pointer;font-weight:600}
       .emptyActions{padding:16px;border:1px dashed #bbb;border-radius:8px;color:#666;margin-top:12px}
       @media(max-width:760px){.externalGrid{grid-template-columns:1fr}}
+      *{box-sizing:border-box}body{max-width:1280px;margin:0 auto;padding:24px;background:#f4f7fb;color:#142c46;font-size:14px;line-height:1.5}
+      h1{font-size:28px;margin:0 0 4px;letter-spacing:-.6px}.pageIntro{color:#64748b;margin:0 0 22px}
+      .behaviorToolbar{position:sticky;top:0;z-index:10;padding:16px;background:#fff;border:1px solid #dbe4ee;border-radius:14px;box-shadow:0 4px 16px #15334d0a;margin-bottom:22px}
+      .behaviorToolbar label{flex:1;min-width:180px;display:flex;gap:12px;align-items:center;font-weight:600}.behaviorToolbar select{width:100%;max-width:420px}
+      button{font:inherit;padding:10px 18px;border-radius:9px;border:1px solid #cad7e3;background:#fff;color:#183b56;cursor:pointer}#btnSave{background:#147d70;color:#fff;border-color:#147d70;font-weight:700}
+      input[type=text],input[type=password],input[type=number],select,textarea{font:inherit;border:1px solid #ccd8e4;border-radius:8px;background:#fff;color:#142c46;padding:10px 12px;max-width:100%;min-width:0}
+      input:focus,select:focus,textarea:focus{outline:2px solid #31ac9b;outline-offset:1px}input:disabled,textarea:disabled,select:disabled{background:#eef2f6;color:#6b788a}
+      .externalCard{background:#fff;border-color:#dbe4ee;border-radius:14px;padding:20px}.externalGrid{gap:16px}.hint{color:#64748b;line-height:1.6}.tag{background:#e5f4ef;color:#126957;border:0;border-radius:20px;padding:4px 10px}textarea{line-height:1.6}.row{gap:12px}
+      @media(max-width:760px){body{padding:14px}h1{font-size:24px}.behaviorToolbar{position:static}.behaviorToolbar label{flex-basis:100%}.externalCard{padding:14px}.row>label{max-width:100%}}
       </style></head><body>
-      <h1>Comportamiento del Bot</h1>
-      <div class="row">
-        <label>Dominio:&nbsp;<input id="tenant" type="text" value="${tenant}" /></label>
+      <h1>Asistente IA</h1>
+      <p class="pageIntro">Configurá el comportamiento, las fuentes de ayuda y las integraciones de cada dominio.</p>
+      <div class="row behaviorToolbar">
+        <label for="tenant">Dominio <select id="tenant" ${canSelectDomain ? '' : 'disabled'}>${domainOptions}</select></label>
         <button id="btnReload">Recargar</button>
-        <button id="btnSave">Guardar</button>
+        <button id="btnSave">Guardar cambios</button>
       </div>
       <div class="row" style="margin-top:8px">
         <label>Tipo de bot:&nbsp;
