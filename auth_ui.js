@@ -1731,10 +1731,6 @@ function usersAdminPage({ user, users, msg, err }) {
   const createEditablePages = ACCESS_PAGES.filter((p) => (isSuper ? true : p.key !== "users"));
   const defaultCreatePages = createEditablePages.filter((p) => p.key !== "users").map((p) => p.key);
 
-  const roleOptionsForCreate = isSuper
-    ? `<option value="user">user</option><option value="admin">admin</option><option value="superadmin">superadmin</option>`
-    : `<option value="user">user</option><option value="admin">admin</option>`;
-
   const createTenantField = isSuper
     ? `<input name="tenantId" required placeholder="default"/>`
     : `<input name="tenantId" required value="${htmlEscape(myTenant)}" readonly/>`;
@@ -1838,6 +1834,10 @@ function usersAdminPage({ user, users, msg, err }) {
       .usersFieldRow{display:flex;flex-direction:column;gap:6px;}
       .usersFieldRow label{font-size:13px;color:#475467;margin:0;}
       .usersFieldRow input,.usersFieldRow select{width:100%;}
+      .usersRoles{display:flex;flex-wrap:wrap;gap:8px;border:0;padding:0;margin:0;min-width:0}
+      .usersRoles label{display:flex;align-items:center;gap:8px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;cursor:pointer}
+      .usersRoles input{width:auto;margin:0}
+      .usersRoles label:has(input:checked){background:#e3f5ef;border-color:#167c69}
       .usersHint{margin-top:6px;padding:10px 12px;border-radius:12px;background:#f8fafc;border:1px solid rgba(148,163,184,.2);}
       .usersModal{position:fixed; inset:0; z-index:3000; isolation:isolate; display:flex; align-items:center; justify-content:center; padding:16px;}
       .usersModal[hidden]{display:none !important;}
@@ -1922,7 +1922,7 @@ function usersAdminPage({ user, users, msg, err }) {
             </div>
             <div class="usersFieldRow">
               <label>Rol</label>
-              <select name="role">${roleOptionsForCreate}</select>
+              <fieldset class="usersRoles" aria-label="Rol">${(isSuper ? ['user', 'admin', 'superadmin'] : ['user', 'admin']).map(role => `<label><input type="radio" name="role" value="${role}" ${role === 'user' ? 'checked' : ''}>${role}</label>`).join('')}</fieldset>
             </div>
           </div>
 
@@ -1982,7 +1982,7 @@ function usersAdminPage({ user, users, msg, err }) {
             </div>
             <div class="usersFieldRow">
               <label>Rol</label>
-              <select name="role"></select>
+              <fieldset class="usersRoles" aria-label="Rol" data-edit-roles></fieldset>
             </div>
             <div class="usersFieldRow">
               <label>Ventana de inicio</label>
@@ -2074,7 +2074,7 @@ function usersAdminPage({ user, users, msg, err }) {
       const editHint = document.getElementById("userEditHint");
       const editUsername = editForm.querySelector("[data-user-edit-username]");
       const editTenantInput = editForm.querySelector('input[name="tenantId"]');
-      const editRoleSelect = editForm.querySelector('select[name="role"]');
+      const editRoleSelect = editForm.querySelector('[data-edit-roles]');
       const editLockInput = editForm.querySelector('input[name="isLocked"]');
       const editDefaultPage = editForm.querySelector('[data-default-page="edit"]');
       const editPermGrid = editForm.querySelector('[data-permissions-grid="edit"]');
@@ -2198,7 +2198,7 @@ function usersAdminPage({ user, users, msg, err }) {
       }
 
       function fillEditRoleOptions(roleValue){
-        editRoleSelect.innerHTML = getRoleOptions().map((role) => '<option value="' + esc(role) + '"' + (role === roleValue ? ' selected' : '') + '>' + esc(role) + '</option>').join("");
+        editRoleSelect.innerHTML = getRoleOptions().map((role) => '<label><input type="radio" name="role" value="' + esc(role) + '"' + (role === roleValue ? ' checked' : '') + '>' + esc(role) + '</label>').join("");
       }
 
       function populateEditModal(userData){

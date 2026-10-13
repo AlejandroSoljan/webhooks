@@ -1,5 +1,9 @@
 # Manual técnico de Asisto
 
+### Roles de usuarios — v5.00.289
+
+Alta y edición presentan opciones de rol visibles (radios), sin desplegable nativo. Se envía el mismo campo `role`; superadmin puede elegir los tres roles y admin sólo user/admin. Continúan las restricciones de dominio y autoedición. Pruebas de alta con base simulada verifican persistencia, hash de contraseña, duplicados, validaciones y prohibición de elevar a superadmin. No generan cuentas en AWS.
+
 ### Administración de usuarios — corrección v5.00.288
 
 Los modales de alta/edición se montan directamente en el cuerpo del documento, por encima de encabezado y navegación. Al abrirlos se cierra el menú móvil y se enfoca el primer campo. Cerrar, Cancelar, fondo y Escape conservan su comportamiento; no se cambian validaciones, credenciales ni permisos. Verificación: `node --test tests/users_modal.test.js tests/admin_navigation.test.js`. La corrección corresponde al panel central AWS, no al servicio local exclusivo del turnero.

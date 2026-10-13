@@ -21,6 +21,15 @@ test('user dialog escapes layout, closes the drawer, accepts input and closes/re
   assert.equal(modal.hidden, false);
   assert.equal(document.body.classList.contains('drawerOpen'), false);
   assert.equal(document.activeElement.name, 'username');
+  for (const role of ['admin', 'superadmin', 'user']) {
+    modal.querySelector('input[name="role"][value="' + role + '"]').click();
+    assert.equal(new dom.window.FormData(document.getElementById('userCreateForm')).get('role'), role);
+  }
+  const permission = modal.querySelector('input[name="allowedPages"][value="users"]');
+  permission.click();
+  assert.ok(modal.querySelector('option[value="/admin/users"]'));
+  permission.click();
+  assert.equal(modal.querySelector('option[value="/admin/users"]'), null);
   document.activeElement.value = 'nuevo_usuario';
   assert.equal(modal.querySelector('[name="username"]').value, 'nuevo_usuario');
   assert.equal(dom.window.getComputedStyle(modal).zIndex, '3000');
@@ -31,4 +40,49 @@ test('user dialog escapes layout, closes the drawer, accepts input and closes/re
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
   assert.equal(modal.hidden, true);
   dom.window.close();
+});
+
+test('isolated create endpoint saves every role and rejects duplicates/invalid data; admin cannot elevate', async () => {
+  const express = require('express');
+  const records = [];
+  const filename = require.resolve('../auth_ui');
+  const fixture = new Module(filename, module);
+  fixture.filename = filename;
+  fixture.paths = module.paths;
+  const originalRequire = fixture.require.bind(fixture);
+  fixture.require = id => id === './db' ? { getDb: async () => ({ collection: () => ({
+    findOne: async query => records.find(r => r.username === query.username),
+    insertOne: async record => records.push(record)
+  }) }) } : originalRequire(id);
+  fixture._compile(fs.readFileSync(filename, 'utf8'), filename);
+  const app = express();
+  let actorRole = 'superadmin';
+  app.use((req, res, next) => { req.user = { uid: 'fixture', role: actorRole, tenantId: 'TEST' }; next(); });
+  fixture.exports.mountAuthRoutes(app);
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  const post = async data => {
+    const res = await fetch('http://127.0.0.1:' + server.address().port + '/admin/users/create', {
+      method: 'POST', redirect: 'manual', body: new URLSearchParams(data)
+    });
+    assert.equal(res.status, 302);
+    return decodeURIComponent(res.headers.get('location'));
+  };
+  try {
+    for (const role of ['user', 'admin', 'superadmin']) {
+      assert.match(await post({ username: 'fixture_' + role, password: 'test-only-password', tenantId: 'TEST', role, allowedPages: 'wweb', defaultPage: '/app' }), /Usuario creado/);
+      assert.equal(records.at(-1).role, role);
+      assert.equal(records.at(-1).isLocked, false);
+      assert.deepEqual(records.at(-1).allowedPages, ['wweb']);
+      assert.equal(fixture.exports.verifyPassword('test-only-password', records.at(-1).password), true);
+    }
+    assert.match(await post({ username: 'fixture_user', password: 'test-only-password' }), /ya existe/);
+    assert.match(await post({ username: 'bad name', password: 'test-only-password' }), /inválido/);
+    assert.match(await post({ username: 'validname', password: '1' }), /muy corta/);
+    assert.equal(records.length, 3);
+    actorRole = 'admin';
+    assert.match(await post({ username: 'fixture_admin_scope', password: 'test-only-password', tenantId: 'OTHER', role: 'superadmin' }), /Usuario creado/);
+    assert.equal(records.at(-1).role, 'admin');
+    assert.equal(records.at(-1).tenantId, 'TEST');
+  } finally { await new Promise(resolve => server.close(resolve)); }
 });
