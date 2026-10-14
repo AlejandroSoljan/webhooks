@@ -133,6 +133,10 @@ function createDeviceRouter({ getService, publicOrigin }) {
       await updatePanelSession(s, ctx, { state: 'number_mismatch' }, { lastQrDataUrl: '', lastQrAt: '' });
       return { ok: false, error: 'number_mismatch' };
     }
+    if (state === 'connected') {
+      const prior = await s.col('sessions').findOne(ctx.scope, { projection: { state: 1 } });
+      if (prior?.state !== 'connected') await s.captureHistoryResume(ctx.scope);
+    }
     const expires = qr ? new Date(+s.now() + 45000) : null;
     await s.col('sessions').updateOne({ _id: id, ...ctx.scope, ...(state === 'disconnected' ? {} : { desired: 'connected' }) }, { $set: { state, connectedNumber: connectedNumber || null, qr: qr ? s.vault.seal(qr, id + ':qr') : null, qrExpiresAt: expires, updatedAt: s.now(), ...(state === 'logged_out' ? { desired: 'disconnected' } : {}) } });
     if (qr) {

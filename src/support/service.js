@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.271 | Fecha: 2026-09-30
+// Asisto | Version: 5.00.292 | Fecha: 2026-10-14
 const crypto = require('node:crypto');
 const taskGrouping = require('./task_grouping');
 const { fail, scopedId, hash, settings, excluded, groupTasks, analyze, ANALYZER_VERSION, GROUPING_VERSION, text, range } = require('./core');
@@ -8,6 +8,28 @@ class SupportService {
     this.db = db; this.vault = vault; this.transcribe = transcribe; this.titleAnalyzer = titleAnalyzer; this.now = now;
   }
   col(name) { return this.db.collection(`support_${name}`); }
+  async captureHistoryResume(scope) {
+    if (!taskGrouping.enabled(scope.tenantId)) return null;
+    const last = await this.col('messages').find({ ...scope, at: { $lte: this.now() } }, { projection: { at: 1 } }).sort({ at: -1 }).limit(1).next();
+    const boundary = last?.at || new Date(+this.now() - 86400000);
+    await this.col('sessions').updateOne({ ...scope }, { $set: { historyResumeAt: boundary, historyResumeCapturedAt: this.now() }, $setOnInsert: { _id: scopedId(scope, 'session') } }, { upsert: true });
+    return boundary;
+  }
+  async historyBoundary(scope) {
+    if (!taskGrouping.enabled(scope.tenantId)) return null;
+    const session = await this.col('sessions').findOne(scope, { projection: { historyResumeAt: 1 } });
+    if (session?.historyResumeAt) return session.historyResumeAt;
+    return this.captureHistoryResume(scope);
+  }
+  recentHistory(scope, message, receivedAt = this.now(), boundary = null) {
+    const age = +new Date(receivedAt) - +new Date(message.at);
+    if (taskGrouping.enabled(scope.tenantId) && boundary) return Number.isFinite(age) && age >= -300000 && +new Date(message.at) >= +new Date(boundary);
+    const window = taskGrouping.enabled(scope.tenantId) ? 86400000 : 24 * 86400000;
+    return Number.isFinite(age) && age >= -300000 && age <= window;
+  }
+  liveEvidence(scope, message, boundary = null) {
+    return !message.historical || (message.catchup === true && this.recentHistory(scope, message, message.receivedAt, message.historyResumeAt || boundary));
+  }
   async audit(scope, action, recordId, outcome = 'ok') {
     await this.col('audit').insertOne({ ...scope, action, recordId, outcome, at: this.now() });
   }
@@ -122,16 +144,23 @@ class SupportService {
     // Baileys reports messages recovered after a short disconnection as
     // history. Keep recent catch-up messages in the semi-automatic flow; old
     // history still requires an explicit period request.
-    const ageMs = +this.now() - +message.at;
-    const catchup = historical && ageMs >= -300000 && ageMs <= 24 * 86400000;
-    const doc = { _id, ...scope, ...metadata, historical, catchup, contentTooLarge, payload: this.vault.seal({ text: contentTooLarge ? '' : String(content), raw }, _id), queued: false, receivedAt: this.now() };
-    await this.col('messages').updateOne({ _id, ...scope }, { $setOnInsert: doc }, { upsert: true });
+    const boundary = historical ? await this.historyBoundary(scope) : null;
+    const catchup = historical && this.recentHistory(scope, message, this.now(), boundary);
+    const doc = { _id, ...scope, ...metadata, historical, catchup, ...(boundary ? { historyResumeAt: boundary } : {}), contentTooLarge, payload: this.vault.seal({ text: contentTooLarge ? '' : String(content), raw }, _id), queued: false, receivedAt: this.now() };
+    const inserted = await this.col('messages').updateOne({ _id, ...scope }, { $setOnInsert: doc }, { upsert: true });
+    if (!inserted.upsertedCount && taskGrouping.enabled(scope.tenantId)) {
+      const previous = await this.col('messages').findOne({ _id, ...scope });
+      if (previous?.queued) return { id: _id, duplicate: true };
+      await this.enqueueMessage(scope, previous || doc, config.inactivityMs);
+      await this.col('messages').updateOne({ _id, ...scope }, { $set: { queued: true } });
+      return { id: _id, recovered: true };
+    }
     await this.enqueueMessage(scope, { ...message, historical, catchup }, config.inactivityMs);
     await this.col('messages').updateOne({ _id, ...scope }, { $set: { queued: true } });
     return { id: _id };
   }
   async enqueueMessage(scope, message, delay) {
-    if (!message.historical || message.catchup) await this.enqueue(scope, message.jid, delay);
+    if (this.liveEvidence(scope, message, await this.historyBoundary(scope))) await this.enqueue(scope, message.jid, delay);
     if (!message.historical) return;
     const requests = await this.col('history_requests').find({ ...scope, 'dates.start': { $lte: message.at }, 'dates.end': { $gt: message.at }, expiresAt: { $gt: this.now() } }).toArray();
     for (const request of requests) await this.enqueue(scope, message.jid, 1000, request.dates);
@@ -191,7 +220,11 @@ class SupportService {
   }
   async repairUnassigned(scope) {
     const config = await this.config(scope);
-    const candidates = await this.col('messages').find({ ...scope, $or: [{ historical: false }, { catchup: true }], assignmentRecoveryV1: { $ne: true }, receivedAt: { $lte: new Date(+this.now() - config.inactivityMs) } }, { projection: { jid: 1, name: 1, at: 1 } }).sort({ at: -1 }).limit(100).toArray();
+    const boundary = await this.historyBoundary(scope);
+    const scanned = await this.col('messages').find({ ...scope, $or: [{ historical: false }, { catchup: true }], assignmentRecoveryV1: { $ne: true }, receivedAt: { $lte: new Date(+this.now() - config.inactivityMs) } }, { projection: { jid: 1, name: 1, at: 1, receivedAt: 1, historical: 1, catchup: 1, historyResumeAt: 1 } }).sort({ at: -1 }).limit(100).toArray();
+    const invalid = scanned.filter(row => !this.liveEvidence(scope, row, boundary));
+    if (invalid.length) await this.col('messages').updateMany({ ...scope, _id: { $in: invalid.map(row => row._id) } }, { $set: { assignmentRecoveryV1: true, catchup: false } });
+    const candidates = scanned.filter(row => this.liveEvidence(scope, row, boundary));
     if (!candidates.length) return false;
     const candidateIds = candidates.map(row => row._id);
     const drafts = await this.col('drafts').find({ ...scope, state: { $ne: 'merged' }, messageIds: { $in: candidateIds } }, { projection: { messageIds: 1 } }).toArray();
@@ -298,9 +331,10 @@ class SupportService {
     if (!actor || !['user', 'admin', 'superadmin'].includes(actor.role) || (actor.role !== 'superadmin' && Array.isArray(actor.allowedPages) && !actor.allowedPages.includes('support'))) fail('access_revoked', 403);
     const config = await this.config(scope);
     const whatsappContact = await this.col('contacts').findOne({ _id: scopedId(scope, 'contact', job.jid), ...scope });
+    const boundary = await this.historyBoundary(scope);
     const rows = (await this.col('messages').find({ ...scope, jid: job.jid }).sort({ at: 1, _id: 1 }).limit(5001).toArray()).map(row => ({ ...row, name: whatsappContact?.name || row.name }));
     if (rows.length > 5000) fail('conversation_requires_pagination', 422);
-    const eligible = rows.filter(m => !excluded(m, config) && (job.dates ? m.at >= job.dates.start && m.at < job.dates.end : !m.historical || m.catchup));
+    const eligible = rows.filter(m => !excluded(m, config) && (job.dates ? m.at >= job.dates.start && m.at < job.dates.end : this.liveEvidence(scope, m, boundary)));
     // A queued job can become due before the last received message has settled.
     // Keep it pending instead of silently completing without creating a draft.
     if (!job.dates && eligible.length) {
@@ -383,7 +417,7 @@ class SupportService {
       const ownedIds = new Set(existing.flatMap(row => row.messageIds || []));
       if (savedIds.size && ids.every(id => ownedIds.has(id))) continue;
       if (existing.some(row => ['sending', 'uncertain'].includes(row.hubspot?.state))) fail('hubspot_delivery_in_progress', 409);
-      const untouched = row => !row.hubspot?.ticketId && row.events?.every(event => !event.by && ['generated', 'source_changed', 'tasks_merged', 'changed_source_summarized_ai'].includes(event.action)) === true;
+      const untouched = row => !row.hubspot?.ticketId && row.events?.every(event => !event.by && ['generated', 'source_changed', 'tasks_merged', 'changed_source_summarized_ai', 'history_import_archived'].includes(event.action)) === true;
       const splittingLegacy = existing.length === 1 && existing[0].groupingVersion !== GROUPING_VERSION && untouched(existing[0]) && existing[0].messageIds.some(id => !ids.includes(id));
       // A narrower historical request must not shrink a consolidated task.
       if (!splittingLegacy && existing.length === 1 && existing[0].analyzerVersion === ANALYZER_VERSION && existing[0].groupingVersion === GROUPING_VERSION && ids.every(id => existing[0].messageIds.includes(id)) && !(taskGrouping.enabled(scope.tenantId) && untouched(existing[0]) && existing[0].state !== 'ignored' && group.every(taskGrouping.automaticNotice))) continue;

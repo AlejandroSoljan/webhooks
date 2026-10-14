@@ -498,6 +498,77 @@ test('recent Baileys catch-up history enters the live task flow after a short di
   assert.equal(draft.messageIds.includes(stored._id), true);
   assert.match(draft.source.description, /cambiar los precios/);
 });
+
+test('ALSO reconnection excludes pre-checkpoint history but explicit periods remain available', async () => {
+  const owner={...scope,tenantId:'ALSO'};
+  await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});
+  const oldAt=new Date(+now-5*86400000), recentAt=new Date(+now-23*3600000);
+  await service.ingest(owner,message('old-import',0,{at:oldAt}),{historical:true});
+  assert.equal((await service.col('messages').findOne({...owner,id:'old-import'})).catchup,false);
+  assert.equal(await service.col('jobs').countDocuments(owner),0);
+  // Stored flags from the former 24-day bug cannot bypass the new rule.
+  await service.col('messages').updateMany(owner,{$set:{catchup:true}});
+  await service.ingest(owner,message('recent-import',0,{at:recentAt}),{historical:true});
+  now=new Date(+now+180001); await service.runOne(async()=>{},owner);
+  const live=await service.col('drafts').findOne(owner);
+  const recent=await service.col('messages').findOne({...owner,id:'recent-import'});
+  assert.deepEqual(live.messageIds,[recent._id]);
+  await service.repairUnassigned(owner);
+  assert.equal((await service.col('messages').findOne({...owner,id:'old-import'})).catchup,false);
+  await service.history(owner,new Date(+oldAt-1000).toISOString(),new Date(+oldAt+1000).toISOString());
+  await service.runOne(async()=>{},owner);
+  assert.equal(await service.col('drafts').countDocuments(owner),2);
+});
+
+test('reconnection recovers several missed days from last sync and replay never duplicates saved tasks', async () => {
+  const owner={...scope,tenantId:'ALSO'};
+  await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});
+  const oldAt=new Date(+now-10*86400000);
+  const [original]=await processMessages([message('synced',0,{at:oldAt})],owner);
+  await service.col('drafts').updateOne({_id:original._id},{$set:{state:'approved',hubspot:{state:'saved',ticketId:'keep'}}});
+  await service.captureHistoryResume(owner);
+  const missed=message('missed-five-days',0,{at:new Date(+now-5*86400000)});
+  await service.ingest(owner,missed,{historical:true});
+  assert.equal((await service.col('messages').findOne({...owner,id:missed.id})).catchup,true);
+  // A second reconnection cannot invalidate accepted but unprocessed evidence.
+  await service.captureHistoryResume(owner);
+  now=new Date(+now+180001);await service.runOne(async()=>{},owner);
+  assert.equal(await service.col('drafts').countDocuments({...owner,state:'pending'}),1);
+  const finished = await service.col('jobs').findOne(owner);
+  assert.equal((await service.ingest(owner,missed,{historical:true})).duplicate,true);
+  assert.equal((await service.col('jobs').findOne(owner)).generation,finished.generation);
+  now=new Date(+now+180001);await service.runOne(async()=>{},owner);
+  assert.equal(await service.col('drafts').countDocuments(owner),2);
+  assert.equal((await service.col('drafts').findOne({_id:original._id})).hubspot.ticketId,'keep');
+});
+
+test('history import repair archives only untouched old-only drafts and is recoverable and repeatable', async () => {
+  const { repair } = require('../scripts/repair_support_history_import.cjs');
+  const owner={...scope,tenantId:'ALSO'}, start=new Date(+now-1000), oldAt=new Date(+now-5*86400000);
+  await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});
+  for(let i=0;i<5;i++) await service.ingest(owner,message('archive-'+i,0,{jid:i+'@lid',at:oldAt}),{historical:true});
+  await service.history(owner,new Date(+oldAt-1000).toISOString(),new Date(+oldAt+1000).toISOString());
+  now=new Date(+now+180001);
+  while(await service.runOne(async()=>{},owner)) {}
+  const rows=await service.col('drafts').find(owner).sort({jid:1}).toArray();
+  await service.col('drafts').updateOne({_id:rows[0]._id},{$push:{events:{action:'edited',by:owner.userId}}});
+  await service.col('drafts').updateOne({_id:rows[1]._id},{$set:{hubspot:{state:'saved',ticketId:'keep'}}});
+  await service.ingest(owner,message('recent-keep',0,{jid:rows[2].jid,at:new Date(+now-3600000)}),{historical:true});
+  const recent=await service.col('messages').findOne({...owner,id:'recent-keep'});
+  await service.col('drafts').updateOne({_id:rows[2]._id},{$push:{messageIds:recent._id}});
+  const options={scope:owner,start,end:new Date(+now+1000),boundary:new Date(+oldAt+86400000)};
+  assert.equal((await repair(db,vault,options)).archiveDrafts,2);
+  assert.equal(await service.col('drafts').countDocuments({...owner,state:'ignored'}),0);
+  const result=await repair(db,vault,{...options,apply:true});
+  assert.equal(result.archived,2);assert.equal(result.conflicts,0);
+  assert.equal(await service.col('drafts').countDocuments({...owner,state:'ignored'}),2);
+  for(const row of rows.slice(3)) {
+    const id='history-import-v1:draft:'+row._id, backup=await service.col('audit').findOne({_id:id});
+    assert.equal(vault.open(backup.snapshot,id)._id,row._id);
+    assert.equal(vault.open(backup.snapshot,id).state,'pending');
+  }
+  assert.equal((await repair(db,vault,{...options,apply:true})).archived,0);
+});
 test('AI task analysis creates a title and operational summary under the dedicated token-control type', async () => {
   service.titleAnalyzer = { run: async () => ({ subject: 'Corregir impresión de facturas', description: 'El cliente informa que la factura no se imprime. Queda pendiente revisar la configuración de impresión.', model: 'fixture-ai', inputTokens: 40, outputTokens: 8, totalTokens: 48 }) };
   const [draft] = await processMessages([message('ai-title', 0, { text: 'Esto no aparece, así que lo vuelvo a generar.' })]);
