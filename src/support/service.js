@@ -379,9 +379,20 @@ class SupportService {
         const summaries = prior.map(row => { const fields = this.vault.open(row.fields, row._id); return { messageIds: row.messageIds || [], text: `${fields.subject || ''}: ${fields.description || ''}`.slice(0, 1000) }; });
         const units = taskGrouping.incrementalInput(groupingMessages, cached, signatures, summaries);
         const input = units || groupingMessages;
-        const result = await this.titleAnalyzer.group(input, { ...scope, jid: job.jid, jobId: job._id });
-        await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: job.jid, waId: job.jid, kind: 'message', provider: 'openai', model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, totalTokens: result.totalTokens || result.inputTokens + result.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'support_task_grouping' }, createdAt: this.now() });
-        taskGrouping.validateGroups(result.groups, input);
+        let result, groupingCorrection;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          await check();
+          result = await this.titleAnalyzer.group(input, { ...scope, jid: job.jid, jobId: job._id, groupingCorrection });
+          await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: job.jid, waId: job.jid, kind: 'message', provider: 'openai', model: result.model, inputTokens: result.inputTokens, outputTokens: result.outputTokens, totalTokens: result.totalTokens || result.inputTokens + result.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'support_task_grouping', formatCorrection: attempt > 0 }, createdAt: this.now() });
+          try { taskGrouping.validateGroups(result.groups, input); break; }
+          catch (error) {
+            if (error.code !== 'task_grouping_invalid' || attempt === 1) throw error;
+            const indices = Array.isArray(result.groups) ? result.groups.filter(Array.isArray).flat() : [];
+            const seen = new Set(indices);
+            const missing = input.map((_, i) => i).filter(i => !seen.has(i));
+            groupingCorrection = `Índices omitidos: ${missing.join(',') || 'ninguno'}. Revisá también índices repetidos, fuera de rango o grupos vacíos.`;
+          }
+        }
         groups = units ? result.groups.map(group => group.flatMap(i => units[i].indices).sort((a,b) => a-b)) : result.groups;
         taskGrouping.validateGroups(groups, groupingMessages);
         await check();

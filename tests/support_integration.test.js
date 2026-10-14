@@ -66,6 +66,21 @@ test('AI regrouping preserves multiple human-edited tasks and rejects incomplete
   assert.equal((await service.col('jobs').findOne(owner)).error,'task_grouping_invalid');
 });
 
+test('one bounded grouping format correction retains every message and meters both calls', async () => {
+  const owner={...scope,tenantId:'ALSO'};
+  await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});
+  let calls=0;
+  service.titleAnalyzer={group:async(rows,context)=>{
+    calls++;
+    if(calls===2) assert.match(context.groupingCorrection,/Índices omitidos: 1/);
+    return {groups:calls===1?[[0]]:[[0,1]],model:'fixture',inputTokens:1,outputTokens:1};
+  },run:async()=>({subject:'Revisar envío',description:'Sin confirmación de resolución.',model:'fixture',inputTokens:1,outputTokens:1})};
+  await processMessages([message('request'),message('reply',30,{fromMe:true,text:'Lo reviso'})],owner);
+  const draft=await service.col('drafts').findOne({...owner,state:'pending'});
+  assert.equal(draft.messageIds.length,2);assert.equal(calls,2);
+  assert.equal(await db.collection('ai_token_usage_log').countDocuments({...owner,'meta.source':'support_task_grouping'}),2);
+});
+
 test('regrouping preserves human dismissals and repairs automatic resurrection', async () => {
   const [draft] = await processMessages([message('dismissed')]);
   await service.col('drafts').updateOne({ _id: draft._id }, { $set: { state: 'needs_review', sourceChanged: true, groupingVersion: 'old' }, $push: { events: { action: 'dismissed_from_extension', by: scope.userId, at: now } } });

@@ -37,7 +37,7 @@ function asistoTitleAnalyzer(env = process.env, { runtimeFor = tenantId => requi
     // Never silently cut off older context or omit evidence.
     if (messages.length > 500 || JSON.stringify(transcript).length > 100000) fail('conversation_window_too_large', 422);
     const response = await clientFor(apiKey).chat.completions.create({ model,
-      messages: [{ role: 'system', content: require('./task_grouping').PROMPT }, { role: 'user', content: JSON.stringify(transcript) }],
+      messages: [{ role: 'system', content: require('./task_grouping').PROMPT + `\nLa entrada tiene ${messages.length} mensajes: incluí todos los índices del 0 al ${messages.length - 1}, exactamente una vez, aun si el mensaje es sólo contexto.` + (context.groupingCorrection ? `\nCorrección requerida: la respuesta anterior no cubrió correctamente los índices. ${context.groupingCorrection} Reagrupá TODOS los mensajes originales, sin omitir ninguno.` : '') }, { role: 'user', content: JSON.stringify(transcript) }],
       response_format: { type: 'json_object' }, max_completion_tokens: 2500,
     });
     let groups = null;

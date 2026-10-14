@@ -128,6 +128,10 @@ La bandeja muestra por defecto borradores para revisar. El selector Mostrar perm
 Ejemplo de referencia: un cliente pide un totalizador de gastos por cuenta y período y recibe orientación sobre sumas y saldos e interfaz contable. Se documenta como Soporte Remoto / Consulta / Capacitacion, En Proceso. La promesa de enviar un video no acredita envío ni cierre resuelto.
 
 Las pausas de inactividad sólo controlan cuándo procesar. La agrupación reúne solicitudes, respuestas y confirmaciones tardías; una nueva solicitud explícita de otro tema inicia otro grupo. Los fragmentos generados se consolidan sin borrarlos (estado merged y vínculo al borrador principal). Si hay varias ediciones humanas incompatibles, se conserva todo y se exige reconciliación. Los contactos se sincronizan desde la agenda/nombre de perfil de WhatsApp por usuario, con alias LID/PN, sin usar el nombre propio de mensajes salientes. Se rellenan contactos vacíos; los nombres manuales existentes se conservan.
+## Validación de cobertura de agrupación (5.00.293)
+
+El agrupador recibe el número exacto de mensajes e índices esperados. Si la respuesta omite, repite o inventa índices, se admite una sola corrección con diagnóstico de índices faltantes y la misma evidencia. Ambas llamadas se registran en consumo. Sólo una respuesta con cobertura completa puede generar tareas; un segundo error mantiene el trabajo fallido con reintentos de cola acotados. No se inventan pertenencias de mensajes para completar la respuesta.
+
 ## Reconexión y continuidad sin repetición (5.00.292)
 
 ALSO, DEMJG y SANA conservan un punto de continuidad por usuario (`support_sessions.historyResumeAt`), capturado antes de recibir el historial de una nueva conexión. Se recuperan mensajes desde la última fecha sincronizada aunque hayan pasado varios días. Para una primera conexión sin evidencia previa se inicia con el último día; los períodos históricos anteriores siguen disponibles mediante solicitud explícita.
