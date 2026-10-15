@@ -1,8 +1,9 @@
-// Asisto | Version: 5.00.269 | Fecha: 2026-09-29
+// Asisto | Version: 5.00.294 | Fecha: 2026-10-15
 (() => {
   let chats = [], knownChats = [], owner = '', timer, stopped = false, currentJid = '', currentName = '', taskData = { tasks: [], messages: [] }, anchorId = '';
-  const remembered = new Map(), addressBook = [], selected = new Map(), controls = new Map();
-  let assignmentBusy = false, messageRequest = 0;
+  const remembered = new Map(), syncedAgenda = new Map(), addressBook = new Map(), addressAliases = new Map(), selected = new Map(), controls = new Map();
+  let assignmentBusy = false, messageRequest = 0, tasksInFlight = null, indexInFlight = null, syncTimer;
+  let chatIndex = AsistoMatch.indexContacts([]), knownIndex = chatIndex, addressIndex = chatIndex;
   const extractJid = value => ((value || '').match(/(?:^|_)([0-9]+@(?:s\.whatsapp\.net|c\.us|lid))(?:_|$)/)?.[1] || '').replace('@c.us', '@s.whatsapp.net');
   const extractMessageId = value => {
     const raw = String(value || '');
@@ -187,17 +188,25 @@
       for (const message of selectedMessages) if (selected.get(message.id) === message) selected.delete(message.id);
       renderMessageControls(); renderToolbar();
       chrome.runtime.sendMessage({ action: 'SET_CONTEXT', jid: currentJid, name: currentName, draftId: response.data?.draftId || '', refresh: true }).catch(() => {});
-      refreshTasks().catch(() => {});
+      refreshTasks(true).catch(() => {});
     };
     const feedback = document.createElement('span'); feedback.className = 'asisto-message-feedback'; feedback.setAttribute('role', 'alert');
     bar.append(title, all, none, from, destination, action, assign, feedback);
   }
-  async function refreshTasks() {
-    if (!currentJid) return; const requestedJid = currentJid, generation = ++messageRequest; const response = await chrome.runtime.sendMessage({ action: 'MESSAGES', jid: requestedJid }); if (!response?.data || currentJid !== requestedJid || generation !== messageRequest) return; taskData = response.data;
-    renderMessageControls();
+  async function refreshTasks(force = false) {
+    if (!currentJid) return;
+    if (!force && tasksInFlight?.jid === currentJid) return tasksInFlight.promise;
+    const requestedJid = currentJid, generation = ++messageRequest;
+    const request = { jid: requestedJid };
+    request.promise = (async () => {
+      const response = await chrome.runtime.sendMessage({ action: 'MESSAGES', jid: requestedJid });
+      if (!response?.data || currentJid !== requestedJid || generation !== messageRequest) return;
+      taskData = response.data; renderMessageControls();
+    })().finally(() => { if (tasksInFlight === request) tasksInFlight = null; });
+    tasksInFlight = request; return request.promise;
   }
   function update() {
-    if (stopped) return; observer.disconnect(); const targets = [...document.querySelectorAll('#pane-side [role="row"], #pane-side [role="listitem"], #main header')], retained = new Set();
+    if (stopped || document.visibilityState === 'hidden') return; observer.disconnect(); const targets = [...document.querySelectorAll('#pane-side [role="row"], #pane-side [role="listitem"], #main header')], retained = new Set();
     for (const target of targets) {
       if (target.closest('[data-asisto-owned]')) continue;
       const placeholder = value => /(?:haz|hac[eé]) clic aqu[ií]|click here|informaci[oó]n (?:del|de) contacto|contact info/i.test(value || '');
@@ -206,11 +215,11 @@
       if (!label) continue;
       const jid = extractJid(target.getAttribute('data-id') || target.querySelector('[data-id]')?.getAttribute('data-id')) || (target.matches('#main header') ? [...document.querySelectorAll('#main [data-id]')].map(node => extractJid(node.getAttribute('data-id'))).find(Boolean) || '' : ''), name = (label.textContent || '').trim() || label.getAttribute('title') || '';
       if (jid && name && remembered.get(jid) !== name) { remembered.set(jid, name); chrome.runtime.sendMessage({ action: 'CONTACT', jid, name }).then(result => { if (result?.data?.saved) refresh(); else if (result?.error) remembered.delete(jid); }).catch(() => {}); }
-      const match = AsistoMatch.matchContact(chats, { jid, name }), known = AsistoMatch.matchContact(knownChats, { jid, name }); let button = target.querySelector('.asisto-task-badge');
-      const localContact = AsistoMatch.matchContact(addressBook.map(contact => ({ jid: contact.aliases[0], aliases: contact.aliases, name: contact.name, count: 0 })), { jid, name });
+      const match = AsistoMatch.matchContact(chatIndex, { jid, name }), known = AsistoMatch.matchContact(knownIndex, { jid, name }); let button = target.querySelector('.asisto-task-badge');
+      const localContact = AsistoMatch.matchContact(addressIndex, { jid, name });
       const header = target.matches('#main header');
       const changedName = header && !!name && currentName !== name;
-      const namedContact = changedName ? AsistoMatch.matchContact(knownChats, { name }) || AsistoMatch.matchContact(addressBook.map(contact => ({ jid: contact.aliases[0], aliases: contact.aliases, name: contact.name })), { name }) : null;
+      const namedContact = changedName ? AsistoMatch.matchContact(knownIndex, { name }) || AsistoMatch.matchContact(addressIndex, { name }) : null;
       // During a chat switch WhatsApp can show the new header while the old
       // messages are still mounted. Do not publish the former chat's ID.
       const activeJid = header ? (changedName && jid === currentJid ? namedContact?.jid || '' : jid || known?.jid || localContact?.jid || '') : '';
@@ -223,16 +232,75 @@
     }
     document.querySelectorAll('.asisto-task-badge').forEach(button => { if (!retained.has(button)) button.remove(); }); renderMessageControls(); observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['title', 'data-id'] });
   }
-  const observer = new MutationObserver(records => { if (records.every(record => record.target.closest?.('[data-asisto-owned]') || (record.type === 'childList' && [...record.addedNodes, ...record.removedNodes].every(node => node.nodeType === 1 && node.matches?.('[data-asisto-owned]'))))) return; clearTimeout(timer); timer = setTimeout(update, 180); });
-  async function refresh() { try { const result = await chrome.runtime.sendMessage({ action: 'INDEX' }); if (owner !== result?.data?.owner) remembered.clear(); owner = result?.data?.owner || ''; chats = result?.data?.chats || []; knownChats = result?.data?.knownChats || chats; } catch { chats = []; knownChats = []; if (!chrome.runtime?.id) stopped = true; } update(); syncAddressBook(); }
-  function syncAddressBook() { if (!chats.length || !addressBook.length) return; const found = new Map(); for (const contact of addressBook) for (const alias of contact.aliases || []) { const chat = chats.find(item => item.jid === alias || item.aliases?.includes(alias)); if (chat && contact.name) found.set(chat.jid, { jid: chat.jid, name: contact.name, aliases: contact.aliases }); } const pending = [...found.values()].filter(contact => remembered.get(contact.jid) !== contact.name); if (!pending.length) return; pending.forEach(contact => remembered.set(contact.jid, contact.name)); for (let offset = 0; offset < pending.length; offset += 50) chrome.runtime.sendMessage({ action: 'CONTACTS', contacts: pending.slice(offset, offset + 50) }).then(result => { if (result?.error) pending.slice(offset, offset + 50).forEach(contact => remembered.delete(contact.jid)); else refresh(); }).catch(() => pending.slice(offset, offset + 50).forEach(contact => remembered.delete(contact.jid))); }
-  window.addEventListener('message', event => { if (event.source !== window || event.origin !== location.origin || event.data?.source !== 'asisto-whatsapp-contacts-v1' || !Array.isArray(event.data.contacts)) return; for (const contact of event.data.contacts) if (typeof contact?.name === 'string' && Array.isArray(contact.aliases)) addressBook.push(contact); update(); syncAddressBook(); });
+  function scheduleUpdate() { clearTimeout(timer); timer = setTimeout(update, 180); }
+  const observer = new MutationObserver(records => {
+    const relevant = records.some(record => {
+      const target = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+      if (target?.closest('[data-asisto-owned], #main footer, #main [contenteditable="true"]')) return false;
+      const changed = [...record.addedNodes || [], ...record.removedNodes || []];
+      if (record.type === 'childList' && changed.length && changed.every(node => node.nodeType === 1 && node.matches?.('[data-asisto-owned]'))) return false;
+      if (target?.closest('#main, #pane-side')) return true;
+      return changed.some(node => node.nodeType === 1 && (node.matches('#main, #pane-side') || node.querySelector('#main, #pane-side')));
+    });
+    if (relevant) scheduleUpdate();
+  });
+  function refresh() {
+    if (indexInFlight) return indexInFlight;
+    indexInFlight = (async () => {
+      try {
+        const result = await chrome.runtime.sendMessage({ action: 'INDEX' });
+        if (owner !== result?.data?.owner) { remembered.clear(); syncedAgenda.clear(); }
+        owner = result?.data?.owner || ''; chats = result?.data?.chats || []; knownChats = result?.data?.knownChats || chats;
+      } catch { if (!chrome.runtime?.id) stopped = true; }
+      chatIndex = AsistoMatch.indexContacts(chats); knownIndex = AsistoMatch.indexContacts(knownChats);
+      update(); scheduleAddressSync();
+    })().finally(() => { indexInFlight = null; });
+    return indexInFlight;
+  }
+  let addressSyncRunning = false;
+  function scheduleAddressSync() { clearTimeout(syncTimer); syncTimer = setTimeout(() => syncAddressBook().catch(() => {}), 300); }
+  async function syncAddressBook() {
+    if (addressSyncRunning || !chats.length || !addressBook.size) return;
+    addressSyncRunning = true;
+    try {
+      const found = new Map();
+      for (const contact of addressBook.values()) for (const alias of contact.aliases) {
+        const chat = chatIndex.byJid.get(alias)?.[0];
+        if (chat) found.set(chat.jid, { jid: chat.jid, name: contact.name, aliases: contact.aliases });
+      }
+      const expectedOwner = owner;
+      const pending = [...found.values()].filter(contact => syncedAgenda.get(contact.jid) !== contact.name);
+      let saved = false;
+      for (let offset = 0; offset < pending.length; offset += 50) {
+        if (owner !== expectedOwner) break;
+        const batch = pending.slice(offset, offset + 50); batch.forEach(contact => syncedAgenda.set(contact.jid, contact.name));
+        try { const result = await chrome.runtime.sendMessage({ action: 'CONTACTS', contacts: batch, owner: expectedOwner }); if (result?.error) batch.forEach(contact => syncedAgenda.delete(contact.jid)); else saved = true; }
+        catch { batch.forEach(contact => syncedAgenda.delete(contact.jid)); }
+      }
+      if (saved) refresh().catch(() => {});
+    } finally { addressSyncRunning = false; }
+  }
+  window.addEventListener('message', event => {
+    if (event.source !== window || event.origin !== location.origin || event.data?.source !== 'asisto-whatsapp-contacts-v1' || !Array.isArray(event.data.contacts)) return;
+    let changed = false;
+    for (const contact of event.data.contacts) {
+      if (typeof contact?.name !== 'string' || !Array.isArray(contact.aliases)) continue;
+      const aliases = [...new Set(contact.aliases.filter(alias => typeof alias === 'string' && /^\d+@(s\.whatsapp\.net|lid)$/.test(alias)))];
+      if (!aliases.length) continue;
+      const key = aliases.map(alias => addressAliases.get(alias)).find(Boolean) || aliases[0], previous = addressBook.get(key);
+      const merged = [...new Set([...(previous?.aliases || []), ...aliases])];
+      if (previous?.name === contact.name && merged.length === previous.aliases.length) continue;
+      addressBook.set(key, { jid: key, name: contact.name, aliases: merged, count: 0 });
+      merged.forEach(alias => addressAliases.set(alias, key)); changed = true;
+    }
+    if (changed) { addressIndex = AsistoMatch.indexContacts([...addressBook.values()]); scheduleUpdate(); scheduleAddressSync(); }
+  });
   window.postMessage({ source: 'asisto-whatsapp-contacts-v1', request: true }, location.origin);
   let scrollFrame = 0;
   document.addEventListener('scroll', () => {
     if (!scrollFrame) scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; positionControls(); });
-    clearTimeout(timer); timer = setTimeout(update, 150);
   }, true);
-  refresh(); const interval = setInterval(() => { if (stopped) clearInterval(interval); else { refresh(); refreshTasks().catch(() => {}); } }, 30000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { refresh(); refreshTasks().catch(() => {}); } });
+  refresh(); const interval = setInterval(() => { if (stopped) clearInterval(interval); else if (document.visibilityState !== 'hidden') { refresh(); refreshTasks().catch(() => {}); } }, 30000);
   chrome.storage.onChanged.addListener((changes, area) => { if (area === 'session' && changes.contactControlUpdated) { refresh(); refreshTasks().catch(() => {}); } });
 })();

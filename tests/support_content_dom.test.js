@@ -19,8 +19,10 @@ async function mount(serverMessages = []) {
     if (message.action === 'ACTIVE_CONTEXT') return { data: { jid: '999@lid', name: 'Otro contacto' } };
     if (message.action === 'MESSAGES') return { data: { tasks: [], messages: serverMessages } };
     return { ok: true };
-  } }, storage: { onChanged: { addListener() {} } } };
+  } }, storage: { onChanged: { addListener(listener) { w.fixtureStorageChanged = listener; } } } };
   w.alert = text => { throw new Error(text); };
+  const nativeInterval=w.setInterval.bind(w);
+  w.setInterval=(callback,ms)=>{if(ms===30000)w.fixturePoll=callback;return nativeInterval(callback,ms);};
   w.eval(matcher); w.eval(source); await pause();
   return { dom, w, calls };
 }
@@ -38,6 +40,83 @@ test('replacing WhatsApp main keeps selection controls usable without pending ta
     assert.equal(bar.querySelector('select').value, 'new');
     bar.querySelector('.primary').click(); await pause();
     assert.equal(calls.find(call => call.action === 'ASSIGN_MESSAGES').destination, 'new');
+  } finally { dom.window.close(); }
+});
+
+test('repeated address-book snapshots reuse one indexed contact instead of growing memory', async () => {
+  const { dom, w } = await mount();
+  try {
+    const original=w.AsistoMatch.indexContacts, sizes=[];
+    w.AsistoMatch.indexContacts=rows=>{if(rows.some(r=>r.name==='Agenda fixture')) sizes.push(rows.length);return original(rows);};
+    const publish=aliases=>w.dispatchEvent(new w.MessageEvent('message',{source:w,origin:w.location.origin,data:{source:'asisto-whatsapp-contacts-v1',contacts:[{name:'Agenda fixture',aliases}]}}));
+    for(let i=0;i<100;i++) publish(['123@lid','5491111111111@s.whatsapp.net']);
+    await pause();
+    assert.deepEqual(sizes,[1]);
+    publish(['123@lid','5491111111111@s.whatsapp.net']);await pause();
+    assert.deepEqual(sizes,[1]);
+  } finally { dom.window.close(); }
+});
+
+test('typing, unrelated page changes and pure scroll skip full scans while preserving selection', async () => {
+  const { dom, w } = await mount();
+  try {
+    const check=w.document.querySelector('.asisto-message-control input');check.click();await pause();
+    const original=w.document.querySelectorAll.bind(w.document);let scans=0;
+    w.document.querySelectorAll=selector=>{if(selector.includes('#pane-side [role='))scans++;return original(selector);};
+    w.document.querySelector('footer').append(w.document.createElement('span'));
+    const unrelated=w.document.createElement('aside');w.document.body.append(unrelated);unrelated.textContent='notificación';
+    w.document.dispatchEvent(new w.Event('scroll',{bubbles:true}));await pause();
+    assert.equal(scans,0);assert.equal(check.checked,true);
+    const row=w.document.createElement('div');row.className='message-in';row.dataset.id='false_123@lid_NEW00000001';row.textContent='Mensaje nuevo';
+    w.document.querySelector('#messages').append(row);await pause();
+    assert.ok(scans>0);assert.equal(original('.asisto-message-control input').length,4);assert.equal(check.checked,true);
+  } finally { dom.window.close(); }
+});
+
+test('overlapping refreshes share one message request and keep selected evidence', async () => {
+  const { dom, w, calls } = await mount();
+  try {
+    const check=w.document.querySelector('.asisto-message-control input');check.click();
+    const original=w.chrome.runtime.sendMessage;let finish,requests=0;
+    w.chrome.runtime.sendMessage=message=>message.action==='MESSAGES'?(requests++,new Promise(resolve=>{finish=resolve;})):original(message);
+    w.fixtureStorageChanged({contactControlUpdated:{}},'session');
+    w.fixtureStorageChanged({contactControlUpdated:{}},'session');
+    await pause();assert.equal(requests,1);
+    finish({data:{tasks:[],messages:[]}});await pause();
+    assert.equal(check.checked,true);
+    w.document.querySelector('.asisto-message-toolbar .primary').click();await pause();
+    assert.equal(calls.find(call=>call.action==='ASSIGN_MESSAGES').selectedMessages.length,1);
+  } finally { dom.window.close(); }
+});
+
+test('hidden WhatsApp pauses polling and resuming preserves selected messages', async () => {
+  const { dom, w, calls } = await mount();
+  try {
+    const check=w.document.querySelector('.asisto-message-control input');check.click();
+    let visibility='hidden';Object.defineProperty(w.document,'visibilityState',{configurable:true,get:()=>visibility});
+    const before=calls.filter(c=>['INDEX','MESSAGES'].includes(c.action)).length;
+    w.fixturePoll();await pause();
+    assert.equal(calls.filter(c=>['INDEX','MESSAGES'].includes(c.action)).length,before);
+    visibility='visible';w.document.dispatchEvent(new w.Event('visibilitychange'));await pause();
+    assert.ok(calls.filter(c=>['INDEX','MESSAGES'].includes(c.action)).length>before);
+    assert.equal(check.checked,true);
+  } finally { dom.window.close(); }
+});
+
+test('agenda and visible-name caches do not trigger repeated contact synchronization', async () => {
+  const { dom, w } = await mount();
+  try {
+    const original=w.chrome.runtime.sendMessage;let syncs=0;
+    w.chrome.runtime.sendMessage=async message=>{
+      if(message.action==='INDEX') return {data:{owner:'ALSO:also',chats:[{jid:'123@lid',name:'Tecnoaplicaciones Magali',count:1}],knownChats:[]}};
+      if(message.action==='CONTACTS'){syncs++;return {data:{saved:true}};}
+      return original(message);
+    };
+    w.fixtureStorageChanged({contactControlUpdated:{}},'session');await pause();
+    w.dispatchEvent(new w.MessageEvent('message',{source:w,origin:w.location.origin,data:{source:'asisto-whatsapp-contacts-v1',contacts:[{name:'Agenda personal',aliases:['123@lid']}]}}));
+    await pause();await pause();await pause();
+    w.fixtureStorageChanged({contactControlUpdated:{}},'session');await pause();await pause();
+    assert.equal(syncs,1);
   } finally { dom.window.close(); }
 });
 
