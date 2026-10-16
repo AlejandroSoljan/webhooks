@@ -1,6 +1,12 @@
 <!-- Asisto | Version: 5.00.178 | Fecha: 2026-09-20 -->
 # Tickets desde WhatsApp: agente personal en cada PC
 
+## Destinatarios Manager — 5.00.298 / extensión 1.0.58
+
+El compositor ofrece un listado explícito de contactos de HubSpot con email terminado exactamente en `@managersistemas.com`, sin duplicados, y conserva el ingreso manual. GET `/api/support/extension/hubspot/mail-contacts` usa la integración del tenant autenticado, busca páginas de 100 hasta 1000 resultados y devuelve `{contacts:[{name,email}],incomplete}`. La interfaz avisa ante resultados parciales o error; nunca elige ni envía automáticamente.
+
+Los nuevos borradores de correo incluyen empresa y contacto de la edición vigente y fecha/hora de `fields.messageDate` (fecha de conversación utilizada para el ticket), en `America/Argentina/Buenos_Aires`. Si falta se indica «No disponible»; no se inventa la hora actual. Los borradores de correo existentes se conservan. El contenido se revisa antes de confirmar. Pruebas: directorio paginado/dominio exacto y DOM de selección, entrada manual, fecha y confirmación.
+
 ## Correo SMTP por usuario — 5.00.297 / extensión 1.0.56
 
 Extensión 1.0.57: el engranaje junto a Actualizar abre Configuración, con correo por usuario y exclusiones de contactos. Ambos controles dejan de ocupar permanentemente la vista de tareas; se conservan nodos, campos, listeners y estado al abrir/cerrar, sin recargar tareas. Cerrar o Escape vuelve al engranaje y vacía solamente la contraseña SMTP aún escrita, no la cifrada en servidor. No cambia autenticación ni configuración persistida.

@@ -87,7 +87,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       case 'MAIL_HISTORY': return api('/drafts/' + id + '/mail');
       case 'MAIL_SEND': return api('/drafts/' + id + '/mail', message.mail, session.csrf);
       case 'COMPANY_PROFILE': return api('/hubspot/company?id=' + encodeURIComponent(String(message.companyId || '')) + '&jid=' + encodeURIComponent(String(message.jid || '')));
-      case 'HUBSPOT_SEARCH': return api('/hubspot/search?type=' + encodeURIComponent(String(message.type || '')) + '&q=' + encodeURIComponent(String(message.query || '')));
+    case 'MAIL_CONTACTS': return api('/hubspot/mail-contacts');
+    case 'HUBSPOT_SEARCH': return api('/hubspot/search?type=' + encodeURIComponent(String(message.type || '')) + '&q=' + encodeURIComponent(String(message.query || '')));
       case 'CONNECT': return api('/hubspot/connect', { token: message.token }, session.csrf);
       case 'PUBLISH': return api('/drafts/' + id + '/publish', { revision: message.revision, mapping: message.mapping }, session.csrf);
       default: throw new Error('invalid_action');

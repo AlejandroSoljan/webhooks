@@ -236,6 +236,22 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
   router.post('/hubspot/connect', route(async (req, s, scope) => {
     fail('hubspot_backend_managed', 410);
   }));
+  router.get('/hubspot/mail-contacts', route(async (req, s, scope) => {
+    const { client } = await clientFor(s, scope), contacts = new Map();
+    let after;
+    for (let page = 0; page < 10; page++) {
+      const result = await client.request('/crm/v3/objects/contacts/search', {
+        query: 'managersistemas.com', limit: 100, properties: ['firstname', 'lastname', 'email'], ...(after ? { after } : {})
+      });
+      for (const row of result.results || []) {
+        const p = row.properties || {}, email = String(p.email || '').trim().toLowerCase();
+        if (/^[^\s@]+@managersistemas\.com$/.test(email)) contacts.set(email, { email, name: [p.firstname, p.lastname].filter(Boolean).join(' ') });
+      }
+      after = result.paging?.next?.after;
+      if (!after) break;
+    }
+    return { contacts: [...contacts.values()].sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email)), incomplete: !!after };
+  }));
   router.get('/hubspot/search', route(async (req, s, scope) => {
     const type = text(req.query.type, 20), query = text(req.query.q || '', 200);
     const { client } = await clientFor(s, scope), result = await client.search(type, query, 15);

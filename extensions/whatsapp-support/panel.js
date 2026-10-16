@@ -5,6 +5,11 @@ let consumedOpenAt = null;
 let mailDraftId = '', mailGeneration = 0, smtpOwner = '', mailPending = false;
 const emailDrafts = new Map();
 const emailKey = id => 'email-draft:' + owner + ':' + id;
+function taskEmailBody(fields, task) {
+  const raw = task?.fields?.messageDate, date = raw ? new Date(raw) : null;
+  const stamp = date && Number.isFinite(date.getTime()) ? date.toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }) + ' (Argentina)' : 'No disponible';
+  return `Empresa: ${fields.company || 'Sin identificar'}\nContacto: ${fields.contact || 'Sin identificar'}\nFecha y hora del ticket (conversación): ${stamp}\n\n${fields.description || ''}`;
+}
 function emailSnapshot() { return { to:$('mailTo').value, subject:$('mailSubject').value, body:$('mailBody').value, key:emailDrafts.get(emailKey(mailDraftId))?.key || crypto.randomUUID() }; }
 function rememberEmail() {
   if (!mailDraftId || $('mailComposer').hidden) return;
@@ -18,12 +23,20 @@ async function openTaskEmail() {
   const stored = await chrome.storage.session.get(storageKey);
   if (generation !== mailGeneration || current?.id !== id) return;
   const previous = emailDrafts.get(storageKey) || stored[storageKey]; mailDraftId = id;
-  const value = previous || { to:'', subject:fields.subject, body:fields.description, key:crypto.randomUUID() }; emailDrafts.set(storageKey,value);
+  const value = previous || { to:'', subject:fields.subject, body:taskEmailBody(fields, current), key:crypto.randomUUID() }; emailDrafts.set(storageKey,value);
   $('mailTo').value=value.to; $('mailSubject').value=value.subject; $('mailBody').value=value.body;
   $('mailTaskName').textContent='Tarea: '+fields.subject;
   $('mailState').textContent=''; $('mailNewAttempt').hidden=true; $('mailPreview').hidden=true; $('mailForm').hidden=false; $('mailComposer').hidden=false;
   $('mailConfirm').disabled=false; $('mailReview').disabled=false;
   $('mailContacts').replaceChildren(); $('mailHistory').replaceChildren(); rememberEmail();
+  $('mailCompanyContacts').replaceChildren(new Option('Elegir contacto o escribir el email abajo', ''));
+  $('mailContactsState').textContent='Consultando contactos de Manager…';
+  $('mailCompanyContacts').onchange=()=>{ if (!$('mailCompanyContacts').value) return; $('mailTo').value=$('mailCompanyContacts').value; $('mailTo').dispatchEvent(new Event('input',{bubbles:true})); };
+  api('MAIL_CONTACTS').then(result=>{
+    if (generation !== mailGeneration || mailDraftId !== id) return;
+    for (const row of result.contacts || []) $('mailCompanyContacts').append(new Option(row.name ? `${row.name} · ${row.email}` : row.email,row.email));
+    $('mailContactsState').textContent=result.incomplete?'Lista parcial. También podés escribir el destinatario.':result.contacts?.length?'Contactos de HubSpot · @managersistemas.com':'No hay contactos de Manager disponibles. Podés escribir el email.';
+  }).catch(()=>{ if (generation === mailGeneration && mailDraftId === id) $('mailContactsState').textContent='No se pudo cargar la lista. Podés escribir el destinatario manualmente.'; });
   if (fields.contact) api('HUBSPOT_SEARCH',{type:'contacts',query:fields.contact}).then(result=>{
     if (generation !== mailGeneration || mailDraftId !== id) return;
     for (const row of result.results || []) { const p=row.properties || {}; if (!p.email) continue; const o=document.createElement('option');o.value=p.email;o.label=[p.firstname,p.lastname].filter(Boolean).join(' ');$('mailContacts').append(o); }

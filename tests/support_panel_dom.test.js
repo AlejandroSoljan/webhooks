@@ -40,6 +40,7 @@ test('task email requires preview and explicit confirmation, preserves task edit
    if(message.action==='COMPANY_PROFILE')return{data:{company:null}};
    if(message.action==='HUBSPOT_SEARCH')return{data:{results:[]}};
    if(message.action==='MAIL_HISTORY')return{data:[]};
+   if(message.action==='MAIL_CONTACTS')return{data:{contacts:[{name:'Soporte',email:'soporte@managersistemas.com'}]}};
    if(message.action==='MAIL_SETTINGS')return{data:{configured:false}};
    if(message.action==='MAIL_SAVE')return{data:{configured:true}};
    if(message.action==='MAIL_SEND')return new Promise(resolve=>{finish=resolve;});
@@ -47,9 +48,14 @@ test('task email requires preview and explicit confirmation, preserves task edit
  }}};
  try{
    w.eval(source+'\nglobalThis.setMailTestTask=value=>{current=value;renderFields();};');await pause();
-   w.setMailTestTask({id:'task',fields:{subject:'Título editado',description:'Texto editado'},source:{}});
+   w.setMailTestTask({id:'task',fields:{subject:'Título editado',description:'Texto editado',company:'Empresa prueba',contact:'Contacto prueba',messageDate:'2026-10-16T15:30:00Z'},source:{}});
    w.document.querySelector('#emailTask').click();await pause();
    assert.equal(w.document.querySelector('#mailSubject').value,'Título editado');assert.equal(calls.filter(x=>x.action==='MAIL_SEND').length,0);
+   assert.match(w.document.querySelector('#mailBody').value,/Empresa: Empresa prueba\nContacto: Contacto prueba/);
+   assert.match(w.document.querySelector('#mailBody').value,/16\/10\/2026.*12:30:00/);
+   assert.equal(w.document.querySelector('#mailTo').value,'');
+   const directory=w.document.querySelector('#mailCompanyContacts');directory.value='soporte@managersistemas.com';directory.dispatchEvent(new w.Event('change'));
+   assert.equal(w.document.querySelector('#mailTo').value,'soporte@managersistemas.com');
    w.document.querySelector('#mailTo').value='client@example.com';
    w.document.querySelector('#mailForm').dispatchEvent(new w.Event('submit',{cancelable:true}));
    assert.equal(w.document.querySelector('#mailPreview').hidden,false);assert.equal(calls.filter(x=>x.action==='MAIL_SEND').length,0);

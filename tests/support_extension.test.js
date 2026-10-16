@@ -34,6 +34,16 @@ async function call(path,body,extra={}) {
  if(body){const r=await fetch(base+'/session',{headers});const session=await r.json();headers['X-Asisto-Extension']=session.csrf;headers['Content-Type']='application/json';}
  const response=await fetch(base+path,{headers,...(body?{method:'POST',body:JSON.stringify(body)}:{})});return{status:response.status,data:await response.json()};
 }
+test('mail directory paginates and returns only deduplicated exact corporate emails', async () => {
+ let pages=0;
+ remote.request=async(path,body)=>{
+   assert.equal(path,'/crm/v3/objects/contacts/search');assert.equal(body.query,'managersistemas.com');pages++;
+   return pages===1?{results:[{properties:{email:'ONE@managersistemas.com',firstname:'Uno'}},{properties:{email:'bad@managersistemas.com.evil'}}],paging:{next:{after:'100'}}}:{results:[{properties:{email:'one@managersistemas.com',firstname:'Uno'}},{properties:{email:'two@managersistemas.com',firstname:'Dos'}}]};
+ };
+ const result=await call('/hubspot/mail-contacts');assert.equal(result.status,200);assert.equal(pages,2);assert.equal(result.data.incomplete,false);
+ assert.deepEqual(result.data.contacts.map(x=>x.email).sort(),['one@managersistemas.com','two@managersistemas.com']);
+});
+
 test('company profile preserves exact subscription categories and only exposes selected properties', async () => {
  let path;
  const api = new HubSpotContract('unused');
