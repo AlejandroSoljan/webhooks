@@ -5,8 +5,9 @@ const { ObjectId } = require('mongodb');
 const { scopeOf, scopedId, hash, text, fail, SupportError, TASK_CHOICES } = require('./core');
 const { HubSpotContract } = require('./hubspot');
 const { hubspotCredential, tenantSuffix } = require('./hubspot_config');
+const { SupportMail } = require('./mail');
 
-function createExtensionRouter({ getService, hubspotFactory = token => new HubSpotContract(token), env = process.env }) {
+function createExtensionRouter({ getService, hubspotFactory = token => new HubSpotContract(token), mailFactory = service => new SupportMail(service), env = process.env }) {
   const router = express.Router();
   router.use(express.json({ limit: '128kb' }));
   router.use(async (req, res, next) => {
@@ -44,6 +45,11 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     if (!credential) fail('hubspot_not_configured', 409);
     return { connection: credential.connection, client: hubspotFactory(credential.token), source: credential.source };
   };
+  router.get('/mail/settings', route(async (req,s,scope) => mailFactory(s).view(scope)));
+  router.post('/mail/settings', route(async (req,s,scope) => mailFactory(s).save(scope,req.body)));
+  router.post('/mail/verify', route(async (req,s,scope) => mailFactory(s).verify(scope)));
+  router.get('/drafts/:id/mail', route(async (req,s,scope) => { const row = await rowFor(s,scope,req.params.id); return mailFactory(s).history(scope,row._id); }));
+  router.post('/drafts/:id/mail', route(async (req,s,scope) => { const row = await rowFor(s,scope,req.params.id); return mailFactory(s).send(scope,row,req.body); }));
   const configuredOwner = async (s, scope, client) => {
     const config = await s.db.collection('tenant_config').findOne({ _id: scope.tenantId }, { projection: { hubspotOwnerId: 1, hubspot_owner_id: 1, hubspotOwnerTicketId: 1 } });
     const saved = text(config?.hubspotOwnerId || config?.hubspot_owner_id || '', 100);

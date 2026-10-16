@@ -2,6 +2,47 @@
 const $ = id => document.getElementById(id);
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, refreshGeneration = 0, companyTimer, companyGeneration = 0;
 let consumedOpenAt = null;
+let mailDraftId = '', mailGeneration = 0, smtpOwner = '', mailPending = false;
+const emailDrafts = new Map();
+const emailKey = id => 'email-draft:' + owner + ':' + id;
+function emailSnapshot() { return { to:$('mailTo').value, subject:$('mailSubject').value, body:$('mailBody').value, key:emailDrafts.get(emailKey(mailDraftId))?.key || crypto.randomUUID() }; }
+function rememberEmail() {
+  if (!mailDraftId || $('mailComposer').hidden) return;
+  const key = emailKey(mailDraftId), value = emailSnapshot(); emailDrafts.set(key,value);
+  if (emailDrafts.size > 30) emailDrafts.delete(emailDrafts.keys().next().value);
+  Promise.resolve(chrome.storage.session.set?.({[key]:value})).catch(()=>{});
+}
+async function openTaskEmail() {
+  if (!current?.id || mailPending) return;
+  const id = current.id, generation = ++mailGeneration, storageKey = emailKey(id), fields = editorFields();
+  const stored = await chrome.storage.session.get(storageKey);
+  if (generation !== mailGeneration || current?.id !== id) return;
+  const previous = emailDrafts.get(storageKey) || stored[storageKey]; mailDraftId = id;
+  const value = previous || { to:'', subject:fields.subject, body:fields.description, key:crypto.randomUUID() }; emailDrafts.set(storageKey,value);
+  $('mailTo').value=value.to; $('mailSubject').value=value.subject; $('mailBody').value=value.body;
+  $('mailTaskName').textContent='Tarea: '+fields.subject;
+  $('mailState').textContent=''; $('mailNewAttempt').hidden=true; $('mailPreview').hidden=true; $('mailForm').hidden=false; $('mailComposer').hidden=false;
+  $('mailConfirm').disabled=false; $('mailReview').disabled=false;
+  $('mailContacts').replaceChildren(); $('mailHistory').replaceChildren(); rememberEmail();
+  if (fields.contact) api('HUBSPOT_SEARCH',{type:'contacts',query:fields.contact}).then(result=>{
+    if (generation !== mailGeneration || mailDraftId !== id) return;
+    for (const row of result.results || []) { const p=row.properties || {}; if (!p.email) continue; const o=document.createElement('option');o.value=p.email;o.label=[p.firstname,p.lastname].filter(Boolean).join(' ');$('mailContacts').append(o); }
+  }).catch(()=>{});
+  api('MAIL_HISTORY',{id}).then(rows=>{
+    if (generation !== mailGeneration || mailDraftId !== id) return;
+    for (const row of rows || []) { const p=document.createElement('p');p.textContent=new Date(row.at).toLocaleString()+' · '+mailStatus(row.state);$('mailHistory').append(p); }
+  }).catch(()=>{});
+}
+function mailStatus(state) { return {accepted:'Aceptado por el servidor SMTP (no confirma entrega al destinatario)',rejected:'Rechazado por SMTP',uncertain:'Resultado sin confirmar. Revisá la casilla antes de volver a enviar.',sending:'Envío iniciado; no confirmado todavía. No lo repitas.'}[state] || 'Sin confirmar'; }
+async function loadSMTP() {
+  const requestedOwner=owner;
+  try {
+    const config=await api('MAIL_SETTINGS'); if (requestedOwner !== owner) return;
+    for (const [id,key] of [['smtpHost','host'],['smtpPort','port'],['smtpUser','user'],['smtpFrom','from'],['smtpName','name']]) $(id).value=config[key] || (key==='port'?'587':'');
+    $('smtpPassword').value='';$('smtpPassword').placeholder=config.configured?'Guardada · dejar vacío para conservar':'Sin configurar';smtpOwner=owner;
+    $('smtpState').textContent=config.configured?'Configuración guardada para tu usuario.':'Configurá tu casilla de correo.';
+  } catch(e) { $('smtpState').textContent=errors[e.message] || 'No se pudo consultar la configuración de correo.'; }
+}
 let pendingContextRefresh = false;
 const unsavedEdits = new Map();
 const draftStorageKey = id => 'editor-draft-' + id;
@@ -82,6 +123,14 @@ async function loadContactControl() {
   }
 }
 const errors = {
+  mail_invalid_address: 'Ingresá una dirección de correo válida, sin nombres ni múltiples destinatarios.',
+  mail_invalid_server: 'Usá un servidor SMTP público y puerto 465 (TLS) o 587 (STARTTLS).',
+  mail_password_required: 'Ingresá la contraseña. Si cambiaste servidor o usuario debés cargarla nuevamente.',
+  mail_invalid_config: 'Revisá la configuración del correo.', mail_not_configured: 'Primero configurá y guardá tu casilla de correo.',
+  mail_dns_failed: 'No se pudo resolver el servidor SMTP.', mail_server_not_public: 'Sólo se permiten servidores SMTP públicos, no direcciones de red interna.',
+  mail_connection_failed: 'No se pudo verificar SMTP. Revisá servidor, puerto, credenciales y habilitación SMTP de tu proveedor.',
+  mail_rate_limited: 'Esperá unos segundos antes de reintentar. Se permiten hasta 30 envíos por hora por usuario.',
+  mail_invalid_message: 'Completá destinatario, asunto y mensaje.', mail_key_conflict: 'El intento corresponde a otro contenido. Cerrá y revisá el correo antes de enviar.',
   agent_access_denied: 'El agente local rechazó el acceso de la extensión. Actualizá el agente y recargá la extensión.',
   authentication_required: 'No se encontró la autorización del agente de esta PC.', agent_not_authorized: 'Iniciá el agente Baileys autorizado en esta PC.', connection_failed: 'No se pudo conectar con el agente Baileys de esta PC.',
   account_changed: 'Cambió el usuario de Asisto. Pulsá Actualizar para cargar sus tareas.', forbidden: 'Tu usuario necesita acceso a Tickets desde WhatsApp en Asisto.',
@@ -170,6 +219,7 @@ function renderFields() {
   $('discardChanges').hidden = !current.hubspot?.ticketId || !hasNewChanges;
   $('reviewWarning').hidden = !hasNewChanges;
   $('editor').hidden = false; $('hubspot').hidden = true;
+  if (mailDraftId && mailDraftId !== current.id) $('mailComposer').hidden = true;
   saveState(staged ? 'Cambios sin guardar' : '', staged ? 'dirty' : '');
   void loadCompanyProfile(displayedFields.companyId || '', displayedFields.company ? '' : current.jid || $('contacts').value);
 }
@@ -207,6 +257,7 @@ async function detail(id) {
   document.querySelectorAll('#tasks button').forEach(button => button.classList.toggle('selected', button.dataset.id === id));
 }
 async function selectContact(jid, draftId = '') {
+  ++mailGeneration; $('mailComposer').hidden=true;
   clearCompanyProfile();
   ++companyGeneration; clearTimeout(companyTimer); companySuggestions.clear();
   current = null; ++selectionGeneration; $('editor').hidden = true; $('tasks').replaceChildren();
@@ -233,6 +284,7 @@ async function refresh() {
   if (generation !== refreshGeneration || contextGeneration !== selectionGeneration) return;
   const nextOwner = nextSession.tenantId + ':' + nextSession.userId;
   if (owner && nextOwner !== owner) { clearCompanyProfile(); profileCache.clear(); }
+  if (owner && nextOwner !== owner) { ++mailGeneration;mailDraftId='';smtpOwner='';$('mailComposer').hidden=true;$('smtpForm').reset();$('smtpPassword').value='';$('mailSettings').open=false; }
   const index = await api('INDEX');
   if (generation !== refreshGeneration || contextGeneration !== selectionGeneration) return;
   if (index.owner !== nextOwner) throw new Error('account_changed');
@@ -409,4 +461,48 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   if (busy) pendingContextRefresh = true;
   else run(refresh);
 });
+$('mailSettings').addEventListener('toggle', () => { if ($('mailSettings').open && smtpOwner !== owner) void loadSMTP(); if (!$('mailSettings').open) $('smtpPassword').value=''; });
+$('smtpForm').onsubmit = async event => {
+  event.preventDefault(); if (mailPending) return; mailPending=true; $('smtpSave').disabled=true; $('smtpVerify').disabled=true;
+  $('smtpForm').querySelectorAll('input,select').forEach(input=>input.disabled=true);
+  const config=Object.fromEntries([['host','smtpHost'],['port','smtpPort'],['user','smtpUser'],['password','smtpPassword'],['from','smtpFrom'],['name','smtpName']].map(([key,id])=>[key,$(id).value]));
+  try { await api('MAIL_SAVE',{config}); $('smtpPassword').placeholder='Guardada · dejar vacío para conservar'; $('smtpState').textContent='Configuración guardada para tu usuario. Probá la conexión.'; }
+  catch(e) { $('smtpState').textContent=errors[e.message] || 'No se pudo guardar la configuración.'; }
+  finally { config.password='';$('smtpPassword').value='';mailPending=false;$('smtpSave').disabled=false;$('smtpVerify').disabled=false;$('smtpForm').querySelectorAll('input,select').forEach(input=>input.disabled=false); }
+};
+$('smtpVerify').onclick=async()=>{
+  if(mailPending)return;mailPending=true;$('smtpVerify').disabled=true;$('smtpState').textContent='Probando conexión segura…';
+  try { await api('MAIL_VERIFY');$('smtpState').textContent='Conexión y autenticación SMTP verificadas. No se envió ningún correo.'; }
+  catch(e){$('smtpState').textContent=errors[e.message] || 'No se pudo comprobar SMTP.';}
+  finally{mailPending=false;$('smtpVerify').disabled=false;}
+};
+$('emailTask').onclick=()=>{void openTaskEmail().catch(()=>{$('mailState').textContent='No se pudo abrir el correo.';});};
+$('mailForm').oninput=()=>{
+  if(mailPending)return;
+  const key=emailKey(mailDraftId), previous=emailDrafts.get(key);
+  if(previous) previous.key=crypto.randomUUID();
+  $('mailPreview').hidden=true;rememberEmail();
+};
+$('mailForm').onsubmit=event=>{
+  event.preventDefault();if(mailPending)return;rememberEmail();
+  $('mailPreviewTo').textContent='Para: '+$('mailTo').value;
+  $('mailPreviewSubject').textContent='Asunto: '+$('mailSubject').value;
+  $('mailPreviewBody').textContent=$('mailBody').value;
+  $('mailForm').hidden=true;$('mailPreview').hidden=false;$('mailConfirm').disabled=false;
+};
+$('mailEdit').onclick=()=>{if(mailPending)return;$('mailPreview').hidden=true;$('mailForm').hidden=false;};
+$('mailClose').onclick=()=>{if(mailPending)return;rememberEmail();++mailGeneration;$('mailComposer').hidden=true;};
+$('mailNewAttempt').onclick=()=>{
+  if(mailPending || !confirm('Si el intento anterior quedó sin confirmar, revisá primero tu casilla para no duplicar el correo. ¿Querés preparar un nuevo envío?'))return;
+  const draft=emailDrafts.get(emailKey(mailDraftId));if(draft)draft.key=crypto.randomUUID();rememberEmail();
+  $('mailState').textContent='Nuevo intento. Revisá el destinatario y el contenido antes de confirmar.';$('mailNewAttempt').hidden=true;$('mailPreview').hidden=true;$('mailForm').hidden=false;
+};
+$('mailConfirm').onclick=async()=>{
+  if(mailPending || !mailDraftId || $('mailPreview').hidden)return;
+  mailPending=true;$('mailConfirm').disabled=true;$('mailEdit').disabled=true;$('mailClose').disabled=true;
+  const id=mailDraftId, generation=mailGeneration, value=emailSnapshot();rememberEmail();$('mailState').textContent='Enviando… No repitas el envío.';
+  try { const result=await api('MAIL_SEND',{id,mail:{...value,confirm:true}});if(generation===mailGeneration)$('mailState').textContent=mailStatus(result.state); }
+  catch(e){if(generation===mailGeneration)$('mailState').textContent=errors[e.message] || 'No se confirmó el envío. Revisá el historial y tu casilla antes de reenviar. Reintentar el mismo correo no duplica el intento.';}
+  finally{mailPending=false;$('mailEdit').disabled=false;$('mailClose').disabled=false;if(generation===mailGeneration)$('mailNewAttempt').hidden=false;}
+};
 (async () => { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); tabId = tab?.id; await run(refresh); })();

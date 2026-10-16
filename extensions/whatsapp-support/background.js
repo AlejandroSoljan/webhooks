@@ -81,6 +81,11 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       case 'DISMISS': return api('/drafts/' + id + '/dismiss', { revision: message.revision }, session.csrf);
       case 'DISCARD_CHANGES': return api('/drafts/' + id + '/discard-changes', { revision: message.revision }, session.csrf);
       case 'HUBSPOT': return api('/hubspot');
+      case 'MAIL_SETTINGS': return api('/mail/settings');
+      case 'MAIL_SAVE': return api('/mail/settings', message.config, session.csrf);
+      case 'MAIL_VERIFY': return api('/mail/verify', {}, session.csrf);
+      case 'MAIL_HISTORY': return api('/drafts/' + id + '/mail');
+      case 'MAIL_SEND': return api('/drafts/' + id + '/mail', message.mail, session.csrf);
       case 'COMPANY_PROFILE': return api('/hubspot/company?id=' + encodeURIComponent(String(message.companyId || '')) + '&jid=' + encodeURIComponent(String(message.jid || '')));
       case 'HUBSPOT_SEARCH': return api('/hubspot/search?type=' + encodeURIComponent(String(message.type || '')) + '&q=' + encodeURIComponent(String(message.query || '')));
       case 'CONNECT': return api('/hubspot/connect', { token: message.token }, session.csrf);

@@ -7,6 +7,37 @@ const html = fs.readFileSync(require.resolve('../extensions/whatsapp-support/pan
 const source = fs.readFileSync(require.resolve('../extensions/whatsapp-support/panel.js'), 'utf8');
 const pause = () => new Promise(resolve => setTimeout(resolve, 35));
 
+test('task email requires preview and explicit confirmation, preserves task edits and never stores SMTP password',async()=>{
+ const dom=new JSDOM(html,{url:'chrome-extension://test/panel.html',runScripts:'outside-only'}),w=dom.window,calls=[],stored={};let finish;
+ w.crypto.randomUUID=()=> '12345678-1234-1234-1234-123456789012';
+ w.chrome={tabs:{query:async()=>[]},storage:{session:{get:async()=>stored,set:async values=>Object.assign(stored,values)},onChanged:{addListener(){}}},runtime:{sendMessage:async message=>{
+   calls.push(message);
+   if(message.action==='SESSION')return{data:{tenantId:'ALSO',userId:'one',choices:{}}};
+   if(message.action==='INDEX')return{data:{owner:'ALSO:one',chats:[]}};
+   if(message.action==='COMPANY_PROFILE')return{data:{company:null}};
+   if(message.action==='HUBSPOT_SEARCH')return{data:{results:[]}};
+   if(message.action==='MAIL_HISTORY')return{data:[]};
+   if(message.action==='MAIL_SETTINGS')return{data:{configured:false}};
+   if(message.action==='MAIL_SAVE')return{data:{configured:true}};
+   if(message.action==='MAIL_SEND')return new Promise(resolve=>{finish=resolve;});
+   throw Error(message.action);
+ }}};
+ try{
+   w.eval(source+'\nglobalThis.setMailTestTask=value=>{current=value;renderFields();};');await pause();
+   w.setMailTestTask({id:'task',fields:{subject:'Título editado',description:'Texto editado'},source:{}});
+   w.document.querySelector('#emailTask').click();await pause();
+   assert.equal(w.document.querySelector('#mailSubject').value,'Título editado');assert.equal(calls.filter(x=>x.action==='MAIL_SEND').length,0);
+   w.document.querySelector('#mailTo').value='client@example.com';
+   w.document.querySelector('#mailForm').dispatchEvent(new w.Event('submit',{cancelable:true}));
+   assert.equal(w.document.querySelector('#mailPreview').hidden,false);assert.equal(calls.filter(x=>x.action==='MAIL_SEND').length,0);
+   w.document.querySelector('#mailConfirm').click();w.document.querySelector('#mailConfirm').click();await pause();assert.equal(calls.filter(x=>x.action==='MAIL_SEND').length,1);
+   finish({data:{state:'accepted'}});await pause();assert.match(w.document.querySelector('#mailState').textContent,/Aceptado/);
+   assert.equal(w.document.querySelector('#field-subject').value,'Título editado');assert.equal(calls.filter(x=>x.action==='SAVE'||x.action==='PUBLISH').length,0);
+   w.document.querySelector('#smtpPassword').value='VERY-SECRET';w.document.querySelector('#smtpForm').dispatchEvent(new w.Event('submit',{cancelable:true}));await pause();
+   assert.equal(w.document.querySelector('#smtpPassword').value,'');assert.ok(!JSON.stringify(stored).includes('VERY-SECRET'));
+ }finally{w.close();}
+});
+
 test('manual contact picker is absent from the visible panel while active chat context is retained', () => {
  const dom = new JSDOM(html);
  try {

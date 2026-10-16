@@ -14,6 +14,8 @@ const indexes = {
   support_transcripts: [{ key: { tenantId: 1, userId: 1, updatedAt: -1 }, name: 'owner_updated' }],
   support_audit: [{ key: { tenantId: 1, userId: 1, at: -1 }, name: 'owner_audit' }],
   support_integrations: [{ key: { tenantId: 1 }, unique: true, name: 'tenant' }],
+  support_mail_settings: [{ key: { tenantId: 1, userId: 1 }, unique: true, name: 'owner' }],
+  support_mail_attempts: [{ key: { tenantId: 1, userId: 1, at: -1 }, name: 'owner_recent' }, { key: { tenantId: 1, userId: 1, draftId: 1, at: -1 }, name: 'task_history' }],
   support_leases: [],
 };
 async function migrate(db) {

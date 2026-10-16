@@ -71,6 +71,14 @@ test('extension requires the session origin, scoped grant and access to the draf
  const expired=Buffer.from(JSON.stringify(vault.seal({...scope,origin:'chrome-extension://'+extensionId,expires:0},'extension-csrf'))).toString('base64url');
  response=await fetch(base+'/drafts/'+id+'/save',{method:'POST',headers:{'Content-Type':'application/json','X-Asisto-Extension-Id':extensionId,'X-Asisto-Extension':expired},body:'{}'});assert.equal(response.status,403);
 });
+test('SMTP routes isolate settings and require access to the task without sending during configuration',async()=>{
+ const config={host:'smtp.example.com',port:587,user:'u@example.com',password:'SECRET-SMTP',from:'u@example.com'};
+ const saved=await call('/mail/settings',config);assert.equal(saved.status,200);assert.equal(saved.data.password,undefined);
+ assert.equal((await call('/mail/settings',null,{'test-user':'other'})).data.configured,false);
+ assert.equal((await call('/drafts/'+id+'/mail',null,{'test-user':'other'})).status,404);
+ assert.equal((await call('/drafts/'+id+'/mail',{confirm:false})).status,400);
+ assert.equal((await call('/drafts/'+id+'/mail')).data.length,0);
+});
 test('approved desktop authorization lets the extension connect without a web login',async()=>{
  const token='D'.repeat(43), userId=new ObjectId();
  await db.collection('users').insertOne({_id:userId,tenantId:'desktop-tenant',role:'user',allowedPages:['support']});

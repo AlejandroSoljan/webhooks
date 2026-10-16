@@ -1,5 +1,9 @@
 # Manual técnico de Asisto
 
+### Correo de tareas por usuario — v5.00.297 / extensión 1.0.56
+
+Configuración SMTP cifrada por usuario desde extensión, prueba de autenticación y envío de texto con revisión/confirmación explícita. Credenciales nunca se devuelven ni almacenan en Chrome. TLS obligatorio, destino público fijado tras DNS, auditoría cifrada por tarea e idempotencia conservadora ante timeout; no cambia ni guarda ticket automáticamente. Contrato, límites y operación en [Tickets WhatsApp](whatsapp_support.md#correo-smtp-por-usuario--500297--extensión-1056).
+
 ### Empresa asociada en extensión — v5.00.296 / 1.0.54
 
 Ficha HubSpot por asociación del contacto o selección de empresa: tipo de cliente exacto (No Abonado en rojo), código, dirección/localidad y teléfonos. Lectura sin IA ni escrituras CRM, errores independientes del editor, caché acotada por dueño y descarte de respuestas obsoletas. Contrato y pruebas en [Tickets WhatsApp](whatsapp_support.md#ficha-de-empresa-en-extensión-1054-500296).
