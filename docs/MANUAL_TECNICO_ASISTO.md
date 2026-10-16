@@ -197,6 +197,8 @@ Contrato detallado y errores: [Ayuda](api/MANUAL_API_AYUDA.md), [modo contextual
 
 ## 8. Productos, QR y catálogo
 
+Lectura local de códigos (2026-10-16): Android conserva `BarcodeDetector` cuando está disponible; iPhone y otros navegadores usan ZXing 0.21.3 en el dispositivo, preferentemente en un Web Worker. Si el lector nativo no encuentra el código durante cinco segundos, el respaldo también es local. Se exigen dos detecciones coincidentes antes de consultar el precio. No se envían capturas automáticas a `/api/ext/qr/photo`; esa ruta se conserva exclusivamente para la opción explícita de fotografiar un producto. El límite de reconocimiento por IA ya no afecta el escaneo de barras. Los assets versionados se sirven desde `/api/ext/qr/scanner-assets/`, sin CDN en ejecución. En la intranet HTTP de Mecan, `/qr/:tenant` abre el scanner público HTTPS, necesario para acceder a la cámara; no cambia las rutas ni permisos de operadores, tótems y displays. Ver [lector local](qr_local_scanner.md).
+
 Ruta pública `/qr/:tenant?codigo=SKU`, también `/qr/:tenant/:codigo`. API de producto `/api/ext/qr/product`; chat y consulta de historial según [manual QR](api/MANUAL_API_QR.md). Mantener `sessionId` estable y códigos como texto para preservar ceros iniciales.
 
 Configurar fuente comercial, autenticación, mapeo de código/precio/stock e identidad del comercio. Los precios y disponibilidad provienen del catálogo/API del comercio, no de inferencias de IA. Probar SKU existente, inexistente y barras duplicadas.

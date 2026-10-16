@@ -8,7 +8,7 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 
 | Variable | Referencias |
 |---|---|
-| `ADD_ENVIO_WITHOUT_ADDRESS` | [logic.js:1510](../../logic.js#L1510) |
+| `ADD_ENVIO_WITHOUT_ADDRESS` | [logic.js:1515](../../logic.js#L1515) |
 | `APP_NAME` | [db.js:72](../../db.js#L72) |
 | `ASISTO_AUTH_MODE` | [app_asisto_ws.js:177](../../app_asisto_ws.js#L177) |
 | `ASISTO_AUTH_PATH` | [app_asisto_ws.js:176](../../app_asisto_ws.js#L176); [app_asisto_ws.js:831](../../app_asisto_ws.js#L831) |
@@ -30,25 +30,25 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `AUTO_UPDATE_RUN_NPM_INSTALL` | [app_asisto_ws.js:192](../../app_asisto_ws.js#L192) |
 | `AUTO_UPDATE_STARTUP_DELAY_MS` | [app_asisto_ws.js:189](../../app_asisto_ws.js#L189) |
 | `BACKUP_EVERY_MS` | [app_asisto_ws.js:175](../../app_asisto_ws.js#L175) |
-| `BOT_MODE` | [logic.js:363](../../logic.js#L363) |
+| `BOT_MODE` | [logic.js:364](../../logic.js#L364) |
 | `CALC_FIX_MAX_RETRIES` | [logic.js:25](../../logic.js#L25); [src/whatsapp/webhook.routes.js:282](../../src/whatsapp/webhook.routes.js#L282); [src/whatsapp/webhook.routes.js:283](../../src/whatsapp/webhook.routes.js#L283) |
 | `CHAT_MAX_TOKENS` | [logic.js:16](../../logic.js#L16) |
 | `CHAT_MODEL` | [conversation_followup_panel.js:340](../../conversation_followup_panel.js#L340); [logic.js:13](../../logic.js#L13) |
 | `CLIENT_PHONE_ACCESS_CACHE_TTL_MS` | [client_phone_access.js:10](../../client_phone_access.js#L10) |
 | `CLIENT_PHONE_ACCESS_MAX_NUMBERS` | [client_phone_access.js:11](../../client_phone_access.js#L11) |
-| `COMPORTAMIENTO` | [logic.js:358](../../logic.js#L358) |
+| `COMPORTAMIENTO` | [logic.js:359](../../logic.js#L359) |
 | `DB_NAME` | [src/script/migrate_products_tenant.js:7](../../src/script/migrate_products_tenant.js#L7) |
-| `DEFAULT_CITY` | [endpoint.js:11897](../../endpoint.js#L11897); [endpoint.js:12317](../../endpoint.js#L12317); [logic.js:1534](../../logic.js#L1534); [logic.js:3092](../../logic.js#L3092); [src/whatsapp/webhook.routes.js:532](../../src/whatsapp/webhook.routes.js#L532); [src/whatsapp/webhook.routes.js:646](../../src/whatsapp/webhook.routes.js#L646) |
-| `DEFAULT_COUNTRY` | [endpoint.js:11899](../../endpoint.js#L11899); [endpoint.js:12319](../../endpoint.js#L12319); [logic.js:1536](../../logic.js#L1536); [logic.js:3094](../../logic.js#L3094); [src/whatsapp/webhook.routes.js:534](../../src/whatsapp/webhook.routes.js#L534); [src/whatsapp/webhook.routes.js:648](../../src/whatsapp/webhook.routes.js#L648) |
-| `DEFAULT_PROVINCE` | [endpoint.js:11898](../../endpoint.js#L11898); [endpoint.js:12318](../../endpoint.js#L12318); [logic.js:1535](../../logic.js#L1535); [logic.js:3093](../../logic.js#L3093); [src/whatsapp/webhook.routes.js:533](../../src/whatsapp/webhook.routes.js#L533); [src/whatsapp/webhook.routes.js:647](../../src/whatsapp/webhook.routes.js#L647) |
+| `DEFAULT_CITY` | [endpoint.js:11923](../../endpoint.js#L11923); [endpoint.js:12343](../../endpoint.js#L12343); [logic.js:1539](../../logic.js#L1539); [logic.js:3098](../../logic.js#L3098); [src/whatsapp/webhook.routes.js:532](../../src/whatsapp/webhook.routes.js#L532); [src/whatsapp/webhook.routes.js:646](../../src/whatsapp/webhook.routes.js#L646) |
+| `DEFAULT_COUNTRY` | [endpoint.js:11925](../../endpoint.js#L11925); [endpoint.js:12345](../../endpoint.js#L12345); [logic.js:1541](../../logic.js#L1541); [logic.js:3100](../../logic.js#L3100); [src/whatsapp/webhook.routes.js:534](../../src/whatsapp/webhook.routes.js#L534); [src/whatsapp/webhook.routes.js:648](../../src/whatsapp/webhook.routes.js#L648) |
+| `DEFAULT_PROVINCE` | [endpoint.js:11924](../../endpoint.js#L11924); [endpoint.js:12344](../../endpoint.js#L12344); [logic.js:1540](../../logic.js#L1540); [logic.js:3099](../../logic.js#L3099); [src/whatsapp/webhook.routes.js:533](../../src/whatsapp/webhook.routes.js#L533); [src/whatsapp/webhook.routes.js:647](../../src/whatsapp/webhook.routes.js#L647) |
 | `DEFAULT_TENANT` | [src/script/migrate_products_tenant.js:8](../../src/script/migrate_products_tenant.js#L8) |
 | `DEMO_RODAVEN_API_KEY` | [demo_catalog_api.js:155](../../demo_catalog_api.js#L155); [demo_catalog_api.js:169](../../demo_catalog_api.js#L169) |
 | `DEMO_RODAVEN_DATA_FILE` | [demo_catalog_api.js:43](../../demo_catalog_api.js#L43) |
 | `DOMAIN_STATUS_API_KEY` | [endpoint.js:14](../../endpoint.js#L14); [help_tool.js:26](../../help_tool.js#L26) |
 | `ENABLE_TELEGRAM` | [server.js:7](../../server.js#L7) |
 | `ENDED_SESSION_TTL_MINUTES` | [logic.js:24](../../logic.js#L24) |
-| `EXTERNAL_API_BODY_TEMPLATE` | [logic.js:388](../../logic.js#L388) |
-| `EXTERNAL_API_ENABLED` | [logic.js:379](../../logic.js#L379) |
+| `EXTERNAL_API_BODY_TEMPLATE` | [logic.js:389](../../logic.js#L389) |
+| `EXTERNAL_API_ENABLED` | [logic.js:380](../../logic.js#L380) |
 | `FIREBASE_CLIENT_EMAIL` | [customer_notifications.js:9](../../customer_notifications.js#L9) |
 | `FIREBASE_PRIVATE_KEY` | [customer_notifications.js:9](../../customer_notifications.js#L9) |
 | `FIREBASE_PROJECT_ID` | [customer_notifications.js:9](../../customer_notifications.js#L9) |
@@ -71,12 +71,12 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `HELP_WEB_RATE_WINDOW_MS` | [help_tool.js:36](../../help_tool.js#L36) |
 | `HELP_WEB_SIGNING_SECRET` | [help_tool.js:34](../../help_tool.js#L34) |
 | `HELP_WEB_TOKEN_TTL_MS` | [help_tool.js:35](../../help_tool.js#L35) |
-| `HISTORY_MODE` | [logic.js:361](../../logic.js#L361) |
+| `HISTORY_MODE` | [logic.js:362](../../logic.js#L362) |
 | `HUBSPOT_PORTAL_ID` | [src/support/hubspot_config.js:10](../../src/support/hubspot_config.js#L10) |
 | `HUBSPOT_PRIVATE_APP_TOKEN` | [src/support/hubspot_config.js:8](../../src/support/hubspot_config.js#L8) |
 | `HUBSPOT_TENANT_ID` | [src/support/hubspot_config.js:7](../../src/support/hubspot_config.js#L7) |
 | `INSTANCE_ID` | [app_asisto_ws.js:438](../../app_asisto_ws.js#L438); [telegram_runtime.js:15](../../telegram_runtime.js#L15) |
-| `LEAD_CAPTURE_ENABLED` | [logic.js:367](../../logic.js#L367) |
+| `LEAD_CAPTURE_ENABLED` | [logic.js:368](../../logic.js#L368) |
 | `LEAD_NOTIFY_WWEB_FROM` | [lead_notification.js:10](../../lead_notification.js#L10) |
 | `LEAD_NOTIFY_WWEB_TENANT` | [lead_notification.js:9](../../lead_notification.js#L9) |
 | `LEAD_NOTIFY_WWEB_TO` | [lead_notification.js:11](../../lead_notification.js#L11) |
@@ -95,24 +95,24 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `MP_SUBSCRIPTIONS_PUBLIC_URL` | [mercadopago_subscriptions.js:16](../../mercadopago_subscriptions.js#L16) |
 | `MP_SUBSCRIPTIONS_TEST_PAYER_ID` | [mercadopago_subscriptions.js:15](../../mercadopago_subscriptions.js#L15) |
 | `MP_SUBSCRIPTIONS_WEBHOOK_SECRET` | [mercadopago_subscriptions.js:14](../../mercadopago_subscriptions.js#L14) |
-| `NODE_ENV` | [auth_ui.js:226](../../auth_ui.js#L226); [endpoint.js:10740](../../endpoint.js#L10740); [src/whatsapp/webhook.routes.js:79](../../src/whatsapp/webhook.routes.js#L79) |
+| `NODE_ENV` | [auth_ui.js:226](../../auth_ui.js#L226); [endpoint.js:10765](../../endpoint.js#L10765); [src/whatsapp/webhook.routes.js:79](../../src/whatsapp/webhook.routes.js#L79) |
 | `NUMERO` | [app_asisto_ws.js:53](../../app_asisto_ws.js#L53); [telegram_runtime.js:356](../../telegram_runtime.js#L356) |
 | `OPENAI_API_KEY` | [fleteros_viajes_panel.js:1000](../../fleteros_viajes_panel.js#L1000); [logic.js:12](../../logic.js#L12); [src/support/crypto.js:45](../../src/support/crypto.js#L45) |
 | `OPENAI_CPE_MODEL` | [fleteros_viajes_panel.js:1004](../../fleteros_viajes_panel.js#L1004) |
 | `OPENAI_MAX_TOKENS` | [logic.js:16](../../logic.js#L16) |
 | `OPENAI_TEMPERATURE` | [logic.js:15](../../logic.js#L15) |
 | `OPENAI_TRANSCRIBE_MODEL` | [logic.js:30](../../logic.js#L30) |
-| `OPENAI_VISION_FALLBACK_MODEL` | [logic.js:1264](../../logic.js#L1264) |
+| `OPENAI_VISION_FALLBACK_MODEL` | [logic.js:1266](../../logic.js#L1266) |
 | `ORDER_CONFIG_CACHE_TTL_MS` | [order_config.js:9](../../order_config.js#L9) |
 | `PHONE_NUMBER_ID` | [logic.js:22](../../logic.js#L22); [wa_inbox_panel.js:19](../../wa_inbox_panel.js#L19) |
-| `PORT` | [endpoint.js:12484](../../endpoint.js#L12484); [endpoint.js:12492](../../endpoint.js#L12492); [server.js:6](../../server.js#L6) |
+| `PORT` | [endpoint.js:12510](../../endpoint.js#L12510); [endpoint.js:12518](../../endpoint.js#L12518); [server.js:6](../../server.js#L6) |
 | `PUBLIC_BASE_URL` | [auth_ui.js:24](../../auth_ui.js#L24); [customer_queue.js:65](../../customer_queue.js#L65); [endpoint.js:1856](../../endpoint.js#L1856); [restaurant.js:30](../../restaurant.js#L30); [restaurant.js:178](../../restaurant.js#L178); [restaurant.js:227](../../restaurant.js#L227); [restaurant.js:237](../../restaurant.js#L237); [src/support/config.js:8](../../src/support/config.js#L8) |
-| `QR_CONFIG_CACHE_MS` | [qr_product_web.js:29](../../qr_product_web.js#L29) |
-| `QR_PRODUCT_API_MAX_CONCURRENT` | [qr_product_web.js:32](../../qr_product_web.js#L32) |
-| `QR_PRODUCT_API_QUEUE_MAX` | [qr_product_web.js:33](../../qr_product_web.js#L33) |
-| `QR_PRODUCT_API_QUEUE_WAIT_MS` | [qr_product_web.js:34](../../qr_product_web.js#L34) |
+| `QR_CONFIG_CACHE_MS` | [qr_product_web.js:31](../../qr_product_web.js#L31) |
+| `QR_PRODUCT_API_MAX_CONCURRENT` | [qr_product_web.js:34](../../qr_product_web.js#L34) |
+| `QR_PRODUCT_API_QUEUE_MAX` | [qr_product_web.js:35](../../qr_product_web.js#L35) |
+| `QR_PRODUCT_API_QUEUE_WAIT_MS` | [qr_product_web.js:36](../../qr_product_web.js#L36) |
 | `QUEUE_OPEN_TENANTS` | [customer_queue.js:65](../../customer_queue.js#L65) |
-| `QUEUE_PORT` | [turnero_server.js:31](../../turnero_server.js#L31) |
+| `QUEUE_PORT` | [turnero_server.js:33](../../turnero_server.js#L33) |
 | `QUEUE_PRESENCE_SECRET` | [customer_queue.js:65](../../customer_queue.js#L65) |
 | `QUEUE_PRINTER_NAME` | [queue_printer.js:28](../../queue_printer.js#L28) |
 | `QUEUE_SERVER_PRINT` | [queue_printer.js:27](../../queue_printer.js#L27) |
@@ -123,7 +123,7 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `RENDER_SERVICE_NAME` | [db.js:70](../../db.js#L70) |
 | `SERVICE_NAME` | [db.js:71](../../db.js#L71) |
 | `SIMULATED_NOW_ISO` | [logic.js:27](../../logic.js#L27) |
-| `START_FALLBACK` | [logic.js:1467](../../logic.js#L1467) |
+| `START_FALLBACK` | [logic.js:1472](../../logic.js#L1472) |
 | `STATUS_TOKEN` | [app_asisto_ws.js:55](../../app_asisto_ws.js#L55); [telegram_runtime.js:199](../../telegram_runtime.js#L199); [telegram_runtime.js:357](../../telegram_runtime.js#L357) |
 | `STORE_LAT` | [logic.js:34](../../logic.js#L34) |
 | `STORE_LNG` | [logic.js:35](../../logic.js#L35) |
@@ -133,7 +133,7 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `SUPPORT_ENCRYPTION_KEYS` | [src/support/crypto.js:36](../../src/support/crypto.js#L36); [src/support/crypto.js:37](../../src/support/crypto.js#L37) |
 | `SUPPORT_HUBSPOT_ENABLED` | [src/support/routes.js:16](../../src/support/routes.js#L16) |
 | `SUPPORT_PUBLIC_ORIGIN` | [src/support/config.js:8](../../src/support/config.js#L8) |
-| `SUPPORT_TASK_MODEL` | [src/support/title_analyzer.js:21](../../src/support/title_analyzer.js#L21) |
+| `SUPPORT_TASK_MODEL` | [src/support/title_analyzer.js:27](../../src/support/title_analyzer.js#L27) |
 | `SUPPORT_TRANSCRIBER_MODEL` | [src/support/baileys.js:162](../../src/support/baileys.js#L162); [src/support/transcriber.js:12](../../src/support/transcriber.js#L12) |
 | `SUPPORT_TRANSCRIBER_TOKEN` | [src/support/baileys.js:164](../../src/support/baileys.js#L164) |
 | `SUPPORT_TRANSCRIBER_URL` | [src/support/baileys.js:159](../../src/support/baileys.js#L159); [src/support/baileys.js:160](../../src/support/baileys.js#L160); [src/support/transcriber.js:11](../../src/support/transcriber.js#L11) |
@@ -154,21 +154,21 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `TG_POLLING_START_PREPARE_MS` | [telegram_runtime.js:24](../../telegram_runtime.js#L24) |
 | `TG_POLLING_STOP_SETTLE_MS` | [telegram_runtime.js:23](../../telegram_runtime.js#L23) |
 | `TG_REFRESH_CONFIG_MS` | [telegram_runtime.js:17](../../telegram_runtime.js#L17) |
-| `TOKEN_COST_AUDIO_PER_MINUTE` | [logic.js:1185](../../logic.js#L1185) |
-| `TOKEN_COST_HELP_INPUT_PER_1K` | [token_control_stats.js:14](../../token_control_stats.js#L14) |
-| `TOKEN_COST_HELP_OUTPUT_PER_1K` | [token_control_stats.js:15](../../token_control_stats.js#L15) |
-| `TOKEN_COST_TASKS_WS_INPUT_PER_1K` | [token_control_stats.js:19](../../token_control_stats.js#L19) |
-| `TOKEN_COST_TASKS_WS_LUNA_INPUT_PER_1K` | [token_control_stats.js:21](../../token_control_stats.js#L21) |
-| `TOKEN_COST_TASKS_WS_LUNA_OUTPUT_PER_1K` | [token_control_stats.js:22](../../token_control_stats.js#L22) |
-| `TOKEN_COST_TASKS_WS_MODEL` | [token_control_stats.js:17](../../token_control_stats.js#L17) |
-| `TOKEN_COST_TASKS_WS_OUTPUT_PER_1K` | [token_control_stats.js:20](../../token_control_stats.js#L20) |
-| `TOKEN_COST_WHISPER_PER_MINUTE` | [logic.js:1185](../../logic.js#L1185) |
+| `TOKEN_COST_AUDIO_PER_MINUTE` | [logic.js:1186](../../logic.js#L1186) |
+| `TOKEN_COST_HELP_INPUT_PER_1K` | [token_control_stats.js:15](../../token_control_stats.js#L15) |
+| `TOKEN_COST_HELP_OUTPUT_PER_1K` | [token_control_stats.js:16](../../token_control_stats.js#L16) |
+| `TOKEN_COST_TASKS_WS_INPUT_PER_1K` | [token_control_stats.js:20](../../token_control_stats.js#L20) |
+| `TOKEN_COST_TASKS_WS_LUNA_INPUT_PER_1K` | [token_control_stats.js:22](../../token_control_stats.js#L22) |
+| `TOKEN_COST_TASKS_WS_LUNA_OUTPUT_PER_1K` | [token_control_stats.js:23](../../token_control_stats.js#L23) |
+| `TOKEN_COST_TASKS_WS_MODEL` | [token_control_stats.js:18](../../token_control_stats.js#L18) |
+| `TOKEN_COST_TASKS_WS_OUTPUT_PER_1K` | [token_control_stats.js:21](../../token_control_stats.js#L21) |
+| `TOKEN_COST_WHISPER_PER_MINUTE` | [logic.js:1186](../../logic.js#L1186) |
 | `TRANSCRIBE_API_URL` | [logic.js:28](../../logic.js#L28) |
 | `VERIFY_TOKEN` | [endpoint.js:11](../../endpoint.js#L11) |
 | `VISION_MODEL` | [logic.js:14](../../logic.js#L14) |
 | `WA_INBOX_UPLOAD_MAX_BYTES` | [wa_inbox_panel.js:21](../../wa_inbox_panel.js#L21) |
 | `WHATSAPP_ACCESS_TOKEN` | [logic.js:31](../../logic.js#L31); [wa_inbox_panel.js:20](../../wa_inbox_panel.js#L20) |
-| `WHATSAPP_APP_SECRET` | [endpoint.js:1836](../../endpoint.js#L1836); [endpoint.js:10739](../../endpoint.js#L10739); [src/whatsapp/webhook.routes.js:78](../../src/whatsapp/webhook.routes.js#L78) |
+| `WHATSAPP_APP_SECRET` | [endpoint.js:1836](../../endpoint.js#L1836); [endpoint.js:10764](../../endpoint.js#L10764); [src/whatsapp/webhook.routes.js:78](../../src/whatsapp/webhook.routes.js#L78) |
 | `WHATSAPP_TOKEN` | [logic.js:31](../../logic.js#L31); [wa_inbox_panel.js:20](../../wa_inbox_panel.js#L20) |
 | `WHATSAPP_VERIFY_TOKEN` | [endpoint.js:11](../../endpoint.js#L11) |
 | `WHISPER_MODEL` | [logic.js:30](../../logic.js#L30) |

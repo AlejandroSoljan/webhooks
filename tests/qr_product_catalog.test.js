@@ -25,13 +25,14 @@ test('un producto escaneado conserva su chat contextual sin mostrar el acceso al
   assert.doesNotMatch(html, /\.appNav a:last-child\{display:none\}/);
 });
 
-test('iPhone y navegadores internos usan lectura asistida si falta BarcodeDetector', () => {
+test('iPhone y navegadores internos leen localmente sin enviar capturas a IA', () => {
   const html = pageHtml({ tenant: 'MCN', code: '', branding: { companyName: 'Mecan' } });
   const script = html.match(/<script>([\s\S]*)<\/script>/)[1];
   new vm.Script(script);
-  assert.match(script, /if\(!detector\)\{status\.textContent='Alineá el código y mantené el celular quieto/);
-  assert.match(script, /scanFallbackTimer=setInterval\(\(\)=>tryPrintedBarcode\(true\),2800\)/);
-  assert.match(script, /function tryPrintedBarcode\(retry=false\)/);
+  assert.match(script, /createLocalBarcodeDetector/);
+  assert.match(script, /new Worker\(assetBase \+ 'worker-v1.js'\)/);
+  assert.doesNotMatch(script, /tryPrintedBarcode|scanOcr|scanFallbackTimer/);
+  assert.match(script, /async function identifyPhoto/);
   assert.doesNotMatch(script, /Este navegador no admite lectura automática/);
 });
 
