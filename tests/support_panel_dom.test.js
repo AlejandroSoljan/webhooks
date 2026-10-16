@@ -7,6 +7,15 @@ const html = fs.readFileSync(require.resolve('../extensions/whatsapp-support/pan
 const source = fs.readFileSync(require.resolve('../extensions/whatsapp-support/panel.js'), 'utf8');
 const pause = () => new Promise(resolve => setTimeout(resolve, 35));
 
+test('manual contact picker is absent from the visible panel while active chat context is retained', () => {
+ const dom = new JSDOM(html);
+ try {
+   const select = dom.window.document.querySelector('#contacts');
+   assert.ok(select, 'internal context remains available to existing task flows');
+   assert.equal(select.closest('label').hidden, true);
+ } finally { dom.window.close(); }
+});
+
 test('company profile shows non-subscriber in red, isolates slow results and never replaces edits', async () => {
  const dom = new JSDOM(html, { url: 'chrome-extension://test/panel.html', runScripts: 'outside-only' });
  const w = dom.window; let resolveOld; let profileCalls = 0;

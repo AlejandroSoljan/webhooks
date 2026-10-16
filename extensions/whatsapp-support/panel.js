@@ -259,7 +259,7 @@ async function refresh() {
   else {
     clearCompanyProfile();
     current = null; $('editor').hidden = true; $('hubspot').hidden = true; $('tasks').replaceChildren(); $('contacts').value = '';
-    notice(selected?.name ? 'Conversación actual: ' + selected.name + '. Todavía no se pudo vincular este contacto con sus tareas.' : index.chats.length ? 'Elegí un contacto o pulsá su icono en WhatsApp Web.' : 'Todavía no hay tareas detectadas. Procesá las conversaciones desde Asisto.');
+    notice(selected?.name ? 'Conversación actual: ' + selected.name + '. Todavía no se pudo vincular este contacto con sus tareas.' : index.chats.length ? 'Abrí un chat en WhatsApp para ver sus tareas.' : 'Todavía no hay tareas detectadas. Procesá las conversaciones desde Asisto.');
   }
 }
 async function save({ hubSpotPending = false } = {}) {
