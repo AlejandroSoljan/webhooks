@@ -248,7 +248,8 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     }
     if (!/^\d+$/.test(companyId)) fail('invalid_company_id');
     const { client, connection } = await clientFor(s, scope);
-    return { company: await client.companyProfile(companyId), portalId: connection.portalId || null };
+    const company = await client.companyProfile(companyId);
+    return { company, portalId: connection.portalId || company.portalId || null };
   }));
   router.post('/drafts/:id/publish', route(async (req, s, scope) => {
     const row = await rowFor(s, scope, req.params.id);

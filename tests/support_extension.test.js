@@ -37,10 +37,11 @@ async function call(path,body,extra={}) {
 test('company profile preserves exact subscription categories and only exposes selected properties', async () => {
  let path;
  const api = new HubSpotContract('unused');
- api.request = async value => { path = value; return { id: '42', properties: { name: 'Example', tipo_cliente: 'No Abonado', cod_cliente: '9', phone: '123', secret: 'hidden' } }; };
+ api.request = async value => { path = value; return { id: '42', url: 'https://app.hubspot.com/contacts/7009289/record/0-2/42', properties: { name: 'Example', tipo_cliente: 'No Abonado', cod_cliente: '9', phone: '123', secret: 'hidden' } }; };
  let profile = await api.companyProfile('42');
  assert.equal(profile.status, 'non_subscriber'); assert.equal(profile.customerType, 'No Abonado'); assert.equal(profile.customerCode, '9'); assert.equal(profile.secret, undefined);
  assert.match(path, /tipo_cliente/);
+ assert.equal(profile.portalId, '7009289');
  for (const [type, expected] of [['Abonado','subscriber'], ['Abonado (consulta)','other'], ['Baja','other'], ['', 'other']]) {
    api.request = async () => ({ id: '42', properties: { tipo_cliente: type } });
    profile = await api.companyProfile('42'); assert.equal(profile.status, expected); assert.equal(profile.customerType, type || 'Sin dato');

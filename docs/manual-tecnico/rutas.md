@@ -308,7 +308,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/drafts/:id/discard-changes` | [src/support/extension.js:209](../../src/support/extension.js#L209) | `, route(async (req, s, scope) => {` |
 | POST | `/drafts/:id/dismiss` | [src/support/extension.js:201](../../src/support/extension.js#L201) | `, route(async (req, s, scope) => {` |
 | POST | `/drafts/:id/manual-complete` | [src/support/extension.js:189](../../src/support/extension.js#L189) | `, route(async (req, s, scope) => {` |
-| POST | `/drafts/:id/publish` | [src/support/extension.js:253](../../src/support/extension.js#L253) | `, route(async (req, s, scope) => {` |
+| POST | `/drafts/:id/publish` | [src/support/extension.js:254](../../src/support/extension.js#L254) | `, route(async (req, s, scope) => {` |
 | POST | `/drafts/:id/queue` | [src/support/extension.js:178](../../src/support/extension.js#L178) | `, route(async (req, s, scope) => {` |
 | POST | `/drafts/:id/reconcile` | [src/support/extension.js:157](../../src/support/extension.js#L157) | `, route(async (req, s, scope) => {` |
 | POST | `/drafts/:id/save` | [src/support/extension.js:156](../../src/support/extension.js#L156) | `, route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, req.body.fields)));` |

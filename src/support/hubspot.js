@@ -74,7 +74,8 @@ class HubSpotContract {
     const p = company.properties || {}, type = text(p.tipo_cliente || '', 200);
     // Preserve the CRM category exactly: a missing/ambiguous category is not “No abonado”.
     const status = normalizedLabel(type) === 'no abonado' ? 'non_subscriber' : normalizedLabel(type) === 'abonado' ? 'subscriber' : 'other';
-    return { id: String(company.id), name: text(p.name || '', 300), customerType: type || 'Sin dato', status,
+    const portalId = /^https:\/\/app\.hubspot\.com\/contacts\/(\d+)\/record\/0-2\/\d+\/?$/.exec(company.url || '')?.[1] || null;
+    return { id: String(company.id), portalId, name: text(p.name || '', 300), customerType: type || 'Sin dato', status,
       customerCode: text(p.cod_cliente || '', 100), address: text(p.address || '', 500), city: text(p.city || '', 200),
       phone: text(p.phone || '', 100), otherPhone: text(p.telefono_otro || '', 100), mobilePhone: text(p.telefono_movil || '', 100), domain: text(p.domain || '', 300) };
   }
