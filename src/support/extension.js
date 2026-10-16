@@ -235,6 +235,21 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const { client } = await clientFor(s, scope), result = await client.search(type, query, 15);
     return { results: (result.results || []).map(row => ({ id: String(row.id), properties: row.properties || {} })) };
   }));
+  router.get('/hubspot/company', route(async (req, s, scope) => {
+    let companyId = text(req.query.id || '', 100);
+    if (!companyId) {
+      const jid = text(req.query.jid || '', 200);
+      if (!/^\d+@(s\.whatsapp\.net|lid)$/.test(jid)) return { company: null };
+      const contact = await s.col('contacts').findOne({ ...scope, $or: [{ jid }, { aliases: jid }] });
+      const memory = await s.col('memory').find({ ...scope, jid: { $in: [...new Set([jid, contact?.jid, ...(contact?.aliases || [])].filter(Boolean))] } }).toArray();
+      const ids = [...new Set(memory.map(row => row.companyId).filter(Boolean))];
+      if (ids.length !== 1) return { company: null };
+      companyId = ids[0];
+    }
+    if (!/^\d+$/.test(companyId)) fail('invalid_company_id');
+    const { client, connection } = await clientFor(s, scope);
+    return { company: await client.companyProfile(companyId), portalId: connection.portalId || null };
+  }));
   router.post('/drafts/:id/publish', route(async (req, s, scope) => {
     const row = await rowFor(s, scope, req.params.id);
     if (row.revision !== req.body.revision) fail('revision_conflict', 409);

@@ -5,6 +5,46 @@ let consumedOpenAt = null;
 let pendingContextRefresh = false;
 const unsavedEdits = new Map();
 const draftStorageKey = id => 'editor-draft-' + id;
+let profileGeneration = 0;
+const profileCache = new Map();
+function clearCompanyProfile() { ++profileGeneration; $('companyProfile').hidden = true; $('companyProfile').replaceChildren(); }
+async function loadCompanyProfile(companyId = '', jid = '') {
+  const generation = ++profileGeneration, box = $('companyProfile'), key = owner + ':' + (companyId || jid);
+  if (!companyId && !jid) { clearCompanyProfile(); return; }
+  box.hidden = false; box.textContent = 'Consultando empresa en HubSpot…';
+  try {
+    let cached = profileCache.get(key);
+    if (!cached || cached.expires < Date.now()) {
+      cached = { expires: Date.now() + 120000, promise: api('COMPANY_PROFILE', { companyId, jid }) };
+      profileCache.set(key, cached);
+      if (profileCache.size > 30) profileCache.delete(profileCache.keys().next().value);
+    }
+    const result = await cached.promise;
+    if (generation !== profileGeneration) return;
+    const company = result?.company;
+    box.replaceChildren();
+    if (!company) { box.hidden = true; return; }
+    const caption = document.createElement('div'); caption.className = 'company-caption'; caption.textContent = 'EMPRESA ASOCIADA · HUBSPOT';
+    const heading = document.createElement('div'); heading.className = 'company-heading';
+    const name = document.createElement('strong'); name.textContent = company.name || 'Empresa ' + company.id;
+    const badge = document.createElement('span'); badge.className = 'company-badge ' + ({ subscriber: 'subscriber', non_subscriber: 'non-subscriber' }[company.status] || 'unknown'); badge.textContent = company.customerType || 'Sin dato';
+    heading.append(name, badge); box.append(caption, heading);
+    if (company.customerCode) { const code = document.createElement('div'); code.textContent = 'Cliente Nº ' + company.customerCode; box.append(code); }
+    const details = document.createElement('details'), summary = document.createElement('summary'), list = document.createElement('dl'); summary.textContent = 'Ver datos de la empresa'; details.append(summary);
+    for (const [label, value] of [['Dirección', company.address], ['Localidad', company.city], ['Teléfono', company.phone], ['Otro teléfono', company.otherPhone], ['Celular', company.mobilePhone], ['Sitio web', company.domain]]) {
+      if (!value) continue;
+      const row = document.createElement('div'), dt = document.createElement('dt'), dd = document.createElement('dd'); dt.textContent = label; dd.textContent = value; row.append(dt, dd); list.append(row);
+    }
+    if (!list.children.length) { const empty = document.createElement('p'); empty.textContent = 'No hay otros datos cargados en HubSpot.'; details.append(empty); }
+    details.append(list);
+    if (/^\d+$/.test(String(result.portalId || '')) && /^\d+$/.test(String(company.id))) { const link = document.createElement('a'); link.href = `https://app.hubspot.com/contacts/${result.portalId}/record/0-2/${company.id}`; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'Abrir empresa en HubSpot ↗'; details.append(link); }
+    box.append(details);
+  } catch {
+    profileCache.delete(key);
+    if (generation !== profileGeneration) return;
+    box.textContent = 'No se pudieron consultar los datos de la empresa. Podés seguir editando la tarea.';
+  }
+}
 function persistEditorDraft(id, draft) {
   if (!id) return;
   Promise.resolve(chrome.storage.session.set?.({ [draftStorageKey(id)]: { ...draft, savedAt: Date.now() } })).catch(() => {});
@@ -107,11 +147,12 @@ function renderFields() {
     const input = document.createElement(values ? 'select' : key === 'description' ? 'textarea' : 'input'); input.id = 'field-' + key;
     if (values) { for (const value of values) option(input, value, value); }
     input.value = displayedFields[key] || ''; input.maxLength = key === 'description' ? 100000 : 200;
+    if (key === 'companyId') input.onchange = () => { void loadCompanyProfile(input.value.trim()); };
     if (key === 'company') {
       input.setAttribute('list', 'hubspot-company-options'); input.placeholder = 'Escribí para buscar en HubSpot'; input.autocomplete = 'off';
       const list = document.createElement('datalist'); list.id = 'hubspot-company-options'; label.append(input, list); $('fields').append(label);
       input.onfocus = () => loadCompanySuggestions(input.value);
-      input.oninput = () => { $('field-companyId').value = ''; current.fields.companyId = ''; clearTimeout(companyTimer); companyTimer = setTimeout(() => loadCompanySuggestions(input.value), 300); };
+      input.oninput = () => { $('field-companyId').value = ''; current.fields.companyId = ''; clearCompanyProfile(); clearTimeout(companyTimer); companyTimer = setTimeout(() => loadCompanySuggestions(input.value), 300); };
       input.onchange = () => selectSuggestedCompany(input.value);
       continue;
     }
@@ -130,6 +171,7 @@ function renderFields() {
   $('reviewWarning').hidden = !hasNewChanges;
   $('editor').hidden = false; $('hubspot').hidden = true;
   saveState(staged ? 'Cambios sin guardar' : '', staged ? 'dirty' : '');
+  void loadCompanyProfile(displayedFields.companyId || '', displayedFields.company ? '' : current.jid || $('contacts').value);
 }
 const companySuggestions = new Map();
 async function loadCompanySuggestions(query) {
@@ -150,8 +192,10 @@ function selectSuggestedCompany(value) {
   const match = companySuggestions.get(norm(value)); if (!match) return;
   $('field-company').value = match.name; $('field-companyId').value = match.id; current.fields.company = match.name; current.fields.companyId = match.id;
   rememberEditorDraft();
+  void loadCompanyProfile(match.id);
 }
 async function detail(id) {
+  clearCompanyProfile(); ++companyGeneration; clearTimeout(companyTimer); companySuggestions.clear();
   const generation = ++selectionGeneration;
   const next = await api('DETAIL', { id }); if (generation !== selectionGeneration) return;
   if (!unsavedEdits.has(id)) {
@@ -163,6 +207,8 @@ async function detail(id) {
   document.querySelectorAll('#tasks button').forEach(button => button.classList.toggle('selected', button.dataset.id === id));
 }
 async function selectContact(jid, draftId = '') {
+  clearCompanyProfile();
+  ++companyGeneration; clearTimeout(companyTimer); companySuggestions.clear();
   current = null; ++selectionGeneration; $('editor').hidden = true; $('tasks').replaceChildren();
   if (!jid) return;
   const generation = selectionGeneration, tasks = await api('DRAFTS', { jid });
@@ -174,7 +220,7 @@ async function selectContact(jid, draftId = '') {
   }
   if (draftId && pending.some(task => task.id === draftId)) await detail(draftId);
   else if (pending.length) await detail(pending[0].id);
-  else notice('Este contacto no tiene tareas pendientes.');
+  else { notice('Este contacto no tiene tareas pendientes.'); void loadCompanyProfile('', jid); }
 }
 async function refresh() {
   const generation = ++refreshGeneration, contextGeneration = selectionGeneration;
@@ -186,6 +232,7 @@ async function refresh() {
   catch (error) { $('connectionState').textContent = 'Sin conexión con Asisto'; $('account').textContent = 'Sesión no disponible'; throw error; }
   if (generation !== refreshGeneration || contextGeneration !== selectionGeneration) return;
   const nextOwner = nextSession.tenantId + ':' + nextSession.userId;
+  if (owner && nextOwner !== owner) { clearCompanyProfile(); profileCache.clear(); }
   const index = await api('INDEX');
   if (generation !== refreshGeneration || contextGeneration !== selectionGeneration) return;
   if (index.owner !== nextOwner) throw new Error('account_changed');
@@ -210,6 +257,7 @@ async function refresh() {
     else await selectContact(jid, requestedDraft);
   }
   else {
+    clearCompanyProfile();
     current = null; $('editor').hidden = true; $('hubspot').hidden = true; $('tasks').replaceChildren(); $('contacts').value = '';
     notice(selected?.name ? 'Conversación actual: ' + selected.name + '. Todavía no se pudo vincular este contacto con sus tareas.' : index.chats.length ? 'Elegí un contacto o pulsá su icono en WhatsApp Web.' : 'Todavía no hay tareas detectadas. Procesá las conversaciones desde Asisto.');
   }
@@ -354,6 +402,7 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'session' || !Object.keys(changes).some(key => key.startsWith('selection-'))) return;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); tabId = tab?.id;
   if (!changes['selection-' + tabId]) return;
+  if (changes['selection-' + tabId].newValue?.jid !== $('contacts').value) clearCompanyProfile();
   ++selectionGeneration;
   $('hubspot').hidden = true;
   notice(changes['selection-' + tabId].newValue?.name ? 'Cargando ' + changes['selection-' + tabId].newValue.name + '…' : 'Identificando conversación…');

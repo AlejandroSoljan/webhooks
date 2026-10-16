@@ -7,6 +7,37 @@ const html = fs.readFileSync(require.resolve('../extensions/whatsapp-support/pan
 const source = fs.readFileSync(require.resolve('../extensions/whatsapp-support/panel.js'), 'utf8');
 const pause = () => new Promise(resolve => setTimeout(resolve, 35));
 
+test('company profile shows non-subscriber in red, isolates slow results and never replaces edits', async () => {
+ const dom = new JSDOM(html, { url: 'chrome-extension://test/panel.html', runScripts: 'outside-only' });
+ const w = dom.window; let resolveOld; let profileCalls = 0;
+ w.chrome = { tabs: { query: async () => [] }, storage: { session: { get: async () => ({}) }, onChanged: { addListener() {} } }, runtime: { sendMessage: async message => {
+   if (message.action === 'SESSION') return { data: { tenantId: 'ALSO', userId: 'also', choices: {} } };
+   if (message.action === 'INDEX') return { data: { owner: 'ALSO:also', chats: [] } };
+   if (message.action === 'COMPANY_PROFILE') {
+     ++profileCalls;
+     if (message.companyId === '1') return new Promise(resolve => { resolveOld = resolve; });
+     return { data: { portalId: '123', company: { id: '2', name: '<img src=x>', customerType: 'No Abonado', status: 'non_subscriber', phone: '123' } } };
+   }
+   throw Error(message.action);
+ } } };
+ try {
+   w.eval(source + '\nglobalThis.setTestCurrent = value => { current = value; renderFields(); };'); await pause();
+   w.setTestCurrent({id: 'draft', fields: {subject: 'Mi edición', companyId: '2'}, source: {}}); await pause();
+   const input = w.document.querySelector('#field-subject'); input.value = 'Todavía editando';
+   const old = w.eval(`loadCompanyProfile('1')`);
+   await w.eval(`loadCompanyProfile('2')`);
+   assert.equal(w.document.querySelector('.company-badge').textContent, 'No Abonado');
+   assert.ok(w.document.querySelector('.company-badge').classList.contains('non-subscriber'));
+   assert.equal(w.document.querySelector('#companyProfile img'), null);
+   assert.match(w.document.querySelector('#companyProfile').textContent, /<img src=x>/);
+   resolveOld({ data: { company: { id: '1', name: 'OLD' } } }); await old;
+   assert.doesNotMatch(w.document.querySelector('#companyProfile').textContent, /OLD/);
+   assert.equal(input.value, 'Todavía editando');
+   assert.equal(profileCalls, 2, 'same company uses bounded short-lived cache');
+   w.eval('clearCompanyProfile()'); assert.equal(w.document.querySelector('#companyProfile').hidden, true);
+ } finally { w.close(); }
+});
+
 test('the current task status takes precedence over the previously saved HubSpot stage', async () => {
   const dom = new JSDOM(html, { url: 'chrome-extension://test/panel.html', runScripts: 'outside-only' });
   const w = dom.window;

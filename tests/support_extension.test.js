@@ -34,6 +34,31 @@ async function call(path,body,extra={}) {
  if(body){const r=await fetch(base+'/session',{headers});const session=await r.json();headers['X-Asisto-Extension']=session.csrf;headers['Content-Type']='application/json';}
  const response=await fetch(base+path,{headers,...(body?{method:'POST',body:JSON.stringify(body)}:{})});return{status:response.status,data:await response.json()};
 }
+test('company profile preserves exact subscription categories and only exposes selected properties', async () => {
+ let path;
+ const api = new HubSpotContract('unused');
+ api.request = async value => { path = value; return { id: '42', properties: { name: 'Example', tipo_cliente: 'No Abonado', cod_cliente: '9', phone: '123', secret: 'hidden' } }; };
+ let profile = await api.companyProfile('42');
+ assert.equal(profile.status, 'non_subscriber'); assert.equal(profile.customerType, 'No Abonado'); assert.equal(profile.customerCode, '9'); assert.equal(profile.secret, undefined);
+ assert.match(path, /tipo_cliente/);
+ for (const [type, expected] of [['Abonado','subscriber'], ['Abonado (consulta)','other'], ['Baja','other'], ['', 'other']]) {
+   api.request = async () => ({ id: '42', properties: { tipo_cliente: type } });
+   profile = await api.companyProfile('42'); assert.equal(profile.status, expected); assert.equal(profile.customerType, type || 'Sin dato');
+ }
+ await assert.rejects(api.companyProfile('../contacts'), /invalid_company_id/);
+});
+test('company information resolves scoped contact memory and aliases even without pending tasks', async () => {
+ remote.companyProfile = async id => ({ id, name: 'Example', customerType: 'Abonado', status: 'subscriber' });
+ await service.col('contacts').insertOne({ ...scope, jid: '123@lid', aliases: ['549123@s.whatsapp.net'] });
+ await service.col('memory').insertOne({ ...scope, jid: '123@lid', companyId: '42' });
+ let response = await call('/hubspot/company?jid=549123%40s.whatsapp.net');
+ assert.equal(response.status, 200); assert.equal(response.data.company.id, '42'); assert.equal(response.data.portalId, '123');
+ response = await call('/hubspot/company?jid=549123%40s.whatsapp.net', null, { 'test-user': 'other' });
+ assert.equal(response.data.company, null);
+ assert.equal((await call('/hubspot/company?id=bad')).status, 400);
+ await service.col('memory').insertOne({ ...scope, jid: '549123@s.whatsapp.net', companyId: '43' });
+ assert.equal((await call('/hubspot/company?jid=549123%40s.whatsapp.net')).data.company, null);
+});
 test('extension requires the session origin, scoped grant and access to the draft',async()=>{
  assert.equal((await fetch(base+'/session')).status,403);
  assert.equal((await call('/session',null,{Origin:'https://evil.example'})).status,403);

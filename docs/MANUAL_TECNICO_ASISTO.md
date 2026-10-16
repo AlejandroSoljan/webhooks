@@ -1,5 +1,9 @@
 # Manual técnico de Asisto
 
+### Empresa asociada en extensión — v5.00.296 / 1.0.54
+
+Ficha HubSpot por asociación del contacto o selección de empresa: tipo de cliente exacto (No Abonado en rojo), código, dirección/localidad y teléfonos. Lectura sin IA ni escrituras CRM, errores independientes del editor, caché acotada por dueño y descarte de respuestas obsoletas. Contrato y pruebas en [Tickets WhatsApp](whatsapp_support.md#ficha-de-empresa-en-extensión-1054-500296).
+
 ### Selector de dominio del Asistente IA — v5.00.291
 
 `/comportamiento` muestra un selector ordenado por identificador de `tenant_config` para superadmin; los demás roles conservan su dominio fijo. Cambiar la selección carga una página nueva con `?tenant=...`, evitando guardar los datos del dominio anterior en el nuevo. Si hubo edición, solicita confirmación antes de descartarla. El diseño conserva las funciones y permisos existentes, incluida la advertencia de configuración global de MANAGER. Pruebas: `tests/behavior_ui_helpers.test.js` y `tests/behavior_pause_config.test.js`.

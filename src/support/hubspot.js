@@ -68,6 +68,16 @@ class HubSpotContract {
     }
     return { companyId: company.id, company: company.properties.name || '', contactId: contact?.id || '', contact: contact ? [contact.properties.firstname, contact.properties.lastname].filter(Boolean).join(' ') : '' };
   }
+  async companyProfile(companyId) {
+    if (!/^\d+$/.test(String(companyId || ''))) fail('invalid_company_id');
+    const company = await this.request(`/crm/v3/objects/companies/${companyId}?properties=name,tipo_cliente,cod_cliente,address,city,phone,telefono_otro,telefono_movil,domain`);
+    const p = company.properties || {}, type = text(p.tipo_cliente || '', 200);
+    // Preserve the CRM category exactly: a missing/ambiguous category is not “No abonado”.
+    const status = normalizedLabel(type) === 'no abonado' ? 'non_subscriber' : normalizedLabel(type) === 'abonado' ? 'subscriber' : 'other';
+    return { id: String(company.id), name: text(p.name || '', 300), customerType: type || 'Sin dato', status,
+      customerCode: text(p.cod_cliente || '', 100), address: text(p.address || '', 500), city: text(p.city || '', 200),
+      phone: text(p.phone || '', 100), otherPhone: text(p.telefono_otro || '', 100), mobilePhone: text(p.telefono_movil || '', 100), domain: text(p.domain || '', 300) };
+  }
   async companyTickets(companyId, { openOnly = false } = {}) {
     const results = [];
     let after;
