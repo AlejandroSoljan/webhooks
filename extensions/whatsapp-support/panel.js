@@ -157,6 +157,11 @@ const errors = {
   invalid_hubspot_owner: 'Elegí el usuario responsable del ticket en HubSpot.', hubspot_ticket_schema_incomplete: 'HubSpot no devolvió propietarios, pipelines o propiedades obligatorias del ticket.',
 };
 function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }
+function toggleSettings(open) {
+  $('settingsPanel').hidden = !open;
+  $('settingsToggle').setAttribute('aria-expanded', String(open));
+  if (!open) { $('smtpPassword').value = ''; $('settingsToggle').focus(); }
+}
 function saveState(message = '', state = '') { $('saveState').textContent = message; $('saveState').className = 'save-state' + (state ? ' ' + state : ''); }
 async function api(action, values = {}) {
   const response = await chrome.runtime.sendMessage({ action, owner, ...values });
@@ -461,6 +466,9 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   if (busy) pendingContextRefresh = true;
   else run(refresh);
 });
+$('settingsToggle').onclick=()=>toggleSettings($('settingsPanel').hidden);
+$('settingsClose').onclick=()=>toggleSettings(false);
+$('settingsPanel').addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();toggleSettings(false);}});
 $('mailSettings').addEventListener('toggle', () => { if ($('mailSettings').open && smtpOwner !== owner) void loadSMTP(); if (!$('mailSettings').open) $('smtpPassword').value=''; });
 $('smtpForm').onsubmit = async event => {
   event.preventDefault(); if (mailPending) return; mailPending=true; $('smtpSave').disabled=true; $('smtpVerify').disabled=true;

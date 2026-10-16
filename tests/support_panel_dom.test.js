@@ -7,6 +7,29 @@ const html = fs.readFileSync(require.resolve('../extensions/whatsapp-support/pan
 const source = fs.readFileSync(require.resolve('../extensions/whatsapp-support/panel.js'), 'utf8');
 const pause = () => new Promise(resolve => setTimeout(resolve, 35));
 
+test('gear groups settings, opens locally and closes without replacing task edits or saved configuration',async()=>{
+ const dom=new JSDOM(html,{url:'chrome-extension://test/panel.html',runScripts:'outside-only'}),w=dom.window,calls=[];
+ w.chrome={tabs:{query:async()=>[]},storage:{session:{get:async()=>({})},onChanged:{addListener(){}}},runtime:{sendMessage:async message=>{
+   calls.push(message.action);
+   if(message.action==='SESSION')return{data:{tenantId:'ALSO',userId:'one',choices:{}}};
+   if(message.action==='INDEX')return{data:{owner:'ALSO:one',chats:[]}};
+   if(message.action==='COMPANY_PROFILE')return{data:{company:null}};
+   throw Error(message.action);
+ }}};
+ try{
+   w.eval(source+'\nglobalThis.setSettingsTestTask=value=>{current=value;renderFields();};');await pause();
+   w.setSettingsTestTask({id:'task',fields:{subject:'No perder edición'},source:{}});
+   const panel=w.document.querySelector('#settingsPanel'),gear=w.document.querySelector('#settingsToggle');
+   assert.equal(panel.hidden,true);assert.equal(w.document.querySelector('#mailSettings').closest('section'),panel);assert.equal(w.document.querySelector('#contactControl').closest('section'),panel);
+   const count=calls.length;gear.click();assert.equal(panel.hidden,false);assert.equal(gear.getAttribute('aria-expanded'),'true');
+   w.document.querySelector('#smtpHost').value='smtp.example.com';w.document.querySelector('#smtpPassword').value='NOT-STORED';
+   panel.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+   assert.equal(panel.hidden,true);assert.equal(gear.getAttribute('aria-expanded'),'false');assert.equal(w.document.activeElement,gear);
+   assert.equal(w.document.querySelector('#smtpPassword').value,'');assert.equal(w.document.querySelector('#smtpHost').value,'smtp.example.com');
+   assert.equal(w.document.querySelector('#field-subject').value,'No perder edición');assert.equal(calls.length,count);
+ }finally{w.close();}
+});
+
 test('task email requires preview and explicit confirmation, preserves task edits and never stores SMTP password',async()=>{
  const dom=new JSDOM(html,{url:'chrome-extension://test/panel.html',runScripts:'outside-only'}),w=dom.window,calls=[],stored={};let finish;
  w.crypto.randomUUID=()=> '12345678-1234-1234-1234-123456789012';
