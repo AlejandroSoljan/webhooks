@@ -79,6 +79,22 @@ class HubSpotContract {
       customerCode: text(p.cod_cliente || '', 100), address: text(p.address || '', 500), city: text(p.city || '', 200),
       phone: text(p.phone || '', 100), otherPhone: text(p.telefono_otro || '', 100), mobilePhone: text(p.telefono_movil || '', 100), domain: text(p.domain || '', 300) };
   }
+  async companyContacts(companyId) {
+    if (!/^\d+$/.test(String(companyId || ''))) fail('invalid_company_id');
+    const contacts = new Map(); let after;
+    for (let page = 0; page < 10; page++) {
+      const result = await this.request('/crm/v3/objects/contacts/search', {
+        filterGroups: [{ filters: [{ propertyName: 'associations.company', operator: 'EQ', value: String(companyId) }] }],
+        properties: ['firstname', 'lastname', 'email', 'phone', 'mobilephone', 'jobtitle'], limit: 100, ...(after ? { after } : {})
+      });
+      for (const row of result.results || []) {
+        const p = row.properties || {};
+        contacts.set(String(row.id), { id: String(row.id), name: [p.firstname, p.lastname].filter(Boolean).join(' '), email: p.email || '', phone: p.phone || '', mobilePhone: p.mobilephone || '', jobTitle: p.jobtitle || '' });
+      }
+      after = result.paging?.next?.after; if (!after) break;
+    }
+    return { contacts: [...contacts.values()].sort((a,b) => a.name.localeCompare(b.name)), incomplete: !!after };
+  }
   async companyTickets(companyId, { openOnly = false } = {}) {
     const results = [];
     let after;

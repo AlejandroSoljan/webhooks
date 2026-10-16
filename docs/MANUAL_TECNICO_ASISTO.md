@@ -1,5 +1,7 @@
 # Manual técnico de Asisto
 
+Extensión 1.0.60 / backend 5.00.299: contactos asociados a la empresa bajo sus datos desplegables, consulta diferida y paginada con credencial del tenant. Contrato en [Tickets WhatsApp](whatsapp_support.md).
+
 Extensión 1.0.58 / backend 5.00.298: listado de destinatarios corporativos Manager desde HubSpot con entrada manual y contexto de empresa, contacto y fecha de conversación en los correos nuevos. Contrato y límites en [Tickets WhatsApp](whatsapp_support.md).
 
 ### Correo de tareas por usuario — v5.00.297 / extensión 1.0.56

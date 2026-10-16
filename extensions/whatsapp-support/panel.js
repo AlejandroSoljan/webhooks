@@ -1,5 +1,6 @@
 // Asisto | Version: 5.00.277 | Fecha: 2026-10-02
 const $ = id => document.getElementById(id);
+document.querySelector('.brand img').title = 'Asisto · Extensión ' + (chrome.runtime.getManifest?.().version || '1.0.60');
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, refreshGeneration = 0, companyTimer, companyGeneration = 0;
 let consumedOpenAt = null;
 let mailDraftId = '', mailGeneration = 0, smtpOwner = '', mailPending = false;
@@ -91,6 +92,27 @@ async function loadCompanyProfile(companyId = '', jid = '') {
     }
     if (!list.children.length) { const empty = document.createElement('p'); empty.textContent = 'No hay otros datos cargados en HubSpot.'; details.append(empty); }
     details.append(list);
+    const contactsTitle = document.createElement('strong'), contactsBox = document.createElement('div');
+    contactsTitle.textContent = 'Contactos asociados'; contactsBox.className = 'company-contacts'; details.append(contactsTitle, contactsBox);
+    let contactsLoading = false, contactsLoaded = false;
+    details.addEventListener('toggle', async () => {
+      if (!details.open || contactsLoading || contactsLoaded) return;
+      contactsLoading = true; contactsBox.textContent = 'Consultando contactos…';
+      try {
+        const data = await api('COMPANY_CONTACTS', { companyId: company.id });
+        if (generation !== profileGeneration || !box.contains(details)) return;
+        contactsBox.replaceChildren(); contactsLoaded = true;
+        for (const contact of data.contacts || []) {
+          const row = document.createElement('p'), title = document.createElement('strong'), info = document.createElement('span');
+          title.textContent = contact.name || 'Contacto sin nombre';
+          info.textContent = [contact.jobTitle, contact.email, contact.phone, contact.mobilePhone !== contact.phone ? contact.mobilePhone : ''].filter(Boolean).join(' · ');
+          row.append(title, document.createElement('br'), info); contactsBox.append(row);
+        }
+        if (!data.contacts?.length) contactsBox.textContent = 'No hay contactos asociados a esta empresa en HubSpot.';
+        if (data.incomplete) { const note = document.createElement('p'); note.textContent = 'Listado parcial. Consultá los demás contactos en HubSpot.'; contactsBox.append(note); }
+      } catch { if (generation === profileGeneration) contactsBox.textContent = 'No se pudieron cargar los contactos. Cerrá y abrí los datos para reintentar.'; }
+      finally { contactsLoading = false; }
+    });
     if (/^\d+$/.test(String(result.portalId || '')) && /^\d+$/.test(String(company.id))) { const link = document.createElement('a'); link.href = `https://app.hubspot.com/contacts/${result.portalId}/record/0-2/${company.id}`; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'Abrir empresa en HubSpot ↗'; details.append(link); }
     box.append(details);
   } catch {

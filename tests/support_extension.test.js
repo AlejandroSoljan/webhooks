@@ -44,6 +44,17 @@ test('mail directory paginates and returns only deduplicated exact corporate ema
  assert.deepEqual(result.data.contacts.map(x=>x.email).sort(),['one@managersistemas.com','two@managersistemas.com']);
 });
 
+test('company contacts filter by association, paginate and do not expose other properties', async () => {
+ const api = new HubSpotContract('unused'); let count=0;
+ api.request=async(path,body)=>{
+   assert.equal(body.filterGroups[0].filters[0].value,'42');assert.equal(body.filterGroups[0].filters[0].propertyName,'associations.company');
+   count++;return {results:[{id:String(count),properties:{firstname:'Contacto',email:'test@example.test',secret:'hidden'}}],...(count===1?{paging:{next:{after:'100'}}}:{})};
+ };
+ remote.companyContacts=id=>api.companyContacts(id);
+ const result=await call('/hubspot/company-contacts?id=42');assert.equal(result.status,200);assert.equal(result.data.contacts.length,2);assert.equal(result.data.incomplete,false);assert.equal(result.data.contacts[0].secret,undefined);
+ assert.equal((await call('/hubspot/company-contacts?id=bad')).status,400);
+});
+
 test('company profile preserves exact subscription categories and only exposes selected properties', async () => {
  let path;
  const api = new HubSpotContract('unused');

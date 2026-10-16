@@ -257,6 +257,12 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const { client } = await clientFor(s, scope), result = await client.search(type, query, 15);
     return { results: (result.results || []).map(row => ({ id: String(row.id), properties: row.properties || {} })) };
   }));
+  router.get('/hubspot/company-contacts', route(async (req, s, scope) => {
+    const id = text(req.query.id || '', 100);
+    if (!/^\d+$/.test(id)) fail('invalid_company_id');
+    const { client } = await clientFor(s, scope);
+    return client.companyContacts(id);
+  }));
   router.get('/hubspot/company', route(async (req, s, scope) => {
     let companyId = text(req.query.id || '', 100);
     if (!companyId) {

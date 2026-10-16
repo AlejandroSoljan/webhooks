@@ -161,7 +161,8 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/horarios` | [endpoint.js:8528](../../endpoint.js#L8528) | `, async (req, res) => {` |
 | GET | `/horarios` | [src/web/web_admin.routes.js:233](../../src/web/web_admin.routes.js#L233) | `, async (req, res) => {` |
 | GET | `/hubspot/companies/:id/tickets` | [src/support/routes.js:86](../../src/support/routes.js#L86) | `, route(async (req, s, scope) => (await client(s, scope)).companyTickets(req.params.id)));` |
-| GET | `/hubspot/company` | [src/support/extension.js:260](../../src/support/extension.js#L260) | `, route(async (req, s, scope) => {` |
+| GET | `/hubspot/company-contacts` | [src/support/extension.js:260](../../src/support/extension.js#L260) | `, route(async (req, s, scope) => {` |
+| GET | `/hubspot/company` | [src/support/extension.js:266](../../src/support/extension.js#L266) | `, route(async (req, s, scope) => {` |
 | GET | `/hubspot/mail-contacts` | [src/support/extension.js:239](../../src/support/extension.js#L239) | `, route(async (req, s, scope) => {` |
 | GET | `/hubspot/metadata` | [src/support/routes.js:85](../../src/support/routes.js#L85) | `, route(async (req, s, scope) => (await client(s, scope)).metadata()));` |
 | GET | `/hubspot/search` | [src/support/extension.js:255](../../src/support/extension.js#L255) | `, route(async (req, s, scope) => {` |
@@ -312,7 +313,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/drafts/:id/dismiss` | [src/support/extension.js:207](../../src/support/extension.js#L207) | `, route(async (req, s, scope) => {` |
 | POST | `/drafts/:id/mail` | [src/support/extension.js:52](../../src/support/extension.js#L52) | `, route(async (req,s,scope) => { const row = await rowFor(s,scope,req.params.id); return mailFactory(s).send(s` |
 | POST | `/drafts/:id/manual-complete` | [src/support/extension.js:195](../../src/support/extension.js#L195) | `, route(async (req, s, scope) => {` |
-| POST | `/drafts/:id/publish` | [src/support/extension.js:276](../../src/support/extension.js#L276) | `, route(async (req, s, scope) => {` |
+| POST | `/drafts/:id/publish` | [src/support/extension.js:282](../../src/support/extension.js#L282) | `, route(async (req, s, scope) => {` |
 | POST | `/drafts/:id/queue` | [src/support/extension.js:184](../../src/support/extension.js#L184) | `, route(async (req, s, scope) => {` |
 | POST | `/drafts/:id/reconcile` | [src/support/extension.js:163](../../src/support/extension.js#L163) | `, route(async (req, s, scope) => {` |
 | POST | `/drafts/:id/save` | [src/support/extension.js:162](../../src/support/extension.js#L162) | `, route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, req.body.fields)));` |

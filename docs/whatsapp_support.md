@@ -1,6 +1,8 @@
 <!-- Asisto | Version: 5.00.178 | Fecha: 2026-09-20 -->
 # Tickets desde WhatsApp: agente personal en cada PC
 
+Extensión 1.0.60 / backend 5.00.299: al desplegar los datos de empresa consulta `GET /api/support/extension/hubspot/company-contacts?id=...` con integración del tenant. Muestra nombre, cargo, email, teléfono y celular de contactos realmente asociados por `associations.company`. Paginación de 100 hasta 1000, con aviso de lista parcial; errores no ocultan la empresa ni alteran borradores. Sólo consulta al expandir; ignora respuestas de una selección anterior. Sin escritura en HubSpot ni envío automático.
+
 Extensión 1.0.59: cabecera compacta y fija con logo, contacto activo y botones de actualizar/configurar. Campos en dos columnas (una en panel muy estrecho), descripción reducida y redimensionable, identificadores de HubSpot desplegables. Conserva los controles, valores, borradores y guardado existentes. Empresa y condición de abonado permanecen visibles; no abonado conserva indicador rojo.
 
 ## Destinatarios Manager — 5.00.298 / extensión 1.0.58
