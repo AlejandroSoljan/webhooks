@@ -1,6 +1,8 @@
 <!-- Asisto | Version: 5.00.178 | Fecha: 2026-09-20 -->
 # Tickets desde WhatsApp: agente personal en cada PC
 
+Extensión 1.0.59: cabecera compacta y fija con logo, contacto activo y botones de actualizar/configurar. Campos en dos columnas (una en panel muy estrecho), descripción reducida y redimensionable, identificadores de HubSpot desplegables. Conserva los controles, valores, borradores y guardado existentes. Empresa y condición de abonado permanecen visibles; no abonado conserva indicador rojo.
+
 ## Destinatarios Manager — 5.00.298 / extensión 1.0.58
 
 El compositor ofrece un listado explícito de contactos de HubSpot con email terminado exactamente en `@managersistemas.com`, sin duplicados, y conserva el ingreso manual. GET `/api/support/extension/hubspot/mail-contacts` usa la integración del tenant autenticado, busca páginas de 100 hasta 1000 resultados y devuelve `{contacts:[{name,email}],incomplete}`. La interfaz avisa ante resultados parciales o error; nunca elige ni envía automáticamente.

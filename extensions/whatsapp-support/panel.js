@@ -209,7 +209,7 @@ function renderFields() {
   const staged = unsavedEdits.get(current.id);
   const displayedFields = staged?.fields || current.fields;
   for (const [key, title] of definitions) {
-    const label = document.createElement('label'); label.textContent = title;
+    const label = document.createElement('label'); label.textContent = title; label.dataset.field = key;
     const values = session.choices?.[key];
     const input = document.createElement(values ? 'select' : key === 'description' ? 'textarea' : 'input'); input.id = 'field-' + key;
     if (values) { for (const value of values) option(input, value, value); }
@@ -226,6 +226,10 @@ function renderFields() {
     label.append(input); $('fields').append(label);
   }
   $('source').textContent = current.source?.description || '';
+  const advanced = document.createElement('details'), advancedTitle = document.createElement('summary');
+  advancedTitle.textContent = 'Identificadores de HubSpot'; advanced.append(advancedTitle); advanced.className = 'field-advanced';
+  for (const key of ['companyId', 'contactId']) { const label = $('field-' + key)?.closest('label'); if (label) advanced.append(label); }
+  $('fields').append(advanced);
   $('taskState').textContent = current.state === 'ignored' ? 'Desestimada' : current.hubspot?.ticketId ? 'Ticket ' + current.hubspot.ticketId : current.hubspot?.state === 'awaiting_configuration' ? 'Pendiente de HubSpot' : 'Borrador';
   if (/^\d+$/.test(String(current.hubspot?.portalId || '')) && /^\d+$/.test(String(current.hubspot?.ticketId || ''))) {
     const link = document.createElement('a'); link.href = `https://app.hubspot.com/contacts/${current.hubspot.portalId}/record/0-5/${current.hubspot.ticketId}/`; link.target = '_blank'; link.rel = 'noopener'; link.textContent = 'Abrir ticket ' + current.hubspot.ticketId; $('taskState').replaceChildren(link);
@@ -316,6 +320,7 @@ async function refresh() {
   const seen = new Set();
   for (const chat of index.chats) { if (seen.has(chat.jid)) continue; seen.add(chat.jid); option($('contacts'), chat.jid, (chat.name || chat.jid) + ' · ' + chat.count); }
   const jid = selected ? selected.jid : previous;
+  $('headerContact').textContent = selected?.name || index.chats.find(chat => chat.jid === jid)?.name || 'Abrí un chat';
   if (jid && !seen.has(jid)) { const known = (index.knownChats || []).find(chat => chat.jid === jid || chat.aliases?.includes(jid)); option($('contacts'), jid, known?.name || selected?.name || jid); seen.add(jid); }
   const explicitlyRequestedDraft = selected?.refreshAt !== consumedOpenAt ? selected?.draftId : '';
   const requestedDraft = explicitlyRequestedDraft || (jid === previous ? previousDraft : '');
