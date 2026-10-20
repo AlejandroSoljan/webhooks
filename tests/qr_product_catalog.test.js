@@ -62,9 +62,9 @@ test('la búsqueda general usa descripción flexible y normaliza preguntas y plu
   assert.equal(url.searchParams.get('valor'), '%motosierra%');
   assert.equal(isGeneralCatalogQuery('¿Tenés motosierras?'), true);
 });
-function load(api) {
+function load(api, overrides = {}) {
   const f = fixture(), routes = new Map();
-  const config = { qr_enabled: true, qr_api_url: 'https://example.invalid/products', qr_api_method: 'POST' };
+  const config = { qr_enabled: true, qr_api_url: 'https://example.invalid/products', qr_api_method: 'POST', ...overrides };
   const db = { collection: name => name === 'settings' ? { findOne: async () => config } : f.col };
   const file = path.resolve(__dirname, '../qr_product_web.js'), realRequire = createRequire(file);
   const sandbox = { module: { exports: {} }, process, console: { log() {}, warn() {}, error() {} }, setTimeout, clearTimeout, setImmediate() {}, Buffer, URL,
@@ -78,6 +78,32 @@ function load(api) {
   }
   return { ...f, request, config };
 }
+const sqlConfig = { qr_api_url: 'https://manager.example/v300/api/Api_Consultas_Generales/Consulta_sql?key=test&sql_id=195', qr_api_method: 'GET' };
+test('SQL conserva LP1, mapea campos y la caché sirve barras sin otra consulta', async () => {
+  let calls = 0;
+  const f = load(async options => {
+    calls++; assert.equal(new URL(options.url).searchParams.get('filtros'), 'tipo:SKU;busqueda:PROM-52G');
+    assert.equal(options.params, undefined);
+    return { status: 200, data: [{ codigo:'PROM-52G', codbarra:'7798225228547', descripcion:'Motosierra', precio_lp1:101519, precio_lp2:90000, stock:1, activo:'S', puntaje:1000 }] };
+  }, sqlConfig);
+  const first = await f.request('PROM-52G'); assert.equal(first.body.product.price, 101519);
+  assert.equal((await f.request('7798225228547')).body.product.price, 101519); assert.equal(calls,1);
+  f.config.qr_field_price = 'Precio_Lp2';
+  assert.equal((await f.request('PROM-52G')).body.product.price,90000);
+});
+test('SQL no elige arbitrariamente entre dos artículos del mismo código de barras', async () => {
+  const f=load(async options=>{assert.equal(new URL(options.url).searchParams.get('filtros'),'tipo:BARRA;busqueda:886661822775');return {status:200,data:['MS194T/35','MS194T/40'].map(codigo=>({codigo,codbarra:'886661822775',descripcion:'Motosierra',precio_lp1:10}))}},sqlConfig);
+  assert.equal((await f.request('886661822775')).statusCode,409);
+});
+test('SQL numérico sin coincidencia BARRA reintenta SKU preservando ceros', async()=>{
+  const types=[];const f=load(async options=>{const filter=new URL(options.url).searchParams.get('filtros');types.push(filter);return {status:200,data:types.length===1?[]:[{codigo:'000123456',descripcion:'SKU numérico',precio_lp1:20}]}},sqlConfig);
+  assert.equal((await f.request('000123456')).body.product.price,20);
+  assert.deepEqual(types,['tipo:BARRA;busqueda:000123456','tipo:SKU;busqueda:000123456']);
+});
+test('SQL vacío no inventa artículos ni precios', async()=>{
+  const f=load(async()=>({status:200,data:[]}),sqlConfig);
+  assert.equal((await f.request('NO-EXISTE')).statusCode,404);
+});
 test('POST funciona y el siguiente escaneo de barras usa MongoDB', async () => {
   let calls = 0;
   const f = load(async options => { calls++; assert.equal(options.data.codigo, '0012'); return { status: 200, data: { product: { Codigo: '0012', Codbarra: '000123', Descripcion: 'Producto', Precio_Lp1: 12 } } }; });

@@ -1,0 +1,15 @@
+# MCN: catálogo Manager SQL — 2026-10-20
+
+La URL configurada en `settings.behavior:MCN.qr_api_url` apunta a `Api_Consultas_Generales/Consulta_sql`, `sql_id=195`. La credencial se conserva exclusivamente en configuración privada del servidor. No incluirla en documentos, logs ni HTML. No se ofrece ejecución de SQL arbitrario.
+
+GET con un parámetro `filtros=tipo:SKU;busqueda:<código>`, `BARRA` para códigos numéricos de 8 a 14 caracteres y `ALTERNATIVOS` para texto. Se codifica mediante URLSearchParams; se rechazan separadores de filtros en la entrada. Ceros iniciales conservados; si BARRA devuelve vacío se prueba SKU para códigos internos numéricos. Múltiples artículos con la misma barra: 409, nunca selección arbitraria. Artículos inactivos excluidos.
+
+El adaptador convierte campos minúsculos a sus alias previos: `precio_lp1` → `Precio_Lp1`, etc. No modifica `qr_field_price`, listas adicionales, etiquetas, moneda ni notas. MCN al migrar utiliza Precio_Lp1, ARS, sin listas adicionales. No presume IVA, descuentos ni conversiones.
+
+Las búsquedas generales eliminan palabras conversacionales y usan ALTERNATIVOS, ordenado por puntaje descendente (no es probabilidad). Las solicitudes de similares en una ficha usan las dos primeras palabras de su descripción para ampliar candidatos, excluyen el artículo original y filtran por precio cuando se pide más barato. Presentan resultados de catálogo sin afirmar equivalencia técnica, compatibilidad ni mayor potencia. La extracción de dos palabras es heurística y no asegura encontrar todos los similares; las comparaciones técnicas siguen requiriendo el flujo asesor. Las consultas deterministas no llaman al modelo. Preguntas técnicas y foto explícita mantienen su flujo existente. Historial y catálogo de conversación siguen registrándose. Sin resultados se informa que no se encontraron alternativas, sin inventar artículos ni recurrir automáticamente a IA.
+
+Caché existente separada por URL/origen: cambiar endpoint invalida el origen anterior sin borrar datos. Mantiene límite de concurrencia, timeout, coalescencia y reintento GET. APIs y otros tenants sin cambio de configuración conservan contrato anterior.
+
+AWS principal aloja la API de productos. Los servicios dedicados AWS/Mecan redirigen `/qr/MCN` a HTTPS público para cámara; no replicar endpoints de productos ni claves al navegador. En Mecan se publica el mismo adaptador como paquete verificable. Su DB local no tiene configuración de catálogo MCN: no crear una copia artificial ni credenciales innecesarias; el destino HTTPS central utiliza la configuración autoritativa. No se modifica nginx, accesos locales, colas ni sincronización. Verificar ambos destinos y registrar releases activos antes de anunciar finalización.
+
+Observación del contrato: para PROM-52G, la API anterior informó LP1 101518,56 y la nueva 101519 en la prueba. Se conserva la lista, pero el redondeo proviene del nuevo endpoint; el adaptador no altera importes. Si se requieren centavos idénticos, debe corregirse el cálculo/serialización de precio_lp1 en Manager.

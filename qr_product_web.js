@@ -12,6 +12,7 @@ const { getDb } = require('./db');
 const { resolveCanonicalTenantId } = require('./tenant_aliases');
 const { resolveOpenAiApiKey } = require('./ai_key_router');
 const { createProductCatalog, sourceKey } = require('./product_catalog');
+const { isManagerSql, managerSqlUrl, managerSqlRow, rankedManagerRows } = require('./manager_sql_catalog');
 const { createLocalBarcodeDetector, decodeLocalBarcodeFrame, mountLocalScannerAssets } = require('./qr_local_scanner');
 const scannerClient = require('./qr_scanner_page_client');
 const { recordMonetizationEvent } = require('./monetization_engine');
@@ -70,7 +71,7 @@ function acquireQrProductApiSlot() {
   });
 }
 function recordQrProductApiFailure(tenant, error) {
-  if (error?.statusCode === 404 || error?.message === 'product_not_found') return;
+  if ([404, 409].includes(error?.statusCode) || error?.message === 'product_not_found') return;
   const now = Date.now(), key = String(tenant || '').toUpperCase(), previous = qrProductCircuit.get(key);
   const state = !previous || now - Number(previous.windowStartedAt || 0) > 60000 ? { failures: 0, windowStartedAt: now, openUntil: 0 } : previous;
   state.failures += 1; if (state.failures >= 5) state.openUntil = now + 20000; qrProductCircuit.set(key, state);
@@ -272,6 +273,7 @@ function replaceTemplateValue(value, variables) {
 }
 
 function managerDirectLookupUrl(value, code) {
+  if (isManagerSql(value)) return managerSqlUrl(value, /^\d{8,14}$/.test(String(code).trim()) ? 'BARRA' : 'SKU', normalizedLookupCode(code, 180));
   const url = new URL(String(value || ''));
   const codigo = normalizedLookupCode(code, 180);
   const isBarcode = /^\d{8,14}$/.test(codigo);
@@ -281,6 +283,7 @@ function managerDirectLookupUrl(value, code) {
 }
 
 function managerCatalogSearchUrl(value, query) {
+  if (isManagerSql(value)) return managerSqlUrl(value, 'ALTERNATIVOS', String(query).replace(/%+/g, ' ').trim());
   const url = new URL(String(value || ''));
   url.searchParams.set('campo', 'OTRO');
   const normalized = clean(query, 120).replace(/^%+|%+$/g, '');
@@ -312,14 +315,15 @@ function photoSearchTerms(identification) {
 }
 
 async function fetchPhotoCatalogSuggestions(cfg, identification) {
-  if (cfg.apiMethod !== 'GET' || !/\/api\/Api_Articulos\/Consulta/i.test(cfg.apiUrl)) return [];
+  if (cfg.apiMethod !== 'GET' || (!isManagerSql(cfg.apiUrl) && !/\/api\/Api_Articulos\/Consulta/i.test(cfg.apiUrl))) return [];
   const headers = { Accept: 'application/json' };
   if (cfg.apiAuthHeader && cfg.apiAuthValue) headers[cfg.apiAuthHeader] = cfg.apiAuthValue;
   const found = new Map();
   for (const term of photoSearchTerms(identification)) {
     const response = await axios({ method: 'GET', url: managerCatalogSearchUrl(cfg.apiUrl, term), headers, timeout: Math.min(cfg.apiTimeoutMs, 20000), validateStatus: () => true, maxContentLength: 2_000_000 });
     if (response.status < 200 || response.status >= 300) continue;
-    for (const raw of externalProductRows(response.data).slice(0, 20)) {
+    const rows = isManagerSql(cfg.apiUrl) ? rankedManagerRows(externalProductRows(response.data)).map(managerSqlRow) : externalProductRows(response.data);
+    for (const raw of rows.slice(0, 20)) {
       try {
         const product = normalizeQrProduct(raw, cfg);
         if (!found.has(product.code.toUpperCase())) found.set(product.code.toUpperCase(), product);
@@ -330,8 +334,8 @@ async function fetchPhotoCatalogSuggestions(cfg, identification) {
   return [...found.values()].slice(0, 4);
 }
 
-async function fetchGeneralCatalogSuggestions(cfg, message) {
-  if (cfg.apiMethod !== 'GET' || !/\/api\/Api_Articulos\/Consulta/i.test(cfg.apiUrl)) return [];
+async function fetchGeneralCatalogSuggestions(cfg, message, currentProduct = null, filterMessage = message) {
+  if (cfg.apiMethod !== 'GET' || (!isManagerSql(cfg.apiUrl) && !/\/api\/Api_Articulos\/Consulta/i.test(cfg.apiUrl))) return [];
   const query = generalCatalogSearchQuery(message);
   if (!query) return [];
   const headers = { Accept: 'application/json' };
@@ -339,13 +343,16 @@ async function fetchGeneralCatalogSuggestions(cfg, message) {
   const response = await axios({ method: 'GET', url: managerCatalogSearchUrl(cfg.apiUrl, query), headers, timeout: Math.min(cfg.apiTimeoutMs, 20000), validateStatus: () => true, maxContentLength: 2_000_000 });
   if (response.status < 200 || response.status >= 300) return [];
   const found = new Map();
-  for (const raw of externalProductRows(response.data).slice(0, 100)) {
+  const rows = isManagerSql(cfg.apiUrl) ? rankedManagerRows(externalProductRows(response.data)).map(managerSqlRow) : externalProductRows(response.data);
+  for (const raw of rows.slice(0, 100)) {
     try {
       const product = normalizeQrProduct(raw, cfg);
+      if (currentProduct && product.code.toUpperCase() === currentProduct.code.toUpperCase()) continue;
+      if (currentProduct && /(?:m[aá]s\s+(?:econ[oó]mic|barat)|menor\s+precio)/i.test(filterMessage) && !(product.price > 0 && product.price < currentProduct.price)) continue;
       if (!found.has(product.code.toUpperCase())) found.set(product.code.toUpperCase(), product);
     } catch {}
   }
-  return [...found.values()].sort((a, b) => Number(b.available === true) - Number(a.available === true)).slice(0, 4);
+  return (isManagerSql(cfg.apiUrl) ? [...found.values()] : [...found.values()].sort((a, b) => Number(b.available === true) - Number(a.available === true))).slice(0, 4);
 }
 
 async function loadQrConfig(db, tenant) {
@@ -416,7 +423,7 @@ async function fetchQrProductDirect(cfg, tenant, code) {
 
   const variables = { codigo, tenant };
   let url = replaceTemplateString(cfg.apiUrl, variables);
-  const managerLookup = cfg.apiMethod === 'GET' && /\/api\/Api_Articulos\/Consulta/i.test(url);
+  const managerLookup = cfg.apiMethod === 'GET' && (isManagerSql(url) || /\/api\/Api_Articulos\/Consulta/i.test(url));
   if (managerLookup) url = managerDirectLookupUrl(url, codigo);
   const headers = { Accept: 'application/json' };
   if (cfg.apiAuthHeader && cfg.apiAuthValue) headers[cfg.apiAuthHeader] = cfg.apiAuthValue;
@@ -534,7 +541,12 @@ async function fetchQrProductDirect(cfg, tenant, code) {
     });
   }
 
-  const rows = externalProductRows(resp.data);
+  // Numeric internal SKUs can resemble barcodes. Retry as SKU only on an empty BARRA result.
+  if (isManagerSql(cfg.apiUrl) && /^\d{8,14}$/.test(codigo) && externalProductRows(resp.data).length === 0) {
+    resp = await axios({ ...baseRequest, url: managerSqlUrl(cfg.apiUrl, 'SKU', codigo) });
+    if (resp.status < 200 || resp.status >= 300) throw Object.assign(new Error('product_api_unavailable'), { statusCode: 502 });
+  }
+  const rows = isManagerSql(cfg.apiUrl) ? rankedManagerRows(externalProductRows(resp.data)).map(managerSqlRow) : externalProductRows(resp.data);
   const exact = rows.find(item => item && String(firstDefined(item,
     [cfg.fieldCode, 'Codigo', 'codigo', 'code', 'sku', 'SKU']) ?? '').trim().toUpperCase() === codigo.toUpperCase());
   const barcodes = exact ? [] : rows.filter(item => item && String(firstDefined(item,
@@ -1649,9 +1661,11 @@ function mountQrProductWeb(app) {
         return res.json({ ok: true, conversationId: String(convId), manual: true, reply: '' });
       }
 
-      if (generalChat && !initial && isGeneralCatalogQuery(message)) {
-        const directProducts = await fetchGeneralCatalogSuggestions(cfg, message);
-        if (directProducts.length) {
+      const directSimilar = !generalChat && !initial && isManagerSql(cfg.apiUrl) && requestsCatalogData(message) && !catalogFollowUp;
+      if (!initial && ((generalChat && (isManagerSql(cfg.apiUrl) || isGeneralCatalogQuery(message))) || directSimilar)) {
+        const query = directSimilar ? product.description.split(/\s+/).slice(0, 2).join(' ') : message;
+        const directProducts = await fetchGeneralCatalogSuggestions(cfg, query, directSimilar ? product : null, message);
+        if (directProducts.length || isManagerSql(cfg.apiUrl)) {
           const mergedProducts = mergeConfirmedCommercialProducts(conv.qrConfirmedCommercialProducts, directProducts);
           const shownCodes = directProducts.map(item => String(item?.code || '').trim()).filter(Boolean);
           await db.collection('conversations').updateOne(

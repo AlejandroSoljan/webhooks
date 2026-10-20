@@ -1,5 +1,7 @@
 # Manual técnico de Asisto
 
+Backend 5.00.300: MCN migra consultas de producto a Manager `Api_Consultas_Generales/Consulta_sql`, consulta 195. Contrato y operación en [Catálogo SQL MCN](mcn_catalog_sql.md). Conserva lista de precios configurada y lector local sin IA.
+
 Extensión 1.0.60 / backend 5.00.299: contactos asociados a la empresa bajo sus datos desplegables, consulta diferida y paginada con credencial del tenant. Contrato en [Tickets WhatsApp](whatsapp_support.md).
 
 Extensión 1.0.58 / backend 5.00.298: listado de destinatarios corporativos Manager desde HubSpot con entrada manual y contexto de empresa, contacto y fecha de conversación en los correos nuevos. Contrato y límites en [Tickets WhatsApp](whatsapp_support.md).
