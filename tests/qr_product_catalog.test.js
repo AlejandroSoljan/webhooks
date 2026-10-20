@@ -112,6 +112,10 @@ test('SQL vacío no inventa artículos ni precios', async()=>{
   const f=load(async()=>({status:200,data:[]}),sqlConfig);
   assert.equal((await f.request('NO-EXISTE')).statusCode,404);
 });
+test('el adaptador no excluye artículos activos de stock cero',async()=>{
+ const f=load(async()=>({status:200,data:[{codigo:'5140062-86',codbarra:'420200103',descripcion:'Mordaza',precio_lp1:3199,stock:0,activo:'S'}]}),sqlConfig);
+ const response=await f.request('420200103');assert.equal(response.statusCode,200);assert.equal(response.body.product.price,3199);assert.equal(response.body.product.available,false);
+});
 test('SQL JSON textual se procesa aunque Axios no haya transformado la respuesta',async()=>{
  const f=load(async()=>({status:200,data:JSON.stringify([{codigo:'PROM-52G',descripcion:'Motosierra',precio_lp1:101519,puntaje:1000}])}),sqlConfig);
  assert.equal((await f.request('PROM-52G')).body.product.price,101519);

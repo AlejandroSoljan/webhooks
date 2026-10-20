@@ -1,5 +1,11 @@
 # Auditoría de publicación MCN — 2026-10-20
 
+## Estado operativo posterior: endpoint anterior restablecido
+
+Tras el reporte real del usuario, se verificaron barras 420200103, 402200001 y 123300022. Consulta_sql 195 devuelve `[]` en BARRA; también devuelve vacío al consultar SKU 5140062-86 y M421640131014. El endpoint anterior devuelve los tres artículos activos con stock cero. Se infiere una exclusión por stock en la consulta nueva; no se dispone de su SQL para atribuir el filtro exacto. No confundir con error de lector ni del adaptador.
+
+Se restauraron `qr_api_url` y la acción de artículos desde el respaldo privado, conservando lista LP1. Verificación pública posterior: los tres códigos devuelven HTTP200 y sus SKU correctos (5140062-86, M421640131014 y AL484). Mecan mantiene servicio saludable y redirección al HTTPS central, por lo que adopta la restauración. El código adaptador y el mensaje amigable permanecen instalados; la API SQL nueva NO está activa actualmente. Para reactivarla hay que corregir/confirmar el contrato de la consulta 195 para artículos existentes sin stock, y volver a probar estos tres casos reales. Las comprobaciones siguientes describen la publicación inicial, no anulan esta restauración posterior.
+
 Código funcional: `0bed8757e2bd6721474b3ae078cd9a63a2104208`, backend 5.00.300. Procedimientos de migración/verificación y este informe se guardan en un commit de auditoría local posterior para no provocar otro reinicio automático de producción por documentación.
 
 Verificación previa: host AWS `ip-172-26-0-152`, MongoDB autoritativo `Cluster0`. Configuración MCN preservada: `Precio_Lp1`, ARS, sin listas adicionales. Cambiados únicamente URL del catálogo y acción `consulta_articulos`/URL legacy asociada; respaldo privado en `settings/migration:MCN:catalog-sql:20261020`. Nunca imprimir su contenido ni incluir credenciales en el informe.
