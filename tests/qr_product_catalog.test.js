@@ -24,6 +24,14 @@ test('un producto escaneado conserva su chat contextual sin mostrar el acceso al
   assert.match(html, />Mi turno<\/a>/);
   assert.doesNotMatch(html, /\.appNav a:last-child\{display:none\}/);
 });
+test('Mostrar más info oculta errores técnicos, libera controles y no repite llamadas de IA',async()=>{
+ const script=pageHtml({tenant:'MCN',code:'SKU'}).match(/<script>([\s\S]*)<\/script>/)[1];
+ const fn=script.slice(script.indexOf('async function callAi('),script.indexOf('async function startAi('));
+ let calls=0;const messages=[],button={disabled:false};
+ const box={sending:false,started:false,TENANT:'MCN',PRODUCT:null,CODE:'SKU',sessionId:()=> 'test',el:()=>button,addMsg:(role,text)=>messages.push(text),removeTyping(){},jsonFetch:async()=>{calls++;throw Error('The origin web server returned an invalid response to Cloudflare')}};
+ vm.runInNewContext(fn+'\nthis.call=callAi;',box);await box.call('',true);
+ assert.equal(calls,1);assert.equal(box.sending,false);assert.equal(box.started,false);assert.equal(button.disabled,false);assert.match(messages.at(-1),/volvé a tocar/);assert.doesNotMatch(messages.at(-1),/Cloudflare|origin|HTTP/);
+});
 
 test('iPhone y navegadores internos leen localmente sin enviar capturas a IA', () => {
   const html = pageHtml({ tenant: 'MCN', code: '', branding: { companyName: 'Mecan' } });
