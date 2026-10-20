@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.011 | Fecha: 2026-09-01 -->
+<!-- Asisto | Version: 5.00.302 | Fecha: 2026-10-20 -->
 # API de Ayuda contextual — modo sin consulta inteligente
 
 ## 1. Objetivo
@@ -107,7 +107,7 @@ Cuando existen videos aplicables, `respuesta` contiene `S`:
 }
 ```
 
-Los videos se ordenan por `importancia`: `1` es la prioridad más alta. Los valores `0` o vacíos quedan al final. El campo `caratula` contiene el valor leído desde la columna `Caratula` o `Carátula` de Drive y puede ser una cadena vacía.
+Los videos se ordenan por `importancia` según el comportamiento de Ayuda. Este puede indicar `MAYOR A MENOR` o `MENOR A MAYOR`; si no contiene una regla explícita se conserva el orden histórico ascendente (`1`, `2`, `3`...). Los valores `0` o vacíos quedan al final. El campo `caratula` contiene el valor leído desde la columna `Caratula` o `Carátula` de Drive y puede ser una cadena vacía.
 
 Aunque el campo se llama `vimeo_ids`, contiene objetos completos con los datos de cada video.
 

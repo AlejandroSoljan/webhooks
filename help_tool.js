@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.078 | Fecha: 2026-09-10
+// Asisto | Version: 5.00.302 | Fecha: 2026-10-20
 // help_tool.js
 // Herramienta de Ayuda contextual de Asisto.
 // - Fuente: Google Sheets (privado con Service Account o CSV público/directo).
@@ -153,6 +153,11 @@ function normalizeHeader(value) {
 
 function normalizeWindow(value) {
   return clean(value, 300).toLowerCase();
+}
+
+function hasUsableVimeoId(value) {
+  const id = clean(value, 120);
+  return !!id && id !== '0';
 }
 
 function sha256(value) {
@@ -712,6 +717,15 @@ function tagsArray(raw) {
   return [...new Set(values)];
 }
 
+function normalizeCover(value) {
+  const cover = clean(value, 5000);
+  if (!cover) return '';
+
+  // Corrige errores de carga frecuentes como "archivo,jpg" sin modificar
+  // otras comas que puedan formar parte de una URL o del nombre del archivo.
+  return cover.replace(/,(?=(?:jpe?g|png|gif|webp|avif|svg)(?:[?#].*)?$)/i, '.');
+}
+
 function matrixToHelpRows(matrix = []) {
   const rows = Array.isArray(matrix) ? matrix : [];
   if (!rows.length) return [];
@@ -723,7 +737,7 @@ function matrixToHelpRows(matrix = []) {
     const item = {
       rowNumber: i + 1,
       title: clean(r[columns.title], 500),
-      cover: clean(r[columns.cover], 5000),
+      cover: normalizeCover(r[columns.cover]),
       vimeoId: clean(r[columns.vimeoId], 120),
       appliesTo: clean(r[columns.appliesTo], 5000),
       versionFrom: clean(r[columns.versionFrom], 80),
@@ -875,17 +889,47 @@ function obviousNaturalCategoryApplies(windowName, categoryText) {
   return false;
 }
 
-function sortVideos(rows = []) {
+function importanceOrderFromBehavior(behavior = '') {
+  const normalized = String(behavior || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+
+  // El comportamiento configurable es la autoridad para el sentido de la
+  // prioridad. Si no declara nada, conservamos el contrato histórico 1 -> 5.
+  if (
+    /MAYOR\s+A\s+MENOR/.test(normalized) ||
+    /ORDEN\s+DESCENDENTE/.test(normalized) ||
+    /PRIMERO\s+EL\s+[2-9].*ULTIMO\s+EL\s+1/.test(normalized)
+  ) return 'desc';
+  if (
+    /MENOR\s+A\s+MAYOR/.test(normalized) ||
+    /ORDEN\s+ASCENDENTE/.test(normalized) ||
+    /PRIMERO\s+EL\s+1/.test(normalized)
+  ) return 'asc';
+  return 'asc';
+}
+
+function compareVideoImportance(a, b, behavior = '') {
+  const ai = Number(a?.importance ?? a?.importancia ?? 0);
+  const bi = Number(b?.importance ?? b?.importancia ?? 0);
+  const aValid = ai > 0;
+  const bValid = bi > 0;
+  if (aValid !== bValid) return aValid ? -1 : 1;
+  if (aValid && bValid && ai !== bi) {
+    return importanceOrderFromBehavior(behavior) === 'desc' ? bi - ai : ai - bi;
+  }
+  return String(a?.title ?? a?.titulo ?? '').localeCompare(
+    String(b?.title ?? b?.titulo ?? ''),
+    'es'
+  );
+}
+
+function sortVideos(rows = [], behavior = '') {
   return [...rows].sort((a, b) => {
-    // Importancia: 1 = más importante, 5 = menos importante.
-    // Los valores 0/vacíos quedan al final.
-    const ai = Number(a.importance || 0);
-    const bi = Number(b.importance || 0);
-    const av = ai > 0 ? ai : Number.MAX_SAFE_INTEGER;
-    const bv = bi > 0 ? bi : Number.MAX_SAFE_INTEGER;
-    const imp = av - bv;
-    if (imp) return imp;
-    return String(a.title || '').localeCompare(String(b.title || ''), 'es');
+    return compareVideoImportance(a, b, behavior);
   });
 }
 
@@ -903,17 +947,9 @@ function outputVideo(row) {
 // Internamente se conservan todos los datos para logs, cache y Control de Tokens.
 function compactHelpApiResponse({ dateInfo, responseBody, intelligent = false } = {}) {
   const vimeo_ids = Array.isArray(responseBody?.videos)
-    ? [...responseBody.videos].sort((a, b) => {
-        // Importancia: 1 = más importante, 5 = menos importante.
-        // Los valores 0/vacíos quedan al final.
-        const ai = Number(a?.importancia || 0);
-        const bi = Number(b?.importancia || 0);
-        const av = ai > 0 ? ai : Number.MAX_SAFE_INTEGER;
-        const bv = bi > 0 ? bi : Number.MAX_SAFE_INTEGER;
-        const imp = av - bv;
-        if (imp) return imp;
-        return String(a?.titulo || '').localeCompare(String(b?.titulo || ''), 'es');
-      })
+    // El orden ya fue resuelto con el comportamiento del agente. No volver a
+    // imponer aquí una prioridad fija que contradiga esa configuración.
+    ? [...responseBody.videos]
     : [];
 
   return {
@@ -992,7 +1028,8 @@ async function resolveNaturalCategories({ cfg, sourceHash, windowName, rows, dom
 
   const categories = rows.slice(0, 250).map(r => ({
     vimeo_id: String(r.vimeoId),
-    categoria: String(r.appliesTo)
+    categoria: String(r.appliesTo),
+    importancia: Number(r.importance || 0)
   }));
   const payloadText = JSON.stringify({ ventana: windowName, categorias });
 
@@ -1254,16 +1291,12 @@ async function buildIntelligentQueryCandidates({
     .filter(x => x.score > 0)
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
-      const ai = Number(a.row.importance || 0);
-      const bi = Number(b.row.importance || 0);
-      const av = ai > 0 ? ai : Number.MAX_SAFE_INTEGER;
-      const bv = bi > 0 ? bi : Number.MAX_SAFE_INTEGER;
-      return av - bv;
+      return compareVideoImportance(a.row, b.row, cfg.behavior);
     })
     .map(x => x.row);
 
   const priority = dedupeRowsByVimeo([...exactRows, ...naturalSelected]);
-  const fallbackImportant = sortVideos(eligible).slice(0, 12);
+  const fallbackImportant = sortVideos(eligible, cfg.behavior).slice(0, 12);
   const combined = dedupeRowsByVimeo([
     ...priority,
     ...scored.slice(0, 30),
@@ -1615,7 +1648,7 @@ async function handleHelpQuery(req, res) {
 
     source = await loadHelpSource(cfg);
     const eligible = source.rows.filter(r =>
-      r.vimeoId && r.appliesTo && versionApplies(version, r.versionFrom, r.versionTo)
+      hasUsableVimeoId(r.vimeoId) && r.appliesTo && versionApplies(version, r.versionFrom, r.versionTo)
     );
 
     // ===================== MODO CONSULTA INTELIGENTE =====================
@@ -1646,7 +1679,7 @@ async function handleHelpQuery(req, res) {
 
       const selectedIds = new Set(intelligent.vimeoIds.map(String));
       const selectedRows = candidateInfo.rows.filter(r => selectedIds.has(String(r.vimeoId)));
-      const videos = sortVideos(selectedRows).slice(0, cfg.max_videos).map(outputVideo);
+      const videos = sortVideos(selectedRows, cfg.behavior).slice(0, cfg.max_videos).map(outputVideo);
 
       const responseBody = {
         ok: true,
@@ -1779,7 +1812,7 @@ async function handleHelpQuery(req, res) {
       ) dedupe.set(key, row);
     }
 
-    const selected = sortVideos([...dedupe.values()]).slice(0, cfg.max_videos);
+    const selected = sortVideos([...dedupe.values()], cfg.behavior).slice(0, cfg.max_videos);
     const videos = selected.map(outputVideo);
     const responseBody = {
       ok: true,
@@ -1952,7 +1985,7 @@ function renderHelpWebChat(config = {}) {
 .composer{padding:11px;border-top:1px solid var(--line)}.form{display:flex;gap:8px;align-items:flex-end}.inputWrap{flex:1;border:1px solid var(--line);border-radius:14px;padding:9px 11px}.inputWrap:focus-within{border-color:#8cb9c9;box-shadow:0 0 0 3px rgba(21,129,151,.08)}textarea{width:100%;min-height:24px;max-height:110px;border:0;outline:0;resize:none;padding:0;background:transparent;font:inherit;font-size:14px;color:var(--text)}.send{width:43px;height:43px;border:0;border-radius:13px;background:linear-gradient(135deg,var(--brand),var(--brand2));color:#fff;font-size:19px;font-weight:900;cursor:pointer}.send:disabled{opacity:.5}.foot{font-size:10px;color:#94a2b3;text-align:center;padding-top:6px}
 @media(max-width:560px){.head{padding:11px 12px}.messages{padding:14px 10px 8px}.bubble{max-width:91%}.videos{max-width:94%}}
 </style></head><body><div class="shell"><header class="head"><div class="logo">A</div><div class="headText"><div class="title" id="title"></div><div class="subtitle" id="ctx"></div></div><div class="status"></div></header><main class="messages" id="messages"></main><footer class="composer"><form class="form" id="form"><div class="inputWrap"><textarea id="input" rows="1" maxlength="4000" placeholder="¿En qué te puedo ayudar?"></textarea></div><button class="send" id="send" type="submit">➜</button></form><div class="foot">Ayuda contextual · Asisto</div></footer></div>
-<script>(function(){'use strict';const CFG=${cfgJson};let currentWindow=CFG.windowName||'',busy=false;const m=document.getElementById('messages'),input=document.getElementById('input'),send=document.getElementById('send'),form=document.getElementById('form');document.getElementById('title').textContent=CFG.title||'Ayuda Manager';function context(){document.getElementById('ctx').textContent=currentWindow?'Ayuda contextual · '+currentWindow:'Asistente general de ayuda'}function scroll(){m.scrollTop=m.scrollHeight}function bubble(role,text,id){const r=document.createElement('div');r.className='row '+role;if(id)r.id=id;const b=document.createElement('div');b.className='bubble';b.textContent=String(text||'');r.appendChild(b);m.appendChild(r);scroll()}function typing(){const r=document.createElement('div');r.className='row assistant';r.id='typing';r.innerHTML='<div class="bubble"><span class="typing"><i></i><i></i><i></i></span></div>';m.appendChild(r);scroll()}function stopTyping(){const x=document.getElementById('typing');if(x)x.remove()}function videos(j){const a=Array.isArray(j&&j.vimeo_ids)?j.vimeo_ids:(Array.isArray(j&&j.videos)?j.videos:[]);return a.slice().sort((x,y)=>{const xi=Number(x&&x.importancia||0),yi=Number(y&&y.importancia||0);return(xi>0?xi:999)-(yi>0?yi:999)})}function addVideos(list){if(!list.length)return;const w=document.createElement('div');w.className='videos';list.forEach(v=>{const id=String(v&&v.vimeo_id||'').replace(/[^0-9]/g,'');if(!id)return;const c=document.createElement('div');c.className='videoCard';const top=document.createElement('div');top.className='videoTop';const badge=document.createElement('span');badge.className='badge';badge.textContent='#'+String(v.importancia||'-');const t=document.createElement('div');t.className='videoTitle';t.textContent=String(v.titulo||'Video de ayuda');const btn=document.createElement('button');btn.type='button';btn.className='watch';btn.textContent='Ver video';const p=document.createElement('div');p.className='player';btn.onclick=()=>{const open=p.style.display==='block';if(open){p.style.display='none';p.innerHTML='';btn.textContent='Ver video'}else{p.style.display='block';const f=document.createElement('iframe');f.src='https://player.vimeo.com/video/'+id;f.allow='autoplay; fullscreen; picture-in-picture';f.allowFullscreen=true;p.appendChild(f);btn.textContent='Cerrar';setTimeout(scroll,100)}};top.append(badge,t,btn);c.append(top,p);w.appendChild(c)});if(w.children.length){m.appendChild(w);scroll()}}async function ask(q){q=String(q||'').trim();if(!q||busy)return;busy=true;send.disabled=true;input.disabled=true;bubble('user',q);typing();try{const r=await fetch('/api/ext/ayuda/chat-web',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify({token:CFG.token,consulta:q,ventana:currentWindow})});let j={};try{j=await r.json()}catch{}stopTyping();if(!r.ok){bubble('assistant',r.status===429?'Se realizaron demasiadas consultas. Probá nuevamente en unos minutos.':'No pude consultar la ayuda en este momento.');return}const a=String(j&&j.respuesta||'').trim();bubble('assistant',a&&a!=='S'&&a!=='N'?a:(a==='N'?'No encontré información suficiente para esa consulta.':'Encontré estos contenidos relacionados:'));addVideos(videos(j))}catch(e){stopTyping();bubble('assistant','No pude conectar con el servicio de ayuda.')}finally{busy=false;send.disabled=false;input.disabled=false;input.focus()}}form.onsubmit=e=>{e.preventDefault();const q=input.value;input.value='';input.style.height='auto';ask(q)};input.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();form.requestSubmit()}};input.oninput=function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,110)+'px'};window.addEventListener('message',e=>{const d=e&&e.data;if(d&&d.type==='asisto-help-context'&&typeof d.ventana==='string'){currentWindow=d.ventana.trim().slice(0,300);context()}});context();bubble('assistant',currentWindow?'Hola. Puedo ayudarte con esta pantalla o con cualquier consulta sobre Manager.':'Hola. ¿Qué necesitás saber de Manager?');input.focus()})();</script></body></html>`;
+<script>(function(){'use strict';const CFG=${cfgJson};let currentWindow=CFG.windowName||'',busy=false;const m=document.getElementById('messages'),input=document.getElementById('input'),send=document.getElementById('send'),form=document.getElementById('form');document.getElementById('title').textContent=CFG.title||'Ayuda Manager';function context(){document.getElementById('ctx').textContent=currentWindow?'Ayuda contextual · '+currentWindow:'Asistente general de ayuda'}function scroll(){m.scrollTop=m.scrollHeight}function bubble(role,text,id){const r=document.createElement('div');r.className='row '+role;if(id)r.id=id;const b=document.createElement('div');b.className='bubble';b.textContent=String(text||'');r.appendChild(b);m.appendChild(r);scroll()}function typing(){const r=document.createElement('div');r.className='row assistant';r.id='typing';r.innerHTML='<div class="bubble"><span class="typing"><i></i><i></i><i></i></span></div>';m.appendChild(r);scroll()}function stopTyping(){const x=document.getElementById('typing');if(x)x.remove()}function videos(j){const a=Array.isArray(j&&j.vimeo_ids)?j.vimeo_ids:(Array.isArray(j&&j.videos)?j.videos:[]);return a.slice()}function addVideos(list){if(!list.length)return;const w=document.createElement('div');w.className='videos';list.forEach(v=>{const id=String(v&&v.vimeo_id||'').replace(/[^0-9]/g,'');if(!id)return;const c=document.createElement('div');c.className='videoCard';const top=document.createElement('div');top.className='videoTop';const badge=document.createElement('span');badge.className='badge';badge.textContent='#'+String(v.importancia||'-');const t=document.createElement('div');t.className='videoTitle';t.textContent=String(v.titulo||'Video de ayuda');const btn=document.createElement('button');btn.type='button';btn.className='watch';btn.textContent='Ver video';const p=document.createElement('div');p.className='player';btn.onclick=()=>{const open=p.style.display==='block';if(open){p.style.display='none';p.innerHTML='';btn.textContent='Ver video'}else{p.style.display='block';const f=document.createElement('iframe');f.src='https://player.vimeo.com/video/'+id;f.allow='autoplay; fullscreen; picture-in-picture';f.allowFullscreen=true;p.appendChild(f);btn.textContent='Cerrar';setTimeout(scroll,100)}};top.append(badge,t,btn);c.append(top,p);w.appendChild(c)});if(w.children.length){m.appendChild(w);scroll()}}async function ask(q){q=String(q||'').trim();if(!q||busy)return;busy=true;send.disabled=true;input.disabled=true;bubble('user',q);typing();try{const r=await fetch('/api/ext/ayuda/chat-web',{method:'POST',headers:{'Content-Type':'application/json'},cache:'no-store',body:JSON.stringify({token:CFG.token,consulta:q,ventana:currentWindow})});let j={};try{j=await r.json()}catch{}stopTyping();if(!r.ok){bubble('assistant',r.status===429?'Se realizaron demasiadas consultas. Probá nuevamente en unos minutos.':'No pude consultar la ayuda en este momento.');return}const a=String(j&&j.respuesta||'').trim();bubble('assistant',a&&a!=='S'&&a!=='N'?a:(a==='N'?'No encontré información suficiente para esa consulta.':'Encontré estos contenidos relacionados:'));addVideos(videos(j))}catch(e){stopTyping();bubble('assistant','No pude conectar con el servicio de ayuda.')}finally{busy=false;send.disabled=false;input.disabled=false;input.focus()}}form.onsubmit=e=>{e.preventDefault();const q=input.value;input.value='';input.style.height='auto';ask(q)};input.onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();form.requestSubmit()}};input.oninput=function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,110)+'px'};window.addEventListener('message',e=>{const d=e&&e.data;if(d&&d.type==='asisto-help-context'&&typeof d.ventana==='string'){currentWindow=d.ventana.trim().slice(0,300);context()}});context();bubble('assistant',currentWindow?'Hola. Puedo ayudarte con esta pantalla o con cualquier consulta sobre Manager.':'Hola. ¿Qué necesitás saber de Manager?');input.focus()})();</script></body></html>`;
 }
 
 function mountHelpTool(app) {
@@ -2043,7 +2076,11 @@ module.exports = {
   mountHelpTool,
   // Exportados para pruebas unitarias/smoke tests.
   parseCsv,
+  normalizeCover,
   matrixToHelpRows,
+  hasUsableVimeoId,
+  importanceOrderFromBehavior,
+  sortVideos,
   versionApplies,
   technicalWindowsFromRule,
   obviousNaturalCategoryApplies,

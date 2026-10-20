@@ -1,4 +1,4 @@
-<!-- Asisto | Version: 5.00.011 | Fecha: 2026-09-01 -->
+<!-- Asisto | Version: 5.00.302 | Fecha: 2026-10-20 -->
 # Manual de integración — API de Ayuda de Asisto
 
 ## 1. Descripción
@@ -170,11 +170,11 @@ async function consultarAyuda({ apiKey, ventana, consulta, version, dominio, usu
 |---|---|---|
 | `respuesta` | string | Texto en modo inteligente; `S` o `N` en modo contextual. |
 | `fecha` | string | Fecha y hora del servidor en formato `YYYY-MM-DDTHH:mm:ss`. |
-| `vimeo_ids` | array | Videos ordenados por importancia; `1` es la mayor prioridad. |
+| `vimeo_ids` | array | Videos ordenados según la regla de `Importancia` configurada en el comportamiento de Ayuda. Sin una regla explícita se conserva el orden histórico ascendente (`1`, `2`, `3`...). |
 | `vimeo_ids[].vimeo_id` | string | Identificador del video en Vimeo. |
 | `vimeo_ids[].titulo` | string | Título del video. |
 | `vimeo_ids[].caratula` | string | Carátula asociada al video, obtenida de la columna `Caratula` o `Carátula` de Drive. Puede ser una cadena vacía. |
-| `vimeo_ids[].importancia` | number | Prioridad. Los valores vacíos o `0` quedan al final. |
+| `vimeo_ids[].importancia` | number | Prioridad. El comportamiento puede indicar `MAYOR A MENOR` o `MENOR A MAYOR`; los valores vacíos o `0` quedan al final. |
 | `vimeo_ids[].descripcion` | string | Descripción del video. |
 
 Aunque el campo se llama `vimeo_ids`, contiene objetos completos y no solamente identificadores.

@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.253 | Fecha: 2026-09-28
+// Asisto | Version: 5.00.302 | Fecha: 2026-10-20
 // endpoint.js
 // Servidor Express y endpoints (webhook, behavior API/UI, cache, salud) con multi-tenant
 // Incluye logs de fixReply en el loop de corrección.
@@ -9338,7 +9338,7 @@ app.get("/comportamiento", async (req, res) => {
           <label>Cache de la hoja (minutos)<input id="helpSourceCacheMinutes" type="number" min="1" max="60" value="5" /></label>
           <label>Cache decisiones IA (días)<input id="helpAiCacheDays" type="number" min="1" max="3650" value="3650" /></label>
           <label>Máximo de videos por respuesta<input id="helpMaxVideos" type="number" min="1" max="100" value="20" /></label>
-          <label style="grid-column:1/-1">Comportamiento para resolver categorías<textarea id="helpBehavior" class="smallArea" placeholder="Reglas para decidir si una ventana técnica pertenece a una categoría..."></textarea></label>
+          <label style="grid-column:1/-1">Comportamiento de selección y orden de Ayuda<textarea id="helpBehavior" class="smallArea" placeholder="Reglas para decidir qué videos aplican y cómo ordenarlos por Importancia..."></textarea><span class="hint">El orden puede indicarse explícitamente como “Importancia de MAYOR A MENOR” o “Importancia de MENOR A MAYOR”. Si no se indica, se conserva el orden histórico 1 → 5.</span></label>
           <div style="grid-column:1/-1" class="hint">API: <b>/api/ext/help</b> o <b>/api/ext/ayuda</b>. Requiere <code>X-API-Key</code> y los parámetros agente, ventana, version, dominio y usuario. La fecha la fija Asisto.</div>
           <div id="helpConfigNote" style="grid-column:1/-1" class="hint"></div>
         </div>
