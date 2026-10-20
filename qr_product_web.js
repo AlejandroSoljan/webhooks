@@ -846,6 +846,10 @@ function alternativeProductCodes(messages, currentCode) {
 }
 
 function externalProductRows(payload) {
+  // Some Manager responses arrive as JSON text even with application/json.
+  if (typeof payload === 'string') {
+    try { return externalProductRows(JSON.parse(payload)); } catch { return []; }
+  }
   if (Array.isArray(payload)) return payload;
   if (!payload || typeof payload !== 'object') return [];
   for (const key of ['data', 'items', 'results', 'articulos', 'productos', 'product', 'articulo']) {

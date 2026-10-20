@@ -104,6 +104,10 @@ test('SQL vacío no inventa artículos ni precios', async()=>{
   const f=load(async()=>({status:200,data:[]}),sqlConfig);
   assert.equal((await f.request('NO-EXISTE')).statusCode,404);
 });
+test('SQL JSON textual se procesa aunque Axios no haya transformado la respuesta',async()=>{
+ const f=load(async()=>({status:200,data:JSON.stringify([{codigo:'PROM-52G',descripcion:'Motosierra',precio_lp1:101519,puntaje:1000}])}),sqlConfig);
+ assert.equal((await f.request('PROM-52G')).body.product.price,101519);
+});
 test('POST funciona y el siguiente escaneo de barras usa MongoDB', async () => {
   let calls = 0;
   const f = load(async options => { calls++; assert.equal(options.data.codigo, '0012'); return { status: 200, data: { product: { Codigo: '0012', Codbarra: '000123', Descripcion: 'Producto', Precio_Lp1: 12 } } }; });
