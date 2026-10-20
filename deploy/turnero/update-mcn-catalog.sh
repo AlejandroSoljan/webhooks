@@ -9,7 +9,7 @@ esac
 commit="${2:?commit required}"
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
 previous=$(readlink -f "$base/current")
-release="$base/releases/v5.00.270-catalog-sql-20261020"
+release="$base/releases/v5.00.270-catalog-sql-${commit:0:12}"
 test -d "$previous"
 test ! -e "$release"
 cp -a --reflink=auto "$previous" "$release"
