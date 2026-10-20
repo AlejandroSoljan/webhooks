@@ -1949,7 +1949,11 @@ async function executeConversationalHttpApi(actionCfg, action = {}, context = {}
     validateStatus: () => true,
   };
 
-  if (method === "POST" && bodyTemplate) {
+  if (method === "GET" && require('./manager_sql_catalog').isManagerSql(url)) {
+    // Only configured Consulta_sql actions use this adapter; legacy APIs stay unchanged.
+    try { request.url = require('./manager_sql_catalog').managerSqlActionUrl(url, query); }
+    catch { return { ok: false, error: 'invalid_catalog_query' }; }
+  } else if (method === "POST" && bodyTemplate) {
     request.headers["Content-Type"] = "application/json";
     try {
       const parsedTemplate = JSON.parse(bodyTemplate);

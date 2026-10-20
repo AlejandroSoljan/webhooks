@@ -23,8 +23,17 @@ function managerSqlRow(row) {
   }
   return result;
 }
+function managerSqlActionUrl(value, query) {
+  let text = String(query || '').trim();
+  let type = 'ALTERNATIVOS';
+  if (/^%?codbarra:/i.test(text)) { type = 'BARRA'; text = text.replace(/^%?codbarra:/i, '').replace(/%/g, ''); }
+  else if (/^sku:/i.test(text)) { type = 'SKU'; text = text.replace(/^sku:/i, ''); }
+  else if (/^\d{8,14}$/.test(text)) type = 'BARRA';
+  else if (/^[\w./-]*[./-][\w./-]+$/.test(text)) type = 'SKU';
+  return managerSqlUrl(value, type, text.replace(/%+/g, ' ').trim());
+}
 function rankedManagerRows(rows) {
   return rows.filter(row => String(row.activo || 'S').toUpperCase() !== 'N')
     .sort((a,b) => Number(b.puntaje || 0) - Number(a.puntaje || 0));
 }
-module.exports = { isManagerSql, managerSqlUrl, managerSqlRow, rankedManagerRows };
+module.exports = { isManagerSql, managerSqlUrl, managerSqlRow, rankedManagerRows, managerSqlActionUrl };

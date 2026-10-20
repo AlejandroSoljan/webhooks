@@ -859,7 +859,8 @@ function commercialProductsFromExternalResult(result, cfg) {
   if (!result?.ok || !result?.body) return [];
   let payload;
   try { payload = typeof result.body === 'string' ? JSON.parse(result.body) : result.body; } catch { return []; }
-  return externalProductRows(payload).slice(0, 1000).map(raw => {
+  return externalProductRows(payload).slice(0, 1000).map(item => {
+    const raw = isManagerSql(cfg.apiUrl) ? managerSqlRow(item) : item;
     const code = firstDefined(raw, [cfg.fieldCode, 'Codigo', 'codigo', 'code', 'sku', 'SKU']);
     const description = firstDefined(raw, [cfg.fieldDescription, 'Descripcion', 'descripcion', 'description', 'nombre', 'name']);
     if (!code || !description) return null;

@@ -1,6 +1,6 @@
 // Asisto | SQL catalog contract | 2026-10-20
 const {test}=require('node:test'),assert=require('node:assert/strict');
-const {managerSqlUrl,managerSqlRow,rankedManagerRows}=require('../manager_sql_catalog');
+const {managerSqlUrl,managerSqlRow,rankedManagerRows,managerSqlActionUrl}=require('../manager_sql_catalog');
 const {managerDirectLookupUrl,managerCatalogSearchUrl,generalCatalogSearchQuery,normalizeQrProduct}=require('../qr_product_web');
 const base='https://manager.example/v300/api/Api_Consultas_Generales/Consulta_sql?key=test&sql_id=195';
 test('SQL URLs preserve authentication server-side and encode a single filter parameter',()=>{
@@ -11,6 +11,9 @@ test('SQL URLs preserve authentication server-side and encode a single filter pa
 test('SQL keeps all configured price lists rather than selecting a cheaper list',()=>{
   const raw=managerSqlRow({codigo:'SKU',descripcion:'Artículo',precio_lp1:100,precio_lp2:80,precio_lp3:70,stock:2,desc_rubro:'Herramientas'});
   for(const [field,expected]of [['Precio_Lp1',100],['Precio_Lp2',80],['Precio_Lp3',70]])assert.equal(normalizeQrProduct(raw,{fieldPrice:field,additionalPrices:[]}).price,expected);
+});
+test('conversational Manager searches accept legacy patterns without using the old endpoint',()=>{
+  for(const [input,filter]of [['%motosierra%52cc%','tipo:ALTERNATIVOS;busqueda:motosierra 52cc'],['%codbarra:000123456','tipo:BARRA;busqueda:000123456'],['PROM-52G','tipo:SKU;busqueda:PROM-52G'],['sku:0012','tipo:SKU;busqueda:0012']])assert.equal(new URL(managerSqlActionUrl(base,input)).searchParams.get('filtros'),filter);
 });
 test('SQL scores rank rather than imply percentage, inactive articles excluded',()=>{
   assert.deepEqual(rankedManagerRows([{codigo:'B',puntaje:58},{codigo:'X',puntaje:1000,activo:'N'},{codigo:'A',puntaje:912}]).map(x=>x.codigo),['A','B']);

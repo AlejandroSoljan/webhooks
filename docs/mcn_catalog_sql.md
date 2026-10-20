@@ -2,6 +2,8 @@
 
 La URL configurada en `settings.behavior:MCN.qr_api_url` apunta a `Api_Consultas_Generales/Consulta_sql`, `sql_id=195`. La credencial se conserva exclusivamente en configuración privada del servidor. No incluirla en documentos, logs ni HTML. No se ofrece ejecución de SQL arbitrario.
 
+La acción conversacional MCN `consulta_articulos` migra a la misma URL; otras acciones permanecen intactas. El adaptador HTTP sólo actúa sobre el nuevo pathname: convierte patrones heredados `%texto%`, `%codbarra:...` y `sku:...` al contrato de filtros, sin modificar integraciones legacy de otros dominios. La ficha normaliza también los resultados comerciales del asesor, preservando la lista configurada.
+
 GET con un parámetro `filtros=tipo:SKU;busqueda:<código>`, `BARRA` para códigos numéricos de 8 a 14 caracteres y `ALTERNATIVOS` para texto. Se codifica mediante URLSearchParams; se rechazan separadores de filtros en la entrada. Ceros iniciales conservados; si BARRA devuelve vacío se prueba SKU para códigos internos numéricos. Múltiples artículos con la misma barra: 409, nunca selección arbitraria. Artículos inactivos excluidos.
 
 El adaptador convierte campos minúsculos a sus alias previos: `precio_lp1` → `Precio_Lp1`, etc. No modifica `qr_field_price`, listas adicionales, etiquetas, moneda ni notas. MCN al migrar utiliza Precio_Lp1, ARS, sin listas adicionales. No presume IVA, descuentos ni conversiones.
