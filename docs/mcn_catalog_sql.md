@@ -1,5 +1,9 @@
 # MCN: catálogo Manager SQL — 2026-10-20
 
+## Política vigente 5.00.301: sólo stock
+
+El negocio confirmó que la exclusión de stock cero es intencional y solicitó reactivar la API nueva. Se exige disponibilidad positiva también al normalizar artículos SQL leídos de caché; se omiten en sugerencias y no se muestra precio de productos sin disponibilidad. Respuesta vacía: HTTP404 `product_unavailable`, detalle público “Producto sin stock o no disponible. Podés consultar al vendedor o escanear otro producto.” No se afirma stock cero cuando la consulta no distingue un código inexistente. No se consulta el endpoint anterior como fallback. Lista LP1 sin cambios; caché mantiene su antigüedad/renovación existentes.
+
 La URL configurada en `settings.behavior:MCN.qr_api_url` apunta a `Api_Consultas_Generales/Consulta_sql`, `sql_id=195`. La credencial se conserva exclusivamente en configuración privada del servidor. No incluirla en documentos, logs ni HTML. No se ofrece ejecución de SQL arbitrario.
 
 La acción conversacional MCN `consulta_articulos` migra a la misma URL; otras acciones permanecen intactas. El adaptador HTTP sólo actúa sobre el nuevo pathname: convierte patrones heredados `%texto%`, `%codbarra:...` y `sku:...` al contrato de filtros, sin modificar integraciones legacy de otros dominios. La ficha normaliza también los resultados comerciales del asesor, preservando la lista configurada.

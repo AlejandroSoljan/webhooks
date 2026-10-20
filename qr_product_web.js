@@ -83,7 +83,14 @@ async function fetchQrProduct(cfg, tenant, code) {
   if (!cfg.enabled) throw Object.assign(new Error('qr_disabled'), { statusCode: 404 });
   const codigo = normalizedLookupCode(code, 180);
   if (!codigo) throw Object.assign(new Error('codigo_required'), { statusCode: 400 });
-  return productCatalog.get(cfg, tenant, codigo);
+  try { return await productCatalog.get(cfg, tenant, codigo); }
+  catch (error) {
+    if (isManagerSql(cfg.apiUrl) && error?.message === 'product_not_found') throw unavailableProductError();
+    throw error;
+  }
+}
+function unavailableProductError() {
+  return Object.assign(new Error('product_unavailable'), { statusCode: 404, publicDetail: 'Producto sin stock o no disponible. Podés consultar al vendedor o escanear otro producto.' });
 }
 async function fetchQrProductProtected(cfg, tenant, code) {
   const requestKey = JSON.stringify([tenant, sourceKey(cfg), code]), shared = qrProductInflight.get(requestKey);
@@ -573,6 +580,7 @@ function normalizeQrProduct(raw, cfg) {
   }
   const priceRaw = firstDefined(raw, [cfg.fieldPrice, 'Precio', 'precio', 'Precio_Lp1', 'price']);
   const stockRaw = firstDefined(raw, [cfg.fieldStock, 'Stock', 'stock', 'disponible', 'availability']);
+  if (isManagerSql(cfg.apiUrl) && parseStock(stockRaw) !== true) throw unavailableProductError();
   const image = cfg.fieldImage
     ? firstDefined(raw, [cfg.fieldImage, 'Imagen', 'imagen', 'image', 'imageUrl', 'url_imagen'])
     : firstDefined(raw, ['Imagen', 'imagen', 'image', 'imageUrl', 'url_imagen']);

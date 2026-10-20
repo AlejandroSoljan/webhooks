@@ -1,5 +1,7 @@
 # Manual técnico de Asisto
 
+Backend 5.00.301: MCN reactiva Consulta_sql 195 por decisión del negocio, sólo con stock. Una respuesta vacía muestra “Producto sin stock o no disponible” sin precio ni error técnico; la API no distingue inexistencia de falta de stock. Se conserva LP1, caché por origen, lectores y accesos. Contrato en [Catálogo SQL MCN](mcn_catalog_sql.md).
+
 Backend 5.00.300: MCN migra consultas de producto a Manager `Api_Consultas_Generales/Consulta_sql`, consulta 195. Contrato y operación en [Catálogo SQL MCN](mcn_catalog_sql.md). Conserva lista de precios configurada y lector local sin IA.
 
 Extensión 1.0.60 / backend 5.00.299: contactos asociados a la empresa bajo sus datos desplegables, consulta diferida y paginada con credencial del tenant. Contrato en [Tickets WhatsApp](whatsapp_support.md).

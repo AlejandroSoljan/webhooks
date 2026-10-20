@@ -104,20 +104,20 @@ test('SQL no elige arbitrariamente entre dos artículos del mismo código de bar
   assert.equal((await f.request('886661822775')).statusCode,409);
 });
 test('SQL numérico sin coincidencia BARRA reintenta SKU preservando ceros', async()=>{
-  const types=[];const f=load(async options=>{const filter=new URL(options.url).searchParams.get('filtros');types.push(filter);return {status:200,data:types.length===1?[]:[{codigo:'000123456',descripcion:'SKU numérico',precio_lp1:20}]}},sqlConfig);
+  const types=[];const f=load(async options=>{const filter=new URL(options.url).searchParams.get('filtros');types.push(filter);return {status:200,data:types.length===1?[]:[{codigo:'000123456',descripcion:'SKU numérico',precio_lp1:20,stock:1}]}},sqlConfig);
   assert.equal((await f.request('000123456')).body.product.price,20);
   assert.deepEqual(types,['tipo:BARRA;busqueda:000123456','tipo:SKU;busqueda:000123456']);
 });
 test('SQL vacío no inventa artículos ni precios', async()=>{
   const f=load(async()=>({status:200,data:[]}),sqlConfig);
-  assert.equal((await f.request('NO-EXISTE')).statusCode,404);
+  const response=await f.request('NO-EXISTE');assert.equal(response.statusCode,404);assert.equal(response.body.error,'product_unavailable');assert.match(response.body.detail,/sin stock o no disponible/);
 });
-test('el adaptador no excluye artículos activos de stock cero',async()=>{
+test('SQL no muestra precio de un artículo sin stock y devuelve un aviso claro',async()=>{
  const f=load(async()=>({status:200,data:[{codigo:'5140062-86',codbarra:'420200103',descripcion:'Mordaza',precio_lp1:3199,stock:0,activo:'S'}]}),sqlConfig);
- const response=await f.request('420200103');assert.equal(response.statusCode,200);assert.equal(response.body.product.price,3199);assert.equal(response.body.product.available,false);
+ const response=await f.request('420200103');assert.equal(response.statusCode,404);assert.equal(response.body.error,'product_unavailable');assert.match(response.body.detail,/sin stock o no disponible/);assert.equal(response.body.product,undefined);
 });
 test('SQL JSON textual se procesa aunque Axios no haya transformado la respuesta',async()=>{
- const f=load(async()=>({status:200,data:JSON.stringify([{codigo:'PROM-52G',descripcion:'Motosierra',precio_lp1:101519,puntaje:1000}])}),sqlConfig);
+ const f=load(async()=>({status:200,data:JSON.stringify([{codigo:'PROM-52G',descripcion:'Motosierra',precio_lp1:101519,puntaje:1000,stock:1}])}),sqlConfig);
  assert.equal((await f.request('PROM-52G')).body.product.price,101519);
 });
 test('POST funciona y el siguiente escaneo de barras usa MongoDB', async () => {
