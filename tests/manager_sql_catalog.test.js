@@ -15,6 +15,16 @@ test('SQL keeps all configured price lists rather than selecting a cheaper list'
 test('conversational Manager searches accept legacy patterns without using the old endpoint',()=>{
   for(const [input,filter]of [['%motosierra%52cc%','tipo:ALTERNATIVOS;busqueda:motosierra 52cc'],['%codbarra:000123456','tipo:BARRA;busqueda:000123456'],['PROM-52G','tipo:SKU;busqueda:PROM-52G'],['sku:0012','tipo:SKU;busqueda:0012']])assert.equal(new URL(managerSqlActionUrl(base,input)).searchParams.get('filtros'),filter);
 });
+test('HTTP executor uses SQL filters but preserves legacy GET query parameters',async()=>{
+  const fs=require('fs'),vm=require('vm');const source=fs.readFileSync(require.resolve('../logic'),'utf8');
+  const fn=source.slice(source.indexOf('async function executeConversationalHttpApi('),source.indexOf('\nfunction extractResponsesApiText('));
+  const requests=[];const box={require:()=>require('../manager_sql_catalog'),console:{log(){},warn(){}},safeStringify:JSON.stringify,axios:{request:async r=>{requests.push(r);return{status:200,data:[],headers:{}}}}};
+  vm.runInNewContext(fn+'\nthis.execute=executeConversationalHttpApi;',box);
+  assert.equal((await box.execute({url:base,method:'GET',query_param:'valor'},{query:'%motosierra%52cc%'})).ok,true);
+  assert.equal(new URL(requests[0].url).searchParams.get('filtros'),'tipo:ALTERNATIVOS;busqueda:motosierra 52cc');assert.equal(requests[0].params,undefined);
+  await box.execute({url:'https://legacy.example/products',method:'GET',query_param:'valor'},{query:'SKU-1'});
+  assert.equal(requests[1].params.valor,'SKU-1');
+});
 test('SQL scores rank rather than imply percentage, inactive articles excluded',()=>{
   assert.deepEqual(rankedManagerRows([{codigo:'B',puntaje:58},{codigo:'X',puntaje:1000,activo:'N'},{codigo:'A',puntaje:912}]).map(x=>x.codigo),['A','B']);
 });

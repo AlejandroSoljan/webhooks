@@ -341,7 +341,10 @@ async function fetchGeneralCatalogSuggestions(cfg, message, currentProduct = nul
   const headers = { Accept: 'application/json' };
   if (cfg.apiAuthHeader && cfg.apiAuthValue) headers[cfg.apiAuthHeader] = cfg.apiAuthValue;
   const response = await axios({ method: 'GET', url: managerCatalogSearchUrl(cfg.apiUrl, query), headers, timeout: Math.min(cfg.apiTimeoutMs, 20000), validateStatus: () => true, maxContentLength: 2_000_000 });
-  if (response.status < 200 || response.status >= 300) return [];
+  if (response.status < 200 || response.status >= 300) {
+    if (isManagerSql(cfg.apiUrl)) throw Object.assign(new Error('product_api_unavailable'), { statusCode: 502 });
+    return [];
+  }
   const found = new Map();
   const rows = isManagerSql(cfg.apiUrl) ? rankedManagerRows(externalProductRows(response.data)).map(managerSqlRow) : externalProductRows(response.data);
   for (const raw of rows.slice(0, 100)) {
@@ -1663,7 +1666,7 @@ function mountQrProductWeb(app) {
       }
 
       const directSimilar = !generalChat && !initial && isManagerSql(cfg.apiUrl) && requestsCatalogData(message) && !catalogFollowUp;
-      if (!initial && ((generalChat && (isManagerSql(cfg.apiUrl) || isGeneralCatalogQuery(message))) || directSimilar)) {
+      if (!initial && ((generalChat && isGeneralCatalogQuery(message)) || directSimilar)) {
         const query = directSimilar ? product.description.split(/\s+/).slice(0, 2).join(' ') : message;
         const directProducts = await fetchGeneralCatalogSuggestions(cfg, query, directSimilar ? product : null, message);
         if (directProducts.length || isManagerSql(cfg.apiUrl)) {
