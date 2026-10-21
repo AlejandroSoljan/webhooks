@@ -6,9 +6,11 @@ let source=fs.readFileSync(stats,'utf8');
 if(!source.includes('mountProductInsights')){
  const anchor='function mountQueueStats(app, { scope, wrap, allowed, isOpen = () => false, dayKey, auth }) {';
  assert.equal(source.split(anchor).length,2,'Stats integration anchor changed');
- const addition="\n  require('./product_insights_routes').mountProductInsights(app, { scope, wrap, allowed, dayKey });";
+ const addition="\n  require('./product_insights_routes').mountProductInsights(app, { scope, wrap, allowed, dayKey, isOpen });";
  const patched=source.replace(anchor,anchor+addition);assert.equal(patched.replace(addition,''),source);fs.writeFileSync(stats,patched);
 }
+source=fs.readFileSync(stats,'utf8');
+if(source.includes('mountProductInsights(app, { scope, wrap, allowed, dayKey });')) fs.writeFileSync(stats,source.replace('mountProductInsights(app, { scope, wrap, allowed, dayKey });','mountProductInsights(app, { scope, wrap, allowed, dayKey, isOpen });'));
 source=fs.readFileSync(cloud,'utf8');
 if(!source.includes('handleProductStatsSync')){
  const anchor='const rows = Array.isArray(req.body?.tickets)';assert.equal(source.split(anchor).length,2,'Cloud integration anchor changed');

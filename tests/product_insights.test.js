@@ -5,9 +5,16 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const { MongoClient } = require('mongodb');
 const express = require('express');
 const { period, recordLookup, buildProductInsights, summarizeProductInsights, getProductInsights } = require('../product_insights');
-const { mountProductInsights } = require('../product_insights_routes');
+const { mountProductInsights, trustedLocalRequest } = require('../product_insights_routes');
 const { mountQueueSyncEndpoint } = require('../queue_cloud_sync');
 let mongo, client, db;
+test('local network trust ignores spoofed headers except the loopback reverse proxy',()=>{
+ const request=(address,header)=>({socket:{remoteAddress:address},get:()=>header});
+ for(const ip of ['192.168.0.79','172.25.168.99','100.76.215.98','::ffff:10.1.2.3'])assert.equal(trustedLocalRequest(request(ip)),true);
+ assert.equal(trustedLocalRequest(request('8.8.8.8','192.168.0.79')),false);
+ assert.equal(trustedLocalRequest(request('127.0.0.1','8.8.8.8')),false);
+ assert.equal(trustedLocalRequest(request('127.0.0.1','192.168.0.79')),true);
+});
 before(async()=>{mongo=await MongoMemoryServer.create({instance:{launchTimeout:60000}});client=await MongoClient.connect(mongo.getUri());db=client.db('product_insights_test');}, {timeout:90000});
 after(async()=>{await client?.close();await mongo?.stop();});
 test('date filters use Argentine boundaries and reject invalid or excessive ranges',()=>{
@@ -67,6 +74,20 @@ test('hybrid summary requires secret and tenant authorization and never mutates 
   assert.equal((await call('wrong','MCN')).status,401);assert.equal((await call(secret,'FOREIGN')).status,403);assert.equal(reads,0);
   const r=await call(secret,'MCN');assert.equal(r.status,200);assert.equal((await r.json()).metrics.successful,4);assert.equal(await db.collection('queue_tickets').countDocuments(),0);
  }finally{await new Promise(r=>server.close(r))}
+});
+
+test('only the enabled local node permits anonymous open-tenant statistics on private networks',async()=>{
+ const previous=process.env.QUEUE_LOCAL_NETWORK_ACCESS;
+ const app=express();mountProductInsights(app,{scope:async req=>({t:req.params.tenant,db}),wrap:fn=>fn,allowed:()=>false,isOpen:t=>t==='MCN',dayKey:()=> '2026-10-20'});
+ const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const url='http://127.0.0.1:'+server.address().port+'/api/customer-app-admin/';
+ try{
+  process.env.QUEUE_LOCAL_NETWORK_ACCESS='0';assert.equal((await fetch(url+'MCN/product-stats')).status,401);
+  process.env.QUEUE_LOCAL_NETWORK_ACCESS='1';
+  assert.equal((await fetch(url+'MCN/product-stats',{headers:{'x-real-ip':'8.8.8.8'}})).status,401);
+  assert.equal((await fetch(url+'FOREIGN/product-stats')).status,401);
+  // Invalid dates prove authorization passed without calling a remote data source.
+  assert.equal((await fetch(url+'MCN/product-stats?from=invalid&to=invalid',{headers:{'x-real-ip':'192.168.0.79'}})).status,400);
+ }finally{if(previous===undefined)delete process.env.QUEUE_LOCAL_NETWORK_ACCESS;else process.env.QUEUE_LOCAL_NETWORK_ACCESS=previous;await new Promise(r=>server.close(r))}
 });
 test('local proxy forwards only the selected tenant and filter, outages do not become zeroes',async()=>{
  const previous=global.fetch;const env={QUEUE_LOCAL_NETWORK_ACCESS:'1',QUEUE_SYNC_URL:'https://example.invalid/api/ext/queue-sync',QUEUE_SYNC_SECRET:'test-private-key-more-than-20'};
