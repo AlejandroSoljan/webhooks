@@ -65,7 +65,7 @@ async function startScanner() {
           if (scanHits >= 2 && Date.now() - scanCandidateAt >= 80) {
             el('codeInput').value = code; stopScanner(false); video.classList.add('hidden');
             status.textContent = 'Código detectado: ' + code + '. Buscando producto…';
-            scanLookupTimer = setTimeout(() => openCode(code), 200); return;
+            scanLookupTimer = setTimeout(() => openCode(code, 'scan'), 200); return;
           }
         } else if (decodedFrame) { scanCandidate = ''; scanHits = 0; }
       } catch {

@@ -16,6 +16,7 @@ const { isManagerSql, managerSqlUrl, managerSqlRow, rankedManagerRows } = requir
 const { createLocalBarcodeDetector, decodeLocalBarcodeFrame, mountLocalScannerAssets } = require('./qr_local_scanner');
 const scannerClient = require('./qr_scanner_page_client');
 const { recordMonetizationEvent } = require('./monetization_engine');
+const { trackLookup } = require('./product_insights');
 const {
   getGPTReply,
   syncSessionConversation,
@@ -1533,6 +1534,8 @@ function mountQrProductWeb(app) {
   });
 
   app.get('/api/ext/qr/product', async (req, res) => {
+    const lookupAt = new Date();
+    let analytics;
     try {
       const requestedTenant = safeTenant(req.query?.tenant);
       const code = digitsOrText(req.query?.codigo, 180);
@@ -1540,7 +1543,9 @@ function mountQrProductWeb(app) {
       const db = await getDb();
       const tenant = await canonicalQrTenant(db, requestedTenant);
       const cfg = await loadQrConfig(db, tenant);
+      if (cfg.enabled) analytics = { db, tenantId:tenant, at:lookupAt, eventId:req.query?.eventId, via:String(req.query?.via || 'qr').toLowerCase(), code };
       const product = await fetchQrProduct(cfg, tenant, code);
+      if (analytics) { const { db: database, ...event } = analytics; trackLookup(database, { ...event, outcome:'available', product }); }
       const via = String(req.query?.via || 'qr').toLowerCase();
       await recordMonetizationEvent({
         db,
@@ -1566,6 +1571,7 @@ function mountQrProductWeb(app) {
       });
     } catch (e) {
       const status = intValue(e?.statusCode, 500, 400, 599);
+      if (analytics) { const { db: database, ...event } = analytics; trackLookup(database, { ...event, outcome:['product_not_found','product_unavailable'].includes(e?.message) ? 'unavailable' : 'error' }); }
       console.error('[qr] product:', e?.message || e);
       return res.status(status).json({
         ok: false,

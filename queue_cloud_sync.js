@@ -97,6 +97,8 @@ function mountQueueSyncEndpoint(app, { getDb, secret = process.env.QUEUE_SYNC_SE
     if (!safeSecret(req.get('x-queue-sync-key'), secret)) return res.status(401).json({ ok: false, error: 'unauthorized' });
     const tenantId = cleanTenant(req.body?.tenantId);
     if (!tenantId || !allowed.has(tenantId)) return res.status(403).json({ ok: false, error: 'tenant_not_allowed' });
+    // Authentication and tenant checks above apply to this read-only mode too.
+    if (await require('./product_insights_routes').handleProductStatsSync(req, res, { getDb })) return;
       const rows = Array.isArray(req.body?.tickets) ? req.body.tickets : [];
     const counterRows = Array.isArray(req.body?.counters) ? req.body.counters : [], presenceRows = Array.isArray(req.body?.presenceSessions) ? req.body.presenceSessions : [];
     if (rows.length > 5000 || counterRows.length > 1000 || presenceRows.length > 5000) return res.status(413).json({ ok: false, error: 'too_many_rows' });

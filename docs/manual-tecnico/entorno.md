@@ -38,9 +38,9 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `CLIENT_PHONE_ACCESS_MAX_NUMBERS` | [client_phone_access.js:11](../../client_phone_access.js#L11) |
 | `COMPORTAMIENTO` | [logic.js:359](../../logic.js#L359) |
 | `DB_NAME` | [src/script/migrate_products_tenant.js:7](../../src/script/migrate_products_tenant.js#L7) |
-| `DEFAULT_CITY` | [endpoint.js:11923](../../endpoint.js#L11923); [endpoint.js:12343](../../endpoint.js#L12343); [logic.js:1539](../../logic.js#L1539); [logic.js:3098](../../logic.js#L3098); [src/whatsapp/webhook.routes.js:532](../../src/whatsapp/webhook.routes.js#L532); [src/whatsapp/webhook.routes.js:646](../../src/whatsapp/webhook.routes.js#L646) |
-| `DEFAULT_COUNTRY` | [endpoint.js:11925](../../endpoint.js#L11925); [endpoint.js:12345](../../endpoint.js#L12345); [logic.js:1541](../../logic.js#L1541); [logic.js:3100](../../logic.js#L3100); [src/whatsapp/webhook.routes.js:534](../../src/whatsapp/webhook.routes.js#L534); [src/whatsapp/webhook.routes.js:648](../../src/whatsapp/webhook.routes.js#L648) |
-| `DEFAULT_PROVINCE` | [endpoint.js:11924](../../endpoint.js#L11924); [endpoint.js:12344](../../endpoint.js#L12344); [logic.js:1540](../../logic.js#L1540); [logic.js:3099](../../logic.js#L3099); [src/whatsapp/webhook.routes.js:533](../../src/whatsapp/webhook.routes.js#L533); [src/whatsapp/webhook.routes.js:647](../../src/whatsapp/webhook.routes.js#L647) |
+| `DEFAULT_CITY` | [endpoint.js:11923](../../endpoint.js#L11923); [endpoint.js:12343](../../endpoint.js#L12343); [logic.js:1539](../../logic.js#L1539); [logic.js:3102](../../logic.js#L3102); [src/whatsapp/webhook.routes.js:532](../../src/whatsapp/webhook.routes.js#L532); [src/whatsapp/webhook.routes.js:646](../../src/whatsapp/webhook.routes.js#L646) |
+| `DEFAULT_COUNTRY` | [endpoint.js:11925](../../endpoint.js#L11925); [endpoint.js:12345](../../endpoint.js#L12345); [logic.js:1541](../../logic.js#L1541); [logic.js:3104](../../logic.js#L3104); [src/whatsapp/webhook.routes.js:534](../../src/whatsapp/webhook.routes.js#L534); [src/whatsapp/webhook.routes.js:648](../../src/whatsapp/webhook.routes.js#L648) |
+| `DEFAULT_PROVINCE` | [endpoint.js:11924](../../endpoint.js#L11924); [endpoint.js:12344](../../endpoint.js#L12344); [logic.js:1540](../../logic.js#L1540); [logic.js:3103](../../logic.js#L3103); [src/whatsapp/webhook.routes.js:533](../../src/whatsapp/webhook.routes.js#L533); [src/whatsapp/webhook.routes.js:647](../../src/whatsapp/webhook.routes.js#L647) |
 | `DEFAULT_TENANT` | [src/script/migrate_products_tenant.js:8](../../src/script/migrate_products_tenant.js#L8) |
 | `DEMO_RODAVEN_API_KEY` | [demo_catalog_api.js:155](../../demo_catalog_api.js#L155); [demo_catalog_api.js:169](../../demo_catalog_api.js#L169) |
 | `DEMO_RODAVEN_DATA_FILE` | [demo_catalog_api.js:43](../../demo_catalog_api.js#L43) |
@@ -60,8 +60,8 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `FLETEROS_TERCEROS_API_TOKEN` | [fleteros_viajes_panel.js:2624](../../fleteros_viajes_panel.js#L2624) |
 | `FLETEROS_TERCEROS_API_URL` | [fleteros_viajes_panel.js:1895](../../fleteros_viajes_panel.js#L1895); [fleteros_viajes_panel.js:2612](../../fleteros_viajes_panel.js#L2612) |
 | `GOOGLE_MAPS_API_KEY` | [logic.js:36](../../logic.js#L36) |
-| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | [help_tool.js:441](../../help_tool.js#L441); [help_tool.js:554](../../help_tool.js#L554); [help_tool.js:2021](../../help_tool.js#L2021) |
-| `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` | [help_tool.js:555](../../help_tool.js#L555) |
+| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | [help_tool.js:446](../../help_tool.js#L446); [help_tool.js:559](../../help_tool.js#L559); [help_tool.js:2054](../../help_tool.js#L2054) |
+| `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` | [help_tool.js:560](../../help_tool.js#L560) |
 | `GRAPH_API_VERSION` | [logic.js:20](../../logic.js#L20); [wa_inbox_panel.js:18](../../wa_inbox_panel.js#L18) |
 | `GRAPH_VERSION` | [logic.js:21](../../logic.js#L21) |
 | `HEARTBEAT_MS` | [app_asisto_ws.js:174](../../app_asisto_ws.js#L174) |
@@ -107,19 +107,20 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `PHONE_NUMBER_ID` | [logic.js:22](../../logic.js#L22); [wa_inbox_panel.js:19](../../wa_inbox_panel.js#L19) |
 | `PORT` | [endpoint.js:12510](../../endpoint.js#L12510); [endpoint.js:12518](../../endpoint.js#L12518); [server.js:6](../../server.js#L6) |
 | `PUBLIC_BASE_URL` | [auth_ui.js:24](../../auth_ui.js#L24); [customer_queue.js:65](../../customer_queue.js#L65); [endpoint.js:1856](../../endpoint.js#L1856); [restaurant.js:30](../../restaurant.js#L30); [restaurant.js:178](../../restaurant.js#L178); [restaurant.js:227](../../restaurant.js#L227); [restaurant.js:237](../../restaurant.js#L237); [src/support/config.js:8](../../src/support/config.js#L8) |
-| `QR_CONFIG_CACHE_MS` | [qr_product_web.js:31](../../qr_product_web.js#L31) |
-| `QR_PRODUCT_API_MAX_CONCURRENT` | [qr_product_web.js:34](../../qr_product_web.js#L34) |
-| `QR_PRODUCT_API_QUEUE_MAX` | [qr_product_web.js:35](../../qr_product_web.js#L35) |
-| `QR_PRODUCT_API_QUEUE_WAIT_MS` | [qr_product_web.js:36](../../qr_product_web.js#L36) |
+| `QR_CONFIG_CACHE_MS` | [qr_product_web.js:33](../../qr_product_web.js#L33) |
+| `QR_PRODUCT_API_MAX_CONCURRENT` | [qr_product_web.js:36](../../qr_product_web.js#L36) |
+| `QR_PRODUCT_API_QUEUE_MAX` | [qr_product_web.js:37](../../qr_product_web.js#L37) |
+| `QR_PRODUCT_API_QUEUE_WAIT_MS` | [qr_product_web.js:38](../../qr_product_web.js#L38) |
+| `QUEUE_LOCAL_NETWORK_ACCESS` | [product_insights.js:114](../../product_insights.js#L114); [product_insights_routes.js:15](../../product_insights_routes.js#L15) |
 | `QUEUE_OPEN_TENANTS` | [customer_queue.js:65](../../customer_queue.js#L65) |
 | `QUEUE_PORT` | [turnero_server.js:33](../../turnero_server.js#L33) |
 | `QUEUE_PRESENCE_SECRET` | [customer_queue.js:65](../../customer_queue.js#L65) |
 | `QUEUE_PRINTER_NAME` | [queue_printer.js:28](../../queue_printer.js#L28) |
 | `QUEUE_SERVER_PRINT` | [queue_printer.js:27](../../queue_printer.js#L27) |
-| `QUEUE_SYNC_EVERY_MS` | [queue_cloud_sync.js:127](../../queue_cloud_sync.js#L127) |
-| `QUEUE_SYNC_SECRET` | [customer_queue.js:28](../../customer_queue.js#L28); [queue_cloud_sync.js:82](../../queue_cloud_sync.js#L82); [queue_cloud_sync.js:127](../../queue_cloud_sync.js#L127) |
-| `QUEUE_SYNC_TENANTS` | [queue_cloud_sync.js:82](../../queue_cloud_sync.js#L82); [queue_cloud_sync.js:127](../../queue_cloud_sync.js#L127) |
-| `QUEUE_SYNC_URL` | [customer_queue.js:28](../../customer_queue.js#L28); [queue_cloud_sync.js:127](../../queue_cloud_sync.js#L127) |
+| `QUEUE_SYNC_EVERY_MS` | [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
+| `QUEUE_SYNC_SECRET` | [customer_queue.js:28](../../customer_queue.js#L28); [product_insights.js:115](../../product_insights.js#L115); [product_insights.js:116](../../product_insights.js#L116); [queue_cloud_sync.js:82](../../queue_cloud_sync.js#L82); [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
+| `QUEUE_SYNC_TENANTS` | [queue_cloud_sync.js:82](../../queue_cloud_sync.js#L82); [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
+| `QUEUE_SYNC_URL` | [customer_queue.js:28](../../customer_queue.js#L28); [product_insights.js:115](../../product_insights.js#L115); [product_insights.js:116](../../product_insights.js#L116); [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
 | `RENDER_SERVICE_NAME` | [db.js:70](../../db.js#L70) |
 | `SERVICE_NAME` | [db.js:71](../../db.js#L71) |
 | `SIMULATED_NOW_ISO` | [logic.js:27](../../logic.js#L27) |

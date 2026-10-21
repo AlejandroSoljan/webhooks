@@ -93,6 +93,7 @@ if(q('statsTenant'))q('statsTenant').onchange=()=>{top.location.href='/ui/turner
 </script></body></html>`;
 }
 function mountQueueStats(app, { scope, wrap, allowed, isOpen = () => false, dayKey, auth }) {
+  require('./product_insights_routes').mountProductInsights(app, { scope, wrap, allowed, dayKey });
   app.get('/ui/turnero/:tenant/estadisticas', wrap(async (req, res) => {
     const { t, db } = await scope(req);
     const publicTenant = isOpen(t);
