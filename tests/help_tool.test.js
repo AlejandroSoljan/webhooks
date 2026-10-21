@@ -5,7 +5,11 @@ const {
   normalizeCover,
   matrixToHelpRows,
   hasUsableVimeoId,
+  hasUsefulHelpDescription,
+  behaviorRequiresUsefulDescription,
   importanceOrderFromBehavior,
+  videoOrderModeFromBehavior,
+  orderRowsByVimeoIds,
   sortVideos
 } = require('../help_tool');
 
@@ -61,4 +65,30 @@ test('la regla de Vimeo descarta IDs vacios y cero', () => {
   assert.equal(hasUsableVimeoId(''), false);
   assert.equal(hasUsableVimeoId('0'), false);
   assert.equal(hasUsableVimeoId('1166096940'), true);
+});
+
+const productionBehavior = `
+3. Tené en cuenta SOLO los videos que tengan ID de Vimeo Y descripción completa. Ignorá los videos cuyo ID de Vimeo esté vacío o sea 0, y los que tengan el campo "Descripcion" vacío o sin texto útil.
+5. Ordená los IDs según tu criterio, del video más útil al menos útil para alguien que está trabajando en esa ventana. Usá como guía el título, la descripción, los tags y qué tan específico es el video para esa ventana: primero el tutorial principal de la ventana, después los casos puntuales o variantes, y al final los videos generales que aplican a muchas ventanas. No uses el campo "Importancia" para decidir el orden.
+`;
+
+test('punto 3 exige una descripcion con texto util', () => {
+  assert.equal(behaviorRequiresUsefulDescription(productionBehavior), true);
+  assert.equal(hasUsefulHelpDescription(''), false);
+  assert.equal(hasUsefulHelpDescription('Pendiente'), false);
+  assert.equal(hasUsefulHelpDescription('Tutorial completo para dar de alta un producto.'), true);
+});
+
+test('punto 5 conserva el ranking de utilidad de la IA e ignora Importancia', () => {
+  const rows = [
+    { vimeoId: 'general', title: 'General', importance: 1 },
+    { vimeoId: 'principal', title: 'Principal', importance: 3 },
+    { vimeoId: 'variante', title: 'Variante', importance: 2 }
+  ];
+  assert.equal(videoOrderModeFromBehavior(productionBehavior), 'ai');
+  assert.deepEqual(
+    orderRowsByVimeoIds(rows, ['principal', 'variante', 'general'], productionBehavior).map(row => row.vimeoId),
+    ['principal', 'variante', 'general']
+  );
+  assert.deepEqual(sortVideos(rows, productionBehavior), rows);
 });

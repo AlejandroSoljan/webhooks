@@ -101,6 +101,7 @@ Respondé únicamente JSON válido con este formato:
 
 const EXPECTED_HEADERS = {
   title: ['titulo', 'título'],
+  type: ['tipo', 'type'],
   cover: ['caratula', 'carátula'],
   vimeoId: ['id vimeo', 'id_vimeo', 'vimeo id', 'vimeo_id'],
   appliesTo: ['ventana que aplica', 'ventana_que_aplica', 'ventana aplica'],
@@ -737,6 +738,7 @@ function matrixToHelpRows(matrix = []) {
     const item = {
       rowNumber: i + 1,
       title: clean(r[columns.title], 500),
+      type: columns.type >= 0 ? clean(r[columns.type], 200) : '',
       cover: normalizeCover(r[columns.cover]),
       vimeoId: clean(r[columns.vimeoId], 120),
       appliesTo: clean(r[columns.appliesTo], 5000),
@@ -754,14 +756,18 @@ function matrixToHelpRows(matrix = []) {
 }
 
 function relevantSourceHash(rows = []) {
-  // El cache de clasificación sólo debe invalidarse cuando cambia algo que
-  // pueda modificar la pertenencia de una ventana. Título/descripcion/tags/importancia
-  // se toman siempre de la hoja actual y no obligan a volver a gastar tokens.
+  // El comportamiento puede seleccionar y ordenar por estos campos. Por eso
+  // cualquier cambio en ellos debe invalidar las clasificaciones ya cacheadas.
   return sha256(JSON.stringify(rows.map(r => [
     r.vimeoId,
+    r.title,
+    r.type,
     r.appliesTo,
     r.versionFrom,
-    r.versionTo
+    r.versionTo,
+    r.importance,
+    r.tags,
+    r.description
   ])));
 }
 
@@ -890,12 +896,11 @@ function obviousNaturalCategoryApplies(windowName, categoryText) {
 }
 
 function importanceOrderFromBehavior(behavior = '') {
-  const normalized = String(behavior || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toUpperCase();
+  const normalized = normalizeBehaviorText(behavior);
+
+  // Compatibilidad pública: esta función sólo expresa el sentido del campo
+  // Importancia. El modo completo se resuelve en videoOrderModeFromBehavior.
+  if (videoOrderModeFromBehavior(behavior) === 'ai') return 'asc';
 
   // El comportamiento configurable es la autoridad para el sentido de la
   // prioridad. Si no declara nada, conservamos el contrato histórico 1 -> 5.
@@ -904,12 +909,50 @@ function importanceOrderFromBehavior(behavior = '') {
     /ORDEN\s+DESCENDENTE/.test(normalized) ||
     /PRIMERO\s+EL\s+[2-9].*ULTIMO\s+EL\s+1/.test(normalized)
   ) return 'desc';
-  if (
-    /MENOR\s+A\s+MAYOR/.test(normalized) ||
-    /ORDEN\s+ASCENDENTE/.test(normalized) ||
-    /PRIMERO\s+EL\s+1/.test(normalized)
-  ) return 'asc';
   return 'asc';
+}
+
+function normalizeBehaviorText(behavior = '') {
+  return String(behavior || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+function videoOrderModeFromBehavior(behavior = '') {
+  const normalized = normalizeBehaviorText(behavior);
+  if (
+    /NO\s+USES?\s+EL\s+CAMPO\s+["']?IMPORTANCIA/.test(normalized) ||
+    /DEL\s+VIDEO\s+MAS\s+UTIL\s+AL\s+MENOS\s+UTIL/.test(normalized) ||
+    (/SEGUN\s+TU\s+CRITERIO/.test(normalized) && /ESPECIFIC/.test(normalized))
+  ) return 'ai';
+  if (
+    /MAYOR\s+A\s+MENOR/.test(normalized) ||
+    /ORDEN\s+DESCENDENTE/.test(normalized) ||
+    /PRIMERO\s+EL\s+[2-9].*ULTIMO\s+EL\s+1/.test(normalized)
+  ) return 'importance_desc';
+  return 'importance_asc';
+}
+
+function behaviorRequiresUsefulDescription(behavior = '') {
+  const normalized = normalizeBehaviorText(behavior);
+  return /DESCRIPCION/.test(normalized) && (
+    /ID\s+DE\s+VIMEO\s+Y\s+DESCRIPCION/.test(normalized) ||
+    /DESCRIPCION\s+(?:COMPLETA|VACIA)/.test(normalized) ||
+    /SIN\s+TEXTO\s+UTIL/.test(normalized)
+  );
+}
+
+function hasUsefulHelpDescription(value) {
+  const description = clean(value, 12000);
+  if (!description || description.length < 10) return false;
+  return !/^(?:-|--|n\/?a|s\/?d|sin descripcion|sin texto|pendiente|no aplica|ninguna?)\.?$/i.test(description);
+}
+
+function helpVideoEligibleByBehavior(row, behavior = '') {
+  return !behaviorRequiresUsefulDescription(behavior) || hasUsefulHelpDescription(row?.description);
 }
 
 function compareVideoImportance(a, b, behavior = '') {
@@ -928,6 +971,9 @@ function compareVideoImportance(a, b, behavior = '') {
 }
 
 function sortVideos(rows = [], behavior = '') {
+  // Cuando el comportamiento delega el ranking a la IA, el orden de entrada
+  // ya es la decisión del modelo y no se debe pisar con Importancia.
+  if (videoOrderModeFromBehavior(behavior) === 'ai') return [...rows];
   return [...rows].sort((a, b) => {
     return compareVideoImportance(a, b, behavior);
   });
@@ -936,6 +982,7 @@ function sortVideos(rows = [], behavior = '') {
 function outputVideo(row) {
   return {
     vimeo_id: row.vimeoId,
+    tipo: row.type || '',
     titulo: row.title,
     caratula: row.cover || '',
     importancia: Number(row.importance || 0),
@@ -966,6 +1013,7 @@ async function ensureIndexes(db) {
   try {
     await Promise.all([
       db.collection('help_category_cache').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: 'help_cache_expiry' }),
+      db.collection('help_behavior_order_cache').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: 'help_behavior_order_cache_expiry' }),
       db.collection('help_intelligent_query_cache').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0, name: 'help_intelligent_query_cache_expiry' }),
       db.collection('help_query_log').createIndex({ createdAt: -1 }, { name: 'help_query_createdAt' }),
       db.collection('help_query_log').createIndex({ dominio: 1, createdAt: -1 }, { name: 'help_query_domain_createdAt' })
@@ -1026,10 +1074,15 @@ async function resolveNaturalCategories({ cfg, sourceHash, windowName, rows, dom
   const client = getOpenAiClient(apiKey);
   if (!client) throw new Error('openai_client_unavailable');
 
+  const useImportance = videoOrderModeFromBehavior(cfg.behavior) !== 'ai';
   const categories = rows.slice(0, 250).map(r => ({
     vimeo_id: String(r.vimeoId),
+    tipo: String(r.type || ''),
+    titulo: String(r.title || ''),
     categoria: String(r.appliesTo),
-    importancia: Number(r.importance || 0)
+    tags: Array.isArray(r.tags) ? r.tags : [],
+    descripcion: String(r.description || ''),
+    ...(useImportance ? { importancia: Number(r.importance || 0) } : {})
   }));
   const payloadText = JSON.stringify({ ventana: windowName, categorias });
 
@@ -1119,6 +1172,144 @@ async function resolveNaturalCategories({ cfg, sourceHash, windowName, rows, dom
   return { vimeoIds, aiUsed: true, cacheHit: false, usage };
 }
 
+function orderRowsByVimeoIds(rows = [], orderedIds = [], behavior = '') {
+  const byId = new Map(rows.map(row => [String(row.vimeoId), row]));
+  const ordered = [];
+  const seen = new Set();
+  for (const rawId of orderedIds || []) {
+    const id = String(rawId || '').trim();
+    if (!id || seen.has(id) || !byId.has(id)) continue;
+    seen.add(id);
+    ordered.push(byId.get(id));
+  }
+  for (const row of rows) {
+    const id = String(row.vimeoId || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    ordered.push(row);
+  }
+  return sortVideos(ordered, behavior);
+}
+
+function selectRowsByVimeoIds(rows = [], orderedIds = []) {
+  const byId = new Map(rows.map(row => [String(row.vimeoId), row]));
+  const seen = new Set();
+  return (orderedIds || []).flatMap(rawId => {
+    const id = String(rawId || '').trim();
+    if (!id || seen.has(id) || !byId.has(id)) return [];
+    seen.add(id);
+    return [byId.get(id)];
+  });
+}
+
+async function resolveBehaviorVideoOrder({ cfg, sourceHash, windowName, rows, domain, user, usageContext = null }) {
+  if (!rows.length) return { rows: [], aiUsed: false, cacheHit: false, usage: null };
+
+  const db = await getDb();
+  await ensureIndexes(db);
+  const behaviorHash = sha256(cfg.behavior);
+  const candidateContentHash = sha256(JSON.stringify(rows.map(r => [
+    r.vimeoId, r.type, r.title, r.appliesTo, r.tags, r.description
+  ])));
+  const cacheKey = sha256(JSON.stringify({
+    agent: cfg.agent,
+    window: normalizeWindow(windowName),
+    sourceHash,
+    model: cfg.model,
+    behaviorHash,
+    candidateContentHash
+  }));
+  const cached = await db.collection('help_behavior_order_cache').findOne({
+    _id: cacheKey,
+    expiresAt: { $gt: new Date() }
+  });
+  if (cached && Array.isArray(cached.vimeoIds)) {
+    return {
+      rows: selectRowsByVimeoIds(rows, cached.vimeoIds),
+      aiUsed: false,
+      cacheHit: true,
+      usage: null
+    };
+  }
+
+  const apiKey = await getOpenAiKey(domain);
+  if (!apiKey) throw new Error('openai_api_key_missing');
+  const client = getOpenAiClient(apiKey);
+  if (!client) throw new Error('openai_client_unavailable');
+
+  const payloadText = JSON.stringify({
+    ventana: windowName,
+    videos: rows.map(r => ({
+      vimeo_id: String(r.vimeoId),
+      tipo: String(r.type || ''),
+      titulo: String(r.title || ''),
+      ventana_que_aplica: String(r.appliesTo || ''),
+      tags: Array.isArray(r.tags) ? r.tags : [],
+      descripcion: String(r.description || '')
+    }))
+  });
+  const request = {
+    model: cfg.model,
+    messages: [
+      { role: 'system', content: cfg.behavior },
+      { role: 'user', content: payloadText }
+    ],
+    response_format: { type: 'json_object' },
+    reasoning_effort: 'none',
+    max_completion_tokens: 1000
+  };
+  let response;
+  try {
+    response = await client.chat.completions.create(request);
+  } catch (e) {
+    if (/max_completion_tokens|unsupported parameter/i.test(String(e?.message || e || ''))) {
+      delete request.max_completion_tokens;
+      request.max_tokens = 1000;
+      response = await client.chat.completions.create(request);
+    } else throw e;
+  }
+
+  const parsed = extractJsonObject(response?.choices?.[0]?.message?.content || '') || {};
+  const allowed = new Set(rows.map(r => String(r.vimeoId)));
+  const vimeoIds = [...new Set(
+    (Array.isArray(parsed.vimeo_ids) ? parsed.vimeo_ids : [])
+      .map(v => String(v || '').trim())
+      .filter(id => allowed.has(id))
+  )];
+  // La respuesta del comportamiento define tanto la selección como el orden.
+  // No agregamos IDs omitidos ni aplicamos una segunda regla local.
+  const orderedRows = selectRowsByVimeoIds(rows, vimeoIds);
+  const finalIds = orderedRows.map(r => String(r.vimeoId));
+  const usage = parseTokenUsagePair(response?.usage || null, 'message');
+  const traceId = usageContext?.traceId || `help:${cfg.agent}:${domain}:${Date.now()}:${crypto.randomBytes(3).toString('hex')}`;
+  await recordTokenUsage({
+    tenantId: domain,
+    kind: 'message',
+    provider: 'openai',
+    model: response?.model || cfg.model,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    totalTokens: usage.totalTokens,
+    conversationId: usageContext?.conversationId || `${traceId}:${clean(user, 80) || 'user'}`,
+    waId: user,
+    channelType: 'help_api',
+    usageTraceId: traceId,
+    meta: {
+      usageType: 'ayuda_orden', agent: cfg.agent, window: windowName, user,
+      sourceHash, orderCandidates: rows.length, requestId: usageContext?.requestId || null
+    }
+  });
+  const expiresAt = new Date(Date.now() + cfg.ai_cache_days * 24 * 60 * 60 * 1000);
+  await db.collection('help_behavior_order_cache').updateOne(
+    { _id: cacheKey },
+    { $set: { agent: cfg.agent, window: normalizeWindow(windowName), sourceHash, model: response?.model || cfg.model,
+      behaviorHash, candidateContentHash, vimeoIds: finalIds, updatedAt: new Date(), expiresAt },
+      $setOnInsert: { createdAt: new Date() } },
+    { upsert: true }
+  ).catch(e => console.warn('[help] order cache write:', e?.message || e));
+  return { rows: orderedRows, aiUsed: true, cacheHit: false, usage };
+}
+
 function intelligentQueryTokens(value) {
   const normalized = normalizeNaturalText(value);
   const stop = new Set([
@@ -1202,14 +1393,15 @@ function dedupeRowsByVimeo(rows = []) {
   return [...map.values()];
 }
 
-function compactQueryVideo(row, transcriptionMax = 0) {
+function compactQueryVideo(row, transcriptionMax = 0, { includeImportance = true } = {}) {
   const transcription = transcriptionMax > 0
     ? clean(row?.transcription, transcriptionMax)
     : '';
   return {
     vimeo_id: String(row?.vimeoId || ''),
+    tipo: clean(row?.type, 200),
     titulo: clean(row?.title, 500),
-    importancia: Number(row?.importance || 0),
+    ...(includeImportance ? { importancia: Number(row?.importance || 0) } : {}),
     tags: (Array.isArray(row?.tags) ? row.tags : []).slice(0, 15),
     ventana_aplica: clean(row?.appliesTo, 900),
     descripcion: clean(row?.description, 1200),
@@ -1217,14 +1409,16 @@ function compactQueryVideo(row, transcriptionMax = 0) {
   };
 }
 
-function compactQueryVideos(rows = []) {
+function compactQueryVideos(rows = [], behavior = '') {
   // Las transcripciones pueden ser extensas. Conservamos contexto suficiente por
   // video y un presupuesto total para evitar prompts desmedidos cuando hay muchos
   // candidatos.
   let remaining = 90000;
   return (rows || []).map(row => {
     const max = Math.max(0, Math.min(12000, remaining));
-    const video = compactQueryVideo(row, max);
+    const video = compactQueryVideo(row, max, {
+      includeImportance: videoOrderModeFromBehavior(behavior) !== 'ai'
+    });
     remaining = Math.max(0, remaining - video.transcripcion.length);
     return video;
   });
@@ -1387,7 +1581,7 @@ async function resolveIntelligentHelpQuery({
   const payloadText = JSON.stringify({
     consulta: query,
     ventana: windowName || '',
-    videos: compactQueryVideos(rows)
+    videos: compactQueryVideos(rows, cfg.behavior)
   });
 
   const request = {
@@ -1648,7 +1842,9 @@ async function handleHelpQuery(req, res) {
 
     source = await loadHelpSource(cfg);
     const eligible = source.rows.filter(r =>
-      hasUsableVimeoId(r.vimeoId) && r.appliesTo && versionApplies(version, r.versionFrom, r.versionTo)
+      hasUsableVimeoId(r.vimeoId) &&
+      r.appliesTo &&
+      versionApplies(version, r.versionFrom, r.versionTo)
     );
 
     // ===================== MODO CONSULTA INTELIGENTE =====================
@@ -1679,7 +1875,9 @@ async function handleHelpQuery(req, res) {
 
       const selectedIds = new Set(intelligent.vimeoIds.map(String));
       const selectedRows = candidateInfo.rows.filter(r => selectedIds.has(String(r.vimeoId)));
-      const videos = sortVideos(selectedRows, cfg.behavior).slice(0, cfg.max_videos).map(outputVideo);
+      const videos = orderRowsByVimeoIds(selectedRows, intelligent.vimeoIds, cfg.behavior)
+        .slice(0, cfg.max_videos)
+        .map(outputVideo);
 
       const responseBody = {
         ok: true,
@@ -1753,6 +1951,67 @@ async function handleHelpQuery(req, res) {
       }));
     }
 
+    // Modo ventana: el comportamiento vigente en MSM es la única autoridad
+    // funcional para seleccionar y ordenar. El backend sólo valida datos
+    // estructurales y versión, y conserva exactamente los IDs devueltos.
+    const behaviorResult = await resolveBehaviorVideoOrder({
+      cfg,
+      sourceHash: source.hash,
+      windowName,
+      rows: eligible,
+      domain: ownerDomain,
+      user,
+      usageContext
+    });
+    const behaviorVideos = behaviorResult.rows.slice(0, cfg.max_videos).map(outputVideo);
+    const behaviorResponse = {
+      ok: true,
+      ...dateInfo,
+      agente: agent,
+      ventana: windowName,
+      version,
+      dominio: requestDomain,
+      usuario: user,
+      respuesta: behaviorVideos.length ? 'S' : 'N',
+      videos: behaviorVideos
+    };
+
+    const behaviorDb = await getDb();
+    await ensureIndexes(behaviorDb);
+    await behaviorDb.collection('help_query_log').insertOne({
+      tenantId: ownerDomain,
+      createdAt: now,
+      fechaAsisto: dateInfo.fecha,
+      agente: agent,
+      ventana: windowName,
+      version,
+      dominio: requestDomain,
+      usuario: user,
+      respuesta: behaviorResponse.respuesta,
+      videoIds: behaviorVideos.map(v => v.vimeo_id),
+      mode: 'behavior_driven',
+      candidates: eligible.length,
+      aiUsed: behaviorResult.aiUsed === true,
+      aiCacheHit: behaviorResult.cacheHit === true,
+      sourceHash: source.hash,
+      durationMs: Date.now() - started
+    }).catch(e => console.warn('[help] behavior query log:', e?.message || e));
+
+    await recordHelpApiRequestEvent({
+      usageContext,
+      version,
+      result: behaviorResponse.respuesta,
+      videoCount: behaviorVideos.length,
+      aiUsed: behaviorResult.aiUsed === true,
+      aiCacheHit: behaviorResult.cacheHit === true
+    });
+    res.set('Cache-Control', 'no-store');
+    return res.json(compactHelpApiResponse({
+      dateInfo,
+      responseBody: behaviorResponse,
+      intelligent: false
+    }));
+
     const wantedWindow = normalizeWindow(windowName);
     const exactRows = [];
     const naturalRows = [];
@@ -1812,7 +2071,24 @@ async function handleHelpQuery(req, res) {
       ) dedupe.set(key, row);
     }
 
-    const selected = sortVideos([...dedupe.values()], cfg.behavior).slice(0, cfg.max_videos);
+    let selected = sortVideos([...dedupe.values()], cfg.behavior);
+    let orderInfo = { aiUsed: false, cacheHit: false };
+    try {
+      orderInfo = await resolveBehaviorVideoOrder({
+        cfg,
+        sourceHash: source.hash,
+        windowName,
+        rows: selected,
+        domain: ownerDomain,
+        user,
+        usageContext
+      });
+      selected = orderInfo.rows;
+    } catch (e) {
+      aiError = aiError || e;
+      console.warn(`[help] orden IA agent=${agent} window=${windowName}:`, e?.message || e);
+    }
+    selected = selected.slice(0, cfg.max_videos);
     const videos = selected.map(outputVideo);
     const responseBody = {
       ok: true,
@@ -1845,8 +2121,10 @@ async function handleHelpQuery(req, res) {
       videoIds: videos.map(v => v.vimeo_id),
       exactMatches: exactRows.length,
       naturalDeterministicMatches: obviousNaturalRows.length,
-      aiUsed: aiInfo.aiUsed === true,
-      aiCacheHit: aiInfo.cacheHit === true,
+      aiUsed: aiInfo.aiUsed === true || orderInfo.aiUsed === true,
+      aiCacheHit: aiInfo.cacheHit === true || orderInfo.cacheHit === true,
+      orderAiUsed: orderInfo.aiUsed === true,
+      orderAiCacheHit: orderInfo.cacheHit === true,
       sourceHash: source.hash,
       durationMs: Date.now() - started
     }).catch(e => console.warn('[help] query log:', e?.message || e));
@@ -1856,8 +2134,8 @@ async function handleHelpQuery(req, res) {
       version,
       result: responseBody.respuesta,
       videoCount: videos.length,
-      aiUsed: aiInfo.aiUsed === true,
-      aiCacheHit: aiInfo.cacheHit === true
+      aiUsed: aiInfo.aiUsed === true || orderInfo.aiUsed === true,
+      aiCacheHit: aiInfo.cacheHit === true || orderInfo.cacheHit === true
     });
 
     res.set('Cache-Control', 'no-store');
@@ -2079,7 +2357,11 @@ module.exports = {
   normalizeCover,
   matrixToHelpRows,
   hasUsableVimeoId,
+  hasUsefulHelpDescription,
+  behaviorRequiresUsefulDescription,
   importanceOrderFromBehavior,
+  videoOrderModeFromBehavior,
+  orderRowsByVimeoIds,
   sortVideos,
   versionApplies,
   technicalWindowsFromRule,
