@@ -19,6 +19,11 @@ foreach ($profile in $profiles) {
   if (-not $run.StartsWith($agentRoot + '\',[StringComparison]::OrdinalIgnoreCase) -or
       [IO.Path]::GetFileName($run) -ne 'run.ps1' -or $expectedProfile -ne $profile.FullName) { throw 'El destino no corresponde al perfil de este usuario.' }
   $release = Split-Path -Parent $run
+  $node = [IO.Path]::GetFullPath($match.Groups['node'].Value)
+  if (-not $node.StartsWith($agentRoot + '\',[StringComparison]::OrdinalIgnoreCase)) { throw 'El runtime no corresponde al agente instalado.' }
+  $mediaFile = Join-Path $release 'node_modules/@whiskeysockets/baileys/lib/Utils/messages-media.js'
+  & $node -e "require(process.argv[1]).patchSource(require('node:fs').readFileSync(process.argv[2],'utf8'))" (Join-Path $PSScriptRoot 'media-stream-patch.cjs') $mediaFile
+  if ($LASTEXITCODE -ne 0) { throw 'La version de Baileys requiere revision. No se modifico ni reinicio el agente.' }
   $backupDirectory = Join-Path $agentRoot 'repair-backups'
   New-Item -ItemType Directory -Path $backupDirectory -Force | Out-Null
   $backup = Join-Path $backupDirectory ('worker-' + $profile.Name + '-' + [Guid]::NewGuid().ToString('N') + '.zip')
