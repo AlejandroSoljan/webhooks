@@ -53,6 +53,18 @@ test('generated-only review consolidates fragments and preserves saved and human
  assert.equal(await service.col('drafts').countDocuments({...owner,state:'merged'}),1);
 });
 
+test('generated review repartitions overlapping automatic drafts without skipping or losing messages', async () => {
+ const owner={...scope,tenantId:'ALSO'};await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});
+ service.titleAnalyzer={group:async()=>({groups:[[0,2],[1,3]],model:'fixture'}),run:async()=>({subject:'Anterior',description:'Solicitud anterior.',model:'fixture'})};
+ await processMessages([message('a',0,{text:'Necesito reporte'}),message('b',20,{text:'No imprime'}),message('c',40,{text:'Ya está el reporte'}),message('d',60,{text:'CORREGIDO'})],owner);
+ const before=await service.col('drafts').find(owner).toArray();const ids=before.flatMap(r=>r.messageIds).sort();
+ service.titleAnalyzer={group:async()=>({groups:[[0],[1,2,3]],model:'fixture'}),run:async()=>({subject:'Revisada',description:'Solicitud revisada.',model:'fixture'})};
+ const job=await service.enqueue(owner,'123@s.whatsapp.net');await service.col('jobs').updateOne({_id:job},{$set:{generatedRepairOnly:true,reviewMessageIds:ids}});await service.runOne(async()=>{},owner);
+ const after=await service.col('drafts').find({...owner,state:{$nin:['merged','ignored']}}).toArray();
+ assert.equal(after.length,2);assert.deepEqual(after.flatMap(r=>r.messageIds).sort(),ids);
+ assert.ok(after.every(r=>vault.open(r.fields,r._id).subject==='Revisada'));
+});
+
 test('objective grouping merges untouched drafts and caches unchanged evidence', async () => {
   const owner = {...scope,tenantId:'ALSO'};
   await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});

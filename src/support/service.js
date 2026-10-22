@@ -375,7 +375,7 @@ class SupportService {
     let detectedGroups;
     if (groupingMessages.length && taskGrouping.enabled(scope.tenantId) && this.titleAnalyzer?.group) {
       const key = hash([taskGrouping.VERSION, ...groupingMessages.map(m => [m._id, m.text, m.at, m.fromMe])]);
-      const cached = whatsappContact?.taskGrouping;
+      const cached = job.generatedRepairOnly ? null : whatsappContact?.taskGrouping;
       const signatures = groupingMessages.map(m => hash([m._id, m.text, m.at, m.fromMe]));
       let groups = cached?.key === key ? cached.groups : null;
       if (!groups) {
@@ -434,9 +434,9 @@ class SupportService {
       if (savedIds.size && ids.every(id => ownedIds.has(id))) continue;
       if (existing.some(row => ['sending', 'uncertain'].includes(row.hubspot?.state))) fail('hubspot_delivery_in_progress', 409);
       const untouched = row => taskGrouping.enabled(scope.tenantId) ? require('./task_assessment').repairable(row) : !row.hubspot?.ticketId && row.events?.every(event => !event.by && ['generated', 'source_changed', 'tasks_merged', 'changed_source_summarized_ai', 'history_import_archived'].includes(event.action)) === true;
-      const splittingLegacy = existing.length === 1 && existing[0].groupingVersion !== GROUPING_VERSION && untouched(existing[0]) && existing[0].messageIds.some(id => !ids.includes(id));
+      const splittingLegacy = existing.length === 1 && (job.generatedRepairOnly || existing[0].groupingVersion !== GROUPING_VERSION) && untouched(existing[0]) && existing[0].messageIds.some(id => !ids.includes(id));
       // A narrower historical request must not shrink a consolidated task.
-      if (!splittingLegacy && existing.length === 1 && existing[0].analyzerVersion === ANALYZER_VERSION && existing[0].groupingVersion === GROUPING_VERSION && ids.every(id => existing[0].messageIds.includes(id)) && !(taskGrouping.enabled(scope.tenantId) && untouched(existing[0]) && existing[0].state !== 'ignored' && group.every(taskGrouping.automaticNotice))) continue;
+      if (!job.generatedRepairOnly && !splittingLegacy && existing.length === 1 && existing[0].analyzerVersion === ANALYZER_VERSION && existing[0].groupingVersion === GROUPING_VERSION && ids.every(id => existing[0].messageIds.includes(id)) && !(taskGrouping.enabled(scope.tenantId) && untouched(existing[0]) && existing[0].state !== 'ignored' && group.every(taskGrouping.automaticNotice))) continue;
       // A regrouped conversation can contain a new fragment while the existing
       // draft still owns older context. Analyze the union instead of discarding
       // that context or leaving a stale title in the extension.
@@ -448,7 +448,7 @@ class SupportService {
       const fingerprint = hash(ids);
       let edited = existing.filter(row => !untouched(row));
       let candidateDraftIds = [];
-      if (edited.length > 1 || (!splittingLegacy && existing.some(row => row.messageIds.some(id => !ids.includes(id))))) {
+      if (edited.length > 1 || (!splittingLegacy && !(job.generatedRepairOnly && existing.every(untouched)) && existing.some(row => row.messageIds.some(id => !ids.includes(id))))) {
         // Ambiguous old ownership must not reopen every task or swallow new
         // evidence. Surface only unassigned messages for review, retaining
         // candidate links and blocking publication until reconciliation.
@@ -473,7 +473,7 @@ class SupportService {
         await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: job.jid, waId: job.jid, kind: 'message', provider: 'openai', model: title.model, inputTokens: title.inputTokens, outputTokens: title.outputTokens, totalTokens: title.totalTokens || title.inputTokens + title.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'support_task_summary' }, createdAt: this.now() });
       }
       if (result.description?.length > 100000) fail('conversation_window_too_large', 422);
-      const _id = existing[0]?._id || scopedId(scope, 'draft', ids[0]);
+      const _id = existing[0]?._id || (job.generatedRepairOnly ? scopedId(scope, 'review-draft', job._id, hash(ids)) : scopedId(scope, 'draft', ids[0]));
       const mutableGuard = taskGrouping.enabled(scope.tenantId) ? { 'hubspot.ticketId': { $in: [null, ''] }, 'hubspot.state': { $nin: ['saved', 'sending', 'uncertain'] }, ...(job.generatedRepairOnly ? { 'events.by': { $exists: false } } : {}) } : { 'hubspot.state': { $nin: ['sending', 'uncertain'] } };
       await check();
       await this.col('usage').insertOne({ ...scope, conversationId: job.jid, recordId: _id, fingerprint, model: ANALYZER_VERSION, kind: 'analysis', inputTokens: 0, outputTokens: 0, audioSeconds: 0, processingUnits: group.reduce((n, m) => n + m.text.length, 0), unit: 'characters', costUsd: 0, durationMs: Date.now() - started, result: result.result, at: this.now() });

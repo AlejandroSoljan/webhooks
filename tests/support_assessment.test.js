@@ -31,9 +31,15 @@ test('objective review joins followup blocks, retains unrelated task and meters 
  const r=await analyzer.group(rows(['No imprime cotizaciones','Al día siguiente: ya está solucionado','Otra consulta: renovar licencia']),{tenantId:'ALSO'});
  assert.deepEqual(r.groups,[[0,1],[2]]);assert.equal(calls,2);assert.equal(r.totalTokens,24);
 });
+test('mini grouping requests strict assignments with one slot per original message',async()=>{
+ let format;const analyzer=asistoTitleAnalyzer({OPENAI_API_KEY_TAREAS_WS:'fixture'},{configFor:async()=>({}),clientFor:()=>({chat:{completions:{create:async args=>{format=args.response_format;return {choices:[{message:{content:'{"assignments":[0,0]}'}}]}}}}})});
+ const r=await analyzer.group(rows(['No imprime','Ya está solucionado']),{tenantId:'ALSO'});
+ assert.deepEqual(r.groups,[[0,1]]);assert.equal(format.json_schema.strict,true);assert.equal(format.json_schema.schema.properties.assignments.minItems,2);
+});
+
 test('access and availability bursts attach to the actual issue without absorbing another request',()=>{
  const {absorbCoordination}=require('../src/support/task_grouping');
- const m=rows(['Santi tengo que salir, antes de irme te lo paso','Okaa','Listo, ya está aplicada la modificación','No imprime cotizaciones','Diego pásame el Team Viwer','Ah bueno listo, ahí te lo paso','Así tranqui, yo me voy y vos apaga la máquina','Ahí está solucionado','Otra consulta: necesito renovar licencia']);
- const groups=absorbCoordination([[0,1,4,5,6],[2,3,7],[8]],m);
+ const m=rows(['Santi tengo que salir, antes de irme te lo paso','Okaa','Listo, ya está aplicada la modificación','No imprime cotizaciones','Diego pasame el delivery y nos vemos. No, no hay problema','Ah bueno listo, ahí te lo paso','Así tranqui, yo me voy y vos apaga la máquina','Ahí está solucionado','Otra consulta: necesito renovar licencia']);m[2].fromMe=true;m[4].fromMe=true;
+ const groups=absorbCoordination([[0,1,2,4,5,6],[3,7],[8]],m);
  assert.deepEqual(groups,[[0,1,2,3,4,5,6,7],[8]]);
 });

@@ -1,5 +1,5 @@
 // Asisto | Group support messages by complete operational objective.
-const { fail, normalize } = require('./core');
+const { fail, normalize, conversationResolved } = require('./core');
 const VERSION = 'objective-ai-v3-followup';
 const enabled = tenant => ['ALSO', 'DEMJG', 'SANA'].includes(String(tenant || '').toUpperCase());
 const PROMPT = `Agrupá una conversación completa de soporte en tareas por problema u objetivo operativo, no por palabras clave ni por cada paso.
@@ -56,9 +56,12 @@ module.exports.incrementalInput = incrementalInput;
 // Pure remote-access/availability steps cannot become a separate objective
 // when an actual request exists in the same reviewed conversation.
 function coordinationOnly(message) {
-  const t = normalize(message.text).replace(/["“”]/g, '');
+  const t = normalize(message.text).replace(/["“”]/g, '').replace(/no[, ]+(?:no[, ]+)?hay problema/g, '');
   if (/(?:necesito|quiero|solicito|problema|error|no (?:puedo|funciona|imprime|entra)|se me|falla|corta|bloque|instal|configur|habilit)/.test(t)) return false;
   return require('./task_assessment').contextOnly([message]) ||
+    (message.fromMe && /\bpasame\b/.test(t)) ||
+    (message.fromMe && conversationResolved([message], { strictResolution: true })) ||
+    (t.split(/\s+/).length <= 10 && /\bgracias\b/.test(t) && !/[?¿]/.test(t)) ||
     /(?:team\s?vi(?:e?wer|wer)|anydesk|te (?:lo )?paso|tengo que salir|me (?:voy|estaba yendo)|apaga la maquina)/.test(t);
 }
 function absorbCoordination(groups, messages) {

@@ -3,6 +3,8 @@
 
 ## Revisión de objetivos 5.00.307 / extensión 1.0.61
 
+5.00.308 completa la repartición de borradores automáticos con membresías cruzadas; la revisión explícita no reutiliza caché ni IDs archivados. Mini usa esquema estricto con una posición por mensaje. No relaja validación semántica de cierres ni protecciones humanas/HubSpot.
+
 ALSO, DEMJG y SANA agrupan ráfagas y seguimientos por objetivo, no por audio. Una segunda revisión acotada puede unir fragmentos; ambas llamadas se contabilizan. Se valida cobertura completa y resolución con cita original: un agradecimiento aislado no cierra, una confirmación explícita sí. Pruebas y avisos automáticos sin pedido no crean tarea. El panel separa estado operativo de “Sin guardar en HubSpot”. Conserva el modelo configurado.
 
 `node scripts/review_support_generated.cjs` simula la revisión; `--apply` respalda cada borrador automático cifrado en support_audit y encola una reparación idempotente sobre sus mensajes originales. Exclusivamente ALSO/DEMJG/SANA y Cluster0. Excluye ediciones humanas, descartes y tickets guardados/enviándose/inciertos; vuelve a validar protecciones al aplicar. No llama a escrituras HubSpot, no borra mensajes ni cambia autenticación. Ante error queda reintentable sin reemplazar evidencia por inferencias.
