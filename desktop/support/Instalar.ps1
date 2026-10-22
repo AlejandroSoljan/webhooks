@@ -1,7 +1,7 @@
 # Asisto | Version: 5.00.269 | Fecha: 2026-09-29
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:LOCALAPPDATA 'AsistoSupport'
-$release = Join-Path $root 'app-5.00.269'
+$release = Join-Path $root 'app-5.00.305'
 $arch = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'arm64' } else { 'x64' }
 $runtime = Join-Path $root "node-v24.12.0-win-$arch"
 $node = Join-Path $runtime 'node.exe'
@@ -16,7 +16,7 @@ if (-not (Test-Path -LiteralPath $node)) {
   Remove-Item -LiteralPath $zip
 }
 New-Item -ItemType Directory -Path $release -Force | Out-Null
-foreach ($name in @('agent.cjs','local.cjs','storage.cjs','protect.ps1','run.ps1','startup.ps1','package.json','package-lock.json')) {
+foreach ($name in @('agent.cjs','media-stream-patch.cjs','local.cjs','storage.cjs','protect.ps1','run.ps1','startup.ps1','package.json','package-lock.json')) {
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $release $name) -Force
 }
 $env:PATH = "$runtime;$env:PATH"

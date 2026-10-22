@@ -1,6 +1,12 @@
 <!-- Asisto | Version: 5.00.178 | Fecha: 2026-09-20 -->
 # Tickets desde WhatsApp: agente personal en cada PC
 
+## Agente Windows 5.00.305 — cortes de descarga
+
+Baileys rc14 encadenaba el flujo HTTP de descarga con `pipe`, dejando `ECONNRESET`/`terminated` sin propagación al consumidor. `media-stream-patch.cjs` aplica antes de importar Baileys una corrección acotada a `downloadEncryptedContent`: `pipeline` destruye ambos flujos ante error y el consumidor recibe el rechazo, incluso si adjunta su iterador después del corte. Conserva copia original del módulo; es idempotente y rechaza fuentes inesperadas. No instala un manejador global que oculte excepciones. Instalador y agente incluyen la corrección aunque npm se ejecute con `--ignore-scripts`.
+
+El supervisor, tras adquirir el mutex del perfil, recupera únicamente un proceso huérfano cuyo ejecutable, script y perfil coincidan exactamente. Conserva autenticación, cola cifrada, tareas y tickets. No ejecuta logout. Pruebas: corte ECONNRESET, consumidor tardío, siguiente descarga correcta, cancelación y regresión del agente. Distribución local/ZIP; no necesita cambio de API o Mongo.
+
 Extensión 1.0.60 / backend 5.00.299: al desplegar los datos de empresa consulta `GET /api/support/extension/hubspot/company-contacts?id=...` con integración del tenant. Muestra nombre, cargo, email, teléfono y celular de contactos realmente asociados por `associations.company`. Paginación de 100 hasta 1000, con aviso de lista parcial; errores no ocultan la empresa ni alteran borradores. Sólo consulta al expandir; ignora respuestas de una selección anterior. Sin escritura en HubSpot ni envío automático.
 
 Extensión 1.0.59: cabecera compacta y fija con logo, contacto activo y botones de actualizar/configurar. Campos en dos columnas (una en panel muy estrecho), descripción reducida y redimensionable, identificadores de HubSpot desplegables. Conserva los controles, valores, borradores y guardado existentes. Empresa y condición de abonado permanecen visibles; no abonado conserva indicador rojo.

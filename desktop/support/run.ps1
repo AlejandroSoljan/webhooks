@@ -7,6 +7,14 @@ try { $acquired = $mutex.WaitOne(0) }
 catch [Threading.AbandonedMutexException] { $acquired = $true }
 if (-not $acquired) { $mutex.Dispose(); exit 0 }
 try {
+  # A Task Scheduler restart can leave its Node child alive. Only reclaim the
+  # worker for this exact executable/profile after acquiring the profile mutex.
+  $agentScript = Join-Path $PSScriptRoot 'agent.cjs'
+  Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
+    $_.ExecutablePath -eq $Node -and $_.CommandLine -and
+    $_.CommandLine.Contains('"' + $agentScript + '"') -and
+    $_.CommandLine.Contains('"' + $Profile + '"')
+  } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop }
   while ($true) {
     $logs = Join-Path $Profile 'logs'
     New-Item -ItemType Directory -Path $logs -Force | Out-Null

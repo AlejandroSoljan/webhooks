@@ -1,5 +1,7 @@
 # Manual técnico de Asisto
 
+Agente Windows 5.00.305: corrección local del error no manejado en descargas Baileys y recuperación de hijo huérfano al reiniciar el supervisor. Conserva perfil y cola. Operación y pruebas en [Tickets WhatsApp](whatsapp_support.md#agente-windows-500305--cortes-de-descarga).
+
 ## Análisis comercial en Estadísticas Turnero (5.00.303)
 
 La misma pantalla y los filtros de dominio y fechas agregan **Productos y consultas**: fichas con resultado, preguntas escritas, aperturas de más información y consultas cuyo origen es la cámara. Presenta conclusiones respaldadas por cantidades/porcentajes y acciones sugeridas: exhibición/surtido, aclaraciones de precio, alternativas, compatibilidad y fricción por falta de resultado o errores. Conserva el diseño azul/verde, los indicadores operativos, los vendedores y el CSV de recorridos (no agrega datos comerciales a ese CSV). Si no hay actividad, ofrece ampliar el período a siete días mediante los mismos filtros; no cambia automáticamente el período.

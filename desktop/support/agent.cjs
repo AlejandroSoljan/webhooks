@@ -52,6 +52,7 @@ async function run(options = {}) {
   const store = options.store || storage(profile), instance = crypto.randomUUID(), pause = options.sleep || sleep;
   const status = value => fs.writeFileSync(path.join(profile, 'status.json'), JSON.stringify({ ...value, updatedAt: new Date().toISOString() }));
   let account = store.read('account'), socket, socketGeneration = 0, stopped = false, retryAt = 0, tail = Promise.resolve();
+  if (!options.loadBaileys) require('./media-stream-patch.cjs').applyMediaStreamPatch();
   const b = await (options.loadBaileys || (() => import('@whiskeysockets/baileys')))();
   const request = async (route, body = {}) => {
     const response = await (options.fetchImpl || fetch)(BASE + '/api/support/device/' + route, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', 'X-Asisto-Instance': instance, ...(account?.token ? { Authorization: 'Bearer ' + account.token } : {}) }, body: JSON.stringify(body) });
