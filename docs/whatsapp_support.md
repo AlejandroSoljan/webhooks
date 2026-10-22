@@ -1,6 +1,12 @@
 <!-- Asisto | Version: 5.00.178 | Fecha: 2026-09-20 -->
 # Tickets desde WhatsApp: agente personal en cada PC
 
+## Revisión de objetivos 5.00.307 / extensión 1.0.61
+
+ALSO, DEMJG y SANA agrupan ráfagas y seguimientos por objetivo, no por audio. Una segunda revisión acotada puede unir fragmentos; ambas llamadas se contabilizan. Se valida cobertura completa y resolución con cita original: un agradecimiento aislado no cierra, una confirmación explícita sí. Pruebas y avisos automáticos sin pedido no crean tarea. El panel separa estado operativo de “Sin guardar en HubSpot”. Conserva el modelo configurado.
+
+`node scripts/review_support_generated.cjs` simula la revisión; `--apply` respalda cada borrador automático cifrado en support_audit y encola una reparación idempotente sobre sus mensajes originales. Exclusivamente ALSO/DEMJG/SANA y Cluster0. Excluye ediciones humanas, descartes y tickets guardados/enviándose/inciertos; vuelve a validar protecciones al aplicar. No llama a escrituras HubSpot, no borra mensajes ni cambia autenticación. Ante error queda reintentable sin reemplazar evidencia por inferencias.
+
 ## Agente Windows 5.00.305 — cortes de descarga
 
 Paquete 5.00.306: para PCs ya instaladas, extraer el ZIP completo y ejecutar `Actualizar.cmd` con el mismo usuario Windows. `Actualizar.ps1` obtiene la ruta real desde la tarea del perfil existente, valida que esté bajo AsistoSupport del usuario, respalda sólo código y cambia únicamente agent.cjs, run.ps1 y el parche de medios. Mantiene rutas de perfil, cuenta, autenticación y cola cifrada, extensión, tarea programada y dependencias. Reinicia el supervisor existente y verifica un estado activo reciente; un fallo de verificación se informa sin iniciar una nueva vinculación. No es un actualizador remoto automático: debe ejecutarse en la PC correspondiente.

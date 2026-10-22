@@ -34,6 +34,25 @@ async function processMessages(messages, owner = scope) {
   return service.listDrafts(owner);
 }
 
+test('generated-only review consolidates fragments and preserves saved and human-edited records byte for byte', async () => {
+ const owner={...scope,tenantId:'ALSO'};await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});
+ service.titleAnalyzer={group:async rows=>({groups:rows.map((_,i)=>[i]),model:'fixture'}),run:async()=>({subject:'Solicitud',description:'Se revisa la solicitud.',model:'fixture'})};
+ const ds=await processMessages([message('saved',0,{text:'Necesito un reporte'}),message('human',20,{text:'Necesito revisar usuarios'}),message('issue',40,{text:'No imprime'}),message('done',60,{text:'CORREGIDO'})],owner);
+ const stored=await service.col('drafts').find({...owner}).sort({createdAt:1,_id:1}).toArray();
+ const byMessage=wa=>stored.find(d=>d.messageIds.includes(scopedId(owner,'message','123@s.whatsapp.net',wa,false)));
+ const saved=byMessage('saved'),human=byMessage('human');
+ await service.col('drafts').updateOne({_id:saved._id},{$set:{hubspot:{ticketId:'42',state:'saved'},state:'approved'}});
+ await service.editDraft(owner,human._id,human.revision,{subject:'Mi título',description:'No perder mi descripción',status:'Nuevo'});
+ const beforeSaved=await service.col('drafts').findOne({_id:saved._id}),beforeHuman=await service.col('drafts').findOne({_id:human._id});
+ service.titleAnalyzer={group:async rows=>({groups:[rows.map((_,i)=>i)],model:'fixture'}),run:async()=>({subject:'Corregir impresión',description:'El cliente confirmó corregido.',status:'Cerrado RESUELTO',model:'fixture'})};
+ const job=await service.enqueue(owner,'123@s.whatsapp.net');await service.col('jobs').updateOne({_id:job},{$set:{generatedRepairOnly:true}});await service.runOne(async()=>{},owner);
+ assert.deepEqual(await service.col('drafts').findOne({_id:saved._id}),beforeSaved);
+ assert.deepEqual(await service.col('drafts').findOne({_id:human._id}),beforeHuman);
+ const active=await service.col('drafts').find({...owner,state:'pending',_id:{$ne:human._id}}).toArray();assert.equal(active.length,1);
+ assert.equal(vault.open(active[0].fields,active[0]._id).status,'Cerrado RESUELTO');
+ assert.equal(await service.col('drafts').countDocuments({...owner,state:'merged'}),1);
+});
+
 test('objective grouping merges untouched drafts and caches unchanged evidence', async () => {
   const owner = {...scope,tenantId:'ALSO'};
   await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});
@@ -607,7 +626,7 @@ test('old generated task titles are repaired without overwriting a human title',
   assert.equal(await service.repairTitle(scope), true);
   [draft] = await service.listDrafts(scope); assert.equal(draft.fields.subject, 'Título definido por la persona'); assert.equal(calls, 2);
 });
-test('opening an edited legacy task summarizes only a description that still copies its source conversation', async () => {
+test('opening an edited legacy task preserves even a description copied from its source conversation', async () => {
   let summary = 'Resumen inicial.';
   service.titleAnalyzer = { run: async () => ({ subject: 'Título de IA', description: summary, model: 'fixture-ai', inputTokens: 10, outputTokens: 5, totalTokens: 15 }) };
   let [draft] = await processMessages([message('legacy-description', 0, { text: 'Necesito revisar la configuración del servidor.' })]);
@@ -620,7 +639,7 @@ test('opening an edited legacy task summarizes only a description that still cop
   [draft] = await service.listDrafts(scope);
   assert.equal(draft.fields.subject, 'Título definido por el usuario');
   assert.equal(draft.fields.category, 'Soporte Servidor Virtual');
-  assert.equal(draft.fields.description, summary);
+  assert.match(draft.fields.description, /2026-09-01T11:00:00.000Z Contacto: Necesito revisar/);
   assert.match(draft.source.description, /Necesito revisar/);
 });
 

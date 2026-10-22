@@ -52,12 +52,13 @@ test('scope excludes unrelated bots including MCN', () => {
 test('grouping uses configured task model, all context and returns usage', async () => {
   let payload;
   const analyzer = asistoTitleAnalyzer({OPENAI_API_KEY_TAREAS_WS:'test'}, {configFor:async()=>({}),clientFor:()=>({chat:{completions:{create:async p=>{
+    if (p.messages[0].content.startsWith('Revisá bloques')) return {choices:[{message:{content:'{"groups":[[0],[1]]}'}}],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15}};
     payload=p; return {choices:[{message:{content:'{"groups":[[0],[1,2,3]]}'}}],usage:{prompt_tokens:100,completion_tokens:20,total_tokens:120}};
   }}}})});
   const result=await analyzer.group(messages,{tenantId:'ALSO'});
   assert.equal(payload.model,'gpt-4o-mini');
   assert.equal(JSON.parse(payload.messages[1].content).length,4);
   assert.match(payload.messages[0].content,/NO justifican/);
-  assert.equal(result.totalTokens,120);
+  assert.equal(result.totalTokens,135);
   assert.equal(validateGroups(result.groups,messages).length,2);
 });

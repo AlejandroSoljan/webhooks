@@ -62,7 +62,7 @@
     }
     return NaN;
   }
-  const statusLabel = status => ({ pending: 'Pendiente', saved: 'HubSpot', discarded: 'Descartada' }[status] || 'Asignada');
+  const statusLabel = status => ({ pending: 'Sin guardar en HubSpot', saved: 'HubSpot', discarded: 'Descartada' }[status] || 'Asignada');
   function messageNodes() {
     const seenNodes = new Set(), seenIds = new Set(), usedRows = new Set(), result = [];
     const candidates = [...document.querySelectorAll('#main .message-in, #main .message-out, #main [data-id^="true_"], #main [data-id^="false_"], #main [data-pre-plain-text], #main [role="row"]')].filter(node => !node.closest('[data-asisto-owned]') && (!node.matches('[role="row"]') || node.querySelector('[data-pre-plain-text], audio, [data-icon*="audio"], [data-testid*="audio"], [data-icon="ptt-status"]')));
@@ -146,7 +146,7 @@
     const tasks = taskData.tasks || [], pending = tasks.filter(task => task.status === 'pending');
     const add = (value, label) => { const item = document.createElement('option'); item.value = value; item.textContent = label; select.append(item); };
     if (pending.length > 1) add('', 'Elegí una tarea'); add('new', 'Nueva tarea');
-    for (const task of tasks) add(task.id, `${task.subject} · ${statusLabel(task.status)}${task.ticketId ? ' #' + task.ticketId : ''}`);
+    for (const task of tasks) add(task.id, `${task.subject}${task.taskStatus ? ' · ' + task.taskStatus : ''} · ${statusLabel(task.status)}${task.ticketId ? ' #' + task.ticketId : ''}`);
     select.value = pending.length === 1 ? pending[0].id : pending.length === 0 ? 'new' : '';
   }
   function renderToolbar(nodes = [...controls.values()].map(control => control.node).filter(node => node?.isConnected)) {

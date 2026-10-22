@@ -251,10 +251,10 @@ class SupportService {
     const row = typeof selected === 'string'
       ? await this.col('drafts').findOne({ _id: text(selected, 64), ...scope, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $ne: 'saved' } })
       : selected;
-    if (!row) return false;
+    if (!row || row.hubspot?.ticketId || ['saved','sending','uncertain'].includes(row.hubspot?.state)) return false;
     if (excluded({ jid: row.jid }, await this.config(scope))) return false;
     const fields = this.vault.open(row.fields, row._id), source = this.vault.open(row.source, row._id + ':source');
-    const generatedOnly = row.events?.every(event => ['generated', 'source_changed', 'tasks_merged'].includes(event.action)) === true;
+    const generatedOnly = taskGrouping.enabled(scope.tenantId) ? require('./task_assessment').repairable(row) : row.events?.every(event => ['generated', 'source_changed', 'tasks_merged'].includes(event.action)) === true;
     // Older drafts can contain the raw transcript with small differences from
     // source.description (for example a heading or a truncated final line).
     // Detect the transcript itself instead of requiring byte-for-byte equality.
@@ -264,7 +264,7 @@ class SupportService {
     // Opening a current summary is a read, not another billable AI analysis.
     // Changed sources are summarized by refreshChangedDraft with their own hash.
     if (!copiedConversation && row.analyzerVersion === ANALYZER_VERSION) return false;
-    if (!generatedOnly && !copiedConversation) {
+    if (!generatedOnly) {
       await this.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision }, { $set: { analyzerVersion: ANALYZER_VERSION, titleUpgradeSkipped: 'human_edited', updatedAt: this.now() } });
       return true;
     }
@@ -273,6 +273,7 @@ class SupportService {
     if (!decoded.length) return false;
     const title = await this.titleAnalyzer.run(decoded, { ...scope, jid: row.jid, draftId: row._id });
     if (generatedOnly) { fields.subject = title.subject; source.subject = title.subject; }
+    if (generatedOnly && title.status) { fields.status = title.status; source.status = title.status; }
     fields.description = title.description || fields.description;
     const updated = await this.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision }, { $set: { fields: this.vault.seal(fields, row._id), source: this.vault.seal(source, row._id + ':source'), analyzerVersion: ANALYZER_VERSION, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: copiedConversation ? 'description_summarized_ai' : 'title_regenerated_ai', at: this.now() } } });
     if (!updated.matchedCount) return false;
@@ -334,7 +335,8 @@ class SupportService {
     const boundary = await this.historyBoundary(scope);
     const rows = (await this.col('messages').find({ ...scope, jid: job.jid }).sort({ at: 1, _id: 1 }).limit(5001).toArray()).map(row => ({ ...row, name: whatsappContact?.name || row.name }));
     if (rows.length > 5000) fail('conversation_requires_pagination', 422);
-    const eligible = rows.filter(m => !excluded(m, config) && (job.dates ? m.at >= job.dates.start && m.at < job.dates.end : this.liveEvidence(scope, m, boundary)));
+    const reviewIds = job.reviewMessageIds ? new Set(job.reviewMessageIds) : null;
+    const eligible = rows.filter(m => !excluded(m, config) && (reviewIds ? reviewIds.has(m._id) : job.dates ? m.at >= job.dates.start && m.at < job.dates.end : this.liveEvidence(scope, m, boundary)));
     // A queued job can become due before the last received message has settled.
     // Keep it pending instead of silently completing without creating a draft.
     if (!job.dates && eligible.length) {
@@ -355,6 +357,7 @@ class SupportService {
     // upgrades. Keep their evidence owned so recovery cannot create it again.
     const dismissed = await this.col('drafts').find({ ...scope, jid: job.jid, state: { $ne: 'merged' }, 'events.action': 'dismissed_from_extension' }).toArray();
     for (const row of dismissed) {
+      if (job.generatedRepairOnly) continue;
       if (row.state === 'ignored' || row.hubspot?.ticketId) continue;
       const lastDismissal = row.events.findLastIndex(event => event.action === 'dismissed_from_extension');
       if (row.events.slice(lastDismissal + 1).some(event => event.by)) continue;
@@ -366,7 +369,9 @@ class SupportService {
     // invalidate the analysis of a new request. Manual assignment is separate.
     const registered = taskGrouping.enabled(scope.tenantId) ? await this.col('drafts').find({ ...scope, jid: job.jid, state: { $ne: 'merged' }, $or: [{ 'hubspot.ticketId': { $exists: true, $nin: ['', null] } }, { 'hubspot.state': 'saved' }] }).toArray() : [];
     const registeredIds = new Set(registered.flatMap(row => row.messageIds || []));
-    const groupingMessages = decoded.filter(message => !dismissedIds.has(message._id) && !registeredIds.has(message._id));
+    const repairProtected = job.generatedRepairOnly ? (await this.col('drafts').find({ ...scope, jid: job.jid, state: { $ne: 'merged' } }).toArray()).filter(row => !require('./task_assessment').repairable(row)) : [];
+    const repairProtectedIds = new Set(repairProtected.flatMap(row => row.messageIds || []));
+    const groupingMessages = decoded.filter(message => !dismissedIds.has(message._id) && !registeredIds.has(message._id) && !repairProtectedIds.has(message._id));
     let detectedGroups;
     if (groupingMessages.length && taskGrouping.enabled(scope.tenantId) && this.titleAnalyzer?.group) {
       const key = hash([taskGrouping.VERSION, ...groupingMessages.map(m => [m._id, m.text, m.at, m.fromMe])]);
@@ -428,7 +433,7 @@ class SupportService {
       const ownedIds = new Set(existing.flatMap(row => row.messageIds || []));
       if (savedIds.size && ids.every(id => ownedIds.has(id))) continue;
       if (existing.some(row => ['sending', 'uncertain'].includes(row.hubspot?.state))) fail('hubspot_delivery_in_progress', 409);
-      const untouched = row => !row.hubspot?.ticketId && row.events?.every(event => !event.by && ['generated', 'source_changed', 'tasks_merged', 'changed_source_summarized_ai', 'history_import_archived'].includes(event.action)) === true;
+      const untouched = row => taskGrouping.enabled(scope.tenantId) ? require('./task_assessment').repairable(row) : !row.hubspot?.ticketId && row.events?.every(event => !event.by && ['generated', 'source_changed', 'tasks_merged', 'changed_source_summarized_ai', 'history_import_archived'].includes(event.action)) === true;
       const splittingLegacy = existing.length === 1 && existing[0].groupingVersion !== GROUPING_VERSION && untouched(existing[0]) && existing[0].messageIds.some(id => !ids.includes(id));
       // A narrower historical request must not shrink a consolidated task.
       if (!splittingLegacy && existing.length === 1 && existing[0].analyzerVersion === ANALYZER_VERSION && existing[0].groupingVersion === GROUPING_VERSION && ids.every(id => existing[0].messageIds.includes(id)) && !(taskGrouping.enabled(scope.tenantId) && untouched(existing[0]) && existing[0].state !== 'ignored' && group.every(taskGrouping.automaticNotice))) continue;
@@ -455,7 +460,7 @@ class SupportService {
       }
       if (edited.length === 1) existing.sort((a, b) => Number(b._id === edited[0]._id) - Number(a._id === edited[0]._id));
       const started = Date.now(), result = analyze(group, { strictResolution: taskGrouping.enabled(scope.tenantId) }), evidenceDescription = result.description;
-      if (taskGrouping.enabled(scope.tenantId) && group.every(taskGrouping.automaticNotice)) {
+      if (taskGrouping.enabled(scope.tenantId) && (group.every(taskGrouping.automaticNotice) || require('./task_assessment').contextOnly(group))) {
         result.result = 'ignored'; result.reason = 'automatic_notice_only';
       }
       let aiSummaryHash = null;
@@ -463,11 +468,13 @@ class SupportService {
         const title = await this.titleAnalyzer.run(group, { ...scope, jid: job.jid, jobId: job._id });
         result.subject = title.subject;
         result.description = title.description || result.description;
+        if (taskGrouping.enabled(scope.tenantId) && title.status) { result.status = title.status; result.assessment = title.assessment; }
         aiSummaryHash = fingerprint;
         await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: job.jid, waId: job.jid, kind: 'message', provider: 'openai', model: title.model, inputTokens: title.inputTokens, outputTokens: title.outputTokens, totalTokens: title.totalTokens || title.inputTokens + title.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'support_task_summary' }, createdAt: this.now() });
       }
       if (result.description?.length > 100000) fail('conversation_window_too_large', 422);
       const _id = existing[0]?._id || scopedId(scope, 'draft', ids[0]);
+      const mutableGuard = taskGrouping.enabled(scope.tenantId) ? { 'hubspot.ticketId': { $in: [null, ''] }, 'hubspot.state': { $nin: ['saved', 'sending', 'uncertain'] }, ...(job.generatedRepairOnly ? { 'events.by': { $exists: false } } : {}) } : { 'hubspot.state': { $nin: ['sending', 'uncertain'] } };
       await check();
       await this.col('usage').insertOne({ ...scope, conversationId: job.jid, recordId: _id, fingerprint, model: ANALYZER_VERSION, kind: 'analysis', inputTokens: 0, outputTokens: 0, audioSeconds: 0, processingUnits: group.reduce((n, m) => n + m.text.length, 0), unit: 'characters', costUsd: 0, durationMs: Date.now() - started, result: result.result, at: this.now() });
       const memory = await this.col('memory').findOne({ ...scope, jid: job.jid });
@@ -475,10 +482,10 @@ class SupportService {
       const sourceDraft = { ...draft, description: evidenceDescription, summaryDescription: result.description };
       if (existing.length) {
         const generatedOnly = untouched(existing[0]);
-        const saved = await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { fingerprint, analyzerVersion: ANALYZER_VERSION, groupingVersion: GROUPING_VERSION, messageIds: ids, ...(aiSummaryHash ? { sourceSuggestionMessageHash: aiSummaryHash } : {}), state: generatedOnly ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !generatedOnly, reconciliationRequired: false, ...(generatedOnly ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(sourceDraft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: existing.length > 1 ? 'tasks_merged' : 'source_changed', at: this.now() } } });
+        const saved = await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision, ...mutableGuard, state: { $ne: 'merged' } }, { $set: { fingerprint, analyzerVersion: ANALYZER_VERSION, groupingVersion: GROUPING_VERSION, messageIds: ids, ...(aiSummaryHash ? { sourceSuggestionMessageHash: aiSummaryHash } : {}), state: generatedOnly ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !generatedOnly, reconciliationRequired: false, ...(generatedOnly ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(sourceDraft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: existing.length > 1 ? 'tasks_merged' : 'source_changed', at: this.now() } } });
         if (!saved.matchedCount) fail('revision_conflict', 409);
         for (const duplicate of existing.slice(1)) {
-          const merged = await this.col('drafts').updateOne({ _id: duplicate._id, ...scope, revision: duplicate.revision, 'hubspot.state': { $nin: ['sending', 'uncertain'] }, state: { $ne: 'merged' } }, { $set: { state: 'merged', mergedInto: _id, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'tasks_merged', into: _id, at: this.now() } } });
+          const merged = await this.col('drafts').updateOne({ _id: duplicate._id, ...scope, revision: duplicate.revision, ...mutableGuard, state: { $ne: 'merged' } }, { $set: { state: 'merged', mergedInto: _id, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'tasks_merged', into: _id, at: this.now() } } });
           if (!merged.matchedCount) fail('revision_conflict', 409);
           await this.col('drafts').updateOne({ _id, ...scope }, { $addToSet: { mergedDraftIds: duplicate._id } });
         }

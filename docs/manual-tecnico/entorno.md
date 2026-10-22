@@ -60,8 +60,8 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `FLETEROS_TERCEROS_API_TOKEN` | [fleteros_viajes_panel.js:2624](../../fleteros_viajes_panel.js#L2624) |
 | `FLETEROS_TERCEROS_API_URL` | [fleteros_viajes_panel.js:1895](../../fleteros_viajes_panel.js#L1895); [fleteros_viajes_panel.js:2612](../../fleteros_viajes_panel.js#L2612) |
 | `GOOGLE_MAPS_API_KEY` | [logic.js:36](../../logic.js#L36) |
-| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | [help_tool.js:446](../../help_tool.js#L446); [help_tool.js:559](../../help_tool.js#L559); [help_tool.js:2054](../../help_tool.js#L2054) |
-| `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` | [help_tool.js:560](../../help_tool.js#L560) |
+| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | [help_tool.js:447](../../help_tool.js#L447); [help_tool.js:560](../../help_tool.js#L560); [help_tool.js:2332](../../help_tool.js#L2332) |
+| `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` | [help_tool.js:561](../../help_tool.js#L561) |
 | `GRAPH_API_VERSION` | [logic.js:20](../../logic.js#L20); [wa_inbox_panel.js:18](../../wa_inbox_panel.js#L18) |
 | `GRAPH_VERSION` | [logic.js:21](../../logic.js#L21) |
 | `HEARTBEAT_MS` | [app_asisto_ws.js:174](../../app_asisto_ws.js#L174) |
@@ -111,7 +111,7 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `QR_PRODUCT_API_MAX_CONCURRENT` | [qr_product_web.js:36](../../qr_product_web.js#L36) |
 | `QR_PRODUCT_API_QUEUE_MAX` | [qr_product_web.js:37](../../qr_product_web.js#L37) |
 | `QR_PRODUCT_API_QUEUE_WAIT_MS` | [qr_product_web.js:38](../../qr_product_web.js#L38) |
-| `QUEUE_LOCAL_NETWORK_ACCESS` | [product_insights.js:114](../../product_insights.js#L114); [product_insights_routes.js:15](../../product_insights_routes.js#L15) |
+| `QUEUE_LOCAL_NETWORK_ACCESS` | [product_insights.js:114](../../product_insights.js#L114); [product_insights_routes.js:11](../../product_insights_routes.js#L11); [product_insights_routes.js:21](../../product_insights_routes.js#L21) |
 | `QUEUE_OPEN_TENANTS` | [customer_queue.js:65](../../customer_queue.js#L65) |
 | `QUEUE_PORT` | [turnero_server.js:33](../../turnero_server.js#L33) |
 | `QUEUE_PRESENCE_SECRET` | [customer_queue.js:65](../../customer_queue.js#L65) |
@@ -134,7 +134,7 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `SUPPORT_ENCRYPTION_KEYS` | [src/support/crypto.js:36](../../src/support/crypto.js#L36); [src/support/crypto.js:37](../../src/support/crypto.js#L37) |
 | `SUPPORT_HUBSPOT_ENABLED` | [src/support/routes.js:16](../../src/support/routes.js#L16) |
 | `SUPPORT_PUBLIC_ORIGIN` | [src/support/config.js:8](../../src/support/config.js#L8) |
-| `SUPPORT_TASK_MODEL` | [src/support/title_analyzer.js:27](../../src/support/title_analyzer.js#L27) |
+| `SUPPORT_TASK_MODEL` | [src/support/title_analyzer.js:36](../../src/support/title_analyzer.js#L36) |
 | `SUPPORT_TRANSCRIBER_MODEL` | [src/support/baileys.js:162](../../src/support/baileys.js#L162); [src/support/transcriber.js:12](../../src/support/transcriber.js#L12) |
 | `SUPPORT_TRANSCRIBER_TOKEN` | [src/support/baileys.js:164](../../src/support/baileys.js#L164) |
 | `SUPPORT_TRANSCRIBER_URL` | [src/support/baileys.js:159](../../src/support/baileys.js#L159); [src/support/baileys.js:160](../../src/support/baileys.js#L160); [src/support/transcriber.js:11](../../src/support/transcriber.js#L11) |

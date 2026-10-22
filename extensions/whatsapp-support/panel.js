@@ -1,6 +1,6 @@
 // Asisto | Version: 5.00.277 | Fecha: 2026-10-02
 const $ = id => document.getElementById(id);
-document.querySelector('.brand img').title = 'Asisto · Extensión ' + (chrome.runtime.getManifest?.().version || '1.0.60');
+document.querySelector('.brand img').title = 'Asisto · Extensión ' + (chrome.runtime.getManifest?.().version || '1.0.61');
 let owner = '', session, current, metadata, connection, tabId, busy = false, selectionGeneration = 0, refreshGeneration = 0, companyTimer, companyGeneration = 0;
 let consumedOpenAt = null;
 let mailDraftId = '', mailGeneration = 0, smtpOwner = '', mailPending = false;
@@ -310,7 +310,7 @@ async function selectContact(jid, draftId = '') {
   if (generation !== selectionGeneration) return;
   const pending = tasks.filter(task => task.status === 'pending');
   for (const task of pending) {
-    const button = document.createElement('button'); button.textContent = task.subject + ' · ' + ({ pending: 'Pendiente', saved: 'HubSpot', discarded: 'Desestimada' }[task.status] || task.status); button.dataset.id = task.id;
+    const button = document.createElement('button'); button.textContent = task.subject + (task.taskStatus ? ' · ' + task.taskStatus : '') + ' · ' + ({ pending: 'Sin guardar en HubSpot', saved: 'HubSpot', discarded: 'Desestimada' }[task.status] || task.status); button.dataset.id = task.id;
     button.onclick = () => run(() => detail(task.id)); $('tasks').append(button);
   }
   if (draftId && pending.some(task => task.id === draftId)) await detail(draftId);

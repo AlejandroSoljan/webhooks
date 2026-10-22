@@ -88,7 +88,9 @@ function conversationResolved(messages, { strictResolution = false } = {}) {
   let resolvedAt = -1;
   for (let index = 0; index < ordered.length; index++) {
     const input = normalize(ordered[index].text);
-    if (explicit.test(input) && !unresolved.test(input)) resolvedAt = index;
+    const coordination = strictResolution && /(?:listo|ya esta).{0,25}(?:te (?:paso|mando|envio)|manana|cuando pueda|voy a|vamos a)/.test(input);
+    const strictCompletion = strictResolution && /\b(?:corregido|ya (?:anda|imprime|ingresa))\b/.test(input);
+    if ((explicit.test(input) || strictCompletion) && !unresolved.test(input) && !coordination) resolvedAt = index;
   }
   const last = ordered.at(-1), lastText = normalize(last?.text);
   const thanks = last && !last.fromMe && /^(?:muchas )?gracias(?:[!., ]|$)/.test(lastText) && !unresolved.test(lastText);
@@ -97,7 +99,7 @@ function conversationResolved(messages, { strictResolution = false } = {}) {
   return !ordered.slice(resolvedAt + 1).some(message => unresolved.test(normalize(message.text)));
 }
 // Every non-excluded exchange is documented. Categories are reviewable HubSpot labels.
-const ANALYZER_VERSION = 'support-task-groups-v9-final-state';
+const ANALYZER_VERSION = 'support-task-groups-v10-assessed';
 const GROUPING_VERSION = 'support-task-semantic-v2';
 function analyze(messages, options = {}) {
   const transcript = messages.map(m => `${m.at.toISOString()} ${m.fromMe ? 'Operador' : 'Contacto'}: ${m.text}`).join('\n');

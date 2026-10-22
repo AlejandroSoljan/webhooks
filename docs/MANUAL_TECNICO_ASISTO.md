@@ -413,3 +413,6 @@ El generador actualiza inventarios de rutas literales, variables de entorno refe
 En cada entrega registrar: comportamiento anterior/nuevo, módulos afectados, configuración nueva, necesidad de reinicio/migración, pruebas y versión publicada. Cuando una función está prevista, marcarla pendiente hasta verificarla. Las URLs de proveedores, tarifas y compatibilidad deben comprobarse al intervenir, no perpetuarse como verdades fijas.
 
 Historial documental: edición inicial reúne operación AWS, alta de cliente, módulos, integraciones y catálogos regenerables. Referencias antiguas se conservan para contexto, con prioridad del código vigente y de la infraestructura verificada.
+<!-- Actualización 2026-10-22 / 5.00.307: soporte ALSO/DEMJG/SANA -->
+La revisión de objetivos conserva mensajes originales, valida cobertura y exige evidencia de resolución. El script scripts/review_support_generated.cjs es dry-run por defecto; --apply respalda cifrado en support_audit y encola jobs con generatedRepairOnly y reviewMessageIds. Preserva ediciones humanas y registros HubSpot guardados/enviándose/inciertos. No realiza escrituras HubSpot ni cambios de vinculación. Extensión 1.0.61 agrega taskStatus sin cambiar el estado de persistencia pendiente/guardado. Ver docs/whatsapp_support.md.
+

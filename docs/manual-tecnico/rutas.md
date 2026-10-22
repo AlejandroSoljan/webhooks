@@ -59,7 +59,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/api/customer-app-admin/:tenant/presence/:sessionId/status` | [customer_queue.js:178](../../customer_queue.js#L178) | `, wrap(async (req, res) => {` |
 | GET | `/api/customer-app-admin/:tenant/presence` | [customer_queue.js:149](../../customer_queue.js#L149) | `, wrap(async (req, res) => {` |
 | GET | `/api/customer-app-admin/:tenant/printer/status` | [customer_queue.js:271](../../customer_queue.js#L271) | `, wrap(async (req, res) => {` |
-| GET | `/api/customer-app-admin/:tenant/product-stats` | [product_insights_routes.js:4](../../product_insights_routes.js#L4) | `, wrap(async (req, res) => {` |
+| GET | `/api/customer-app-admin/:tenant/product-stats` | [product_insights_routes.js:9](../../product_insights_routes.js#L9) | `, wrap(async (req, res) => {` |
 | GET | `/api/customer-app-admin/:tenant/sellers` | [customer_queue.js:129](../../customer_queue.js#L129) | `, wrap(async (req, res) => {` |
 | GET | `/api/customer-app-admin/:tenant/state` | [customer_queue.js:219](../../customer_queue.js#L219) | `, state);` |
 | GET | `/api/customer-app-admin/:tenant/stats` | [queue_stats.js:108](../../queue_stats.js#L108) | `, wrap(async (req, res) => {` |
@@ -69,10 +69,10 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/api/customer-app/:tenant/queue` | [customer_queue.js:218](../../customer_queue.js#L218) | `, state);` |
 | GET | `/api/customer-app/:tenant/tickets/:id` | [customer_queue.js:348](../../customer_queue.js#L348) | `, wrap(async (req, res) => {` |
 | GET | `/api/customer-notifications/:tenant` | [customer_notifications.js:16](../../customer_notifications.js#L16) | `,requireAuth,async(req,res)=>{try{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,t))return res` |
-| GET | `/api/ext/ayuda` | [help_tool.js:2038](../../help_tool.js#L2038) | `, requireHelpExternalAccess, handleHelpQuery);` |
+| GET | `/api/ext/ayuda` | [help_tool.js:2316](../../help_tool.js#L2316) | `, requireHelpExternalAccess, handleHelpQuery);` |
 | GET | `/api/ext/domain-status` | [endpoint.js:1490](../../endpoint.js#L1490) | `, requireDomainStatusAccess, async (req, res) => {` |
-| GET | `/api/ext/help/status` | [help_tool.js:2042](../../help_tool.js#L2042) | `, requireHelpExternalAccess, async (req, res) => {` |
-| GET | `/api/ext/help` | [help_tool.js:2036](../../help_tool.js#L2036) | `, requireHelpExternalAccess, handleHelpQuery);` |
+| GET | `/api/ext/help/status` | [help_tool.js:2320](../../help_tool.js#L2320) | `, requireHelpExternalAccess, async (req, res) => {` |
+| GET | `/api/ext/help` | [help_tool.js:2314](../../help_tool.js#L2314) | `, requireHelpExternalAccess, handleHelpQuery);` |
 | GET | `/api/ext/qr/chat/messages` | [qr_product_web.js:1584](../../qr_product_web.js#L1584) | `, async (req, res) => {` |
 | GET | `/api/ext/qr/product` | [qr_product_web.js:1536](../../qr_product_web.js#L1536) | `, async (req, res) => {` |
 | GET | `/api/ext/qr/scanner-assets/:asset` | [qr_local_scanner.js:131](../../qr_local_scanner.js#L131) | `, (req, res) => {` |
@@ -247,9 +247,9 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/api/customer-app/:tenant/tickets/:id/handoff` | [customer_queue.js:336](../../customer_queue.js#L336) | `, wrap(async (req, res) => {` |
 | POST | `/api/customer-app/:tenant/tickets` | [customer_queue.js:220](../../customer_queue.js#L220) | `, wrap(async (req, res) => {` |
 | POST | `/api/customer-notifications/:tenant` | [customer_notifications.js:18](../../customer_notifications.js#L18) | `,requireAuth,notificationJson,async(req,res)=>{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,` |
-| POST | `/api/ext/ayuda/chat-web` | [help_tool.js:2018](../../help_tool.js#L2018) | `, json, async (req, res) => {` |
-| POST | `/api/ext/ayuda` | [help_tool.js:2039](../../help_tool.js#L2039) | `, json, requireHelpExternalAccess, handleHelpQuery);` |
-| POST | `/api/ext/help` | [help_tool.js:2037](../../help_tool.js#L2037) | `, json, requireHelpExternalAccess, handleHelpQuery);` |
+| POST | `/api/ext/ayuda/chat-web` | [help_tool.js:2296](../../help_tool.js#L2296) | `, json, async (req, res) => {` |
+| POST | `/api/ext/ayuda` | [help_tool.js:2317](../../help_tool.js#L2317) | `, json, requireHelpExternalAccess, handleHelpQuery);` |
+| POST | `/api/ext/help` | [help_tool.js:2315](../../help_tool.js#L2315) | `, json, requireHelpExternalAccess, handleHelpQuery);` |
 | POST | `/api/ext/qr/chat` | [qr_product_web.js:1634](../../qr_product_web.js#L1634) | `, qrJson, async (req, res) => {` |
 | POST | `/api/ext/qr/photo` | [qr_product_web.js:1502](../../qr_product_web.js#L1502) | `, qrPhotoJson, async (req, res) => {` |
 | POST | `/api/ext/queue-sequence` | [queue_cloud_sync.js:84](../../queue_cloud_sync.js#L84) | `, express.json({ limit: '8kb' }), async (req, res) => {` |

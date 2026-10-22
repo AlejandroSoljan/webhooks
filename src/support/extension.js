@@ -84,7 +84,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const contact = await s.col('contacts').findOne({ ...scope, $or: [{ _id: scopedId(scope, 'contact', jid) }, { jid }, { aliases: jid }] });
     if (require('./core').excluded({ jid, name: contact?.name }, await s.config(scope))) return [];
     const rows = await s.col('drafts').find({ ...scope, jid: { $in: [...new Set([jid, ...(contact?.aliases || [])])] }, state: { $nin: ['merged', 'ignored'] }, $or: [{ 'hubspot.state': { $ne: 'saved' } }, { 'hubspot.pendingFollowup': true }, { sourceChanged: true }, { reconciliationRequired: true }] }).sort({ updatedAt: -1 }).limit(100).toArray();
-    return rows.map(row => { const fields = s.vault.open(row.fields, row._id); return { id: row._id, subject: fields.subject || 'Tarea para revisar', contact: fields.contact || contact?.name || '', state: row.state, status: row.state === 'ignored' ? 'discarded' : (row.hubspot?.pendingFollowup || row.sourceChanged || row.reconciliationRequired) ? 'pending' : row.hubspot?.ticketId ? 'saved' : 'pending', hubspot: row.hubspot || null }; });
+    return rows.map(row => { const fields = s.vault.open(row.fields, row._id); return { id: row._id, subject: fields.subject || 'Tarea para revisar', contact: fields.contact || contact?.name || '', state: row.state, taskStatus: fields.status || 'Sin clasificar', status: row.state === 'ignored' ? 'discarded' : (row.hubspot?.pendingFollowup || row.sourceChanged || row.reconciliationRequired) ? 'pending' : row.hubspot?.ticketId ? 'saved' : 'pending', hubspot: row.hubspot || null }; });
   }));
   router.get('/messages', route(async (req, s, scope) => {
     const jid = text(req.query.jid, 200);
@@ -96,7 +96,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     const tasks = drafts.map(row => {
       const fields = s.vault.open(row.fields, row._id);
       const status = row.state === 'ignored' ? 'discarded' : (row.hubspot?.pendingFollowup || row.sourceChanged || row.reconciliationRequired) ? 'pending' : row.hubspot?.ticketId ? 'saved' : 'pending';
-      return { id: row._id, shortId: row._id.slice(0, 6), subject: fields.subject || 'Tarea para revisar', status, ticketId: row.hubspot?.ticketId || null, messageIds: row.messageIds || [], updatedAt: row.updatedAt || row.createdAt };
+      return { id: row._id, shortId: row._id.slice(0, 6), subject: fields.subject || 'Tarea para revisar', taskStatus: fields.status || 'Sin clasificar', status, ticketId: row.hubspot?.ticketId || null, messageIds: row.messageIds || [], updatedAt: row.updatedAt || row.createdAt };
     });
     const assignments = new Map();
     for (const task of tasks) for (const messageId of task.messageIds) {
