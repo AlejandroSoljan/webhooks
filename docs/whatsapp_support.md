@@ -3,6 +3,8 @@
 
 ## Agente Windows 5.00.305 — cortes de descarga
 
+Paquete 5.00.306: para PCs ya instaladas, extraer el ZIP completo y ejecutar `Actualizar.cmd` con el mismo usuario Windows. `Actualizar.ps1` obtiene la ruta real desde la tarea del perfil existente, valida que esté bajo AsistoSupport del usuario, respalda sólo código y cambia únicamente agent.cjs, run.ps1 y el parche de medios. Mantiene rutas de perfil, cuenta, autenticación y cola cifrada, extensión, tarea programada y dependencias. Reinicia el supervisor existente y verifica un estado activo reciente; un fallo de verificación se informa sin iniciar una nueva vinculación. No es un actualizador remoto automático: debe ejecutarse en la PC correspondiente.
+
 Baileys rc14 encadenaba el flujo HTTP de descarga con `pipe`, dejando `ECONNRESET`/`terminated` sin propagación al consumidor. `media-stream-patch.cjs` aplica antes de importar Baileys una corrección acotada a `downloadEncryptedContent`: `pipeline` destruye ambos flujos ante error y el consumidor recibe el rechazo, incluso si adjunta su iterador después del corte. Conserva copia original del módulo; es idempotente y rechaza fuentes inesperadas. No instala un manejador global que oculte excepciones. Instalador y agente incluyen la corrección aunque npm se ejecute con `--ignore-scripts`.
 
 El supervisor, tras adquirir el mutex del perfil, recupera únicamente un proceso huérfano cuyo ejecutable, script y perfil coincidan exactamente. Conserva autenticación, cola cifrada, tareas y tickets. No ejecuta logout. Pruebas: corte ECONNRESET, consumidor tardío, siguiente descarga correcta, cancelación y regresión del agente. Distribución local/ZIP; no necesita cambio de API o Mongo.

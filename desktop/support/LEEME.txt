@@ -2,6 +2,12 @@ Asisto | Version: 5.00.178 | Fecha: 2026-09-20
 
 AGENTE PERSONAL DE WHATSAPP PARA WINDOWS
 
+SI YA ESTA INSTALADO (5.00.306): extrae todo el ZIP y ejecuta Actualizar.cmd
+desde el mismo usuario de Windows que utiliza Asisto. Actualiza solo el codigo
+del agente instalado, hace respaldo y reinicia el supervisor del mismo perfil.
+Conserva las credenciales, la cola y las tareas. No cambia la extension ni
+instala dependencias. No pide un QR nuevo por actualizar el codigo.
+
 1. Descomprimi todos los archivos y ejecuta Instalar.cmd.
 2. El instalador prepara Baileys y copia la extension en una carpeta permanente.
 3. En Chrome abre chrome://extensions, activa Modo de desarrollador, pulsa

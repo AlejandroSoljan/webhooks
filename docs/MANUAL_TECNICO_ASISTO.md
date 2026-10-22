@@ -1,5 +1,7 @@
 # Manual técnico de Asisto
 
+Actualización de agentes existentes 5.00.306: `Actualizar.cmd` modifica únicamente código del worker en su ruta actual, con respaldo y comprobación del perfil; no reinstala dependencias, no cambia la extensión ni inicia vinculación. Operación en [Tickets WhatsApp](whatsapp_support.md#agente-windows-500305--cortes-de-descarga).
+
 Agente Windows 5.00.305: corrección local del error no manejado en descargas Baileys y recuperación de hijo huérfano al reiniciar el supervisor. Conserva perfil y cola. Operación y pruebas en [Tickets WhatsApp](whatsapp_support.md#agente-windows-500305--cortes-de-descarga).
 
 ## Análisis comercial en Estadísticas Turnero (5.00.303)
