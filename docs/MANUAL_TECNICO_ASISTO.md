@@ -417,3 +417,4 @@ Historial documental: edición inicial reúne operación AWS, alta de cliente, m
 La revisión de objetivos conserva mensajes originales, valida cobertura y exige evidencia de resolución. El script scripts/review_support_generated.cjs es dry-run por defecto; --apply respalda cifrado en support_audit y encola jobs con generatedRepairOnly y reviewMessageIds. Preserva ediciones humanas y registros HubSpot guardados/enviándose/inciertos. No realiza escrituras HubSpot ni cambios de vinculación. Extensión 1.0.61 agrega taskStatus sin cambiar el estado de persistencia pendiente/guardado. Ver docs/whatsapp_support.md.
 
 <!-- 5.00.308: reparación explícita admite membresías automáticas cruzadas, mantiene cobertura e IDs únicos de revisión. Mini exige esquema estricto. No relaja protección de ediciones ni HubSpot. -->
+<!-- 5.00.309: preflight de todos los resúmenes antes de escribir membresías durante reparación generada; consumo rechazado validado se contabiliza. -->

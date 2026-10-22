@@ -65,6 +65,17 @@ test('generated review repartitions overlapping automatic drafts without skippin
  assert.ok(after.every(r=>vault.open(r.fields,r._id).subject==='Revisada'));
 });
 
+test('generated review validates all summaries before modifying any original draft',async()=>{
+ const owner={...scope,tenantId:'ALSO'};await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});
+ service.titleAnalyzer={group:async()=>({groups:[[0],[1]],model:'fixture'}),run:async()=>({subject:'Anterior',description:'Conservar.',model:'fixture'})};
+ await processMessages([message('first',0,{text:'Necesito reporte'}),message('second',20,{text:'No imprime'})],owner);
+ const before=await service.col('drafts').find(owner).sort({_id:1}).toArray();let calls=0;
+ service.titleAnalyzer.run=async()=>{if(++calls===2)throw Object.assign(Error('invalid'),{code:'task_assessment_invalid'});return {subject:'No aplicar parcialmente',description:'Validar todo.',model:'fixture'}};
+ const job=await service.enqueue(owner,'123@s.whatsapp.net');await service.col('jobs').updateOne({_id:job},{$set:{generatedRepairOnly:true}});await service.runOne(async()=>{},owner);
+ assert.deepEqual(await service.col('drafts').find(owner).sort({_id:1}).toArray(),before);
+ assert.equal((await service.col('jobs').findOne({_id:job})).error,'task_assessment_invalid');
+});
+
 test('objective grouping merges untouched drafts and caches unchanged evidence', async () => {
   const owner = {...scope,tenantId:'ALSO'};
   await db.collection('users').updateOne({_id:new ObjectId(scope.userId)},{$set:{tenantId:'ALSO'}});

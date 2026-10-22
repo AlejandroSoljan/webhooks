@@ -444,3 +444,5 @@ Barra lateral y accesos superiores con SVG de personas, reloj, mesa, cocina, rec
 
 2026-10-22 | v5.00.308 | Completa reparación de borradores automáticos con membresías cruzadas: permite reparticionar evidencia completa sin saltar grupos, sin reutilizar IDs de archivados y sin alterar protegidos. Agrupación mini exige esquema estricto con una asignación por mensaje. Pruebas de cobertura, repartición y preservación. Commit: fix(support): repair overlapping generated memberships safely.
 
+2026-10-22 | v5.00.309 | Revisión generada valida todos los resúmenes antes de alterar membresías, evitando aplicación parcial ante un cierre contradictorio. Conserva respaldo y protecciones; mide también respuestas rechazadas por validación semántica. Prueba de error tardío con originales idénticos. Commit: fix(support): preflight generated repairs before changing memberships.
+

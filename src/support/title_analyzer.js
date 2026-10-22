@@ -122,7 +122,9 @@ function asistoTitleAnalyzer(env = process.env, { runtimeFor = tenantId => requi
     const subject = text(bounded(parsed?.subject, 80), 80), description = text(bounded(parsed?.description, 700), 700);
     if (!subject || !description) fail('task_title_failed', 502);
     const usage = response?.usage || {};
-    const decision = grounded ? require('./task_assessment').summaryDecision({ ...parsed, description }, messages) : {};
+    let decision;
+    try { decision = grounded ? require('./task_assessment').summaryDecision({ ...parsed, description }, messages) : {}; }
+    catch (error) { error.usage = { model, inputTokens: Number(usage.prompt_tokens || 0), outputTokens: Number(usage.completion_tokens || 0), totalTokens: Number(usage.total_tokens || 0) }; throw error; }
     return { subject, description, ...decision, model, inputTokens: Number(usage.prompt_tokens ?? usage.input_tokens ?? 0) || 0, outputTokens: Number(usage.completion_tokens ?? usage.output_tokens ?? 0) || 0, totalTokens: Number(usage.total_tokens || 0) || 0 };
   } };
 }

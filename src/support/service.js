@@ -405,6 +405,22 @@ class SupportService {
       }
       detectedGroups = taskGrouping.validateGroups(groups, groupingMessages);
     } else detectedGroups = groupTasks(groupingMessages, config.inactivityMs);
+    const summaries = new Map();
+    const summarize = async group => {
+      let title, error;
+      try { title = await this.titleAnalyzer.run(group, { ...scope, jid: job.jid, jobId: job._id }); } catch (e) { error = e; }
+      const usage = title || error?.usage;
+      if (usage) await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: job.jid, waId: job.jid, kind: 'message', provider: 'openai', model: usage.model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens || usage.inputTokens + usage.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'support_task_summary', ...(error ? { rejected: true } : {}) }, createdAt: this.now() });
+      if (error) throw error;
+      return title;
+    };
+    // Validate every proposed replacement before changing any old membership.
+    // A later contradictory summary must not leave half a repartition applied.
+    if (job.generatedRepairOnly && this.titleAnalyzer) for (const group of detectedGroups) {
+      if (require('./task_assessment').contextOnly(group) || group.every(taskGrouping.automaticNotice)) continue;
+      await check();
+      summaries.set(hash(group.map(m => m._id)), await summarize(group));
+    }
     for (const detectedGroup of detectedGroups) {
       let group = detectedGroup.filter(message => !dismissedIds.has(message._id));
       if (!group.length) continue;
@@ -465,12 +481,11 @@ class SupportService {
       }
       let aiSummaryHash = null;
       if (result.result === 'draft' && this.titleAnalyzer) {
-        const title = await this.titleAnalyzer.run(group, { ...scope, jid: job.jid, jobId: job._id });
+        const title = summaries.get(fingerprint) || await summarize(group);
         result.subject = title.subject;
         result.description = title.description || result.description;
         if (taskGrouping.enabled(scope.tenantId) && title.status) { result.status = title.status; result.assessment = title.assessment; }
         aiSummaryHash = fingerprint;
-        await this.db.collection('ai_token_usage_log').insertOne({ ...scope, conversationId: job.jid, waId: job.jid, kind: 'message', provider: 'openai', model: title.model, inputTokens: title.inputTokens, outputTokens: title.outputTokens, totalTokens: title.totalTokens || title.inputTokens + title.outputTokens, channelType: 'whatsapp_tasks', meta: { usageType: 'whatsapp_task_summary', source: 'support_task_summary' }, createdAt: this.now() });
       }
       if (result.description?.length > 100000) fail('conversation_window_too_large', 422);
       const _id = existing[0]?._id || (job.generatedRepairOnly ? scopedId(scope, 'review-draft', job._id, hash(ids)) : scopedId(scope, 'draft', ids[0]));
