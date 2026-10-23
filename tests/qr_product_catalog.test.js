@@ -39,8 +39,9 @@ test('la ficha de Mecan muestra las acciones rediseñadas y evita mostrar datos 
   assert.match(html, /Opciones alternativas/);
   assert.match(html, /Escanear otro producto/);
   assert.match(html, /\.mcnTileIcon svg\{[^}]*stroke:#e00000!important/);
-  assert.match(html, /\.mcnTile\{min-height:94px/);
-  assert.match(html, /\.mcnScan\{min-height:50px/);
+  assert.match(html, /\.mcnTile\{min-height:136px;display:grid/);
+  assert.match(html, /\.mcnTileIcon\{grid-column:1\/-1;grid-row:1/);
+  assert.match(html, /\.mcnScan\{min-height:56px;display:flex;align-items:center;justify-content:center/);
   assert.match(html, /mcnAltWrap/);
   assert.match(html, /#e00000/);
   assert.doesNotMatch(html, /DEMO-100245|\$ 32\.490/);
