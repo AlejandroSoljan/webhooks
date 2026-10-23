@@ -1,4 +1,4 @@
-// Asisto | Version: 5.00.183 | Fecha: 2026-09-22
+// Asisto | Version: 5.00.310 | Fecha: 2026-10-23
 // qr_product_web.js
 // Ficha pública de producto por QR + asesor IA opcional.
 // La carga inicial consulta el catálogo local y su API de respaldo: NO usa OpenAI.
@@ -24,7 +24,7 @@ const {
   analyzeImageExternal,
 } = require('./logic');
 
-const QR_BUILD = '2026-10-16-v9-local-barcode-reader';
+const QR_BUILD = '2026-10-23-v10-mcn-alternatives';
 const qrJson = express.json({ limit: '512kb' });
 const qrPhotoJson = express.json({ limit: '8mb' });
 const rateState = new Map();
@@ -322,8 +322,9 @@ function photoSearchTerms(identification) {
   return [...new Set(values.map(value => clean(value, 120).replace(/[^\p{L}\p{N} ._/-]/gu, ' ').replace(/\s+/g, ' ').trim()).filter(value => value.length >= 3))].slice(0, 3);
 }
 
-async function fetchPhotoCatalogSuggestions(cfg, identification) {
+async function fetchPhotoCatalogSuggestions(cfg, identification, limit = 4) {
   if (cfg.apiMethod !== 'GET' || (!isManagerSql(cfg.apiUrl) && !/\/api\/Api_Articulos\/Consulta/i.test(cfg.apiUrl))) return [];
+  const maxResults = intValue(limit, 4, 1, 6);
   const headers = { Accept: 'application/json' };
   if (cfg.apiAuthHeader && cfg.apiAuthValue) headers[cfg.apiAuthHeader] = cfg.apiAuthValue;
   const found = new Map();
@@ -337,9 +338,9 @@ async function fetchPhotoCatalogSuggestions(cfg, identification) {
         if (!found.has(product.code.toUpperCase())) found.set(product.code.toUpperCase(), product);
       } catch {}
     }
-    if (found.size >= 4) break;
+    if (found.size >= maxResults) break;
   }
-  return [...found.values()].slice(0, 4);
+  return [...found.values()].slice(0, maxResults);
 }
 
 async function fetchGeneralCatalogSuggestions(cfg, message, currentProduct = null, filterMessage = message) {
@@ -1298,6 +1299,8 @@ function qrPublicBranding(cfg, tenant = '') {
 
 function pageHtml({ tenant, code, branding = {} }) {
   const generalChat = code === 'CONSULTA_GENERAL';
+  const mecanPage = String(tenant || '').toUpperCase() === 'MCN';
+  const mecanStyles = `body.mcnPage .mcnActions{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:14px}body.mcnPage .mcnTile{min-height:82px;position:relative;display:flex;align-items:flex-start;gap:8px;text-align:left;padding:11px 9px;background:#fff;border:1px solid #d8e2e8;border-radius:14px;color:#10243e;box-shadow:0 3px 10px rgba(16,36,61,.06)}body.mcnPage .mcnTileIcon{width:32px;height:32px;flex:none;display:grid;place-items:center;border-radius:9px;background:#fff0f0;color:#e00000}body.mcnPage .mcnTileIcon svg{width:21px;height:21px;stroke-width:2.4}body.mcnPage .mcnTileCopy{display:flex;flex-direction:column;gap:4px;min-width:0;padding:2px 7px 0 0}body.mcnPage .mcnTileCopy b{font-size:12px;line-height:1.2}body.mcnPage .mcnTileCopy small{font-size:10px;line-height:1.25;color:#667085}body.mcnPage .mcnTileArrow{position:absolute;right:8px;bottom:9px;font-size:20px;line-height:16px}body.mcnPage .mcnScan{grid-column:1/-1;background:#e00000;border-color:#e00000;color:#fff;min-height:48px}body.mcnPage .mcnScan svg{width:19px;height:19px}body.mcnPage .mcnAltWrap{position:fixed;inset:0;z-index:90;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.48);padding:12px}body.mcnPage .mcnAltWrap[hidden]{display:none!important}body.mcnPage .mcnAltSheet{width:min(100%,520px);max-height:min(82vh,700px);overflow:auto;background:#fff;border-radius:20px;padding:17px 15px 19px;box-shadow:0 -8px 26px rgba(0,0,0,.18)}body.mcnPage .mcnAltHead{display:flex;align-items:center;justify-content:space-between;margin-bottom:13px}body.mcnPage .mcnAltHead h2{margin:0;font-size:19px}body.mcnPage .mcnAltClose{width:40px;height:40px;border:1px solid #10243e;border-radius:6px;background:#fff;color:#10243e;font-size:22px}body.mcnPage .mcnAltList{display:grid;gap:8px}body.mcnPage .mcnAltItem{width:100%;min-height:68px;display:grid;grid-template-columns:36px minmax(0,1fr) auto 12px;align-items:center;gap:9px;padding:9px 10px;text-align:left;background:#fff;border:1px solid #d8e2e8;border-radius:13px;box-shadow:0 3px 10px rgba(16,36,61,.06);color:#10243e}body.mcnPage .mcnAltMark{width:36px;height:36px;display:grid;place-items:center;border-radius:11px;background:#fff0f0;color:#e00000;font-size:15px;font-weight:850}body.mcnPage .mcnAltInfo{display:grid;gap:2px;min-width:0}body.mcnPage .mcnAltBrand{font-size:12px;line-height:1.15;font-weight:800}body.mcnPage .mcnAltProduct{font-size:10px;line-height:1.2;color:#667085}body.mcnPage .mcnAltSku{font-size:9px;line-height:1.2;color:#667085;overflow-wrap:anywhere}body.mcnPage .mcnAltPrice{font-size:13px;white-space:nowrap;color:#10243e;font-weight:800;font-variant-numeric:tabular-nums}body.mcnPage .mcnAltArrow{font-size:18px;line-height:1;color:#667085}body.mcnPage .mcnAltNote{font-size:10px;color:#667085;text-align:center;margin-top:10px}body.mcnPage .mcnAltMessage{padding:16px;text-align:center;color:#667085;font-size:13px}`;
   return String.raw`<!doctype html>
 <html lang="es">
 <head>
@@ -1315,13 +1318,15 @@ function pageHtml({ tenant, code, branding = {} }) {
 .appNav{position:fixed;left:0;right:0;bottom:0;height:calc(76px + env(safe-area-inset-bottom,0px));padding-bottom:env(safe-area-inset-bottom,0px);display:flex;justify-content:space-around;background:#fff;box-shadow:0 -3px 18px rgba(16,36,61,.16);z-index:50}.appNav a{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#52617c;text-decoration:none;font-size:11px;font-weight:650}.appNav svg{width:22px;height:22px;display:block;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.appNav a.active{color:#e71932}body{padding-bottom:calc(78px + env(safe-area-inset-bottom,0px))}
 .appTop{max-width:720px;margin:auto;padding:calc(22px + env(safe-area-inset-top,0px)) 20px 10px;display:flex;align-items:center;gap:12px}.topLogo{display:block;width:200px;max-width:44vw;height:auto;object-fit:contain}.topBrand{font-size:29px;font-weight:950;letter-spacing:-1px;line-height:1}.topBell{margin-left:auto;border:0;background:transparent;color:#092451;padding:4px;position:relative}.topBell svg{width:29px;height:29px;display:block;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.topBell:after{content:'';position:absolute;width:9px;height:9px;border-radius:50%;background:#e71932;right:3px;top:2px}.brand{display:none}@media(max-height:800px){.appTop{padding-top:calc(12px + env(safe-area-inset-top,0px));padding-bottom:5px}.topLogo{max-height:48px;width:auto;max-width:48vw}.topBrand{font-size:25px}}
 </style>
+${mecanPage ? `<style>${mecanStyles}</style>` : ''}
 </head>
-<body>
+<body class="${mecanPage ? 'mcnPage' : ''}">
 <header class="appTop"><img class="topLogo hidden" id="topCompanyLogo" alt="Logo de la empresa"><div class="topBrand" id="topBrand">Asisto</div><button class="topBell" type="button" aria-label="Notificaciones"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg></button></header>
 <div class="page">
   <div class="brand"><div class="brandMark" id="brandMark">A</div><img class="brandLogo hidden" id="companyLogo" alt="Logo de la empresa"/><div class="brandText"><b id="companyName">Información del producto</b><span id="pageTitle">Información del producto</span><small id="pageSubtitle">Cargando ficha…</small></div></div>
   <section class="card lookup" id="lookup"><div class="content"><div class="eyebrow">Buscar producto</div><h1 class="title">Escaneá o ingresá el código</h1><button class="btn btnPrimary" id="scanBtn" type="button">Abrir cámara</button><div class="lookupForm"><input id="codeInput" type="text" maxlength="180" autocomplete="off" placeholder="Código, SKU o código de barras"/><button class="btn" id="lookupBtn" type="button">Buscar</button></div><div class="scanner hidden" id="scanner"><div class="scannerViewport"><video id="scanVideo" playsinline muted></video><div class="scanGuide"></div></div><div class="scanStatus" id="scanStatus">Apuntá al QR o al código de barras.</div><div class="scanControls"><label id="zoomLabel" class="hidden">Zoom <input id="zoomControl" type="range" step="0.1"/></label><button class="btn hidden" id="torchBtn" type="button">Encender luz</button><button class="btn btnPrimary" id="photoBtn" type="button">Sacar foto al producto</button><input class="hidden" id="photoInput" type="file" accept="image/*" capture="environment"/></div><div class="photoResult hidden" id="photoResult"></div><button class="btn" id="stopScanBtn" type="button">Cerrar cámara</button></div></div></section>
   <section class="card" id="productCard"><div class="loading">Consultando producto…</div></section>
+  ${mecanPage ? '<section class="mcnAltWrap" id="mcnAltWrap" hidden aria-label="Opciones alternativas"><div class="mcnAltSheet" role="dialog" aria-modal="true" aria-labelledby="mcnAltTitle"><div class="mcnAltHead"><h2 id="mcnAltTitle">Opciones alternativas</h2><button class="mcnAltClose" id="mcnAltClose" type="button" aria-label="Cerrar">×</button></div><div class="mcnAltList" id="mcnAltList"></div><div class="mcnAltNote">Precios y disponibilidad según el catálogo del negocio.</div></div></section>' : ''}
   <section class="chat" id="chat">
     <div class="chatHead"><div><b id="chatTitle">Asistente del producto</b><br/><span id="chatProduct"></span></div><button class="btn" id="closeChat" type="button">Cerrar</button></div>
     <div class="chatBody" id="chatBody"></div>
@@ -1334,6 +1339,7 @@ function pageHtml({ tenant, code, branding = {} }) {
 const TENANT=${JSON.stringify(tenant)};
 const BRANDING=${JSON.stringify(branding)};
 const GENERAL_CHAT=${JSON.stringify(generalChat)};
+const MECAN_PAGE=TENANT.toUpperCase()==='MCN';
 let CODE=${JSON.stringify(code)};
 let PRODUCT=null, AI_ENABLED=false, sending=false, started=false, conversationId='', pollTimer=null, unchangedPolls=0, lastMessagesSignature='', scanStream=null, scanTrack=null, scanFrame=0, scanLookupTimer=null, scanCandidate='', scanHits=0, scanCandidateAt=0, torchOn=false, scanLocalDetector=null, scanGeneration=0;
 ${decodeLocalBarcodeFrame.toString()}
@@ -1405,6 +1411,15 @@ function renderProduct(j){
     ? '<div class="hero" style="display:flex"><img src="'+esc(p.image)+'" alt="'+esc(p.description)+'"/></div>'
     : '';
 
+  const actionsHtml=MECAN_PAGE
+    ? '<div class="actions mcnActions">'+
+      (AI_ENABLED?'<button class="mcnTile cursor-interaction" id="moreBtn" type="button"><span class="mcnTileIcon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9a2.5 2.5 0 1 1 4.4 1.6c-1.2 1.1-2 1.4-2 3"/><path d="M12 17h.01"/></svg></span><span class="mcnTileCopy"><b>Más info</b><small>Detalles del producto</small></span><span class="mcnTileArrow">›</span></button>':'')+
+      '<button class="mcnTile mcnAltButton cursor-interaction" id="mcnAlternativesBtn" type="button"><span class="mcnTileIcon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m17 1 4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="m7 23-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span><span class="mcnTileCopy"><b>Opciones alternativas</b><small>Productos similares</small></span><span class="mcnTileArrow">›</span></button>'+
+      '<button class="btn mcnScan cursor-interaction" id="otherProductBtn" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V4h3M17 4h3v3M20 17v3h-3M7 20H4v-3M8 8v8M11 8v8M15 8v8"/></svg> Escanear otro producto</button>'+
+      '</div>'
+    : (AI_ENABLED?'<div class="actions"><button class="btn btnPrimary btnWithLogo" id="moreBtn" type="button"><span>Mostrar más info</span></button></div>':'')+
+      '<div class="actions"><button class="btn" id="otherProductBtn" type="button">Escanear o ingresar otro producto</button></div>';
+
   el('productCard').innerHTML=imageHtml+
     '<div class="content">'+
       '<div class="eyebrow">Ficha del producto</div>'+
@@ -1415,14 +1430,17 @@ function renderProduct(j){
         (p.brand?'<div class="fact"><label>Marca</label><b>'+esc(p.brand)+'</b></div>':'')+
         (p.subcategory?'<div class="fact"><label>Categoría</label><b>'+esc(p.subcategory)+'</b></div>':'')+
       '</div>'+
-      (AI_ENABLED?'<div class="actions"><button class="btn btnPrimary btnWithLogo" id="moreBtn" type="button"><span>Mostrar más info</span></button></div>':'')+
-      '<div class="actions"><button class="btn" id="otherProductBtn" type="button">Escanear o ingresar otro producto</button></div>'+
+      actionsHtml+
     '</div>';
 
   el('chatProduct').textContent=p.description+' · SKU '+p.code;
   if(AI_ENABLED&&el('moreBtn'))el('moreBtn').addEventListener('click',startAi);
   el('otherProductBtn').addEventListener('click',openScannerPanel);
+  if(MECAN_PAGE&&el('mcnAlternativesBtn'))el('mcnAlternativesBtn').addEventListener('click',openMecanAlternatives);
 }
+function renderMecanAlternativeList(items,currency){const list=el('mcnAltList');list.replaceChildren();if(!items.length){const empty=document.createElement('div');empty.className='mcnAltMessage';empty.textContent='No encontramos otras opciones confirmadas en el catálogo.';list.append(empty);return}for(const p of items){const button=document.createElement('button');button.type='button';button.className='mcnAltItem cursor-interaction';const mark=document.createElement('span');mark.className='mcnAltMark';mark.textContent=String(p.brand||p.description||'P').trim().charAt(0).toUpperCase();const info=document.createElement('span');info.className='mcnAltInfo';const brand=document.createElement('strong');brand.className='mcnAltBrand';brand.textContent=p.brand||p.description||'Producto';const description=document.createElement('span');description.className='mcnAltProduct';description.textContent=p.description||'Producto alternativo';const sku=document.createElement('small');sku.className='mcnAltSku';sku.textContent='SKU '+p.code;info.append(brand,description,sku);const price=document.createElement('span');price.className='mcnAltPrice';price.textContent=money(p.price,currency);const arrow=document.createElement('span');arrow.className='mcnAltArrow';arrow.textContent='›';button.append(mark,info,price,arrow);button.addEventListener('click',()=>{closeMecanAlternatives();openCode(p.code,'sku')});list.append(button)}}
+function closeMecanAlternatives(){const wrap=el('mcnAltWrap');if(wrap)wrap.hidden=true}
+async function openMecanAlternatives(){const wrap=el('mcnAltWrap'),list=el('mcnAltList');if(!wrap||!PRODUCT)return;wrap.hidden=false;list.innerHTML='<div class="mcnAltMessage">Buscando en el catálogo…</div>';try{const url=new URL('/api/ext/qr/alternatives',location.origin);url.searchParams.set('tenant',TENANT);url.searchParams.set('codigo',PRODUCT.code);const result=await jsonFetch(url.toString());renderMecanAlternativeList(Array.isArray(result.alternatives)?result.alternatives:[],result.currency)}catch(_){list.innerHTML='<div class="mcnAltMessage">No pudimos consultar las opciones ahora. Probá de nuevo en un momento.</div>'}}
 function normalizedCode(value){let code=String(value||'').trim();if(!code)return '';try{const u=new URL(code,location.origin);if(/^https?:/i.test(code)){const extracted=u.searchParams.get('codigo')||((u.pathname.match(/^\/qr\/[^/]+\/(.+)$/)||[])[1]);if(!extracted)return '' ;code=extracted}}catch(_){}try{code=decodeURIComponent(code).trim()}catch(_){}return code} function openCode(value,via){const code=normalizedCode(value);if(!code)return;stopScanner();const u=new URL('/qr/'+encodeURIComponent(TENANT),location.origin);u.searchParams.set('codigo',code);u.searchParams.set('via',via||'sku');location.href=u.pathname+u.search} function openScannerPanel(){el('lookup').classList.remove('hidden');el('lookup').scrollIntoView({behavior:'smooth',block:'start'});startScanner()}
 ${scannerClient.stopScanner.toString()}
 async function setScannerZoom(value){if(!scanTrack)return;try{await scanTrack.applyConstraints({advanced:[{zoom:Number(value)}]})}catch(_){}}
@@ -1437,6 +1455,7 @@ async function photoDataUrl(file){const img=await new Promise((resolve,reject)=>
 async function identifyPhoto(file){if(!file)return;const out=el('photoResult'),btn=el('photoBtn');out.classList.remove('hidden');out.textContent='Analizando la foto y buscando en el catálogo…';btn.disabled=true;try{const image=await photoDataUrl(file);const j=await jsonFetch('/api/ext/qr/photo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenant:TENANT,image})});if(j.product?.code){out.textContent='Producto encontrado: '+j.product.description;setTimeout(()=>openCode(j.product.code),350);return}const i=j.identification||{},label=[i.brand,i.name,i.model].filter(Boolean).join(' · '),choices=Array.isArray(j.suggestions)?j.suggestions:[];if(choices.length){out.innerHTML=(label?'<b>Identificación aproximada: '+esc(label)+'</b>':'<b>Encontré estas opciones similares:</b>')+'<div class="photoChoices">'+choices.map(p=>'<button class="photoChoice" type="button" data-photo-code="'+esc(p.code)+'"><b>'+esc(p.description)+'</b><small>SKU: '+esc(p.code)+'</small><span>'+esc(money(p.price,j.currency||'ARS'))+'</span></button>').join('')+'</div><small>Elegí una opción para ver su ficha.</small>';out.querySelectorAll('[data-photo-code]').forEach(x=>x.addEventListener('click',()=>openCode(x.dataset.photoCode)));return}out.textContent=label?'Identifiqué aproximadamente '+label+', pero no encontré alternativas confirmadas en el catálogo. Probá una foto donde se vea mejor la marca o el modelo.':'No pude identificarlo con seguridad. Probá acercando la cámara al frente o al código de barras.'}catch(e){out.textContent='No pude analizar la foto: '+e.message}finally{btn.disabled=false;el('photoInput').value=''}}
 el('photoBtn').addEventListener('click',()=>{stopScanner(false);el('scanner').classList.remove('hidden');el('scanner').classList.add('photoMode');el('photoResult').classList.add('hidden');el('photoInput').click()});el('photoInput').addEventListener('change',e=>identifyPhoto(e.currentTarget.files&&e.currentTarget.files[0]));
 el('scanBtn').addEventListener('click',()=>{el('scanner').classList.remove('photoMode')});
+if(MECAN_PAGE){el('mcnAltClose')?.addEventListener('click',closeMecanAlternatives);el('mcnAltWrap')?.addEventListener('click',e=>{if(e.target===el('mcnAltWrap'))closeMecanAlternatives()});document.addEventListener('keydown',e=>{if(e.key==='Escape')closeMecanAlternatives()})}
 el('sendBtn').addEventListener('click',send);el('message').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});el('closeChat').addEventListener('click',()=>GENERAL_CHAT?history.back():el('chat').classList.remove('open'));el('scanBtn').addEventListener('click',startScanner);el('stopScanBtn').addEventListener('click',stopScanner);el('zoomControl').addEventListener('input',e=>setScannerZoom(e.currentTarget.value));el('torchBtn').addEventListener('click',toggleScannerTorch);el('lookupBtn').addEventListener('click',()=>openCode(el('codeInput').value));el('codeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openCode(e.currentTarget.value)}});window.addEventListener('pagehide',stopScanner);document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(pollTimer){clearTimeout(pollTimer);pollTimer=null}if(started)scheduleChatPoll(0)}});applyBranding(BRANDING);if(GENERAL_CHAT){el('lookup').classList.add('hidden');el('productCard').classList.add('hidden');el('chat').classList.add('open');el('chatTitle').textContent='Encontralo al instante';el('chatProduct').textContent='Consultá precios, productos, disponibilidad y recibí ayuda en el momento.';el('message').placeholder='Escribí tu consulta…';addMsg('bot','¡Hola! ¿Qué producto o información necesitás encontrar?');syncChatMessages(true).then(changed=>{started=changed;if(changed)startChatPolling()});setTimeout(()=>el('message').focus(),100)}else if(CODE){el('lookup').classList.add('hidden');loadProduct()}else{el('productCard').classList.add('hidden');if(!BRANDING.pageSubtitle)el('pageSubtitle').textContent='Escaneá un QR, un código de barras o ingresá el código manualmente.';if(new URLSearchParams(location.search).get('scan')==='1')setTimeout(startScanner,150)}
 </script>
 </body>
@@ -1578,6 +1597,31 @@ function mountQrProductWeb(app) {
         error: clean(e?.message || 'internal', 200),
         detail: clean(e?.publicDetail || e?.message || 'internal', 300),
       });
+    }
+  });
+
+  app.get('/api/ext/qr/alternatives', async (req, res) => {
+    try {
+      const requestedTenant = safeTenant(req.query?.tenant);
+      const code = digitsOrText(req.query?.codigo, 180);
+      if (!requestedTenant || !code) return res.status(400).json({ ok: false, error: 'tenant_codigo_required' });
+      const db = await getDb();
+      const tenant = await canonicalQrTenant(db, requestedTenant);
+      if (!tenant) return res.status(404).json({ ok: false, error: 'tenant_not_found' });
+      if (!allowAiRequest(req, `catalog_alternatives_${tenant}_${code}`)) return res.status(429).json({ ok: false, error: 'rate_limited' });
+      const cfg = await loadQrConfig(db, tenant);
+      const current = await fetchQrProduct(cfg, tenant, code);
+      const suggestions = await fetchPhotoCatalogSuggestions(cfg, { brand: current.brand, name: current.description }, 6);
+      const alternatives = suggestions
+        .filter(item => String(item.code).toUpperCase() !== String(current.code).toUpperCase())
+        .slice(0, 5)
+        .map(item => ({ code: item.code, description: item.description, brand: item.brand, price: item.price, available: item.available }));
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json({ ok: true, tenant, currency: cfg.currency, alternatives });
+    } catch (e) {
+      const status = intValue(e?.statusCode, 500, 400, 599);
+      console.error('[qr] alternatives:', e?.message || e);
+      return res.status(status).json({ ok: false, error: clean(e?.message || 'internal', 200), detail: clean(e?.publicDetail || 'No se pudieron consultar alternativas.', 300) });
     }
   });
 

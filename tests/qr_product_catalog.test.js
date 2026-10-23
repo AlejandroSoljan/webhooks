@@ -33,7 +33,19 @@ test('Mostrar más info oculta errores técnicos, libera controles y no repite l
  assert.equal(calls,1);assert.equal(box.sending,false);assert.equal(box.started,false);assert.equal(button.disabled,false);assert.match(messages.at(-1),/volvé a tocar/);assert.doesNotMatch(messages.at(-1),/Cloudflare|origin|HTTP/);
 });
 
-test('iPhone y navegadores internos leen localmente sin enviar capturas a IA', () => {
+test('la ficha de Mecan muestra las acciones rediseñadas y evita mostrar datos de ejemplo', () => {
+  const html = pageHtml({ tenant: 'MCN', code: 'SKU-1', branding: { companyName: 'Mecan' }, aiEnabled: true });
+  assert.match(html, /Más info/);
+  assert.match(html, /Opciones alternativas/);
+  assert.match(html, /Escanear otro producto/);
+  assert.match(html, /mcnAltWrap/);
+  assert.match(html, /#e00000/);
+  assert.doesNotMatch(html, /DEMO-100245|\$ 32\.490/);
+  const otherTenant = pageHtml({ tenant: 'A', code: 'SKU-1', branding: {} });
+  assert.doesNotMatch(otherTenant, /<body class="mcnPage">|<section class="mcnAltWrap"/);
+});
+
+test('iPhone y navegadores internos usan lectura asistida si falta BarcodeDetector', () => {
   const html = pageHtml({ tenant: 'MCN', code: '', branding: { companyName: 'Mecan' } });
   const script = html.match(/<script>([\s\S]*)<\/script>/)[1];
   new vm.Script(script);
@@ -84,7 +96,7 @@ function load(api, overrides = {}) {
     await routes.get('/api/ext/qr/product')({ query: { tenant: 'A', codigo: code } }, res);
     return res;
   }
-  return { ...f, request, config };
+  return { ...f, request, config, routes };
 }
 const sqlConfig = { qr_api_url: 'https://manager.example/v300/api/Api_Consultas_Generales/Consulta_sql?key=test&sql_id=195', qr_api_method: 'GET' };
 test('SQL conserva LP1, mapea campos y la caché sirve barras sin otra consulta', async () => {
@@ -164,4 +176,23 @@ test('la API tampoco puede resolver barras duplicadas arbitrariamente', async ()
     { Codigo: '2', Codbarra: '123', Descripcion: 'Dos' },
   ] }));
   assert.equal((await f.request('123')).statusCode, 409); assert.equal(f.rows.length, 0);
+});
+
+test('las opciones alternativas usan el catálogo, excluyen el producto actual y limitan a cinco', async () => {
+  const rows = [
+    { Codigo: '001', Descripcion: 'Látex blanco 4 L', Marca: 'Marca actual', Precio_Lp1: 300 },
+    ...Array.from({ length: 7 }, (_, i) => ({ Codigo: `ALT-${i}`, Descripcion: 'Látex blanco 4 L', Marca: `Marca ${i}`, Precio_Lp1: 250 - i })),
+  ];
+  const f = load(async options => {
+    const url = new URL(options.url);
+    if (url.searchParams.get('campo') === 'ID') return { status: 200, data: rows[0] };
+    return { status: 200, data: rows };
+  });
+  f.config.qr_api_method = 'GET';
+  f.config.qr_api_url = 'https://manager.example/v300/api/Api_Articulos/Consulta?key=x';
+  const res = { statusCode: 200, setHeader() {}, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
+  await f.routes.get('/api/ext/qr/alternatives')({ query: { tenant: 'A', codigo: '001' }, headers: {}, socket: {} }, res);
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.alternatives.length, 5);
+  assert.ok(res.body.alternatives.every(item => item.code !== '001' && item.price !== null));
 });
