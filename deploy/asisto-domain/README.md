@@ -34,6 +34,8 @@ Release SEO acotada: `ced5f0a5cecc-auto-OXtWSPWb-brand-asisto-20261027-seo-asist
 
 Search Console: tras autorización explícita del propietario, `https://asisto.com.ar/` se verificó mediante etiqueta HTML en la cuenta autorizada. El sitemap se envió y Google confirmó «El sitemap se ha procesado correctamente», con dos páginas descubiertas. La etiqueta de verificación debe conservarse en la portada; no es una contraseña. Esto no acredita que las páginas ya aparezcan en resultados. La propiedad es de prefijo HTTPS/apex, no de todos los subdominios.
 
+Inspección posterior de la raíz el mismo día: Google mostró «La URL está en Google» / «La página está indexada». Se solicitó actualización por los cambios recientes y confirmó «Se ha solicitado la indexación» (cola prioritaria). No garantiza posición, texto del resultado ni plazo para actualizarlo.
+
 ## Limpieza autorizada de builds fallidos
 
 El 2026-10-27 se eliminaron 21 directorios `a28aa1749074-auto-*` fallidos, no referenciados por enlaces ni procesos; se conservaron el activo, todos los respaldos previos y `a28aa1749074-auto-spjx23K6` para diagnóstico. Manifest y medidas en `/var/lib/asisto/maintenance/cleanup-failed-20261027`. Uso de disco: 81.102.397.440 → 68.467.961.856 bytes; disponibles 13.601.972.224 bytes, 84%. Liberados 12.634.435.584 bytes (~12,6 GB decimales).
