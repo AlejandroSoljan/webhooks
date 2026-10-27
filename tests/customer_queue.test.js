@@ -11,7 +11,7 @@ let mongo, client, db, server, url, queue, sent = 0;
 const notifications = []; let rejectPush = false;
 const cfg = { businessName: 'Mecan', branchId: 'CENTRAL', queuePresence: 'open', sellers: [{ id: 'seller-aldana', name: 'ALDANA', active: true }], sectors: [{ id: 'ferreteria', name: 'Ferretería', prefix: 'F' }, { id: 'caja', name: 'Caja', prefix: 'C' }] };
 before(async () => {
-  mongo = await MongoMemoryServer.create();
+  mongo = await MongoMemoryServer.create({ instance: { launchTimeout: 60000 } });
   client = new MongoClient(mongo.getUri());
   await client.connect();
   db = client.db('queue_isolated_test');
@@ -19,7 +19,9 @@ before(async () => {
   app.use((req, _res, next) => { if (req.get('x-test-user')) req.user = { uid: 'test', tenantId: req.get('x-test-user'), username: 'Tester', role: req.get('x-test-role') || 'admin' }; next(); });
   queue = mountQueue(app, { openTenants: ['OPEN'], getDb: async () => db, configFor: async () => cfg, dayKey: () => '2026-09-14', secret: 'test-secret', auth: { appShell: ({ active, main }) => `<nav data-active="${active}">Menú Asisto</nav>${main}` }, firebaseSender: async () => async (token, message) => { if (rejectPush) throw Error('mock_failure'); sent++; notifications.push({ token, ...message }); } });
   app.get('/api/customer-app/:tenant/config', (_req, res) => res.json(cfg));
-  server = app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r)); url = 'http://127.0.0.1:' + server.address().port;
+  server = app.listen(0, '127.0.0.1');
+  server.keepAliveTimeout = 120000; server.headersTimeout = 125000;
+  await new Promise(r => server.once('listening', r)); url = 'http://127.0.0.1:' + server.address().port;
 });
 after(async () => {
   if (server) await new Promise(r => server.close(r)); await client?.close();
@@ -399,6 +401,29 @@ test('browser-to-app handoff transfers notification ownership, is retryable, and
   const access = await db.collection('customer_app_devices').findOne({ tenantId: 'TEST', installId: reserved.owner });
   assert.ok(+access.queueAccessUntil > Date.now() + 119 * 60 * 1000);
 });
+test('install handoff survives the QR expiry, preserves the same ticket, and cannot be replayed by another phone', async () => {
+  const created = await req(api + '/tickets', { sectorId: 'ferreteria', installId: 'install-kiosk', source: 'kiosk', delivery: 'qr_or_print' }, 'TEST');
+  assert.equal(created.status, 200);
+  const url = new URL(created.body.claimUrl), code = new URLSearchParams(url.hash.slice(1)).get('code');
+  const id = created.body.id;
+  assert.equal((await req(api + '/tickets/' + id + '/claim', { installId: 'install-web', code })).status, 200);
+  assert.equal((await req(api + '/tickets/' + id + '/handoff', { installId: 'install-stranger', purpose: 'install' })).status, 403);
+  assert.equal((await req(api + '/tickets/' + id + '/handoff', { installId: 'install-web', purpose: 'invalid' })).status, 400);
+  const transfer = await req(api + '/tickets/' + id + '/handoff', { installId: 'install-web', purpose: 'install' });
+  assert.equal(transfer.status, 200);
+  assert.ok(+new Date(transfer.body.expiresAt) > Date.now() + 119 * 60 * 1000);
+  await db.collection('queue_tickets').updateOne({ kioskRequestId: 'install-kiosk' }, { $set: { reservationExpiresAt: new Date(Date.now() - 10 * 60 * 1000) } });
+  const payload = { installId: 'install-app', code: transfer.body.code };
+  const linked = await req(api + '/tickets/' + id + '/claim', payload);
+  assert.equal(linked.status, 200); assert.equal(linked.body.id, id); assert.equal(linked.body.displayNumber, created.body.displayNumber);
+  assert.equal((await req(api + '/tickets/' + id + '/claim', payload)).status, 200);
+  assert.equal((await req(api + '/tickets/' + id + '/claim', { ...payload, installId: 'install-stranger' })).status, 403);
+  assert.equal((await req(api + '/tickets/' + id + '?installId=install-web')).status, 200);
+  assert.equal(await db.collection('queue_tickets').countDocuments({ kioskRequestId: 'install-kiosk' }), 1);
+  assert.equal((await req(api + '/tickets/' + id + '/cancel', { installId: 'install-web' })).status, 200);
+  assert.equal((await req(api + '/tickets/' + id + '/handoff', { installId: 'install-app', purpose: 'install' })).status, 410);
+});
+
 test('printing activates the same reservation and retries never create a second ticket', async () => {
   const x = (await req(api + '/tickets', { sectorId: 'caja', installId: 'paper', source: 'kiosk', delivery: 'qr_or_print' }, 'TEST')).body;
   assert.equal((await req(admin + '/tickets/' + x.id + '/print', {})).status, 401);

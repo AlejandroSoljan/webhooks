@@ -14,7 +14,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | DELETE | `/api/products/:id` | [src/web/web_admin.routes.js:123](../../src/web/web_admin.routes.js#L123) | `, async (req, res) => {` |
 | DELETE | `/api/tenant-channels/:id` | [endpoint.js:455](../../endpoint.js#L455) | `, auth.requireAdmin, async (req, res) => {` |
 | DELETE | `/api/tenant-config` | [auth_ui.js:5211](../../auth_ui.js#L5211) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| GET | `/.well-known/assetlinks.json` | [customer_app_web.js:110](../../customer_app_web.js#L110) | `, (_req, res) => res.sendFile(require('path').join(__dirname, 'static/turnero/assetlinks.json')));` |
+| GET | `/.well-known/assetlinks.json` | [customer_app_web.js:114](../../customer_app_web.js#L114) | `, (_req, res) => res.sendFile(require('path').join(__dirname, 'static/turnero/assetlinks.json')));` |
 | GET | `/` | [app_asisto_ws.js:529](../../app_asisto_ws.js#L529) | `, (req, res) => {` |
 | GET | `/` | [endpoint.js:1863](../../endpoint.js#L1863) | `, async (req, res) => {` |
 | GET | `/admin/billing` | [billing_subscriptions.js:84](../../billing_subscriptions.js#L84) | `, auth.requireAuth, requireSuper, (_req, res) => res.set('Cache-Control', 'no-store').type('html').send(render` |
@@ -56,25 +56,26 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/api/conversation-followup/config` | [conversation_followup_panel.js:1107](../../conversation_followup_panel.js#L1107) | `, async (req, res) => {` |
 | GET | `/api/conversation-followup/conversations` | [conversation_followup_panel.js:1133](../../conversation_followup_panel.js#L1133) | `, async (req, res) => {` |
 | GET | `/api/conversation-followup/version` | [conversation_followup_panel.js:1103](../../conversation_followup_panel.js#L1103) | `, (req, res) => {` |
-| GET | `/api/customer-app-admin/:tenant/presence/:sessionId/status` | [customer_queue.js:178](../../customer_queue.js#L178) | `, wrap(async (req, res) => {` |
-| GET | `/api/customer-app-admin/:tenant/presence` | [customer_queue.js:149](../../customer_queue.js#L149) | `, wrap(async (req, res) => {` |
-| GET | `/api/customer-app-admin/:tenant/printer/status` | [customer_queue.js:271](../../customer_queue.js#L271) | `, wrap(async (req, res) => {` |
+| GET | `/api/customer-app-admin/:tenant/presence/:sessionId/status` | [customer_queue.js:179](../../customer_queue.js#L179) | `, wrap(async (req, res) => {` |
+| GET | `/api/customer-app-admin/:tenant/presence` | [customer_queue.js:150](../../customer_queue.js#L150) | `, wrap(async (req, res) => {` |
+| GET | `/api/customer-app-admin/:tenant/printer/status` | [customer_queue.js:272](../../customer_queue.js#L272) | `, wrap(async (req, res) => {` |
 | GET | `/api/customer-app-admin/:tenant/product-stats` | [product_insights_routes.js:9](../../product_insights_routes.js#L9) | `, wrap(async (req, res) => {` |
-| GET | `/api/customer-app-admin/:tenant/sellers` | [customer_queue.js:129](../../customer_queue.js#L129) | `, wrap(async (req, res) => {` |
-| GET | `/api/customer-app-admin/:tenant/state` | [customer_queue.js:219](../../customer_queue.js#L219) | `, state);` |
+| GET | `/api/customer-app-admin/:tenant/sellers` | [customer_queue.js:130](../../customer_queue.js#L130) | `, wrap(async (req, res) => {` |
+| GET | `/api/customer-app-admin/:tenant/state` | [customer_queue.js:220](../../customer_queue.js#L220) | `, state);` |
 | GET | `/api/customer-app-admin/:tenant/stats` | [queue_stats.js:108](../../queue_stats.js#L108) | `, wrap(async (req, res) => {` |
-| GET | `/api/customer-app-admin/:tenant/tickets/:id/delivery` | [customer_queue.js:251](../../customer_queue.js#L251) | `, wrap(async (req, res) => {` |
-| GET | `/api/customer-app/:tenant/config` | [customer_app_web.js:113](../../customer_app_web.js#L113) | `, async (req, res) => { try { const t=tenant(req.params.tenant),{ sellers: _privateSellers, ...publicConfig }=` |
-| GET | `/api/customer-app/:tenant/presence/:sessionId/status` | [customer_queue.js:172](../../customer_queue.js#L172) | `, wrap(async (req, res) => {` |
-| GET | `/api/customer-app/:tenant/queue` | [customer_queue.js:218](../../customer_queue.js#L218) | `, state);` |
-| GET | `/api/customer-app/:tenant/tickets/:id` | [customer_queue.js:348](../../customer_queue.js#L348) | `, wrap(async (req, res) => {` |
+| GET | `/api/customer-app-admin/:tenant/tickets/:id/delivery` | [customer_queue.js:252](../../customer_queue.js#L252) | `, wrap(async (req, res) => {` |
+| GET | `/api/customer-app/:tenant/config` | [customer_app_web.js:117](../../customer_app_web.js#L117) | `, async (req, res) => { try { const t=tenant(req.params.tenant),{ sellers: _privateSellers, ...publicConfig }=` |
+| GET | `/api/customer-app/:tenant/presence/:sessionId/status` | [customer_queue.js:173](../../customer_queue.js#L173) | `, wrap(async (req, res) => {` |
+| GET | `/api/customer-app/:tenant/queue` | [customer_queue.js:219](../../customer_queue.js#L219) | `, state);` |
+| GET | `/api/customer-app/:tenant/tickets/:id` | [customer_queue.js:350](../../customer_queue.js#L350) | `, wrap(async (req, res) => {` |
 | GET | `/api/customer-notifications/:tenant` | [customer_notifications.js:16](../../customer_notifications.js#L16) | `,requireAuth,async(req,res)=>{try{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,t))return res` |
 | GET | `/api/ext/ayuda` | [help_tool.js:2316](../../help_tool.js#L2316) | `, requireHelpExternalAccess, handleHelpQuery);` |
 | GET | `/api/ext/domain-status` | [endpoint.js:1490](../../endpoint.js#L1490) | `, requireDomainStatusAccess, async (req, res) => {` |
 | GET | `/api/ext/help/status` | [help_tool.js:2320](../../help_tool.js#L2320) | `, requireHelpExternalAccess, async (req, res) => {` |
 | GET | `/api/ext/help` | [help_tool.js:2314](../../help_tool.js#L2314) | `, requireHelpExternalAccess, handleHelpQuery);` |
-| GET | `/api/ext/qr/chat/messages` | [qr_product_web.js:1584](../../qr_product_web.js#L1584) | `, async (req, res) => {` |
-| GET | `/api/ext/qr/product` | [qr_product_web.js:1536](../../qr_product_web.js#L1536) | `, async (req, res) => {` |
+| GET | `/api/ext/qr/alternatives` | [qr_product_web.js:1615](../../qr_product_web.js#L1615) | `, async (req, res) => {` |
+| GET | `/api/ext/qr/chat/messages` | [qr_product_web.js:1640](../../qr_product_web.js#L1640) | `, async (req, res) => {` |
+| GET | `/api/ext/qr/product` | [qr_product_web.js:1567](../../qr_product_web.js#L1567) | `, async (req, res) => {` |
 | GET | `/api/ext/qr/scanner-assets/:asset` | [qr_local_scanner.js:131](../../qr_local_scanner.js#L131) | `, (req, res) => {` |
 | GET | `/api/ext/wweb/qr-image` | [endpoint.js:1648](../../endpoint.js#L1648) | `, requireWwebExternalAccess, async (req, res) => {` |
 | GET | `/api/ext/wweb/qr` | [endpoint.js:1590](../../endpoint.js#L1590) | `, requireWwebExternalAccess, async (req, res) => {` |
@@ -147,9 +148,9 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/comportamiento` | [endpoint.js:9247](../../endpoint.js#L9247) | `, async (req, res) => {` |
 | GET | `/comportamiento` | [src/web/web_admin.routes.js:360](../../src/web/web_admin.routes.js#L360) | `, async (req, res) => {` |
 | GET | `/contact-control` | [src/support/extension.js:108](../../src/support/extension.js#L108) | `, route(async (req, s, scope) => {` |
-| GET | `/customer-app/:tenant/` | [customer_queue.js:113](../../customer_queue.js#L113) | ` + mode, wrap(async (req, res) => {` |
-| GET | `/customer-app/:tenant` | [customer_app_web.js:112](../../customer_app_web.js#L112) | `, (req, res) => { const t = tenant(req.params.tenant); if (!t) return res.status(400).send("Dominio inválido")` |
-| GET | `/customer-app/download/android` | [customer_app_web.js:111](../../customer_app_web.js#L111) | `, (_req, res) => res.download(require('path').join(__dirname, 'Asisto-1.1.7.apk'), 'Asisto-1.1.7.apk'));` |
+| GET | `/customer-app/:tenant/` | [customer_queue.js:114](../../customer_queue.js#L114) | ` + mode, wrap(async (req, res) => {` |
+| GET | `/customer-app/:tenant` | [customer_app_web.js:116](../../customer_app_web.js#L116) | `, (req, res) => { const t = tenant(req.params.tenant); if (!t) return res.status(400).send("Dominio inválido")` |
+| GET | `/customer-app/download/android` | [customer_app_web.js:115](../../customer_app_web.js#L115) | `, (_req, res) => res.download(require('path').join(__dirname, 'Asisto-1.1.7.apk'), 'Asisto-1.1.7.apk'));` |
 | GET | `/drafts/:id/evidence` | [src/support/routes.js:62](../../src/support/routes.js#L62) | `, route((req, s, scope) => s.evidence(scope, req.params.id)));` |
 | GET | `/drafts/:id/mail` | [src/support/extension.js:51](../../src/support/extension.js#L51) | `, route(async (req,s,scope) => { const row = await rowFor(s,scope,req.params.id); return mailFactory(s).histor` |
 | GET | `/drafts/:id` | [src/support/extension.js:149](../../src/support/extension.js#L149) | `, route(async (req, s, scope) => {` |
@@ -177,8 +178,8 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/novedades` | [endpoint.js:1872](../../endpoint.js#L1872) | `, (_req, res) => {` |
 | GET | `/productos` | [endpoint.js:7942](../../endpoint.js#L7942) | `, async (req, res) => {` |
 | GET | `/productos` | [src/web/web_admin.routes.js:174](../../src/web/web_admin.routes.js#L174) | `, async (req, res) => {` |
-| GET | `/qr/:tenant/:codigo` | [qr_product_web.js:1485](../../qr_product_web.js#L1485) | `, async (req, res) => {` |
-| GET | `/qr/:tenant` | [qr_product_web.js:1468](../../qr_product_web.js#L1468) | `, async (req, res) => {` |
+| GET | `/qr/:tenant/:codigo` | [qr_product_web.js:1516](../../qr_product_web.js#L1516) | `, async (req, res) => {` |
+| GET | `/qr/:tenant` | [qr_product_web.js:1499](../../qr_product_web.js#L1499) | `, async (req, res) => {` |
 | GET | `/r` | [web_access_stats.js:501](../../web_access_stats.js#L501) | `, async (req, res) => {` |
 | GET | `/request/:code` | [src/support/devices.js:83](../../src/support/devices.js#L83) | `, route(async (req, s) => {` |
 | GET | `/resto/:tenant/:token` | [restaurant.js:86](../../restaurant.js#L86) | `, async (req, res) => {` |
@@ -197,8 +198,8 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/ui/configuracion` | [auth_ui.js:3649](../../auth_ui.js#L3649) | `, requireAuth, (req, res) => {` |
 | GET | `/ui/notificaciones-app` | [customer_notifications.js:15](../../customer_notifications.js#L15) | `,requireAuth,async(req,res)=>{const isSuper=String(req.user?.role&#124;&#124;'').toLowerCase()==='superadmin',` |
 | GET | `/ui/turnero/:tenant/estadisticas` | [queue_stats.js:97](../../queue_stats.js#L97) | `, wrap(async (req, res) => {` |
-| GET | `/ui/turnero/:tenant/vendedores` | [customer_queue.js:124](../../customer_queue.js#L124) | `, wrap(async (req, res) => {` |
-| GET | `/ui/turnero/:tenant` | [customer_queue.js:118](../../customer_queue.js#L118) | `, wrap(async (req, res) => {` |
+| GET | `/ui/turnero/:tenant/vendedores` | [customer_queue.js:125](../../customer_queue.js#L125) | `, wrap(async (req, res) => {` |
+| GET | `/ui/turnero/:tenant` | [customer_queue.js:119](../../customer_queue.js#L119) | `, wrap(async (req, res) => {` |
 | GET | `/usage` | [src/support/routes.js:72](../../src/support/routes.js#L72) | `, route((req, s, scope) => s.col('usage').find(scope).sort({ at: -1 }).limit(100).toArray()));` |
 | GET | `/webhook` | [endpoint.js:10738](../../endpoint.js#L10738) | `, async (req, res) => {` |
 | GET | `/webhook` | [src/whatsapp/webhook.routes.js:52](../../src/whatsapp/webhook.routes.js#L52) | `, async (req, res) => {` |
@@ -236,22 +237,24 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/api/conversation-followup/:id/send` | [conversation_followup_panel.js:1443](../../conversation_followup_panel.js#L1443) | `, async (req, res) => {` |
 | POST | `/api/conversation-followup/:id` | [conversation_followup_panel.js:1510](../../conversation_followup_panel.js#L1510) | `, async (req, res) => {` |
 | POST | `/api/conversation-followup/config` | [conversation_followup_panel.js:1118](../../conversation_followup_panel.js#L1118) | `, async (req, res) => {` |
-| POST | `/api/customer-app-admin/:tenant/sectors/:sector/:action` | [customer_queue.js:372](../../customer_queue.js#L372) | `, wrap(async (req, res) => {` |
-| POST | `/api/customer-app-admin/:tenant/settings` | [customer_queue.js:192](../../customer_queue.js#L192) | `, wrap(async (req, res) => {` |
-| POST | `/api/customer-app-admin/:tenant/tickets/:id/cancel` | [customer_queue.js:258](../../customer_queue.js#L258) | `, wrap(async (req, res) => {` |
-| POST | `/api/customer-app-admin/:tenant/tickets/:id/print` | [customer_queue.js:275](../../customer_queue.js#L275) | `, wrap(async (req, res) => {` |
-| POST | `/api/customer-app/:tenant/devices` | [customer_app_web.js:114](../../customer_app_web.js#L114) | `, async (req,res)=>{ try{const t=tenant(req.params.tenant),installId=clean(req.body.installId,120),pushToken=c` |
-| POST | `/api/customer-app/:tenant/presence/checkin` | [customer_queue.js:160](../../customer_queue.js#L160) | `, wrap(async (req, res) => {` |
-| POST | `/api/customer-app/:tenant/tickets/:id/cancel` | [customer_queue.js:357](../../customer_queue.js#L357) | `, wrap(async (req, res) => {` |
-| POST | `/api/customer-app/:tenant/tickets/:id/claim` | [customer_queue.js:309](../../customer_queue.js#L309) | `, wrap(async (req, res) => {` |
-| POST | `/api/customer-app/:tenant/tickets/:id/handoff` | [customer_queue.js:336](../../customer_queue.js#L336) | `, wrap(async (req, res) => {` |
-| POST | `/api/customer-app/:tenant/tickets` | [customer_queue.js:220](../../customer_queue.js#L220) | `, wrap(async (req, res) => {` |
+| POST | `/api/customer-app-admin/:tenant/sectors/:sector/:action` | [customer_queue.js:374](../../customer_queue.js#L374) | `, wrap(async (req, res) => {` |
+| POST | `/api/customer-app-admin/:tenant/settings` | [customer_queue.js:193](../../customer_queue.js#L193) | `, wrap(async (req, res) => {` |
+| POST | `/api/customer-app-admin/:tenant/tickets/:id/cancel` | [customer_queue.js:259](../../customer_queue.js#L259) | `, wrap(async (req, res) => {` |
+| POST | `/api/customer-app-admin/:tenant/tickets/:id/print` | [customer_queue.js:276](../../customer_queue.js#L276) | `, wrap(async (req, res) => {` |
+| POST | `/api/customer-app/:tenant/devices` | [customer_app_web.js:118](../../customer_app_web.js#L118) | `, async (req,res)=>{ try{const t=tenant(req.params.tenant),installId=clean(req.body.installId,120),pushToken=c` |
+| POST | `/api/customer-app/:tenant/presence/checkin` | [customer_queue.js:161](../../customer_queue.js#L161) | `, wrap(async (req, res) => {` |
+| POST | `/api/customer-app/:tenant/tickets/:id/cancel` | [customer_queue.js:359](../../customer_queue.js#L359) | `, wrap(async (req, res) => {` |
+| POST | `/api/customer-app/:tenant/tickets/:id/claim` | [customer_queue.js:310](../../customer_queue.js#L310) | `, wrap(async (req, res) => {` |
+| POST | `/api/customer-app/:tenant/tickets/:id/handoff` | [customer_queue.js:337](../../customer_queue.js#L337) | `, wrap(async (req, res) => {` |
+| POST | `/api/customer-app/:tenant/tickets/:id/handoff` | [deploy/mecan-install/patch-runtime.cjs:25](../../deploy/mecan-install/patch-runtime.cjs#L25) | `, wrap(async (req, res) => {", "  app.post('/api/customer-app/:tenant/tickets/:id/handoff', wrap(async (req, r` |
+| POST | `/api/customer-app/:tenant/tickets/:id/handoff` | [deploy/mecan-install/patch-runtime.cjs:25](../../deploy/mecan-install/patch-runtime.cjs#L25) | `, wrap(async (req, res) => {\n    const expiresAt = new Date(Date.now() + handoffDuration(req.body?.purpose));` |
+| POST | `/api/customer-app/:tenant/tickets` | [customer_queue.js:221](../../customer_queue.js#L221) | `, wrap(async (req, res) => {` |
 | POST | `/api/customer-notifications/:tenant` | [customer_notifications.js:18](../../customer_notifications.js#L18) | `,requireAuth,notificationJson,async(req,res)=>{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,` |
 | POST | `/api/ext/ayuda/chat-web` | [help_tool.js:2296](../../help_tool.js#L2296) | `, json, async (req, res) => {` |
 | POST | `/api/ext/ayuda` | [help_tool.js:2317](../../help_tool.js#L2317) | `, json, requireHelpExternalAccess, handleHelpQuery);` |
 | POST | `/api/ext/help` | [help_tool.js:2315](../../help_tool.js#L2315) | `, json, requireHelpExternalAccess, handleHelpQuery);` |
-| POST | `/api/ext/qr/chat` | [qr_product_web.js:1634](../../qr_product_web.js#L1634) | `, qrJson, async (req, res) => {` |
-| POST | `/api/ext/qr/photo` | [qr_product_web.js:1502](../../qr_product_web.js#L1502) | `, qrPhotoJson, async (req, res) => {` |
+| POST | `/api/ext/qr/chat` | [qr_product_web.js:1690](../../qr_product_web.js#L1690) | `, qrJson, async (req, res) => {` |
+| POST | `/api/ext/qr/photo` | [qr_product_web.js:1533](../../qr_product_web.js#L1533) | `, qrPhotoJson, async (req, res) => {` |
 | POST | `/api/ext/queue-sequence` | [queue_cloud_sync.js:84](../../queue_cloud_sync.js#L84) | `, express.json({ limit: '8kb' }), async (req, res) => {` |
 | POST | `/api/ext/queue-sync` | [queue_cloud_sync.js:96](../../queue_cloud_sync.js#L96) | `, express.json({ limit: '10mb' }), async (req, res) => {` |
 | POST | `/api/ext/wweb/agent/bootstrap` | [endpoint.js:915](../../endpoint.js#L915) | `, wwebAgentJson, async (req, res) => {` |
@@ -338,7 +341,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/webhooks/mercadopago/subscriptions` | [billing_subscriptions.js:120](../../billing_subscriptions.js#L120) | `, express.json({ limit: '16kb' }), async (req, res) => {` |
 | POST | `/work` | [src/support/devices.js:178](../../src/support/devices.js#L178) | `, route(async (req, s) => {` |
 | PUT | `/api/billing/accounts/:owner` | [billing_subscriptions.js:96](../../billing_subscriptions.js#L96) | `, auth.requireAuth, requireSuper, writeGuard, express.json({ limit: '8kb' }), wrap(async (req, res) => {` |
-| PUT | `/api/customer-app-admin/:tenant/sellers` | [customer_queue.js:133](../../customer_queue.js#L133) | `, wrap(async (req, res) => {` |
+| PUT | `/api/customer-app-admin/:tenant/sellers` | [customer_queue.js:134](../../customer_queue.js#L134) | `, wrap(async (req, res) => {` |
 | PUT | `/api/fleteros/viajes/:id` | [fleteros_viajes_panel.js:2965](../../fleteros_viajes_panel.js#L2965) | `, requireAuth, async (req, res) => {` |
 | PUT | `/api/monetization/config` | [monetization_config.js:49](../../monetization_config.js#L49) | `,auth.requireAuth,requireSuper,async(req,res)=>{const tenantId=tenant(req.body?.tenantId);if(!tenantId)return ` |
 | PUT | `/api/products/:id` | [endpoint.js:7739](../../endpoint.js#L7739) | `, async (req, res) => {` |
@@ -349,14 +352,14 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | PUT | `/memory` | [src/support/routes.js:75](../../src/support/routes.js#L75) | `, route((req, s, scope) => s.rememberContact(scope, req.body)));` |
 | PUT | `/settings` | [src/support/routes.js:45](../../src/support/routes.js#L45) | `, route((req, s, scope) => s.saveConfig(scope, req.body)));` |
 | PUT | `/tenant-settings` | [src/support/routes.js:46](../../src/support/routes.js#L46) | `, route((req, s, scope) => { admin(req); return s.saveConfig({ ...scope, userId: '*' }, req.body); }));` |
-| USE | `/api/customer-app-admin` | [customer_app_web.js:107](../../customer_app_web.js#L107) | `, express.json({ limit: "32kb" }));` |
-| USE | `/api/customer-app` | [customer_app_web.js:106](../../customer_app_web.js#L106) | `, express.json({ limit: "32kb" }));` |
+| USE | `/api/customer-app-admin` | [customer_app_web.js:111](../../customer_app_web.js#L111) | `, express.json({ limit: "32kb" }));` |
+| USE | `/api/customer-app` | [customer_app_web.js:110](../../customer_app_web.js#L110) | `, express.json({ limit: "32kb" }));` |
 | USE | `/api/support/device` | [src/support/routes.js:120](../../src/support/routes.js#L120) | `, createDeviceRouter({ getService, publicOrigin }));` |
 | USE | `/api/support/extension` | [src/support/routes.js:121](../../src/support/routes.js#L121) | `, createExtensionRouter({ getService }));` |
 | USE | `/api/support` | [src/support/routes.js:122](../../src/support/routes.js#L122) | `, createRouter({ getService, publicOrigin }));` |
 | USE | `/api/support` | [src/support/routes.js:124](../../src/support/routes.js#L124) | `, (req, res) => {` |
 | USE | `/api/wweb` | [endpoint.js:485](../../endpoint.js#L485) | `, auth.requireWwebAccess);` |
-| USE | `/customer-app/assets` | [customer_app_web.js:108](../../customer_app_web.js#L108) | `, express.static(require('path').join(__dirname, 'static', 'turnero')));` |
+| USE | `/customer-app/assets` | [customer_app_web.js:112](../../customer_app_web.js#L112) | `, express.static(require('path').join(__dirname, 'static', 'turnero')));` |
 | USE | `/static/clientes` | [endpoint.js:151](../../endpoint.js#L151) | `, express.static(path.join(__dirname, "static", "clientes")));` |
 | USE | `/static` | [endpoint.js:154](../../endpoint.js#L154) | `, express.static(path.join(__dirname, "static")));` |
 | USE | `/static` | [endpoint.js:157](../../endpoint.js#L157) | `, express.static(path.join(__dirname)));` |

@@ -12,10 +12,13 @@ async function linkReservedTicket() {
     history.replaceState(null, '', location.pathname + '?view=ticket');
     await refreshTicket();
     setupTicketNotices();
+    try { if (window.AsistoNative?.completeInstallTicket) window.AsistoNative.completeInstallTicket(x.id); } catch (_) {}
+    if (typeof offerMecanInstall === 'function') offerMecanInstall(x);
   } catch (e) { el('sectorLabel').textContent = 'No se pudo guardar el turno'; el('ticketNumber').textContent = '—'; el('ahead').textContent = e.message; }
   return true;
 }
 function setupTicketNotices() {
+  if (typeof restoreMecanInstallReturn === 'function') restoreMecanInstallReturn(localStorage.asistoTicketId);
   if (!localStorage.asistoTicketId || el('ticketNotices')) return;
   const box = document.createElement('div'); box.id = 'ticketNotices'; box.style.cssText = 'padding:11px 14px;margin-top:12px;border-radius:14px;background:#eef7f2';
   const message = document.createElement('p'); message.style.cssText = 'font-size:13px;line-height:1.35;margin:0 0 9px';

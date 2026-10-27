@@ -2,6 +2,7 @@
 const { ObjectId } = require('mongodb');
 const { createHmac, timingSafeEqual, randomBytes, createHash } = require('node:crypto');
 const QRCode = require('qrcode');
+const { handoffDuration } = require('./queue_install');
 const { queuePage, sellerSettingsPage } = require('./queue_pages');
 const { createQueueNotifications } = require('./queue_notifications');
 const { mountQueueStats, listStatsTenants } = require('./queue_stats');
@@ -335,15 +336,16 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
   }));
   app.post('/api/customer-app/:tenant/tickets/:id/handoff', wrap(async (req, res) => {
     const { t, db, base } = await scope(req), installId = clean(req.body?.installId);
+    const expiresAt = new Date(Date.now() + handoffDuration(req.body?.purpose));
     if (!ObjectId.isValid(req.params.id)) fail(404, 'Turno inexistente');
     const code = randomBytes(32).toString('base64url');
     await serial(t, async () => {
       const tickets = db.collection('queue_tickets'), doc = await tickets.findOne({ ...base, _id: new ObjectId(req.params.id) });
       if (!doc?.claimedAt || !owns(doc, installId)) fail(403, 'No autorizado para este turno.');
       if (!active.includes(doc.status)) fail(410, 'El turno finalizó.');
-      await tickets.updateOne({ _id: doc._id }, { $set: { handoffHash: hash(code), handoffExpiresAt: new Date(Date.now() + 180000) } });
+      await tickets.updateOne({ _id: doc._id }, { $set: { handoffHash: hash(code), handoffExpiresAt: expiresAt } });
     });
-    res.json({ code });
+    res.json({ code, expiresAt });
   }));
   app.get('/api/customer-app/:tenant/tickets/:id', wrap(async (req, res) => {
     const { t, db } = await scope(req);

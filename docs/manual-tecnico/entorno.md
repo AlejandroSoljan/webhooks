@@ -84,6 +84,7 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `MANAGER_API_KEY` | [fleteros_viajes_panel.js:30](../../fleteros_viajes_panel.js#L30) |
 | `MANAGER_API_URL` | [fleteros_viajes_panel.js:28](../../fleteros_viajes_panel.js#L28) |
 | `MANAGER_API_VERSION` | [fleteros_viajes_panel.js:29](../../fleteros_viajes_panel.js#L29) |
+| `MECAN_INSTALL_PROMPT_ENABLED` | [customer_app_web.js:92](../../customer_app_web.js#L92); [deploy/mecan-install/patch-runtime.cjs:21](../../deploy/mecan-install/patch-runtime.cjs#L21) |
 | `MIN_LEASE_MS` | [app_asisto_ws.js:172](../../app_asisto_ws.js#L172) |
 | `MONGO_DB` | [app_asisto_ws.js:60](../../app_asisto_ws.js#L60) |
 | `MONGO_URI` | [app_asisto_ws.js:54](../../app_asisto_ws.js#L54); [src/script/migrate_products_tenant.js:6](../../src/script/migrate_products_tenant.js#L6) |
@@ -106,21 +107,21 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `ORDER_CONFIG_CACHE_TTL_MS` | [order_config.js:9](../../order_config.js#L9) |
 | `PHONE_NUMBER_ID` | [logic.js:22](../../logic.js#L22); [wa_inbox_panel.js:19](../../wa_inbox_panel.js#L19) |
 | `PORT` | [endpoint.js:12510](../../endpoint.js#L12510); [endpoint.js:12518](../../endpoint.js#L12518); [server.js:6](../../server.js#L6) |
-| `PUBLIC_BASE_URL` | [auth_ui.js:24](../../auth_ui.js#L24); [customer_queue.js:65](../../customer_queue.js#L65); [endpoint.js:1856](../../endpoint.js#L1856); [restaurant.js:30](../../restaurant.js#L30); [restaurant.js:178](../../restaurant.js#L178); [restaurant.js:227](../../restaurant.js#L227); [restaurant.js:237](../../restaurant.js#L237); [src/support/config.js:8](../../src/support/config.js#L8) |
+| `PUBLIC_BASE_URL` | [auth_ui.js:24](../../auth_ui.js#L24); [customer_queue.js:66](../../customer_queue.js#L66); [endpoint.js:1856](../../endpoint.js#L1856); [restaurant.js:30](../../restaurant.js#L30); [restaurant.js:178](../../restaurant.js#L178); [restaurant.js:227](../../restaurant.js#L227); [restaurant.js:237](../../restaurant.js#L237); [src/support/config.js:8](../../src/support/config.js#L8) |
 | `QR_CONFIG_CACHE_MS` | [qr_product_web.js:33](../../qr_product_web.js#L33) |
 | `QR_PRODUCT_API_MAX_CONCURRENT` | [qr_product_web.js:36](../../qr_product_web.js#L36) |
 | `QR_PRODUCT_API_QUEUE_MAX` | [qr_product_web.js:37](../../qr_product_web.js#L37) |
 | `QR_PRODUCT_API_QUEUE_WAIT_MS` | [qr_product_web.js:38](../../qr_product_web.js#L38) |
 | `QUEUE_LOCAL_NETWORK_ACCESS` | [product_insights.js:114](../../product_insights.js#L114); [product_insights_routes.js:11](../../product_insights_routes.js#L11); [product_insights_routes.js:21](../../product_insights_routes.js#L21) |
-| `QUEUE_OPEN_TENANTS` | [customer_queue.js:65](../../customer_queue.js#L65) |
+| `QUEUE_OPEN_TENANTS` | [customer_queue.js:66](../../customer_queue.js#L66) |
 | `QUEUE_PORT` | [turnero_server.js:33](../../turnero_server.js#L33) |
-| `QUEUE_PRESENCE_SECRET` | [customer_queue.js:65](../../customer_queue.js#L65) |
+| `QUEUE_PRESENCE_SECRET` | [customer_queue.js:66](../../customer_queue.js#L66) |
 | `QUEUE_PRINTER_NAME` | [queue_printer.js:28](../../queue_printer.js#L28) |
 | `QUEUE_SERVER_PRINT` | [queue_printer.js:27](../../queue_printer.js#L27) |
 | `QUEUE_SYNC_EVERY_MS` | [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
-| `QUEUE_SYNC_SECRET` | [customer_queue.js:28](../../customer_queue.js#L28); [product_insights.js:115](../../product_insights.js#L115); [product_insights.js:116](../../product_insights.js#L116); [queue_cloud_sync.js:82](../../queue_cloud_sync.js#L82); [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
+| `QUEUE_SYNC_SECRET` | [customer_queue.js:29](../../customer_queue.js#L29); [product_insights.js:115](../../product_insights.js#L115); [product_insights.js:116](../../product_insights.js#L116); [queue_cloud_sync.js:82](../../queue_cloud_sync.js#L82); [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
 | `QUEUE_SYNC_TENANTS` | [queue_cloud_sync.js:82](../../queue_cloud_sync.js#L82); [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
-| `QUEUE_SYNC_URL` | [customer_queue.js:28](../../customer_queue.js#L28); [product_insights.js:115](../../product_insights.js#L115); [product_insights.js:116](../../product_insights.js#L116); [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
+| `QUEUE_SYNC_URL` | [customer_queue.js:29](../../customer_queue.js#L29); [product_insights.js:115](../../product_insights.js#L115); [product_insights.js:116](../../product_insights.js#L116); [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
 | `RENDER_SERVICE_NAME` | [db.js:70](../../db.js#L70) |
 | `SERVICE_NAME` | [db.js:71](../../db.js#L71) |
 | `SIMULATED_NOW_ISO` | [logic.js:27](../../logic.js#L27) |
@@ -134,7 +135,7 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `SUPPORT_ENCRYPTION_KEYS` | [src/support/crypto.js:36](../../src/support/crypto.js#L36); [src/support/crypto.js:37](../../src/support/crypto.js#L37) |
 | `SUPPORT_HUBSPOT_ENABLED` | [src/support/routes.js:16](../../src/support/routes.js#L16) |
 | `SUPPORT_PUBLIC_ORIGIN` | [src/support/config.js:8](../../src/support/config.js#L8) |
-| `SUPPORT_TASK_MODEL` | [src/support/title_analyzer.js:36](../../src/support/title_analyzer.js#L36) |
+| `SUPPORT_TASK_MODEL` | [src/support/title_analyzer.js:43](../../src/support/title_analyzer.js#L43) |
 | `SUPPORT_TRANSCRIBER_MODEL` | [src/support/baileys.js:162](../../src/support/baileys.js#L162); [src/support/transcriber.js:12](../../src/support/transcriber.js#L12) |
 | `SUPPORT_TRANSCRIBER_TOKEN` | [src/support/baileys.js:164](../../src/support/baileys.js#L164) |
 | `SUPPORT_TRANSCRIBER_URL` | [src/support/baileys.js:159](../../src/support/baileys.js#L159); [src/support/baileys.js:160](../../src/support/baileys.js#L160); [src/support/transcriber.js:11](../../src/support/transcriber.js#L11) |

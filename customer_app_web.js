@@ -5,6 +5,7 @@ const { ObjectId } = require("mongodb");
 const { getDb } = require("./db");
 const { firebaseSender } = require("./customer_notifications");
 const { linkReservedTicket, setupTicketNotices, enableTicketAlerts, ticketAlert, armDefaultTicketAlerts } = require('./queue_mobile');
+const { offerMecanInstall, restoreMecanInstallReturn } = require('./queue_install');
 const { mountQueue } = require("./customer_queue");
 
 const DEFAULT_SECTORS = [
@@ -88,6 +89,9 @@ function ticketIds(){let ids=[];try{ids=JSON.parse(localStorage.asistoTicketIds|
 let claimPending=new URLSearchParams(location.search).has('claim');
 let ticketAudioContext=null;let ticketAlertsEnabled=true;
 ${linkReservedTicket.toString()}
+const MECAN_INSTALL_PROMPT_ENABLED=${/^(1|true)$/i.test(process.env.MECAN_INSTALL_PROMPT_ENABLED || '')};
+${offerMecanInstall.toString()}
+${restoreMecanInstallReturn.toString()}
 ${setupTicketNotices.toString()}
 ${enableTicketAlerts.toString()}
 ${ticketAlert.toString()}

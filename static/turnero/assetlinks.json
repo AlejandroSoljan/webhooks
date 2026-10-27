@@ -10,5 +10,17 @@
         "45:A5:2D:AB:8C:88:F8:B9:52:A8:35:CB:C3:37:41:FB:68:C8:81:AE:B1:98:D2:7E:48:F1:7F:9F:84:09:D4:90"
       ]
     }
+  },
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "ar.com.asisto.mecan",
+      "sha256_cert_fingerprints": [
+        "2F:78:86:C6:AB:EC:DC:D4:F3:AF:F6:5D:3D:1A:72:21:C0:6E:CC:4B:24:0D:DC:C9:D2:D8:72:76:3A:F3:2B:F7",
+        "9A:63:9D:FA:C1:88:65:AD:B2:F9:B8:DE:7D:A6:37:BC:6F:7E:F2:30:DA:74:E6:22:64:14:1E:BB:D1:04:E2:45",
+        "B7:63:50:F1:BD:A8:4B:C7:C8:91:BB:16:7C:E4:AA:20:32:A8:5B:36:F7:73:81:7A:1E:54:C8:5F:E2:21:47:EC"
+      ]
+    }
   }
 ]

@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.AsistoScanner" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/asisto_teal</item>
+        <item name="colorPrimaryVariant">@color/asisto_navy</item>
+        <item name="colorOnPrimary">@color/asisto_navy</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:statusBarColor">@color/asisto_navy</item>
+    </style>
+</resources>
