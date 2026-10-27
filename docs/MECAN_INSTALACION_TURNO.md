@@ -26,3 +26,12 @@ El script `deploy/mecan-install/patch-runtime.cjs` aplica los puntos de integrac
 ## Verificación
 
 Pruebas DOM: visibilidad, cierre, referrer con el mismo id, almacenamiento anterior a navegación, regreso desde tienda y error de API sin navegación. Integración Mongo aislada: token de instalación más allá del vencimiento del QR inicial, id/número únicos, autorización y rechazo de replay. Android: validación de referrer, sin URLs externas ni parámetros ambiguos; compilar AAB/APK firmado y pruebas JVM. Pendiente siempre documentar la prueba física Play → instalación → mismo turno y aprobación/publicación de Play.
+
+## Registro de publicación, 2026-10-27
+
+- Código publicado en `main`: `a28aa17490748808171df6914fbfdc6ada772af5`.
+- Turnero AWS y turnero local Mecan: release `v5.00.313-mecan-install-20261027`, servicios activos y `/healthz` correcto. Conservan sus diferencias operativas y su release anterior para reversión.
+- URL pública MCN comprobada: contiene las funciones de instalación y regreso, con invitación **apagada**. `/.well-known/assetlinks.json` público conserva Scanner e incluye Mecan con sus tres certificados de Play.
+- Mecan 1.0.1 (2): AAB firmado aceptado por Play Console y enviado a revisión de producción (100% de los países ya configurados). Console muestra «Cambios en la etapa de revisión», con verificaciones rápidas todavía en curso; esto no acredita aprobación ni disponibilidad en la tienda.
+- Resultado local: 43/43 pruebas Node focalizadas, 3/3 pruebas JVM y compilación release firmada. No había teléfono conectado para la prueba física de instalación.
+- Pendiente: confirmar release activo del backend principal después de su despliegue automático; aprobación/distribución Play y prueba física antes de activar la invitación. No activar por el solo hecho de terminar la compilación o enviar a revisión.
