@@ -10,4 +10,6 @@ Se guardó el bloque HTTP anterior como `/etc/nginx/sites-available/asisto.com.a
 
 Verificación: TLS público válido desde Windows, ambas raíces redirigen a `/login`, `/healthz` devuelve `{"ok":true}` en ambos nombres y en asistobot.com.ar. Las sesiones del navegador son independientes por nombre: iniciar sesión nuevamente al cambiar de dominio es normal.
 
+Prueba de renovación ACME staging completada correctamente el 2026-10-27, incluido el deploy hook (nginx válido y recarga). La prueba manual usó `--no-random-sleep-on-renew`; no se quitó la espera aleatoria de la tarea programada.
+
 Operación: `sudo nginx -t`, `sudo systemctl status certbot.timer`, `sudo certbot certificates`, `sudo certbot renew --cert-name asisto.com.ar --dry-run --run-deploy-hooks`. No reiniciar Mongo ni el backend para renovar un certificado.
