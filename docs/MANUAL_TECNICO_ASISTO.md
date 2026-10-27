@@ -129,6 +129,8 @@ Probar `/healthz`, login y una operación del módulo elegido. Salud HTTP no pru
 
 ### AWS actual
 
+Control de consumos 5.00.314: resumen inicial de ventanas con `details=0` no recorre el historial manual/real de WhatsApp. Ese recuento sigue disponible al abrir el detalle (`details=1`, sólo superadmin). El gráfico carga de forma independiente; si falla no oculta el resumen completo. Las consultas del navegador tienen 45 segundos de límite y el detalle real Mongo 60 segundos; errores dejan el total a cobrar como **Pendiente / reporte incompleto**, nunca como cero válido. No cambian tarifas, importes históricos ni el método de cobro por ventanas. Verificación: pruebas `token_control_lazy`, `token_control_api_messages`, `token_control_window_prices`, `token_control_groups` y reporte autenticado en AWS.
+
 Dominio adicional `asisto.com.ar` y `www.asisto.com.ar`: configuración HTTPS, certificado, renovación y recuperación documentados en [deploy/asisto-domain/README.md](../deploy/asisto-domain/README.md). Se conserva `asistobot.com.ar` sin redirección forzada ni cambios a integraciones existentes.
 
 El alias SSH `asisto-aws` usa el acceso configurado en la PC. En esta instalación incluye un túnel loopback `127.0.0.1:37017` hacia MongoDB del servidor; conservarlo privado. No cambiar rutas de red ni la conexión del servidor de Mecan para publicar el backend.

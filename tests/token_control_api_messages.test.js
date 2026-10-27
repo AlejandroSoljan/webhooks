@@ -25,6 +25,21 @@ after(async () => {
   await mongo?.stop();
 });
 
+test('resumen conserva cobro por ventana sin consultar conversaciones manuales', async () => {
+  await db.collection('wa_api_message_windows').insertOne({tenantId:'FAST',windowStartedAt:new Date('2026-10-01T12:00:00Z'),currency:'ARS',amount:40,unitValue:40,messageCount:2,messages:[]});
+  const original=db.collection.bind(db);
+  db.collection=function(name,...args){
+    assert.notEqual(name,'wa_wweb_message_log','el resumen inicial no debe procesar el historial manual');
+    return original(name,...args);
+  };
+  try {
+    const result=await buildApiMessageWindowBilling({tenantId:'FAST',includeDetails:false});
+    assert.equal(result.totals.windows,1);
+    assert.equal(result.totals.byCurrency.ARS,40);
+    assert.deepEqual(result.realItems,[]);
+  } finally {db.collection=original;}
+});
+
 test('excluye eventos salientes vacíos y conserva medios sin texto', async () => {
   const at = new Date('2026-09-30T12:00:00.000Z');
   await db.collection('tenant_config').insertOne({ _id: 'TFG', nom_emp: 'TFG' });

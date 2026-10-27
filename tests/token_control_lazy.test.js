@@ -6,6 +6,37 @@ const { renderTokenControlPage } = require('../token_control_stats');
 
 const tick = () => new Promise(resolve => setTimeout(resolve, 25));
 
+test('un gráfico pendiente no bloquea el resumen completo ni los importes', async () => {
+  const dom = new JSDOM(renderTokenControlPage({role:'superadmin',tenantId:'CARICO'},['CARICO']), {url:'https://asisto.com.ar/admin/token-control',runScripts:'outside-only'});
+  try {
+    dom.window.fetch=async url=>{
+      if(String(url).includes('/timeline'))return new Promise(()=>{});
+      const body=String(url).includes('/token-control/summary')
+        ? {ok:true,items:[{tenantId:'CARICO',total_tokens:100,events:1,billed_cost:2,real_cost:1,billing_configured:true}],totals:{total_tokens:100,billed_cost:2,real_cost:1}}
+        : String(url).includes('/exchange-rate') ? {ok:true,rate:1500,source:'BCRA'}
+        : {ok:true,items:[],byTenant:[],byDomain:[],totals:{byCurrency:{}}};
+      return {ok:true,json:async()=>body};
+    };
+    dom.window.eval([...dom.window.document.scripts].pop().textContent);
+    await tick();
+    assert.equal(dom.window.document.getElementById('kpiTokens').textContent,'100');
+    assert.doesNotMatch(dom.window.document.getElementById('kpiBilledCost').textContent,/Pendiente|Cargando/);
+    assert.doesNotMatch(dom.window.document.getElementById('billingHealth').textContent,/Revisando configuración/);
+    assert.match(dom.window.document.getElementById('rows').textContent,/CARICO/);
+  } finally {dom.window.close();}
+});
+
+test('respuesta inválida no se presenta como un total cero válido', async () => {
+  const dom = new JSDOM(renderTokenControlPage({role:'superadmin',tenantId:'CARICO'},['CARICO']), {url:'https://asisto.com.ar/admin/token-control',runScripts:'outside-only'});
+  try {
+    dom.window.fetch=async()=>({ok:true,json:async()=>{throw Error('HTML de login');}});
+    dom.window.eval([...dom.window.document.scripts].pop().textContent);
+    await tick();
+    assert.equal(dom.window.document.getElementById('kpiBilledCost').textContent,'Pendiente');
+    assert.match(dom.window.document.getElementById('billingHealth').textContent,/Reporte incompleto/);
+  } finally {dom.window.close();}
+});
+
 test('control de consumos carga totales primero y detalles sólo al pedirlos', async () => {
   const dom = new JSDOM(renderTokenControlPage({ role: 'superadmin', tenantId: 'CARICO' }, ['RVL', 'MCN', 'CARICO']), { url: 'https://asistobot.com.ar/admin/token-control', runScripts: 'outside-only' });
   try {

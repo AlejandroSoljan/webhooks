@@ -543,15 +543,15 @@ async function buildApiMessageWindowBilling({
     ] } } }
   ];
   const [realMessageRows, realDocs] = await Promise.all([
-    db.collection('wa_wweb_message_log').aggregate([
+    includeDetails ? db.collection('wa_wweb_message_log').aggregate([
       ...realPipeline,
       { $group: { _id: '$tenantId', messages: { $sum: 1 }, last_at: { $max: '$at' } } }
-    ]).toArray(),
+    ], { allowDiskUse: true, maxTimeMS: 60000 }).toArray() : Promise.resolve([]),
     includeDetails ? db.collection('wa_wweb_message_log').aggregate([
       ...realPipeline,
       { $sort: { at: -1 } },
       { $limit: safeLimit }
-    ]).toArray() : Promise.resolve([])
+    ], { allowDiskUse: true, maxTimeMS: 60000 }).toArray() : Promise.resolve([])
   ]);
   const realMessagesByTenant = new Map(realMessageRows.map(row => [String(row._id || ''), row]));
 
@@ -2226,13 +2226,21 @@ function renderTokenControlPage(user, tenants = []) {
   }
 
   async function getJson(url){
+    const controller = new AbortController();
+    const timeout = setTimeout(function(){ controller.abort(); }, 45000);
+    try {
     const r = await fetch(url, {
       headers: { 'Accept':'application/json' },
-      credentials: 'same-origin'
+      credentials: 'same-origin', signal: controller.signal
     });
     const j = await r.json().catch(() => null);
     if (!r.ok) throw new Error((j && (j.error || j.message)) || ('HTTP ' + r.status));
-    return j || {};
+    if (!j || typeof j !== 'object') throw new Error('Respuesta inválida. Volvé a iniciar sesión y reintentá.');
+    return j;
+    } catch(error) {
+      if(error && error.name === 'AbortError') throw new Error('La consulta demoró demasiado. Reintentá o elegí un rango menor.');
+      throw error;
+    } finally { clearTimeout(timeout); }
   }
 
   function mergeAmountMaps(){
@@ -2588,6 +2596,9 @@ function renderTokenControlPage(user, tenants = []) {
   async function load(){
     const sequence=++loadSequence;
     msgEl.textContent = '';
+    kpiTokens.textContent = 'Cargando…';
+    if(kpiRealCost)kpiRealCost.textContent = 'Cargando…';
+    kpiBilledCost.textContent = 'Pendiente';
     rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '7' : '6') + '" class="small">Cargando…</td></tr>';
     resetDetails();
 
@@ -2595,24 +2606,36 @@ function renderTokenControlPage(user, tenants = []) {
       const summaryUrl = '/api/token-control/summary?' + buildQuery(false).toString();
       const monetizationQuery=new URLSearchParams();const selectedTenant=String(tenantEl.value||'').trim();if(selectedTenant)monetizationQuery.set('tenantId',selectedTenant);if(fromEl.value)monetizationQuery.set('from',fromEl.value);if(toEl.value)monetizationQuery.set('to',toEl.value);
       const summaryQuery=buildQuery(false).toString();
+      // El gráfico no debe bloquear los importes completos de facturación.
+      getJson('/api/token-control/timeline?'+summaryQuery).then(function(timeline){
+        if(sequence===loadSequence)renderTimeline(timeline);
+      }).catch(function(){
+        if(sequence===loadSequence)domainChart.textContent='No se pudo cargar el gráfico. Actualizá para reintentar.';
+      });
       const result = await Promise.all([
-        getJson(summaryUrl),
+        getJson(summaryUrl).then(function(summary){
+          if(sequence===loadSequence){
+            kpiTokens.textContent=fmtInt(summary.totals&&summary.totals.total_tokens||0);
+            if(kpiRealCost)kpiRealCost.textContent=fmtMoney(summary.totals&&summary.totals.real_cost||0);
+          }
+          return summary;
+        }),
         getJson('/api/monetization/summary?'+monetizationQuery.toString()),
         getJson('/api/token-control/api-message-windows?'+summaryQuery+'&details=0'),
-        getJson('/api/token-control/timeline?'+summaryQuery),
         getJson('/api/token-control/exchange-rate')
       ]);
       if(sequence!==loadSequence)return;
       lastTokenSummary=result[0];
       lastMonetizationSummary=result[1];
       lastApiSummary=result[2];
-      lastExchangeRate=result[4];
+      lastExchangeRate=result[3];
       renderDomainSummary(lastTokenSummary,lastApiSummary,lastMonetizationSummary,lastExchangeRate);
       renderMonetization(lastMonetizationSummary);
-      renderTimeline(result[3]);
     } catch(e){
       if(sequence!==loadSequence)return;
       msgEl.textContent = e && e.message ? e.message : String(e);
+      kpiBilledCost.textContent = 'Pendiente';
+      billingHealth.textContent = 'Reporte incompleto: no usar para cobrar. Reintentá la carga.';
       rowsEl.innerHTML = '<tr><td colspan="' + (isSuper ? '7' : '6') + '" class="small">Error cargando datos.</td></tr>';
     }
   }
