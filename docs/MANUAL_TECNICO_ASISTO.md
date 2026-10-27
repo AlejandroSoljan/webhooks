@@ -129,6 +129,8 @@ Probar `/healthz`, login y una operación del módulo elegido. Salud HTTP no pru
 
 ### AWS actual
 
+Dominio adicional `asisto.com.ar` y `www.asisto.com.ar`: configuración HTTPS, certificado, renovación y recuperación documentados en [deploy/asisto-domain/README.md](../deploy/asisto-domain/README.md). Se conserva `asistobot.com.ar` sin redirección forzada ni cambios a integraciones existentes.
+
 El alias SSH `asisto-aws` usa el acceso configurado en la PC. En esta instalación incluye un túnel loopback `127.0.0.1:37017` hacia MongoDB del servidor; conservarlo privado. No cambiar rutas de red ni la conexión del servidor de Mecan para publicar el backend.
 
 ```powershell
