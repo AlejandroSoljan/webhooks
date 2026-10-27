@@ -1853,7 +1853,7 @@ function resolveTenantId(req) {
 // Evitamos que "/" redirija a /app (privado). Si los crawlers caen en login,
 // suelen mostrar "no se puede mostrar la descripción". Esta landing es indexable
 // y define description + og:image (logo) para snippets.
-const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "https://www.asistobot.com.ar").trim();
+const PUBLIC_BASE_URL = require('./public_seo').PUBLIC_SEO_ORIGIN;
 function absUrl(p = "/") {
   const base = String(PUBLIC_BASE_URL || "").replace(/\/+$/g, "");
   const path = String(p || "/").startsWith("/") ? String(p || "/") : `/${p}`;
@@ -1865,7 +1865,7 @@ app.get("/", async (req, res) => {
     ? req.originalUrl.slice(req.originalUrl.indexOf("?"))
     : "";
   await recordPublicVisit({ req, res, overrides: { app: "sitio_asisto", placement: "inicio", destination: "/login" + qs } });
-  return res.redirect(302, "/login" + qs);
+  return res.status(200).send(auth.publicLandingPage({ to: req.query?.to || '/app', msg: '', error: '' }));
 });
 
 // ===================== Novedades públicas =====================

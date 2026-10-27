@@ -22,6 +22,7 @@ const { queueLeadWhatsAppAlert } = require("./lead_notification");
 const { CONFIG_SECTIONS, configurationState, navigationGroups, icon: menuIcon } = require("./admin_navigation");
 const { dashboardHtml, mountOperationsDashboard } = require('./operations_dashboard');
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || "https://www.asistobot.com.ar"; // ej: https://tudominio.com
+const { PUBLIC_SEO_ORIGIN, publicSeoUrl } = require('./public_seo');
 
 
 const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || "asisto_sess";
@@ -1517,24 +1518,27 @@ function appShell({ title, user, active, main }) {
 }
 
 function loginSeoHead({ baseUrl }) {
-  const canonical = absUrl(baseUrl, "/login");
-  const ogImage = absUrl(baseUrl, "/static/logo.png");
+  const canonical = publicSeoUrl('/');
+  const ogImage = publicSeoUrl('/static/logo-asisto-transparent.png');
   // Ajustá el texto si querés apuntar a un nicho (heladería/rotisería/super, etc.)
-  const desc = "Asisto Bot, Lo hace por vos.. Asistente con Inteligencia artificial, automatiza tus conversaciones por whatsapp y tu sistema de gestión. Venado Tuerto - Santa Fe - Argentina";
+  const desc = "Asisto: inteligencia artificial y automatización para tu negocio. Conversaciones por WhatsApp, tareas, turnos e integración con tu sistema de gestión. Venado Tuerto, Santa Fe, Argentina.";
   return `
   <link rel="canonical" href="${htmlEscape(canonical)}"/>
   <meta name="description" content="${htmlEscape(desc)}"/>
   <meta property="og:type" content="website"/>
- <meta property="og:title" content="Asisto — IA - Whatsapp"/>
+ <meta property="og:title" content="Asisto | Inteligencia artificial y automatización para tu negocio"/>
+  <meta property="og:site_name" content="Asisto"/>
   <meta property="og:description" content="${htmlEscape(desc)}"/>
   <meta property="og:url" content="${htmlEscape(canonical)}"/>
   <meta property="og:image" content="${htmlEscape(ogImage)}"/>
   <meta name="twitter:card" content="summary_large_image"/>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"Asisto","url":"https://asisto.com.ar/"}</script>
   <script type="application/ld+json">
  {
     "@context":"https://schema.org",
     "@type":"SoftwareApplication",
     "name":"Asisto",
+    "url":"https://asisto.com.ar/",
     "applicationCategory":"BusinessApplication",
    "operatingSystem":"Web",
     "description":"${desc.replace(/"/g, '\\"')}"
@@ -1550,7 +1554,7 @@ function loginPage({ error, msg, to, baseUrl }) {
   
 
     return pageShell({
-    title: "Login · Asisto",
+    title: "Asisto | Inteligencia artificial y automatización para tu negocio",
     user: null,
     // /login es tu página pública principal => indexable
     robots: "index,follow",
@@ -3561,7 +3565,7 @@ function mountAuthRoutes(app) {
     const baseUrl =
       PUBLIC_BASE_URL ||
       `${req.protocol}://${req.get("host")}`;
-    const sitemapUrl = absUrl(baseUrl, "/sitemap.xml");
+    const sitemapUrl = publicSeoUrl('/sitemap.xml');
     res.set("Content-Type", "text/plain; charset=utf-8");
     return res.status(200).send(
       [
@@ -3583,8 +3587,8 @@ function mountAuthRoutes(app) {
     const baseUrl =
       PUBLIC_BASE_URL ||
       `${req.protocol}://${req.get("host")}`;
-    const loginUrl = absUrl(baseUrl, "/login");
-    const novedadesUrl = absUrl(baseUrl, "/novedades");
+    const loginUrl = publicSeoUrl('/');
+    const novedadesUrl = publicSeoUrl('/novedades');
     res.set("Content-Type", "application/xml; charset=utf-8");
     return res.status(200).send(
       `<?xml version="1.0" encoding="UTF-8"?>\n` +
@@ -6358,6 +6362,7 @@ function protectRoutes(app) {
 }
 
 module.exports = {
+  publicLandingPage: options => loginPage({ ...options, baseUrl: PUBLIC_SEO_ORIGIN }),
   attachUser,
   requireAuth,
   requireAdmin,
