@@ -19,7 +19,7 @@ function receiptText(ticket) {
     center(ticket.businessName || 'Turnero'), '', center(ticket.sectorName || ''), '',
     center(ticket.displayNumber || '', 20), '', center(createdAt), '',
     center('Mira la pantalla de llamados.'), center('Conserva este numero si te derivan.'), '',
-    center('Powered by Asisto'), center('www.asistobot.com.ar'), '', '', '',
+    center('Powered by Asisto'), center('www.asisto.com.ar'), '', '', '',
   ].join('\n');
 }
 

@@ -21,7 +21,7 @@ function buildTransferReceiptAcknowledgement(tenantId) {
   const identity = tenant === "SDG"
     ? "Soy Asisto, el asistente de Supermercado Digital."
     : "Soy Asisto, el asistente virtual que te está atendiendo.";
-  return `${identity} Recibí el comprobante de transferencia. Gracias. Lo dejamos registrado para su revisión. Conocé más en www.asistobot.com.ar`;
+  return `${identity} Recibí el comprobante de transferencia. Gracias. Lo dejamos registrado para su revisión. Conocé más en www.asisto.com.ar`;
 }
 
 module.exports = {

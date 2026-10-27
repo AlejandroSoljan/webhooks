@@ -27,6 +27,6 @@ test("la respuesta SDG se presenta como Asisto y no confirma acreditación", () 
   const reply = buildTransferReceiptAcknowledgement("SDG");
   assert.match(reply, /Soy Asisto, el asistente de Supermercado Digital/i);
   assert.match(reply, /Recibí el comprobante de transferencia/i);
-  assert.match(reply, /www\.asistobot\.com\.ar/i);
+  assert.match(reply, /www\.asisto\.com\.ar/i);
   assert.doesNotMatch(reply, /pago confirmado|acreditad[oa]/i);
 });

@@ -13,3 +13,9 @@ Verificación: TLS público válido desde Windows, ambas raíces redirigen a `/l
 Prueba de renovación ACME staging completada correctamente el 2026-10-27, incluido el deploy hook (nginx válido y recarga). La prueba manual usó `--no-random-sleep-on-renew`; no se quitó la espera aleatoria de la tarea programada.
 
 Operación: `sudo nginx -t`, `sudo systemctl status certbot.timer`, `sudo certbot certificates`, `sudo certbot renew --cert-name asisto.com.ar --dry-run --run-deploy-hooks`. No reiniciar Mongo ni el backend para renovar un certificado.
+
+## Enlaces visibles
+
+`patch-branding.cjs` reemplaza el dominio únicamente en siete archivos de presentación: pies del turnero/tickets, ficha de producto, restaurante y agradecimiento de comprobantes. Conserva URLs de apps Android, Install Referrer, agentes Windows/extensión, callbacks, identidad de correo, configuraciones históricas y certificado anterior. Esas integraciones continúan operativas bajo asistobot.com.ar; no se migran con una sustitución textual indiscriminada.
+
+`release-branding.sh` clona la release activa y aplica sólo ese parche en AWS principal, turnero AWS y Mecan. Hace cambio atómico del enlace, reinicio del servicio correspondiente y healthz, con reversión ante fallo. No representa un despliegue integral del commit ni cambia la versión declarada del backend. Guardar su release anterior y verificar contenido público y local.
