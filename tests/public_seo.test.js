@@ -8,6 +8,7 @@ const { publicSeoUrl } = require('../public_seo');
 test('portada conserva formulario y declara Asisto en el dominio nuevo', () => {
   const doc = new JSDOM(publicLandingPage({ to:'/app', msg:'', error:'' })).window.document;
   assert.equal(doc.querySelector('link[rel=canonical]').href, 'https://asisto.com.ar/');
+  assert.equal(doc.querySelector('meta[name="google-site-verification"]').content, 'G2MfNayP-53-_FRAnnBsjuPuudrOHs-jATJRpBOeBak');
   assert.equal(doc.querySelector('meta[property="og:url"]').content, 'https://asisto.com.ar/');
   assert.match(doc.title, /^Asisto \|/);
   assert.equal(doc.querySelector('meta[name=robots]').content, 'index,follow');

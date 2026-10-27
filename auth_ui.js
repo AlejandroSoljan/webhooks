@@ -1524,6 +1524,7 @@ function loginSeoHead({ baseUrl }) {
   const desc = "Asisto: inteligencia artificial y automatización para tu negocio. Conversaciones por WhatsApp, tareas, turnos e integración con tu sistema de gestión. Venado Tuerto, Santa Fe, Argentina.";
   return `
   <link rel="canonical" href="${htmlEscape(canonical)}"/>
+  <meta name="google-site-verification" content="G2MfNayP-53-_FRAnnBsjuPuudrOHs-jATJRpBOeBak"/>
   <meta name="description" content="${htmlEscape(desc)}"/>
   <meta property="og:type" content="website"/>
  <meta property="og:title" content="Asisto | Inteligencia artificial y automatización para tu negocio"/>
