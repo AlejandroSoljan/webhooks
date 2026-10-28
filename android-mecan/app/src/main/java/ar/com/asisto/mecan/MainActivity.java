@@ -138,38 +138,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private String urlFromIntent(Intent intent) {
-        String candidate = intent == null ? null : intent.getStringExtra("url");
         Uri incoming = intent == null ? null : intent.getData();
-        if (incoming != null && "https".equalsIgnoreCase(incoming.getScheme()) &&
-            "asistobot.com.ar".equalsIgnoreCase(incoming.getHost()) &&
-            incoming.getPath() != null && incoming.getPath().startsWith("/customer-app/MCN")) {
-            return incoming.buildUpon().authority("asistobot.com.ar").build().toString();
-        }
+        String direct = MecanLinks.canonicalTicketUrl(incoming == null ? null : incoming.toString());
+        if (direct != null) return direct;
+        String candidate = intent == null ? null : intent.getStringExtra("url");
         if (incoming != null && "asisto".equalsIgnoreCase(incoming.getScheme()) && "turno".equalsIgnoreCase(incoming.getHost())) {
             candidate = incoming.getQueryParameter("url");
-            if (candidate != null) {
-                Uri ticket = Uri.parse(candidate);
-                String host = ticket.getHost();
-                if ("https".equalsIgnoreCase(ticket.getScheme()) &&
-                    ("asistobot.com.ar".equalsIgnoreCase(host) || "www.asistobot.com.ar".equalsIgnoreCase(host)) &&
-                    ticket.getPath() != null && ticket.getPath().startsWith("/customer-app/")) {
-                    return ticket.buildUpon().authority("asistobot.com.ar").build().toString();
-                }
-            }
-            return HOME_URL;
         }
-        if (candidate != null) {
-            Uri uri = Uri.parse(candidate);
-            String host = uri.getHost();
-            if ("https".equalsIgnoreCase(uri.getScheme()) &&
-                ("asistobot.com.ar".equalsIgnoreCase(host) || "www.asistobot.com.ar".equalsIgnoreCase(host)) &&
-                uri.getPath() != null && uri.getPath().startsWith("/customer-app/MCN")) {
-                return uri.buildUpon().authority("asistobot.com.ar").build().toString();
-            }
-        }
-        return HOME_URL;
+        String ticket = MecanLinks.canonicalTicketUrl(candidate);
+        return ticket == null ? HOME_URL : ticket;
     }
-
     private void requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {

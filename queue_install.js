@@ -8,20 +8,51 @@ function handoffDuration(purpose) {
   return purpose === 'install' ? 2 * 60 * 60 * 1000 : 3 * 60 * 1000;
 }
 
+function mecanTicketAppIntent(ticketId, transfer) {
+  if (!/^[a-f0-9]{24}$/i.test(ticketId || '') || !/^[A-Za-z0-9_-]{43}$/.test(transfer?.code || '')) throw Error('Vínculo inválido.');
+  const claim = new URL('/customer-app/MCN', 'https://asistobot.com.ar');
+  claim.searchParams.set('claim', ticketId); claim.searchParams.set('view', 'ticket');
+  claim.hash = new URLSearchParams({code:transfer.code}).toString();
+  const play = new URL('https://play.google.com/store/apps/details');
+  play.searchParams.set('id', 'ar.com.asisto.mecan');
+  play.searchParams.set('referrer', new URLSearchParams({mecan_ticket:ticketId,mecan_code:transfer.code}).toString());
+  return 'intent://turno?url=' + encodeURIComponent(claim.href) + '#Intent;scheme=asisto;package=ar.com.asisto.mecan;S.browser_fallback_url=' + encodeURIComponent(play.href) + ';end';
+}
+
+async function prepareMecanTicketTransfer(ticket) {
+  const key = 'mecanInstallTransfer:' + ticket.id;
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) {}
+  if (/^[A-Za-z0-9_-]{43}$/.test(saved?.code || '') && +new Date(saved.expiresAt) > Date.now() + 60000) return saved;
+  const pending = window.__mecanInstallTransfers ||= new Map();
+  if (pending.has(ticket.id)) return pending.get(ticket.id);
+  const request = (async () => {
+    const response = await fetch(API + '/tickets/' + encodeURIComponent(ticket.id) + '/handoff', {
+      method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({installId,purpose:'install'})
+    });
+    const value = await response.json();
+    if (!response.ok) throw Error(value.error || 'No se pudo preparar el turno.');
+    if (!/^[A-Za-z0-9_-]{43}$/.test(value.code || '') || !(+new Date(value.expiresAt) > Date.now())) throw Error('No se pudo guardar el turno para la app.');
+    localStorage.setItem(key, JSON.stringify(value));
+    return value;
+  })();
+  pending.set(ticket.id, request);
+  try { return await request; } finally { pending.delete(ticket.id); }
+}
+
 function restoreMecanInstallReturn(ticketId) {
   if (TENANT !== 'MCN' || window.AsistoNative || !/Android/i.test(navigator.userAgent) || !ticketId) return;
+  if (localStorage.asistoTicketId && localStorage.asistoTicketId !== ticketId) return;
   let transfer;
   try { transfer = JSON.parse(localStorage.getItem('mecanInstallTransfer:' + ticketId) || 'null'); } catch (_) {}
-  if (!/^[A-Za-z0-9_-]{43}$/.test(transfer?.code || '') || +new Date(transfer.expiresAt) <= Date.now()) return;
+  if (!/^[A-Za-z0-9_-]{43}$/.test(transfer?.code || '') || !(+new Date(transfer.expiresAt) > Date.now())) return;
   let button = document.getElementById('mecanInstallReturn');
   if (!button) { button = document.createElement('button'); button.id = 'mecanInstallReturn'; button.type = 'button'; el('my').append(button); }
   button.style.cssText = 'display:block;margin:12px auto;min-height:44px;border:1px solid #e00000;border-radius:12px;background:#fff;color:#b00016;padding:10px 14px;font:600 13px system-ui';
-  button.textContent = 'Ya instalé Mecan · Abrir mi turno';
+  button.textContent = 'Abrir mi turno en Mecan'; button.disabled=false; button.dataset.ticketId=ticketId;
   button.onclick = () => {
-    const claimUrl = new URL('/customer-app/MCN', 'https://asistobot.com.ar');
-    claimUrl.searchParams.set('claim', ticketId); claimUrl.searchParams.set('view', 'ticket');
-    claimUrl.hash = new URLSearchParams({ code: transfer.code }).toString();
-    location.href = 'asisto://turno?url=' + encodeURIComponent(claimUrl.href);
+    if (+new Date(transfer.expiresAt) <= Date.now()) { button.disabled=true;button.textContent='Actualizá para abrir el turno';return; }
+    location.href = mecanTicketAppIntent(ticketId, transfer);
   };
 }
 
@@ -29,6 +60,10 @@ function offerMecanInstall(ticket) {
   if (TENANT !== 'MCN' || !MECAN_INSTALL_PROMPT_ENABLED || window.AsistoNative ||
       !/Android/i.test(navigator.userAgent) || !ticket?.id ||
       !['WAITING', 'CALLED'].includes(ticket.status)) return;
+  const previousButton=document.getElementById('mecanInstallReturn');
+  if(previousButton && previousButton.dataset.ticketId!==ticket.id)previousButton.disabled=true;
+  // El intent se abre sin esperar una red dentro del gesto de clic.
+  prepareMecanTicketTransfer(ticket).then(()=>restoreMecanInstallReturn(ticket.id)).catch(()=>{});
   const promptKey = 'mecanInstallOffered:' + ticket.id;
   try { if (sessionStorage.getItem(promptKey)) return; } catch (_) {}
   if (document.getElementById('mecanInstallPrompt')) return;
@@ -48,19 +83,7 @@ function offerMecanInstall(ticket) {
     const button = dialog.querySelector('.mecanInstallAction'), error = dialog.querySelector('.mecanInstallError');
     button.disabled = true; button.textContent = 'Guardando tu turno…'; error.hidden = true;
     try {
-      const key = 'mecanInstallTransfer:' + ticket.id;
-      let transfer;
-      try { transfer = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) {}
-      if (!transfer?.code || +new Date(transfer.expiresAt) < Date.now() + 60000) {
-        const response = await fetch(API + '/tickets/' + encodeURIComponent(ticket.id) + '/handoff', {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ installId, purpose: 'install' })
-        });
-        transfer = await response.json();
-        if (!response.ok) throw Error(transfer.error || 'No se pudo preparar la instalación.');
-        if (!/^[A-Za-z0-9_-]{43}$/.test(transfer.code || '') || !Number.isFinite(+new Date(transfer.expiresAt))) throw Error('No se pudo guardar el turno para la app.');
-        try { localStorage.setItem(key, JSON.stringify(transfer)); } catch (_) {}
-      }
+      const transfer = await prepareMecanTicketTransfer(ticket);
       const params = new URLSearchParams({ mecan_ticket: ticket.id, mecan_code: transfer.code });
       const playUrl = 'https://play.google.com/store/apps/details?id=ar.com.asisto.mecan&referrer=' + encodeURIComponent(params.toString());
       restoreMecanInstallReturn(ticket.id);
@@ -75,4 +98,4 @@ function offerMecanInstall(ticket) {
   try { dialog.showModal(); sessionStorage.setItem(promptKey, '1'); } catch (_) {}
 }
 
-module.exports = { handoffDuration, offerMecanInstall, restoreMecanInstallReturn };
+module.exports = { handoffDuration, offerMecanInstall, restoreMecanInstallReturn, prepareMecanTicketTransfer, mecanTicketAppIntent };

@@ -35,3 +35,17 @@ Pruebas DOM: visibilidad, cierre, referrer con el mismo id, almacenamiento anter
 - Mecan 1.0.1 (2): AAB firmado aceptado por Play Console y enviado a revisión de producción (100% de los países ya configurados). Console muestra «Cambios en la etapa de revisión», con verificaciones rápidas todavía en curso; esto no acredita aprobación ni disponibilidad en la tienda.
 - Resultado local: 43/43 pruebas Node focalizadas, 3/3 pruebas JVM y compilación release firmada. No había teléfono conectado para la prueba física de instalación.
 - Pendiente: confirmar release activo del backend principal después de su despliegue automático; aprobación/distribución Play y prueba física antes de activar la invitación. No activar por el solo hecho de terminar la compilación o enviar a revisión.
+
+## Corrección y activación, 2026-10-28
+
+Play Console confirmó 1.0.1 (2) activa. Se habilitó `MECAN_INSTALL_PROMPT_ENABLED=1` en producción AWS, turnero AWS y turnero local Mecan, release acotada `v5.00.315-mecan-app-opening-20261028`. Los tres servicios y sus healthz fueron verificados. El backend principal recibió también la integración original de instalación que faltaba en su runtime.
+
+El aviso se ofrece al recuperar un turno activo guardado, además de reclamar uno nuevo. Se prepara un único vínculo compartido por turno y se conserva el botón «Abrir mi turno en Mecan» aunque se cierre el modal. El botón abre un intent explícito del paquete desde el clic del usuario, con alternativa Play y referrer al mismo turno. No se intenta abrir la app automáticamente mediante JavaScript: la apertura directa del QR depende de Android App Links y de las preferencias del teléfono.
+
+Android 1.0.2 (3) acepta ambos dominios con y sin www y los convierte al origen interno existente, preservando query y fragmento. Rechaza otros tenants, hosts, protocolos y rutas ambiguas. La compilación activa R8 y reducción de recursos, conservando los métodos del puente JavascriptInterface. Resultado: 44/44 pruebas Node focalizadas, 5/5 JVM y AAB/APK release firmado. No hubo teléfono conectado para acreditar la prueba física de instalación/QR. Las asociaciones públicas de los cuatro hosts respondieron HTTP 200 con el paquete Mecan.
+
+AAB 1.0.2: SHA-256 `E433BC94C2EF705677F1E0EE80A89B077B39F1D436C625DA8D57118F8058E1EE`, 2.997.423 bytes. Play aceptó el paquete con mapa ReTrace; tamaño estimado de instalación 1,26 MB, 3,45 MB menos que la versión anterior. La advertencia restante del formulario corresponde a símbolos de depuración nativos de dependencias, distinta de la optimización DEX.
+
+Estado confirmado en Console: «Cambios en la etapa de revisión», versión «1.0.2 - Enlaces QR y optimización», lanzamiento completo a los países existentes. Verificaciones rápidas en curso; no se acredita aprobación ni disponibilidad de 1.0.2 hasta que Play lo confirme. La advertencia del panel de la versión activa puede persistir hasta esa actualización. Captura operativa guardada fuera del repositorio.
+
+Retención AWS: se eliminaron únicamente los respaldos más antiguos `c6a07705dc5f-auto-bXBKhfQ3` y `v5.00.270-catalog-sql-bdd698409e90` tras validar current 315 y siete releases por servicio. Quedan seis por servicio (activa + cinco respaldos), sin tocar respaldos Mongo. El temporizador de auto-deploy sigue deshabilitado por el fallo previo de su suite; esta publicación acotada no lo reactivó.

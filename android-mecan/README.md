@@ -25,6 +25,8 @@ El APK de desarrollo queda en `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Release para Google Play
 
+Versión 1.0.2 (3): enlaces MCN en asisto.com.ar y asistobot.com.ar, con y sin www, conservando turno y origen interno. Release usa R8 y shrinkResources; los métodos JavascriptInterface se conservan mediante reglas específicas. El mapa queda en `app/build/outputs/mapping/release/mapping.txt` y se incorpora al AAB. Ejecutar las pruebas JVM de `MecanLinksTest` e `InstallTicketLinkTest` antes de publicar. La comprobación física requiere la firma de Play y enlaces compatibles habilitados en Android; una compilación correcta no acredita ese recorrido.
+
 Ejecutar `./build-release.ps1` en PowerShell. Usa JDK 17, Gradle 8.11.1, Android API 36 y la clave de carga exclusiva de Mecan, guardada fuera del repositorio en `C:\Asisto\android-signing\mecan`.
 
 - AAB: `app/build/outputs/bundle/release/app-release.aab`.
