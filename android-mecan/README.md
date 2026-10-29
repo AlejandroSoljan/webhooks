@@ -25,6 +25,10 @@ El APK de desarrollo queda en `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Release para Google Play
 
+Versión 1.0.3 (4): comprobación de actualizaciones mediante Google Play In-App Updates 2.1.0 al entrar o volver a primer plano. Ofrece actualización flexible una vez por apertura de Activity; permite posponerla y continuar con el turno. Tras descargar muestra «Instalar» antes de completar/reiniciar. Si Play no permite flujo flexible abre la ficha oficial. Sin conexión o sin Play la pantalla sigue operativa. No desinstala ni borra WebView, cookies, preferencias, identificador de instalación o referrer pendiente. La 1.0.3 requiere una primera actualización desde la tienda porque versiones anteriores no tienen este comprobador.
+
+La prueba completa requiere una app firmada por Play, propiedad de la cuenta del dispositivo, y una versión superior disponible. Un APK debug o una instalación sin Play no demuestra ese recorrido. No afirmar conservación física validada sin comparar turno/identificador antes y después en un teléfono.
+
 Versión 1.0.2 (3): enlaces MCN en asisto.com.ar y asistobot.com.ar, con y sin www, conservando turno y origen interno. Release usa R8 y shrinkResources; los métodos JavascriptInterface se conservan mediante reglas específicas. El mapa queda en `app/build/outputs/mapping/release/mapping.txt` y se incorpora al AAB. Ejecutar las pruebas JVM de `MecanLinksTest` e `InstallTicketLinkTest` antes de publicar. La comprobación física requiere la firma de Play y enlaces compatibles habilitados en Android; una compilación correcta no acredita ese recorrido.
 
 Ejecutar `./build-release.ps1` en PowerShell. Usa JDK 17, Gradle 8.11.1, Android API 36 y la clave de carga exclusiva de Mecan, guardada fuera del repositorio en `C:\Asisto\android-signing\mecan`.

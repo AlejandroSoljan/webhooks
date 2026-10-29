@@ -11,8 +11,8 @@ android {
         applicationId 'ar.com.asisto.mecan'
         minSdk 24
         targetSdk 36
-        versionCode 3
-        versionName '1.0.2'
+        versionCode 4
+        versionName '1.0.3'
     }
 
     signingConfigs {
@@ -47,6 +47,7 @@ if (alternateBuildDir) {
 }
 
 dependencies {
+    implementation 'com.google.android.play:app-update:2.1.0'
     implementation 'com.android.installreferrer:installreferrer:2.2'
     testImplementation 'junit:junit:4.13.2'
     implementation 'androidx.appcompat:appcompat:1.7.0'

@@ -41,6 +41,7 @@ public class MainActivity extends AppCompatActivity {
     private ValueCallback<Uri[]> fileCallback;
     private Uri capturedPhotoUri;
     private int launchGeneration = 0;
+    private MecanUpdates updates;
 
     private final ActivityResultLauncher<String> cameraPermission =
         registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
@@ -79,6 +80,7 @@ public class MainActivity extends AppCompatActivity {
         webView = findViewById(R.id.webView);
         progress = findViewById(R.id.progress);
         configureWebView();
+        updates = new MecanUpdates(this);
         requestNotificationPermission();
         FirebaseMessaging.getInstance().getToken().addOnSuccessListener(token -> {
             pushToken = token == null ? "" : token;
@@ -97,6 +99,16 @@ public class MainActivity extends AppCompatActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         loadInitialUrl(intent);
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        if (updates != null) updates.check();
+    }
+
+    @Override protected void onDestroy() {
+        if (updates != null) updates.close();
+        super.onDestroy();
     }
 
     private void loadInitialUrl(Intent intent) {
