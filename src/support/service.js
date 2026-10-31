@@ -115,6 +115,16 @@ class SupportService {
     const own = settings(user?.config);
     return { ...own, excludedJids: [...(tenant?.config.excludedJids || []), ...own.excludedJids], excludedNames: [...(tenant?.config.excludedNames || []), ...own.excludedNames] };
   }
+  async excludedChat(scope, message, config = null) {
+    const jid = String(message?.jid || '');
+    if (!/^[^@]+@(s\.whatsapp\.net|lid)$/.test(jid)) return true;
+    const effective = config || await this.config(scope);
+    if (effective.excludedJids.includes(jid)) return true;
+    if (!effective.excludedNames.length) return false;
+    if (excluded(message, effective)) return true;
+    const contact = await this.col('contacts').findOne({ _id: scopedId(scope, 'contact', jid), ...scope }, { projection: { name: 1 } });
+    return !!contact?.name && excluded({ ...message, name: contact.name }, effective);
+  }
   async saveConfig(scope, input) {
     const config = settings(input);
     await this.col('settings').updateOne(scope, { $set: { config, updatedAt: this.now() }, $push: { events: { action: 'settings_saved', at: this.now() } } }, { upsert: true });
@@ -136,8 +146,8 @@ class SupportService {
   }
   async ingest(scope, message, { historical = false } = {}) {
     const config = await this.config(scope);
-    if (excluded(message, config)) return { ignored: true };
-    if (!message.id || !Number.isFinite(+message.at) || message.at > new Date(+this.now() + 300000)) return { ignored: true };
+    if (!/^[^@]+@(s\.whatsapp\.net|lid)$/.test(String(message?.jid || '')) || !message.id || !Number.isFinite(+message.at) || message.at > new Date(+this.now() + 300000)) return { ignored: true };
+    const taskExcluded = await this.excludedChat(scope, message, config);
     const _id = scopedId(scope, 'message', message.jid, message.id, !!message.fromMe);
     const { text: content = '', raw = null, ...metadata } = message;
     const contentTooLarge = String(content).length > 20000;
@@ -146,8 +156,12 @@ class SupportService {
     // history still requires an explicit period request.
     const boundary = historical ? await this.historyBoundary(scope) : null;
     const catchup = historical && this.recentHistory(scope, message, this.now(), boundary);
-    const doc = { _id, ...scope, ...metadata, historical, catchup, ...(boundary ? { historyResumeAt: boundary } : {}), contentTooLarge, payload: this.vault.seal({ text: contentTooLarge ? '' : String(content), raw }, _id), queued: false, receivedAt: this.now() };
+    const doc = { _id, ...scope, ...metadata, historical, catchup, ...(boundary ? { historyResumeAt: boundary } : {}), contentTooLarge, ...(taskExcluded ? { taskExcluded: true } : {}), payload: this.vault.seal({ text: contentTooLarge ? '' : String(content), raw: taskExcluded ? null : raw }, _id), queued: taskExcluded, receivedAt: this.now() };
     const inserted = await this.col('messages').updateOne({ _id, ...scope }, { $setOnInsert: doc }, { upsert: true });
+    if (taskExcluded) {
+      if (!inserted.upsertedCount) await this.col('messages').updateOne({ _id, ...scope }, { $set: { queued: true, taskExcluded: true } });
+      return { id: _id, archived: true, tasksExcluded: true };
+    }
     if (!inserted.upsertedCount && taskGrouping.enabled(scope.tenantId)) {
       const previous = await this.col('messages').findOne({ _id, ...scope });
       if (previous?.queued) return { id: _id, duplicate: true };
@@ -160,12 +174,14 @@ class SupportService {
     return { id: _id };
   }
   async enqueueMessage(scope, message, delay) {
+    if (await this.excludedChat(scope, message)) return;
     if (this.liveEvidence(scope, message, await this.historyBoundary(scope))) await this.enqueue(scope, message.jid, delay);
     if (!message.historical) return;
     const requests = await this.col('history_requests').find({ ...scope, 'dates.start': { $lte: message.at }, 'dates.end': { $gt: message.at }, expiresAt: { $gt: this.now() } }).toArray();
     for (const request of requests) await this.enqueue(scope, message.jid, 1000, request.dates);
   }
   async enqueue(scope, jid, delay = 0, dates = null) {
+    if (await this.excludedChat(scope, { jid })) return null;
     const _id = scopedId(scope, 'job', jid, dates ? [dates.start.toISOString(), dates.end.toISOString()] : 'live');
     await this.col('jobs').updateOne({ _id, ...scope }, {
       $set: { jid, dates, state: 'pending', dueAt: new Date(+this.now() + delay), attempts: 0 },
@@ -182,10 +198,12 @@ class SupportService {
       { $match: { ...scope, at: { $gte: dates.start, $lt: dates.end } } },
       { $group: { _id: '$jid', messages: { $sum: 1 } } },
     ]).toArray();
-    const jids = chats.map(chat => chat._id);
+    const eligibleChats = [];
+    for (const chat of chats) if (!await this.excludedChat(scope, { jid: chat._id })) eligibleChats.push(chat);
+    const jids = eligibleChats.map(chat => chat._id);
     for (const jid of jids) await this.enqueue(scope, jid, 0, dates);
     await this.audit(scope, 'history_requested', `${dates.start.toISOString()}/${dates.end.toISOString()}`);
-    return { conversations: jids.length, messages: chats.reduce((n, chat) => n + chat.messages, 0), source: 'locally_synced_messages', completeHistoryGuaranteed: false };
+    return { conversations: jids.length, messages: eligibleChats.reduce((n, chat) => n + chat.messages, 0), source: 'locally_synced_messages', completeHistoryGuaranteed: false };
   }
   async historyStatus(scope, from, to) {
     const dates = range(from, to);
