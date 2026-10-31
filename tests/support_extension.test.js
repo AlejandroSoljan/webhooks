@@ -134,7 +134,7 @@ test('contact control excludes aliases for this user and restores monitoring wit
  assert.equal((await call('/drafts?jid=123%40lid')).data.length,0);
  assert.equal((await call('/messages?jid=549123%40s.whatsapp.net')).data.excluded,true);
  assert.equal((await call('/messages/assign',{jid:'123@lid',messageIds:['test'],destination:'new'})).data.error,'conversation_excluded');
- assert.deepEqual(await service.ingest(scope,{id:'excluded',jid:'549123@s.whatsapp.net',at:new Date(),text:'Necesito ayuda'}),{ignored:true});
+ const archived=await service.ingest(scope,{id:'excluded',jid:'549123@s.whatsapp.net',at:new Date(),text:'Necesito ayuda'});assert.equal(archived.archived,true);assert.equal(archived.tasksExcluded,true);assert.equal(await service.col('messages').countDocuments({...scope,jid:'549123@s.whatsapp.net'}),1);assert.equal(await service.col('jobs').countDocuments(scope),0);assert.equal(await service.col('drafts').countDocuments(scope),1);
  assert.equal(await service.col('drafts').countDocuments(scope),1);
  assert.equal((await call('/contact-control',{jid:'549123@s.whatsapp.net',excluded:false})).status,200);
  assert.equal((await call('/index')).data.chats[0].count,1);

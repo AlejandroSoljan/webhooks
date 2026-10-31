@@ -360,7 +360,7 @@ test('queue repairs an insertion/enqueue crash', async () => {
 });
 test('exclusions do not cross tenants and block approval if changed after generation', async () => {
   await service.saveConfig({ ...scope, userId: '*' }, { excludedNames: ['Juan Garziera'] });
-  assert.deepEqual(await service.ingest(scope, message('internal', 0, { name: 'Juan Garziera' })), { ignored: true });
+  const archived = await service.ingest(scope, message('internal', 0, { name: 'Juan Garziera' })); assert.equal(archived.archived, true); assert.equal(archived.tasksExcluded, true); assert.equal(await service.col('messages').countDocuments(scope), 1); assert.equal(await service.col('jobs').countDocuments(scope), 0);
   assert.ok((await service.ingest(foreign, message('internal', 0, { name: 'Juan Garziera' }))).id);
   const [draft] = await processMessages([message('one')]);
   await service.saveConfig(scope, { excludedJids: ['123@s.whatsapp.net'] });
