@@ -17,8 +17,8 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `ASISTO_HELP_API_KEY` | [help_tool.js:25](../../help_tool.js#L25) |
 | `ASISTO_OPENAI_API_KEY` | [fleteros_viajes_panel.js:1000](../../fleteros_viajes_panel.js#L1000) |
 | `AUDIO_CACHE_TTL_MS` | [logic.js:29](../../logic.js#L29) |
-| `AUTH_COOKIE_NAME` | [auth_ui.js:27](../../auth_ui.js#L27) |
-| `AUTH_COOKIE_SECRET` | [auth_ui.js:28](../../auth_ui.js#L28); [src/support/crypto.js:31](../../src/support/crypto.js#L31); [src/support/crypto.js:43](../../src/support/crypto.js#L43) |
+| `AUTH_COOKIE_NAME` | [auth_ui.js:28](../../auth_ui.js#L28) |
+| `AUTH_COOKIE_SECRET` | [auth_ui.js:29](../../auth_ui.js#L29); [src/support/crypto.js:31](../../src/support/crypto.js#L31); [src/support/crypto.js:43](../../src/support/crypto.js#L43) |
 | `AUTO_UPDATE_BRANCH` | [app_asisto_ws.js:187](../../app_asisto_ws.js#L187) |
 | `AUTO_UPDATE_CHECK_EVERY_MS` | [app_asisto_ws.js:188](../../app_asisto_ws.js#L188) |
 | `AUTO_UPDATE_ENABLED` | [app_asisto_ws.js:184](../../app_asisto_ws.js#L184) |
@@ -49,10 +49,10 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `ENDED_SESSION_TTL_MINUTES` | [logic.js:24](../../logic.js#L24) |
 | `EXTERNAL_API_BODY_TEMPLATE` | [logic.js:389](../../logic.js#L389) |
 | `EXTERNAL_API_ENABLED` | [logic.js:380](../../logic.js#L380) |
-| `FIREBASE_CLIENT_EMAIL` | [customer_notifications.js:9](../../customer_notifications.js#L9) |
-| `FIREBASE_PRIVATE_KEY` | [customer_notifications.js:9](../../customer_notifications.js#L9) |
-| `FIREBASE_PROJECT_ID` | [customer_notifications.js:9](../../customer_notifications.js#L9) |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | [customer_notifications.js:9](../../customer_notifications.js#L9) |
+| `FIREBASE_CLIENT_EMAIL` | [customer_notifications.js:10](../../customer_notifications.js#L10) |
+| `FIREBASE_PRIVATE_KEY` | [customer_notifications.js:10](../../customer_notifications.js#L10) |
+| `FIREBASE_PROJECT_ID` | [customer_notifications.js:10](../../customer_notifications.js#L10) |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | [customer_notifications.js:10](../../customer_notifications.js#L10) |
 | `FLETEROS_API_KEY` | [fleteros_viajes_panel.js:30](../../fleteros_viajes_panel.js#L30) |
 | `FLETEROS_API_URL` | [fleteros_viajes_panel.js:28](../../fleteros_viajes_panel.js#L28) |
 | `FLETEROS_API_VERSION` | [fleteros_viajes_panel.js:29](../../fleteros_viajes_panel.js#L29) |
@@ -90,13 +90,13 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `MONGO_URI` | [app_asisto_ws.js:54](../../app_asisto_ws.js#L54); [src/script/migrate_products_tenant.js:6](../../src/script/migrate_products_tenant.js#L6) |
 | `MONGODB_DBNAME` | [db.js:99](../../db.js#L99) |
 | `MONGODB_FULL_IDLE_DISCONNECT_MS` | [db.js:20](../../db.js#L20) |
-| `MONGODB_URI` | [db.js:86](../../db.js#L86); [db.js:133](../../db.js#L133); [src/support/config.js:17](../../src/support/config.js#L17) |
+| `MONGODB_URI` | [db.js:86](../../db.js#L86); [db.js:133](../../db.js#L133); [deploy/audit-notification-devices.cjs:8](../../deploy/audit-notification-devices.cjs#L8); [deploy/audit-notification-devices.cjs:11](../../deploy/audit-notification-devices.cjs#L11); [deploy/link-confirmed-devices.cjs:8](../../deploy/link-confirmed-devices.cjs#L8); [deploy/validate-notification-tokens.cjs:8](../../deploy/validate-notification-tokens.cjs#L8); [src/support/config.js:17](../../src/support/config.js#L17) |
 | `MP_SUBSCRIPTIONS_ACCESS_TOKEN` | [mercadopago_subscriptions.js:13](../../mercadopago_subscriptions.js#L13) |
 | `MP_SUBSCRIPTIONS_MODE` | [mercadopago_subscriptions.js:12](../../mercadopago_subscriptions.js#L12) |
 | `MP_SUBSCRIPTIONS_PUBLIC_URL` | [mercadopago_subscriptions.js:16](../../mercadopago_subscriptions.js#L16) |
 | `MP_SUBSCRIPTIONS_TEST_PAYER_ID` | [mercadopago_subscriptions.js:15](../../mercadopago_subscriptions.js#L15) |
 | `MP_SUBSCRIPTIONS_WEBHOOK_SECRET` | [mercadopago_subscriptions.js:14](../../mercadopago_subscriptions.js#L14) |
-| `NODE_ENV` | [auth_ui.js:226](../../auth_ui.js#L226); [endpoint.js:10765](../../endpoint.js#L10765); [src/whatsapp/webhook.routes.js:79](../../src/whatsapp/webhook.routes.js#L79) |
+| `NODE_ENV` | [auth_ui.js:227](../../auth_ui.js#L227); [endpoint.js:10765](../../endpoint.js#L10765); [src/whatsapp/webhook.routes.js:79](../../src/whatsapp/webhook.routes.js#L79) |
 | `NUMERO` | [app_asisto_ws.js:53](../../app_asisto_ws.js#L53); [telegram_runtime.js:356](../../telegram_runtime.js#L356) |
 | `OPENAI_API_KEY` | [fleteros_viajes_panel.js:1000](../../fleteros_viajes_panel.js#L1000); [logic.js:12](../../logic.js#L12); [src/support/crypto.js:45](../../src/support/crypto.js#L45) |
 | `OPENAI_CPE_MODEL` | [fleteros_viajes_panel.js:1004](../../fleteros_viajes_panel.js#L1004) |
@@ -107,7 +107,7 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `ORDER_CONFIG_CACHE_TTL_MS` | [order_config.js:9](../../order_config.js#L9) |
 | `PHONE_NUMBER_ID` | [logic.js:22](../../logic.js#L22); [wa_inbox_panel.js:19](../../wa_inbox_panel.js#L19) |
 | `PORT` | [endpoint.js:12510](../../endpoint.js#L12510); [endpoint.js:12518](../../endpoint.js#L12518); [server.js:6](../../server.js#L6) |
-| `PUBLIC_BASE_URL` | [auth_ui.js:24](../../auth_ui.js#L24); [customer_queue.js:66](../../customer_queue.js#L66); [endpoint.js:1856](../../endpoint.js#L1856); [restaurant.js:30](../../restaurant.js#L30); [restaurant.js:178](../../restaurant.js#L178); [restaurant.js:227](../../restaurant.js#L227); [restaurant.js:237](../../restaurant.js#L237); [src/support/config.js:8](../../src/support/config.js#L8) |
+| `PUBLIC_BASE_URL` | [auth_ui.js:24](../../auth_ui.js#L24); [customer_queue.js:66](../../customer_queue.js#L66); [restaurant.js:30](../../restaurant.js#L30); [restaurant.js:178](../../restaurant.js#L178); [restaurant.js:227](../../restaurant.js#L227); [restaurant.js:237](../../restaurant.js#L237); [src/support/config.js:8](../../src/support/config.js#L8) |
 | `QR_CONFIG_CACHE_MS` | [qr_product_web.js:33](../../qr_product_web.js#L33) |
 | `QR_PRODUCT_API_MAX_CONCURRENT` | [qr_product_web.js:36](../../qr_product_web.js#L36) |
 | `QR_PRODUCT_API_QUEUE_MAX` | [qr_product_web.js:37](../../qr_product_web.js#L37) |

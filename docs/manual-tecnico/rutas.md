@@ -8,13 +8,13 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 
 | Método | Ruta declarada | Implementación | Inicio de registro / middleware |
 |---|---|---|---|
-| DELETE | `/api/leads/:id` | [auth_ui.js:3499](../../auth_ui.js#L3499) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| DELETE | `/api/leads/:id` | [auth_ui.js:5439](../../auth_ui.js#L5439) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| DELETE | `/api/leads/:id` | [auth_ui.js:3504](../../auth_ui.js#L3504) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| DELETE | `/api/leads/:id` | [auth_ui.js:5444](../../auth_ui.js#L5444) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | DELETE | `/api/products/:id` | [endpoint.js:7891](../../endpoint.js#L7891) | `, async (req, res) => {` |
 | DELETE | `/api/products/:id` | [src/web/web_admin.routes.js:123](../../src/web/web_admin.routes.js#L123) | `, async (req, res) => {` |
 | DELETE | `/api/tenant-channels/:id` | [endpoint.js:455](../../endpoint.js#L455) | `, auth.requireAdmin, async (req, res) => {` |
-| DELETE | `/api/tenant-config` | [auth_ui.js:5211](../../auth_ui.js#L5211) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| GET | `/.well-known/assetlinks.json` | [customer_app_web.js:114](../../customer_app_web.js#L114) | `, (_req, res) => res.sendFile(require('path').join(__dirname, 'static/turnero/assetlinks.json')));` |
+| DELETE | `/api/tenant-config` | [auth_ui.js:5216](../../auth_ui.js#L5216) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| GET | `/.well-known/assetlinks.json` | [customer_app_web.js:116](../../customer_app_web.js#L116) | `, (_req, res) => res.sendFile(require('path').join(__dirname, 'static/turnero/assetlinks.json')));` |
 | GET | `/` | [app_asisto_ws.js:529](../../app_asisto_ws.js#L529) | `, (req, res) => {` |
 | GET | `/` | [endpoint.js:1863](../../endpoint.js#L1863) | `, async (req, res) => {` |
 | GET | `/admin/billing` | [billing_subscriptions.js:84](../../billing_subscriptions.js#L84) | `, auth.requireAuth, requireSuper, (_req, res) => res.set('Cache-Control', 'no-store').type('html').send(render` |
@@ -25,19 +25,19 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/admin/followup` | [conversation_followup_panel.js:1083](../../conversation_followup_panel.js#L1083) | `, async (req, res) => {` |
 | GET | `/admin/inbox` | [endpoint.js:4105](../../endpoint.js#L4105) | `, async (req, res) => {` |
 | GET | `/admin/inbox` | [wa_inbox_panel.js:972](../../wa_inbox_panel.js#L972) | `, async (req, res) => {` |
-| GET | `/admin/leads` | [auth_ui.js:5305](../../auth_ui.js#L5305) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| GET | `/admin/leads` | [auth_ui.js:5310](../../auth_ui.js#L5310) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | GET | `/admin/messages/:convId` | [endpoint.js:7487](../../endpoint.js#L7487) | `, async (req, res) => {` |
 | GET | `/admin/monetization` | [monetization_config.js:45](../../monetization_config.js#L45) | `,auth.requireAuth,requireSuper,(_req,res)=>res.type('html').send(renderPage()));` |
 | GET | `/admin/order-config` | [order_config_panel.js:309](../../order_config_panel.js#L309) | `, auth.requireAdmin, async (req, res) => {` |
 | GET | `/admin/resto` | [restaurant.js:284](../../restaurant.js#L284) | `, (_req, res) => res.sendFile(path.join(__dirname, 'static', 'restaurant_panel.html')));` |
 | GET | `/admin/support` | [src/support/routes.js:128](../../src/support/routes.js#L128) | `, (req, res) => {` |
 | GET | `/admin/telegram` | [telegram_runtime.js:2255](../../telegram_runtime.js#L2255) | `, auth.requireAuth, auth.requireAdmin, async (_req, res) => {` |
-| GET | `/admin/tenant-config` | [auth_ui.js:5001](../../auth_ui.js#L5001) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| GET | `/admin/tenant-config` | [auth_ui.js:5006](../../auth_ui.js#L5006) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | GET | `/admin/ticket/:convId` | [endpoint.js:7523](../../endpoint.js#L7523) | `, async (req, res) => {` |
-| GET | `/admin/token-control` | [token_control_stats.js:2676](../../token_control_stats.js#L2676) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
-| GET | `/admin/users` | [auth_ui.js:3730](../../auth_ui.js#L3730) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| GET | `/admin/token-control` | [token_control_stats.js:2699](../../token_control_stats.js#L2699) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/admin/users` | [auth_ui.js:3735](../../auth_ui.js#L3735) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | GET | `/admin/web-access` | [web_access_stats.js:508](../../web_access_stats.js#L508) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| GET | `/admin/wweb` | [auth_ui.js:5456](../../auth_ui.js#L5456) | `, requireAuth, (req, res, next) => hasAccess(req.user, 'wweb', 'support') ? next() : res.status(403).send('403` |
+| GET | `/admin/wweb` | [auth_ui.js:5461](../../auth_ui.js#L5461) | `, requireAuth, (req, res, next) => hasAccess(req.user, 'wweb', 'support') ? next() : res.status(403).send('403` |
 | GET | `/admin` | [endpoint.js:5284](../../endpoint.js#L5284) | `, async (req, res) => {` |
 | GET | `/api/admin/conversation-meta` | [endpoint.js:4054](../../endpoint.js#L4054) | `, async (req, res) => {` |
 | GET | `/api/admin/wa-inbox/conversations` | [wa_inbox_panel.js:987](../../wa_inbox_panel.js#L987) | `, async (req, res) => {` |
@@ -64,11 +64,12 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/api/customer-app-admin/:tenant/state` | [customer_queue.js:220](../../customer_queue.js#L220) | `, state);` |
 | GET | `/api/customer-app-admin/:tenant/stats` | [queue_stats.js:108](../../queue_stats.js#L108) | `, wrap(async (req, res) => {` |
 | GET | `/api/customer-app-admin/:tenant/tickets/:id/delivery` | [customer_queue.js:252](../../customer_queue.js#L252) | `, wrap(async (req, res) => {` |
-| GET | `/api/customer-app/:tenant/config` | [customer_app_web.js:117](../../customer_app_web.js#L117) | `, async (req, res) => { try { const t=tenant(req.params.tenant),{ sellers: _privateSellers, ...publicConfig }=` |
+| GET | `/api/customer-app/:tenant/config` | [customer_app_web.js:119](../../customer_app_web.js#L119) | `, async (req, res) => { try { const t=tenant(req.params.tenant),{ sellers: _privateSellers, ...publicConfig }=` |
 | GET | `/api/customer-app/:tenant/presence/:sessionId/status` | [customer_queue.js:173](../../customer_queue.js#L173) | `, wrap(async (req, res) => {` |
 | GET | `/api/customer-app/:tenant/queue` | [customer_queue.js:219](../../customer_queue.js#L219) | `, state);` |
 | GET | `/api/customer-app/:tenant/tickets/:id` | [customer_queue.js:350](../../customer_queue.js#L350) | `, wrap(async (req, res) => {` |
-| GET | `/api/customer-notifications/:tenant` | [customer_notifications.js:16](../../customer_notifications.js#L16) | `,requireAuth,async(req,res)=>{try{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,t))return res` |
+| GET | `/api/customer-notifications/:tenant` | [customer_notifications.js:15](../../customer_notifications.js#L15) | `,requireAuth,async(req,res)=>{try{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,t))return res` |
+| GET | `/api/customer-notifications/:tenant` | [deploy/patch-notification-devices.cjs:7](../../deploy/patch-notification-devices.cjs#L7) | `,", "app.post('/api/customer-notifications/:tenant',",'async function firebaseSender(){']){` |
 | GET | `/api/ext/ayuda` | [help_tool.js:2316](../../help_tool.js#L2316) | `, requireHelpExternalAccess, handleHelpQuery);` |
 | GET | `/api/ext/domain-status` | [endpoint.js:1490](../../endpoint.js#L1490) | `, requireDomainStatusAccess, async (req, res) => {` |
 | GET | `/api/ext/help/status` | [help_tool.js:2320](../../help_tool.js#L2320) | `, requireHelpExternalAccess, async (req, res) => {` |
@@ -87,10 +88,10 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/api/fleteros/viajes` | [fleteros_viajes_panel.js:2928](../../fleteros_viajes_panel.js#L2928) | `, requireAuth, async (req, res) => {` |
 | GET | `/api/hours` | [endpoint.js:10325](../../endpoint.js#L10325) | `, async (req, res) => {` |
 | GET | `/api/hours` | [src/web/web_admin.routes.js:494](../../src/web/web_admin.routes.js#L494) | `, async (req, res) => {` |
-| GET | `/api/leads/:id` | [auth_ui.js:3480](../../auth_ui.js#L3480) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| GET | `/api/leads/:id` | [auth_ui.js:5423](../../auth_ui.js#L5423) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| GET | `/api/leads` | [auth_ui.js:3445](../../auth_ui.js#L3445) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| GET | `/api/leads` | [auth_ui.js:5410](../../auth_ui.js#L5410) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| GET | `/api/leads/:id` | [auth_ui.js:3485](../../auth_ui.js#L3485) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| GET | `/api/leads/:id` | [auth_ui.js:5428](../../auth_ui.js#L5428) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| GET | `/api/leads` | [auth_ui.js:3450](../../auth_ui.js#L3450) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| GET | `/api/leads` | [auth_ui.js:5415](../../auth_ui.js#L5415) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | GET | `/api/logs/conversations` | [endpoint.js:3745](../../endpoint.js#L3745) | `, async (req, res) => {` |
 | GET | `/api/logs/messages` | [endpoint.js:4025](../../endpoint.js#L4025) | `, async (req, res) => {` |
 | GET | `/api/logs/pedido` | [endpoint.js:5162](../../endpoint.js#L5162) | `, async (req, res) => {` |
@@ -119,26 +120,26 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/api/support/status` | [src/support/routes.js:97](../../src/support/routes.js#L97) | `, async (req, res) => {` |
 | GET | `/api/tenant-channels` | [endpoint.js:359](../../endpoint.js#L359) | `, auth.requireAdmin, async (req, res) => {` |
 | GET | `/api/tenant-channels` | [src/web/tenant_channels.routes.js:15](../../src/web/tenant_channels.routes.js#L15) | `, auth.requireAdmin, async (req, res) => {` |
-| GET | `/api/tenant-config/whatsapp-metrics` | [auth_ui.js:5053](../../auth_ui.js#L5053) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| GET | `/api/tenant-config` | [auth_ui.js:5089](../../auth_ui.js#L5089) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| GET | `/api/tenant-config/whatsapp-metrics` | [auth_ui.js:5058](../../auth_ui.js#L5058) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| GET | `/api/tenant-config` | [auth_ui.js:5094](../../auth_ui.js#L5094) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | GET | `/api/tg/chats` | [telegram_runtime.js:2310](../../telegram_runtime.js#L2310) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
 | GET | `/api/tg/stats` | [telegram_runtime.js:2295](../../telegram_runtime.js#L2295) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
 | GET | `/api/tg/status` | [telegram_runtime.js:2263](../../telegram_runtime.js#L2263) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
-| GET | `/api/token-control/api-message-windows` | [token_control_stats.js:2778](../../token_control_stats.js#L2778) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
-| GET | `/api/token-control/conversations` | [token_control_stats.js:2753](../../token_control_stats.js#L2753) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
-| GET | `/api/token-control/exchange-rate` | [token_control_stats.js:2720](../../token_control_stats.js#L2720) | `, requireAuth, requireTokenControlAccess, async (_req, res) => {` |
+| GET | `/api/token-control/api-message-windows` | [token_control_stats.js:2801](../../token_control_stats.js#L2801) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/api/token-control/conversations` | [token_control_stats.js:2776](../../token_control_stats.js#L2776) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/api/token-control/exchange-rate` | [token_control_stats.js:2743](../../token_control_stats.js#L2743) | `, requireAuth, requireTokenControlAccess, async (_req, res) => {` |
 | GET | `/api/token-control/media/:id/content` | [token_control_media.js:65](../../token_control_media.js#L65) | `, auth.requireAuth, superOnly, wrap(async (req, res) => {` |
 | GET | `/api/token-control/media/:id` | [token_control_media.js:60](../../token_control_media.js#L60) | `, auth.requireAuth, superOnly, wrap(async (req, res) => {` |
-| GET | `/api/token-control/summary` | [token_control_stats.js:2697](../../token_control_stats.js#L2697) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
-| GET | `/api/token-control/timeline` | [token_control_stats.js:2731](../../token_control_stats.js#L2731) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/api/token-control/summary` | [token_control_stats.js:2720](../../token_control_stats.js#L2720) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
+| GET | `/api/token-control/timeline` | [token_control_stats.js:2754](../../token_control_stats.js#L2754) | `, requireAuth, requireTokenControlAccess, async (req, res) => {` |
 | GET | `/api/web-access/summary` | [web_access_stats.js:517](../../web_access_stats.js#L517) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| GET | `/api/wweb/history` | [auth_ui.js:6206](../../auth_ui.js#L6206) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
+| GET | `/api/wweb/history` | [auth_ui.js:6211](../../auth_ui.js#L6211) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
 | GET | `/api/wweb/history` | [endpoint.js:1795](../../endpoint.js#L1795) | `, async (req, res) => {` |
-| GET | `/api/wweb/locks` | [auth_ui.js:5699](../../auth_ui.js#L5699) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
-| GET | `/api/wweb/qr` | [auth_ui.js:5794](../../auth_ui.js#L5794) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
+| GET | `/api/wweb/locks` | [auth_ui.js:5704](../../auth_ui.js#L5704) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
+| GET | `/api/wweb/qr` | [auth_ui.js:5799](../../auth_ui.js#L5799) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
 | GET | `/api/wweb/sessions` | [endpoint.js:1378](../../endpoint.js#L1378) | `, async (req, res) => {` |
-| GET | `/api/wweb/stats` | [auth_ui.js:6076](../../auth_ui.js#L6076) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| GET | `/app` | [auth_ui.js:3605](../../auth_ui.js#L3605) | `, requireAuth, (req, res) => {` |
+| GET | `/api/wweb/stats` | [auth_ui.js:6081](../../auth_ui.js#L6081) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| GET | `/app` | [auth_ui.js:3610](../../auth_ui.js#L3610) | `, requireAuth, (req, res) => {` |
 | GET | `/audit` | [src/support/routes.js:73](../../src/support/routes.js#L73) | `, route((req, s, scope) => s.col('audit').find(scope).sort({ at: -1 }).limit(100).toArray()));` |
 | GET | `/cache/audio/:id` | [endpoint.js:2381](../../endpoint.js#L2381) | `, (req, res) => {` |
 | GET | `/cache/media/:id` | [endpoint.js:2387](../../endpoint.js#L2387) | `, (req, res) => {` |
@@ -149,8 +150,8 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/comportamiento` | [src/web/web_admin.routes.js:360](../../src/web/web_admin.routes.js#L360) | `, async (req, res) => {` |
 | GET | `/contact-control` | [src/support/extension.js:108](../../src/support/extension.js#L108) | `, route(async (req, s, scope) => {` |
 | GET | `/customer-app/:tenant/` | [customer_queue.js:114](../../customer_queue.js#L114) | ` + mode, wrap(async (req, res) => {` |
-| GET | `/customer-app/:tenant` | [customer_app_web.js:116](../../customer_app_web.js#L116) | `, (req, res) => { const t = tenant(req.params.tenant); if (!t) return res.status(400).send("Dominio inválido")` |
-| GET | `/customer-app/download/android` | [customer_app_web.js:115](../../customer_app_web.js#L115) | `, (_req, res) => res.download(require('path').join(__dirname, 'Asisto-1.1.7.apk'), 'Asisto-1.1.7.apk'));` |
+| GET | `/customer-app/:tenant` | [customer_app_web.js:118](../../customer_app_web.js#L118) | `, (req, res) => { const t = tenant(req.params.tenant); if (!t) return res.status(400).send("Dominio inválido")` |
+| GET | `/customer-app/download/android` | [customer_app_web.js:117](../../customer_app_web.js#L117) | `, (_req, res) => res.download(require('path').join(__dirname, 'Asisto-1.1.7.apk'), 'Asisto-1.1.7.apk'));` |
 | GET | `/drafts/:id/evidence` | [src/support/routes.js:62](../../src/support/routes.js#L62) | `, route((req, s, scope) => s.evidence(scope, req.params.id)));` |
 | GET | `/drafts/:id/mail` | [src/support/extension.js:51](../../src/support/extension.js#L51) | `, route(async (req,s,scope) => { const row = await rowFor(s,scope,req.params.id); return mailFactory(s).histor` |
 | GET | `/drafts/:id` | [src/support/extension.js:149](../../src/support/extension.js#L149) | `, route(async (req, s, scope) => {` |
@@ -171,7 +172,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/hubspot` | [src/support/extension.js:228](../../src/support/extension.js#L228) | `, route(async (req, s, scope) => {` |
 | GET | `/index` | [src/support/extension.js:67](../../src/support/extension.js#L67) | `, route(async (req, s, scope) => {` |
 | GET | `/jobs` | [src/support/routes.js:71](../../src/support/routes.js#L71) | `, route((req, s, scope) => s.col('jobs').find(scope, { projection: { claim: 0 } }).sort({ createdAt: -1 }).lim` |
-| GET | `/login` | [auth_ui.js:3389](../../auth_ui.js#L3389) | `, (req, res) => {` |
+| GET | `/login` | [auth_ui.js:3394](../../auth_ui.js#L3394) | `, (req, res) => {` |
 | GET | `/mail/settings` | [src/support/extension.js:48](../../src/support/extension.js#L48) | `, route(async (req,s,scope) => mailFactory(s).view(scope)));` |
 | GET | `/memory` | [src/support/routes.js:74](../../src/support/routes.js#L74) | `, route((req, s, scope) => s.col('memory').find(scope).limit(500).toArray()));` |
 | GET | `/messages` | [src/support/extension.js:89](../../src/support/extension.js#L89) | `, route(async (req, s, scope) => {` |
@@ -184,19 +185,19 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/request/:code` | [src/support/devices.js:83](../../src/support/devices.js#L83) | `, route(async (req, s) => {` |
 | GET | `/resto/:tenant/:token` | [restaurant.js:86](../../restaurant.js#L86) | `, async (req, res) => {` |
 | GET | `/resto/image/:id` | [restaurant_image.js:27](../../restaurant_image.js#L27) | `, async (req, res) => {` |
-| GET | `/robots.txt` | [auth_ui.js:3560](../../auth_ui.js#L3560) | `, (req, res) => {` |
+| GET | `/robots.txt` | [auth_ui.js:3565](../../auth_ui.js#L3565) | `, (req, res) => {` |
 | GET | `/robots.txt` | [endpoint.js:2344](../../endpoint.js#L2344) | `, (_req, res) => {` |
 | GET | `/session` | [src/support/extension.js:63](../../src/support/extension.js#L63) | `, route(async (req, s, scope) => {` |
 | GET | `/session` | [src/support/routes.js:47](../../src/support/routes.js#L47) | `, route(async (req, s, scope) => {` |
 | GET | `/settings` | [src/support/routes.js:44](../../src/support/routes.js#L44) | `, route((req, s, scope) => s.config(scope)));` |
-| GET | `/sitemap.xml` | [auth_ui.js:3582](../../auth_ui.js#L3582) | `, (req, res) => {` |
+| GET | `/sitemap.xml` | [auth_ui.js:3587](../../auth_ui.js#L3587) | `, (req, res) => {` |
 | GET | `/sitemap.xml` | [endpoint.js:2354](../../endpoint.js#L2354) | `, (_req, res) => {` |
 | GET | `/status/lock` | [app_asisto_ws.js:752](../../app_asisto_ws.js#L752) | `, requireStatusToken, async (req, res) => {` |
 | GET | `/status/qr` | [app_asisto_ws.js:757](../../app_asisto_ws.js#L757) | `, requireStatusToken, async (req, res) => {` |
 | GET | `/status` | [app_asisto_ws.js:732](../../app_asisto_ws.js#L732) | `, requireStatusToken, async (req, res) => {` |
-| GET | `/ui/:page` | [auth_ui.js:3657](../../auth_ui.js#L3657) | `, requireAuth, (req, res) => {` |
-| GET | `/ui/configuracion` | [auth_ui.js:3649](../../auth_ui.js#L3649) | `, requireAuth, (req, res) => {` |
-| GET | `/ui/notificaciones-app` | [customer_notifications.js:15](../../customer_notifications.js#L15) | `,requireAuth,async(req,res)=>{const isSuper=String(req.user?.role&#124;&#124;'').toLowerCase()==='superadmin',` |
+| GET | `/ui/:page` | [auth_ui.js:3662](../../auth_ui.js#L3662) | `, requireAuth, (req, res) => {` |
+| GET | `/ui/configuracion` | [auth_ui.js:3654](../../auth_ui.js#L3654) | `, requireAuth, (req, res) => {` |
+| GET | `/ui/notificaciones-app` | [customer_notifications.js:14](../../customer_notifications.js#L14) | `,requireAuth,async(req,res)=>{const isSuper=String(req.user?.role&#124;&#124;'').toLowerCase()==='superadmin',` |
 | GET | `/ui/turnero/:tenant/estadisticas` | [queue_stats.js:97](../../queue_stats.js#L97) | `, wrap(async (req, res) => {` |
 | GET | `/ui/turnero/:tenant/vendedores` | [customer_queue.js:125](../../customer_queue.js#L125) | `, wrap(async (req, res) => {` |
 | GET | `/ui/turnero/:tenant` | [customer_queue.js:119](../../customer_queue.js#L119) | `, wrap(async (req, res) => {` |
@@ -204,14 +205,14 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/webhook` | [endpoint.js:10738](../../endpoint.js#L10738) | `, async (req, res) => {` |
 | GET | `/webhook` | [src/whatsapp/webhook.routes.js:52](../../src/whatsapp/webhook.routes.js#L52) | `, async (req, res) => {` |
 | GET | `/webhooks/mercadopago/subscriptions/return` | [billing_subscriptions.js:119](../../billing_subscriptions.js#L119) | `, (_req, res) => res.type('html').send('<!doctype html><html lang="es"><meta charset="utf-8"><title>Asisto · M` |
-| PATCH | `/api/customer-notifications/:tenant/devices/:installId` | [customer_notifications.js:17](../../customer_notifications.js#L17) | `,requireAuth,notificationJson,async(req,res)=>{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,` |
+| PATCH | `/api/customer-notifications/:tenant/devices/:installId` | [customer_notifications.js:16](../../customer_notifications.js#L16) | `,requireAuth,notificationJson,async(req,res)=>{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,` |
 | PATCH | `/api/resto/events/:id` | [restaurant.js:265](../../restaurant.js#L265) | `, json, async (req, res) => {` |
 | PATCH | `/drafts/:id` | [src/support/routes.js:63](../../src/support/routes.js#L63) | `, route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, req.body.fields)));` |
-| POST | `/admin/leads/delete` | [auth_ui.js:5395](../../auth_ui.js#L5395) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| POST | `/admin/users/create` | [auth_ui.js:3753](../../auth_ui.js#L3753) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| POST | `/admin/users/delete` | [auth_ui.js:3919](../../auth_ui.js#L3919) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| POST | `/admin/users/reset-password` | [auth_ui.js:3880](../../auth_ui.js#L3880) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| POST | `/admin/users/update` | [auth_ui.js:3810](../../auth_ui.js#L3810) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| POST | `/admin/leads/delete` | [auth_ui.js:5400](../../auth_ui.js#L5400) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| POST | `/admin/users/create` | [auth_ui.js:3758](../../auth_ui.js#L3758) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| POST | `/admin/users/delete` | [auth_ui.js:3924](../../auth_ui.js#L3924) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| POST | `/admin/users/reset-password` | [auth_ui.js:3885](../../auth_ui.js#L3885) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| POST | `/admin/users/update` | [auth_ui.js:3815](../../auth_ui.js#L3815) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | POST | `/api-chat-cab/procesar-mensaje` | [endpoint.js:10680](../../endpoint.js#L10680) | `, handleApiChatCabProcesarMensajePost);` |
 | POST | `/api/admin/conversation-delivered` | [endpoint.js:4899](../../endpoint.js#L4899) | `, async (req, res) => {` |
 | POST | `/api/admin/conversation-kitchen` | [endpoint.js:4948](../../endpoint.js#L4948) | `, async (req, res) => {` |
@@ -241,7 +242,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/api/customer-app-admin/:tenant/settings` | [customer_queue.js:193](../../customer_queue.js#L193) | `, wrap(async (req, res) => {` |
 | POST | `/api/customer-app-admin/:tenant/tickets/:id/cancel` | [customer_queue.js:259](../../customer_queue.js#L259) | `, wrap(async (req, res) => {` |
 | POST | `/api/customer-app-admin/:tenant/tickets/:id/print` | [customer_queue.js:276](../../customer_queue.js#L276) | `, wrap(async (req, res) => {` |
-| POST | `/api/customer-app/:tenant/devices` | [customer_app_web.js:118](../../customer_app_web.js#L118) | `, async (req,res)=>{ try{const t=tenant(req.params.tenant),installId=clean(req.body.installId,120),pushToken=c` |
+| POST | `/api/customer-app/:tenant/devices` | [customer_app_web.js:120](../../customer_app_web.js#L120) | `, async (req,res)=>{ try{const t=tenant(req.params.tenant),installId=clean(req.body.installId,120),pushToken=c` |
 | POST | `/api/customer-app/:tenant/presence/checkin` | [customer_queue.js:161](../../customer_queue.js#L161) | `, wrap(async (req, res) => {` |
 | POST | `/api/customer-app/:tenant/tickets/:id/cancel` | [customer_queue.js:359](../../customer_queue.js#L359) | `, wrap(async (req, res) => {` |
 | POST | `/api/customer-app/:tenant/tickets/:id/claim` | [customer_queue.js:310](../../customer_queue.js#L310) | `, wrap(async (req, res) => {` |
@@ -249,7 +250,8 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/api/customer-app/:tenant/tickets/:id/handoff` | [deploy/mecan-install/patch-runtime.cjs:25](../../deploy/mecan-install/patch-runtime.cjs#L25) | `, wrap(async (req, res) => {", "  app.post('/api/customer-app/:tenant/tickets/:id/handoff', wrap(async (req, r` |
 | POST | `/api/customer-app/:tenant/tickets/:id/handoff` | [deploy/mecan-install/patch-runtime.cjs:25](../../deploy/mecan-install/patch-runtime.cjs#L25) | `, wrap(async (req, res) => {\n    const expiresAt = new Date(Date.now() + handoffDuration(req.body?.purpose));` |
 | POST | `/api/customer-app/:tenant/tickets` | [customer_queue.js:221](../../customer_queue.js#L221) | `, wrap(async (req, res) => {` |
-| POST | `/api/customer-notifications/:tenant` | [customer_notifications.js:18](../../customer_notifications.js#L18) | `,requireAuth,notificationJson,async(req,res)=>{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,` |
+| POST | `/api/customer-notifications/:tenant` | [customer_notifications.js:17](../../customer_notifications.js#L17) | `,requireAuth,notificationJson,async(req,res)=>{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,` |
+| POST | `/api/customer-notifications/:tenant` | [deploy/patch-notification-devices.cjs:7](../../deploy/patch-notification-devices.cjs#L7) | `,",'async function firebaseSender(){']){` |
 | POST | `/api/ext/ayuda/chat-web` | [help_tool.js:2296](../../help_tool.js#L2296) | `, json, async (req, res) => {` |
 | POST | `/api/ext/ayuda` | [help_tool.js:2317](../../help_tool.js#L2317) | `, json, requireHelpExternalAccess, handleHelpQuery);` |
 | POST | `/api/ext/help` | [help_tool.js:2315](../../help_tool.js#L2315) | `, json, requireHelpExternalAccess, handleHelpQuery);` |
@@ -291,22 +293,22 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/api/resto/tables` | [restaurant.js:198](../../restaurant.js#L198) | `, json, async (req, res) => {` |
 | POST | `/api/tenant-channels` | [endpoint.js:399](../../endpoint.js#L399) | `, auth.requireAdmin, async (req, res) => {` |
 | POST | `/api/tenant-channels` | [src/web/tenant_channels.routes.js:47](../../src/web/tenant_channels.routes.js#L47) | `, auth.requireAdmin, async (req, res) => {` |
-| POST | `/api/tenant-config` | [auth_ui.js:5123](../../auth_ui.js#L5123) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| POST | `/api/tenant-config` | [auth_ui.js:5128](../../auth_ui.js#L5128) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | POST | `/api/tg/policy` | [telegram_runtime.js:2394](../../telegram_runtime.js#L2394) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
 | POST | `/api/tg/release` | [telegram_runtime.js:2351](../../telegram_runtime.js#L2351) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
 | POST | `/api/tg/reload` | [telegram_runtime.js:2342](../../telegram_runtime.js#L2342) | `, auth.requireAuth, auth.requireAdmin, async (_req, res) => {` |
 | POST | `/api/tg/restart` | [telegram_runtime.js:2378](../../telegram_runtime.js#L2378) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
 | POST | `/api/tg/start` | [telegram_runtime.js:2364](../../telegram_runtime.js#L2364) | `, auth.requireAuth, auth.requireAdmin, async (req, res) => {` |
 | POST | `/api/token-control/messages/:id/media` | [token_control_media.js:33](../../token_control_media.js#L33) | `, auth.requireAuth, superOnly, wrap(async (req, res) => {` |
-| POST | `/api/wweb/action` | [auth_ui.js:6239](../../auth_ui.js#L6239) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
-| POST | `/api/wweb/delete-session` | [auth_ui.js:5910](../../auth_ui.js#L5910) | `, requireAuth, requireAdmin, async (req, res) => {` |
-| POST | `/api/wweb/policy` | [auth_ui.js:5963](../../auth_ui.js#L5963) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
+| POST | `/api/wweb/action` | [auth_ui.js:6244](../../auth_ui.js#L6244) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
+| POST | `/api/wweb/delete-session` | [auth_ui.js:5915](../../auth_ui.js#L5915) | `, requireAuth, requireAdmin, async (req, res) => {` |
+| POST | `/api/wweb/policy` | [auth_ui.js:5968](../../auth_ui.js#L5968) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
 | POST | `/api/wweb/policy` | [endpoint.js:1730](../../endpoint.js#L1730) | `, async (req, res) => {` |
-| POST | `/api/wweb/release` | [auth_ui.js:5838](../../auth_ui.js#L5838) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
+| POST | `/api/wweb/release` | [auth_ui.js:5843](../../auth_ui.js#L5843) | `, requireAuth, requireWwebAccess, async (req, res) => {` |
 | POST | `/api/wweb/release` | [endpoint.js:1771](../../endpoint.js#L1771) | `, async (req, res) => {` |
 | POST | `/approve` | [src/support/devices.js:89](../../src/support/devices.js#L89) | `, route(async (req, s) => {` |
 | POST | `/contact-control` | [src/support/extension.js:116](../../src/support/extension.js#L116) | `, route(async (req, s, scope) => {` |
-| POST | `/contact` | [auth_ui.js:3401](../../auth_ui.js#L3401) | `, async (req, res) => {` |
+| POST | `/contact` | [auth_ui.js:3406](../../auth_ui.js#L3406) | `, async (req, res) => {` |
 | POST | `/contact` | [src/support/extension.js:128](../../src/support/extension.js#L128) | `, route(async (req, s, scope) => {` |
 | POST | `/contacts` | [src/support/devices.js:165](../../src/support/devices.js#L165) | `, route(async (req, s) => {` |
 | POST | `/contacts` | [src/support/extension.js:136](../../src/support/extension.js#L136) | `, route(async (req, s, scope) => {` |
@@ -324,8 +326,8 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/heartbeat` | [src/support/devices.js:108](../../src/support/devices.js#L108) | `, route(async (req, s) => {` |
 | POST | `/history` | [src/support/routes.js:59](../../src/support/routes.js#L59) | `, route((req, s, scope) => s.history(scope, req.body.from, req.body.to)));` |
 | POST | `/hubspot/connect` | [src/support/extension.js:236](../../src/support/extension.js#L236) | `, route(async (req, s, scope) => {` |
-| POST | `/login` | [auth_ui.js:3515](../../auth_ui.js#L3515) | `, async (req, res) => {` |
-| POST | `/logout` | [auth_ui.js:3599](../../auth_ui.js#L3599) | `, (req, res) => {` |
+| POST | `/login` | [auth_ui.js:3520](../../auth_ui.js#L3520) | `, async (req, res) => {` |
+| POST | `/logout` | [auth_ui.js:3604](../../auth_ui.js#L3604) | `, (req, res) => {` |
 | POST | `/mail/settings` | [src/support/extension.js:49](../../src/support/extension.js#L49) | `, route(async (req,s,scope) => mailFactory(s).save(scope,req.body)));` |
 | POST | `/mail/verify` | [src/support/extension.js:50](../../src/support/extension.js#L50) | `, route(async (req,s,scope) => mailFactory(s).verify(scope)));` |
 | POST | `/messages/assign` | [src/support/extension.js:107](../../src/support/extension.js#L107) | `, route((req, s, scope) => s.assignMessages(scope, req.body)));` |
@@ -352,14 +354,14 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | PUT | `/memory` | [src/support/routes.js:75](../../src/support/routes.js#L75) | `, route((req, s, scope) => s.rememberContact(scope, req.body)));` |
 | PUT | `/settings` | [src/support/routes.js:45](../../src/support/routes.js#L45) | `, route((req, s, scope) => s.saveConfig(scope, req.body)));` |
 | PUT | `/tenant-settings` | [src/support/routes.js:46](../../src/support/routes.js#L46) | `, route((req, s, scope) => { admin(req); return s.saveConfig({ ...scope, userId: '*' }, req.body); }));` |
-| USE | `/api/customer-app-admin` | [customer_app_web.js:111](../../customer_app_web.js#L111) | `, express.json({ limit: "32kb" }));` |
-| USE | `/api/customer-app` | [customer_app_web.js:110](../../customer_app_web.js#L110) | `, express.json({ limit: "32kb" }));` |
+| USE | `/api/customer-app-admin` | [customer_app_web.js:113](../../customer_app_web.js#L113) | `, express.json({ limit: "32kb" }));` |
+| USE | `/api/customer-app` | [customer_app_web.js:112](../../customer_app_web.js#L112) | `, express.json({ limit: "32kb" }));` |
 | USE | `/api/support/device` | [src/support/routes.js:120](../../src/support/routes.js#L120) | `, createDeviceRouter({ getService, publicOrigin }));` |
 | USE | `/api/support/extension` | [src/support/routes.js:121](../../src/support/routes.js#L121) | `, createExtensionRouter({ getService }));` |
 | USE | `/api/support` | [src/support/routes.js:122](../../src/support/routes.js#L122) | `, createRouter({ getService, publicOrigin }));` |
 | USE | `/api/support` | [src/support/routes.js:124](../../src/support/routes.js#L124) | `, (req, res) => {` |
 | USE | `/api/wweb` | [endpoint.js:485](../../endpoint.js#L485) | `, auth.requireWwebAccess);` |
-| USE | `/customer-app/assets` | [customer_app_web.js:112](../../customer_app_web.js#L112) | `, express.static(require('path').join(__dirname, 'static', 'turnero')));` |
+| USE | `/customer-app/assets` | [customer_app_web.js:114](../../customer_app_web.js#L114) | `, express.static(require('path').join(__dirname, 'static', 'turnero')));` |
 | USE | `/static/clientes` | [endpoint.js:151](../../endpoint.js#L151) | `, express.static(path.join(__dirname, "static", "clientes")));` |
 | USE | `/static` | [endpoint.js:154](../../endpoint.js#L154) | `, express.static(path.join(__dirname, "static")));` |
 | USE | `/static` | [endpoint.js:157](../../endpoint.js#L157) | `, express.static(path.join(__dirname)));` |

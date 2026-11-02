@@ -426,3 +426,5 @@ La revisión de objetivos conserva mensajes originales, valida cobertura y exige
 
 <!-- 5.00.308: reparación explícita admite membresías automáticas cruzadas, mantiene cobertura e IDs únicos de revisión. Mini exige esquema estricto. No relaja protección de ediciones ni HubSpot. -->
 <!-- 5.00.309: preflight de todos los resúmenes antes de escribir membresías durante reparación generada; consumo rechazado validado se contabiliza. -->
+
+Centro de actividad: ver [CENTRO_ACTIVIDAD_APP.md](CENTRO_ACTIVIDAD_APP.md).
