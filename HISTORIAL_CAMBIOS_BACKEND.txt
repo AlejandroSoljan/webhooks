@@ -1,3 +1,4 @@
+2026-11-02 | v5.00.331 | Corrige reporte Productos y consultas: total unico, desglose origen/resultado y historico separado. Sin cambios de cobro ni registros. Pruebas product_insights; publicacion incremental sobre release activo. Rama codex/notifications-device-dedup.
 2026-11-01 | v5.00.328 | Centro de actividad global: resumen, graficos horarios/diarios, ficha y eventos por celular. Publicado en AWS y Mecan local; consultas compatibles API estricta Mongo. Pruebas focalizadas y validacion visual. Manual actualizado.
 2026-11-01 | Alcance global notificaciones / Escaner 1.1.8 (10) | Verifica listado y envio en 35 combinaciones de dominios/modelos, sin condiciones por MCN o marca. Escaner agrega identidad estable y registra dominio de la pagina abierta; requiere distribuir APK. Auditoria global AWS y limites documentados; no fusiona por modelo.
 

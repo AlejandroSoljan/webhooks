@@ -47,7 +47,7 @@ test('historical/new cutover prevents double counts, aliases merge and only user
   {...base,ts:undefined,createdAt:new Date('2026-10-20T15:00Z'),content:'Qué precio tiene?'},
  ]);
  const result=await buildProductInsights(db,tenantId,'2026-10-20','2026-10-20');
- assert.equal(result.metrics.successful,4);assert.equal(result.metrics.legacySuccessful,3);assert.equal(result.metrics.camera,1);assert.equal(result.metrics.measuredAttempts,3);
+ assert.equal(result.metrics.measuredSuccessful,1); assert.equal(result.bySource.reduce((n,r)=>n+r.total,0),3); assert.deepEqual(result.bySource.filter(r=>r.total).map(r=>[r.source,r.available,r.unavailable,r.errors,r.total]),[['scan',1,0,0,1],['sku',0,1,1,2]]); assert.equal(result.metrics.successful,4);assert.equal(result.metrics.legacySuccessful,3);assert.equal(result.metrics.camera,1);assert.equal(result.metrics.measuredAttempts,3);
  assert.equal(result.metrics.written,3);assert.equal(result.metrics.infoRequests,1);assert.equal(result.metrics.unavailable,1);assert.equal(result.metrics.errors,1);
  assert.equal(result.topProducts[0].code,'S1');assert.equal(result.topProducts[0].views,4);assert.equal(result.topProducts[0].questions,3);
  const serialized=JSON.stringify(result);assert.doesNotMatch(serialized,/PRIVATE|Qué batería|FOREIGN/);assert.match(serialized,/no ventas ni clientes únicos/);assert.equal(result.metrics.uniqueCustomers,undefined);
