@@ -2,6 +2,8 @@
 
 Alcance global comprobado el 01/11/2026: la regla no contiene condiciones por MCN, OnePlus ni listas de dominios. Las 12 pruebas Node incluyen 35 combinaciones de siete dominios y cinco modelos, listado y envío, conservando aislamiento entre dominios. El mismo modelo con identidades distintas sigue separado.
 
+Escáner 1.1.8 compilado con assembleDebug correcto: APK de 7.197.583 bytes, SHA-256 D749358541CFD6975A782B252B766B24D71E9B2CFE008F6ED1B45337C7CEA1E4. Es un paquete de prueba firmado para debug, no una publicación en Google Play ni prueba física de reinstalación.
+
 Escáner 1.1.8 (código 10) incorpora la misma identidad estable de Mecan. Su registro nativo toma el dominio de la página customer-app abierta; DEMO_FERRETERIA queda sólo como valor inicial. Requiere distribuir e instalar el APK; cambiar el servidor no actualiza una app ya instalada. En clientes web o versiones antiguas sin identidad estable no se pueden unir automáticamente registros tras borrar almacenamiento o reinstalar si tampoco comparten token/installId. No inferir identidad por modelo.
 
 Auditoría AWS posterior: DEMO_FERRETERIA tiene dos registros con token y un destino habilitado; MCN tiene 33 registros con token y seis destinos habilitados. Incluye un grupo nuevo de cuatro registros relacionados y el grupo histórico confirmado de 22. Son cifras de ese momento, no valores fijos del panel. No se enviaron mensajes reales.
