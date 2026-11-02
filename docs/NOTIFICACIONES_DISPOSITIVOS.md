@@ -1,5 +1,11 @@
 # Notificaciones: identidad de destinatarios
 
+Alcance global comprobado el 01/11/2026: la regla no contiene condiciones por MCN, OnePlus ni listas de dominios. Las 12 pruebas Node incluyen 35 combinaciones de siete dominios y cinco modelos, listado y envío, conservando aislamiento entre dominios. El mismo modelo con identidades distintas sigue separado.
+
+Escáner 1.1.8 (código 10) incorpora la misma identidad estable de Mecan. Su registro nativo toma el dominio de la página customer-app abierta; DEMO_FERRETERIA queda sólo como valor inicial. Requiere distribuir e instalar el APK; cambiar el servidor no actualiza una app ya instalada. En clientes web o versiones antiguas sin identidad estable no se pueden unir automáticamente registros tras borrar almacenamiento o reinstalar si tampoco comparten token/installId. No inferir identidad por modelo.
+
+Auditoría AWS posterior: DEMO_FERRETERIA tiene dos registros con token y un destino habilitado; MCN tiene 33 registros con token y seis destinos habilitados. Incluye un grupo nuevo de cuatro registros relacionados y el grupo histórico confirmado de 22. Son cifras de ese momento, no valores fijos del panel. No se enviaron mensajes reales.
+
 El Centro de notificaciones lista y cuenta destinos únicos con token habilitado. `notification_devices.js` agrupa por igualdad exacta de `installId`, `pushToken`, `deviceKey` o `notificationGroupId`, siempre dentro del mismo dominio. Las relaciones son transitivas para contemplar cambios de token e instalación. `notificationGroupId` se asigna sólo tras confirmación del operador; nunca se deduce por modelo. El registro más reciente con token vigente determina el destinatario y se conserva el alias disponible.
 
 El GET del panel y el POST de envío usan la misma agrupación. Una selección antigua se resuelve contra todos los registros habilitados del dominio: seleccionar dos identificadores vinculados envía una sola notificación. La respuesta pública no expone tokens Firebase, agentes de usuario ni listas internas de identificadores. El panel indica cuántos registros están vinculados y cuenta destinos únicos.

@@ -175,6 +175,7 @@ public class MainActivity extends AppCompatActivity {
         });
         webView.setWebViewClient(new WebViewClient() {
             @Override public void onPageFinished(WebView view, String url) {
+                PushRegistration.selectPage(MainActivity.this, url);
                 injectPushToken();
                 PushRegistration.ensure(MainActivity.this);
                 if (pushToken != null && !pushToken.isEmpty()) PushRegistration.register(MainActivity.this, pushToken);

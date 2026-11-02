@@ -31,9 +31,9 @@ function harness(rows, failureCode) {
     post:(route,...handlers)=>routes.set('POST '+route,handlers.at(-1)),
     patch:()=>{}};
   sandbox.module.exports.mountCustomerNotifications(app,{requireAuth:(_q,_s,next)=>next()});
-  async function call(method, body, user = {role:'superadmin'}) {
+  async function call(method, body, user = {role:'superadmin'}, tenant = 'MCN') {
     const res = {code:200,status(code){this.code=code;return this;},json(data){this.data=data;return this;}};
-    await routes.get(method+' /api/customer-notifications/:tenant')({params:{tenant:'MCN'},query:{},body,user},res);
+    await routes.get(method+' /api/customer-notifications/:tenant')({params:{tenant},query:{},body,user},res);
     return res;
   }
   return {call,sends,records,retired,page:sandbox.module.exports.panelPage};
@@ -75,5 +75,19 @@ test('only a confirmed UNREGISTERED response retires a token, never transient er
   assert.equal((await h.call('POST',{title:'x',body:'y',installIds:['old']})).code,502);
   assert.equal(h.retired.length,code==='UNREGISTERED'?1:0);
   if(h.retired.length)assert.equal(h.retired[0].update.$set.notificationInvalidTokenHash.length,64);
+ }
+});
+test('generic list and send apply to every tenant and model, with tenant isolation',async()=>{
+ for(const tenant of ['MCN','NEA','NEA2','RVL','MSM','DEMO_FERRETERIA','NEW_TENANT']){
+  for(const deviceName of ['Samsung','Google Pixel','Motorola','iPhone','Unknown']){
+   const h=harness([
+    {tenantId:tenant,installId:'a',pushToken:'old',deviceKey:'stable',deviceName,updatedAt:new Date('2026-10-29')},
+    {tenantId:tenant,installId:'b',pushToken:'new',deviceKey:'stable',deviceName,updatedAt:new Date('2026-11-01')},
+    {tenantId:'FOREIGN',installId:'a',pushToken:'foreign',deviceKey:'stable',deviceName,updatedAt:new Date()},
+   ]);
+   assert.equal((await h.call('GET',undefined,{role:'superadmin'},tenant)).data.summary.total,1);
+   const response=await h.call('POST',{title:'x',body:'y',installIds:['a','b']},{role:'superadmin'},tenant);
+   assert.equal(response.code,200);assert.equal(h.sends.length,1);assert.equal(h.sends[0].token,'new');
+  }
  }
 });

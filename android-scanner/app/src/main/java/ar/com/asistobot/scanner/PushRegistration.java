@@ -21,7 +21,15 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 final class PushRegistration {
-    private static final String REGISTER_URL = "https://asistobot.com.ar/api/customer-app/DEMO_FERRETERIA/devices";
+    static void selectPage(Context context, String url) {
+        android.net.Uri uri = android.net.Uri.parse(url == null ? "" : url);
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || !"asistobot.com.ar".equalsIgnoreCase(uri.getHost())) return;
+        java.util.List<String> parts = uri.getPathSegments();
+        if (parts.size() < 2 || !"customer-app".equals(parts.get(0))) return;
+        String tenant = parts.get(1);
+        if (!tenant.matches("[A-Za-z0-9_-]{1,120}")) return;
+        context.getSharedPreferences("asisto_push", Context.MODE_PRIVATE).edit().putString("tenant", tenant).apply();
+    }
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final AtomicBoolean TOKEN_REQUEST_RUNNING = new AtomicBoolean(false);
@@ -77,10 +85,13 @@ final class PushRegistration {
                 JSONObject payload = new JSONObject();
                 payload.put("installId", installId(app));
                 payload.put("pushToken", token);
+                payload.put("deviceKey", DeviceIdentity.key(android.provider.Settings.Secure.getString(
+                    app.getContentResolver(), android.provider.Settings.Secure.ANDROID_ID), app.getPackageName()));
                 payload.put("deviceName", (Build.MANUFACTURER + " " + Build.MODEL).trim());
                 payload.put("registrationSource", "android-native");
                 byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
-                connection = (HttpURLConnection) new URL(REGISTER_URL).openConnection();
+                String tenant = app.getSharedPreferences("asisto_push", Context.MODE_PRIVATE).getString("tenant", "DEMO_FERRETERIA");
+                connection = (HttpURLConnection) new URL("https://asistobot.com.ar/api/customer-app/" + tenant + "/devices").openConnection();
                 connection.setRequestMethod("POST");
                 connection.setConnectTimeout(15000);
                 connection.setReadTimeout(15000);
