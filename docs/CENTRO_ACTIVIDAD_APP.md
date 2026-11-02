@@ -9,3 +9,5 @@ POST `/api/customer-app/:tenant/activity`: requiere instalación y token actuale
 Envíos desde `/center/send` tienen idempotencia y enlace individual con secreto aleatorio cuyo hash se guarda en recibos. Sólo la instalación destinataria puede acreditar apertura. Aceptación por Firebase no prueba recepción ni lectura; envíos históricos sin seguimiento muestran sin medición. No se envían notificaciones durante las pruebas.
 
 La web incorpora seguimiento sin requerir reinstalar. Versiones nativas antiguas sin puente/token no producen mediciones; versión y permiso desconocidos aparecen sin datos. Los eventos se capturan sólo dentro de la app. Se preservan identidad, turnos y datos existentes. El código nativo 1.0.6 sigue su revisión independiente.
+
+Verificación final: 24 pruebas aprobadas; panel y ficha comprobados en producción. Release activo en AWS principal, turnero AWS y Mecan local: v5.00.328-activity-20261101-3. Healthz correcto. Commit e6afb86; envío a GitHub pendiente por autenticación de Git en esta PC.
