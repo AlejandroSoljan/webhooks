@@ -77,8 +77,12 @@ final class PushRegistration {
                 JSONObject payload = new JSONObject();
                 payload.put("installId", installId(app));
                 payload.put("pushToken", token);
+                payload.put("deviceKey", DeviceIdentity.key(android.provider.Settings.Secure.getString(
+                    app.getContentResolver(), android.provider.Settings.Secure.ANDROID_ID), app.getPackageName()));
                 payload.put("deviceName", (Build.MANUFACTURER + " " + Build.MODEL).trim());
                 payload.put("registrationSource", "android-mecan");
+                payload.put("appVersion", app.getPackageManager().getPackageInfo(app.getPackageName(), 0).versionName);
+                payload.put("installRecoveryStatus", InstallTicketReferrer.diagnostic(app));
                 byte[] body = payload.toString().getBytes(StandardCharsets.UTF_8);
                 connection = (HttpURLConnection) new URL(REGISTER_URL).openConnection();
                 connection.setRequestMethod("POST");

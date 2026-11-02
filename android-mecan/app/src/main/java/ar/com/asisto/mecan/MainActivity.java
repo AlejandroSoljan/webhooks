@@ -3,6 +3,8 @@ package ar.com.asisto.mecan;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.Intent;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
@@ -41,7 +43,10 @@ public class MainActivity extends AppCompatActivity {
     private ValueCallback<Uri[]> fileCallback;
     private Uri capturedPhotoUri;
     private int launchGeneration = 0;
+    private Runnable cancelInstallRecovery = () -> {};
     private MecanUpdates updates;
+    private boolean clipboardFallbackReady, clipboardChecked;
+    private String acceptedClipboard;
 
     private final ActivityResultLauncher<String> cameraPermission =
         registerForActivityResult(new ActivityResultContracts.RequestPermission(), granted -> {
@@ -107,22 +112,69 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override protected void onDestroy() {
+        cancelInstallRecovery.run();
         if (updates != null) updates.close();
         super.onDestroy();
     }
 
     private void loadInitialUrl(Intent intent) {
+        cancelInstallRecovery.run();
+        clipboardFallbackReady = false;
+        clipboardChecked = false;
+        acceptedClipboard = null;
         final int generation = ++launchGeneration;
         String directUrl = urlFromIntent(intent);
         if (!HOME_URL.equals(directUrl)) {
             webView.loadUrl(directUrl);
             return;
         }
-        InstallTicketReferrer.resolve(this, url -> runOnUiThread(() -> {
+        cancelInstallRecovery = InstallTicketReferrer.resolve(this, url -> runOnUiThread(() -> {
             if (!isFinishing() && !isDestroyed() && generation == launchGeneration) {
+                clipboardFallbackReady = url == null;
                 webView.loadUrl(url == null ? HOME_URL : url);
+                if (url == null) webView.post(this::tryClipboardRecovery);
             }
         }));
+    }
+
+    @Override public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) tryClipboardRecovery();
+    }
+
+    private void tryClipboardRecovery() {
+        if (!clipboardFallbackReady || clipboardChecked || !hasWindowFocus() || isFinishing() || isDestroyed()) return;
+        clipboardChecked = true;
+        if (!InstallTicketReferrer.beginClipboardCheck(this)) return;
+        try {
+            ClipboardManager manager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            ClipData clip = manager == null ? null : manager.getPrimaryClip();
+            // Do not coerce URIs or read files from clipboard providers.
+            CharSequence text = clip != null && clip.getItemCount() == 1 ? clip.getItemAt(0).getText() : null;
+            if (text == null || text.length() != 73) return;
+            String proof = text.toString();
+            String url = InstallTicketReferrer.acceptClipboard(this, proof);
+            if (url == null) return;
+            acceptedClipboard = proof;
+            clipboardFallbackReady = false;
+            cancelInstallRecovery.run();
+            ++launchGeneration; // Ignore late Play callbacks after selecting the backup proof.
+            webView.loadUrl(url);
+        } catch (RuntimeException ignored) { /* Play recovery continues if clipboard is unavailable. */ }
+    }
+
+    private void clearAcceptedClipboard() {
+        if (acceptedClipboard == null) return;
+        try {
+            ClipboardManager manager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            ClipData clip = manager == null ? null : manager.getPrimaryClip();
+            CharSequence text = clip != null && clip.getItemCount() == 1 ? clip.getItemAt(0).getText() : null;
+            if (text != null && acceptedClipboard.contentEquals(text)) {
+                if (Build.VERSION.SDK_INT >= 28) manager.clearPrimaryClip();
+                else manager.setPrimaryClip(ClipData.newPlainText("", ""));
+            }
+        } catch (RuntimeException ignored) { }
+        acceptedClipboard = null;
     }
 
     private void showPrivacy() {
@@ -233,7 +285,10 @@ public class MainActivity extends AppCompatActivity {
 
     private final class NativeBridge {
         @JavascriptInterface public void completeInstallTicket(String ticketId) {
-            InstallTicketReferrer.complete(MainActivity.this, ticketId);
+            if (InstallTicketReferrer.complete(MainActivity.this, ticketId)) runOnUiThread(() -> {
+                clearAcceptedClipboard();
+                PushRegistration.ensure(MainActivity.this);
+            });
         }
 
         @JavascriptInterface public void showPrivacy() {

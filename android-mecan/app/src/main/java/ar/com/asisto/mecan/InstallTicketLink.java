@@ -5,6 +5,11 @@ import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 
 final class InstallTicketLink {
+    // Only our exact, short-lived proof is recognized; never interpret arbitrary clipboard URLs.
+    static String fromClipboard(String text) {
+        if (text == null || !text.matches("MCN1:[a-fA-F0-9]{24}:[A-Za-z0-9_-]{43}")) return null;
+        return fromReferrer("mecan_ticket=" + text.substring(5, 29) + "&mecan_code=" + text.substring(30));
+    }
     static String fromReferrer(String referrer) {
         if (referrer == null || referrer.length() > 1024) return null;
         String id = null, code = null;

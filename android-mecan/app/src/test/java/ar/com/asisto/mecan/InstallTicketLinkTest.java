@@ -6,6 +6,17 @@ public class InstallTicketLinkTest {
     private static final String ID = "0123456789abcdef01234567";
     private static final String CODE = "a".repeat(43);
     private static final String VALID = "mecan_ticket=" + ID + "&mecan_code=" + CODE;
+    @Test public void clipboardRestoresExactlyTheSameProof() {
+        assertEquals(InstallTicketLink.fromReferrer(VALID), InstallTicketLink.fromClipboard("MCN1:" + ID + ":" + CODE));
+    }
+    @Test public void clipboardNeverAcceptsUnrelatedOrMalformedContent() {
+        for (String text : new String[]{"", VALID, "https://evil.test", "MCN1:" + ID + ":short",
+            " MCN1:" + ID + ":" + CODE, "MCN1:" + ID + ":" + CODE + "\n",
+            "MCN1:" + ID + ":" + CODE + ":extra", "MCN2:" + ID + ":" + CODE}) {
+            assertNull(InstallTicketLink.fromClipboard(text));
+        }
+        assertNull(InstallTicketLink.fromClipboard(null));
+    }
     @Test public void restoresTheSameTicketOnCanonicalMecanUrl() {
         assertEquals("https://asistobot.com.ar/customer-app/MCN?view=ticket&claim=" + ID + "#code=" + CODE,
             InstallTicketLink.fromReferrer(VALID));

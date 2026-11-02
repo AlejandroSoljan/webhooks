@@ -268,7 +268,7 @@ Configurar secciones, vendedores/puestos y acceso; verificar servicio escritor p
 
 Validar emisión → reclamación/impresión → espera → llamado → finalización. Probar audio de televisión, pantalla completa y resolución real. El navegador puede requerir gesto para habilitar sonido. Probar impresora física, falta de papel y reimpresión del mismo ticket. Verificar que el QR use un origen accesible desde el celular.
 
-Para app/notificaciones, comprobar dispositivo, permisos y entrega real; un token registrado no prueba recepción. [Historia operativa del turnero](turnero_aws.md) contiene referencias de releases anteriores; consultar `customer_queue.js` y sus módulos importados para las reglas actuales.
+Para app/notificaciones, comprobar dispositivo, permisos y entrega real; un token registrado no prueba recepción. Consultar [Identidad de destinatarios y duplicados](NOTIFICACIONES_DISPOSITIVOS.md) para agrupación, envíos únicos y sus límites. [Historia operativa del turnero](turnero_aws.md) contiene referencias de releases anteriores; consultar `customer_queue.js` y sus módulos importados para las reglas actuales.
 
 ## 10. Restaurante
 

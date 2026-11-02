@@ -1,4 +1,4 @@
-// Asisto | Mecan: recuperar el turno después de instalar desde Google Play | 2026-10-27
+// Asisto | Recuperación persistente del turno tras instalación | 2026-10-29
 package ar.com.asisto.mecan;
 
 import android.content.Context;
@@ -8,68 +8,123 @@ import android.os.Handler;
 import android.os.Looper;
 import com.android.installreferrer.api.InstallReferrerClient;
 import com.android.installreferrer.api.InstallReferrerStateListener;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.io.File;
+import java.io.IOException;
 
 final class InstallTicketReferrer {
     interface Callback { void ready(String url); }
     private static final String PREFS = "mecan_install_ticket";
     private static final String PENDING = "pending_url";
-    private static final String CHECKED = "referrer_checked";
+    private static final String COMPLETED = "completed_url";
 
-    private static SharedPreferences preferences(Context context) {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    private static synchronized SharedPreferences preferences(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        // Restored preferences cannot suppress recovery on a new installation.
+        File marker = new File(context.getNoBackupFilesDir(), "mecan-install-recovery-v2");
+        if (!marker.exists()) {
+            prefs.edit().clear().commit();
+            try { marker.createNewFile(); } catch (IOException ignored) { }
+        }
+        return prefs;
     }
 
-    // Sólo se admiten el identificador y token de MCN. Nunca URLs arbitrarias del referrer.
-    static String ticketUrl(String referrer) {
-        return InstallTicketLink.fromReferrer(referrer);
+    static String ticketUrl(String referrer) { return InstallTicketLink.fromReferrer(referrer); }
+
+    static void diagnostic(Context context, String status) {
+        preferences(context).edit().putString("recovery_status", status).apply();
     }
 
-    static void resolve(Context context, Callback callback) {
+    static String diagnostic(Context context) {
+        return preferences(context).getString("recovery_status", "not_started");
+    }
+
+    static boolean beginClipboardCheck(Context context) {
         SharedPreferences prefs = preferences(context);
+        if (prefs.contains(COMPLETED) || prefs.getBoolean("clipboard_checked", false)) return false;
+        prefs.edit().putBoolean("clipboard_checked", true).commit();
+        return true;
+    }
+
+    static String acceptClipboard(Context context, String text) {
+        String url = InstallTicketLink.fromClipboard(text);
+        SharedPreferences prefs = preferences(context);
+        if (url == null || url.equals(prefs.getString(COMPLETED, null))) return null;
+        prefs.edit().putString(PENDING, url).putString("recovery_status", "clipboard_received").commit();
+        return url;
+    }
+
+    /** May show Home first and deliver a late ticket without restarting the app. */
+    static Runnable resolve(Context context, Callback callback) {
+        Context app = context.getApplicationContext();
+        SharedPreferences prefs = preferences(app);
         String pending = prefs.getString(PENDING, null);
-        if (pending != null) { callback.ready(pending); return; }
-        if (prefs.getBoolean(CHECKED, false)) { callback.ready(null); return; }
+        if (pending != null) { diagnostic(app, "pending"); callback.ready(pending); return () -> {}; }
+        diagnostic(app, "connecting");
         Handler handler = new Handler(Looper.getMainLooper());
-        InstallReferrerClient client = InstallReferrerClient.newBuilder(context.getApplicationContext()).build();
-        AtomicBoolean finished = new AtomicBoolean(false);
+        InstallRecoveryState state = new InstallRecoveryState();
         class Request {
-            void finish(String url, boolean checked) {
-                if (!finished.compareAndSet(false, true)) return;
-                handler.removeCallbacksAndMessages(null);
-                if (checked) {
-                    SharedPreferences.Editor editor = prefs.edit().putBoolean(CHECKED, true);
-                    if (url != null) editor.putString(PENDING, url);
-                    editor.commit(); // Guardar antes de navegar: un reinicio no debe perder el turno.
-                }
-                try { client.endConnection(); } catch (RuntimeException ignored) {}
-                callback.ready(url);
+            InstallReferrerClient client;
+            boolean stopped;
+            int attempts, generation;
+            void home() { if (!stopped && state.showHome()) callback.ready(null); }
+            void closeClient() {
+                if (client != null) { try { client.endConnection(); } catch (RuntimeException ignored) {} client = null; }
+            }
+            void stop() { stopped = true; generation++; handler.removeCallbacksAndMessages(null); closeClient(); }
+            void retry(int attempt) {
+                if (stopped || attempt != generation) return;
+                generation++;
+                closeClient();
+                home();
+                PushRegistration.ensure(app);
+                if (attempts < 4) handler.postDelayed(this::start, attempts * 2000L);
+            }
+            void start() {
+                if (stopped) return;
+                attempts++;
+                final int attempt = ++generation;
+                handler.postDelayed(() -> retry(attempt), 15000);
+                try {
+                    client = InstallReferrerClient.newBuilder(app).build();
+                    client.startConnection(new InstallReferrerStateListener() {
+                        @Override public void onInstallReferrerSetupFinished(int response) {
+                            handler.post(() -> {
+                                if (stopped || attempt != generation) return;
+                                if (response != InstallReferrerClient.InstallReferrerResponse.OK) { diagnostic(app, "play_response_" + response); retry(attempt); return; }
+                                try {
+                                    String raw = client.getInstallReferrer().getInstallReferrer();
+                                    String url = ticketUrl(raw);
+                                    diagnostic(app, url != null ? "referrer_received" : (raw == null || raw.isEmpty() ? "referrer_empty" : "referrer_unrecognized"));
+                                    if (state.deliver(url, prefs.getString(COMPLETED, null))) {
+                                        prefs.edit().putString(PENDING, url).commit();
+                                        stop();
+                                        callback.ready(url);
+                                    } else if (url != null && url.equals(prefs.getString(COMPLETED, null))) {
+                                        diagnostic(app, "completed");
+                                        home(); stop();
+                                    } else retry(attempt);
+                                } catch (Exception ignored) { diagnostic(app, "referrer_error"); retry(attempt); }
+                            });
+                        }
+                        @Override public void onInstallReferrerServiceDisconnected() { handler.post(() -> retry(attempt)); }
+                    });
+                } catch (RuntimeException ignored) { retry(attempt); }
             }
         }
         Request request = new Request();
-        handler.postDelayed(() -> request.finish(null, false), 3500);
-        try {
-            client.startConnection(new InstallReferrerStateListener() {
-                @Override public void onInstallReferrerSetupFinished(int responseCode) {
-                    if (finished.get()) return;
-                    if (responseCode == InstallReferrerClient.InstallReferrerResponse.OK) {
-                        try { request.finish(ticketUrl(client.getInstallReferrer().getInstallReferrer()), true); }
-                        catch (Exception ignored) { request.finish(null, false); }
-                    } else {
-                        request.finish(null, responseCode == InstallReferrerClient.InstallReferrerResponse.FEATURE_NOT_SUPPORTED);
-                    }
-                }
-                @Override public void onInstallReferrerServiceDisconnected() { request.finish(null, false); }
-            });
-        } catch (RuntimeException ignored) { request.finish(null, false); }
+        handler.postDelayed(request::home, 3500);
+        request.start();
+        return request::stop;
     }
 
-    static void complete(Context context, String ticketId) {
-        if (ticketId == null || !ticketId.matches("[a-fA-F0-9]{24}")) return;
+    static boolean complete(Context context, String ticketId) {
+        if (ticketId == null || !ticketId.matches("[a-fA-F0-9]{24}")) return false;
         SharedPreferences prefs = preferences(context);
         String pending = prefs.getString(PENDING, null);
         if (pending != null && ticketId.equals(Uri.parse(pending).getQueryParameter("claim"))) {
-            prefs.edit().remove(PENDING).apply();
+            prefs.edit().putString(COMPLETED, pending).remove(PENDING).putString("recovery_status", "completed").commit();
+            return true;
         }
+        return false;
     }
 }
