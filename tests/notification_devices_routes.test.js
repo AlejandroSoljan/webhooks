@@ -5,8 +5,8 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 
-function harness(rows) {
-  const routes = new Map(), sends = [], records = [];
+function harness(rows, failureCode) {
+  const routes = new Map(), sends = [], records = [], retired = [];
   const db = {collection: name => ({
     find: query => {
       const cursor = {sort(){return this;},limit(){return this;},project(){return this;},
@@ -16,12 +16,13 @@ function harness(rows) {
       return cursor;
     },
     async insertOne(record){records.push(record);return {insertedId:'notice'};},
-    async updateOne(){return {matchedCount:1};}
+    async updateOne(){return {matchedCount:1};},
+    async updateMany(filter,update){retired.push({filter,update});return {modifiedCount:1};}
   })};
   const exports = {};
   const sandbox = {module:{exports},exports,console,URL,AbortSignal,
     process:{env:{FIREBASE_CLIENT_EMAIL:'test@example.invalid',FIREBASE_PRIVATE_KEY:'fake-key'}},
-    fetch:async (_url, options) => {sends.push(JSON.parse(options.body).message);return {ok:true,json:async()=>({name:'sent'})};},
+    fetch:async (_url, options) => {sends.push(JSON.parse(options.body).message);return {ok:!failureCode,json:async()=>failureCode?{error:{message:'Rejected',details:[{errorCode:failureCode}]}}:{name:'sent'}};},
     require: name => name === 'express' ? {json:()=>((_q,_s,next)=>next())} :
       name === 'googleapis' ? {google:{auth:{GoogleAuth:class {async getClient(){return {getAccessToken:async()=>({token:'fake'})};}}}}} :
       name === './db' ? {getDb:async()=>db} : require(path.resolve(__dirname,'..',name))};
@@ -35,7 +36,7 @@ function harness(rows) {
     await routes.get(method+' /api/customer-notifications/:tenant')({params:{tenant:'MCN'},query:{},body,user},res);
     return res;
   }
-  return {call,sends,records,page:sandbox.module.exports.panelPage};
+  return {call,sends,records,retired,page:sandbox.module.exports.panelPage};
 }
 const rows = () => [
   {tenantId:'MCN',installId:'old',pushToken:'token',deviceName:'OnePlus',updatedAt:new Date('2026-10-29')},
@@ -67,4 +68,12 @@ test('same model alone cannot collapse recipients; unauthorized tenant cannot se
   assert.equal((await h.call('GET')).data.summary.total,2);
   assert.equal((await h.call('POST',{title:'x',body:'y',installIds:['old']},{role:'user',tenantId:'OTHER'})).code,403);
   assert.equal(h.sends.length,0);
+});
+test('only a confirmed UNREGISTERED response retires a token, never transient errors',async()=>{
+ for(const code of ['UNREGISTERED','UNAVAILABLE','QUOTA_EXCEEDED','SENDER_ID_MISMATCH']){
+  const h=harness(rows(),code);
+  assert.equal((await h.call('POST',{title:'x',body:'y',installIds:['old']})).code,502);
+  assert.equal(h.retired.length,code==='UNREGISTERED'?1:0);
+  if(h.retired.length)assert.equal(h.retired[0].update.$set.notificationInvalidTokenHash.length,64);
+ }
 });
