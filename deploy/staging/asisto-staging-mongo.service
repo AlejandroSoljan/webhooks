@@ -1,0 +1,21 @@
+[Unit]
+Description=Asisto staging MongoDB in private network namespace
+
+[Service]
+User=asisto-staging
+Group=asisto-staging
+ExecStart=/usr/bin/mongod --dbpath /var/lib/asisto-staging/mongo --bind_ip 127.0.0.1 --port 27018 --wiredTigerCacheSizeGB 0.25 --nounixsocket
+Restart=on-failure
+RestartSec=10
+PrivateNetwork=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/asisto-staging/mongo
+InaccessiblePaths=/etc/asisto /opt/asisto /var/lib/asisto
+MemoryMax=512M
+CPUQuota=25%
+
+[Install]
+WantedBy=multi-user.target

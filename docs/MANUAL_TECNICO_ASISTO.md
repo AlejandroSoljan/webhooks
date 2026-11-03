@@ -2,6 +2,8 @@
 
 Desarrollo compartido: [incorporación](INCORPORACION_DESARROLLADORES.md), [arquitectura](ARQUITECTURA.md) y [estándares](ESTANDARES_DESARROLLO.md).
 
+Infraestructura para colaboradores: [entorno aislado de pruebas y protección de main](ENTORNO_PRUEBAS.md). Código y datos separados de producción; acceso mediante túnel SSH y sin salida a Internet desde la aplicación.
+
 ## Instalación de Mecan desde el QR (5.00.313 / Android 1.0.1)
 
 Modal opcional después de guardar el turno, recuperación mediante Google Play Install Referrer y traslado autorizado del mismo documento/número. Invitación limitada a MCN Android web mediante `MECAN_INSTALL_PROMPT_ENABLED`, apagada hasta verificar la distribución compatible. Contrato, operación, asociación de firma Play, despliegue en ambos motores y pruebas en [Instalación Mecan y conservación del turno](MECAN_INSTALACION_TURNO.md).

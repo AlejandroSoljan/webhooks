@@ -1,0 +1,32 @@
+[Unit]
+Description=Asisto isolated development staging
+Requires=asisto-staging-mongo.service
+After=asisto-staging-mongo.service
+JoinsNamespaceOf=asisto-staging-mongo.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+User=asisto-staging
+Group=www-data
+WorkingDirectory=/opt/asisto-staging/current
+EnvironmentFile=/etc/asisto-staging.env
+ExecStart=/usr/local/bin/node /opt/asisto-staging/server.cjs
+Restart=on-failure
+RestartSec=15
+RuntimeDirectory=asisto-staging
+RuntimeDirectoryMode=0750
+UMask=0027
+PrivateNetwork=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/run/asisto-staging /var/lib/asisto-staging/app
+InaccessiblePaths=/etc/asisto /opt/asisto /var/lib/asisto
+MemoryHigh=384M
+MemoryMax=512M
+CPUQuota=25%
+
+[Install]
+WantedBy=multi-user.target

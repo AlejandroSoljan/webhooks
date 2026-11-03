@@ -36,10 +36,10 @@ Subir la rama y presentar un pull request con comportamiento, pruebas y límites
 - [ ] Funcionalidad, revisor y commit base reconciliado.
 - [ ] MongoDB, datos sintéticos y usuario de prueba.
 - [ ] Entorno de pruebas y cuentas externas de prueba.
-- [ ] Protección de main y revisiones verificadas en GitHub.
+- [x] Protección de main y revisiones verificadas en GitHub (2026-11-03; excepción de administrador documentada).
 - [ ] Exclusión mutua del despliegue real, incluido auto-deploy del servidor.
 
-Esta documentación no crea esos accesos, un servidor de pruebas ni Codespaces.
+La preparación posterior del servidor de pruebas se documenta en [Entorno de pruebas](ENTORNO_PRUEBAS.md). Los accesos individuales y Codespaces no quedan creados por esta documentación.
 
 ## Mensaje para el otro Codex
 
