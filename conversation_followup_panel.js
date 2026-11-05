@@ -10,6 +10,7 @@
 const { ObjectId } = require('mongodb');
 const OpenAI = require('openai');
 const { getDb } = require('./db');
+const { listPilotSessions, readPilotSession } = require('./bot_test_followup');
 const { resolveOpenAiApiKey } = require('./ai_key_router');
 
 const DEFAULT_TENANT_ID = String(process.env.TENANT_ID || 'default').trim() || 'default';
@@ -826,6 +827,7 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
     </details>  </div>
 
   <section class="tableCard">
+    <section id="pilotSection" class="hidden" style="padding:16px;border-bottom:1px solid #ddd"><h2>Conversaciones de prueba · NEA</h2><p class="muted">Piloto NEA_PRUEBAS · solo lectura · filtros de búsqueda y fecha. No se incluyen en los indicadores de atención real.</p><div id="pilotRows">Cargando…</div></section>
     <div class="tableHead"><strong>Conversaciones</strong><span class="muted" id="listCount">0 registros</span></div>
     <div class="tableWrap">
       <table>
@@ -928,6 +930,21 @@ async function loadRows(){
   const dateFrom=localDateBoundary('dateFrom',false);const dateTo=localDateBoundary('dateTo',true);if(dateFrom)p.set('dateFrom',dateFrom);if(dateTo)p.set('dateTo',dateTo);
   const j=conversationChannels.length ? await requestJson('/api/conversation-followup/conversations?'+p.toString()) : {items:[],summary:{}};
   rows=j.items||[];renderKpis(j.summary||{});renderRows();
+  await loadPilotRows();
+}
+async function loadPilotRows(){
+  const visible=TENANT==='NEA'||TENANT==='NEA_PRUEBAS';el('pilotSection').classList.toggle('hidden',!visible);if(!visible)return;
+  try{
+    const p=new URLSearchParams();p.set('q',el('q').value.trim());p.set('dateFrom',localDateBoundary('dateFrom',false));p.set('dateTo',localDateBoundary('dateTo',true));
+    const j=await requestJson('/api/conversation-followup/pilot-sessions?'+p.toString());
+    el('pilotRows').innerHTML=j.items.length?j.items.map(x=>'<div style="padding:12px;border-bottom:1px solid #ddd"><b>PRUEBA · '+esc(x.sessionId.slice(0,12))+'</b> · '+esc(fmt(x.lastAt))+' · '+x.count+' consultas · '+x.failed+' errores<div>'+esc(x.preview)+'</div><button class="btn btnSm" data-pilot="'+esc(x.id)+'">Ver prueba</button></div>').join(''):'No hay conversaciones de prueba registradas con estos filtros.';
+    el('pilotRows').querySelectorAll('[data-pilot]').forEach(b=>b.onclick=()=>openPilot(b.dataset.pilot));
+  }catch(e){el('pilotRows').textContent='No se pudieron cargar las pruebas.';throw e}
+}
+async function openPilot(id){
+  if(chatPollTimer){clearInterval(chatPollTimer);chatPollTimer=null}activeId='';activeItem=null;lastChatMessagesSignature='';
+  openModal('chatModal');el('chatTitle').textContent='PRUEBA · NEA';el('chatSubtitle').textContent='Consulta y respuesta del piloto · solo lectura';el('chatContact').textContent='';el('chatFoot').innerHTML='';el('chatComposer').classList.add('hidden');el('chatBody').textContent='Cargando…';
+  try{const j=await requestJson('/api/conversation-followup/pilot-sessions/'+encodeURIComponent(id));renderFollowupChatMessages(j.items,true)}catch(e){el('chatBody').textContent='No se pudo cargar la prueba.';toast(e.message,true)}
 }
 function renderMedia(m){if(!m.media||!m.media.url)return '';const u=api(m.media.url);const k=String(m.media.kind||'');if(k==='image')return '<div class="media"><a href="'+esc(u)+'" target="_blank"><img src="'+esc(u)+'"/></a></div>';if(k==='audio')return '<div class="media"><audio controls src="'+esc(u)+'"></audio></div>';if(k==='video')return '<div class="media"><video controls src="'+esc(u)+'"></video></div>';return '<div class="media"><a href="'+esc(u)+'" target="_blank">📎 '+esc(m.media.filename||'Archivo')+'</a></div>'}
 function renderFollowupChatMessages(items,forceBottom=false){
@@ -1048,6 +1065,19 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
     }
   });
 
+  app.get('/api/conversation-followup/pilot-sessions', async(req,res)=>{
+    try { const tenant=resolveTenant(req,auth);if(!['NEA','NEA_PRUEBAS'].includes(tenant))return res.status(403).json({error:'forbidden'});
+      const items=await listPilotSessions(await getDb(),tenant,{q:cleanString(req.query?.q,150),from:safeDate(req.query?.dateFrom),to:safeDate(req.query?.dateTo)});
+      res.setHeader('Cache-Control','no-store');return res.json({ok:true,items});
+    }catch(e){return res.status(500).json({error:'pilot_history_failed'})}
+  });
+  app.get('/api/conversation-followup/pilot-sessions/:id', async(req,res)=>{
+    try { const tenant=resolveTenant(req,auth);if(!['NEA','NEA_PRUEBAS'].includes(tenant))return res.status(403).json({error:'forbidden'});
+      if(!ObjectId.isValid(req.params.id))return res.status(400).json({error:'invalid_id'});
+      const items=await readPilotSession(await getDb(),tenant,new ObjectId(req.params.id));if(!items)return res.status(404).json({error:'not_found'});
+      res.setHeader('Cache-Control','no-store');return res.json({ok:true,items});
+    }catch(e){return res.status(500).json({error:'pilot_history_failed'})}
+  });
   app.get('/api/conversation-followup/version', (req, res) => {
     return res.json({ ok: true, build: FOLLOWUP_BUILD, temperatureSent: false });
   });
