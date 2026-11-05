@@ -756,7 +756,7 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
 <body>
 <div class="wrap">
   <div class="top">
-    <div class="title"><h1>Seguimiento de conversaciones</h1><p>Dominio: <strong id="tenantLabel">${htmlEscape(tenant)}</strong> · ${htmlEscape(role)} · conversaciones en modo conversacional · IA ${htmlEscape(FOLLOWUP_BUILD)}</p></div>
+    <div class="title"><h1>Seguimiento de conversaciones</h1><p>Dominio: <strong id="tenantLabel">${htmlEscape(tenant)}</strong> · ${htmlEscape(role)} · conversaciones con el bot · excluye envíos automáticos · IA ${htmlEscape(FOLLOWUP_BUILD)}</p></div>
     <div class="topActions">
       ${canSelectTenant ? `<div class="tenantPicker"><label for="tenantSelect">Dominio</label><select id="tenantSelect">${tenantOptions.map(t => `<option value="${htmlEscape(t)}" ${String(t) === String(tenant) ? 'selected' : ''}>${htmlEscape(t)}</option>`).join('')}</select></div>` : ''}
       <span class="muted" id="cfgLabel">Cierre automático: cargando…</span>
@@ -785,7 +785,6 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
         <div class="multiTools"><button type="button" data-select-all="channelFilterValue">Todos</button><button type="button" data-clear-all="channelFilterValue">Ninguno</button></div>
         <label><input type="checkbox" name="channelFilterValue" value="whatsapp" checked/>WhatsApp</label>
         <label><input type="checkbox" name="channelFilterValue" value="qr_web" checked/>QR Web</label>
-        <label><input type="checkbox" name="channelFilterValue" value="api_messages" checked/>API Mensajes</label>
       </div>
     </details>
 
@@ -849,7 +848,7 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
   </section>
 
 </div>
-<div class="modal" id="apiWindowModal"><div class="modalCard wide"><div class="modalHead"><div><h3 id="apiWindowTitle">Ventana API Mensajes</h3><div class="muted" id="apiWindowSubtitle"></div></div><button class="btn btnSm" data-close="apiWindowModal">Cerrar</button></div><div class="modalBody" id="apiWindowDetail"><div class="empty">Cargando…</div></div></div></div>
+
 
 <div class="modal" id="chatModal"><div class="modalCard wide"><div class="modalHead"><div><h3 id="chatTitle">Conversación</h3><div class="muted" id="chatSubtitle"></div><div class="contactLine" id="chatContact"></div></div><button class="btn btnSm" data-close="chatModal">Cerrar</button></div><div class="chat" id="chatBody"><div class="empty">Cargando…</div></div><div class="chatComposer hidden" id="chatComposer"><textarea id="chatMessage" maxlength="4000" placeholder="Escribí una respuesta al cliente…"></textarea><button class="btn btnPrimary" id="chatSendBtn" type="button">Enviar</button></div><div class="modalFoot" id="chatFoot"></div></div></div>
 <div class="modal" id="followModal"><div class="modalCard wide"><div class="modalHead"><div><h3 id="followTitle">Seguimiento</h3><div class="muted" id="followSubtitle"></div></div><button class="btn btnSm" data-close="followModal">Cerrar</button></div><div class="modalBody" id="followBody"><div class="empty">Cargando…</div></div><div class="modalFoot" id="followFoot"></div></div></div>
@@ -860,7 +859,7 @@ let TENANT=${JSON.stringify(tenant)};
 const CAN_INBOX=${canInbox ? 'true' : 'false'};
 const CAN_EDIT_CONFIG=${canEditConfig ? 'true' : 'false'};
 const CAN_SELECT_TENANT=${canSelectTenant ? 'true' : 'false'};
-let rows=[];let apiWindows=[];let activeId='';let activeItem=null;let config={autoCloseEnabled:true,inactivityMinutes:30};let debounce=null;let classificationTouched=false;let chatPollTimer=null;let lastChatMessagesSignature='';
+let rows=[];let activeId='';let activeItem=null;let config={autoCloseEnabled:true,inactivityMinutes:30};let debounce=null;let classificationTouched=false;let chatPollTimer=null;let lastChatMessagesSignature='';
 const el=id=>document.getElementById(id);
 function api(path){const u=new URL(path,location.origin);if(TENANT)u.searchParams.set('tenant',TENANT);return u.toString()}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
@@ -887,20 +886,9 @@ function localDateBoundary(id,endOfDay){const v=String(el(id)?.value||'').trim()
 function cfgText(){el('cfgLabel').textContent=config.autoCloseEnabled?('Cierre: '+config.inactivityMinutes+' min'):'Cierre automático desactivado'}
 async function loadConfig(){const j=await requestJson('/api/conversation-followup/config');config=j.config||config;cfgText()}
 function renderKpis(s){el('kActive').textContent=s.active||0;el('kManual').textContent=s.manual||0;el('kClosed').textContent=s.closed||0;el('kPending').textContent=s.pending_review||0;el('kFollow').textContent=s.follow_up||0;el('kDue').textContent=s.due||0}
-function apiWindowSummaryText(x){
-  const open=x.windowEndsAt&&new Date(x.windowEndsAt).getTime()>Date.now();
-  return [
-    'Último envío: '+fmt(x.lastMessageAt),
-    'Ventana: '+String(x.windowMinutes||20)+' min',
-    'Mensajes: '+String(x.messageCount||0),
-    'Importe: '+fmtMoney(x.amount||0,x.currency||'ARS'),
-    'Estado: '+(open?'Abierta':'Cerrada')
-  ].join(' · ');
-}
 function renderRows(){
   const mixed=[
-    ...rows.map(x=>({kind:'conversation',at:x.lastAt||x.updatedAt||x.createdAt||'',item:x})),
-    ...apiWindows.map(x=>({kind:'api_messages',at:x.windowStartedAt||x.lastMessageAt||'',item:x}))
+    ...rows.map(x=>({kind:'conversation',at:x.lastAt||x.updatedAt||x.createdAt||'',item:x}))
   ].sort((a,b)=>{
     const ta=new Date(a.at||0).getTime()||0;
     const tb=new Date(b.at||0).getTime()||0;
@@ -914,29 +902,6 @@ function renderRows(){
   }
 
   el('tbody').innerHTML=mixed.map(entry=>{
-    if(entry.kind==='api_messages'){
-      const x=entry.item||{};
-      const recipient=x.contact||x.contactName||'Sin nombre';
-      const sub=[
-        'API Mensajes',
-        (x.contactName&&x.contactName!==x.contact)?x.contactName:'',
-        x.numeroFrom?('desde '+x.numeroFrom):''
-      ].filter(Boolean).join(' · ');
-      const summary=apiWindowSummaryText(x);
-      return '<tr class="apiMessageRow">'+
-        '<td><div class="clientName" title="'+esc(recipient)+'">'+esc(recipient)+'</div><div class="phone">'+esc(sub)+'</div></td>'+
-        '<td>'+esc(fmt(x.windowStartedAt))+'</td>'+ 
-        '<td>—</td>'+ 
-        '<td>—</td>'+ 
-        '<td>—</td>'+ 
-        '<td>—</td>'+ 
-        '<td>—</td>'+ 
-        '<td><div class="summaryCell" title="'+esc(summary)+'">'+esc(summary)+'</div></td>'+ 
-        '<td>—</td>'+ 
-        '<td><div class="actionsCell"><button class="btn btnSm" data-api-window="'+esc(x._id)+'">Ver mensajes</button></div></td>'+ 
-      '</tr>';
-    }
-
     const x=entry.item;
     const nm=x.channelType==='qr_web'?(x.lead?.name||x.contactName||x.waId||'Sin nombre'):(x.contactName||x.lead?.name||x.waId||'Sin nombre');
     const qrContact=x.lead?.phone||x.contactPhone||x.lead?.email||x.contactEmail||'';
@@ -950,17 +915,6 @@ function renderRows(){
 
   el('tbody').querySelectorAll('[data-chat]').forEach(b=>b.addEventListener('click',()=>openChat(b.dataset.chat)));
   el('tbody').querySelectorAll('[data-follow]').forEach(b=>b.addEventListener('click',()=>openFollow(b.dataset.follow)));
-  el('tbody').querySelectorAll('[data-api-window]').forEach(b=>b.addEventListener('click',()=>openApiWindow(b.dataset.apiWindow)));
-}
-async function openApiWindow(id){
-  openModal('apiWindowModal');el('apiWindowDetail').innerHTML='<div class="empty">Cargando…</div>';
-  try{
-    const j=await requestJson('/api/conversation-followup/api-message-window/'+encodeURIComponent(id));
-    const x=j.item||{};const msgs=Array.isArray(x.messages)?x.messages:[];
-    el('apiWindowTitle').textContent='Ventana · '+(x.contactName||x.contact||'');
-    el('apiWindowSubtitle').textContent=fmt(x.windowStartedAt)+' → '+fmt(x.windowEndsAt)+' · '+String(x.messageCount||0)+' mensajes · '+fmtMoney(x.amount||0,x.currency||'ARS');
-    el('apiWindowDetail').innerHTML=msgs.length?msgs.map(m=>'<div class="histItem"><b>'+esc(fmt(m.at))+'</b> · '+esc(m.type||'text')+(m.id_msj_dest?'<span class="muted"> · dest '+esc(m.id_msj_dest)+'</span>':'')+(m.id_msj_renglon?'<span class="muted"> · renglón '+esc(m.id_msj_renglon)+'</span>':'')+'<div class="apiMessageText" style="margin-top:5px">'+esc(m.text||'')+'</div></div>').join(''):'<div class="empty">No hay detalle guardado para esta ventana.</div>';
-  }catch(e){el('apiWindowDetail').innerHTML='<div class="empty">Error cargando detalle.</div>';toast(e.message,true)}
 }
 async function loadRows(){
   const p=new URLSearchParams();p.set('limit','500');const q=el('q').value.trim();if(q)p.set('q',q);
@@ -972,14 +926,8 @@ async function loadRows(){
   p.set('workflow',workflows.length===allWorkflows.length?'all':(workflows.length?workflows.join(','):'none'));
   p.set('category',categories.length===allCategories.length?'all':(categories.length?categories.join(','):'none'));
   const dateFrom=localDateBoundary('dateFrom',false);const dateTo=localDateBoundary('dateTo',true);if(dateFrom)p.set('dateFrom',dateFrom);if(dateTo)p.set('dateTo',dateTo);
-  const tasks=[];
-  if(conversationChannels.length)tasks.push(requestJson('/api/conversation-followup/conversations?'+p.toString()));else tasks.push(Promise.resolve({items:[],summary:{}}));
-  if(channels.includes('api_messages')){
-    const ap=new URLSearchParams();ap.set('limit','1000');if(q)ap.set('q',q);if(dateFrom)ap.set('dateFrom',dateFrom);if(dateTo)ap.set('dateTo',dateTo);
-    tasks.push(requestJson('/api/conversation-followup/api-message-windows?'+ap.toString()));
-  }else tasks.push(Promise.resolve({items:[],summary:{windows:0,messages:0,byCurrency:{}}}));
-  const [j,aw]=await Promise.all(tasks);
-  rows=j.items||[];apiWindows=aw.items||[];renderKpis(j.summary||{});renderRows();
+  const j=conversationChannels.length ? await requestJson('/api/conversation-followup/conversations?'+p.toString()) : {items:[],summary:{}};
+  rows=j.items||[];renderKpis(j.summary||{});renderRows();
 }
 function renderMedia(m){if(!m.media||!m.media.url)return '';const u=api(m.media.url);const k=String(m.media.kind||'');if(k==='image')return '<div class="media"><a href="'+esc(u)+'" target="_blank"><img src="'+esc(u)+'"/></a></div>';if(k==='audio')return '<div class="media"><audio controls src="'+esc(u)+'"></audio></div>';if(k==='video')return '<div class="media"><video controls src="'+esc(u)+'"></video></div>';return '<div class="media"><a href="'+esc(u)+'" target="_blank">📎 '+esc(m.media.filename||'Archivo')+'</a></div>'}
 function renderFollowupChatMessages(items,forceBottom=false){
