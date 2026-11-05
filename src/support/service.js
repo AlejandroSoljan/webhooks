@@ -644,20 +644,27 @@ class SupportService {
       if (sources.some(m => excluded(m, config))) fail('conversation_excluded', 409);
     }
     const fields = this.vault.open(current.fields, id);
-    const editable = ['subject', 'description', 'companyId', 'company', 'contactId', 'contact', 'status', 'channel', 'category', 'errorType', 'messageDate', 'proposedAction'];
+    const previousClosedDate = fields.closedDate || '';
+    const editable = ['subject', 'description', 'companyId', 'company', 'contactId', 'contact', 'status', 'channel', 'category', 'errorType', 'messageDate', 'closedDate', 'proposedAction'];
     for (const [key, value] of Object.entries(input || {})) {
       if (!editable.includes(key)) fail('invalid_draft_field');
       fields[key] = text(value, key === 'description' ? 100000 : 200);
     }
     if (!['review', 'create', 'update', 'close', 'ignore'].includes(fields.proposedAction)) fail('invalid_action');
     if (!Number.isFinite(+new Date(fields.messageDate))) fail('invalid_message_date');
+    if (/^Cerrado /i.test(fields.status || '')) {
+      const date = fields.closedDate || new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' }).format(this.now());
+      const day = String(date).slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(+new Date(day)) || new Date(day).toISOString().slice(0, 10) !== day) fail('invalid_closed_date');
+      fields.closedDate = day;
+    } else fields.closedDate = ''; 
     if (approve && (current.reconciliationRequired || current.sourceChanged)) fail('source_reconciliation_required', 409);
     if (approve && current.mode === 'suggest') fail('suggestion_only', 409);
     if (approve && (!fields.subject || (!fields.company && !fields.companyId) || fields.proposedAction === 'review')) fail('approval_fields_required');
     const state = approve ? 'approved' : 'pending';
     const result = await this.col('drafts').updateOne({ _id: id, ...scope, revision, state: { $ne: 'merged' }, 'hubspot.state': { $ne: 'sending' } }, {
       $set: { fields: this.vault.seal(fields, id), state, updatedAt: this.now() }, $inc: { revision: 1 },
-      $push: { events: { action: approve ? 'approved' : 'edited', by: scope.userId, revision: revision + 1, at: this.now() } },
+      $push: { events: { action: approve ? 'approved' : 'edited', by: scope.userId, revision: revision + 1, ...(previousClosedDate !== fields.closedDate ? { closedDateChange: { from: previousClosedDate, to: fields.closedDate } } : {}), at: this.now() } },
     });
     if (!result.matchedCount) fail('revision_conflict', 409);
     if (Object.hasOwn(input || {}, 'company') && fields.company && current.jid) {

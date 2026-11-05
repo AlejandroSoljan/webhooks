@@ -194,6 +194,8 @@ const errors = {
 function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }
 function toggleSettings(open) {
   $('settingsPanel').hidden = !open;
+  stopWhatsappStatus();
+  if (open) loadWhatsappStatus();
   $('settingsToggle').setAttribute('aria-expanded', String(open));
   if (!open) { $('smtpPassword').value = ''; $('settingsToggle').focus(); }
 }
@@ -216,7 +218,7 @@ function preferredStage(options, status, savedStageId) {
   if (matches.length === 1) return matches[0].id;
   return options.some(row => row.id === savedStageId) ? savedStageId : '';
 }
-const definitions = [ ['subject','Nombre breve'], ['contact','Contacto de WhatsApp'], ['company','Empresa'], ['status','Estado en Asisto'], ['category','Categoría'], ['errorType','Error tipo'], ['channel','Vía de contacto'], ['description','Descripción'], ['companyId','ID de empresa en HubSpot (opcional)'], ['contactId','ID de contacto en HubSpot (opcional)'] ];
+const definitions = [ ['subject','Nombre breve'], ['contact','Contacto de WhatsApp'], ['company','Empresa'], ['status','Estado en Asisto'], ['closedDate','Fecha de finalización'], ['category','Categoría'], ['errorType','Error tipo'], ['channel','Vía de contacto'], ['description','Descripción'], ['companyId','ID de empresa en HubSpot (opcional)'], ['contactId','ID de contacto en HubSpot (opcional)'] ];
 function editorFields() {
   return Object.fromEntries(definitions.map(([key]) => [key, $('field-' + key)?.value || '']));
 }
@@ -235,7 +237,8 @@ function renderFields() {
     const values = session.choices?.[key];
     const input = document.createElement(values ? 'select' : key === 'description' ? 'textarea' : 'input'); input.id = 'field-' + key;
     if (values) { for (const value of values) option(input, value, value); }
-    input.value = displayedFields[key] || ''; input.maxLength = key === 'description' ? 100000 : 200;
+    if (key === 'closedDate') { input.type = 'date'; label.title = 'Podés cambiarla si terminaste la tarea otro día.'; }
+    input.value = key === 'closedDate' ? (displayedFields[key] || '').slice(0, 10) : displayedFields[key] || ''; input.maxLength = key === 'description' ? 100000 : 200;
     if (key === 'companyId') input.onchange = () => { void loadCompanyProfile(input.value.trim()); };
     if (key === 'company') {
       input.setAttribute('list', 'hubspot-company-options'); input.placeholder = 'Escribí para buscar en HubSpot'; input.autocomplete = 'off';
@@ -245,7 +248,7 @@ function renderFields() {
       input.onchange = () => selectSuggestedCompany(input.value);
       continue;
     }
-    label.append(input); $('fields').append(label);
+    label.append(input); if (key === 'closedDate') { const hint = document.createElement('small'); hint.textContent = 'Podés cambiarla si terminaste la tarea otro día.'; label.append(hint); } $('fields').append(label);
   }
   $('source').textContent = current.source?.description || '';
   const advanced = document.createElement('details'), advancedTitle = document.createElement('summary');
@@ -324,10 +327,10 @@ async function refresh() {
   $('connectionState').textContent = 'Comprobando conexión…';
   let nextSession;
   try { nextSession = await api('SESSION'); }
-  catch (error) { $('connectionState').textContent = 'Sin conexión con Asisto'; $('account').textContent = 'Sesión no disponible'; throw error; }
+  catch (error) { stopWhatsappStatus(); $('connectionState').textContent = 'Sin conexión con Asisto'; $('account').textContent = 'Sesión no disponible'; throw error; }
   if (generation !== refreshGeneration || contextGeneration !== selectionGeneration) return;
   const nextOwner = nextSession.tenantId + ':' + nextSession.userId;
-  if (owner && nextOwner !== owner) { clearCompanyProfile(); profileCache.clear(); }
+  if (owner && nextOwner !== owner) { stopWhatsappStatus(); $('whatsappSettings').open=false; clearCompanyProfile(); profileCache.clear(); }
   if (owner && nextOwner !== owner) { ++mailGeneration;mailDraftId='';smtpOwner='';$('mailComposer').hidden=true;$('smtpForm').reset();$('smtpPassword').value='';$('mailSettings').open=false; }
   const index = await api('INDEX');
   if (generation !== refreshGeneration || contextGeneration !== selectionGeneration) return;
@@ -446,7 +449,14 @@ $('refresh').onclick = () => run(refresh);
 $('contactControl').ontoggle = () => { if ($('contactControl').open) run(loadContactControl); };
 $('controlSearch').oninput = () => { clearTimeout(controlTimer); controlTimer = setTimeout(() => loadContactControl().catch(error => notice('No se pudieron cargar los contactos.', true)), 300); };
 $('contacts').onchange = () => run(() => selectContact($('contacts').value));
-$('editor').addEventListener('input', event => { if (event.target?.id?.startsWith('field-')) rememberEditorDraft(); });
+$('editor').addEventListener('input', event => {
+  if (event.target?.id === 'field-status') {
+    const date = $('field-closedDate');
+    if (/^Cerrado /i.test(event.target.value)) { if (!date.value) date.value = new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' }).format(new Date()); }
+    else date.value = '';
+  }
+  if (event.target?.id?.startsWith('field-')) rememberEditorDraft();
+});
 $('editor').addEventListener('change', event => { if (event.target?.id?.startsWith('field-')) rememberEditorDraft(); });
 $('editor').onsubmit = event => { event.preventDefault(); run(saveAndPublish); };
 $('dismiss').onclick = () => run(async () => {
@@ -554,3 +564,35 @@ $('mailConfirm').onclick=async()=>{
   finally{mailPending=false;$('mailEdit').disabled=false;$('mailClose').disabled=false;if(generation===mailGeneration)$('mailNewAttempt').hidden=false;}
 };
 (async () => { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); tabId = tab?.id; await run(refresh); })();
+
+let whatsappTimer, whatsappExpiry, whatsappGeneration = 0, whatsappBusy = false;
+function stopWhatsappStatus() {
+  ++whatsappGeneration; clearTimeout(whatsappTimer); clearTimeout(whatsappExpiry);
+  $('whatsappQr').hidden = true; $('whatsappQr').removeAttribute('src');
+}
+async function loadWhatsappStatus(connect = false) {
+  if (whatsappBusy || document.hidden || $('settingsPanel').hidden || !$('whatsappSettings').open) return;
+  const generation = whatsappGeneration, account = owner;
+  whatsappBusy = true; $('whatsappConnect').disabled = true;
+  try {
+    const result = await api(connect ? 'WHATSAPP_CONNECT' : 'WHATSAPP_STATUS');
+    if (generation !== whatsappGeneration || account !== owner) return;
+    clearTimeout(whatsappExpiry); $('whatsappQr').hidden = true; $('whatsappQr').removeAttribute('src');
+    const labels = { connected: 'WhatsApp conectado.', queued: 'Esperando al agente de esta PC…', reconnecting: 'Reconectando…', qr: 'Escaneá el QR desde el celular.', disconnected: 'WhatsApp desconectado.', logged_out: 'Sesión cerrada. Pulsá Vincular para obtener el QR.' };
+    $('whatsappState').textContent = labels[result.state] || 'Revisá el estado del agente en Asisto.';
+    const remaining = new Date(result.qrExpiresAt).getTime() - Date.now();
+    if (result.qr?.startsWith('data:image/png;base64,') && remaining > 0) {
+      $('whatsappQr').src = result.qr; $('whatsappQr').hidden = false;
+      whatsappExpiry = setTimeout(() => { $('whatsappQr').hidden = true; $('whatsappQr').removeAttribute('src'); $('whatsappState').textContent = 'QR vencido. Esperando uno nuevo…'; }, remaining);
+    }
+  } catch (error) {
+    if (generation === whatsappGeneration) { $('whatsappQr').hidden = true; $('whatsappQr').removeAttribute('src'); $('whatsappState').textContent = errors[error.message] || 'No se pudo consultar el QR. Comprobá el agente de esta PC.'; }
+  } finally {
+    whatsappBusy = false; $('whatsappConnect').disabled = false; clearTimeout(whatsappTimer);
+    if (!document.hidden && !$('settingsPanel').hidden && $('whatsappSettings').open) whatsappTimer = setTimeout(() => loadWhatsappStatus(), 5000);
+  }
+}
+$('whatsappConnect').onclick = () => loadWhatsappStatus(true);
+$('whatsappSettings').addEventListener('toggle', () => { stopWhatsappStatus(); if ($('whatsappSettings').open) loadWhatsappStatus(); });
+document.addEventListener('visibilitychange', () => { stopWhatsappStatus(); if (!document.hidden) loadWhatsappStatus(); });
+window.addEventListener('pagehide', stopWhatsappStatus);

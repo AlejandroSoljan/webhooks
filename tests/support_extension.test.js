@@ -471,3 +471,20 @@ test('background restricts WhatsApp messages, exposes the active chat and forces
  const save=calls.at(-1);assert.equal(save.options.headers['X-Asisto-Extension'],'private-grant');assert.equal(save.options.credentials,'omit');assert.equal(save.options.headers.Authorization,'Bearer '+'A'.repeat(43));assert.match(save.url,/^https:\/\/asistobot\.com\.ar\/api\/support\/extension\//);
  assert.equal(typeof action,'function');
 });
+
+test('completion date edits update the saved HubSpot ticket and reopening clears it', async()=>{
+ metadata.pipelines[0].stages=[{id:'s',label:'Nuevo',metadata:{isClosed:false}},{id:'done',label:'Cerrado RESUELTO',metadata:{isClosed:true}}];
+ metadata.properties.push({name:'closed_date',type:'datetime'});
+ try {
+  let result=await call('/drafts/'+id+'/publish',{revision:1,mapping});assert.equal(result.status,200);
+  result=await call('/drafts/'+id+'/save',{revision:2,fields:{status:'Cerrado RESUELTO',closedDate:'2026-10-20'}});assert.equal(result.status,200);
+  result=await call('/drafts/'+id+'/publish',{revision:3,mapping});assert.equal(result.status,200,JSON.stringify(result.data));
+  assert.equal(writes.at(-1).ticketId,'99');assert.equal(writes.at(-1).payload.properties.closed_date,'2026-10-20T03:00:00.000Z');
+  result=await call('/drafts/'+id+'/save',{revision:4,fields:{closedDate:'2026-02-31'}});assert.equal(result.status,400);
+  result=await call('/drafts/'+id+'/save',{revision:4,fields:{closedDate:'2026-10-21'}});assert.equal(result.status,200);
+  result=await call('/drafts/'+id+'/publish',{revision:5,mapping});assert.equal(result.status,200);assert.equal(writes.at(-1).payload.properties.closed_date,'2026-10-21T03:00:00.000Z');
+  result=await call('/drafts/'+id+'/save',{revision:6,fields:{status:'Nuevo'}});assert.equal(result.status,200);
+  result=await call('/drafts/'+id+'/publish',{revision:7,mapping});assert.equal(result.status,200);assert.equal(writes.at(-1).payload.properties.closed_date,'');
+  const row=await service.col('drafts').findOne({_id:id});assert.ok(row.events.some(e=>e.by===scope.userId&&e.closedDateChange?.to==='2026-10-21'));
+ } finally {metadata.pipelines[0].stages=[{id:'s'}];metadata.properties=metadata.properties.filter(p=>p.name!=='closed_date');}
+});

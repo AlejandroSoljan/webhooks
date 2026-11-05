@@ -56,6 +56,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (message.owner && message.owner !== session.tenantId + ':' + session.userId) throw new Error('account_changed');
     const id = encodeURIComponent(String(message.id || ''));
     switch (message.action) {
+      case 'WHATSAPP_STATUS': return api('/whatsapp/session');
+      case 'WHATSAPP_CONNECT': return api('/whatsapp/session', {}, session.csrf);
       case 'CONTACT_CONTROL': return api('/contact-control?q=' + encodeURIComponent(String(message.query || '')));
       case 'SET_CONTACT_CONTROL': return api('/contact-control', { jid: String(message.jid || ''), excluded: message.excluded === true }, session.csrf);
       case 'CONTACT': return api('/contact', { jid: String(message.jid || ''), name: String(message.name || '') }, session.csrf);
