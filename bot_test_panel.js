@@ -9,6 +9,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const { getDb } = require('./db');
+const { beginTestRecord, finishTestRecord } = require('./bot_test_history');
 const { resolveOpenAiApiKey } = require('./ai_key_router');
 const {
   getGPTReply,
@@ -181,7 +182,7 @@ function panelHtml({ tenant, tenantOptions = [], canSelectTenant = false }) {
     </div>
   </div>
 
-  <div class="notice"><span class="dot"></span><span>Simulación activa. Los mensajes de esta pantalla no se envían a WhatsApp.</span></div>
+  <div class="notice"><span class="dot"></span><span>Simulación activa. Los mensajes de esta pantalla no se envían a WhatsApp.${tenant === 'NEA_PRUEBAS' ? ' Las consultas y respuestas del piloto se guardan para analizar y mejorar el bot.' : ''}</span></div>
 
   <section class="chatCard">
     <div class="chatHead">
@@ -252,6 +253,7 @@ function mountBotTestPanel(app, { auth } = {}) {
 
   app.post('/api/bot-test/send', botTestJson, async (req, res) => {
     const started = Date.now();
+    let testRecord;
     try {
       const tenant = resolveTenant(req, auth);
       const message = cleanString(req.body?.message, MAX_MESSAGE_CHARS);
@@ -264,9 +266,11 @@ function mountBotTestPanel(app, { auth } = {}) {
         loadBehaviorConfigFromMongo(tenant),
         resolveTestRuntime(db, tenant),
       ]);
+      testRecord = await beginTestRecord(db, { tenant, sessionId, message, userId: req?.user?.uid, model: behavior?.chat_model });
       const botMode = normalizeBotMode(behavior?.bot_mode || 'pedidos');
       runtime.apiKey = resolveOpenAiApiKey(botMode);
       if (!runtime.apiKey) {
+        await finishTestRecord(testRecord, { error: true, durationMs: Date.now() - started });
         return res.status(409).json({ ok: false, error: 'bot_not_available', detail: 'Falta configurar la clave OpenAI específica para este tipo de IA.' });
       }
       const usageTraceId = `bot-test:${tenant}:${cleanString(req?.user?.uid || 'user', 80)}:${sessionId}:${Date.now()}`;
@@ -287,11 +291,13 @@ function mountBotTestPanel(app, { auth } = {}) {
       console.log(`[bot-test] mensaje tenant=${tenant} session=${sessionId.slice(0, 8)} modo=${botMode}`);
       const raw = await callBotWithCompatibility(tenant, from, message, opts);
       const reply = parseReply(raw);
+      await finishTestRecord(testRecord, { reply, durationMs: Date.now() - started });
       console.log(`[bot-test] respuesta tenant=${tenant} session=${sessionId.slice(0, 8)} ms=${Date.now() - started}`);
 
       res.setHeader('Cache-Control', 'no-store');
       return res.json({ ok: true, sessionId, reply });
     } catch (e) {
+      try { await finishTestRecord(testRecord, { error: true, durationMs: Date.now() - started }); } catch (_) { console.error('[bot-test] history persistence failed'); }
       const detail = errorText(e);
       console.error('[bot-test] send:', detail);
       return res.status(500).json({ ok: false, error: 'bot_test_failed', detail: detail || 'No se pudo obtener una respuesta del bot.' });

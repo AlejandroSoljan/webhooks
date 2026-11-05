@@ -440,3 +440,7 @@ La revisión de objetivos conserva mensajes originales, valida cobertura y exige
 <!-- 5.00.309: preflight de todos los resúmenes antes de escribir membresías durante reparación generada; consumo rechazado validado se contabiliza. -->
 
 Centro de actividad: ver [CENTRO_ACTIVIDAD_APP.md](CENTRO_ACTIVIDAD_APP.md).
+
+### Registro de pruebas NEA (2026-11-05)
+
+Desde v5.00.333, cada envío de NEA_PRUEBAS se registra en AWS Cluster0, colección bot_test_history: dominio, sesión, usuario técnico, fecha, consulta, modelo configurado, respuesta, duración y estado pending/completed/failed. Se escribe antes de llamar al bot; los errores no guardan payloads del proveedor ni claves. Un fallo de persistencia devuelve error visible. Reiniciar conversación no borra el historial. No recupera consultas anteriores; una interrupción puede dejar estado pending. Sin vencimiento automático. El análisis se realiza administrativamente en AWS, filtrando tenant y sessionId; no existe todavía pantalla de historial ni exportación. No usar datos sensibles reales en pruebas. Este registro está habilitado únicamente para NEA_PRUEBAS y no escribe en conversaciones de WhatsApp.

@@ -18,7 +18,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/` | [app_asisto_ws.js:529](../../app_asisto_ws.js#L529) | `, (req, res) => {` |
 | GET | `/` | [endpoint.js:1863](../../endpoint.js#L1863) | `, async (req, res) => {` |
 | GET | `/admin/billing` | [billing_subscriptions.js:84](../../billing_subscriptions.js#L84) | `, auth.requireAuth, requireSuper, (_req, res) => res.set('Cache-Control', 'no-store').type('html').send(render` |
-| GET | `/admin/bot-test` | [bot_test_panel.js:237](../../bot_test_panel.js#L237) | `, async (req, res) => {` |
+| GET | `/admin/bot-test` | [bot_test_panel.js:238](../../bot_test_panel.js#L238) | `, async (req, res) => {` |
 | GET | `/admin/client-phone-access` | [client_phone_access.js:389](../../client_phone_access.js#L389) | `, requireAdmin, async (req, res) => {` |
 | GET | `/admin/conversation` | [endpoint.js:7211](../../endpoint.js#L7211) | `, async (req, res) => {` |
 | GET | `/admin/fleteros/viajes` | [fleteros_viajes_panel.js:2639](../../fleteros_viajes_panel.js#L2639) | `, requireAuth, async (req, res) => {` |
@@ -68,6 +68,9 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/api/customer-app/:tenant/presence/:sessionId/status` | [customer_queue.js:173](../../customer_queue.js#L173) | `, wrap(async (req, res) => {` |
 | GET | `/api/customer-app/:tenant/queue` | [customer_queue.js:219](../../customer_queue.js#L219) | `, state);` |
 | GET | `/api/customer-app/:tenant/tickets/:id` | [customer_queue.js:350](../../customer_queue.js#L350) | `, wrap(async (req, res) => {` |
+| GET | `/api/customer-notifications/:tenant/center/devices/:id` | [app_center.js:38](../../app_center.js#L38) | `,guard,access,wrap(async(req,res)=>{` |
+| GET | `/api/customer-notifications/:tenant/center/summary` | [app_activity_summary.js:5](../../app_activity_summary.js#L5) | `,guard,access,wrap(async(req,res)=>{` |
+| GET | `/api/customer-notifications/:tenant/center` | [app_center.js:27](../../app_center.js#L27) | `,guard,access,wrap(async(req,res)=>{` |
 | GET | `/api/customer-notifications/:tenant` | [customer_notifications.js:15](../../customer_notifications.js#L15) | `,requireAuth,async(req,res)=>{try{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,t))return res` |
 | GET | `/api/customer-notifications/:tenant` | [deploy/patch-notification-devices.cjs:7](../../deploy/patch-notification-devices.cjs#L7) | `,", "app.post('/api/customer-notifications/:tenant',",'async function firebaseSender(){']){` |
 | GET | `/api/ext/ayuda` | [help_tool.js:2316](../../help_tool.js#L2316) | `, requireHelpExternalAccess, handleHelpQuery);` |
@@ -192,6 +195,9 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/settings` | [src/support/routes.js:44](../../src/support/routes.js#L44) | `, route((req, s, scope) => s.config(scope)));` |
 | GET | `/sitemap.xml` | [auth_ui.js:3587](../../auth_ui.js#L3587) | `, (req, res) => {` |
 | GET | `/sitemap.xml` | [endpoint.js:2354](../../endpoint.js#L2354) | `, (_req, res) => {` |
+| GET | `/static/app-activity-chart.js` | [app_activity_summary.js:4](../../app_activity_summary.js#L4) | `,guard,(_q,r)=>r.type('js').sendFile(require('path').join(__dirname,'app_activity_chart.js')));` |
+| GET | `/static/app-center-client.js` | [app_center.js:74](../../app_center.js#L74) | `,(_req,res)=>res.type('js').sendFile(require('path').join(__dirname,'app_center_client.js')));` |
+| GET | `/static/app-center-panel.js` | [app_center.js:75](../../app_center.js#L75) | `,guard,(_req,res)=>res.type('js').sendFile(require('path').join(__dirname,'app_center_panel.js')));` |
 | GET | `/status/lock` | [app_asisto_ws.js:752](../../app_asisto_ws.js#L752) | `, requireStatusToken, async (req, res) => {` |
 | GET | `/status/qr` | [app_asisto_ws.js:757](../../app_asisto_ws.js#L757) | `, requireStatusToken, async (req, res) => {` |
 | GET | `/status` | [app_asisto_ws.js:732](../../app_asisto_ws.js#L732) | `, requireStatusToken, async (req, res) => {` |
@@ -205,6 +211,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/webhook` | [endpoint.js:10738](../../endpoint.js#L10738) | `, async (req, res) => {` |
 | GET | `/webhook` | [src/whatsapp/webhook.routes.js:52](../../src/whatsapp/webhook.routes.js#L52) | `, async (req, res) => {` |
 | GET | `/webhooks/mercadopago/subscriptions/return` | [billing_subscriptions.js:119](../../billing_subscriptions.js#L119) | `, (_req, res) => res.type('html').send('<!doctype html><html lang="es"><meta charset="utf-8"><title>Asisto · M` |
+| PATCH | `/api/customer-notifications/:tenant/center/devices/:id` | [app_center.js:43](../../app_center.js#L43) | `,guard,access,json,wrap(async(req,res)=>{` |
 | PATCH | `/api/customer-notifications/:tenant/devices/:installId` | [customer_notifications.js:16](../../customer_notifications.js#L16) | `,requireAuth,notificationJson,async(req,res)=>{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,` |
 | PATCH | `/api/resto/events/:id` | [restaurant.js:265](../../restaurant.js#L265) | `, json, async (req, res) => {` |
 | PATCH | `/drafts/:id` | [src/support/routes.js:63](../../src/support/routes.js#L63) | `, route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, req.body.fields)));` |
@@ -229,8 +236,8 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/api/billing/accounts/:owner/cancel-test` | [billing_subscriptions.js:112](../../billing_subscriptions.js#L112) | `, auth.requireAuth, requireSuper, writeGuard, express.json({ limit: '8kb' }), wrap(async (req, res) => {` |
 | POST | `/api/billing/accounts/:owner/reconcile` | [billing_subscriptions.js:106](../../billing_subscriptions.js#L106) | `, auth.requireAuth, requireSuper, writeGuard, express.json({ limit: '8kb' }), wrap(async (req, res) => {` |
 | POST | `/api/billing/accounts/:owner/test-subscription` | [billing_subscriptions.js:101](../../billing_subscriptions.js#L101) | `, auth.requireAuth, requireSuper, writeGuard, express.json({ limit: '8kb' }), wrap(async (req, res) => {` |
-| POST | `/api/bot-test/reset` | [bot_test_panel.js:301](../../bot_test_panel.js#L301) | `, botTestJson, async (req, res) => {` |
-| POST | `/api/bot-test/send` | [bot_test_panel.js:253](../../bot_test_panel.js#L253) | `, botTestJson, async (req, res) => {` |
+| POST | `/api/bot-test/reset` | [bot_test_panel.js:307](../../bot_test_panel.js#L307) | `, botTestJson, async (req, res) => {` |
+| POST | `/api/bot-test/send` | [bot_test_panel.js:254](../../bot_test_panel.js#L254) | `, botTestJson, async (req, res) => {` |
 | POST | `/api/client-phone-access` | [client_phone_access.js:411](../../client_phone_access.js#L411) | `, requireAdmin, async (req, res) => {` |
 | POST | `/api/conversation-followup/:id/classify` | [conversation_followup_panel.js:1492](../../conversation_followup_panel.js#L1492) | `, async (req, res) => {` |
 | POST | `/api/conversation-followup/:id/close` | [conversation_followup_panel.js:1567](../../conversation_followup_panel.js#L1567) | `, async (req, res) => {` |
@@ -242,6 +249,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/api/customer-app-admin/:tenant/settings` | [customer_queue.js:193](../../customer_queue.js#L193) | `, wrap(async (req, res) => {` |
 | POST | `/api/customer-app-admin/:tenant/tickets/:id/cancel` | [customer_queue.js:259](../../customer_queue.js#L259) | `, wrap(async (req, res) => {` |
 | POST | `/api/customer-app-admin/:tenant/tickets/:id/print` | [customer_queue.js:276](../../customer_queue.js#L276) | `, wrap(async (req, res) => {` |
+| POST | `/api/customer-app/:tenant/activity` | [app_center.js:63](../../app_center.js#L63) | `,json,wrap(async(req,res)=>{` |
 | POST | `/api/customer-app/:tenant/devices` | [customer_app_web.js:120](../../customer_app_web.js#L120) | `, async (req,res)=>{ try{const t=tenant(req.params.tenant),installId=clean(req.body.installId,120),pushToken=c` |
 | POST | `/api/customer-app/:tenant/presence/checkin` | [customer_queue.js:161](../../customer_queue.js#L161) | `, wrap(async (req, res) => {` |
 | POST | `/api/customer-app/:tenant/tickets/:id/cancel` | [customer_queue.js:359](../../customer_queue.js#L359) | `, wrap(async (req, res) => {` |
@@ -250,6 +258,7 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/api/customer-app/:tenant/tickets/:id/handoff` | [deploy/mecan-install/patch-runtime.cjs:25](../../deploy/mecan-install/patch-runtime.cjs#L25) | `, wrap(async (req, res) => {", "  app.post('/api/customer-app/:tenant/tickets/:id/handoff', wrap(async (req, r` |
 | POST | `/api/customer-app/:tenant/tickets/:id/handoff` | [deploy/mecan-install/patch-runtime.cjs:25](../../deploy/mecan-install/patch-runtime.cjs#L25) | `, wrap(async (req, res) => {\n    const expiresAt = new Date(Date.now() + handoffDuration(req.body?.purpose));` |
 | POST | `/api/customer-app/:tenant/tickets` | [customer_queue.js:221](../../customer_queue.js#L221) | `, wrap(async (req, res) => {` |
+| POST | `/api/customer-notifications/:tenant/center/send` | [app_center.js:47](../../app_center.js#L47) | `,guard,access,json,wrap(async(req,res)=>{` |
 | POST | `/api/customer-notifications/:tenant` | [customer_notifications.js:17](../../customer_notifications.js#L17) | `,requireAuth,notificationJson,async(req,res)=>{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,` |
 | POST | `/api/customer-notifications/:tenant` | [deploy/patch-notification-devices.cjs:7](../../deploy/patch-notification-devices.cjs#L7) | `,",'async function firebaseSender(){']){` |
 | POST | `/api/ext/ayuda/chat-web` | [help_tool.js:2296](../../help_tool.js#L2296) | `, json, async (req, res) => {` |

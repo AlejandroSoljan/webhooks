@@ -14,8 +14,10 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `ASISTO_AUTH_PATH` | [app_asisto_ws.js:176](../../app_asisto_ws.js#L176); [app_asisto_ws.js:831](../../app_asisto_ws.js#L831) |
 | `ASISTO_CONFIG_COLLECTION` | [app_asisto_ws.js:148](../../app_asisto_ws.js#L148); [app_asisto_ws.js:637](../../app_asisto_ws.js#L637); [telegram_runtime.js:16](../../telegram_runtime.js#L16) |
 | `ASISTO_DOMAIN_STATUS_API_KEY` | [endpoint.js:15](../../endpoint.js#L15); [help_tool.js:27](../../help_tool.js#L27) |
+| `ASISTO_ENVIRONMENT` | [deploy/staging/server.cjs:4](../../deploy/staging/server.cjs#L4) |
 | `ASISTO_HELP_API_KEY` | [help_tool.js:25](../../help_tool.js#L25) |
 | `ASISTO_OPENAI_API_KEY` | [fleteros_viajes_panel.js:1000](../../fleteros_viajes_panel.js#L1000) |
+| `ASISTO_STAGING_RELEASE` | [deploy/staging/server.cjs:5](../../deploy/staging/server.cjs#L5) |
 | `AUDIO_CACHE_TTL_MS` | [logic.js:29](../../logic.js#L29) |
 | `AUTH_COOKIE_NAME` | [auth_ui.js:28](../../auth_ui.js#L28) |
 | `AUTH_COOKIE_SECRET` | [auth_ui.js:29](../../auth_ui.js#L29); [src/support/crypto.js:31](../../src/support/crypto.js#L31); [src/support/crypto.js:43](../../src/support/crypto.js#L43) |
@@ -90,7 +92,7 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `MONGO_URI` | [app_asisto_ws.js:54](../../app_asisto_ws.js#L54); [src/script/migrate_products_tenant.js:6](../../src/script/migrate_products_tenant.js#L6) |
 | `MONGODB_DBNAME` | [db.js:99](../../db.js#L99) |
 | `MONGODB_FULL_IDLE_DISCONNECT_MS` | [db.js:20](../../db.js#L20) |
-| `MONGODB_URI` | [db.js:86](../../db.js#L86); [db.js:133](../../db.js#L133); [deploy/audit-notification-devices.cjs:8](../../deploy/audit-notification-devices.cjs#L8); [deploy/audit-notification-devices.cjs:11](../../deploy/audit-notification-devices.cjs#L11); [deploy/link-confirmed-devices.cjs:8](../../deploy/link-confirmed-devices.cjs#L8); [deploy/validate-notification-tokens.cjs:8](../../deploy/validate-notification-tokens.cjs#L8); [src/support/config.js:17](../../src/support/config.js#L17) |
+| `MONGODB_URI` | [db.js:86](../../db.js#L86); [db.js:133](../../db.js#L133); [deploy/audit-notification-devices.cjs:8](../../deploy/audit-notification-devices.cjs#L8); [deploy/audit-notification-devices.cjs:11](../../deploy/audit-notification-devices.cjs#L11); [deploy/link-confirmed-devices.cjs:8](../../deploy/link-confirmed-devices.cjs#L8); [deploy/staging/server.cjs:3](../../deploy/staging/server.cjs#L3); [deploy/validate-notification-tokens.cjs:8](../../deploy/validate-notification-tokens.cjs#L8); [src/support/config.js:17](../../src/support/config.js#L17) |
 | `MP_SUBSCRIPTIONS_ACCESS_TOKEN` | [mercadopago_subscriptions.js:13](../../mercadopago_subscriptions.js#L13) |
 | `MP_SUBSCRIPTIONS_MODE` | [mercadopago_subscriptions.js:12](../../mercadopago_subscriptions.js#L12) |
 | `MP_SUBSCRIPTIONS_PUBLIC_URL` | [mercadopago_subscriptions.js:16](../../mercadopago_subscriptions.js#L16) |
@@ -112,16 +114,16 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `QR_PRODUCT_API_MAX_CONCURRENT` | [qr_product_web.js:36](../../qr_product_web.js#L36) |
 | `QR_PRODUCT_API_QUEUE_MAX` | [qr_product_web.js:37](../../qr_product_web.js#L37) |
 | `QR_PRODUCT_API_QUEUE_WAIT_MS` | [qr_product_web.js:38](../../qr_product_web.js#L38) |
-| `QUEUE_LOCAL_NETWORK_ACCESS` | [product_insights.js:114](../../product_insights.js#L114); [product_insights_routes.js:11](../../product_insights_routes.js#L11); [product_insights_routes.js:21](../../product_insights_routes.js#L21) |
+| `QUEUE_LOCAL_NETWORK_ACCESS` | [product_insights.js:120](../../product_insights.js#L120); [product_insights_routes.js:11](../../product_insights_routes.js#L11); [product_insights_routes.js:21](../../product_insights_routes.js#L21) |
 | `QUEUE_OPEN_TENANTS` | [customer_queue.js:66](../../customer_queue.js#L66) |
 | `QUEUE_PORT` | [turnero_server.js:33](../../turnero_server.js#L33) |
 | `QUEUE_PRESENCE_SECRET` | [customer_queue.js:66](../../customer_queue.js#L66) |
 | `QUEUE_PRINTER_NAME` | [queue_printer.js:28](../../queue_printer.js#L28) |
 | `QUEUE_SERVER_PRINT` | [queue_printer.js:27](../../queue_printer.js#L27) |
 | `QUEUE_SYNC_EVERY_MS` | [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
-| `QUEUE_SYNC_SECRET` | [customer_queue.js:29](../../customer_queue.js#L29); [product_insights.js:115](../../product_insights.js#L115); [product_insights.js:116](../../product_insights.js#L116); [queue_cloud_sync.js:82](../../queue_cloud_sync.js#L82); [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
+| `QUEUE_SYNC_SECRET` | [customer_queue.js:29](../../customer_queue.js#L29); [product_insights.js:121](../../product_insights.js#L121); [product_insights.js:122](../../product_insights.js#L122); [queue_cloud_sync.js:82](../../queue_cloud_sync.js#L82); [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
 | `QUEUE_SYNC_TENANTS` | [queue_cloud_sync.js:82](../../queue_cloud_sync.js#L82); [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
-| `QUEUE_SYNC_URL` | [customer_queue.js:29](../../customer_queue.js#L29); [product_insights.js:115](../../product_insights.js#L115); [product_insights.js:116](../../product_insights.js#L116); [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
+| `QUEUE_SYNC_URL` | [customer_queue.js:29](../../customer_queue.js#L29); [product_insights.js:121](../../product_insights.js#L121); [product_insights.js:122](../../product_insights.js#L122); [queue_cloud_sync.js:129](../../queue_cloud_sync.js#L129) |
 | `RENDER_SERVICE_NAME` | [db.js:70](../../db.js#L70) |
 | `SERVICE_NAME` | [db.js:71](../../db.js#L71) |
 | `SIMULATED_NOW_ISO` | [logic.js:27](../../logic.js#L27) |
@@ -142,7 +144,7 @@ Referencias estáticas; que un nombre exista no significa que sea obligatorio o 
 | `TELEGRAM_BOT_TOKEN` | [telegram_runtime.js:354](../../telegram_runtime.js#L354) |
 | `TELEGRAM_BOT_USERNAME` | [telegram_runtime.js:355](../../telegram_runtime.js#L355) |
 | `TENANT_AI_CONFIG_CACHE_TTL_MS` | [logic.js:17](../../logic.js#L17) |
-| `TENANT_ID` | [app_asisto_ws.js:52](../../app_asisto_ws.js#L52); [bot_test_panel.js:21](../../bot_test_panel.js#L21); [bot_test_panel.js:47](../../bot_test_panel.js#L47); [client_phone_access.js:194](../../client_phone_access.js#L194); [client_phone_access.js:195](../../client_phone_access.js#L195); [client_phone_access.js:198](../../client_phone_access.js#L198); [client_phone_access.js:203](../../client_phone_access.js#L203); [conversation_followup_panel.js:15](../../conversation_followup_panel.js#L15); [conversation_followup_panel.js:68](../../conversation_followup_panel.js#L68); [endpoint.js:41](../../endpoint.js#L41); [endpoint.js:1846](../../endpoint.js#L1846); [fleteros_viajes_panel.js:23](../../fleteros_viajes_panel.js#L23); [fleteros_viajes_panel.js:55](../../fleteros_viajes_panel.js#L55); [fleteros_viajes_panel.js:3017](../../fleteros_viajes_panel.js#L3017); [logic.js:32](../../logic.js#L32); [order_config_panel.js:30](../../order_config_panel.js#L30); [order_config_panel.js:31](../../order_config_panel.js#L31); [restaurant.js:23](../../restaurant.js#L23); [restaurant.js:222](../../restaurant.js#L222); [restaurant.js:232](../../restaurant.js#L232); [restaurant.js:258](../../restaurant.js#L258); [restaurant.js:266](../../restaurant.js#L266); [restaurant_operations.js:160](../../restaurant_operations.js#L160); [telegram_runtime.js:353](../../telegram_runtime.js#L353); [wa_inbox_panel.js:17](../../wa_inbox_panel.js#L17); [wa_inbox_panel.js:33](../../wa_inbox_panel.js#L33) |
+| `TENANT_ID` | [app_asisto_ws.js:52](../../app_asisto_ws.js#L52); [bot_test_panel.js:22](../../bot_test_panel.js#L22); [bot_test_panel.js:48](../../bot_test_panel.js#L48); [client_phone_access.js:194](../../client_phone_access.js#L194); [client_phone_access.js:195](../../client_phone_access.js#L195); [client_phone_access.js:198](../../client_phone_access.js#L198); [client_phone_access.js:203](../../client_phone_access.js#L203); [conversation_followup_panel.js:15](../../conversation_followup_panel.js#L15); [conversation_followup_panel.js:68](../../conversation_followup_panel.js#L68); [endpoint.js:41](../../endpoint.js#L41); [endpoint.js:1846](../../endpoint.js#L1846); [fleteros_viajes_panel.js:23](../../fleteros_viajes_panel.js#L23); [fleteros_viajes_panel.js:55](../../fleteros_viajes_panel.js#L55); [fleteros_viajes_panel.js:3017](../../fleteros_viajes_panel.js#L3017); [logic.js:32](../../logic.js#L32); [order_config_panel.js:30](../../order_config_panel.js#L30); [order_config_panel.js:31](../../order_config_panel.js#L31); [restaurant.js:23](../../restaurant.js#L23); [restaurant.js:222](../../restaurant.js#L222); [restaurant.js:232](../../restaurant.js#L232); [restaurant.js:258](../../restaurant.js#L258); [restaurant.js:266](../../restaurant.js#L266); [restaurant_operations.js:160](../../restaurant_operations.js#L160); [telegram_runtime.js:353](../../telegram_runtime.js#L353); [wa_inbox_panel.js:17](../../wa_inbox_panel.js#L17); [wa_inbox_panel.js:33](../../wa_inbox_panel.js#L33) |
 | `TENANT_RUNTIME_CACHE_TTL_MS` | [tenant.js:9](../../tenant.js#L9); [tenant_runtime.js:10](../../tenant_runtime.js#L10) |
 | `TG_ACTION_POLL_MS` | [telegram_runtime.js:19](../../telegram_runtime.js#L19) |
 | `TG_API` | [telegram_runtime.js:358](../../telegram_runtime.js#L358) |
