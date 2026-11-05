@@ -1,5 +1,13 @@
 # Manual técnico de Asisto
 
+## Piloto web de Expreso Alfa — 2026-11-05
+
+En **Pruebas Bot**, seleccionar `NEA_PRUEBAS` (superadmin). Acceso directo: `/admin/bot-test?tenant=NEA_PRUEBAS`. Perfil independiente en `tenant_config` y `settings` (`behavior:NEA_PRUEBAS`), sin número ni documento en `tenant_channels`; WhatsApp, Telegram, auto-update y habilitar_bot desactivados. No se modificó el comportamiento ni configuración de NEA/NEA2. No conectar canales reales a este perfil.
+
+Modo conversacional, modelo gpt-5.4, historial estándar del simulador; usa la clave conversacional ya configurada. Las pruebas consumen API y se registran como bot_test. No habilita acciones externas, QR, leads ni análisis de comprobantes. Datos institucionales tomados de https://www.expresoalfa.com.ar/ y sus páginas nuevo-inventario, segunda-mano y financiacion, verificados el 05/11/2026: instantánea del sitio, no navegación en vivo.
+
+El piloto responde servicios y depósitos, recopila datos para cotización y explica la derivación a Logística/Administración/Compras. No consulta saldos, facturas ni seguimiento real; no confirma pagos, tarifas ni entrega. Las derivaciones son simuladas. Ajustar el comportamiento seleccionando exclusivamente NEA_PRUEBAS. Validado con preguntas de depósito, cotización y guía ficticia; comprobada respuesta real en el panel y ausencia de canales vinculados. Para activar WhatsApp se requiere una tarea explícita y validación aparte.
+
 Desarrollo compartido: [incorporación](INCORPORACION_DESARROLLADORES.md), [arquitectura](ARQUITECTURA.md) y [estándares](ESTANDARES_DESARROLLO.md).
 
 Infraestructura para colaboradores: [entorno aislado de pruebas y protección de main](ENTORNO_PRUEBAS.md). Código y datos separados de producción; acceso mediante túnel SSH y sin salida a Internet desde la aplicación.
