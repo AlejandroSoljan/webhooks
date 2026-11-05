@@ -2,7 +2,7 @@
 'use strict';
 
 async function beginTestRecord(db, { tenant, sessionId, message, userId, model }) {
-  // Alcance explícito del piloto autorizado; no altera los simuladores reales.
+  // Alcance explÃ­cito del piloto autorizado; no altera los simuladores reales.
   if (tenant !== 'NEA_PRUEBAS') return null;
   const collection = db.collection('bot_test_history');
   const result = await collection.insertOne({
@@ -10,7 +10,7 @@ async function beginTestRecord(db, { tenant, sessionId, message, userId, model }
     model: String(model || ''), channel: 'bot_test', status: 'pending',
     createdAt: new Date(),
   });
-  return { collection, id: result.insertedId, tenant };
+  return { collection, id: result.insertedId, tenant, db };
 }
 
 async function finishTestRecord(record, { reply, error = false, durationMs }) {
@@ -20,6 +20,10 @@ async function finishTestRecord(record, { reply, error = false, durationMs }) {
       ...(error ? { errorCode: 'bot_test_failed' } : { reply }),
       durationMs, completedAt: new Date() },
   });
+  if (record.db) {
+    const saved = await record.collection.findOne({ _id: record.id, tenant: record.tenant });
+    await require('./bot_test_projection').syncPilotRecord(record.db, saved);
+  }
 }
 
 module.exports = { beginTestRecord, finishTestRecord };

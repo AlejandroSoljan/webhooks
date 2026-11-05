@@ -5064,6 +5064,7 @@ app.post("/api/admin/send-message", async (req, res) => {
       return res.status(404).json({ error: "conv_not_found" });
     }
 
+    if (conv.isTest === true || conv.channelType === "bot_test") return res.status(403).json({ error: "test_conversation_no_delivery" });
     const to = conv.waId;
     const channelType = String(conv.channelType || "whatsapp").trim().toLowerCase() || "whatsapp";
     let rt = null;

@@ -213,6 +213,7 @@ function publicConversation(conv, followup, lead, config) {
 
   return {
     _id: String(conv?._id || ''),
+    isTest: conv?.isTest === true,
     tenantId: conv?.tenantId || '',
     waId: conv?.waId || '',
     contactName: conv?.contactName || '',
@@ -786,6 +787,7 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
         <div class="multiTools"><button type="button" data-select-all="channelFilterValue">Todos</button><button type="button" data-clear-all="channelFilterValue">Ninguno</button></div>
         <label><input type="checkbox" name="channelFilterValue" value="whatsapp" checked/>WhatsApp</label>
         <label><input type="checkbox" name="channelFilterValue" value="qr_web" checked/>QR Web</label>
+        <label><input type="checkbox" name="channelFilterValue" value="bot_test" checked/>Pruebas Bot</label>
       </div>
     </details>
 
@@ -827,8 +829,8 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
     </details>  </div>
 
   <section class="tableCard">
-    <section id="pilotSection" class="hidden" style="padding:16px;border-bottom:1px solid #ddd"><h2>Conversaciones de prueba · NEA</h2><p class="muted">Piloto NEA_PRUEBAS · solo lectura · filtros de búsqueda y fecha. No se incluyen en los indicadores de atención real.</p><div id="pilotRows">Cargando…</div></section>
-    <div class="tableHead"><strong>Conversaciones</strong><span class="muted" id="listCount">0 registros</span></div>
+
+    <div class="tableHead"><strong>Conversaciones</strong><select id="originFilter"><option value="all">Origen: Todas</option><option value="real">Reales</option><option value="test">Pruebas</option></select><span class="muted" id="listCount">0 registros</span></div>
     <div class="tableWrap">
       <table>
         <colgroup>
@@ -905,9 +907,9 @@ function renderRows(){
 
   el('tbody').innerHTML=mixed.map(entry=>{
     const x=entry.item;
-    const nm=x.channelType==='qr_web'?(x.lead?.name||x.contactName||x.waId||'Sin nombre'):(x.contactName||x.lead?.name||x.waId||'Sin nombre');
+    const nm=x.isTest?('PRUEBA · '+x.contactName):x.channelType==='qr_web'?(x.lead?.name||x.contactName||x.waId||'Sin nombre'):(x.contactName||x.lead?.name||x.waId||'Sin nombre');
     const qrContact=x.lead?.phone||x.contactPhone||x.lead?.email||x.contactEmail||'';
-    const channelInfo=x.channelType==='qr_web'?('QR Web'+(x.qrProductCode?' · SKU '+x.qrProductCode:'')+(qrContact?' · '+qrContact:'')):(x.waId||'');
+    const channelInfo=x.isTest?'Pruebas Bot · NEA':x.channelType==='qr_web'?('QR Web'+(x.qrProductCode?' · SKU '+x.qrProductCode:'')+(qrContact?' · '+qrContact:'')):(x.waId||'');
     const status=x.finalized?'<span class="badge bClosed">Finalizada</span>':(x.manualOpen?'<span class="badge bFollow">Atención manual</span>':'<span class="badge bOpen">Bot activo</span>');
     const workflow='<span class="badge '+workflowBadge(x.workflowStatus)+'">'+esc(workflowLabel(x.workflowStatus))+'</span>'+(x.isDue?' <span class="badge bDue">Vencido</span>':'');
     const cat=x.category?'<span class="badge bYes">'+esc(categoryLabel(x.category))+'</span> '+aiBadge(x):aiBadge(x)||'<span class="badge bNo">Sin clasificar</span>';
@@ -919,10 +921,10 @@ function renderRows(){
   el('tbody').querySelectorAll('[data-follow]').forEach(b=>b.addEventListener('click',()=>openFollow(b.dataset.follow)));
 }
 async function loadRows(){
-  const p=new URLSearchParams();p.set('limit','500');const q=el('q').value.trim();if(q)p.set('q',q);
+  const p=new URLSearchParams();p.set('origin',el('originFilter').value);p.set('limit','500');const q=el('q').value.trim();if(q)p.set('q',q);
   const channels=checkedValues('channelFilterValue');const states=checkedValues('state');const workflows=checkedValues('workflowFilterValue');const categories=checkedValues('categoryFilterValue');
   const allStates=allValues('state');const allWorkflows=allValues('workflowFilterValue');const allCategories=allValues('categoryFilterValue');
-  const conversationChannels=channels.filter(v=>v==='whatsapp'||v==='qr_web');
+  const conversationChannels=channels.filter(v=>v==='whatsapp'||v==='qr_web'||v==='bot_test');
   p.set('channel',conversationChannels.length?conversationChannels.join(','):'none');
   p.set('conversationState',states.length===allStates.length?'all':(states.length?states.join(','):'none'));
   p.set('workflow',workflows.length===allWorkflows.length?'all':(workflows.length?workflows.join(','):'none'));
@@ -930,21 +932,7 @@ async function loadRows(){
   const dateFrom=localDateBoundary('dateFrom',false);const dateTo=localDateBoundary('dateTo',true);if(dateFrom)p.set('dateFrom',dateFrom);if(dateTo)p.set('dateTo',dateTo);
   const j=conversationChannels.length ? await requestJson('/api/conversation-followup/conversations?'+p.toString()) : {items:[],summary:{}};
   rows=j.items||[];renderKpis(j.summary||{});renderRows();
-  await loadPilotRows();
-}
-async function loadPilotRows(){
-  const visible=TENANT==='NEA'||TENANT==='NEA_PRUEBAS';el('pilotSection').classList.toggle('hidden',!visible);if(!visible)return;
-  try{
-    const p=new URLSearchParams();p.set('q',el('q').value.trim());p.set('dateFrom',localDateBoundary('dateFrom',false));p.set('dateTo',localDateBoundary('dateTo',true));
-    const j=await requestJson('/api/conversation-followup/pilot-sessions?'+p.toString());
-    el('pilotRows').innerHTML=j.items.length?j.items.map(x=>'<div style="padding:12px;border-bottom:1px solid #ddd"><b>PRUEBA · '+esc(x.sessionId.slice(0,12))+'</b> · '+esc(fmt(x.lastAt))+' · '+x.count+' consultas · '+x.failed+' errores<div>'+esc(x.preview)+'</div><button class="btn btnSm" data-pilot="'+esc(x.id)+'">Ver prueba</button></div>').join(''):'No hay conversaciones de prueba registradas con estos filtros.';
-    el('pilotRows').querySelectorAll('[data-pilot]').forEach(b=>b.onclick=()=>openPilot(b.dataset.pilot));
-  }catch(e){el('pilotRows').textContent='No se pudieron cargar las pruebas.';throw e}
-}
-async function openPilot(id){
-  if(chatPollTimer){clearInterval(chatPollTimer);chatPollTimer=null}activeId='';activeItem=null;lastChatMessagesSignature='';
-  openModal('chatModal');el('chatTitle').textContent='PRUEBA · NEA';el('chatSubtitle').textContent='Consulta y respuesta del piloto · solo lectura';el('chatContact').textContent='';el('chatFoot').innerHTML='';el('chatComposer').classList.add('hidden');el('chatBody').textContent='Cargando…';
-  try{const j=await requestJson('/api/conversation-followup/pilot-sessions/'+encodeURIComponent(id));renderFollowupChatMessages(j.items,true)}catch(e){el('chatBody').textContent='No se pudo cargar la prueba.';toast(e.message,true)}
+
 }
 function renderMedia(m){if(!m.media||!m.media.url)return '';const u=api(m.media.url);const k=String(m.media.kind||'');if(k==='image')return '<div class="media"><a href="'+esc(u)+'" target="_blank"><img src="'+esc(u)+'"/></a></div>';if(k==='audio')return '<div class="media"><audio controls src="'+esc(u)+'"></audio></div>';if(k==='video')return '<div class="media"><video controls src="'+esc(u)+'"></video></div>';return '<div class="media"><a href="'+esc(u)+'" target="_blank">📎 '+esc(m.media.filename||'Archivo')+'</a></div>'}
 function renderFollowupChatMessages(items,forceBottom=false){
@@ -978,6 +966,7 @@ async function refreshOpenChatMessages(id){
 }
 function startOpenChatPolling(id){if(chatPollTimer)clearInterval(chatPollTimer);chatPollTimer=setInterval(()=>refreshOpenChatMessages(id),3000)}
 async function sendFromFollowupChat(){
+  if(activeItem?.isTest)return;
   if(!activeId||!activeItem)return;
   const box=el('chatMessage'),btn=el('chatSendBtn'),text=String(box.value||'').trim();
   if(!text)return;btn.disabled=true;
@@ -1004,12 +993,12 @@ async function openChat(id){
   try{
     const [d,m]=await Promise.all([requestJson('/api/conversation-followup/'+encodeURIComponent(id)),requestJson('/api/conversation-followup/'+encodeURIComponent(id)+'/messages')]);
     const x=d.item;activeItem=x;
-    const nm=x.channelType==='qr_web'?(x.lead?.name||x.contactName||x.waId||'Sin nombre'):(x.contactName||x.lead?.name||x.waId||'Sin nombre');
+    const nm=x.isTest?('PRUEBA · '+x.contactName):x.channelType==='qr_web'?(x.lead?.name||x.contactName||x.waId||'Sin nombre'):(x.contactName||x.lead?.name||x.waId||'Sin nombre');
     el('chatTitle').textContent=nm;
     el('chatSubtitle').textContent=(x.channelType==='qr_web'?('QR Web'+(x.qrProductCode?' · SKU '+x.qrProductCode:'')):(x.waId||''))+' · '+(x.finalized?'Finalizada':(x.manualOpen?'Atención manual':'Bot activo'))+' · última actividad '+fmt(x.lastAt);
     const contactParts=[];if(x.lead?.phone||x.contactPhone)contactParts.push('Tel: '+(x.lead?.phone||x.contactPhone));if(x.lead?.email||x.contactEmail)contactParts.push('Email: '+(x.lead?.email||x.contactEmail));if(x.lead?.company)contactParts.push('Empresa: '+x.lead.company);el('chatContact').textContent=contactParts.join(' · ');
     renderFollowupChatMessages(m.items||[],true);
-    if(CAN_INBOX){
+    if(CAN_INBOX&&!x.isTest){
       el('chatComposer').classList.remove('hidden');
       el('chatMessage').placeholder=x.finalized?'Escribí una respuesta… Al enviar, la conversación se reabrirá en atención manual.':'Escribí una respuesta al cliente…';
     }
@@ -1026,6 +1015,7 @@ async function closeNow(id){if(!confirm('¿Finalizar esta conversación ahora? S
 async function refresh(){el('refreshBtn').disabled=true;try{await loadConfig();await loadRows()}catch(e){toast(e.message,true)}finally{el('refreshBtn').disabled=false}}
 async function changeTenant(value){const next=String(value||'').trim();if(!CAN_SELECT_TENANT||!next||next===TENANT)return;TENANT=next;activeId='';activeItem=null;if(el('tenantLabel'))el('tenantLabel').textContent=TENANT;try{const u=new URL(location.href);u.searchParams.set('tenant',TENANT);history.replaceState(null,'',u.toString())}catch{}await refresh()}
 el('chatSendBtn').addEventListener('click',sendFromFollowupChat);el('chatMessage').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendFromFollowupChat()}});
+el('originFilter').addEventListener('change',()=>loadRows().catch(e=>toast(e.message,true)));
 el('refreshBtn').addEventListener('click',refresh);if(CAN_SELECT_TENANT&&el('tenantSelect'))el('tenantSelect').addEventListener('change',e=>changeTenant(e.target.value));el('q').addEventListener('input',()=>{clearTimeout(debounce);debounce=setTimeout(()=>loadRows().catch(e=>toast(e.message,true)),250)});['dateFrom','dateTo'].forEach(id=>el(id).addEventListener('change',()=>loadRows().catch(e=>toast(e.message,true))));setupMulti('channelFilter','channelFilterValue','Canal');setupMulti('stateFilter','state','Estado');setupMulti('workflowFilter','workflowFilterValue','Gestión');setupMulti('categoryFilter','categoryFilterValue','Tipo');
 if(CAN_EDIT_CONFIG){el('cfgBtn').addEventListener('click',()=>{el('cfgEnabled').checked=config.autoCloseEnabled;el('cfgMinutes').value=config.inactivityMinutes;openModal('cfgModal')});el('cfgSave').addEventListener('click',async()=>{try{const j=await requestJson('/api/conversation-followup/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({autoCloseEnabled:el('cfgEnabled').checked,inactivityMinutes:el('cfgMinutes').value})});config=j.config;cfgText();closeModal('cfgModal');toast('Configuración guardada');await loadRows()}catch(e){toast(e.message,true)}})}
 Promise.all([loadConfig(),loadRows()]).catch(e=>toast(e.message,true));setInterval(()=>{if(!document.hidden)loadRows().catch(()=>{})},30000);
@@ -1036,6 +1026,14 @@ Promise.all([loadConfig(),loadRows()]).catch(e=>toast(e.message,true));setInterv
 
 // ===================== Rutas =====================
 
+async function resolveFollowupTenant(req,auth){
+ const tenant=resolveTenant(req,auth);
+ if(tenant==='NEA'&&ObjectId.isValid(String(req.params?.id||''))){
+  const db=await getDb();const test=await db.collection('conversations').findOne({_id:new ObjectId(req.params.id),tenantId:'NEA_PRUEBAS',isTest:true});
+  if(test)return 'NEA_PRUEBAS';
+ }
+ return tenant;
+}
 function mountConversationFollowupPanel(app, { auth } = {}) {
   if (!app || app.__asistoConversationFollowupMounted) return;
   app.__asistoConversationFollowupMounted = true;
@@ -1127,20 +1125,23 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
       const noStates = rawStates === 'none';
       const noWorkflows = rawWorkflows === 'none';
       const noCategories = rawCategories === 'none';
-      const channels = (rawChannels === 'all' || noChannels) ? [] : queryList(rawChannels, ['whatsapp', 'qr_web']);
+      const channels = (rawChannels === 'all' || noChannels) ? [] : queryList(rawChannels, ['whatsapp', 'qr_web', 'bot_test']);
       const conversationStates = (rawStates === 'all' || noStates) ? [] : queryList(rawStates, ['open', 'manual', 'closed']);
       const workflows = (rawWorkflows === 'all' || noWorkflows) ? [] : queryList(rawWorkflows, ['pending_review', 'follow_up', 'due', 'resolved', 'discarded']);
       const categories = (rawCategories === 'all' || noCategories) ? [] : queryList(rawCategories, ['consulta', 'cotizacion', 'soporte', 'reclamo', 'comercial', 'otro', 'sin_clasificar']);
       const dateFrom = safeDate(req.query?.dateFrom);
       const dateTo = safeDate(req.query?.dateTo);
-      const q = { tenantId: tenant, botMode: 'conversacional' };
+      const tenantScope=tenant==='NEA'?{ $in:['NEA','NEA_PRUEBAS'] }:tenant;
+      const q = { tenantId: tenantScope, botMode: 'conversacional' };
+      if(req.query.origin==='test')q.isTest=true;
+      if(req.query.origin==='real')q.isTest={$ne:true};
 
 
       if (qText) {
         const rx = new RegExp(escapeRegex(qText), 'i');
         const [followupHits, leadHits] = await Promise.all([
-          db.collection(FOLLOWUP_COLLECTION).find({ tenantId: tenant, $or: [{ summary: rx }, { notes: rx }, { tags: rx }, { assignedTo: rx }, { aiFollowUpReason: rx }] }, { projection: { conversationId: 1 } }).limit(500).toArray(),
-          db.collection('leads').find({ tenantId: tenant, $or: [{ name: rx }, { company: rx }, { email: rx }, { phone: rx }, { lastMessage: rx }] }, { projection: { conversationId: 1 } }).limit(500).toArray(),
+          db.collection(FOLLOWUP_COLLECTION).find({ tenantId: tenantScope, $or: [{ summary: rx }, { notes: rx }, { tags: rx }, { assignedTo: rx }, { aiFollowUpReason: rx }] }, { projection: { conversationId: 1 } }).limit(500).toArray(),
+          db.collection('leads').find({ tenantId: tenantScope, $or: [{ name: rx }, { company: rx }, { email: rx }, { phone: rx }, { lastMessage: rx }] }, { projection: { conversationId: 1 } }).limit(500).toArray(),
         ]);
         const relatedIds = [...followupHits, ...leadHits]
           .map(x => x.conversationId)
@@ -1154,8 +1155,8 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
       const convs = await db.collection('conversations').find(q).sort({ updatedAt: -1, openedAt: -1 }).limit(fetchLimit).toArray();
       const ids = convs.map(c => c._id);
       const [followups, leads] = ids.length ? await Promise.all([
-        db.collection(FOLLOWUP_COLLECTION).find({ tenantId: tenant, conversationId: { $in: ids } }).toArray(),
-        db.collection('leads').find({ tenantId: tenant, conversationId: { $in: ids } }).toArray(),
+        db.collection(FOLLOWUP_COLLECTION).find({ tenantId: tenantScope, conversationId: { $in: ids } }).toArray(),
+        db.collection('leads').find({ tenantId: tenantScope, conversationId: { $in: ids } }).toArray(),
       ]) : [[], []];
       const fm = new Map(followups.map(x => [String(x.conversationId), x]));
       const lm = new Map(leads.map(x => [String(x.conversationId), x]));
@@ -1307,7 +1308,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
 
   app.get('/api/conversation-followup/:id/messages', async (req, res) => {
     try {
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
       const db = await getDb();
@@ -1323,7 +1324,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
 
   app.get('/api/conversation-followup/:id/history', async (req, res) => {
     try {
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
       const db = await getDb();
@@ -1347,7 +1348,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
 
   app.get('/api/conversation-followup/:id', async (req, res) => {
     try {
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
       const db = await getDb();
@@ -1375,7 +1376,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
   app.post('/api/conversation-followup/:id/reopen', async (req, res) => {
     try {
       if (!hasPageAccess(auth, req, 'inbox')) return res.status(403).json({ ok: false, error: 'forbidden' });
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
 
@@ -1421,7 +1422,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
   app.post('/api/conversation-followup/:id/send', async (req, res) => {
     try {
       if (!hasPageAccess(auth, req, 'inbox')) return res.status(403).json({ ok: false, error: 'forbidden' });
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       const text = cleanString(req.body?.text, 4000);
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
@@ -1469,7 +1470,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
 
   app.post('/api/conversation-followup/:id/classify', async (req, res) => {
     try {
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
       const db = await getDb();
@@ -1487,7 +1488,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
 
   app.post('/api/conversation-followup/:id', async (req, res) => {
     try {
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
       const db = await getDb();
@@ -1544,7 +1545,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
 
   app.post('/api/conversation-followup/:id/close', async (req, res) => {
     try {
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
       const db = await getDb();
@@ -1564,4 +1565,4 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
   });
 }
 
-module.exports = { mountConversationFollowupPanel, runAutoCloseSweep };
+module.exports = { mountConversationFollowupPanel, runAutoCloseSweep, classifyConversationWithAi };
