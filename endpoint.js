@@ -1015,6 +1015,9 @@ app.post('/api/ext/wweb/agent/db', wwebAgentJson, requireWwebAgentAccess, async 
     if (operation === 'findOne') {
       result = await collection.findOne(query, options);
     } else if (operation === 'find') {
+      if (collectionName === 'wa_api_message_windows' && args.query?.channelType === 'api_messages' && args.query?.['messages.at']?.$gte && args.query?.['messages.at']?.$lt) {
+        for (const part of (query.$and || [query])) { if (part['messages.at']) { part.messages = { $elemMatch: { at: part['messages.at'] } }; delete part['messages.at']; } }
+      }
       let cursor = collection.find(query, options);
       if (collectionName === 'wa_api_message_windows' && args.query?.channelType === 'api_messages' && args.query?.['messages.at']?.$gte && args.query?.['messages.at']?.$lt) cursor = cursor.hint('cpu_20261106_tenantId_numeroFrom_channelType_messages.at');
       if (args.sort && typeof args.sort === 'object') cursor = cursor.sort(args.sort);

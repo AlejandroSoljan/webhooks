@@ -468,3 +468,5 @@ Segunda ronda 2026-11-06: catálogo ampliado a 14 índices con tenantId/updatedA
 ### Plan ventanas por fecha v5.00.339
 
 El proxy de agentes aplica hint exclusivamente a find de wa_api_message_windows con channelType=api_messages y messages.at con ambos límites. Requiere índice cpu_20261106_tenantId_numeroFrom_channelType_messages.at antes de publicar; scripts/sync_cpu_indexes.cjs lo reproduce. No cambia filtro, dominio, número, orden ni límites. Comparación real completa de IDs de muestra fue idéntica (65). Mongo rechazó la gestión administrativa de planes; no se ampliaron permisos y se implementó la elección en la consulta. Rollback mediante release anterior elimina el hint. El módulo solo existe en backend central AWS; turnero local no contiene endpoint.js.
+
+En v5.00.340 la consulta acotada del agente usa messages/$elemMatch/at para que ambos límites del rango correspondan al mismo mensaje y el índice multikey combine los bounds. No altera los mensajes ni importes: elimina posibles ventanas candidatas sin mensajes dentro del rango. En la muestra real ambos filtros devolvieron los mismos 66 IDs y el nuevo examinó 66 documentos en 0 ms.
