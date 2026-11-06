@@ -889,7 +889,7 @@ async function requireWwebAgentAccess(req, res, next) {
     const db = await getDb();
     const doc = await db.collection('tenant_config').findOne({
       $or: [{ _id: tenantId }, { tenantId }, { tenantid: tenantId }]
-    });
+    }, { projection: { control_api_token: 1, controlApiToken: 1, status_token: 1, statusToken: 1, 'configuracion.control_api_token': 1, 'configuracion.controlApiToken': 1, 'configuracion.status_token': 1, 'configuracion.statusToken': 1 } });
     const nested = doc && doc.configuracion && typeof doc.configuracion === 'object' ? doc.configuracion : {};
     const expected = String(
       nested.control_api_token || nested.controlApiToken || nested.status_token || nested.statusToken ||
@@ -982,7 +982,26 @@ app.post('/api/ext/wweb/agent/ping', wwebAgentJson, requireWwebAgentAccess, asyn
   }
 });
 
-app.post('/api/ext/wweb/agent/db', wwebAgentJson, requireWwebAgentAccess, async (req, res) => {
+function wwebAgentRequestMetrics(req, res, next) {
+  const started = Date.now();
+  res.once('finish', () => {
+    const collection = WWEB_AGENT_ALLOWED_COLLECTIONS.has(req.body?.collection) ? req.body.collection : 'other';
+    const operation = WWEB_AGENT_ALLOWED_OPERATIONS.has(req.body?.operation) ? req.body.operation : 'other';
+    const key = collection + ':' + operation;
+    const item = wwebAgentTraffic.get(key) || { count: 0, bytes: 0, ms: 0 };
+    item.count++; item.bytes += Number(res.getHeader('content-length')) || 0; item.ms += Date.now() - started;
+    wwebAgentTraffic.set(key, item);
+    const now = Date.now();
+    if (now - wwebAgentTrafficSince >= 60000) {
+      console.log('[WWEB_AGENT_TRAFFIC]', JSON.stringify({ seconds: Math.round((now - wwebAgentTrafficSince) / 1000), operations: Object.fromEntries(wwebAgentTraffic) }));
+      wwebAgentTraffic.clear(); wwebAgentTrafficSince = now;
+    }
+  });
+  next();
+}
+const wwebAgentTraffic = new Map();
+let wwebAgentTrafficSince = Date.now();
+app.post('/api/ext/wweb/agent/db', wwebAgentJson, wwebAgentRequestMetrics, requireWwebAgentAccess, async (req, res) => {
   try {
     const tenantId = String(req.body?.tenantId || req.headers['x-asisto-tenant'] || '').trim().toUpperCase();
     const numero = String(req.body?.numero || req.headers['x-asisto-numero'] || '').replace(/\D/g, '');

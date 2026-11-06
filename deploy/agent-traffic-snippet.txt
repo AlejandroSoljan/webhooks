@@ -1,0 +1,19 @@
+function wwebAgentRequestMetrics(req, res, next) {
+  const started = Date.now();
+  res.once('finish', () => {
+    const collection = WWEB_AGENT_ALLOWED_COLLECTIONS.has(req.body?.collection) ? req.body.collection : 'other';
+    const operation = WWEB_AGENT_ALLOWED_OPERATIONS.has(req.body?.operation) ? req.body.operation : 'other';
+    const key = collection + ':' + operation;
+    const item = wwebAgentTraffic.get(key) || { count: 0, bytes: 0, ms: 0 };
+    item.count++; item.bytes += Number(res.getHeader('content-length')) || 0; item.ms += Date.now() - started;
+    wwebAgentTraffic.set(key, item);
+    const now = Date.now();
+    if (now - wwebAgentTrafficSince >= 60000) {
+      console.log('[WWEB_AGENT_TRAFFIC]', JSON.stringify({ seconds: Math.round((now - wwebAgentTrafficSince) / 1000), operations: Object.fromEntries(wwebAgentTraffic) }));
+      wwebAgentTraffic.clear(); wwebAgentTrafficSince = now;
+    }
+  });
+  next();
+}
+const wwebAgentTraffic = new Map();
+let wwebAgentTrafficSince = Date.now();
