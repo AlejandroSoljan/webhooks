@@ -182,7 +182,7 @@ function panelHtml({ tenant, tenantOptions = [], canSelectTenant = false }) {
     </div>
   </div>
 
-  <div class="notice"><span class="dot"></span><span>Simulación activa. Los mensajes de esta pantalla no se envían a WhatsApp.${tenant === 'NEA_PRUEBAS' ? ' Las consultas y respuestas del piloto se guardan para analizar y mejorar el bot.' : ''}</span></div>
+  <div class="notice"><span class="dot"></span><span>Simulación activa. Los mensajes de esta pantalla no se envían a WhatsApp. Las consultas y respuestas quedan registradas en Seguimiento.</span></div>
 
   <section class="chatCard">
     <div class="chatHead">
@@ -262,11 +262,11 @@ function mountBotTestPanel(app, { auth } = {}) {
       const sessionId = safeSessionId(req.body?.sessionId);
       const from = testSessionFrom(req, tenant, sessionId);
       const db = await getDb();
+      testRecord = await beginTestRecord(db, { tenant, sessionId, message, userId: req?.user?.uid || req?.user?.username });
       const [behavior, runtime] = await Promise.all([
         loadBehaviorConfigFromMongo(tenant),
         resolveTestRuntime(db, tenant),
       ]);
-      testRecord = await beginTestRecord(db, { tenant, sessionId, message, userId: req?.user?.uid, model: behavior?.chat_model });
       const botMode = normalizeBotMode(behavior?.bot_mode || 'pedidos');
       runtime.apiKey = resolveOpenAiApiKey(botMode);
       if (!runtime.apiKey) {

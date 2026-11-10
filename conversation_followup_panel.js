@@ -918,7 +918,7 @@ function renderRows(){
     const x=entry.item;
     const nm=x.isTest?('PRUEBA · '+x.contactName):x.channelType==='qr_web'?(x.lead?.name||x.contactName||x.waId||'Sin nombre'):(x.contactName||x.lead?.name||x.waId||'Sin nombre');
     const qrContact=x.lead?.phone||x.contactPhone||x.lead?.email||x.contactEmail||'';
-    const channelInfo=x.isTest?'Pruebas Bot · NEA':x.channelType==='qr_web'?('QR Web'+(x.qrProductCode?' · SKU '+x.qrProductCode:'')+(qrContact?' · '+qrContact:'')):(x.waId||'');
+    const channelInfo=x.isTest?'Pruebas Bot · '+(x.tenantId==='NEA_PRUEBAS'?'NEA':x.tenantId||TENANT):x.channelType==='qr_web'?('QR Web'+(x.qrProductCode?' · SKU '+x.qrProductCode:'')+(qrContact?' · '+qrContact:'')):(x.waId||'');
     const status=x.finalized?'<span class="badge bClosed">Finalizada</span>':(x.manualOpen?'<span class="badge bFollow">Atención manual</span>':'<span class="badge bOpen">Bot activo</span>');
     const workflow='<span class="badge '+workflowBadge(x.workflowStatus)+'">'+esc(workflowLabel(x.workflowStatus))+'</span>'+(x.isDue?' <span class="badge bDue">Vencido</span>':'');
     const cat=x.category?'<span class="badge bYes">'+esc(categoryLabel(x.category))+'</span> '+aiBadge(x):aiBadge(x)||'<span class="badge bNo">Sin clasificar</span>';

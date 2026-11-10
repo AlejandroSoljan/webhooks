@@ -1,10 +1,34 @@
-const test=require('node:test'),assert=require('node:assert/strict');
-const {syncPilotRecord}=require('../bot_test_projection');
-test('projection idempotent and isolated, keeps manual close on replay',async()=>{
- const docs=new Map(),msgs=new Map();const db={collection:n=>({findOne:async q=>docs.get(String(q._id)),updateOne:async(q,u)=>{const map=n==='conversations'?docs:msgs;const key=String(q._id);const old=map.get(key)||{};map.set(key,{...(!map.has(key)?u.$setOnInsert:{}),...old,...u.$set,...u.$max});}})};
- const record={_id:'event',tenant:'NEA_PRUEBAS',sessionId:'session',userId:'user',createdAt:new Date(),status:'completed',message:'Consulta',reply:'Respuesta'};
- const id=await syncPilotRecord(db,record);await syncPilotRecord(db,record);assert.equal(docs.size,1);assert.equal(msgs.size,2);assert.equal(docs.get(String(id)).tenantId,'NEA_PRUEBAS');assert.equal(docs.get(String(id)).isTest,true);
- docs.get(String(id)).finalized=true;await syncPilotRecord(db,record);assert.equal(docs.get(String(id)).finalized,true);
- await syncPilotRecord(db,{...record,tenant:'NEA'});assert.equal(docs.size,1);
- await syncPilotRecord(db,{...record,_id:'later',createdAt:new Date(Date.now()+1000)});assert.equal(docs.get(String(id)).finalized,false);
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const {MongoMemoryServer} = require('mongodb-memory-server');
+const {MongoClient} = require('mongodb');
+const {beginTestRecord,finishTestRecord} = require('../bot_test_history');
+const {syncPilotRecord} = require('../bot_test_projection');
+
+test('new test chats persist before model reply, isolate tenants and survive replay', async () => {
+  const server = await MongoMemoryServer.create();
+  const client = new MongoClient(server.getUri(),{serverApi:{version:'1',strict:true}});
+  try {
+    const db = client.db('synthetic');
+    const input = {sessionId:'same-session',userId:'tester',message:'Synthetic question'};
+    const a = await beginTestRecord(db,{...input,tenant:'NEA'});
+    const b = await beginTestRecord(db,{...input,tenant:'NEA_PRUEBAS'});
+    assert.equal(await db.collection('messages').countDocuments({isTest:true,role:'user'}),2);
+    assert.equal(await db.collection('conversations').countDocuments({isTest:true,channelType:'bot_test'}),2);
+    await finishTestRecord(a,{reply:'Synthetic answer'});
+    await finishTestRecord(a,{error:true});
+    const saved = await db.collection('bot_test_history').findOne({_id:a.id});
+    assert.equal(saved.status,'completed');
+    assert.equal(saved.reply,'Synthetic answer');
+    const id = await syncPilotRecord(db,saved);
+    await db.collection('conversations').updateOne({_id:id},{$set:{finalized:true}});
+    await syncPilotRecord(db,saved);
+    assert.equal((await db.collection('conversations').findOne({_id:id})).finalized,true);
+    assert.equal(await db.collection('messages').countDocuments({tenantId:'NEA',conversationId:id}),2);
+    await finishTestRecord(b,{error:true});
+    assert.equal(await db.collection('messages').countDocuments({tenantId:'NEA_PRUEBAS',role:'assistant'}),0);
+    const later = new Date(+saved.createdAt+1000);
+    await syncPilotRecord(db,{...saved,_id:'new-event',createdAt:later});
+    assert.equal((await db.collection('conversations').findOne({_id:id})).finalized,false);
+  } finally { await client.close(); await server.stop(); }
 });

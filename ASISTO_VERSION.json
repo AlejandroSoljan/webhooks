@@ -1,8 +1,8 @@
 {
   "proyecto": "Asisto Webhooks",
-  "version": "5.00.341",
-  "fecha": "2026-11-06",
-  "rama": "codex/notifications-device-dedup",
+  "version": "5.00.343",
+  "fecha": "2026-11-10",
+  "rama": "codex/bot-test-recovery",
   "politica": "Los archivos de codigo y documentacion llevan cabecera. JSON, binarios e imagenes se registran aqui para preservar su formato.",
-  "date": "2026-11-06"
+  "date": "2026-11-10"
 }
