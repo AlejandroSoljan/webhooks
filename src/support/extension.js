@@ -127,7 +127,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
   }));
   router.post('/contact', route(async (req, s, scope) => {
     const jid = text(req.body.jid, 200), name = text(req.body.name, 200);
-    if (!/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(jid) || !name) fail('invalid_contact');
+    if (!/^(?:\d+@(s\.whatsapp\.net|lid)|\d+(?:-\d+)?@g\.us)$/.test(jid) || !name) fail('invalid_contact');
     // A visible WhatsApp label can enrich only a conversation already owned by this user.
     if (!await s.col('messages').findOne({ ...scope, jid }, { projection: { _id: 1 } }) && !await s.col('drafts').findOne({ ...scope, jid }, { projection: { _id: 1 } })) return { saved: false };
     await s.col('contacts').updateOne({ _id: scopedId(scope, 'contact', jid), ...scope }, { $set: { jid, name, source: 'whatsapp-web', updatedAt: s.now() }, $addToSet: { aliases: jid } }, { upsert: true });

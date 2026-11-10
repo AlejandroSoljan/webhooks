@@ -117,7 +117,7 @@ class SupportService {
   }
   async excludedChat(scope, message, config = null) {
     const jid = String(message?.jid || '');
-    if (!/^[^@]+@(s\.whatsapp\.net|lid)$/.test(jid)) return true;
+    if (!/^(?:[^@]+@(s\.whatsapp\.net|lid)|\d+(?:-\d+)?@g\.us)$/.test(jid)) return true;
     const effective = config || await this.config(scope);
     if (effective.excludedJids.includes(jid)) return true;
     if (!effective.excludedNames.length) return false;
@@ -132,7 +132,7 @@ class SupportService {
   }
   async rememberContact(scope, input) {
     const jid = text(input.jid);
-    if (!/^[^@]+@(s\.whatsapp\.net|lid)$/.test(jid)) fail('invalid_jid');
+    if (!/^(?:[^@]+@(s\.whatsapp\.net|lid)|\d+(?:-\d+)?@g\.us)$/.test(jid)) fail('invalid_jid');
     // Manual labels must never inherit a previously verified remote identity.
     if (['companyId', 'contactId', 'verifiedAt', 'source'].some(key => Object.hasOwn(input, key))) fail('manual_identity_fields_only');
     const company = text(input.company || ''), contact = text(input.contact || '');
@@ -146,7 +146,7 @@ class SupportService {
   }
   async ingest(scope, message, { historical = false } = {}) {
     const config = await this.config(scope);
-    if (!/^[^@]+@(s\.whatsapp\.net|lid)$/.test(String(message?.jid || '')) || !message.id || !Number.isFinite(+message.at) || message.at > new Date(+this.now() + 300000)) return { ignored: true };
+    if (!/^(?:[^@]+@(s\.whatsapp\.net|lid)|\d+(?:-\d+)?@g\.us)$/.test(String(message?.jid || '')) || !message.id || !Number.isFinite(+message.at) || message.at > new Date(+this.now() + 300000)) return { ignored: true };
     const taskExcluded = await this.excludedChat(scope, message, config);
     const _id = scopedId(scope, 'message', message.jid, message.id, !!message.fromMe);
     const { text: content = '', raw = null, ...metadata } = message;

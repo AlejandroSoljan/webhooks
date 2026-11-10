@@ -814,3 +814,19 @@ test('late WhatsApp names fill blank contacts and preserve manually entered cont
   assert.equal((await service.listDrafts(scope))[0].fields.contact, 'Nombre corregido');
   assert.equal((await service.listDrafts(other)).length, 0);
 });
+
+test('WhatsApp groups generate isolated review drafts while broadcasts are ignored', async () => {
+  const group = '120363000001-123456@g.us';
+  const otherGroup = '120363000002@g.us';
+  await processMessages([
+    message('same-wa-id', 0, { jid: group, name: 'Soporte Norte' }),
+    message('same-wa-id', 0, { jid: otherGroup, name: 'Soporte Sur' }),
+    message('status', 0, { jid: 'status@broadcast' })
+  ]);
+  const drafts = await service.col('drafts').find(scope).toArray();
+  assert.deepEqual(drafts.map(row => row.jid).sort(), [group, otherGroup].sort());
+  assert.equal(drafts.find(row => row.jid === group).messageIds.length, 1);
+  assert.equal(drafts.find(row => row.jid === otherGroup).messageIds.length, 1);
+  assert.equal(await service.col('drafts').countDocuments(other), 0);
+  assert.equal(await service.col('messages').countDocuments({ ...scope, jid: 'status@broadcast' }), 0);
+});

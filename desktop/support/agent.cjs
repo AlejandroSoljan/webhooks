@@ -106,6 +106,8 @@ async function run(options = {}) {
   };
   let uploadLimit = 25;
   const recentFirst = ids => ids.sort((a, b) => (order.get(b) || 0) - (order.get(a) || 0));
+  const groupNames = new Map();
+  const rememberGroups = rows => { for (const row of rows || []) { const name = row.subject || row.name; if (row.id?.endsWith('@g.us') && name) groupNames.set(row.id, name); } };
   const queue = async (messages, historical = false) => {
     for (let offset = 0; offset < messages.length; offset += 50) {
       rememberContacts(messages.slice(offset, offset + 50).filter(raw => !raw.key?.fromMe && raw.pushName).map(raw => ({ id: raw.key?.remoteJid, notify: raw.pushName })));
@@ -113,11 +115,11 @@ async function run(options = {}) {
       let changed = false;
       for (const raw of messages.slice(offset, offset + 50)) {
       const msg = b.normalizeMessageContent(raw.message), jid = raw.key?.remoteJid;
-      if (!msg || !raw.key?.id || !/^[^@]+@(s\.whatsapp\.net|lid)$/.test(jid || '')) continue;
+      if (!msg || !raw.key?.id || !/^(?:[^@]+@(s\.whatsapp\.net|lid)|\d+(?:-\d+)?@g\.us)$/.test(jid || '')) continue;
       const content = msg.conversation || msg.extendedTextMessage?.text || msg.imageMessage?.caption || msg.documentMessage?.caption || '';
       if (!content && !msg.audioMessage) continue;
       const audio = msg.audioMessage;
-      const message = { id: raw.key.id, jid, fromMe: !!raw.key.fromMe, name: contactName(jid), at: new Date(Number(raw.messageTimestamp) * 1000).toISOString(), text: content.length > 20000 ? '' : content, contentTooLarge: content.length > 20000, audio: audio ? { seconds: Number(audio.seconds || 0), mimetype: audio.mimetype || 'audio/ogg', bytes: Number(audio.fileLength || 0) } : null, raw: audio ? JSON.stringify(raw, b.BufferJSON.replacer) : null };
+      const message = { id: raw.key.id, jid, fromMe: !!raw.key.fromMe, name: jid.endsWith('@g.us') ? groupNames.get(jid) || '' : contactName(jid), at: new Date(Number(raw.messageTimestamp) * 1000).toISOString(), text: content.length > 20000 ? '' : content, contentTooLarge: content.length > 20000, audio: audio ? { seconds: Number(audio.seconds || 0), mimetype: audio.mimetype || 'audio/ogg', bytes: Number(audio.fileLength || 0) } : null, raw: audio ? JSON.stringify(raw, b.BufferJSON.replacer) : null };
       const id = crypto.createHash('sha256').update(JSON.stringify([jid, raw.key.id, !!raw.key.fromMe])).digest('hex');
       // An interrupted upload is replayed idempotently using the WhatsApp ID.
       if (!seen.has(id)) { store.write('outbox:' + id, { ...message, historical }); index.add(id); seen.add(id); order.set(id, Date.parse(message.at)); changed = true; }
@@ -133,12 +135,15 @@ async function run(options = {}) {
     const active = b.default({ auth: { creds, keys: {
       async get(type, ids) { const result = {}; for (const id of ids) { let value = readAuth(type + ':' + id); if (type === 'app-state-sync-key' && value) value = b.proto.Message.AppStateSyncKeyData.fromObject(value); result[id] = value; } return result; },
       async set(data) { for (const [type, values] of Object.entries(data)) for (const [id, value] of Object.entries(values)) writeAuth(type + ':' + id, value); },
-    } }, logger: require('pino')({ level: 'silent' }), markOnlineOnConnect: false, syncFullHistory: true, shouldSyncHistoryMessage: () => true, shouldIgnoreJid: jid => /@(g\.us|broadcast|newsletter)$/.test(jid), getMessage: async () => undefined });
+    } }, logger: require('pino')({ level: 'silent' }), markOnlineOnConnect: false, syncFullHistory: true, shouldSyncHistoryMessage: () => true, shouldIgnoreJid: jid => /@(broadcast|newsletter)$/.test(jid), getMessage: async () => undefined });
     socket = active;
     const event = fn => { tail = tail.then(async () => { if (generation === socketGeneration) await fn(); }).catch(() => { if (generation === socketGeneration) { stopSocket(); retryAt = Date.now() + 15000; } }); };
     active.ev.on('creds.update', () => event(() => writeAuth('creds', creds)));
     active.ev.on('messages.upsert', update => event(() => queue(update.messages, update.type === 'append')));
-    active.ev.on('messaging-history.set', update => event(() => { rememberContacts(update.contacts); return queue(update.messages || [], true); }));
+    active.ev.on('messaging-history.set', update => event(() => { rememberContacts(update.contacts); rememberGroups(update.chats); return queue(update.messages || [], true); }));
+    active.ev.on('groups.upsert', rows => rememberGroups(rows));
+    active.ev.on('groups.update', rows => rememberGroups(rows));
+    active.ev.on('chats.upsert', rows => rememberGroups(rows));
     active.ev.on('contacts.upsert', updates => event(() => rememberContacts(updates)));
     active.ev.on('contacts.update', updates => event(() => rememberContacts(updates)));
     active.ev.on('connection.update', update => event(async () => {
@@ -179,7 +184,7 @@ async function run(options = {}) {
       if (state.desired !== 'connected') {
         if (socket) { stopSocket(); await request('session', { state: 'disconnected' }); }
       } else if (!socket && Date.now() >= retryAt) connect();
-      const contactBatch = state.validated ? [...contactPending].slice(0, 50).map(jid => ({ jid, name: contactName(jid), aliases: contacts[jid]?.aliases || [] })).filter(contact => contact.name) : [];
+      const contactBatch = state.validated ? [...contactPending].slice(0, 50).map(jid => ({ jid, name: jid.endsWith('@g.us') ? groupNames.get(jid) || '' : contactName(jid), aliases: contacts[jid]?.aliases || [] })).filter(contact => contact.name) : [];
       if (contactBatch.length) {
         await request('contacts', { contacts: contactBatch });
         for (const contact of contactBatch) if (contactName(contact.jid) === contact.name) contactPending.delete(contact.jid);

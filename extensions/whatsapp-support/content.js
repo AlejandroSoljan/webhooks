@@ -4,7 +4,7 @@
   const remembered = new Map(), syncedAgenda = new Map(), addressBook = new Map(), addressAliases = new Map(), selected = new Map(), controls = new Map();
   let assignmentBusy = false, messageRequest = 0, tasksInFlight = null, indexInFlight = null, syncTimer;
   let chatIndex = AsistoMatch.indexContacts([]), knownIndex = chatIndex, addressIndex = chatIndex;
-  const extractJid = value => ((value || '').match(/(?:^|_)([0-9]+@(?:s\.whatsapp\.net|c\.us|lid))(?:_|$)/)?.[1] || '').replace('@c.us', '@s.whatsapp.net');
+  const extractJid = value => ((value || '').match(/(?:^|_)((?:[0-9]+@(?:s\.whatsapp\.net|c\.us|lid)|[0-9]+(?:-[0-9]+)?@g\.us))(?:_|$)/)?.[1] || '').replace('@c.us', '@s.whatsapp.net');
   const extractMessageId = value => {
     const raw = String(value || '');
     return raw.match(/^(?:true|false)_[^_]+_(.+)$/)?.[1] || raw.match(/(?:^|_)([A-Za-z0-9-]{10,})$/)?.[1] || '';
