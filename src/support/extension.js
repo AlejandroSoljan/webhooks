@@ -45,6 +45,19 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     if (!credential) fail('hubspot_not_configured', 409);
     return { connection: credential.connection, client: hubspotFactory(credential.token), source: credential.source };
   };
+  const whatsappSession = async (s, scope) => {
+    const row = await s.col('sessions').findOne(scope);
+    const valid = row?.state === 'qr' && row.desired === 'connected' && row.qr && row.qrExpiresAt > s.now();
+    return { state: row?.state || 'disconnected', qr: valid ? await require('qrcode').toDataURL(s.vault.open(row.qr, row._id + ':qr'), { width: 280, margin: 2 }) : null, qrExpiresAt: valid ? row.qrExpiresAt : null };
+  };
+  router.get('/whatsapp/session', route((req, s, scope) => whatsappSession(s, scope)));
+  router.post('/whatsapp/session', route(async (req, s, scope) => {
+    const _id = scopedId(scope, 'session');
+    await s.col('sessions').updateOne({ _id, ...scope }, { $setOnInsert: { desired: 'disconnected', state: 'disconnected', updatedAt: s.now() } }, { upsert: true });
+    // Repeated clicks must never reset a connected session or a QR being scanned.
+    await s.col('sessions').updateOne({ _id, ...scope, desired: { $ne: 'connected' }, state: { $ne: 'connected' } }, { $set: { desired: 'connected', state: 'queued', retryAt: s.now(), updatedAt: s.now() } });
+    return whatsappSession(s, scope);
+  }));
   router.get('/mail/settings', route(async (req,s,scope) => mailFactory(s).view(scope)));
   router.post('/mail/settings', route(async (req,s,scope) => mailFactory(s).save(scope,req.body)));
   router.post('/mail/verify', route(async (req,s,scope) => mailFactory(s).verify(scope)));
@@ -127,7 +140,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
   }));
   router.post('/contact', route(async (req, s, scope) => {
     const jid = text(req.body.jid, 200), name = text(req.body.name, 200);
-    if (!/^[0-9]+@(s\.whatsapp\.net|lid)$/.test(jid) || !name) fail('invalid_contact');
+    if (!/^(?:\d+@(s\.whatsapp\.net|lid)|\d+(?:-\d+)?@g\.us)$/.test(jid) || !name) fail('invalid_contact');
     // A visible WhatsApp label can enrich only a conversation already owned by this user.
     if (!await s.col('messages').findOne({ ...scope, jid }, { projection: { _id: 1 } }) && !await s.col('drafts').findOne({ ...scope, jid }, { projection: { _id: 1 } })) return { saved: false };
     await s.col('contacts').updateOne({ _id: scopedId(scope, 'contact', jid), ...scope }, { $set: { jid, name, source: 'whatsapp-web', updatedAt: s.now() }, $addToSet: { aliases: jid } }, { upsert: true });
@@ -157,7 +170,40 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
       if (memory?.company) { fields.company = memory.company; fields.companyId = memory.companyId || ''; }
     }
     if (!fields.contact) fields.contact = (await s.col('contacts').findOne({ _id: scopedId(scope, 'contact', row.jid), ...scope }))?.name || '';
-    return { id: row._id, jid: row.jid, state: row.state, revision: row.revision, fields, source, sourceChanged: !!row.sourceChanged, reconciliationRequired: !!row.reconciliationRequired, hubspot: row.hubspot || null, mode: row.mode };
+    const suggestedFollowups = row.suggestedFollowupIds?.length
+      ? (await s.col('drafts').find({ ...scope, jid: row.jid, _id: { $in: row.suggestedFollowupIds } }, { projection: { hubspot: 1, fields: 1 } }).toArray())
+        .map(candidate => ({ id: candidate._id, ticketId: candidate.hubspot?.ticketId, portalId: candidate.hubspot?.portalId, subject: s.vault.open(candidate.fields, candidate._id).subject || 'Ticket existente' })).filter(candidate => candidate.ticketId)
+      : [];
+    return { id: row._id, jid: row.jid, state: row.state, revision: row.revision, fields, source, sourceChanged: !!row.sourceChanged, reconciliationRequired: !!row.reconciliationRequired, suggestedFollowups, requiresFollowupChoice: !!row.suggestedFollowupIds?.length, hubspot: row.hubspot || null, mode: row.mode };
+  }));
+  // Explicit resolution preserves the source draft and every message ID in one atomic update.
+  router.post('/drafts/:id/resolve-followup', route(async (req, s, scope) => {
+    const row = await rowFor(s, scope, req.params.id);
+    if (row.revision !== req.body.revision) fail('revision_conflict', 409);
+    if (!row.suggestedFollowupIds?.length || row.hubspot?.ticketId || ['merged', 'ignored'].includes(row.state)) fail('followup_resolution_unavailable', 409);
+    if (['sending', 'uncertain'].includes(row.hubspot?.state)) fail('hubspot_delivery_unconfirmed', 409);
+    const choice = req.body.choice;
+    if (!['new', 'existing'].includes(choice)) fail('followup_choice_required');
+    const set = { updatedAt: s.now(), followupResolution: { choice, at: s.now(), by: scope.userId, messageIds: row.messageIds || [] } };
+    if (choice === 'existing') {
+      if (!row.suggestedFollowupIds.includes(req.body.targetId)) fail('invalid_followup_target', 409);
+      const target = await s.col('drafts').findOne({ _id: req.body.targetId, ...scope, jid: row.jid, state: { $nin: ['merged', 'ignored'] } });
+      if (!target?.hubspot?.ticketId || ['sending', 'uncertain'].includes(target.hubspot.state)) fail('invalid_followup_target', 409);
+      const fields = s.vault.open(row.fields, row._id), previous = s.vault.open(target.fields, target._id);
+      if (fields.companyId && target.hubspot.companyId && fields.companyId !== target.hubspot.companyId) fail('hubspot_associations_changed', 409);
+      for (const key of ['companyId', 'contactId']) fields[key] = target.hubspot[key] || '';
+      if (previous.company) fields.company = previous.company;
+      set.fields = s.vault.seal(fields, row._id);
+      set.hubspot = { ticketId: target.hubspot.ticketId, portalId: target.hubspot.portalId || null, companyId: fields.companyId, contactId: fields.contactId, state: 'saved', pendingFollowup: true, followupAction: 'followup' };
+      set.followupResolution.targetId = target._id;
+      set.followupResolution.ticketId = target.hubspot.ticketId;
+    }
+    const result = await s.col('drafts').updateOne({ _id: row._id, ...scope, revision: row.revision, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $nin: ['sending', 'uncertain'] } }, {
+      $set: set, $unset: { suggestedFollowupIds: '' }, $inc: { revision: 1 },
+      $push: { events: { action: 'followup_resolved', ...set.followupResolution } }
+    });
+    if (!result.matchedCount) fail('revision_conflict', 409);
+    return { revision: row.revision + 1, choice };
   }));
   router.post('/drafts/:id/save', route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, req.body.fields)));
   router.post('/drafts/:id/reconcile', route(async (req, s, scope) => {
@@ -183,6 +229,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
   }));
   router.post('/drafts/:id/queue', route(async (req, s, scope) => {
     const row = await rowFor(s, scope, req.params.id);
+    if (row.suggestedFollowupIds?.length) fail('followup_existing_ticket', 409);
     if (row.revision !== req.body.revision) fail('revision_conflict', 409);
     const result = await s.col('drafts').updateOne(
       { _id: row._id, ...scope, revision: row.revision, state: { $nin: ['merged', 'ignored'] }, 'hubspot.state': { $nin: ['sending', 'uncertain', 'saved'] } },
@@ -194,6 +241,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
   }));
   router.post('/drafts/:id/manual-complete', route(async (req, s, scope) => {
     const row = await rowFor(s, scope, req.params.id);
+    if (row.suggestedFollowupIds?.length) fail('followup_existing_ticket', 409);
     if (row.revision !== req.body.revision) fail('revision_conflict', 409);
     const hubspot = { state: 'saved', method: 'browser_extension', ticketId: text(req.body.ticketId || 'manual', 100), savedAt: s.now() };
     const result = await s.col('drafts').updateOne(
@@ -281,6 +329,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
   }));
   router.post('/drafts/:id/publish', route(async (req, s, scope) => {
     const row = await rowFor(s, scope, req.params.id);
+    if (row.suggestedFollowupIds?.length) fail('followup_existing_ticket', 409);
     if (row.revision !== req.body.revision) fail('revision_conflict', 409);
     if (row.mode === 'suggest' || row.sourceChanged || row.reconciliationRequired) fail('source_reconciliation_required', 409);
     if (['sending', 'uncertain'].includes(row.hubspot?.state)) fail('hubspot_delivery_unconfirmed', 409);
@@ -307,10 +356,11 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     payload.properties.content = ['Contacto de WhatsApp: ' + (fields.contact || ''), 'Empresa: ' + (fields.company || ''), '', fields.description].join('\n');
     if (row.hubspot?.ticketId && row.hubspot?.followupAction === 'followup') {
       const previous = await client.ticket(row.hubspot.ticketId);
+      if (previous?.properties?.subject) payload.properties.subject = previous.properties.subject;
       if (previous?.properties?.content) payload.properties.content = `${previous.properties.content}\n\nSeguimiento desde WhatsApp:\n${payload.properties.content}`.slice(0, 65000);
     }
     if (row.hubspot?.ticketId && (row.hubspot.companyId !== (fields.companyId || '') || row.hubspot.contactId !== (fields.contactId || ''))) fail('hubspot_associations_changed', 409);
-    if (!row.hubspot?.ticketId) {
+    if (!row.hubspot?.ticketId && row.followupResolution?.choice !== 'new') {
       const existing = await client.findSimilarOpenTicket(fields, checked.metadata, fields.companyId);
       if (existing?.id) {
         const hubspot = { state: 'saved', method: 'matched_existing', matched: true, ticketId: String(existing.id), portalId: connection.portalId || null, companyId: fields.companyId || '', contactId: fields.contactId || '', savedAt: s.now() };

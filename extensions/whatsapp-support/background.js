@@ -56,6 +56,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     if (message.owner && message.owner !== session.tenantId + ':' + session.userId) throw new Error('account_changed');
     const id = encodeURIComponent(String(message.id || ''));
     switch (message.action) {
+      case 'WHATSAPP_STATUS': return api('/whatsapp/session');
+      case 'WHATSAPP_CONNECT': return api('/whatsapp/session', {}, session.csrf);
       case 'CONTACT_CONTROL': return api('/contact-control?q=' + encodeURIComponent(String(message.query || '')));
       case 'SET_CONTACT_CONTROL': return api('/contact-control', { jid: String(message.jid || ''), excluded: message.excluded === true }, session.csrf);
       case 'CONTACT': return api('/contact', { jid: String(message.jid || ''), name: String(message.name || '') }, session.csrf);
@@ -64,6 +66,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       case 'MESSAGES': return api('/messages?jid=' + encodeURIComponent(String(message.jid || '')));
       case 'ASSIGN_MESSAGES': return api('/messages/assign', { jid: String(message.jid || ''), messageIds: Array.isArray(message.messageIds) ? message.messageIds : [], selectedMessages: Array.isArray(message.selectedMessages) ? message.selectedMessages : [], destination: String(message.destination || ''), existingAction: String(message.existingAction || ''), reassign: message.reassign === true, duplicate: message.duplicate === true }, session.csrf);
       case 'DETAIL': return api('/drafts/' + id);
+      case 'RESOLVE_FOLLOWUP': return api('/drafts/' + id + '/resolve-followup', { revision: message.revision, choice: message.choice, targetId: message.targetId }, session.csrf);
       case 'SAVE': return api('/drafts/' + id + '/save', { revision: message.revision, fields: message.fields }, session.csrf);
       case 'RECONCILE': return api('/drafts/' + id + '/reconcile', { revision: message.revision, fields: message.fields }, session.csrf);
       case 'QUEUE': return api('/drafts/' + id + '/queue', { revision: message.revision }, session.csrf);
@@ -94,7 +97,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       case 'PUBLISH': return api('/drafts/' + id + '/publish', { revision: message.revision, mapping: message.mapping }, session.csrf);
       default: throw new Error('invalid_action');
     }
-  })().then(data => reply({ data }), error => reply({ error: error.message === 'Failed to fetch' ? 'connection_failed' : error.message }));
+  })().then(data => reply({ data }), error => reply({ error: error.name === 'TimeoutError' ? 'connection_timeout' : error.message === 'Failed to fetch' ? 'connection_failed' : error.message }));
   return true;
 });
 chrome.runtime.onMessage.addListener((message, sender, reply) => {

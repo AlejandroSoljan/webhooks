@@ -117,7 +117,7 @@ class SupportService {
   }
   async excludedChat(scope, message, config = null) {
     const jid = String(message?.jid || '');
-    if (!/^[^@]+@(s\.whatsapp\.net|lid)$/.test(jid)) return true;
+    if (!/^(?:[^@]+@(s\.whatsapp\.net|lid)|\d+(?:-\d+)?@g\.us)$/.test(jid)) return true;
     const effective = config || await this.config(scope);
     if (effective.excludedJids.includes(jid)) return true;
     if (!effective.excludedNames.length) return false;
@@ -132,7 +132,7 @@ class SupportService {
   }
   async rememberContact(scope, input) {
     const jid = text(input.jid);
-    if (!/^[^@]+@(s\.whatsapp\.net|lid)$/.test(jid)) fail('invalid_jid');
+    if (!/^(?:[^@]+@(s\.whatsapp\.net|lid)|\d+(?:-\d+)?@g\.us)$/.test(jid)) fail('invalid_jid');
     // Manual labels must never inherit a previously verified remote identity.
     if (['companyId', 'contactId', 'verifiedAt', 'source'].some(key => Object.hasOwn(input, key))) fail('manual_identity_fields_only');
     const company = text(input.company || ''), contact = text(input.contact || '');
@@ -146,7 +146,7 @@ class SupportService {
   }
   async ingest(scope, message, { historical = false } = {}) {
     const config = await this.config(scope);
-    if (!/^[^@]+@(s\.whatsapp\.net|lid)$/.test(String(message?.jid || '')) || !message.id || !Number.isFinite(+message.at) || message.at > new Date(+this.now() + 300000)) return { ignored: true };
+    if (!/^(?:[^@]+@(s\.whatsapp\.net|lid)|\d+(?:-\d+)?@g\.us)$/.test(String(message?.jid || '')) || !message.id || !Number.isFinite(+message.at) || message.at > new Date(+this.now() + 300000)) return { ignored: true };
     const taskExcluded = await this.excludedChat(scope, message, config);
     const _id = scopedId(scope, 'message', message.jid, message.id, !!message.fromMe);
     const { text: content = '', raw = null, ...metadata } = message;
@@ -390,9 +390,20 @@ class SupportService {
     const repairProtected = job.generatedRepairOnly ? (await this.col('drafts').find({ ...scope, jid: job.jid, state: { $ne: 'merged' } }).toArray()).filter(row => !require('./task_assessment').repairable(row)) : [];
     const repairProtectedIds = new Set(repairProtected.flatMap(row => row.messageIds || []));
     const groupingMessages = decoded.filter(message => !dismissedIds.has(message._id) && !registeredIds.has(message._id) && !repairProtectedIds.has(message._id));
+    const followupCandidates = new Map();
     let detectedGroups;
     if (groupingMessages.length && taskGrouping.enabled(scope.tenantId) && this.titleAnalyzer?.group) {
-      const key = hash([taskGrouping.VERSION, ...groupingMessages.map(m => [m._id, m.text, m.at, m.fromMe])]);
+      const latestAt = +groupingMessages.at(-1).at;
+      const savedContext = job.generatedRepairOnly || groupingMessages.length > 495 || groupingMessages.reduce((n, m) => n + m.text.length, 0) > 80000
+        ? []
+        : registered.filter(row => row.hubspot?.state === 'saved' && row.hubspot.ticketId && Math.abs(latestAt - +new Date(row.hubspot.savedAt)) <= 7 * 86400000)
+          .sort((a, b) => +new Date(b.hubspot.savedAt) - +new Date(a.hubspot.savedAt)).slice(0, 5)
+          .map(row => {
+            const fields = this.vault.open(row.fields, row._id);
+            return { _id: 'saved-context:' + row._id, at: row.hubspot.savedAt, fromMe: true, savedDraftId: row._id, text: (fields.subject + ': ' + fields.description).slice(0, 1000) };
+          });
+      const groupingInput = [...groupingMessages, ...savedContext];
+      const key = hash([taskGrouping.VERSION, ...groupingInput.map(m => [m._id, m.text, m.at, m.fromMe])]);
       const cached = job.generatedRepairOnly ? null : whatsappContact?.taskGrouping;
       const signatures = groupingMessages.map(m => hash([m._id, m.text, m.at, m.fromMe]));
       let groups = cached?.key === key ? cached.groups : null;
@@ -400,8 +411,8 @@ class SupportService {
         await check();
         const prior = await this.col('drafts').find({ ...scope, jid: job.jid, state: { $nin: ['merged', 'ignored'] } }).toArray();
         const summaries = prior.map(row => { const fields = this.vault.open(row.fields, row._id); return { messageIds: row.messageIds || [], text: `${fields.subject || ''}: ${fields.description || ''}`.slice(0, 1000) }; });
-        const units = taskGrouping.incrementalInput(groupingMessages, cached, signatures, summaries);
-        const input = units || groupingMessages;
+        const units = savedContext.length ? null : taskGrouping.incrementalInput(groupingMessages, cached, signatures, summaries);
+        const input = units || groupingInput;
         let result, groupingCorrection;
         for (let attempt = 0; attempt < 2; attempt++) {
           await check();
@@ -417,11 +428,16 @@ class SupportService {
           }
         }
         groups = units ? result.groups.map(group => group.flatMap(i => units[i].indices).sort((a,b) => a-b)) : result.groups;
-        taskGrouping.validateGroups(groups, groupingMessages);
+        taskGrouping.validateGroups(groups, groupingInput);
         await check();
         await this.col('contacts').updateOne({ _id: scopedId(scope, 'contact', job.jid), ...scope }, { $set: { taskGrouping: { version: taskGrouping.VERSION, key, groups, signatures } }, $setOnInsert: { jid: job.jid, name: groupingMessages.find(m => !m.fromMe && m.name)?.name || '' } }, { upsert: true });
       }
-      detectedGroups = taskGrouping.validateGroups(groups, groupingMessages);
+      detectedGroups = taskGrouping.validateGroups(groups, groupingInput).map(group => {
+        const candidates = group.filter(message => message.savedDraftId).map(message => message.savedDraftId);
+        const evidence = group.filter(message => !message.savedDraftId);
+        if (candidates.length) for (const message of evidence) followupCandidates.set(message._id, candidates);
+        return evidence;
+      }).filter(group => group.length);
     } else detectedGroups = groupTasks(groupingMessages, config.inactivityMs);
     const summaries = new Map();
     const summarize = async group => {
@@ -481,6 +497,7 @@ class SupportService {
       if (ids.length > 500 || group.reduce((n, m) => n + m.text.length, 0) > 100000) fail('conversation_window_too_large', 422);
       const fingerprint = hash(ids);
       let edited = existing.filter(row => !untouched(row));
+      const suggestedFollowupIds = [...new Set(ids.flatMap(id => followupCandidates.get(id) || []))];
       let candidateDraftIds = [];
       if (edited.length > 1 || (!splittingLegacy && !(job.generatedRepairOnly && existing.every(untouched)) && existing.some(row => row.messageIds.some(id => !ids.includes(id))))) {
         // Ambiguous old ownership must not reopen every task or swallow new
@@ -515,7 +532,7 @@ class SupportService {
       const sourceDraft = { ...draft, description: evidenceDescription, summaryDescription: result.description };
       if (existing.length) {
         const generatedOnly = untouched(existing[0]);
-        const saved = await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision, ...mutableGuard, state: { $ne: 'merged' } }, { $set: { fingerprint, analyzerVersion: ANALYZER_VERSION, groupingVersion: GROUPING_VERSION, messageIds: ids, ...(aiSummaryHash ? { sourceSuggestionMessageHash: aiSummaryHash } : {}), state: generatedOnly ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !generatedOnly, reconciliationRequired: false, ...(generatedOnly ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(sourceDraft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: existing.length > 1 ? 'tasks_merged' : 'source_changed', at: this.now() } } });
+        const saved = await this.col('drafts').updateOne({ _id, ...scope, revision: existing[0].revision, ...mutableGuard, state: { $ne: 'merged' } }, { $set: { fingerprint, analyzerVersion: ANALYZER_VERSION, groupingVersion: GROUPING_VERSION, messageIds: ids, ...(aiSummaryHash ? { sourceSuggestionMessageHash: aiSummaryHash } : {}), ...(suggestedFollowupIds.length && !existing[0].followupResolution ? { suggestedFollowupIds } : {}), state: generatedOnly ? (result.result === 'ignored' ? 'ignored' : 'pending') : 'needs_review', sourceChanged: !generatedOnly, reconciliationRequired: false, ...(generatedOnly ? { fields: this.vault.seal(draft, _id) } : {}), source: this.vault.seal(sourceDraft, _id + ':source'), updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: existing.length > 1 ? 'tasks_merged' : 'source_changed', at: this.now() } } });
         if (!saved.matchedCount) fail('revision_conflict', 409);
         for (const duplicate of existing.slice(1)) {
           const merged = await this.col('drafts').updateOne({ _id: duplicate._id, ...scope, revision: duplicate.revision, ...mutableGuard, state: { $ne: 'merged' } }, { $set: { state: 'merged', mergedInto: _id, updatedAt: this.now() }, $inc: { revision: 1 }, $push: { events: { action: 'tasks_merged', into: _id, at: this.now() } } });
@@ -523,7 +540,7 @@ class SupportService {
           await this.col('drafts').updateOne({ _id, ...scope }, { $addToSet: { mergedDraftIds: duplicate._id } });
         }
       } else {
-        await this.col('drafts').updateOne({ _id, ...scope }, { $setOnInsert: { ...scope, jid: job.jid, messageIds: ids, fingerprint: hash(ids), ...(aiSummaryHash ? { sourceSuggestionMessageHash: aiSummaryHash } : {}), ...(candidateDraftIds.length ? { candidateDraftIds, reconciliationRequired: true } : {}), analyzerVersion: ANALYZER_VERSION, groupingVersion: GROUPING_VERSION, state: result.result === 'ignored' ? 'ignored' : 'pending', revision: 1, fields: this.vault.seal(draft, _id), source: this.vault.seal(sourceDraft, _id + ':source'), mode: config.mode, createdAt: this.now(), updatedAt: this.now(), events: [{ action: 'generated', at: this.now() }] } }, { upsert: true });
+        await this.col('drafts').updateOne({ _id, ...scope }, { $setOnInsert: { ...scope, jid: job.jid, messageIds: ids, fingerprint: hash(ids), ...(aiSummaryHash ? { sourceSuggestionMessageHash: aiSummaryHash } : {}), ...(candidateDraftIds.length ? { candidateDraftIds, reconciliationRequired: true } : {}), ...(suggestedFollowupIds.length ? { suggestedFollowupIds } : {}), analyzerVersion: ANALYZER_VERSION, groupingVersion: GROUPING_VERSION, state: result.result === 'ignored' ? 'ignored' : 'pending', revision: 1, fields: this.vault.seal(draft, _id), source: this.vault.seal(sourceDraft, _id + ':source'), mode: config.mode, createdAt: this.now(), updatedAt: this.now(), events: [{ action: 'generated', at: this.now() }] } }, { upsert: true });
       }
     }
   }
@@ -636,6 +653,7 @@ class SupportService {
     if (!Number.isInteger(revision) || revision < 1) fail('revision_required', 409);
     const current = await this.col('drafts').findOne({ _id: text(id, 64), ...scope });
     if (!current) fail('not_found', 404);
+    if (approve && current.suggestedFollowupIds?.length) fail('followup_existing_ticket', 409);
     if (current.state === 'merged') fail('draft_merged', 409);
     if (current.hubspot?.state === 'sending') fail('hubspot_delivery_in_progress', 409);
     if (approve) {
@@ -644,20 +662,27 @@ class SupportService {
       if (sources.some(m => excluded(m, config))) fail('conversation_excluded', 409);
     }
     const fields = this.vault.open(current.fields, id);
-    const editable = ['subject', 'description', 'companyId', 'company', 'contactId', 'contact', 'status', 'channel', 'category', 'errorType', 'messageDate', 'proposedAction'];
+    const previousClosedDate = fields.closedDate || '';
+    const editable = ['subject', 'description', 'companyId', 'company', 'contactId', 'contact', 'status', 'channel', 'category', 'errorType', 'messageDate', 'closedDate', 'proposedAction'];
     for (const [key, value] of Object.entries(input || {})) {
       if (!editable.includes(key)) fail('invalid_draft_field');
       fields[key] = text(value, key === 'description' ? 100000 : 200);
     }
     if (!['review', 'create', 'update', 'close', 'ignore'].includes(fields.proposedAction)) fail('invalid_action');
     if (!Number.isFinite(+new Date(fields.messageDate))) fail('invalid_message_date');
+    if (/^Cerrado /i.test(fields.status || '')) {
+      const date = fields.closedDate || new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' }).format(this.now());
+      const day = String(date).slice(0, 10);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(+new Date(day)) || new Date(day).toISOString().slice(0, 10) !== day) fail('invalid_closed_date');
+      fields.closedDate = day;
+    } else fields.closedDate = ''; 
     if (approve && (current.reconciliationRequired || current.sourceChanged)) fail('source_reconciliation_required', 409);
     if (approve && current.mode === 'suggest') fail('suggestion_only', 409);
     if (approve && (!fields.subject || (!fields.company && !fields.companyId) || fields.proposedAction === 'review')) fail('approval_fields_required');
     const state = approve ? 'approved' : 'pending';
     const result = await this.col('drafts').updateOne({ _id: id, ...scope, revision, state: { $ne: 'merged' }, 'hubspot.state': { $ne: 'sending' } }, {
       $set: { fields: this.vault.seal(fields, id), state, updatedAt: this.now() }, $inc: { revision: 1 },
-      $push: { events: { action: approve ? 'approved' : 'edited', by: scope.userId, revision: revision + 1, at: this.now() } },
+      $push: { events: { action: approve ? 'approved' : 'edited', by: scope.userId, revision: revision + 1, ...(previousClosedDate !== fields.closedDate ? { closedDateChange: { from: previousClosedDate, to: fields.closedDate } } : {}), at: this.now() } },
     });
     if (!result.matchedCount) fail('revision_conflict', 409);
     if (Object.hasOwn(input || {}, 'company') && fields.company && current.jid) {

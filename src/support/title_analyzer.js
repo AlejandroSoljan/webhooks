@@ -3,7 +3,7 @@ const OpenAI = require('openai');
 const { fail, text } = require('./core');
 const { resolveOpenAiApiKey } = require('../../ai_key_router');
 
-const COST_OPTIMIZED_TASK_TENANTS = new Set(['ALSO', 'DEMJG', 'SANA']);
+const COST_OPTIMIZED_TASK_TENANTS = new Set(['ALSO', 'DEMJG', 'SANA', 'GUJO', 'HEMO']);
 function groupingFormat(model, length) {
   if (!/^gpt-4o-mini(?:-|$)/.test(model)) return { type: 'json_object' };
   return { type: 'json_schema', json_schema: { name: 'support_objectives', strict: true, schema: {
@@ -49,11 +49,11 @@ function asistoTitleAnalyzer(env = process.env, { runtimeFor = tenantId => requi
     const apiKey = resolveOpenAiApiKey('tareas_ws', env);
     if (!apiKey) fail('task_title_provider_required', 422);
     const model = resolveTasksModel(config, env, context.tenantId);
-    const transcript = messages.map((m, index) => ({ index, at: m.at, role: m.fromMe ? 'OPERADOR' : 'CLIENTE', text: m.text }));
+    const transcript = messages.map((m, index) => ({ index, at: m.at, role: m.savedDraftId ? 'TICKET_GUARDADO' : m.fromMe ? 'OPERADOR' : 'CLIENTE', text: m.text }));
     // Never silently cut off older context or omit evidence.
     if (messages.length > 500 || JSON.stringify(transcript).length > 100000) fail('conversation_window_too_large', 422);
     const response = await clientFor(apiKey).chat.completions.create({ model, ...(/^gpt-4o-mini(?:-|$)/.test(model) ? { temperature: 0 } : {}),
-      messages: [{ role: 'system', content: require('./task_grouping').PROMPT + `\nLa entrada tiene ${messages.length} mensajes: incluí todos los índices del 0 al ${messages.length - 1}, exactamente una vez, aun si el mensaje es sólo contexto.` + (context.groupingCorrection ? `\nCorrección requerida: la respuesta anterior no cubrió correctamente los índices. ${context.groupingCorrection} Reagrupá TODOS los mensajes originales, sin omitir ninguno.` : '') }, { role: 'user', content: JSON.stringify(transcript) }],
+      messages: [{ role: 'system', content: require('./task_grouping').PROMPT + '\nUn TICKET_GUARDADO es contexto de un caso previo. Agrupalo con mensajes nuevos únicamente si continúan el mismo problema concreto. Separá los asuntos distintos aunque sean del mismo cliente.' + `\nLa entrada tiene ${messages.length} mensajes: incluí todos los índices del 0 al ${messages.length - 1}, exactamente una vez, aun si el mensaje es sólo contexto.` + (context.groupingCorrection ? `\nCorrección requerida: la respuesta anterior no cubrió correctamente los índices. ${context.groupingCorrection} Reagrupá TODOS los mensajes originales, sin omitir ninguno.` : '') }, { role: 'user', content: JSON.stringify(transcript) }],
       response_format: groupingFormat(model, messages.length), max_completion_tokens: 2500,
     });
     let groups = null;

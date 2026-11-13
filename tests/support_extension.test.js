@@ -471,3 +471,55 @@ test('background restricts WhatsApp messages, exposes the active chat and forces
  const save=calls.at(-1);assert.equal(save.options.headers['X-Asisto-Extension'],'private-grant');assert.equal(save.options.credentials,'omit');assert.equal(save.options.headers.Authorization,'Bearer '+'A'.repeat(43));assert.match(save.url,/^https:\/\/asistobot\.com\.ar\/api\/support\/extension\//);
  assert.equal(typeof action,'function');
 });
+
+ test('WhatsApp QR is scoped, expires and reconnect never resets active credentials', async () => {
+   const sid = scopedId(scope, 'session');
+   await service.col('sessions').insertOne({_id:sid,...scope,state:'qr',desired:'connected',qr:vault.seal('test-qr',sid+':qr'),qrExpiresAt:new Date(Date.now()+45000)});
+   const visible=await call('/whatsapp/session'); assert.equal(visible.status,200); assert.match(visible.data.qr,/^data:image\/png;base64,/);
+   const other=await call('/whatsapp/session',null,{'test-tenant':'OTHER'}); assert.equal(other.data.qr,null);
+   await service.col('sessions').updateOne({_id:sid},{$set:{qrExpiresAt:new Date(0)}});
+   assert.equal((await call('/whatsapp/session')).data.qr,null);
+   await service.col('sessions').updateOne({_id:sid},{$set:{state:'connected',desired:'connected'}});
+   const before=await service.col('sessions').findOne({_id:sid});
+   await call('/whatsapp/session',{}); assert.deepEqual(await service.col('sessions').findOne({_id:sid}),before);
+   await service.col('sessions').updateOne({_id:sid},{$set:{state:'logged_out',desired:'disconnected'}});
+   assert.equal((await call('/whatsapp/session',{})).data.state,'queued');
+   assert.deepEqual(writes,[]);
+ });
+
+async function seedFollowup() {
+ const target='e'.repeat(64);
+ await service.col('drafts').insertOne({_id:target,...scope,jid:'123@lid',revision:4,mode:'approval',state:'approved',messageIds:['old-message'],hubspot:{state:'saved',ticketId:'777',portalId:'123',companyId:'',contactId:''},fields:vault.seal({...fields,subject:'Instalación original'},target),source:vault.seal(fields,target+':source')});
+ await service.col('drafts').updateOne({_id:id},{$set:{suggestedFollowupIds:[target],messageIds:['new-audio','new-text']}});
+ return target;
+}
+test('followup resolution keeps every message and original ticket, appends content with PATCH',async()=>{
+ const target=await seedFollowup(); const before=await service.col('drafts').findOne({_id:target});
+ assert.equal((await call('/drafts/'+id+'/publish',{revision:1,mapping})).status,409);
+ const detail=(await call('/drafts/'+id)).data; assert.equal(detail.suggestedFollowups[0].subject,'Instalación original');
+ assert.equal((await call('/drafts/'+id+'/save',{revision:1,fields:{description:'Edición del operador'}})).status,200);
+ let result=await call('/drafts/'+id+'/resolve-followup',{revision:2,choice:'existing',targetId:target});assert.equal(result.status,200);
+ let row=await service.col('drafts').findOne({_id:id});assert.deepEqual(row.messageIds,['new-audio','new-text']);assert.equal(row.hubspot.ticketId,'777');assert.equal(row.suggestedFollowupIds,undefined);assert.equal(vault.open(row.fields,id).description,'Edición del operador');
+ remote.ticket=async()=>({properties:{subject:'Título original HubSpot',content:'Historial anterior'}});
+ result=await call('/drafts/'+id+'/publish',{revision:3,mapping});assert.equal(result.status,200,JSON.stringify(result.data));
+ assert.equal(writes.length,1);assert.equal(writes[0].ticketId,'777');assert.match(writes[0].payload.properties.content,/Historial anterior[\s\S]*Edición del operador/);assert.equal(writes[0].payload.properties.subject,'Título original HubSpot');
+ assert.deepEqual(await service.col('drafts').findOne({_id:target}),before);
+ assert.equal((await call('/drafts/'+id+'/publish',{revision:3,mapping})).status,409);assert.equal(writes.length,1);
+});
+test('explicit other task creates new ticket even if similarity matcher would choose old ticket',async()=>{
+ await seedFollowup();remote.findSimilarOpenTicket=async()=>{throw Error('must not auto-match explicit new task');};
+ assert.equal((await call('/drafts/'+id+'/resolve-followup',{revision:1,choice:'new'})).status,200);
+ const result=await call('/drafts/'+id+'/publish',{revision:2,mapping});assert.equal(result.status,200,JSON.stringify(result.data));assert.equal(writes.length,1);assert.equal(writes[0].ticketId,undefined);
+ const row=await service.col('drafts').findOne({_id:id});assert.deepEqual(row.messageIds,['new-audio','new-text']);assert.equal(row.followupResolution.choice,'new');
+});
+test('followup resolution rejects stale revisions, foreign or unrelated target and uncertain delivery without changing evidence',async()=>{
+ const target=await seedFollowup();const before=await service.col('drafts').findOne({_id:id});
+ assert.equal((await call('/drafts/'+id+'/resolve-followup',{revision:0,choice:'new'})).status,409);
+ assert.equal((await call('/drafts/'+id+'/resolve-followup',{revision:1,choice:'existing',targetId:'f'.repeat(64)})).status,409);
+ assert.equal((await call('/drafts/'+id+'/resolve-followup',{revision:1,choice:'new'},{'test-user':'other'})).status,404);
+ await service.col('drafts').updateOne({_id:target},{$set:{userId:'other'}});
+ assert.equal((await call('/drafts/'+id+'/resolve-followup',{revision:1,choice:'existing',targetId:target})).status,409);
+ assert.deepEqual(await service.col('drafts').findOne({_id:id}),before);
+ await service.col('drafts').updateOne({_id:id},{$set:{'hubspot.state':'uncertain'}});
+ assert.equal((await call('/drafts/'+id+'/resolve-followup',{revision:1,choice:'new'})).status,409);
+});

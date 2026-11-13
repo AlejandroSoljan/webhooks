@@ -43,7 +43,7 @@ function settings(input = {}) {
   return { inactivityMs, ...lists, mode: input.mode || 'approval' };
 }
 function excluded(message, config) {
-  if (!/^[^@]+@(s\.whatsapp\.net|lid)$/.test(message.jid)) return true;
+  if (!/^(?:[^@]+@(s\.whatsapp\.net|lid)|\d+(?:-\d+)?@g\.us)$/.test(message.jid)) return true;
   return config.excludedJids.includes(message.jid) || config.excludedNames.some(n => normalize(n) === normalize(message.name));
 }
 function groupMessages(messages, inactivityMs) {

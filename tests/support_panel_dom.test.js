@@ -332,3 +332,47 @@ test('a stale WhatsApp reference to a dismissed task opens the current pending t
     assert.equal(w.document.querySelector('#save').hidden, false);
   } finally { dom.window.close(); }
 });
+
+test('QR settings discard late responses and clear the image on close', async () => {
+ const dom=new JSDOM(html,{url:'chrome-extension://test/panel.html',runScripts:'outside-only',pretendToBeVisual:true}),w=dom.window;let finish;
+ w.chrome={tabs:{query:async()=>[]},storage:{session:{get:async()=>({})},onChanged:{addListener(){}}},runtime:{sendMessage:async message=>{
+   if(message.action==='SESSION')return{data:{tenantId:'ALSO',userId:'one',choices:{}}};
+   if(message.action==='INDEX')return{data:{owner:'ALSO:one',chats:[]}};
+   if(message.action==='WHATSAPP_STATUS')return new Promise(resolve=>{finish=resolve;});
+   return{data:{}};
+ }}};
+ try {
+   w.eval(source);await pause();
+   w.document.querySelector('#settingsToggle').click();
+   const section=w.document.querySelector('#whatsappSettings');section.open=true;await pause();
+   assert.equal(typeof finish,'function');
+   w.document.querySelector('#settingsClose').click();
+   finish({data:{state:'qr',qr:'data:image/png;base64,AAAA',qrExpiresAt:new Date(Date.now()+45000).toISOString()}});await pause();
+   assert.equal(w.document.querySelector('#whatsappQr').hidden,true);
+   assert.equal(w.document.querySelector('#whatsappQr').hasAttribute('src'),false);
+ } finally {dom.window.close();}
+});
+
+for (const destination of ['target', 'new']) test('followup panel requires explicit choice and preserves edits when resolving '+destination, async()=>{
+ const dom=new JSDOM(html,{url:'chrome-extension://test/panel.html',runScripts:'outside-only'}),w=dom.window,calls=[];
+ let task={id:'task',revision:1,state:'pending',fields:{subject:'Consulta nueva',description:'Audio transcripto'},source:{},suggestedFollowups:[{id:'target',ticketId:'777',subject:'Instalación original'}],requiresFollowupChoice:true};
+ w.chrome={tabs:{query:async()=>[]},storage:{session:{get:async()=>({}),set:async()=>{},remove:async()=>{}},onChanged:{addListener(){}}},runtime:{sendMessage:async m=>{
+  calls.push(m);
+  if(m.action==='SESSION')return{data:{tenantId:'ALSO',userId:'one',choices:{}}};
+  if(m.action==='INDEX')return{data:{owner:'ALSO:one',chats:[]}};
+  if(m.action==='COMPANY_PROFILE')return{data:{company:null}};
+  if(m.action==='SAVE'){task={...task,fields:m.fields,revision:2};return{data:{revision:2,fields:m.fields}};}
+  if(m.action==='RESOLVE_FOLLOWUP'){assert.equal(m.revision,2);task={...task,revision:3,suggestedFollowups:[],requiresFollowupChoice:false};return{data:{revision:3}};}
+  if(m.action==='DETAIL')return{data:task};
+  throw Error(m.action);
+ }}};
+ try{
+  w.eval(source+'\nglobalThis.setTask=value=>{current=value;renderFields();};');await pause();w.setTask(task);
+  assert.equal(w.document.querySelector('#save').hidden,false);
+  const select=w.document.querySelector('#followupDestination');assert.equal(select.value,'');assert.match(select.textContent,/#777.*Instalación original/);assert.match(select.textContent,/otra tarea/);
+  assert.equal(await w.eval('resolveFollowupChoice()'),false);assert.equal(calls.filter(m=>m.action==='SAVE').length,0);
+  select.value=destination;w.document.querySelector('#field-description').value='Mi edición y audio';
+  assert.equal(await w.eval('resolveFollowupChoice()'),true);
+  const request=calls.find(m=>m.action==='RESOLVE_FOLLOWUP');assert.equal(request.choice,destination==='new'?'new':'existing');assert.equal(task.fields.description,'Mi edición y audio');assert.equal(w.document.querySelector('#field-description').value,'Mi edición y audio');assert.equal(w.document.querySelector('#followupChoice').hidden,true);
+ }finally{w.close();}
+});

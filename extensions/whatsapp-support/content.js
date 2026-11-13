@@ -4,9 +4,11 @@
   const remembered = new Map(), syncedAgenda = new Map(), addressBook = new Map(), addressAliases = new Map(), selected = new Map(), controls = new Map();
   let assignmentBusy = false, messageRequest = 0, tasksInFlight = null, indexInFlight = null, syncTimer;
   let chatIndex = AsistoMatch.indexContacts([]), knownIndex = chatIndex, addressIndex = chatIndex;
-  const extractJid = value => ((value || '').match(/(?:^|_)([0-9]+@(?:s\.whatsapp\.net|c\.us|lid))(?:_|$)/)?.[1] || '').replace('@c.us', '@s.whatsapp.net');
+  const extractJid = value => ((value || '').match(/(?:^|_)((?:[0-9]+@(?:s\.whatsapp\.net|c\.us|lid)|[0-9]+(?:-[0-9]+)?@g\.us))(?:_|$)/)?.[1] || '').replace('@c.us', '@s.whatsapp.net');
   const extractMessageId = value => {
     const raw = String(value || '');
+    const groupKey = raw.match(/^(?:true|false)_\d+(?:-\d+)?@g\.us_([^_]+)(?:_|$)/);
+    if (groupKey) return groupKey[1];
     return raw.match(/^(?:true|false)_[^_]+_(.+)$/)?.[1] || raw.match(/(?:^|_)([A-Za-z0-9-]{10,})$/)?.[1] || '';
   };
   function messageAt(value) {
@@ -15,7 +17,7 @@
     return +new Date(year, Number(match[4]) - 1, Number(match[3]), Number(match[1]), Number(match[2]));
   }
   const messageText = node => [...node.querySelectorAll('.selectable-text')].filter(element => !element.parentElement?.closest('.selectable-text')).map(element => element.innerText || element.textContent || '').join('\n').trim();
-  const isAudio = node => !!node.querySelector('audio, [data-icon*="audio"], [data-testid*="audio"], [data-icon="ptt-status"]');
+  const isAudio = node => !!node.querySelector('[aria-label*="mensaje de voz" i], audio, [data-icon*="audio"], [data-testid*="audio"], [data-icon="ptt-status"]');
   const audioSeconds = node => {
     if (!isAudio(node)) return 0;
     const values = (node.textContent || '').match(/\b\d{1,2}:\d{2}\b/g) || [];
@@ -30,7 +32,7 @@
     const pre = node.matches('[data-pre-plain-text]') ? node : node.querySelector('[data-pre-plain-text]');
     const at = visibleMessageAt(node, pre);
     const text = messageText(node);
-    const media = node.querySelector('audio, [data-icon*="audio"], [data-testid*="audio"], [data-icon="ptt-status"]') ? 'Audio' : node.querySelector('img, video, [data-icon="image"]') ? 'Imagen o video' : 'Mensaje';
+    const media = isAudio(node) ? 'Audio' : node.querySelector('img, video, [data-icon="image"]') ? 'Imagen o video' : 'Mensaje';
     const capturedAt = new Date().toISOString();
     return { id, jid: currentJid, at: Number.isFinite(at) ? new Date(at).toISOString() : capturedAt, observedAt: !Number.isFinite(at), fromMe: node.classList.contains('message-out') || !!node.querySelector('.message-out') || node.getAttribute('data-id')?.startsWith('true_') === true, text: (Number.isFinite(at) ? '' : '[Fecha original no visible en WhatsApp] ') + (text || `[${media} seleccionado sin texto visible]`) };
   };
@@ -65,13 +67,13 @@
   const statusLabel = status => ({ pending: 'Sin guardar en HubSpot', saved: 'HubSpot', discarded: 'Descartada' }[status] || 'Asignada');
   function messageNodes() {
     const seenNodes = new Set(), seenIds = new Set(), usedRows = new Set(), result = [];
-    const candidates = [...document.querySelectorAll('#main .message-in, #main .message-out, #main [data-id^="true_"], #main [data-id^="false_"], #main [data-pre-plain-text], #main [role="row"]')].filter(node => !node.closest('[data-asisto-owned]') && (!node.matches('[role="row"]') || node.querySelector('[data-pre-plain-text], audio, [data-icon*="audio"], [data-testid*="audio"], [data-icon="ptt-status"]')));
+    const candidates = [...document.querySelectorAll('#main .message-in, #main .message-out, #main [data-testid="msg-container"], #main [data-id^="true_"], #main [data-id^="false_"], #main [data-pre-plain-text], #main [role="row"]')].filter(node => !node.closest('[data-asisto-owned]') && (!node.matches('[role="row"]') || node.querySelector('[data-pre-plain-text], audio, [data-icon*="audio"], [data-testid*="audio"], [data-icon="ptt-status"]')));
     for (const candidate of candidates) {
       const message = candidate.closest('.message-in, .message-out') || (candidate.matches('.message-in, .message-out') ? candidate : null);
       const node = candidate.closest('[data-id^="true_"], [data-id^="false_"]') || candidate.closest('[role="row"]') || message || candidate;
       if (seenNodes.has(node)) continue;
-      const idNode = node.matches('[data-id^="true_"], [data-id^="false_"]') ? node : node.querySelector('[data-id^="true_"], [data-id^="false_"]'), pre = node.matches('[data-pre-plain-text]') ? node : node.querySelector('[data-pre-plain-text]');
-      let id = extractMessageId(idNode?.getAttribute('data-id'));
+      const idNode = node.matches('[data-id^="true_"], [data-id^="false_"], [data-testid^="conv-msg-"][data-id]') ? node : node.querySelector('[data-id^="true_"], [data-id^="false_"], [data-testid^="conv-msg-"][data-id]'), pre = node.matches('[data-pre-plain-text]') ? node : node.querySelector('[data-pre-plain-text]');
+      let id = extractMessageId(idNode?.getAttribute('data-id')) || (idNode?.getAttribute('data-testid')?.startsWith('conv-msg-') ? idNode.getAttribute('data-id') : '');
       const at = visibleMessageAt(node, pre), fromMe = node.classList.contains('message-out') || !!node.closest('.message-out') || !!node.querySelector('.message-out');
       if (!id) {
         const audio = isAudio(node), seconds = audioSeconds(node);
@@ -213,16 +215,31 @@
       const labels = [...target.querySelectorAll('span[dir="auto"], span[title]')].filter(node => !node.closest('[data-asisto-owned]'));
       const label = labels.find(node => node.matches('[dir="auto"]') && (node.textContent || '').trim() && !placeholder(node.textContent)) || labels.find(node => !placeholder(node.getAttribute('title')) && !placeholder(node.textContent));
       if (!label) continue;
-      const jid = extractJid(target.getAttribute('data-id') || target.querySelector('[data-id]')?.getAttribute('data-id')) || (target.matches('#main header') ? [...document.querySelectorAll('#main [data-id]')].map(node => extractJid(node.getAttribute('data-id'))).find(Boolean) || '' : ''), name = (label.textContent || '').trim() || label.getAttribute('title') || '';
-      if (jid && name && remembered.get(jid) !== name) { remembered.set(jid, name); chrome.runtime.sendMessage({ action: 'CONTACT', jid, name }).then(result => { if (result?.data?.saved) refresh(); else if (result?.error) remembered.delete(jid); }).catch(() => {}); }
+      const header = target.matches('#main header');
+      const name = (label.textContent || '').trim() || label.getAttribute('title') || '';
+      const direct = extractJid(target.getAttribute('data-id') || target.querySelector('[data-id]')?.getAttribute('data-id'));
+      const messageJids = header && !direct ? [...document.querySelectorAll('#main [data-id]')]
+        .map(node => node.getAttribute('data-id')).filter(key => /^(true|false)_/.test(key)).map(extractJid).filter(Boolean) : [];
+      const visibleGroup = messageJids.find(id => id.endsWith('@g.us'));
+      const named = [AsistoMatch.matchContact(knownIndex, { name }), AsistoMatch.matchContact(addressIndex, { name })].filter(Boolean);
+      const namedIds = [...new Set(named.map(chat => chat.jid))];
+      const namedGroup = namedIds.length === 1 && namedIds[0].endsWith('@g.us') ? namedIds[0] : '';
+      const groupJid = direct.endsWith('@g.us') ? direct : !direct ? namedGroup || visibleGroup || '' : '';
+      const jid = groupJid || direct || messageJids[0] || '';
+      if (jid && name && remembered.get(jid) !== name && !(header && currentName !== name && jid === currentJid && jid !== namedGroup)) {
+        remembered.set(jid, name);
+        chrome.runtime.sendMessage({ action: 'CONTACT', jid, name }).then(result => {
+          if (result?.data?.saved) refresh();
+          else remembered.delete(jid);
+        }).catch(() => remembered.delete(jid));
+      }
       const match = AsistoMatch.matchContact(chatIndex, { jid, name }), known = AsistoMatch.matchContact(knownIndex, { jid, name }); let button = target.querySelector('.asisto-task-badge');
       const localContact = AsistoMatch.matchContact(addressIndex, { jid, name });
-      const header = target.matches('#main header');
       const changedName = header && !!name && currentName !== name;
       const namedContact = changedName ? AsistoMatch.matchContact(knownIndex, { name }) || AsistoMatch.matchContact(addressIndex, { name }) : null;
       // During a chat switch WhatsApp can show the new header while the old
       // messages are still mounted. Do not publish the former chat's ID.
-      const activeJid = header ? (changedName && jid === currentJid ? namedContact?.jid || '' : jid || known?.jid || localContact?.jid || '') : '';
+      const activeJid = header ? ((changedName && jid === currentJid && jid !== namedGroup ? namedContact?.jid || '' : jid || known?.jid || localContact?.jid || '')) : '';
       if (header && (currentJid !== activeJid || changedName)) { currentJid = activeJid; currentName = name; taskData = { tasks: [], messages: [] }; selected.clear(); anchorId = ''; chrome.runtime.sendMessage({ action: 'SET_CONTEXT', jid: currentJid, name: currentName }).catch(() => {}); if (currentJid) refreshTasks().catch(() => {}); }
       else if (header) currentName = name;
       if (!match) { button?.remove(); continue; }
@@ -285,8 +302,8 @@
     let changed = false;
     for (const contact of event.data.contacts) {
       if (typeof contact?.name !== 'string' || !Array.isArray(contact.aliases)) continue;
-      const aliases = [...new Set(contact.aliases.filter(alias => typeof alias === 'string' && /^\d+@(s\.whatsapp\.net|lid)$/.test(alias)))];
-      if (!aliases.length) continue;
+      const aliases = [...new Set(contact.aliases.filter(alias => typeof alias === 'string' && /^(?:\d+@(s\.whatsapp\.net|lid)|\d+(?:-\d+)?@g\.us)$/.test(alias)))];
+      if (!aliases.length || (aliases.some(alias => alias.endsWith('@g.us')) && aliases.length !== 1)) continue;
       const key = aliases.map(alias => addressAliases.get(alias)).find(Boolean) || aliases[0], previous = addressBook.get(key);
       const merged = [...new Set([...(previous?.aliases || []), ...aliases])];
       if (previous?.name === contact.name && merged.length === previous.aliases.length) continue;
