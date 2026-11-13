@@ -1,8 +1,8 @@
 {
   "proyecto": "Asisto Webhooks",
-  "version": "5.00.357",
-  "fecha": "2026-11-12",
+  "version": "5.00.358",
+  "fecha": "2026-11-13",
   "rama": "codex/resolve-ticket-followup",
   "politica": "Los archivos de codigo y documentacion llevan cabecera. JSON, binarios e imagenes se registran aqui para preservar su formato.",
-  "date": "2026-11-12"
+  "date": "2026-11-13"
 }

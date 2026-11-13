@@ -48,7 +48,7 @@ function excluded(message, config) {
 }
 function groupMessages(messages, inactivityMs) {
   const groups = [];
-  for (const message of [...messages].sort((a, b) => +a.at - +b.at || a._id.localeCompare(b._id))) {
+  for (const message of [...messages].sort((a, b) => +a.at - +b.at || String(a._id || '').localeCompare(String(b._id || '')))) {
     const last = groups.at(-1);
     if (!last || message.at - last.at(-1).at > inactivityMs) groups.push([message]);
     else last.push(message);
@@ -65,7 +65,7 @@ function taskTopics(value) {
 }
 function groupTasks(messages, inactivityMs = 180000) {
   const groups = [];
-  for (const message of [...messages].sort((a, b) => +a.at - +b.at || a._id.localeCompare(b._id))) {
+  for (const message of [...messages].sort((a, b) => +a.at - +b.at || String(a._id || '').localeCompare(String(b._id || '')))) {
     const last = groups.at(-1), input = normalize(message.text);
     const topics = taskTopics(input);
     const priorTopics = last ? new Set(last.filter(m => !m.fromMe).flatMap(m => taskTopics(m.text))) : new Set();
@@ -82,13 +82,13 @@ function groupTasks(messages, inactivityMs = 180000) {
   return groups;
 }
 function conversationResolved(messages, { strictResolution = false } = {}) {
-  const ordered = [...messages].sort((a, b) => +a.at - +b.at || a._id.localeCompare(b._id));
-  const unresolved = /(?:quedo|seguimos|sigue|todavia|aun|falta|pendiente|esper(?:o|ando)|avisame|decime|confirmame|pasame|enviame|mandame|cuando puedas|no (?:esta|funciona|puedo)|\?)/;
-  const explicit = /(?:^|\b)(?:ya (?:esta|quedo|funciona)|quedo (?:listo|resuelto|solucionado|renovado|actualizado)|esta (?:listo|resuelto|solucionado|renovado|actualizado)|listo|resuelto|solucionado|finalizado|completado|renovado|actualizado)(?:\b|$)/;
+  const ordered = [...messages].sort((a, b) => +a.at - +b.at || String(a._id || '').localeCompare(String(b._id || '')));
+  const unresolved = /(?:quedo a la espera|a la espera|seguimos|sigue|todavia|aun|falta|pendiente|esper(?:o|ando)|avisame|decime|confirmame|pasame|enviame|mandame|cuando puedas|no (?:esta|quedo|qued[oó]|funciona|anda|imprime|puedo)|sin (?:resolver|solucionar|terminar)|\?)/;
+  const explicit = /(?:^|\b)(?:ya (?:esta|quedo|funciona)|quedo (?:listo|resuelto|solucionado|renovado|actualizado)|esta (?:listo|resuelto|solucionado|renovado|actualizado)|listo|resuelto|solucionado|finalizado|terminado|completado|renovado|actualizado)(?:\b|$)/;
   let resolvedAt = -1;
   for (let index = 0; index < ordered.length; index++) {
     const input = normalize(ordered[index].text);
-    const coordination = strictResolution && /(?:listo|ya esta).{0,25}(?:te (?:paso|mando|envio)|manana|cuando pueda|voy a|vamos a)/.test(input);
+    const coordination = strictResolution && /(?:listo|ya esta).{0,25}(?:te (?:paso|mando|envio)|manana|cuando pueda|voy a|vamos a|lo (?:reviso|vemos|hago)|para (?:revisar|probar|instalar))/.test(input);
     const strictCompletion = strictResolution && /\b(?:corregido|ya (?:anda|imprime|ingresa))\b/.test(input);
     if ((explicit.test(input) || strictCompletion) && !unresolved.test(input) && !coordination) resolvedAt = index;
   }
