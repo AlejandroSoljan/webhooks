@@ -1,13 +1,13 @@
 // Asisto | Version: 5.00.263 | Fecha: 2026-09-28
 
 const OPENAI_PRICING_SOURCE = 'https://developers.openai.com/api/docs/pricing';
-const OPENAI_PRICING_VERIFIED_AT = '2026-09-28';
+const OPENAI_PRICING_VERIFIED_AT = '2026-11-14';
 
 // Valores oficiales Standard de OpenAI convertidos de USD por 1M a USD por 1K.
 const TEXT_MODEL_PRICES_PER_1K = Object.freeze({
-  // Standard, verified 2026-10-07 on official model pages; not Batch/Flex.
+  // Standard short-context rates from official OpenAI pricing.
   'gpt-6-astra': { input: 0.010, output: 0.050 },
-  'gpt-6-sol': { input: 0.001, output: 0.005 },
+  'gpt-6-sol': { input: 0.002, output: 0.010 },
   'gpt-6-luna': { input: 0.0001, output: 0.0005 },
   'gpt-5.6-sol': { input: 0.004, output: 0.020 },
   'gpt-5.6-terra': { input: 0.002, output: 0.012 },
