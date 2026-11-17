@@ -19,4 +19,3 @@
 - En desarrollo usá datos sintéticos y configuración de pruebas. No copies ni uses credenciales, sesiones ni datos productivos.
 - Para funciones por dominio, aplicá los controles de permisos y el filtro de tenant existentes a toda lectura y escritura. Probá el caso de acceso desde otro dominio.
 - Documentá cambios de API, configuración y operación en el manual correspondiente y ejecutá las pruebas aplicables. La integración requiere el check `build (24.x)`.
-
