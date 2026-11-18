@@ -1,0 +1,43 @@
+# Acceso de la otra PC al staging AWS
+
+Preparado el 18/11/2026. Cuenta SSH `manager-go-dev`, host Tailscale `100.76.215.98`. La cuenta tiene un directorio de releases y permiso para activar versiones de staging. El ingreso queda pendiente de instalar la clave pública de la PC y autorizar su cuenta/equipo en Tailscale. El mantenedor necesita esos dos datos para completar el acceso. La clave privada permanece en la PC del desarrollador.
+
+En la otra PC, instalar Tailscale e iniciar sesión con la cuenta que autorice el mantenedor. Generar una clave SSH propia si no existe y enviar el archivo `.pub` al mantenedor. Cuando ambos accesos estén autorizados, agregar a `~/.ssh/config` lo siguiente.
+
+```sshconfig
+Host asisto-staging
+    HostName 100.76.215.98
+    User manager-go-dev
+    IdentityFile ~/.ssh/asisto_staging
+    IdentitiesOnly yes
+    LocalForward 13101 127.0.0.1:3101
+```
+
+Abrir `ssh asisto-staging` y mantenerlo conectado para entrar desde el navegador a `http://127.0.0.1:13101`. Las credenciales del panel deben crearse en la base de staging. Las cookies se vinculan al host, por lo que conviene usar un perfil de navegador dedicado para ese panel.
+
+## Subir una versión para probar
+
+El operador trabaja con un commit y cambios guardados en Git. Desde la raíz del checkout puede empaquetar sólo los archivos versionados. Reemplazar `COMMIT` y `RELEASE` por el commit y un nombre único simple como `manager-go-abc1234`. Si el directorio ya existe, usar otro nombre.
+
+```powershell
+git archive --format=tar -o manager-go-staging.tar COMMIT
+scp manager-go-staging.tar asisto-staging:/home/manager-go-dev/
+ssh asisto-staging
+```
+
+En la sesión Linux, preparar dependencias como el usuario de despliegue y activar el release.
+
+```bash
+mkdir /opt/asisto-staging/developer/releases/RELEASE
+tar -xf ~/manager-go-staging.tar -C /opt/asisto-staging/developer/releases/RELEASE
+cd /opt/asisto-staging/developer/releases/RELEASE
+npm ci
+sudo /usr/local/sbin/asisto-staging-activate RELEASE
+curl -fsS http://127.0.0.1:3101/healthz
+```
+
+El activador serializa despliegues, cambia el enlace de staging, reinicia ese servicio y verifica `/healthz`. Si la comprobación falla, restaura el enlace anterior y vuelve a iniciar el servicio. Para volver a una versión del directorio del desarrollador, ejecutar el activador con su nombre. Revisar el release activo antes de cada despliegue, porque staging es compartido. Las dependencias deben instalarse con permisos de lectura para el servicio `asisto-staging`, como ocurre con la umask habitual 022.
+
+## Estado de verificación
+
+El mantenedor verificó la configuración de SSH, la sintaxis del activador, el rechazo de un nombre de release inválido, el permiso sudo limitado al activador y `/healthz` de staging. Falta la prueba de inicio de sesión y de despliegue desde la otra PC. El primer despliegue también debe verificar el arranque real de Manager Go y su operación de ejemplo. El servicio usa base `asisto_staging`, namespace privado, límites de recursos y archivos productivos inaccesibles.

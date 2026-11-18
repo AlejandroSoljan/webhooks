@@ -56,3 +56,7 @@ La [referencia de APIs para Manager Go](MANAGER_GO_APIS_ASISTO.md) detalla las r
 Al entregar, incluí los commits o PR de cada repositorio, la operación elegida, una muestra anonimizada, las instrucciones para habilitarla y el resultado de estas pruebas. Actualizá el manual técnico de Asisto cuando cambien rutas, permisos, configuración o comportamiento. Indicá qué se verificó con la extensión y qué sigue pendiente de validar con Manager real.
 
 La habilitación, la credencial de instalación y el endpoint de Manager Go están pendientes de implementación. La primera decisión operativa es elegir la operación de Manager que se va a registrar y obtener su ejemplo anonimizado.
+
+## Desplegar desde la otra PC
+
+Seguí [Acceso al staging AWS](ACCESO_STAGING_MANAGER_GO.md) para autorizar la PC, abrir el panel con túnel SSH y subir un commit de prueba. El ingreso requiere completar la autorización de Tailscale y registrar la clave pública de esa PC.
