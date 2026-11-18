@@ -14,3 +14,5 @@ npm test
 Usá Node.js 24, igual que el CI. Cada servicio se trabaja en su rama y se propone en un PR hacia `main`. Describí el cambio, permisos, configuración nueva, migraciones si las hay y cómo probarlo. Revisá el PR con el responsable de Asisto antes de integrarlo. La rama histórica `develop` no es el punto de partida de los servicios nuevos.
 
 Para probar localmente, usá datos sintéticos y una base separada. Las integraciones externas se prueban con simuladores o cuentas dedicadas de prueba. Si el servicio necesita validación en AWS, coordiná con el mantenedor el despliegue de un commit del PR en staging y la prueba con un dominio de demostración. La publicación en producción es un paso operativo posterior a la validación.
+
+Para Manager Go, empezá por el [manual del operador de Codex](MANUAL_OPERADOR_CODEX_MANAGER_GO.md).
