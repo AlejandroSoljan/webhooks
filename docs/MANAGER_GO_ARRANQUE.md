@@ -1,0 +1,13 @@
+# Manager Go | Prompt de arranque para Codex
+
+Copiá el bloque completo en una tarea nueva de Codex, desde la PC donde vas a trabajar. Si ya tenés un checkout de Asisto, abrí esa carpeta primero.
+
+```text
+Vamos a desarrollar Manager Go para Asisto. Es una extensión de navegador que se conecta al software Manager. Asisto debe registrar los datos de las operaciones acordadas. Mi primer objetivo es tener una prueba local de punta a punta con un evento de ejemplo simulado, mientras definimos la integración real.
+
+1. Verificá Git y Node.js 24. Si el repo no está en la PC, cloná https://github.com/AlejandroSoljan/webhooks.git. Si existe, revisá su remoto y estado, y preservá los cambios existentes. Actualizá origin/main y creá la rama codex/manager-go desde ahí. Si ya existe, revisala antes de reutilizarla. Instalá dependencias con npm ci.
+2. Leé AGENTS.md, docs/MANUAL_TECNICO_ASISTO.md y las indicaciones de colaboración en https://github.com/AlejandroSoljan/webhooks/blob/codex/colaboracion-asisto/docs/COLABORACION.md. Revisá extensions/whatsapp-support como referencia para Manifest V3, src/support/extension.js como referencia de comunicación con el backend, y la resolución de dominio en tenant.js y los módulos de autenticación. Confirmá qué se puede reutilizar con la base actual.
+3. Pedime, en una sola consulta, cómo Manager puede entregar el evento real (API, página web o conector existente), cuál es la primera operación a registrar y un ejemplo anonimizado de sus campos. Mientras te contesto, avanzá con un evento sintético manual claramente rotulado como prueba. Un ejemplo provisional puede tener identificador de evento, tipo y fecha. No tomes eso como contrato definitivo de Manager.
+4. Prepará la prueba local de punta a punta: extensión cargada sin empaquetar, botón de prueba que envíe un evento sintético y backend local que lo reciba, valide y permita comprobar el registro. Reutilizá los permisos y la separación por dominio de Asisto. El backend debe asociar el dominio a la credencial autorizada, y un reintento con el mismo identificador en ese dominio debe registrar una sola operación. Usá una base de prueba. Limitá los permisos de navegador al entorno que se pruebe y mantené las credenciales fuera del código y los archivos versionados.
+5. Probá un envío, su reintento, un mensaje inválido y un intento desde otro dominio. Dejá pasos reproducibles para cargar la extensión en el navegador y verificar el registro. Explicá qué parte quedó simulada y qué falta para conectar con Manager real. Trabajá en local con datos de ejemplo, sin credenciales ni tráfico de producción. Cuando haya acceso de GitHub, subimos la rama y abrimos un PR hacia main conforme a las reglas de Asisto.
+```
