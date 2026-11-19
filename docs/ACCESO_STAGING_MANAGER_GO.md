@@ -41,3 +41,17 @@ El activador serializa despliegues, cambia el enlace de staging, reinicia ese se
 ## Estado de verificación
 
 El mantenedor verificó la configuración de SSH, la sintaxis del activador, el rechazo de un nombre de release inválido, el permiso sudo limitado al activador y `/healthz` de staging. Falta la prueba de inicio de sesión y de despliegue desde la otra PC. El primer despliegue también debe verificar el arranque real de Manager Go y su operación de ejemplo. El servicio usa base `asisto_staging`, namespace privado, límites de recursos y archivos productivos inaccesibles.
+
+## Publicar en producción desde la otra PC
+
+Por autorización del responsable de Asisto del 19/11/2026, `manager-go-dev` también puede ejecutar el desplegador productivo existente sin argumentos. Tras integrar y verificar el commit en `main`, ejecutar en AWS.
+
+```bash
+sudo /usr/local/sbin/asisto-auto-deploy
+curl -fsS http://127.0.0.1:3000/healthz
+readlink -f /opt/asisto/current
+```
+
+El comando descarga `main`, instala dependencias, ejecuta las pruebas, activa el release y comprueba la salud del servicio. El proceso incluye recuperación al release anterior si falla la comprobación. La publicación abarca el backend compartido y afecta a sus dominios. Seguir las reglas de versión, historial y verificación de AGENTS.md. El acceso SSH a AWS y el permiso de escritura o integración en GitHub se administran por separado.
+
+Se validó el permiso mediante `sudo -l` con el usuario de despliegue y la sintaxis de sudoers. Al habilitar este permiso se comprobó `/healthz` de producción. El comando de publicación no se ejecutó como parte del alta del permiso.
