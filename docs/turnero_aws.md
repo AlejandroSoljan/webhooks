@@ -110,3 +110,6 @@ Trasladar el servicio y Mongo, ajustar origen público/proxy y mantener un únic
 - `QUEUE_PRINTER_NAME` fija la cola CUPS. Si se omite, se usa la impresora predeterminada del sistema.
 - El kiosco genera identificadores también en HTTP local. Los navegadores reservan `crypto.randomUUID()` para contextos seguros; el fallback evita que el clic en una sección quede sin respuesta al abrir el LXC por IP privada.
 - El panel local de atención elimina los accesos rápidos a otras pantallas. El parámetro `sector` permite abrir todas las secciones sin parámetro o una sola mediante su identificador o nombre, sin distinguir mayúsculas ni acentos.
+
+El 20/11/2026 se aclaran los indicadores como Turnos vinculados al celular (turnos del kiosco asociados mediante QR o app) y Accesos al autoservicio mediante QR (sesiones habilitadas por el QR presencial). La unidad del primero es turno y la del segundo sesión de autoservicio.
+
