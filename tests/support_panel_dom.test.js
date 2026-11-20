@@ -361,8 +361,8 @@ for (const destination of ['target', 'new']) test('followup panel requires expli
   if(m.action==='SESSION')return{data:{tenantId:'ALSO',userId:'one',choices:{}}};
   if(m.action==='INDEX')return{data:{owner:'ALSO:one',chats:[]}};
   if(m.action==='COMPANY_PROFILE')return{data:{company:null}};
-  if(m.action==='SAVE'){task={...task,fields:m.fields,revision:2};return{data:{revision:2,fields:m.fields}};}
-  if(m.action==='RESOLVE_FOLLOWUP'){assert.equal(m.revision,2);task={...task,revision:3,suggestedFollowups:[],requiresFollowupChoice:false};return{data:{revision:3}};}
+  if(m.action==='SAVE' && !m.fields?._followupResolution){task={...task,fields:m.fields,revision:2};return{data:{revision:2,fields:m.fields}};}
+  if(m.action==='SAVE' && m.fields?._followupResolution){assert.equal(m.revision,2);task={...task,revision:3,suggestedFollowups:[],requiresFollowupChoice:false};return{data:{revision:3}};}
   if(m.action==='DETAIL')return{data:task};
   throw Error(m.action);
  }}};
@@ -373,6 +373,6 @@ for (const destination of ['target', 'new']) test('followup panel requires expli
   assert.equal(await w.eval('resolveFollowupChoice()'),false);assert.equal(calls.filter(m=>m.action==='SAVE').length,0);
   select.value=destination;w.document.querySelector('#field-description').value='Mi edición y audio';
   assert.equal(await w.eval('resolveFollowupChoice()'),true);
-  const request=calls.find(m=>m.action==='RESOLVE_FOLLOWUP');assert.equal(request.choice,destination==='new'?'new':'existing');assert.equal(task.fields.description,'Mi edición y audio');assert.equal(w.document.querySelector('#field-description').value,'Mi edición y audio');assert.equal(w.document.querySelector('#followupChoice').hidden,true);
+  const request=calls.find(m=>m.action==='SAVE' && m.fields?._followupResolution);assert.equal(request.fields._followupResolution.choice,destination==='new'?'new':'existing');assert.equal(task.fields.description,'Mi edición y audio');assert.equal(w.document.querySelector('#field-description').value,'Mi edición y audio');assert.equal(w.document.querySelector('#followupChoice').hidden,true);
  }finally{w.close();}
 });

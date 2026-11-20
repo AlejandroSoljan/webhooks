@@ -220,7 +220,7 @@ function preferredStage(options, status, savedStageId) {
   if (matches.length === 1) return matches[0].id;
   return options.some(row => row.id === savedStageId) ? savedStageId : '';
 }
-const definitions = [ ['subject','Nombre breve'], ['contact','Contacto de WhatsApp'], ['company','Empresa'], ['status','Estado en Asisto'], ['closedDate','Fecha de finalización'], ['category','Categoría'], ['errorType','Error tipo'], ['channel','Vía de contacto'], ['description','Descripción'], ['companyId','ID de empresa en HubSpot (opcional)'], ['contactId','ID de contacto en HubSpot (opcional)'] ];
+const definitions = [ ['subject','Nombre breve'], ['contact','Contacto de WhatsApp'], ['company','Empresa'], ['closedDate','Fecha de finalización'], ['status','Estado en Asisto'], ['category','Categoría'], ['errorType','Error tipo'], ['channel','Vía de contacto'], ['description','Descripción'], ['companyId','ID de empresa en HubSpot (opcional)'], ['contactId','ID de contacto en HubSpot (opcional)'] ];
 function editorFields() {
   return Object.fromEntries(definitions.map(([key]) => [key, $('field-' + key)?.value || '']));
 }
@@ -239,6 +239,21 @@ function renderFields() {
     const values = session.choices?.[key];
     const input = document.createElement(values ? 'select' : key === 'description' ? 'textarea' : 'input'); input.id = 'field-' + key;
     if (values) { for (const value of values) option(input, value, value); }
+    if (key === 'closedDate') {
+      const creation = document.createElement('label');
+      creation.textContent = 'Fecha de creación';
+      const value = document.createElement('input');
+      value.id = 'field-creationDate';
+      value.readOnly = true;
+      const rawDate = current.fields?.messageDate;
+      const messageDate = rawDate ? new Date(rawDate) : null;
+      value.value = messageDate && Number.isFinite(messageDate.getTime())
+        ? new Intl.DateTimeFormat('es-AR', { dateStyle: 'short', timeZone: 'America/Argentina/Buenos_Aires' }).format(messageDate)
+        : 'No disponible';
+      value.title = 'Fecha del mensaje de origen en Argentina';
+      creation.append(value);
+      $('fields').append(creation);
+    }
     if (key === 'closedDate') { input.type = 'date'; label.title = 'Podés cambiarla si terminaste la tarea otro día.'; }
     input.value = key === 'closedDate' ? (displayedFields[key] || '').slice(0, 10) : displayedFields[key] || ''; input.maxLength = key === 'description' ? 100000 : 200;
     if (key === 'companyId') input.onchange = () => { void loadCompanyProfile(input.value.trim()); };
@@ -300,7 +315,7 @@ async function resolveFollowupChoice() {
   // Save human edits before changing the destination; both requests use revisions.
   if (!await save()) return false;
   const id = current.id;
-  await api('RESOLVE_FOLLOWUP', { id, revision: current.revision, choice: destination === 'new' ? 'new' : 'existing', targetId: destination === 'new' ? undefined : destination });
+  await api('SAVE', { id, revision: current.revision, fields: { _followupResolution: { choice: destination === 'new' ? 'new' : 'existing', targetId: destination === 'new' ? undefined : destination } } });
   await detail(id);
   return true;
 }
@@ -396,7 +411,9 @@ async function refreshOnce() {
   option($('contacts'), '', 'Elegí un contacto');
   const seen = new Set();
   for (const chat of index.chats) { if (seen.has(chat.jid)) continue; seen.add(chat.jid); option($('contacts'), chat.jid, (chat.name || chat.jid) + ' · ' + chat.count); }
-  const jid = selected ? selected.jid : previous;
+  const jid = selected
+    ? selected.jid || globalThis.AsistoMatch?.matchContact(index.knownChats || index.chats, { name: selected.name })?.jid || ''
+    : previous;
   $('headerContact').textContent = selected?.name || index.chats.find(chat => chat.jid === jid)?.name || 'Abrí un chat';
   if (jid && !seen.has(jid)) { const known = (index.knownChats || []).find(chat => chat.jid === jid || chat.aliases?.includes(jid)); option($('contacts'), jid, known?.name || selected?.name || jid); seen.add(jid); }
   const explicitlyRequestedDraft = selected?.refreshAt !== consumedOpenAt ? selected?.draftId : '';

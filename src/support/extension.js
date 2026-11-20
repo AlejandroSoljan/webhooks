@@ -177,7 +177,7 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     return { id: row._id, jid: row.jid, state: row.state, revision: row.revision, fields, source, sourceChanged: !!row.sourceChanged, reconciliationRequired: !!row.reconciliationRequired, suggestedFollowups, requiresFollowupChoice: !!row.suggestedFollowupIds?.length, hubspot: row.hubspot || null, mode: row.mode };
   }));
   // Explicit resolution preserves the source draft and every message ID in one atomic update.
-  router.post('/drafts/:id/resolve-followup', route(async (req, s, scope) => {
+  async function resolveFollowup(req, s, scope) {
     const row = await rowFor(s, scope, req.params.id);
     if (row.revision !== req.body.revision) fail('revision_conflict', 409);
     if (!row.suggestedFollowupIds?.length || row.hubspot?.ticketId || ['merged', 'ignored'].includes(row.state)) fail('followup_resolution_unavailable', 409);
@@ -204,8 +204,18 @@ function createExtensionRouter({ getService, hubspotFactory = token => new HubSp
     });
     if (!result.matchedCount) fail('revision_conflict', 409);
     return { revision: row.revision + 1, choice };
+  }
+  router.post('/drafts/:id/resolve-followup', route(resolveFollowup));
+  router.post('/drafts/:id/save', route((req, s, scope) => {
+    // SAVE is supported by older installed workers. Keep the scoped, revision-checked
+    // resolution atomic and separate from ordinary editable fields.
+    const resolution = req.body.fields?._followupResolution;
+    if (resolution !== undefined) {
+      if (!resolution || typeof resolution !== 'object' || Array.isArray(resolution) || Object.keys(req.body.fields).length !== 1) fail('invalid_draft_field');
+      return resolveFollowup({ ...req, params: req.params, body: { revision: req.body.revision, choice: resolution.choice, targetId: resolution.targetId } }, s, scope);
+    }
+    return s.editDraft(scope, req.params.id, req.body.revision, req.body.fields);
   }));
-  router.post('/drafts/:id/save', route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, req.body.fields)));
   router.post('/drafts/:id/reconcile', route(async (req, s, scope) => {
     const row = await rowFor(s, scope, req.params.id);
     if (row.revision !== req.body.revision) fail('revision_conflict', 409);

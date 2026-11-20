@@ -523,3 +523,17 @@ test('followup resolution rejects stale revisions, foreign or unrelated target a
  await service.col('drafts').updateOne({_id:id},{$set:{'hubspot.state':'uncertain'}});
  assert.equal((await call('/drafts/'+id+'/resolve-followup',{revision:1,choice:'new'})).status,409);
 });
+
+for(const choice of ['new','existing']) test('legacy SAVE transport resolves '+choice+' without losing messages or edits',async()=>{
+ const target=await seedFollowup();const before=await service.col('drafts').findOne({_id:id});
+ const result=await call('/drafts/'+id+'/save',{revision:1,fields:{_followupResolution:{choice,targetId:target}}});
+ assert.equal(result.status,200,JSON.stringify(result.data));const row=await service.col('drafts').findOne({_id:id});
+ assert.deepEqual(row.messageIds,before.messageIds);assert.equal(vault.open(row.fields,id).description,vault.open(before.fields,id).description);assert.equal(row.followupResolution.choice,choice);assert.equal(row.suggestedFollowupIds,undefined);
+ assert.equal((await call('/drafts/'+id+'/save',{revision:1,fields:{_followupResolution:{choice,targetId:target}}})).status,409);
+});
+test('legacy resolution transport rejects cross-user and mixed edits',async()=>{
+ await seedFollowup();const before=await service.col('drafts').findOne({_id:id});
+ assert.equal((await call('/drafts/'+id+'/save',{revision:1,fields:{_followupResolution:{choice:'new'}}},{'test-user':'other'})).status,404);
+ assert.equal((await call('/drafts/'+id+'/save',{revision:1,fields:{subject:'lost?',_followupResolution:{choice:'new'}}})).status,400);
+ assert.deepEqual(await service.col('drafts').findOne({_id:id}),before);
+});
