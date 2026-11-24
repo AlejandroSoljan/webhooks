@@ -17,9 +17,11 @@ targets:
         DEVELOPMENT_TEAM: 6TJ9WJ9766
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_NSCameraUsageDescription: Escaneá códigos de productos y turnos de Mecan.
         CODE_SIGN_ENTITLEMENTS: Mecan.entitlements
+        MECAN_APS_ENVIRONMENT: development
     dependencies:
       - package: Firebase
         product: FirebaseMessaging
