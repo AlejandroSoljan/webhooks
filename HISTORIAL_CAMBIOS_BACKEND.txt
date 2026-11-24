@@ -513,3 +513,5 @@ Barra lateral y accesos superiores con SVG de personas, reloj, mesa, cocina, rec
 2026-11-18 | Panel Ayuda sobre v5.00.358 | Ventanas más consultadas cuenta únicamente registros con consulta ausente, nula o vacía tras quitar espacios. Excluye preguntas de texto del ranking. Sintaxis verificada; resto de indicadores conserva sus filtros.
 
 2026-11-24 | v5.00.359 | codex/aws-parity-20261124 | Integra el código activo de AWS al flujo compartido de main. Empaquetado de plantillas HTML, historial y documentación para despliegues futuros. Verificación por comparación con el release activo.
+
+2026-11-24 | v5.00.359 | codex/manifiesto-publicacion | Publicador AWS: manifiesto SHA-256 por release sano, reemplazo atómico y lectura por manager-go-dev. Verificación de sintaxis, huella y lectura en AWS.

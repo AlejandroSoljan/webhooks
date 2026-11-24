@@ -59,3 +59,7 @@ Se validó el permiso mediante `sudo -l` con el usuario de despliegue y la sinta
 ## Coordinar las dos PC
 
 Cada cambio tiene una rama y un PR. Con trabajo de Gabriel en curso, incorporá origin/main en esa rama y resolvé diferencias antes de probar. Staging es compartido: verificá su release antes de activarlo y registrá en el PR el commit probado, la prueba funcional y el resultado. Para integrar se necesita la revisión de otra persona y el CI de Node 24. Al publicar, compará el prefijo del release activo con el SHA integrado en main y verificá la función además de /healthz.
+
+## Manifiesto de producción
+
+El publicador de producción actualiza automáticamente `/var/lib/asisto-review/production.sha256` después de verificar la salud del release. En AWS, ambos operadores pueden consultarlo con `cat /var/lib/asisto-review/production.sha256` usando la cuenta de despliegue `manager-go-dev`, sin sudo. Las dos primeras líneas identifican el release y la fecha UTC; las siguientes contienen SHA-256 y ruta relativa de cada archivo controlado. Antes de comparar, comprobar que el release del encabezado coincide con el activo. Si la publicación se revierte, se conserva el manifiesto anterior.
