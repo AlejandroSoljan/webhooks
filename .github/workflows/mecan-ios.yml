@@ -1,0 +1,29 @@
+name: Mecan iOS
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/mecan-ios-build']
+    paths: ['ios-mecan/**', '.github/workflows/mecan-ios.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  simulator:
+    runs-on: macos-26
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: ios-mecan
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+      - name: Compile Mecan
+        run: |
+          xcodebuild -project Mecan.xcodeproj -scheme Mecan \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
+
