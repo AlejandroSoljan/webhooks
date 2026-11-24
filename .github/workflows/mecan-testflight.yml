@@ -56,7 +56,11 @@ jobs:
           security create-keychain -p "$keychain_password" "$keychain"
           security unlock-keychain -p "$keychain_password" "$keychain"
           security list-keychains -d user -s "$keychain"
-          security import "$signing/distribution.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          # Security.framework needs a PKCS#12 container using legacy-compatible algorithms.
+          openssl pkcs12 -in "$signing/distribution.p12" -passin env:CERTIFICATE_PASSWORD -nodes |
+            openssl pkcs12 -export -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
+              -passout env:CERTIFICATE_PASSWORD -out "$signing/apple-distribution.p12"
+          security import "$signing/apple-distribution.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
           xcodebuild -project Mecan.xcodeproj -scheme Mecan -configuration Release \
             -destination 'generic/platform=iOS' -archivePath "$signing/Mecan.xcarchive" \
