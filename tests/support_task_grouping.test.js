@@ -46,7 +46,7 @@ test('missing, repeated, invented and empty assignments fail without dropping ev
   for (const groups of [null, [], [[0,1]], [[0,1,2,3,3]], [[0,1,2,4]], [[0,1,2,3],[]]]) assert.throws(()=>validateGroups(groups,messages), /task_grouping_invalid/);
 });
 test('scope excludes unrelated bots including MCN', () => {
-  for (const tenant of ['ALSO','DEMJG','SANA']) assert.equal(enabled(tenant),true);
+  for (const tenant of ['ALSO','DEMJG','SANA','GUJO','HEMO']) assert.equal(enabled(tenant),true);
   for (const tenant of ['MCN','SDG']) assert.equal(enabled(tenant),false);
 });
 test('grouping uses configured task model, all context and returns usage', async () => {

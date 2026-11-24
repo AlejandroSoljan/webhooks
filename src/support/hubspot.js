@@ -163,7 +163,15 @@ class HubSpotContract {
     put('hubspot_owner_id', String(owner.id));
     put('createdate', fields.messageDate, false);
     if (stage.metadata?.isClosed === 'true' || stage.metadata?.isClosed === true) {
-      if (fields.closedDate) put('closed_date', fields.closedDate, false);
+      if (fields.closedDate) {
+        const property = metadata.properties.find(p => ['closed_date', 'closedate'].includes(p.name) && !p.modificationMetadata?.readOnlyValue);
+        if (!property) fail('property_not_writable');
+        put(property.name, property.type === 'date' ? fields.closedDate.slice(0, 10) : fields.closedDate.slice(0, 10) + 'T03:00:00.000Z');
+      }
+    }
+    if (!(stage.metadata?.isClosed === 'true' || stage.metadata?.isClosed === true)) {
+      const property = metadata.properties.find(p => ['closed_date', 'closedate'].includes(p.name) && !p.modificationMetadata?.readOnlyValue);
+      if (property) put(property.name, '');
     }
     for (const [field, config] of Object.entries(mapping.fields || {})) {
       if (!['category', 'errorType', 'channel'].includes(field) || ['subject', 'content', 'hs_pipeline', 'hs_pipeline_stage', 'createdate', 'closed_date'].includes(config.property)) fail('invalid_property_mapping');

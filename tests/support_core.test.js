@@ -79,9 +79,10 @@ test('scope cannot fall back to a global tenant and respects page access', () =>
   assert.throws(() => settings({ mode: 'automatic' }), /automation_not_enabled/);
   assert.throws(() => range('2026-01-01', '2026-03-01'), /invalid_range/);
 });
-test('exclusions are configurable and groups/broadcasts never enter', () => {
+test('exclusions are configurable and groups enter and broadcasts remain excluded', () => {
   const config = settings({ excludedNames: ['Juan Garziera'], excludedJids: ['1@s.whatsapp.net'] });
-  assert.ok(excluded({ jid: 'x@g.us' }, config));
+  assert.equal(excluded({ jid: '12345-678@g.us' }, config), false);
+  assert.ok(excluded({ jid: '12345-678@g.us' }, settings({ excludedJids: ['12345-678@g.us'] })));
   assert.ok(excluded({ jid: 'status@broadcast' }, config));
   assert.ok(excluded({ jid: 'x@lid', name: 'JUAN GARZIERA' }, config));
   assert.ok(excluded({ jid: '1@s.whatsapp.net' }, config));
@@ -117,10 +118,10 @@ test('HubSpot payload uses discovered internal IDs and writable dates only', () 
   const metadata = { properties: ['subject', 'content', 'hs_pipeline', 'hs_pipeline_stage', 'hubspot_owner_id', 'createdate', 'closed_date'].map(name => ({ name, modificationMetadata: { readOnlyValue: name === 'createdate' } })), pipelines: [{ id: 'p', stages: [{ id: 'new', label: 'Nuevo', metadata: { isClosed: 'false' } }, { id: 'done', label: 'Cerrado RESUELTO', metadata: { isClosed: 'true' } }] }], owners: [{ id: 'owner-1' }], associationTypes: { companies: [{ typeId: 123, category: 'HUBSPOT_DEFINED', label: null }], contacts: [] } };
   const client = new HubSpotContract('fake'), fields = { subject: 'Manager', description: 'Detalle', messageDate: '2026-01-01T00:00:00Z', closedDate: '2026-01-02T00:00:00Z', companyId: '1' };
   const open = client.prepare(fields, metadata, { ownerId: 'owner-1', pipelineId: 'p', stageId: 'new' });
-  assert.equal(open.properties.createdate, undefined); assert.equal(open.properties.closed_date, undefined);
+  assert.equal(open.properties.createdate, undefined); assert.equal(open.properties.closed_date, '');
   assert.equal(open.associations[0].types[0].associationTypeId, 123);
   assert.equal(open.properties.hubspot_owner_id, 'owner-1');
-  assert.equal(client.prepare(fields, metadata, { ownerId: 'owner-1', pipelineId: 'p', stageId: 'done' }).properties.closed_date, fields.closedDate);
+  assert.equal(client.prepare(fields, metadata, { ownerId: 'owner-1', pipelineId: 'p', stageId: 'done' }).properties.closed_date, '2026-01-02T03:00:00.000Z');
   assert.equal(client.prepare({ ...fields, status: 'Nuevo' }, metadata, { ownerId: 'owner-1', pipelineId: 'p', stageId: 'done' }).properties.hs_pipeline_stage, 'new');
   assert.throws(() => client.prepare(fields, metadata, { ownerId: 'owner-1', pipelineId: 'p', stageId: 'Nuevo' }), /invalid_pipeline_stage/);
 });

@@ -257,10 +257,12 @@ function buildInboxContactGroups(rows = []) {
   return Array.from(groups.values()).sort((a, b) => dateMs(b.lastAt) - dateMs(a.lastAt));
 }
 
+function withInboxTenant(filter, tenantId) { return withTenant({ ...filter, isTest: { $ne: true }, channelType: { $ne: 'bot_test' } }, tenantId); }
+
 async function loadInboxConversations(tenantId, limit = 500) {
   const db = await getDb();
   const rows = await db.collection("conversations")
-    .find(withTenant({}, tenantId))
+    .find(withInboxTenant({}, tenantId))
     .sort({ updatedAt: -1, lastUserTs: -1, lastAssistantTs: -1, closedAt: -1, openedAt: -1, createdAt: -1 })
     .limit(Math.max(1, Math.min(Number(limit) || 500, 1000)))
     .toArray();
@@ -283,7 +285,7 @@ async function findConversationsForInbox({ tenantId, convId, convIds, waId, cont
 
   if (ids.length) {
     return db.collection("conversations")
-      .find(withTenant({ _id: { $in: ids } }, tenantId))
+      .find(withInboxTenant({ _id: { $in: ids } }, tenantId))
       .sort({ updatedAt: -1, openedAt: -1, createdAt: -1 })
       .limit(limit)
       .toArray();
@@ -291,7 +293,7 @@ async function findConversationsForInbox({ tenantId, convId, convIds, waId, cont
 
   if (waId) {
     return db.collection("conversations")
-      .find(withTenant({ waId: String(waId) }, tenantId))
+      .find(withInboxTenant({ waId: String(waId) }, tenantId))
       .sort({ updatedAt: -1, openedAt: -1, createdAt: -1 })
       .limit(limit)
       .toArray();
@@ -299,7 +301,7 @@ async function findConversationsForInbox({ tenantId, convId, convIds, waId, cont
 
   if (contactKey) {
     const all = await db.collection("conversations")
-      .find(withTenant({}, tenantId))
+      .find(withInboxTenant({}, tenantId))
       .sort({ updatedAt: -1, openedAt: -1, createdAt: -1 })
       .limit(1000)
       .toArray();
@@ -314,20 +316,20 @@ async function pickConversationForReply({ tenantId, convId, waId, convIds }) {
   const db = await getDb();
 
   if (convId && ObjectId.isValid(String(convId))) {
-    const conv = await db.collection("conversations").findOne(withTenant({ _id: new ObjectId(String(convId)) }, tenantId));
+    const conv = await db.collection("conversations").findOne(withInboxTenant({ _id: new ObjectId(String(convId)) }, tenantId));
     if (conv && isInboxConversationOpen(conv)) return conv;
   }
 
   const ids = parseConvIdList(convIds);
   if (ids.length) {
     const active = await db.collection("conversations").findOne(
-      withTenant({ _id: { $in: ids }, finalized: { $ne: true }, status: { $nin: ["COMPLETED", "CANCELLED"] } }, tenantId),
+      withInboxTenant({ _id: { $in: ids }, finalized: { $ne: true }, status: { $nin: ["COMPLETED", "CANCELLED"] } }, tenantId),
       { sort: { updatedAt: -1, openedAt: -1, createdAt: -1 } }
     );
     if (active) return active;
 
     const latest = await db.collection("conversations").findOne(
-      withTenant({ _id: { $in: ids } }, tenantId),
+      withInboxTenant({ _id: { $in: ids } }, tenantId),
       { sort: { updatedAt: -1, openedAt: -1, createdAt: -1 } }
     );
     if (latest) return latest;
@@ -335,13 +337,13 @@ async function pickConversationForReply({ tenantId, convId, waId, convIds }) {
 
   if (waId) {
     const active = await db.collection("conversations").findOne(
-      withTenant({ waId: String(waId), finalized: { $ne: true }, status: { $nin: ["COMPLETED", "CANCELLED"] } }, tenantId),
+      withInboxTenant({ waId: String(waId), finalized: { $ne: true }, status: { $nin: ["COMPLETED", "CANCELLED"] } }, tenantId),
       { sort: { updatedAt: -1, openedAt: -1, createdAt: -1 } }
     );
     if (active) return active;
 
     return db.collection("conversations").findOne(
-      withTenant({ waId: String(waId) }, tenantId),
+      withInboxTenant({ waId: String(waId) }, tenantId),
       { sort: { updatedAt: -1, openedAt: -1, createdAt: -1 } }
     );
   }

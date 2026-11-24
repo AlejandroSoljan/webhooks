@@ -1413,7 +1413,9 @@ function renderProduct(j){
   applyBranding(j);
 
   const p=PRODUCT;
-  const availability=p.available===true
+  const availability=TENANT==='MCN' && p.available!==true
+    ? '<span class="availabilityBadge unknown">Consultar</span>'
+    : p.available===true
     ? '<span class="availabilityBadge available">Disponible</span>'
     : (p.available===false
       ? '<span class="availabilityBadge unavailable">Sin disponibilidad</span>'
@@ -1450,7 +1452,7 @@ function renderProduct(j){
   el('otherProductBtn').addEventListener('click',openScannerPanel);
   if(MECAN_PAGE&&el('mcnAlternativesBtn'))el('mcnAlternativesBtn').addEventListener('click',openMecanAlternatives);
 }
-function renderMecanAlternativeList(items,currency){const list=el('mcnAltList');list.replaceChildren();if(!items.length){const empty=document.createElement('div');empty.className='mcnAltMessage';empty.textContent='No encontramos otras opciones confirmadas en el catálogo.';list.append(empty);return}for(const p of items){const button=document.createElement('button');button.type='button';button.className='mcnAltItem cursor-interaction';const mark=document.createElement('span');mark.className='mcnAltMark';mark.textContent=String(p.brand||p.description||'P').trim().charAt(0).toUpperCase();const info=document.createElement('span');info.className='mcnAltInfo';const brand=document.createElement('strong');brand.className='mcnAltBrand';brand.textContent=p.brand||p.description||'Producto';const description=document.createElement('span');description.className='mcnAltProduct';description.textContent=p.description||'Producto alternativo';const sku=document.createElement('small');sku.className='mcnAltSku';sku.textContent='SKU '+p.code;info.append(brand,description,sku);const price=document.createElement('span');price.className='mcnAltPrice';price.textContent=money(p.price,currency);const arrow=document.createElement('span');arrow.className='mcnAltArrow';arrow.textContent='›';button.append(mark,info,price,arrow);button.addEventListener('click',()=>{closeMecanAlternatives();openCode(p.code,'sku')});list.append(button)}}
+function renderMecanAlternativeList(items,currency){const list=el('mcnAltList');list.replaceChildren();if(!items.length){const empty=document.createElement('div');empty.className='mcnAltMessage';empty.textContent='No encontramos otras opciones confirmadas en el catálogo.';list.append(empty);return}for(const p of items){const button=document.createElement('button');button.type='button';button.className='mcnAltItem cursor-interaction';const mark=document.createElement('span');mark.className='mcnAltMark';mark.textContent=String(p.brand||p.description||'P').trim().charAt(0).toUpperCase();const info=document.createElement('span');info.className='mcnAltInfo';const brand=document.createElement('strong');brand.className='mcnAltBrand';brand.textContent=p.brand||p.description||'Producto';const description=document.createElement('span');description.className='mcnAltProduct';description.textContent=p.description||'Producto alternativo';const sku=document.createElement('small');sku.className='mcnAltSku';sku.textContent='SKU '+p.code;const badge=document.createElement('span');badge.className='availabilityBadge '+(p.available===true?'available':'unknown');badge.style.justifySelf='start';badge.style.marginTop='3px';badge.textContent=p.available===true?'Disponible':'Consultar';info.append(brand,description,sku,badge);const price=document.createElement('span');price.className='mcnAltPrice';price.textContent=money(p.price,currency);const arrow=document.createElement('span');arrow.className='mcnAltArrow';arrow.textContent='›';button.append(mark,info,price,arrow);button.addEventListener('click',()=>{closeMecanAlternatives();openCode(p.code,'sku')});list.append(button)}}
 function closeMecanAlternatives(){const wrap=el('mcnAltWrap');if(wrap)wrap.hidden=true}
 async function openMecanAlternatives(){const wrap=el('mcnAltWrap'),list=el('mcnAltList');if(!wrap||!PRODUCT)return;wrap.hidden=false;list.innerHTML='<div class="mcnAltMessage">Buscando en el catálogo…</div>';try{const url=new URL('/api/ext/qr/alternatives',location.origin);url.searchParams.set('tenant',TENANT);url.searchParams.set('codigo',PRODUCT.code);const result=await jsonFetch(url.toString());renderMecanAlternativeList(Array.isArray(result.alternatives)?result.alternatives:[],result.currency)}catch(_){list.innerHTML='<div class="mcnAltMessage">No pudimos consultar las opciones ahora. Probá de nuevo en un momento.</div>'}}
 function normalizedCode(value){let code=String(value||'').trim();if(!code)return '';try{const u=new URL(code,location.origin);if(/^https?:/i.test(code)){const extracted=u.searchParams.get('codigo')||((u.pathname.match(/^\/qr\/[^/]+\/(.+)$/)||[])[1]);if(!extracted)return '' ;code=extracted}}catch(_){}try{code=decodeURIComponent(code).trim()}catch(_){}return code} function openCode(value,via){const code=normalizedCode(value);if(!code)return;stopScanner();const u=new URL('/qr/'+encodeURIComponent(TENANT),location.origin);u.searchParams.set('codigo',code);u.searchParams.set('via',via||'sku');location.href=u.pathname+u.search} function openScannerPanel(){el('lookup').classList.remove('hidden');el('lookup').scrollIntoView({behavior:'smooth',block:'start'});startScanner()}
@@ -1470,7 +1472,7 @@ el('scanBtn').addEventListener('click',()=>{el('scanner').classList.remove('phot
 if(MECAN_PAGE){el('mcnAltClose')?.addEventListener('click',closeMecanAlternatives);el('mcnAltWrap')?.addEventListener('click',e=>{if(e.target===el('mcnAltWrap'))closeMecanAlternatives()});document.addEventListener('keydown',e=>{if(e.key==='Escape')closeMecanAlternatives()})}
 el('sendBtn').addEventListener('click',send);el('message').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}});el('closeChat').addEventListener('click',()=>GENERAL_CHAT?history.back():el('chat').classList.remove('open'));el('scanBtn').addEventListener('click',startScanner);el('stopScanBtn').addEventListener('click',stopScanner);el('zoomControl').addEventListener('input',e=>setScannerZoom(e.currentTarget.value));el('torchBtn').addEventListener('click',toggleScannerTorch);el('lookupBtn').addEventListener('click',()=>openCode(el('codeInput').value));el('codeInput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();openCode(e.currentTarget.value)}});window.addEventListener('pagehide',stopScanner);document.addEventListener('visibilitychange',()=>{if(!document.hidden){if(pollTimer){clearTimeout(pollTimer);pollTimer=null}if(started)scheduleChatPoll(0)}});applyBranding(BRANDING);if(GENERAL_CHAT){el('lookup').classList.add('hidden');el('productCard').classList.add('hidden');el('chat').classList.add('open');el('chatTitle').textContent='Encontralo al instante';el('chatProduct').textContent='Consultá precios, productos, disponibilidad y recibí ayuda en el momento.';el('message').placeholder='Escribí tu consulta…';addMsg('bot','¡Hola! ¿Qué producto o información necesitás encontrar?');syncChatMessages(true).then(changed=>{started=changed;if(changed)startChatPolling()});setTimeout(()=>el('message').focus(),100)}else if(CODE){el('lookup').classList.add('hidden');loadProduct()}else{el('productCard').classList.add('hidden');if(!BRANDING.pageSubtitle)el('pageSubtitle').textContent='Escaneá un QR, un código de barras o ingresá el código manualmente.';if(new URLSearchParams(location.search).get('scan')==='1')setTimeout(startScanner,150)}
 </script>
-</body>
+<script src="/static/mecan-account-nav.js?v=20261112-352" defer></script></body>
 </html>`;
 }
 
@@ -1623,7 +1625,16 @@ function mountQrProductWeb(app) {
       if (!allowAiRequest(req, `catalog_alternatives_${tenant}_${code}`)) return res.status(429).json({ ok: false, error: 'rate_limited' });
       const cfg = await loadQrConfig(db, tenant);
       const current = await fetchQrProduct(cfg, tenant, code);
-      const suggestions = await fetchPhotoCatalogSuggestions(cfg, { brand: current.brand, name: current.description }, 6);
+      let suggestions = await fetchPhotoCatalogSuggestions(cfg, { brand: current.brand, name: current.description }, 6);
+      if (tenant === 'MCN' && suggestions.filter(item => item.code.toUpperCase() !== current.code.toUpperCase()).length < 5) {
+        const words = String(current.description || '').trim().split(/\s+/).filter(Boolean);
+        if (words.length > 2) {
+          const related = await fetchPhotoCatalogSuggestions(cfg, { name: words.slice(0, 2).join('%') }, 6);
+          const type = words[0].toLocaleUpperCase('es');
+          const sameType = related.filter(item => String(item.description || '').trim().split(/\s+/)[0].toLocaleUpperCase('es') === type);
+          suggestions = [...new Map([...suggestions, ...sameType].map(item => [item.code.toUpperCase(), item])).values()];
+        }
+      }
       const alternatives = suggestions
         .filter(item => String(item.code).toUpperCase() !== String(current.code).toUpperCase())
         .slice(0, 5)
@@ -1926,3 +1937,5 @@ function mountQrProductWeb(app) {
 }
 
 module.exports = { mountQrProductWeb, loadQrConfig, normalizeQrProduct, managerDirectLookupUrl, managerCatalogSearchUrl, generalCatalogSearchQuery, isGeneralCatalogQuery, qrPublicBranding, pageHtml };
+
+// MCN alternative-stock 5.00.349: central renderer and same-type fallback.

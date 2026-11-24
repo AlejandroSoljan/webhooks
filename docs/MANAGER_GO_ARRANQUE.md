@@ -1,0 +1,16 @@
+# Manager Go | Integración con Asisto
+
+Copiá el bloque completo en Codex con el proyecto existente de Manager Go abierto. Mantené Asisto en un checkout separado.
+
+```text
+Manager Go ya funciona como extensión de navegador conectada a Manager. Integrá la extensión existente con Asisto para registrar las operaciones que acordemos y dar de alta Manager Go como funcionalidad por dominio.
+
+1. Inspeccioná la extensión existente y ubicá el punto donde sabe que una operación de Manager terminó correctamente. Usá ese punto para emitir el evento. Identificá si Manager ya proporciona un ID estable y qué mecanismo usa la extensión para autenticar la instalación. Si falta definir la primera operación, los campos a conservar o la forma de asociar la instalación al dominio, pedime esos datos en una sola consulta con un ejemplo anonimizado. Mientras tanto podés probar el envío con una operación ficticia desde el mismo flujo existente.
+2. Cloná https://github.com/AlejandroSoljan/webhooks.git en una carpeta aparte si hace falta. Creá codex/manager-go desde origin/main y leé AGENTS.md y docs/MANUAL_TECNICO_ASISTO.md. Conservá los cambios locales existentes en ambos proyectos. Usá Node.js 24 y una base local o de pruebas.
+3. Del lado Asisto, incorporá una habilitación por dominio desactivada por defecto. Agregá “Manager Go” al campo servicios del dominio en GET /api/ext/domain-status?dominio=... mediante domainStatusConfig y domainStatusServices en endpoint.js. Debe aparecer aunque el dominio no tenga sesiones WhatsApp. Revisá también las otras APIs de configuración y consulta por dominio que expongan funcionalidades. Respetá el alcance de cada dominio secundario y documentá el campo y sus valores.
+4. Agregá la recepción de operaciones con una credencial limitada al dominio y a Manager Go. Asisto debe resolver el dominio desde la autorización y verificar la habilitación antes de guardar. Validá el tipo de operación y los campos acordados. Guardá sólo los datos necesarios. Usá un identificador estable con unicidad por dominio para tolerar reintentos sin duplicar registros. No uses en la extensión claves globales de Asisto o de las APIs de administración.
+5. Usá monetization_config.js y monetization_engine.js para medir Manager Go como concepto separado, con una clave de evento estable acordada. Mostrá cantidad por dominio y por rango de fecha en Control de Tokens, en Consumo por funcionalidad y detalle por dominio cuando corresponda. Contá una sola vez cada operación aceptada. Registrá operaciones como operaciones y cualquier consumo real de IA por su canal habitual. Dejá la medición sin cargo hasta que se acuerde una tarifa. Documentá cómo conciliar los registros de operaciones con el reporte.
+6. Verificá desde la extensión existente el envío de una operación, su reintento, la habilitación informada en la API sin WhatsApp, el rechazo cuando falta autorización o el dominio está deshabilitado y el conteo visible en Control de Tokens. Probá que dos dominios queden separados. Dejá los cambios de cada proyecto listos para revisión y actualizá el manual de Asisto con el contrato, la configuración y las pruebas. Si todavía no hay acceso de escritura en GitHub, trabajá con commits locales.
+```
+
+Referencia para la integración: [APIs de Asisto para Manager Go](MANAGER_GO_APIS_ASISTO.md).

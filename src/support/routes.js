@@ -76,7 +76,7 @@ function createRouter({ getService, hubspotFactory = token => new HubSpotContrac
   router.put('/memory/verify', route(async (req, s, scope) => {
     requireHubSpot();
     const jid = text(req.body.jid);
-    if (!/^[^@]+@(s\.whatsapp\.net|lid)$/.test(jid)) fail('invalid_jid');
+    if (!/^(?:[^@]+@(s\.whatsapp\.net|lid)|\d+(?:-\d+)?@g\.us)$/.test(jid)) fail('invalid_jid');
     const identity = await (await client(s, scope)).identity(text(req.body.companyId), text(req.body.contactId || ''));
     await s.col('memory').updateOne({ ...scope, jid }, { $set: { ...identity, source: 'hubspot', verifiedAt: s.now() }, $push: { events: { action: 'identity_verified', by: scope.userId, at: s.now() } } }, { upsert: true });
     return identity;

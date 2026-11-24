@@ -1,7 +1,7 @@
 // Asisto | Group support messages by complete operational objective.
 const { fail, normalize, conversationResolved } = require('./core');
 const VERSION = 'objective-ai-v3-followup';
-const enabled = tenant => ['ALSO', 'DEMJG', 'SANA'].includes(String(tenant || '').toUpperCase());
+const enabled = tenant => ['ALSO', 'DEMJG', 'SANA', 'GUJO', 'HEMO'].includes(String(tenant || '').toUpperCase());
 const PROMPT = `Agrupá una conversación completa de soporte en tareas por problema u objetivo operativo, no por palabras clave ni por cada paso.
 Leé primero toda la cronología. Una ráfaga de audios es un relato y sus aclaraciones; acceso remoto, pasar TeamViewer, probar, reiniciar y confirmar son pasos, no objetivos nuevos.
 Un "no te olvides de nosotros" al día siguiente retoma el problema pendiente anterior salvo que se identifique explícitamente otro pedido. El mensaje "ahí está solucionado, cierren y abran" cierra ese problema: NO crees una tarea de acceso ni de reinicio para esos pasos.

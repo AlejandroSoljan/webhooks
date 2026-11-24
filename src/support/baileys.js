@@ -64,7 +64,7 @@ function normalizeMessage(raw, baileys) {
   const image = msg.imageMessage;
   const content = msg.conversation || msg.extendedTextMessage?.text || image?.caption || msg.documentMessage?.caption || (image ? '[Imagen recibida sin texto]' : '');
   if (!content && !audio) return null;
-  return { id: raw.key.id, jid, fromMe: !!raw.key.fromMe, name: raw.pushName || '', at: new Date(Number(raw.messageTimestamp) * 1000), text: content,
+  return { id: raw.key.id, jid, fromMe: !!raw.key.fromMe, name: jid.endsWith('@g.us') ? '' : raw.pushName || '', at: new Date(Number(raw.messageTimestamp) * 1000), text: content,
     audio: audio ? { seconds: Number(audio.seconds || 0), mimetype: audio.mimetype || 'audio/ogg', bytes: Number(audio.fileLength || 0), fingerprint: audioFingerprint(audio.fileSha256) } : null,
     image: image ? { mimetype: image.mimetype || 'image/jpeg', bytes: Number(image.fileLength || 0), hasCaption: !!image.caption } : null,
     raw: audio ? JSON.stringify(raw, baileys.BufferJSON.replacer) : null };
@@ -101,7 +101,7 @@ class BaileysSessions {
     await this.assertOwner();
     const auth = await encryptedAuth(this.service, scope, b, this.assertOwner);
     const socket = b.default({ auth: auth.state, printQRInTerminal: false, markOnlineOnConnect: false, syncFullHistory: true, shouldSyncHistoryMessage: () => true,
-      shouldIgnoreJid: jid => /@(g\.us|broadcast|newsletter)$/.test(jid),
+      shouldIgnoreJid: jid => /@(broadcast|newsletter)$/.test(jid),
       logger: require('pino')({ level: 'silent' }), getMessage: async () => undefined });
     const entry = { socket, tail: Promise.resolve() };
     this.sockets.set(id, entry);

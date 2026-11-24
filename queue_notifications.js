@@ -1,3 +1,4 @@
+const {snapshot}=require('./notification_recipients');
 // Durable milestone delivery. Called under the tenant's single-writer lock.
 function createQueueNotifications({ firebaseSender, publicBase }) {
   async function reconcile(db, base) {
@@ -27,7 +28,7 @@ function createQueueNotifications({ firebaseSender, publicBase }) {
           tenantId: doc.tenantId, notificationKey, notificationType: 'automatic_queue', sourceLabel: 'Turnero automático',
           ticketId: String(doc._id), ticketNumber: doc.displayNumber, sectorId: doc.sectorId, sectorName: doc.sectorName,
           milestone, visit, status: 'sending', targetCount: 1, requestedCount: 1, successCount: 0, failureCount: 0,
-          updatedAt: new Date(),
+          recipients:[snapshot(device)], updatedAt: new Date(),
         };
         await db.collection('customer_app_notifications').updateOne(
           { tenantId: doc.tenantId, notificationKey },
@@ -47,7 +48,7 @@ function createQueueNotifications({ firebaseSender, publicBase }) {
           { $set: {
             title: doc.status === 'CALLED' ? '¡Es tu turno!' : ahead === 1 ? 'Falta 1 turno para el tuyo' : 'Faltan 2 turnos para el tuyo',
             body: `${doc.displayNumber} · ${doc.sectorName}${doc.status === 'CALLED' && doc.desk ? ' · ' + doc.desk : ''}${ahead ? ' · Acercate al sector.' : ''}`,
-            status: record.status, successCount: record.status === 'sent' ? 1 : 0, failureCount: record.status === 'sent' ? 0 : 1,
+            recipients:[{...snapshot(device),status:record.status==='sent'?'accepted':'failed'}], status: record.status, successCount: record.status === 'sent' ? 1 : 0, failureCount: record.status === 'sent' ? 0 : 1,
             updatedAt: new Date(), ...(record.sentAt ? { sentAt: record.sentAt } : {}),
           } },
         );

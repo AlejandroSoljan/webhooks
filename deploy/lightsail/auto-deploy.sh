@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Poll GitHub from the Lightsail host. No inbound webhook or GitHub SSH key is needed.
 exec 9>/run/lock/asisto-auto-deploy.lock
-flock -n 9 || exit 0
+flock -n 9 || { echo "Another deployment is running" >&2; exit 1; }
 
 repo_url=https://github.com/AlejandroSoljan/webhooks.git
 source_dir=/var/lib/asisto/deploy-source
@@ -19,6 +19,29 @@ sha=$(git -C "$source_dir" rev-parse FETCH_HEAD)
 short=${sha:0:12}
 previous=$(readlink -f "$current_link")
 
+# Each release gets a root-owned record outside its writable application tree.
+state_dir=/var/lib/asisto-release-checks
+release_digest() (
+  cd "$1"
+  find . -maxdepth 1 -type f \( -name '*.js' -o -name '*.html' -o -name '*.json' -o -name '*.png' -o -name '*.jpg' -o -name '*.ico' \) -print0
+  find src static desktop scripts extensions tests data -type f -print0
+)
+fingerprint() (
+  set -o pipefail
+  cd "$1"
+  release_digest "$PWD" | LC_ALL=C sort -z | xargs -0 -r sha256sum -- | sha256sum | cut -d' ' -f1
+)
+check_active() {
+  local record="$state_dir/$(basename "$previous").sha256"
+  if [[ "$(readlink -f "$current_link")" != "$previous" || ! -f "$record" || "$(fingerprint "$previous")" != "$(<"$record")" ]]; then
+    echo "Active release changed or has no verified baseline. Reconcile it with Git before deploying." >&2
+    exit 1
+  fi
+}
+check_active
+for template in app_center_panel.html mecan_account.html; do
+  git -C "$source_dir" cat-file -e "$sha:$template" || { echo "Missing production template: $template" >&2; exit 1; }
+done
 if [[ "$(basename "$previous")" == "$short"-* ]]; then
   echo "Already deployed: $sha"
   exit 0
@@ -32,7 +55,7 @@ candidate=$(mktemp -d "$releases_dir/$short-auto-XXXXXXXX")
 echo "Preparing $sha in $candidate"
 mapfile -t paths < <(git -C "$source_dir" ls-tree --name-only "$sha" | while IFS= read -r name; do
   case "$name" in
-    *.js|*.png|*.jpg|*.ico|package.json|package-lock.json|ASISTO_VERSION.json|version.json|configuracion_errores.json|src|static|desktop|scripts|extensions|tests) printf '%s\n' "$name" ;;
+    app_center_panel.html|mecan_account.html|HISTORIAL_CAMBIOS_BACKEND.txt|docs|*.js|*.png|*.jpg|*.ico|package.json|package-lock.json|ASISTO_VERSION.json|version.json|configuracion_errores.json|src|static|desktop|scripts|extensions|tests) printf '%s\n' "$name" ;;
   esac
 done)
 if git -C "$source_dir" cat-file -e "$sha:data/articulos_rodaven.txt" 2>/dev/null; then
@@ -49,6 +72,8 @@ if ! runuser -u asisto -- npm --cache /var/lib/asisto/npm-cache --prefix "$candi
   exit 1
 fi
 
+check_active
+fingerprint "$candidate" > "$state_dir/$(basename "$candidate").sha256"
 ln -s "$candidate" "$current_link.next"
 mv -Tf "$current_link.next" "$current_link"
 systemctl restart asisto-production

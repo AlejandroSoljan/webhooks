@@ -11,7 +11,9 @@ test('combined Windows installer includes Baileys and the Chrome extension witho
   const launcher = fs.readFileSync(path.join(root, 'desktop/support/Instalar.cmd'), 'utf8');
   const builder = fs.readFileSync(path.join(root, 'scripts/build_support_desktop.ps1'), 'utf8');
   const panel = fs.readFileSync(path.join(root, 'src/support/panel.html'), 'utf8');
-  const archive = fs.readFileSync(path.join(root, 'static/downloads/AsistoTareas-5.00.269.zip'));
+  const download = panel.match(/AsistoTareas-[\d.]+\.zip/);
+  assert.ok(download, 'visible installer download');
+  const archive = fs.readFileSync(path.join(root, 'static/downloads', download[0]));
   const archiveText = archive.toString('latin1');
 
   assert.match(installer, /npm-cli\.js'\) ci --omit=dev --ignore-scripts/);
@@ -25,7 +27,6 @@ test('combined Windows installer includes Baileys and the Chrome extension witho
   assert.match(launcher, /Esta ventana permanecera abierta/);
   assert.match(launcher, /pause/);
   assert.match(builder, /extensions\/whatsapp-support/);
-  assert.match(panel, /AsistoTareas-5\.00\.277\.zip/);
   assert.match(archiveText, /Extension[\\/]manifest\.json/);
   assert.match(archiveText, /agent\.cjs/);
   assert.doesNotMatch(archiveText, /node_modules/);

@@ -29,7 +29,7 @@ function harness(rows, failureCode) {
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../customer_notifications.js'),'utf8'),sandbox);
   const app = {locals:{},get:(route,...handlers)=>routes.set('GET '+route,handlers.at(-1)),
     post:(route,...handlers)=>routes.set('POST '+route,handlers.at(-1)),
-    patch:()=>{}};
+    use:()=>{},patch:()=>{}};
   sandbox.module.exports.mountCustomerNotifications(app,{requireAuth:(_q,_s,next)=>next()});
   async function call(method, body, user = {role:'superadmin'}) {
     const res = {code:200,status(code){this.code=code;return this;},json(data){this.data=data;return this;}};

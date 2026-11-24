@@ -13,7 +13,7 @@ test('la consulta general abre un chat sin mencionar la marca en el título', ()
   assert.match(html, /Encontralo al instante/);
   assert.doesNotMatch(html, />Consultas<\/a>/);
   assert.match(html, /GENERAL_CHAT=true/);
-  new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]);
+  new vm.Script(html.match(/<script>([\s\S]*?)<\/script>/)[1]);
 });
 
 test('un producto escaneado conserva su chat contextual sin mostrar el acceso al chat general', () => {
@@ -51,7 +51,7 @@ test('la ficha de Mecan muestra las acciones rediseñadas y evita mostrar datos 
 
 test('iPhone y navegadores internos usan lectura asistida si falta BarcodeDetector', () => {
   const html = pageHtml({ tenant: 'MCN', code: '', branding: { companyName: 'Mecan' } });
-  const script = html.match(/<script>([\s\S]*)<\/script>/)[1];
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
   new vm.Script(script);
   assert.match(script, /createLocalBarcodeDetector/);
   assert.match(script, /new Worker\(assetBase \+ 'worker-v1.js'\)/);
