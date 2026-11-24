@@ -10,6 +10,7 @@
 const { ObjectId } = require('mongodb');
 const OpenAI = require('openai');
 const { getDb } = require('./db');
+const { listPilotSessions, readPilotSession } = require('./bot_test_followup');
 const { resolveOpenAiApiKey } = require('./ai_key_router');
 
 const DEFAULT_TENANT_ID = String(process.env.TENANT_ID || 'default').trim() || 'default';
@@ -212,6 +213,7 @@ function publicConversation(conv, followup, lead, config) {
 
   return {
     _id: String(conv?._id || ''),
+    isTest: conv?.isTest === true,
     tenantId: conv?.tenantId || '',
     waId: conv?.waId || '',
     contactName: conv?.contactName || '',
@@ -746,7 +748,7 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
 :root{--bg:#eef3f6;--card:#fff;--line:#dce5ea;--text:#10243e;--muted:#667085;--primary:#0e6b66;--primary2:#0a5955;--danger:#b42318;--warn:#b54708;--ok:#067647;--blue:#175cd3;--purple:#5925dc;--shadow:0 6px 18px rgba(16,24,40,.07)}
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--text)}button,input,select,textarea{font:inherit}button{cursor:pointer}.wrap{padding:14px;min-height:100vh}.top{display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}.title h1{font-size:22px;margin:0 0 4px}.title p{margin:0;color:var(--muted);font-size:12px}.topActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.tenantPicker{display:flex;align-items:center;gap:8px;padding:6px 9px;border:1px solid var(--line);border-radius:10px;background:#fff}.tenantPicker label{font-size:11px;font-weight:800;color:#475467}.tenantPicker select{min-width:150px;border:0;background:transparent;color:var(--text);font-weight:800;outline:none}.btn{border:1px solid var(--line);border-radius:9px;padding:8px 11px;background:#fff;color:var(--text);font-weight:750}.btn:hover{background:#f8fafc}.btnPrimary{background:var(--primary);border-color:var(--primary);color:#fff}.btnPrimary:hover{background:var(--primary2)}.btnDanger{color:var(--danger);border-color:#f4c7c3}.btnSm{padding:6px 9px;font-size:12px}.muted{color:var(--muted);font-size:12px}
 .kpis{display:grid;grid-template-columns:repeat(6,minmax(95px,1fr));gap:6px;margin-bottom:8px}.kpi{background:#fff;border:1px solid var(--line);border-radius:10px;padding:6px 9px;box-shadow:0 2px 8px rgba(16,24,40,.04);min-height:52px}.kpi b{display:block;font-size:18px;line-height:1.05}.kpi span{font-size:10px;color:var(--muted);line-height:1.15}
-.filters{display:grid;grid-template-columns:minmax(210px,1.25fr) 120px 120px minmax(140px,.75fr) minmax(145px,.8fr) minmax(155px,.85fr) minmax(145px,.8fr);gap:8px;background:#fff;border:1px solid var(--line);padding:9px;border-radius:12px;margin-bottom:10px;align-items:end}.filters>input,.dateFilter input{width:100%;border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:white;min-height:38px}.dateFilter{display:flex;flex-direction:column;gap:4px}.dateFilter label{font-size:10px;font-weight:800;color:#475467;padding-left:2px}.multiFilter{position:relative}.multiFilter summary{list-style:none;width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 30px 9px 10px;background:#fff;min-height:38px;font-size:12px;font-weight:750;color:#344054;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative}.multiFilter summary::-webkit-details-marker{display:none}.multiFilter summary:after{content:'▾';position:absolute;right:10px;top:8px;color:#667085}.multiFilter[open] summary{border-color:#98a2b3}.multiMenu{position:absolute;z-index:20;left:0;right:0;top:43px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:7px;box-shadow:0 12px 30px rgba(16,24,40,.16);max-height:260px;overflow:auto}.multiMenu label{display:flex;align-items:center;gap:8px;padding:6px 7px;border-radius:7px;font-size:12px;cursor:pointer}.multiMenu label:hover{background:#f8fafc}.multiMenu input{width:auto;margin:0}.multiTools{display:flex;gap:6px;padding:3px 4px 7px;border-bottom:1px solid #edf1f4;margin-bottom:3px}.multiTools button{border:0;background:#f2f4f7;border-radius:6px;padding:4px 7px;font-size:10px;font-weight:800;color:#475467}
+.filters{display:grid;grid-template-columns:minmax(210px,1.25fr) 120px 120px repeat(5,minmax(120px,.8fr));gap:8px;background:#fff;border:1px solid var(--line);padding:9px;border-radius:12px;margin-bottom:10px;align-items:end}.filters>input,.dateFilter input{width:100%;border:1px solid var(--line);border-radius:9px;padding:8px 10px;background:white;min-height:38px}.dateFilter{display:flex;flex-direction:column;gap:4px}.dateFilter label{font-size:10px;font-weight:800;color:#475467;padding-left:2px}.multiFilter{position:relative}.multiFilter summary{list-style:none;width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 30px 9px 10px;background:#fff;min-height:38px;font-size:12px;font-weight:750;color:#344054;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative}.multiFilter summary::-webkit-details-marker{display:none}.multiFilter summary:after{content:'▾';position:absolute;right:10px;top:8px;color:#667085}.multiFilter[open] summary{border-color:#98a2b3}.multiMenu{position:absolute;z-index:20;left:0;right:0;top:43px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:7px;box-shadow:0 12px 30px rgba(16,24,40,.16);max-height:260px;overflow:auto}.multiMenu label{display:flex;align-items:center;gap:8px;padding:6px 7px;border-radius:7px;font-size:12px;cursor:pointer}.multiMenu label:hover{background:#f8fafc}.multiMenu input{width:auto;margin:0}.multiTools{display:flex;gap:6px;padding:3px 4px 7px;border-bottom:1px solid #edf1f4;margin-bottom:3px}.multiTools button{border:0;background:#f2f4f7;border-radius:6px;padding:4px 7px;font-size:10px;font-weight:800;color:#475467}
 .apiMoney{font-weight:850;color:#067647}.apiMessageText{max-width:560px;white-space:pre-wrap;overflow-wrap:anywhere}.tableCard{background:#fff;border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);overflow:hidden}.tableHead{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}.tableWrap{overflow:auto;max-height:calc(100vh - 300px);min-height:330px}table{width:100%;border-collapse:collapse;font-size:11.5px;min-width:1000px;table-layout:fixed}th{position:sticky;top:0;z-index:2;background:#f8fafc;color:#475467;font-size:10px;text-transform:uppercase;letter-spacing:.01em;text-align:left;padding:7px 6px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}td{padding:8px 6px;border-bottom:1px solid #edf1f4;vertical-align:middle;overflow:hidden}tr:hover td{background:#fbfdfd}.clientName{font-size:12px;font-weight:800;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.phone{font-size:10px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.summaryCell{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#475467}.actionsCell{display:flex;gap:4px;white-space:nowrap;align-items:center}.actionsCell .btnSm{padding:5px 7px;font-size:10.5px}.badge{display:inline-flex;align-items:center;border-radius:999px;padding:3px 6px;font-size:9px;font-weight:800;border:1px solid transparent;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}.stars{font-size:11px!important;letter-spacing:0!important;white-space:nowrap}.bOpen{background:#eff8ff;color:#175cd3}.bClosed{background:#f2f4f7;color:#344054}.bPending{background:#fffaeb;color:#b54708}.bFollow{background:#f4f3ff;color:#5925dc}.bResolved{background:#ecfdf3;color:#067647}.bDiscarded{background:#f2f4f7;color:#475467}.bDue{background:#fef3f2;color:#b42318}.bYes{background:#eef4ff;color:#3538cd}.bNo{background:#f2f4f7;color:#475467}.bAi{background:#ecfdf3;color:#067647}.bAiPending{background:#fff7ed;color:#c2410c}.bAiError{background:#fef3f2;color:#b42318}.stars{color:#b54708;font-size:13px;letter-spacing:1px}.empty{padding:40px;text-align:center;color:var(--muted)}
 .modal{display:none;position:fixed;z-index:80;inset:0;background:rgba(15,23,42,.50);align-items:center;justify-content:center;padding:18px}.modal.open{display:flex}.modalCard{width:min(900px,96vw);max-height:92vh;background:#fff;border-radius:16px;box-shadow:0 28px 80px rgba(0,0,0,.3);display:flex;flex-direction:column;overflow:hidden}.modalCard.wide{width:min(1050px,97vw)}.modalHead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line)}.modalHead h3{margin:0;font-size:17px}.modalBody{padding:14px 16px;overflow:auto}.modalFoot{padding:11px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}.chat{background:#f6f8fa;padding:14px;min-height:360px;max-height:68vh;overflow:auto}.msgRow{display:flex;margin:7px 0}.msgRow.user{justify-content:flex-start}.msgRow.assistant{justify-content:flex-end}.bubble{max-width:78%;padding:9px 11px;border-radius:12px;font-size:13px;line-height:1.42;white-space:pre-wrap;overflow-wrap:anywhere}.user .bubble{background:#fff;border:1px solid var(--line);border-bottom-left-radius:4px}.assistant .bubble{background:#dff6e9;border:1px solid #c4ebd5;border-bottom-right-radius:4px}.msgAt{display:block;font-size:10px;color:var(--muted);margin-top:5px}.media{margin-top:7px}.media img{max-width:320px;max-height:250px;border-radius:8px}.media audio,.media video{max-width:320px}.chatComposer{display:flex;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:#fff;align-items:flex-end}.chatComposer.hidden{display:none}.chatComposer textarea{flex:1;min-height:44px;max-height:110px;resize:vertical;border:1px solid var(--line);border-radius:10px;padding:9px 10px;font:inherit}.chatComposer .btn{min-width:84px;height:44px}.contactLine{font-size:11px;color:#475467;margin-top:3px}
 .aiBox{background:#f5fbfa;border:1px solid #cfe9e6;border-radius:12px;padding:11px 12px;margin-bottom:12px}.aiBoxHead{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:6px}.aiBox h4{margin:0;font-size:13px}.aiGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px}.aiMini{background:#fff;border:1px solid var(--line);border-radius:9px;padding:8px}.aiMini label{display:block;font-size:10px;color:var(--muted);margin-bottom:3px}.aiMini b{font-size:12px}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.field{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}.field label{font-size:11px;font-weight:800;color:#475467}.field input,.field select,.field textarea{width:100%;border:1px solid var(--line);border-radius:9px;padding:9px 10px;background:#fff}.field textarea{min-height:76px;resize:vertical}.check{display:flex;gap:8px;align-items:center;padding:9px 10px;border:1px solid var(--line);border-radius:9px;margin-bottom:10px}.check input{width:auto}.history{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}.histItem{padding:8px;border:1px solid var(--line);border-radius:9px;margin:6px 0;background:#fafbfc;font-size:11px}.leadBox{background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:9px;margin-bottom:10px;font-size:11px}.toast{position:fixed;right:18px;bottom:18px;background:#101828;color:#fff;padding:10px 13px;border-radius:10px;display:none;z-index:100;font-size:12px}.toast.show{display:block}.toast.err{background:#b42318}
@@ -756,7 +758,7 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
 <body>
 <div class="wrap">
   <div class="top">
-    <div class="title"><h1>Seguimiento de conversaciones</h1><p>Dominio: <strong id="tenantLabel">${htmlEscape(tenant)}</strong> · ${htmlEscape(role)} · conversaciones en modo conversacional · IA ${htmlEscape(FOLLOWUP_BUILD)}</p></div>
+    <div class="title"><h1>Seguimiento de conversaciones</h1><p>Dominio: <strong id="tenantLabel">${htmlEscape(tenant)}</strong> · ${htmlEscape(role)} · conversaciones con el bot · excluye envíos automáticos · IA ${htmlEscape(FOLLOWUP_BUILD)}</p></div>
     <div class="topActions">
       ${canSelectTenant ? `<div class="tenantPicker"><label for="tenantSelect">Dominio</label><select id="tenantSelect">${tenantOptions.map(t => `<option value="${htmlEscape(t)}" ${String(t) === String(tenant) ? 'selected' : ''}>${htmlEscape(t)}</option>`).join('')}</select></div>` : ''}
       <span class="muted" id="cfgLabel">Cierre automático: cargando…</span>
@@ -779,13 +781,22 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
     <div class="dateFilter"><label for="dateFrom">Desde</label><input id="dateFrom" type="date"/></div>
     <div class="dateFilter"><label for="dateTo">Hasta</label><input id="dateTo" type="date"/></div>
 
+    <details class="multiFilter" id="originFilter">
+      <summary>Origen: Todas</summary>
+      <div class="multiMenu" role="group" aria-label="Origen de la conversación">
+        <label><input type="radio" name="originFilterValue" value="all" checked/>Todas</label>
+        <label><input type="radio" name="originFilterValue" value="real"/>Reales</label>
+        <label><input type="radio" name="originFilterValue" value="test"/>Pruebas</label>
+      </div>
+    </details>
+
     <details class="multiFilter" id="channelFilter">
       <summary>Canal: Todos</summary>
       <div class="multiMenu">
         <div class="multiTools"><button type="button" data-select-all="channelFilterValue">Todos</button><button type="button" data-clear-all="channelFilterValue">Ninguno</button></div>
         <label><input type="checkbox" name="channelFilterValue" value="whatsapp" checked/>WhatsApp</label>
         <label><input type="checkbox" name="channelFilterValue" value="qr_web" checked/>QR Web</label>
-        <label><input type="checkbox" name="channelFilterValue" value="api_messages" checked/>API Mensajes</label>
+        <label><input type="checkbox" name="channelFilterValue" value="bot_test" checked/>Pruebas Bot</label>
       </div>
     </details>
 
@@ -827,6 +838,7 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
     </details>  </div>
 
   <section class="tableCard">
+
     <div class="tableHead"><strong>Conversaciones</strong><span class="muted" id="listCount">0 registros</span></div>
     <div class="tableWrap">
       <table>
@@ -849,7 +861,7 @@ function panelHtml({ tenant, tenantOptions = [], user, canInbox, canEditConfig, 
   </section>
 
 </div>
-<div class="modal" id="apiWindowModal"><div class="modalCard wide"><div class="modalHead"><div><h3 id="apiWindowTitle">Ventana API Mensajes</h3><div class="muted" id="apiWindowSubtitle"></div></div><button class="btn btnSm" data-close="apiWindowModal">Cerrar</button></div><div class="modalBody" id="apiWindowDetail"><div class="empty">Cargando…</div></div></div></div>
+
 
 <div class="modal" id="chatModal"><div class="modalCard wide"><div class="modalHead"><div><h3 id="chatTitle">Conversación</h3><div class="muted" id="chatSubtitle"></div><div class="contactLine" id="chatContact"></div></div><button class="btn btnSm" data-close="chatModal">Cerrar</button></div><div class="chat" id="chatBody"><div class="empty">Cargando…</div></div><div class="chatComposer hidden" id="chatComposer"><textarea id="chatMessage" maxlength="4000" placeholder="Escribí una respuesta al cliente…"></textarea><button class="btn btnPrimary" id="chatSendBtn" type="button">Enviar</button></div><div class="modalFoot" id="chatFoot"></div></div></div>
 <div class="modal" id="followModal"><div class="modalCard wide"><div class="modalHead"><div><h3 id="followTitle">Seguimiento</h3><div class="muted" id="followSubtitle"></div></div><button class="btn btnSm" data-close="followModal">Cerrar</button></div><div class="modalBody" id="followBody"><div class="empty">Cargando…</div></div><div class="modalFoot" id="followFoot"></div></div></div>
@@ -860,7 +872,7 @@ let TENANT=${JSON.stringify(tenant)};
 const CAN_INBOX=${canInbox ? 'true' : 'false'};
 const CAN_EDIT_CONFIG=${canEditConfig ? 'true' : 'false'};
 const CAN_SELECT_TENANT=${canSelectTenant ? 'true' : 'false'};
-let rows=[];let apiWindows=[];let activeId='';let activeItem=null;let config={autoCloseEnabled:true,inactivityMinutes:30};let debounce=null;let classificationTouched=false;let chatPollTimer=null;let lastChatMessagesSignature='';
+let rows=[];let activeId='';let activeItem=null;let config={autoCloseEnabled:true,inactivityMinutes:30};let debounce=null;let classificationTouched=false;let chatPollTimer=null;let lastChatMessagesSignature='';
 const el=id=>document.getElementById(id);
 function api(path){const u=new URL(path,location.origin);if(TENANT)u.searchParams.set('tenant',TENANT);return u.toString()}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]))}
@@ -887,20 +899,9 @@ function localDateBoundary(id,endOfDay){const v=String(el(id)?.value||'').trim()
 function cfgText(){el('cfgLabel').textContent=config.autoCloseEnabled?('Cierre: '+config.inactivityMinutes+' min'):'Cierre automático desactivado'}
 async function loadConfig(){const j=await requestJson('/api/conversation-followup/config');config=j.config||config;cfgText()}
 function renderKpis(s){el('kActive').textContent=s.active||0;el('kManual').textContent=s.manual||0;el('kClosed').textContent=s.closed||0;el('kPending').textContent=s.pending_review||0;el('kFollow').textContent=s.follow_up||0;el('kDue').textContent=s.due||0}
-function apiWindowSummaryText(x){
-  const open=x.windowEndsAt&&new Date(x.windowEndsAt).getTime()>Date.now();
-  return [
-    'Último envío: '+fmt(x.lastMessageAt),
-    'Ventana: '+String(x.windowMinutes||20)+' min',
-    'Mensajes: '+String(x.messageCount||0),
-    'Importe: '+fmtMoney(x.amount||0,x.currency||'ARS'),
-    'Estado: '+(open?'Abierta':'Cerrada')
-  ].join(' · ');
-}
 function renderRows(){
   const mixed=[
-    ...rows.map(x=>({kind:'conversation',at:x.lastAt||x.updatedAt||x.createdAt||'',item:x})),
-    ...apiWindows.map(x=>({kind:'api_messages',at:x.windowStartedAt||x.lastMessageAt||'',item:x}))
+    ...rows.map(x=>({kind:'conversation',at:x.lastAt||x.updatedAt||x.createdAt||'',item:x}))
   ].sort((a,b)=>{
     const ta=new Date(a.at||0).getTime()||0;
     const tb=new Date(b.at||0).getTime()||0;
@@ -914,33 +915,10 @@ function renderRows(){
   }
 
   el('tbody').innerHTML=mixed.map(entry=>{
-    if(entry.kind==='api_messages'){
-      const x=entry.item||{};
-      const recipient=x.contact||x.contactName||'Sin nombre';
-      const sub=[
-        'API Mensajes',
-        (x.contactName&&x.contactName!==x.contact)?x.contactName:'',
-        x.numeroFrom?('desde '+x.numeroFrom):''
-      ].filter(Boolean).join(' · ');
-      const summary=apiWindowSummaryText(x);
-      return '<tr class="apiMessageRow">'+
-        '<td><div class="clientName" title="'+esc(recipient)+'">'+esc(recipient)+'</div><div class="phone">'+esc(sub)+'</div></td>'+
-        '<td>'+esc(fmt(x.windowStartedAt))+'</td>'+ 
-        '<td>—</td>'+ 
-        '<td>—</td>'+ 
-        '<td>—</td>'+ 
-        '<td>—</td>'+ 
-        '<td>—</td>'+ 
-        '<td><div class="summaryCell" title="'+esc(summary)+'">'+esc(summary)+'</div></td>'+ 
-        '<td>—</td>'+ 
-        '<td><div class="actionsCell"><button class="btn btnSm" data-api-window="'+esc(x._id)+'">Ver mensajes</button></div></td>'+ 
-      '</tr>';
-    }
-
     const x=entry.item;
-    const nm=x.channelType==='qr_web'?(x.lead?.name||x.contactName||x.waId||'Sin nombre'):(x.contactName||x.lead?.name||x.waId||'Sin nombre');
+    const nm=x.isTest?('PRUEBA · '+x.contactName):x.channelType==='qr_web'?(x.lead?.name||x.contactName||x.waId||'Sin nombre'):(x.contactName||x.lead?.name||x.waId||'Sin nombre');
     const qrContact=x.lead?.phone||x.contactPhone||x.lead?.email||x.contactEmail||'';
-    const channelInfo=x.channelType==='qr_web'?('QR Web'+(x.qrProductCode?' · SKU '+x.qrProductCode:'')+(qrContact?' · '+qrContact:'')):(x.waId||'');
+    const channelInfo=x.isTest?'Pruebas Bot · '+(x.tenantId==='NEA_PRUEBAS'?'NEA':x.tenantId||TENANT):x.channelType==='qr_web'?('QR Web'+(x.qrProductCode?' · SKU '+x.qrProductCode:'')+(qrContact?' · '+qrContact:'')):(x.waId||'');
     const status=x.finalized?'<span class="badge bClosed">Finalizada</span>':(x.manualOpen?'<span class="badge bFollow">Atención manual</span>':'<span class="badge bOpen">Bot activo</span>');
     const workflow='<span class="badge '+workflowBadge(x.workflowStatus)+'">'+esc(workflowLabel(x.workflowStatus))+'</span>'+(x.isDue?' <span class="badge bDue">Vencido</span>':'');
     const cat=x.category?'<span class="badge bYes">'+esc(categoryLabel(x.category))+'</span> '+aiBadge(x):aiBadge(x)||'<span class="badge bNo">Sin clasificar</span>';
@@ -950,36 +928,20 @@ function renderRows(){
 
   el('tbody').querySelectorAll('[data-chat]').forEach(b=>b.addEventListener('click',()=>openChat(b.dataset.chat)));
   el('tbody').querySelectorAll('[data-follow]').forEach(b=>b.addEventListener('click',()=>openFollow(b.dataset.follow)));
-  el('tbody').querySelectorAll('[data-api-window]').forEach(b=>b.addEventListener('click',()=>openApiWindow(b.dataset.apiWindow)));
-}
-async function openApiWindow(id){
-  openModal('apiWindowModal');el('apiWindowDetail').innerHTML='<div class="empty">Cargando…</div>';
-  try{
-    const j=await requestJson('/api/conversation-followup/api-message-window/'+encodeURIComponent(id));
-    const x=j.item||{};const msgs=Array.isArray(x.messages)?x.messages:[];
-    el('apiWindowTitle').textContent='Ventana · '+(x.contactName||x.contact||'');
-    el('apiWindowSubtitle').textContent=fmt(x.windowStartedAt)+' → '+fmt(x.windowEndsAt)+' · '+String(x.messageCount||0)+' mensajes · '+fmtMoney(x.amount||0,x.currency||'ARS');
-    el('apiWindowDetail').innerHTML=msgs.length?msgs.map(m=>'<div class="histItem"><b>'+esc(fmt(m.at))+'</b> · '+esc(m.type||'text')+(m.id_msj_dest?'<span class="muted"> · dest '+esc(m.id_msj_dest)+'</span>':'')+(m.id_msj_renglon?'<span class="muted"> · renglón '+esc(m.id_msj_renglon)+'</span>':'')+'<div class="apiMessageText" style="margin-top:5px">'+esc(m.text||'')+'</div></div>').join(''):'<div class="empty">No hay detalle guardado para esta ventana.</div>';
-  }catch(e){el('apiWindowDetail').innerHTML='<div class="empty">Error cargando detalle.</div>';toast(e.message,true)}
 }
 async function loadRows(){
-  const p=new URLSearchParams();p.set('limit','500');const q=el('q').value.trim();if(q)p.set('q',q);
+  const p=new URLSearchParams();p.set('origin',checkedValues('originFilterValue')[0]||'all');p.set('limit','500');const q=el('q').value.trim();if(q)p.set('q',q);
   const channels=checkedValues('channelFilterValue');const states=checkedValues('state');const workflows=checkedValues('workflowFilterValue');const categories=checkedValues('categoryFilterValue');
   const allStates=allValues('state');const allWorkflows=allValues('workflowFilterValue');const allCategories=allValues('categoryFilterValue');
-  const conversationChannels=channels.filter(v=>v==='whatsapp'||v==='qr_web');
+  const conversationChannels=channels.filter(v=>v==='whatsapp'||v==='qr_web'||v==='bot_test');
   p.set('channel',conversationChannels.length?conversationChannels.join(','):'none');
   p.set('conversationState',states.length===allStates.length?'all':(states.length?states.join(','):'none'));
   p.set('workflow',workflows.length===allWorkflows.length?'all':(workflows.length?workflows.join(','):'none'));
   p.set('category',categories.length===allCategories.length?'all':(categories.length?categories.join(','):'none'));
   const dateFrom=localDateBoundary('dateFrom',false);const dateTo=localDateBoundary('dateTo',true);if(dateFrom)p.set('dateFrom',dateFrom);if(dateTo)p.set('dateTo',dateTo);
-  const tasks=[];
-  if(conversationChannels.length)tasks.push(requestJson('/api/conversation-followup/conversations?'+p.toString()));else tasks.push(Promise.resolve({items:[],summary:{}}));
-  if(channels.includes('api_messages')){
-    const ap=new URLSearchParams();ap.set('limit','1000');if(q)ap.set('q',q);if(dateFrom)ap.set('dateFrom',dateFrom);if(dateTo)ap.set('dateTo',dateTo);
-    tasks.push(requestJson('/api/conversation-followup/api-message-windows?'+ap.toString()));
-  }else tasks.push(Promise.resolve({items:[],summary:{windows:0,messages:0,byCurrency:{}}}));
-  const [j,aw]=await Promise.all(tasks);
-  rows=j.items||[];apiWindows=aw.items||[];renderKpis(j.summary||{});renderRows();
+  const j=conversationChannels.length ? await requestJson('/api/conversation-followup/conversations?'+p.toString()) : {items:[],summary:{}};
+  rows=j.items||[];renderKpis(j.summary||{});renderRows();
+
 }
 function renderMedia(m){if(!m.media||!m.media.url)return '';const u=api(m.media.url);const k=String(m.media.kind||'');if(k==='image')return '<div class="media"><a href="'+esc(u)+'" target="_blank"><img src="'+esc(u)+'"/></a></div>';if(k==='audio')return '<div class="media"><audio controls src="'+esc(u)+'"></audio></div>';if(k==='video')return '<div class="media"><video controls src="'+esc(u)+'"></video></div>';return '<div class="media"><a href="'+esc(u)+'" target="_blank">📎 '+esc(m.media.filename||'Archivo')+'</a></div>'}
 function renderFollowupChatMessages(items,forceBottom=false){
@@ -1013,6 +975,7 @@ async function refreshOpenChatMessages(id){
 }
 function startOpenChatPolling(id){if(chatPollTimer)clearInterval(chatPollTimer);chatPollTimer=setInterval(()=>refreshOpenChatMessages(id),3000)}
 async function sendFromFollowupChat(){
+  if(activeItem?.isTest)return;
   if(!activeId||!activeItem)return;
   const box=el('chatMessage'),btn=el('chatSendBtn'),text=String(box.value||'').trim();
   if(!text)return;btn.disabled=true;
@@ -1039,12 +1002,12 @@ async function openChat(id){
   try{
     const [d,m]=await Promise.all([requestJson('/api/conversation-followup/'+encodeURIComponent(id)),requestJson('/api/conversation-followup/'+encodeURIComponent(id)+'/messages')]);
     const x=d.item;activeItem=x;
-    const nm=x.channelType==='qr_web'?(x.lead?.name||x.contactName||x.waId||'Sin nombre'):(x.contactName||x.lead?.name||x.waId||'Sin nombre');
+    const nm=x.isTest?('PRUEBA · '+x.contactName):x.channelType==='qr_web'?(x.lead?.name||x.contactName||x.waId||'Sin nombre'):(x.contactName||x.lead?.name||x.waId||'Sin nombre');
     el('chatTitle').textContent=nm;
     el('chatSubtitle').textContent=(x.channelType==='qr_web'?('QR Web'+(x.qrProductCode?' · SKU '+x.qrProductCode:'')):(x.waId||''))+' · '+(x.finalized?'Finalizada':(x.manualOpen?'Atención manual':'Bot activo'))+' · última actividad '+fmt(x.lastAt);
     const contactParts=[];if(x.lead?.phone||x.contactPhone)contactParts.push('Tel: '+(x.lead?.phone||x.contactPhone));if(x.lead?.email||x.contactEmail)contactParts.push('Email: '+(x.lead?.email||x.contactEmail));if(x.lead?.company)contactParts.push('Empresa: '+x.lead.company);el('chatContact').textContent=contactParts.join(' · ');
     renderFollowupChatMessages(m.items||[],true);
-    if(CAN_INBOX){
+    if(CAN_INBOX&&!x.isTest){
       el('chatComposer').classList.remove('hidden');
       el('chatMessage').placeholder=x.finalized?'Escribí una respuesta… Al enviar, la conversación se reabrirá en atención manual.':'Escribí una respuesta al cliente…';
     }
@@ -1061,6 +1024,7 @@ async function closeNow(id){if(!confirm('¿Finalizar esta conversación ahora? S
 async function refresh(){el('refreshBtn').disabled=true;try{await loadConfig();await loadRows()}catch(e){toast(e.message,true)}finally{el('refreshBtn').disabled=false}}
 async function changeTenant(value){const next=String(value||'').trim();if(!CAN_SELECT_TENANT||!next||next===TENANT)return;TENANT=next;activeId='';activeItem=null;if(el('tenantLabel'))el('tenantLabel').textContent=TENANT;try{const u=new URL(location.href);u.searchParams.set('tenant',TENANT);history.replaceState(null,'',u.toString())}catch{}await refresh()}
 el('chatSendBtn').addEventListener('click',sendFromFollowupChat);el('chatMessage').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendFromFollowupChat()}});
+el('originFilter').addEventListener('change',()=>{const value=checkedValues('originFilterValue')[0]||'all';el('originFilter').querySelector('summary').textContent='Origen: '+({all:'Todas',real:'Reales',test:'Pruebas'}[value]);el('originFilter').open=false;loadRows().catch(e=>toast(e.message,true))});
 el('refreshBtn').addEventListener('click',refresh);if(CAN_SELECT_TENANT&&el('tenantSelect'))el('tenantSelect').addEventListener('change',e=>changeTenant(e.target.value));el('q').addEventListener('input',()=>{clearTimeout(debounce);debounce=setTimeout(()=>loadRows().catch(e=>toast(e.message,true)),250)});['dateFrom','dateTo'].forEach(id=>el(id).addEventListener('change',()=>loadRows().catch(e=>toast(e.message,true))));setupMulti('channelFilter','channelFilterValue','Canal');setupMulti('stateFilter','state','Estado');setupMulti('workflowFilter','workflowFilterValue','Gestión');setupMulti('categoryFilter','categoryFilterValue','Tipo');
 if(CAN_EDIT_CONFIG){el('cfgBtn').addEventListener('click',()=>{el('cfgEnabled').checked=config.autoCloseEnabled;el('cfgMinutes').value=config.inactivityMinutes;openModal('cfgModal')});el('cfgSave').addEventListener('click',async()=>{try{const j=await requestJson('/api/conversation-followup/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({autoCloseEnabled:el('cfgEnabled').checked,inactivityMinutes:el('cfgMinutes').value})});config=j.config;cfgText();closeModal('cfgModal');toast('Configuración guardada');await loadRows()}catch(e){toast(e.message,true)}})}
 Promise.all([loadConfig(),loadRows()]).catch(e=>toast(e.message,true));setInterval(()=>{if(!document.hidden)loadRows().catch(()=>{})},30000);
@@ -1071,6 +1035,14 @@ Promise.all([loadConfig(),loadRows()]).catch(e=>toast(e.message,true));setInterv
 
 // ===================== Rutas =====================
 
+async function resolveFollowupTenant(req,auth){
+ const tenant=resolveTenant(req,auth);
+ if(tenant==='NEA'&&ObjectId.isValid(String(req.params?.id||''))){
+  const db=await getDb();const test=await db.collection('conversations').findOne({_id:new ObjectId(req.params.id),tenantId:'NEA_PRUEBAS',isTest:true});
+  if(test)return 'NEA_PRUEBAS';
+ }
+ return tenant;
+}
 function mountConversationFollowupPanel(app, { auth } = {}) {
   if (!app || app.__asistoConversationFollowupMounted) return;
   app.__asistoConversationFollowupMounted = true;
@@ -1100,6 +1072,19 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
     }
   });
 
+  app.get('/api/conversation-followup/pilot-sessions', async(req,res)=>{
+    try { const tenant=resolveTenant(req,auth);if(!['NEA','NEA_PRUEBAS'].includes(tenant))return res.status(403).json({error:'forbidden'});
+      const items=await listPilotSessions(await getDb(),tenant,{q:cleanString(req.query?.q,150),from:safeDate(req.query?.dateFrom),to:safeDate(req.query?.dateTo)});
+      res.setHeader('Cache-Control','no-store');return res.json({ok:true,items});
+    }catch(e){return res.status(500).json({error:'pilot_history_failed'})}
+  });
+  app.get('/api/conversation-followup/pilot-sessions/:id', async(req,res)=>{
+    try { const tenant=resolveTenant(req,auth);if(!['NEA','NEA_PRUEBAS'].includes(tenant))return res.status(403).json({error:'forbidden'});
+      if(!ObjectId.isValid(req.params.id))return res.status(400).json({error:'invalid_id'});
+      const items=await readPilotSession(await getDb(),tenant,new ObjectId(req.params.id));if(!items)return res.status(404).json({error:'not_found'});
+      res.setHeader('Cache-Control','no-store');return res.json({ok:true,items});
+    }catch(e){return res.status(500).json({error:'pilot_history_failed'})}
+  });
   app.get('/api/conversation-followup/version', (req, res) => {
     return res.json({ ok: true, build: FOLLOWUP_BUILD, temperatureSent: false });
   });
@@ -1149,20 +1134,23 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
       const noStates = rawStates === 'none';
       const noWorkflows = rawWorkflows === 'none';
       const noCategories = rawCategories === 'none';
-      const channels = (rawChannels === 'all' || noChannels) ? [] : queryList(rawChannels, ['whatsapp', 'qr_web']);
+      const channels = (rawChannels === 'all' || noChannels) ? [] : queryList(rawChannels, ['whatsapp', 'qr_web', 'bot_test']);
       const conversationStates = (rawStates === 'all' || noStates) ? [] : queryList(rawStates, ['open', 'manual', 'closed']);
       const workflows = (rawWorkflows === 'all' || noWorkflows) ? [] : queryList(rawWorkflows, ['pending_review', 'follow_up', 'due', 'resolved', 'discarded']);
       const categories = (rawCategories === 'all' || noCategories) ? [] : queryList(rawCategories, ['consulta', 'cotizacion', 'soporte', 'reclamo', 'comercial', 'otro', 'sin_clasificar']);
       const dateFrom = safeDate(req.query?.dateFrom);
       const dateTo = safeDate(req.query?.dateTo);
-      const q = { tenantId: tenant, botMode: 'conversacional' };
+      const tenantScope=tenant==='NEA'?{ $in:['NEA','NEA_PRUEBAS'] }:tenant;
+      const q = { tenantId: tenantScope, botMode: 'conversacional' };
+      if(req.query.origin==='test')q.isTest=true;
+      if(req.query.origin==='real')q.isTest={$ne:true};
 
 
       if (qText) {
         const rx = new RegExp(escapeRegex(qText), 'i');
         const [followupHits, leadHits] = await Promise.all([
-          db.collection(FOLLOWUP_COLLECTION).find({ tenantId: tenant, $or: [{ summary: rx }, { notes: rx }, { tags: rx }, { assignedTo: rx }, { aiFollowUpReason: rx }] }, { projection: { conversationId: 1 } }).limit(500).toArray(),
-          db.collection('leads').find({ tenantId: tenant, $or: [{ name: rx }, { company: rx }, { email: rx }, { phone: rx }, { lastMessage: rx }] }, { projection: { conversationId: 1 } }).limit(500).toArray(),
+          db.collection(FOLLOWUP_COLLECTION).find({ tenantId: tenantScope, $or: [{ summary: rx }, { notes: rx }, { tags: rx }, { assignedTo: rx }, { aiFollowUpReason: rx }] }, { projection: { conversationId: 1 } }).limit(500).toArray(),
+          db.collection('leads').find({ tenantId: tenantScope, $or: [{ name: rx }, { company: rx }, { email: rx }, { phone: rx }, { lastMessage: rx }] }, { projection: { conversationId: 1 } }).limit(500).toArray(),
         ]);
         const relatedIds = [...followupHits, ...leadHits]
           .map(x => x.conversationId)
@@ -1176,8 +1164,8 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
       const convs = await db.collection('conversations').find(q).sort({ updatedAt: -1, openedAt: -1 }).limit(fetchLimit).toArray();
       const ids = convs.map(c => c._id);
       const [followups, leads] = ids.length ? await Promise.all([
-        db.collection(FOLLOWUP_COLLECTION).find({ tenantId: tenant, conversationId: { $in: ids } }).toArray(),
-        db.collection('leads').find({ tenantId: tenant, conversationId: { $in: ids } }).toArray(),
+        db.collection(FOLLOWUP_COLLECTION).find({ tenantId: tenantScope, conversationId: { $in: ids } }).toArray(),
+        db.collection('leads').find({ tenantId: tenantScope, conversationId: { $in: ids } }).toArray(),
       ]) : [[], []];
       const fm = new Map(followups.map(x => [String(x.conversationId), x]));
       const lm = new Map(leads.map(x => [String(x.conversationId), x]));
@@ -1329,7 +1317,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
 
   app.get('/api/conversation-followup/:id/messages', async (req, res) => {
     try {
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
       const db = await getDb();
@@ -1345,7 +1333,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
 
   app.get('/api/conversation-followup/:id/history', async (req, res) => {
     try {
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
       const db = await getDb();
@@ -1369,7 +1357,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
 
   app.get('/api/conversation-followup/:id', async (req, res) => {
     try {
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
       const db = await getDb();
@@ -1397,7 +1385,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
   app.post('/api/conversation-followup/:id/reopen', async (req, res) => {
     try {
       if (!hasPageAccess(auth, req, 'inbox')) return res.status(403).json({ ok: false, error: 'forbidden' });
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
 
@@ -1443,7 +1431,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
   app.post('/api/conversation-followup/:id/send', async (req, res) => {
     try {
       if (!hasPageAccess(auth, req, 'inbox')) return res.status(403).json({ ok: false, error: 'forbidden' });
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       const text = cleanString(req.body?.text, 4000);
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
@@ -1491,7 +1479,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
 
   app.post('/api/conversation-followup/:id/classify', async (req, res) => {
     try {
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
       const db = await getDb();
@@ -1509,7 +1497,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
 
   app.post('/api/conversation-followup/:id', async (req, res) => {
     try {
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
       const db = await getDb();
@@ -1566,7 +1554,7 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
 
   app.post('/api/conversation-followup/:id/close', async (req, res) => {
     try {
-      const tenant = resolveTenant(req, auth);
+      const tenant = await resolveFollowupTenant(req, auth);
       const id = String(req.params.id || '').trim();
       if (!ObjectId.isValid(id)) return res.status(400).json({ ok: false, error: 'invalid_id' });
       const db = await getDb();
@@ -1586,4 +1574,4 @@ function mountConversationFollowupPanel(app, { auth } = {}) {
   });
 }
 
-module.exports = { mountConversationFollowupPanel, runAutoCloseSweep };
+module.exports = { mountConversationFollowupPanel, runAutoCloseSweep, classifyConversationWithAi };

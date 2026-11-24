@@ -43,3 +43,18 @@ test('access and availability bursts attach to the actual issue without absorbin
  const groups=absorbCoordination([[0,1,2,4,5,6],[3,7],[8]],m);
  assert.deepEqual(groups,[[0,1,2,3,4,5,6,7],[8]]);
 });
+
+test('operator confirmations override an open AI assessment without requiring a client reply',()=>{
+ for(const text of ['Listo','Ya está','Quedó listo','Listo, quedó solucionado','Finalizado']) {
+  const messages=rows(['Necesito configurar la impresora',text]);
+  assert.equal(analyze(messages,{strictResolution:true}).status,'Cerrado RESUELTO',text);
+  const result=summaryDecision({status:'En Proceso',description:'Se configuró la impresora. Sin confirmación de resolución.'},messages);
+  assert.equal(result.status,'Cerrado RESUELTO',text);assert.equal(result.assessment.resolutionMessage,1);assert.equal(result.assessment.resolutionQuote,text);assert.doesNotMatch(result.description,/Sin confirmación/);
+ }
+});
+test('operator acceptance, negation, partial completion and later failure remain open',()=>{
+ for(const text of ['Listo, mañana lo reviso','Listo, lo reviso','Listo para instalar','No quedó listo','Todavía no está listo','Listo en una PC, falta la otra','Listo, voy a revisarlo']) {
+  assert.notEqual(summaryDecision({status:'En Proceso',description:'Pendiente.'},rows(['No imprime',text])).status,'Cerrado RESUELTO',text);
+ }
+ assert.notEqual(summaryDecision({status:'En Proceso'},rows(['No imprime','Ya está','Sigue sin imprimir'])).status,'Cerrado RESUELTO');
+});

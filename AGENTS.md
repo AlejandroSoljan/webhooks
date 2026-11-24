@@ -23,3 +23,7 @@
 ## Inicio en otra PC
 
 - Para un checkout nuevo, seguir [Inicio desde otro Codex](docs/INICIO_OTRO_CODEX.md). Esa guía incluye las reglas de acceso a datos productivos para equipos que no tienen C:\Asisto\AGENTS.md.
+
+## Publicación desde cualquiera de las dos PC
+
+Usar la misma secuencia documentada en [Acceso a staging y producción](docs/ACCESO_STAGING_MANAGER_GO.md). Partir de origin/main actualizado, preservar ramas y cambios pendientes, probar el commit en staging y abrir un PR a main. Verificar la revisión integrada y el release activo antes y después de publicar. Si hay cambios directos en AWS, incorporarlos primero al repositorio.

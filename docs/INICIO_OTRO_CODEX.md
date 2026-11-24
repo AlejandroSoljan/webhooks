@@ -1,11 +1,11 @@
 # Abrir Asisto desde otro Codex
 
-Copiá este bloque en el otro Codex. Descarga el repositorio existente completo y la documentación de incorporación que está en la rama `codex/colaboracion-asisto`.
+Copiá este bloque en el otro Codex. Descarga el repositorio existente completo y la documentación de incorporación que está en `main`.
 
 ```text
 Prepará este equipo para trabajar en Asisto, en su repositorio existente https://github.com/AlejandroSoljan/webhooks.git. La funcionalidad nueva será Manager Go. Su extensión ya está funcionando y su responsable la incorporará después.
 
-Si no existe un checkout local, cloná el repositorio en una carpeta webhooks. Si ya existe, verificá el remoto y los cambios locales antes de actuar. Ejecutá git fetch origin. La guía de incorporación y las reglas actualizadas están publicadas en origin/codex/colaboracion-asisto, pendiente de integrar a main. Para este arranque creá una rama nueva codex/manager-go desde origin/codex/colaboracion-asisto. Si la rama ya existe o hay cambios locales, preservalos y revisá cómo incorporar esa base. Así obtenés todo el código versionado de main junto con las instrucciones nuevas.
+Si no existe un checkout local, cloná el repositorio en una carpeta webhooks. Si ya existe, verificá el remoto y los cambios locales antes de actuar. Ejecutá git fetch origin. Para un desarrollo nuevo, creá una rama codex/nombre-del-cambio desde origin/main. Si la rama ya existe o hay cambios locales, preservalos y revisá cómo incorporar esa base. Así obtenés todo el código versionado de main junto con las instrucciones nuevas.
 
 Con la carpeta de Asisto como proyecto de trabajo, leé primero AGENTS.md y docs/INICIO_OTRO_CODEX.md. Continuá con docs/MANUAL_OPERADOR_CODEX_MANAGER_GO.md, docs/MANUAL_TECNICO_ASISTO.md y docs/MANAGER_GO_APIS_ASISTO.md. Aplicá esas reglas a los cambios. Verificá Node.js 24 e instalá dependencias con npm ci. Informá la rama, commit descargado y resultado de la instalación. Identificá las rutas, permisos, habilitación por dominio y medición de operaciones que necesita Manager Go. El endpoint de Manager Go está propuesto y pendiente de implementación.
 

@@ -167,9 +167,9 @@ function createDeviceRouter({ getService, publicOrigin }) {
     if (!Array.isArray(req.body.contacts) || req.body.contacts.length > 50) fail('invalid_contacts');
     for (const input of req.body.contacts) {
       const jid = text(input.jid, 200), name = text(input.name, 200);
-      if (!/^[^@]+@(s\.whatsapp\.net|lid)$/.test(jid) || !name) fail('invalid_contact');
+      if (!/^(?:[^@]+@(s\.whatsapp\.net|lid)|\d+(?:-\d+)?@g\.us)$/.test(jid) || !name) fail('invalid_contact');
       const aliases = input.aliases || [jid];
-      if (!Array.isArray(aliases) || aliases.length > 5 || aliases.some(id => typeof id !== 'string' || id.length > 200 || !/^[^@]+@(s\.whatsapp\.net|lid)$/.test(id))) fail('invalid_contact');
+      if (!Array.isArray(aliases) || (jid.endsWith('@g.us') && aliases.length > 0) || aliases.length > 5 || aliases.some(id => typeof id !== 'string' || id.length > 200 || !/^[^@]+@(s\.whatsapp\.net|lid)$/.test(id))) fail('invalid_contact');
       await assertLease(s, ctx);
       await s.col('contacts').updateOne({ _id: scopedId(ctx.scope, 'contact', jid), ...ctx.scope }, { $set: { jid, name, aliases: [...new Set([jid, ...aliases])], source: 'whatsapp', updatedAt: s.now() } }, { upsert: true });
     }

@@ -3,8 +3,8 @@
 const { SupportService } = require('../src/support/service');
 const { ANALYZER_VERSION, scopedId } = require('../src/support/core');
 const { repairable } = require('../src/support/task_assessment');
-async function review(db, vault, { apply = false, tenantIds = ['ALSO','DEMJG','SANA'] } = {}) {
-  if (tenantIds.some(t => !['ALSO','DEMJG','SANA'].includes(t))) throw Error('invalid_review_scope');
+async function review(db, vault, { apply = false, tenantIds = ['ALSO','DEMJG','SANA','GUJO','HEMO'] } = {}) {
+  if (tenantIds.some(t => !['ALSO','DEMJG','SANA','GUJO','HEMO'].includes(t))) throw Error('invalid_review_scope');
   const s = new SupportService(db, vault), rows = await s.col('drafts').find({ tenantId: { $in: tenantIds }, state: { $nin: ['ignored','merged'] } }).toArray();
   const report = { host: require('os').hostname(), db: db.databaseName, apply, byTenant: {}, jobs: [] };
   const chats = new Map();

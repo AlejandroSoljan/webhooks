@@ -79,7 +79,7 @@ Recibirás:
 
 Objetivo:
 - Respondé la consulta usando EXCLUSIVAMENTE la información contenida en los videos candidatos.
-- Si \"ventana\" tiene valor, dale prioridad fuerte a los videos que correspondan a esa ventana o a una categoría general que claramente la incluya.
+- Resolvé la consulta independientemente de la ventana actual. En este modo ignorá las reglas anteriores de pertenencia a ventanas: la relevancia depende de la pregunta del usuario.
 - Si \"ventana\" está vacía, resolvé la consulta de forma general con los candidatos disponibles.
 - Podés combinar información de varios videos si ayuda a responder mejor.
 - Elegí solamente videos realmente útiles para la consulta.
@@ -823,6 +823,15 @@ function versionApplies(version, from, to) {
     if (cmp !== null && cmp > 0) return false;
   }
   return true;
+}
+
+function contextualHelpCandidates(rows, windowName) {
+  const wanted = normalizeWindow(windowName);
+  if (!wanted || !rows.some(row => technicalWindowsFromRule(row.appliesTo)?.includes(wanted))) return [];
+  return rows.filter(row => {
+    const technical = technicalWindowsFromRule(row.appliesTo);
+    return technical ? technical.includes(wanted) : true;
+  });
 }
 
 function technicalWindowsFromRule(value) {
@@ -1855,7 +1864,7 @@ async function handleHelpQuery(req, res) {
         cfg,
         sourceHash: source.hash,
         eligible,
-        windowName,
+        windowName: '',
         query,
         domain: ownerDomain,
         user,
@@ -1865,7 +1874,7 @@ async function handleHelpQuery(req, res) {
       const intelligent = await resolveIntelligentHelpQuery({
         cfg,
         sourceHash: source.hash,
-        windowName,
+        windowName: '',
         query,
         rows: candidateInfo.rows,
         domain: ownerDomain,
@@ -1958,7 +1967,7 @@ async function handleHelpQuery(req, res) {
       cfg,
       sourceHash: source.hash,
       windowName,
-      rows: eligible,
+      rows: contextualHelpCandidates(eligible, windowName),
       domain: ownerDomain,
       user,
       usageContext

@@ -64,6 +64,7 @@ const ACCESS_PAGES = [
   { key: "order_config", title: "Reglas de Pedidos" },
   { key: "web_access", title: "Ingresos Web" },
   { key: "token_control", title: "Control de Tokens" },
+  { key: "help_stats", title: "Estadísticas de Ayuda" },
   { key: "monetization", title: "Monetización" },
   { key: "notifications", title: "Notificaciones App" },
   { key: "queue_kiosk", title: "Emisión de turnos" },
@@ -99,6 +100,7 @@ function hasAccess(user, ...keys) {
 // Devuelve qué "keys" de acceso requiere una ruta
 function requiredAccessForPath(p) {
   const path = String(p || "");
+  if (path.startsWith("/admin/help-stats") || path.startsWith("/api/help-stats") || path === "/ui/help_stats") return ["help_stats"];
   if (path.startsWith("/admin/support") || path.startsWith("/api/support")) return ["support"];
   if (path.startsWith("/admin/resto") || path.startsWith("/api/resto")) return ["resto"];
   if (path === "/app") return [];
@@ -1402,6 +1404,7 @@ ${shell ? '<link rel="stylesheet" href="/static/admin_shell.css?v=5.00.174">' : 
 function getNavItemsForUser(user, { includeHidden = false } = {}) {
   const isAdmin = user && (user.role === "admin" || user.role === "superadmin");
   const items = [{ key: "home", title: "Inicio", href: "/app" }];
+  if (hasAccess(user, "help_stats")) items.push({ key: "help_stats", title: "Estadísticas de Ayuda", href: "/ui/help_stats" });
 
   if (hasAccess(user, "admin")) items.push({ key: "admin", title: "Conversaciones", href: "/ui/admin" });
   if (hasAccess(user, "followup")) items.push({ key: "followup", title: "Seguimiento", href: "/ui/followup" });
@@ -2059,6 +2062,7 @@ function usersAdminPage({ user, users, msg, err }) {
         { key: "order_config", title: "Reglas de Pedidos" },
          { key: "web_access", title: "Ingresos Web" },
           { key: "token_control", title: "Control de Tokens" },
+  { key: "help_stats", title: "Estadísticas de Ayuda" },
         { key: "notifications", title: "Notificaciones App" },
         { key: "queue_kiosk", title: "Emisión de turnos" },
         { key: "queue_attention", title: "Atención del turnero" },
@@ -2153,6 +2157,7 @@ function usersAdminPage({ user, users, msg, err }) {
         if (allowedKeys.includes("order_config")) items.push({ key: "order_config", title: "Reglas de Pedidos", href: "/ui/order_config" });
         if (allowedKeys.includes("web_access")) items.push({ key: "web_access", title: "Ingresos Web", href: "/ui/web_access" });
         if (allowedKeys.includes("token_control")) items.push({ key: "token_control", title: "Control de Tokens", href: "/ui/token_control" });
+        if (allowedKeys.includes("help_stats")) items.push({ key: "help_stats", title: "Estadísticas de Ayuda", href: "/ui/help_stats" });
         if (allowedKeys.includes("notifications")) items.push({ key: "notifications", title: "Notificaciones App", href: "/ui/notificaciones-app" });
         const queueTenant = encodeURIComponent(String(tenantId || "").trim());
         if (queueTenant && allowedKeys.includes("queue_kiosk")) items.push({ key: "queue_kiosk", title: "Emisión de turnos", href: "/customer-app/" + queueTenant + "/kiosk" });
@@ -3702,6 +3707,7 @@ function mountAuthRoutes(app) {
 
     };
 
+    map.help_stats = { title: "Estadísticas de Ayuda", desc: "Uso y calidad de las respuestas de Manager", badge: "Ayuda", src: "/admin/help-stats?embed=1", active: "help_stats" };
     const conf = map[page];
     if (!conf) return res.status(404).send("404 - No existe esa pantalla");
 
@@ -4783,7 +4789,7 @@ function mountAuthRoutes(app) {
             listEl.innerHTML = items.map(it => {
               return '<tr>'+
                 '<td><span class="pill">'+esc(it._id||'')+'</span></td>'+
-                '<td>'+esc(Array.isArray(it.api_aliases) ? it.api_aliases.join(', ') : '')+'</td>'+
+                '<td>'+esc([...new Set([...(Array.isArray(it.api_aliases) ? it.api_aliases : []), ...(Array.isArray(it.wweb_domains) ? it.wweb_domains : [])])].join(', '))+'</td>'+
                 '<td>'+esc(it.nom_emp||'')+'</td>'+
                 '<td>'+esc(it.numero||'')+'</td>'+
                 '<td><span class="pill">'+esc(it.release_tag || it.version_tag || it.target_tag || '-')+'</span></td>'+
@@ -5115,7 +5121,7 @@ function mountAuthRoutes(app) {
 
       // listado (superadmin)
       const items = await col
-        .find({}, { projection: { _id: 1, api_aliases: 1, nom_emp: 1, numero: 1, release_tag: 1, version_tag: 1, target_tag: 1, createdAt: 1, updatedAt: 1 } })
+        .find({}, { projection: { _id: 1, api_aliases: 1, wweb_domains: 1, nom_emp: 1, numero: 1, release_tag: 1, version_tag: 1, target_tag: 1, createdAt: 1, updatedAt: 1 } })
         .sort({ _id: 1 })
         .limit(500)
         .toArray();
@@ -6327,6 +6333,7 @@ function protectRoutes(app) {
       p.startsWith("/qr/") ||
       p.startsWith("/customer-app/") ||
       p.startsWith("/api/customer-app/") ||
+      p.startsWith("/api/mecan-account/") ||
       p.startsWith("/resto/") ||
       p.startsWith("/api/public/resto/") ||
       p.startsWith("/api/ext/qr/") ||

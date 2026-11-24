@@ -10,7 +10,7 @@ const CONFIG_SECTIONS = Object.freeze({
 });
 
 const GROUPS = [
-  { key: 'attention', title: 'Atención al cliente', description: 'Conversaciones, seguimiento y oportunidades.', icon: 'chat', keys: ['inbox', 'admin', 'followup', 'leads'] },
+  { key: 'attention', title: 'Atención al cliente', description: 'Conversaciones, seguimiento y oportunidades.', icon: 'chat', keys: ['inbox', 'admin', 'followup', 'leads', 'help_stats'] },
   { key: 'connections', title: 'Mensajes y conexiones', description: 'Estado y gestión de las sesiones conectadas.', icon: 'connection', keys: ['wweb', 'telegram'] },
   { key: 'operations', title: 'Ventas y operaciones', description: 'Catálogo, restaurante y viajes.', icon: 'box', keys: ['productos', 'resto', 'fleteros'] },
   { key: 'app', title: 'App del comercio', description: 'Notificaciones a los clientes con la app.', icon: 'phone', keys: ['notifications'] },

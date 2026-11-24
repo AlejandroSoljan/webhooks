@@ -7,7 +7,7 @@ function renderMultiSection(s) {
   for(const t of [...tickets].reverse()){
     const card=element('article',undefined,'multiTicket');card.append(element('div','EN ATENCIÓN','multiEyebrow'),element('div',t.displayNumber,'multiNumber'),element('div',t.desk||'Acercate al sector','multiDesk'));
     const seller=element('div',undefined,'multiSeller');seller.append(sellerNameLine(t.sellerName||'Sin vendedor',''),element('span',''));
-    card.append(seller);
+    card.append(seller); applySellerColor(card, seller, t, cfg.sellers);
     const seconds=Math.max(0,Math.floor((Date.now()-Date.parse(t.serviceStartedAt||t.calledAt))/1000));
     card.append(element('div','◷ '+Math.floor(seconds/60).toString().padStart(2,'0')+':'+(seconds%60).toString().padStart(2,'0'),'multiTimer'));
     const actions=element('div',undefined,'multiActions');

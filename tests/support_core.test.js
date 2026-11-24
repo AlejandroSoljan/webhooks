@@ -79,9 +79,10 @@ test('scope cannot fall back to a global tenant and respects page access', () =>
   assert.throws(() => settings({ mode: 'automatic' }), /automation_not_enabled/);
   assert.throws(() => range('2026-01-01', '2026-03-01'), /invalid_range/);
 });
-test('exclusions are configurable and groups/broadcasts never enter', () => {
+test('exclusions are configurable and groups enter and broadcasts remain excluded', () => {
   const config = settings({ excludedNames: ['Juan Garziera'], excludedJids: ['1@s.whatsapp.net'] });
-  assert.ok(excluded({ jid: 'x@g.us' }, config));
+  assert.equal(excluded({ jid: '12345-678@g.us' }, config), false);
+  assert.ok(excluded({ jid: '12345-678@g.us' }, settings({ excludedJids: ['12345-678@g.us'] })));
   assert.ok(excluded({ jid: 'status@broadcast' }, config));
   assert.ok(excluded({ jid: 'x@lid', name: 'JUAN GARZIERA' }, config));
   assert.ok(excluded({ jid: '1@s.whatsapp.net' }, config));

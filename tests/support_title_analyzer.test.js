@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { asistoTitleAnalyzer, resolveTasksModel } = require('../src/support/title_analyzer');
 
 test('ALSO, DEMJG and SANA migrate the former tasks model without replacing another explicit override', () => {
-  for (const tenantId of ['ALSO', 'demjg', 'SANA']) {
+  for (const tenantId of ['ALSO', 'demjg', 'SANA', 'GUJO', 'hemo']) {
     assert.equal(resolveTasksModel({ openai: { tasks_model: 'gpt-5.4-mini' } }, {}, tenantId), 'gpt-4o-mini');
   }
   assert.equal(resolveTasksModel({ openai: { tasks_model: 'fixture-custom-model' } }, {}, 'ALSO'), 'fixture-custom-model');

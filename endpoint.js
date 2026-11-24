@@ -171,6 +171,7 @@ app.use("/ui", auth.requireAuth);
 auth.protectRoutes(app);
 mountWebAccessRoutes(app, auth);
 mountTokenControlRoutes(app, auth);
+require('./help_stats').mountHelpStats(app, auth);
 mountMonetizationRoutes(app, auth);
 mountBillingRoutes(app, auth);
 mountFleterosViajesPanel(app, { auth });
@@ -889,7 +890,7 @@ async function requireWwebAgentAccess(req, res, next) {
     const db = await getDb();
     const doc = await db.collection('tenant_config').findOne({
       $or: [{ _id: tenantId }, { tenantId }, { tenantid: tenantId }]
-    });
+    }, { projection: { control_api_token: 1, controlApiToken: 1, status_token: 1, statusToken: 1, 'configuracion.control_api_token': 1, 'configuracion.controlApiToken': 1, 'configuracion.status_token': 1, 'configuracion.statusToken': 1 } });
     const nested = doc && doc.configuracion && typeof doc.configuracion === 'object' ? doc.configuracion : {};
     const expected = String(
       nested.control_api_token || nested.controlApiToken || nested.status_token || nested.statusToken ||
@@ -982,7 +983,26 @@ app.post('/api/ext/wweb/agent/ping', wwebAgentJson, requireWwebAgentAccess, asyn
   }
 });
 
-app.post('/api/ext/wweb/agent/db', wwebAgentJson, requireWwebAgentAccess, async (req, res) => {
+function wwebAgentRequestMetrics(req, res, next) {
+  const started = Date.now();
+  res.once('finish', () => {
+    const collection = WWEB_AGENT_ALLOWED_COLLECTIONS.has(req.body?.collection) ? req.body.collection : 'other';
+    const operation = WWEB_AGENT_ALLOWED_OPERATIONS.has(req.body?.operation) ? req.body.operation : 'other';
+    const key = collection + ':' + operation;
+    const item = wwebAgentTraffic.get(key) || { count: 0, bytes: 0, ms: 0 };
+    item.count++; item.bytes += Number(res.getHeader('content-length')) || 0; item.ms += Date.now() - started;
+    wwebAgentTraffic.set(key, item);
+    const now = Date.now();
+    if (now - wwebAgentTrafficSince >= 60000) {
+      console.log('[WWEB_AGENT_TRAFFIC]', JSON.stringify({ seconds: Math.round((now - wwebAgentTrafficSince) / 1000), operations: Object.fromEntries(wwebAgentTraffic) }));
+      wwebAgentTraffic.clear(); wwebAgentTrafficSince = now;
+    }
+  });
+  next();
+}
+const wwebAgentTraffic = new Map();
+let wwebAgentTrafficSince = Date.now();
+app.post('/api/ext/wweb/agent/db', wwebAgentJson, wwebAgentRequestMetrics, requireWwebAgentAccess, async (req, res) => {
   try {
     const tenantId = String(req.body?.tenantId || req.headers['x-asisto-tenant'] || '').trim().toUpperCase();
     const numero = String(req.body?.numero || req.headers['x-asisto-numero'] || '').replace(/\D/g, '');
@@ -1015,7 +1035,11 @@ app.post('/api/ext/wweb/agent/db', wwebAgentJson, requireWwebAgentAccess, async 
     if (operation === 'findOne') {
       result = await collection.findOne(query, options);
     } else if (operation === 'find') {
+      if (collectionName === 'wa_api_message_windows' && args.query?.channelType === 'api_messages' && args.query?.['messages.at']?.$gte && args.query?.['messages.at']?.$lt) {
+        for (const part of (query.$and || [query])) { if (part['messages.at']) { part.messages = { $elemMatch: { at: part['messages.at'] } }; delete part['messages.at']; } }
+      }
       let cursor = collection.find(query, options);
+      if (collectionName === 'wa_api_message_windows' && args.query?.channelType === 'api_messages' && args.query?.['messages.at']?.$gte && args.query?.['messages.at']?.$lt) cursor = cursor.hint('cpu_20261106_tenantId_numeroFrom_channelType_messages.at');
       if (args.sort && typeof args.sort === 'object') cursor = cursor.sort(args.sort);
       const limit = Math.max(0, Math.min(500, Number(args.limit) || 0));
       if (limit) cursor = cursor.limit(limit);
@@ -5064,6 +5088,7 @@ app.post("/api/admin/send-message", async (req, res) => {
       return res.status(404).json({ error: "conv_not_found" });
     }
 
+    if (conv.isTest === true || conv.channelType === "bot_test") return res.status(403).json({ error: "test_conversation_no_delivery" });
     const to = conv.waId;
     const channelType = String(conv.channelType || "whatsapp").trim().toLowerCase() || "whatsapp";
     let rt = null;
@@ -7947,31 +7972,7 @@ app.get("/productos", async (req, res) => {
     const tenant = isSuper && !selectedTenant ? '' : resolveTenantId(req);
     const filtro = {};
     if (tenant) filtro.tenantId = tenant; else if (TENANT_ID && !isSuper) filtro.tenantId = TENANT_ID;
-    const productos = isSuper && !tenant ? [] : await db.collection("products").find(filtro).sort({ active: -1, descripcion: 1, createdAt: -1 }).toArray();
-
-    const escAttr = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-    const escText = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
-    const initialRows = productos.map(p => `<tr data-id="${p._id}">
-        <td class="col-desc"><input class="descripcion" type="text" value="${escAttr(p.descripcion || "")}" placeholder="Descripción del producto" /></td>
-        <td class="col-tag"><input class="tag" type="text" value="${escAttr(p.tag || "")}" placeholder="Tag" /></td>
-        <td class="col-price"><input class="importe" type="number" step="0.01" value="${escAttr(p.importe ?? "")}" placeholder="0" /></td>
-        <td class="col-qty"><input class="cantidad" type="number" step="1" value="${escAttr(p.cantidad ?? "")}" placeholder="0" /></td>
-        <td class="col-obs"><textarea class="observacion" placeholder="Observaciones, categoría, presentación...">${escText(p.observacion || "")}</textarea></td>
-        <td class="col-image"><input class="imagen" type="text" value="${escAttr(validProductImageUrl(p.imagen || '') ? (p.imagen || '') : '')}" placeholder="URL HTTPS de imagen"><input class="image-file" type="file" accept="image/jpeg,image/png,image/webp"><img class="image-preview" src="${escAttr(validProductImageUrl(p.imagen || '') ? (p.imagen || '') : '')}" alt="Vista previa" ${p.imagen && validProductImageUrl(p.imagen) ? '' : 'hidden'}></td>
-        <td class="col-active">
-          <label class="active-check" title="Activo">
-            <input class="active" type="checkbox" ${p.active !== false ? "checked" : ""} />
-            <span></span>
-          </label>
-        </td>
-        <td class="col-actions">
-          <div class="actions-stack">
-  
-            <button class="del btn btn-danger" type="button">Eliminar</button>
-          
-          </div>
-        </td>
-      </tr>`).join("");
+    const initialRows = '';
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.end(`<!doctype html><html><head><meta charset="utf-8" /><title>Productos</title>
@@ -8159,7 +8160,11 @@ app.get("/productos", async (req, res) => {
               <p id="tableHint">Editá varios productos y usá “Guardar cambios” .</p>
             </div>
           </div>
-          <div class="table-wrap">
+          <div class="table-head" style="gap:12px;flex-wrap:wrap">
+            <label>Por página <select id="pageSize" class="filter-select"><option>25</option><option>50</option><option>100</option></select></label>
+            <span id="pageInfo" role="status" aria-live="polite"></span>
+            <div><button id="pagePrev" class="btn" type="button">Anterior</button> <button id="pageNext" class="btn" type="button">Siguiente</button></div>
+          </div><div class="table-wrap">
             <table id="tbl">
               <thead>
               <tr>
@@ -8253,8 +8258,30 @@ app.get("/productos", async (req, res) => {
           
         }
 
+        let entries=[], page=1, pageSize=25;
+        function entryValues(e){return e.tr ? buildPayloadFromRow(e.tr) : e.item;}
+        function matchesEntry(e,term,status){
+          const v=entryValues(e);
+          return (!term || [v.descripcion,v.tag,v.observacion,v.importe,v.cantidad,v.codigo,v.codbarra].join(' ').toLowerCase().includes(term)) && (status==='all'||(status==='active'?v.active!==false:v.active===false));
+        }
+        function renderPage(){
+          const term=q('#searchInput').value.trim().toLowerCase(), status=currentFilterValue();
+          const filtered=entries.filter(e=>matchesEntry(e,term,status));
+          const pages=Math.max(1,Math.ceil(filtered.length/pageSize));page=Math.min(Math.max(1,page),pages);
+          const tb=q('#productRows');tb.replaceChildren();
+          filtered.slice((page-1)*pageSize,page*pageSize).forEach(e=>{
+            if(!e.tr){e.tr=q('#row-tpl').content.firstElementChild.cloneNode(true);setRowValues(e.tr,e.item);bindRow(e.tr);}
+            tb.appendChild(e.tr);
+          });
+          if(!tb.children.length)tb.innerHTML='<tr class="empty-row"><td colspan="8">No hay productos para mostrar.</td></tr>';
+          q('#pageInfo').textContent='Página '+page+' de '+pages+' · '+filtered.length+' productos';
+          q('#pagePrev').disabled=page<=1;q('#pageNext').disabled=page>=pages;
+          q('#metaCount').textContent=filtered.length+' / '+entries.length+' productos';
+          q('#metaFilter').textContent=status==='active'?'Activos':status==='inactive'?'Inactivos':'Todos';
+          updateMeta();
+        }
         function dataRows(){
-          return all('#productRows tr').filter(tr => !tr.classList.contains('empty-row'));
+          return entries.filter(e=>e.tr).map(e=>e.tr);
         }
 
         function markDirty(tr){
@@ -8289,25 +8316,8 @@ app.get("/productos", async (req, res) => {
         }
 
         function updateMeta(){
-          const term=(q('#searchInput').value||'').trim().toLowerCase();
-          const status=currentFilterValue();
-          const rows=dataRows();
-          let visibles=0, dirty=0;
-          rows.forEach(tr=>{
-            const show=rowMatches(tr, term, status);
-            tr.style.display=show?'':'none';
-            if(show) visibles++;
-            if(tr.dataset.dirty==='1') dirty++;
-          });
-          const filterLabel = status==='active' ? 'Activos' : (status==='inactive' ? 'Inactivos' : 'Todos');
-          q('#metaFilter').textContent = filterLabel;
-          q('#metaCount').textContent = visibles + ' / ' + rows.length + ' visibles';
-          q('#metaDirty').textContent = dirty + ' cambios pendientes';
-          q('#tableHint').textContent = rows.length
-            ? (term || status!=='all'
-                ? ('Filtrando ' + visibles + ' de ' + rows.length + ' productos. Los cambios se guardan de forma masiva.')
-                : 'Editá varios productos y usá “Guardar cambios” para persistir todo junto.')
-            : 'No hay productos para mostrar.';
+          q('#metaDirty').textContent=dataRows().filter(tr=>tr.dataset.dirty==='1').length+' cambios pendientes';
+          q('#tableHint').textContent='Los cambios se conservan al cambiar de página. Usá Guardar cambios para guardarlos todos.';
         }
 
         function bindRow(tr){
@@ -8382,23 +8392,15 @@ app.get("/productos", async (req, res) => {
         }
 
         async function reload(){
-           const data=await j(scoped('/api/products?status=all'));
-          const tb=q('#productRows');
-          tb.innerHTML='';
-          if(Array.isArray(data) && data.length){
-            data.forEach(it=>{
-              const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);
-              setRowValues(tr,it);
-              bindRow(tr);
-              tb.appendChild(tr);
-            });
-          }
-          showEmptyIfNeeded();
-          updateMeta();
+          const tenantAtStart=selectedTenant;
+          const data=await j(scoped('/api/products?status=all'));
+          if(tenantAtStart!==selectedTenant)return;
+          entries=(Array.isArray(data)?data:[]).map(item=>({item,tr:null}));
+          renderPage();
         }
 
         async function saveAll(){
-          const rows=dataRows();
+          const rows=dataRows().filter(tr=>tr.dataset.dirty==='1');
           if(!rows.length){ setFlash('ok','No hay cambios para guardar.'); return; }
           const payloads=[];
           for(const tr of rows){
@@ -8439,32 +8441,33 @@ app.get("/productos", async (req, res) => {
         async function deleteRow(tr){
           const id=tr.dataset.id;
           if(!id){
-            tr.remove();
-            showEmptyIfNeeded();
-            updateMeta();
+            entries=entries.filter(e=>e.tr!==tr);
+            renderPage();
             return;
           }
           if(!confirm('¿Eliminar definitivamente este producto?')) return;
           await j(scoped('/api/products/'+encodeURIComponent(id)),{method:'DELETE'});
-          tr.remove();
-          showEmptyIfNeeded();
-          updateMeta();
+          entries=entries.filter(e=>e.tr!==tr);
+          renderPage();
           setFlash('ok','Producto eliminado.');
         }
 
        
 
-        q('#btnReload').addEventListener('click',()=>reload().catch(e=>setFlash('err', e.message||String(e))));
+        q('#btnReload').addEventListener('click',()=>{if(dataRows().some(tr=>tr.dataset.dirty==='1')&&!confirm('Hay cambios sin guardar. ¿Recargar?'))return;reload().catch(e=>setFlash('err',e.message));});
         q('#btnSaveAll').addEventListener('click',()=>saveAll());
         q('#btnAdd').addEventListener('click',()=>{
           const tr=q('#row-tpl').content.firstElementChild.cloneNode(true);
           bindRow(tr);
-          q('#productRows').prepend(tr);
-          showEmptyIfNeeded();
-          markDirty(tr);
+          entries.unshift({item:{},tr});page=1;q('#searchInput').value='';q('#statusFilter').value='all';
+          markDirty(tr);renderPage();
           q('.descripcion',tr).focus();
         });
-        q('#statusFilter').addEventListener('change',updateMeta);
+        q('#statusFilter').addEventListener('change',()=>{page=1;renderPage();});
+        let searchTimer; q('#searchInput').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{page=1;renderPage();},200);});
+        q('#pageSize').addEventListener('change',()=>{pageSize=Number(q('#pageSize').value);page=1;renderPage();});
+        q('#pagePrev').addEventListener('click',()=>{page--;renderPage();});
+        q('#pageNext').addEventListener('click',()=>{page++;renderPage();});
 
         if(isSuper){
           const selector=q('#domainFilter');
@@ -8481,7 +8484,7 @@ app.get("/productos", async (req, res) => {
             }catch(_){}
             q('#btnAdd').disabled=!tenant;
             q('#btnSaveAll').disabled=!tenant;
-            q('#productRows').innerHTML='';
+            entries=[];page=1;q('#productRows').innerHTML='';
             showEmptyIfNeeded();
             updateMeta();
             if(tenant) await reload();
@@ -8513,8 +8516,8 @@ app.get("/productos", async (req, res) => {
         all('#productRows tr').forEach(tr=>{
           if(!tr.classList.contains('empty-row')) bindRow(tr);
         });
-        showEmptyIfNeeded();
-        updateMeta();
+        renderPage();
+        if(!isSuper)reload().catch(e=>setFlash('err',e.message));
       </script></body></html>`);
   } catch (e) {
     console.error("/productos error:", e);

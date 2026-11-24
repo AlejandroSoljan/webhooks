@@ -132,7 +132,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
     res.json({ sellers: (cfg.sellers || []).filter(seller => seller.active !== false) });
   }));
   app.put('/api/customer-app-admin/:tenant/sellers', wrap(async (req, res) => {
-    const { t, db } = await scope(req); guard(req, t);
+    const { t, db, cfg } = await scope(req); guard(req, t);
     if (!['admin', 'superadmin'].includes(String(req.user?.role || '').toLowerCase())) fail(403, 'Solo un administrador puede configurar vendedores.');
     const source = Array.isArray(req.body?.sellers) ? req.body.sellers : [];
     if (source.length > 100) fail(400, 'Podés configurar hasta 100 vendedores.');
@@ -141,7 +141,7 @@ function mountQueue(app, { getDb, configFor, invalidateConfig = () => {}, dayKey
       if (!name) fail(400, `Completá el nombre del vendedor ${index + 1}.`);
       if (seen.has(key)) fail(400, `El vendedor ${name} está repetido.`);
       seen.add(key);
-      return { id: clean(item?.id, 60) || randomBytes(9).toString('base64url'), name, active: item?.active !== false };
+      return { id: clean(item?.id, 60) || randomBytes(9).toString('base64url'), name, active: item?.active !== false, color: require('./queue_seller_colors').savedColor(item, (cfg.sellers || []).find(s => s.id === item.id)) };
     });
     await db.collection('customer_app_config').updateOne({ tenantId: t }, { $set: { sellers, updatedAt: new Date() } }, { upsert: true });
     invalidateConfig(t);

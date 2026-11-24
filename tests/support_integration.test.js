@@ -153,14 +153,23 @@ test('ALSO new messages cannot attach automatically to a saved ticket even when 
   const [draft]=await processMessages([message('saved')],owner);
   await service.col('drafts').updateOne({_id:draft._id},{$set:{state:'approved',hubspot:{state:'saved',ticketId:'123',savedAt:now}}});
   const before=await service.col('drafts').findOne({_id:draft._id});
-  service.titleAnalyzer={group:async rows=>{assert.ok(rows.every(row=>row._id!==before.messageIds[0]),'saved evidence must not reach grouping');return {groups:[rows.map((_,i)=>i)],model:'fixture',inputTokens:1,outputTokens:1,totalTokens:2};},run:async()=>({subject:'Registrar movimientos de caja',description:'Nueva consulta de caja.',model:'fixture',inputTokens:1,outputTokens:1,totalTokens:2})};
+  service.titleAnalyzer={group:async rows=>{assert.ok(rows.every(row=>row._id!==before.messageIds[0]),'saved evidence must not reach grouping');assert.ok(rows.some(row=>row.savedDraftId===draft._id),'saved ticket summary is available as context');return {groups:[rows.map((_,i)=>i)],model:'fixture',inputTokens:1,outputTokens:1,totalTokens:2};},run:async()=>({subject:'Registrar movimientos de caja',description:'Nueva consulta de caja.',model:'fixture',inputTokens:1,outputTokens:1,totalTokens:2})};
   await processMessages([message('cash',300,{text:'Necesito registrar un ingreso de dinero en caja'})],owner);
   assert.deepEqual(await service.col('drafts').findOne({_id:draft._id}),before);
   const pending=await service.col('drafts').findOne({...owner,state:'pending'});
-  assert.ok(pending);assert.equal(pending.messageIds.length,1);assert.equal(pending.hubspot,undefined);
+  assert.ok(pending);assert.equal(pending.messageIds.length,1);assert.equal(pending.hubspot,undefined);assert.deepEqual(pending.suggestedFollowupIds,[draft._id]);
+  await assert.rejects(service.editDraft(owner,pending._id,pending.revision,{},true),{code:'followup_existing_ticket'});
   await processMessages([message('thanks',600,{text:'Gracias',fromMe:false})],owner);
   assert.equal(await service.col('drafts').countDocuments({...owner,state:'pending'}),1);
   assert.deepEqual(await service.col('drafts').findOne({_id:draft._id}),before);
+  service.titleAnalyzer.group = async rows => {
+    const independent = rows.findIndex(row => row.text.includes('impresora'));
+    assert.ok(independent >= 0);
+    return {groups:[rows.map((_,i)=>i).filter(i=>i!==independent),[independent]],model:'fixture',inputTokens:1,outputTokens:1};
+  };
+  await processMessages([message('printer',900,{text:'La impresora no enciende, necesito ayuda'})],owner);
+  assert.equal(await service.col('drafts').countDocuments({...owner,state:'pending',suggestedFollowupIds:{$exists:false}}),1);
+
 });
 
 test('fragmented generated follow-ups consolidate while saved human edits remain intact', async () => {
@@ -813,4 +822,20 @@ test('late WhatsApp names fill blank contacts and preserve manually entered cont
   await service.editDraft(scope, draft._id, current.revision, { contact: 'Nombre corregido' });
   assert.equal((await service.listDrafts(scope))[0].fields.contact, 'Nombre corregido');
   assert.equal((await service.listDrafts(other)).length, 0);
+});
+
+test('WhatsApp groups generate isolated review drafts while broadcasts are ignored', async () => {
+  const group = '120363000001-123456@g.us';
+  const otherGroup = '120363000002@g.us';
+  await processMessages([
+    message('same-wa-id', 0, { jid: group, name: 'Soporte Norte' }),
+    message('same-wa-id', 0, { jid: otherGroup, name: 'Soporte Sur' }),
+    message('status', 0, { jid: 'status@broadcast' })
+  ]);
+  const drafts = await service.col('drafts').find(scope).toArray();
+  assert.deepEqual(drafts.map(row => row.jid).sort(), [group, otherGroup].sort());
+  assert.equal(drafts.find(row => row.jid === group).messageIds.length, 1);
+  assert.equal(drafts.find(row => row.jid === otherGroup).messageIds.length, 1);
+  assert.equal(await service.col('drafts').countDocuments(other), 0);
+  assert.equal(await service.col('messages').countDocuments({ ...scope, jid: 'status@broadcast' }), 0);
 });
