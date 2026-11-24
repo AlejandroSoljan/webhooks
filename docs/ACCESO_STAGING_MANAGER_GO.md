@@ -1,6 +1,6 @@
 # Acceso de la otra PC al staging AWS
 
-Preparado el 18/11/2026. Cuenta SSH `manager-go-dev`, host Tailscale `100.76.215.98`. La cuenta tiene un directorio de releases y permiso para activar versiones de staging. El ingreso queda pendiente de instalar la clave pública de la PC y autorizar su cuenta/equipo en Tailscale. El mantenedor necesita esos dos datos para completar el acceso. La clave privada permanece en la PC del desarrollador.
+Preparado el 18/11/2026. Cuenta SSH `manager-go-dev`, host Tailscale `100.76.215.98`. La cuenta tiene un directorio de releases y permiso para activar versiones de staging. La clave pública de Gabriel ya está instalada. La clave privada permanece en la PC del desarrollador.
 
 En la otra PC, instalar Tailscale e iniciar sesión con la cuenta que autorice el mantenedor. Generar una clave SSH propia si no existe y enviar el archivo `.pub` al mantenedor. Cuando ambos accesos estén autorizados, agregar a `~/.ssh/config` lo siguiente.
 
@@ -55,3 +55,7 @@ readlink -f /opt/asisto/current
 El comando descarga `main`, instala dependencias, ejecuta las pruebas, activa el release y comprueba la salud del servicio. El proceso incluye recuperación al release anterior si falla la comprobación. La publicación abarca el backend compartido y afecta a sus dominios. Seguir las reglas de versión, historial y verificación de AGENTS.md. El acceso SSH a AWS y el permiso de escritura o integración en GitHub se administran por separado.
 
 Se validó el permiso mediante `sudo -l` con el usuario de despliegue y la sintaxis de sudoers. Al habilitar este permiso se comprobó `/healthz` de producción. El comando de publicación no se ejecutó como parte del alta del permiso.
+
+## Coordinar las dos PC
+
+Cada cambio tiene una rama y un PR. Con trabajo de Gabriel en curso, incorporá origin/main en esa rama y resolvé diferencias antes de probar. Staging es compartido: verificá su release antes de activarlo y registrá en el PR el commit probado, la prueba funcional y el resultado. Para integrar se necesita la revisión de otra persona y el CI de Node 24. Al publicar, compará el prefijo del release activo con el SHA integrado en main y verificá la función además de /healthz.

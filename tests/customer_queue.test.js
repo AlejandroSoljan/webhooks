@@ -60,7 +60,7 @@ test('statistics reconstruct transfers and do not reset service time on recalls'
   const presenceStats = summarize([], cfg.sectors, [{ status: 'QR', scannedAt: at(2), expiresAt: at(3) }, { status: 'PENDING', expiresAt: at(3) }, { status: 'PENDING', expiresAt: at(59) }], at(30));
   assert.deepEqual([presenceStats.summary.presenceQr, presenceStats.summary.presenceWithoutQr, presenceStats.summary.presencePending], [1, 2, 1]);
   new vm.Script(statsPage('TEST', '2026-09-14').match(/<script>([\s\S]*)<\/script>/)[1]);
-  assert.match(statsPage('TEST', '2026-09-14'), /Ingresos con QR/); assert.match(statsPage('TEST', '2026-09-14'), /Ingresos sin QR/);
+  assert.match(statsPage('TEST', '2026-09-14'), /Accesos al autoservicio mediante QR/); assert.match(statsPage('TEST', '2026-09-14'), /Ingresos sin QR/);
   assert.match(statsPage('TEST', '2026-09-14'), /Rendimiento por vendedor/); assert.match(statsPage('TEST', '2026-09-14'), /Atención promedio/);
 });
 test('queue statistics use the Asisto shell and superadmin can select a tenant', async () => {
@@ -77,7 +77,7 @@ test('notification history filters preserve legacy manual records and separate q
   assert.deepEqual(notificationHistoryFilter('test', 'all'), { tenantId: 'TEST' });
   assert.equal(notificationHistoryFilter('test', 'wrong'), null);
   const html = panelPage({ tenantId: 'TEST', tenants: ['TEST'], isSuper: false });
-  assert.match(html, /Automáticas por turnos/); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]);
+  assert.match(html, /id="ac-history-filter"/); assert.match(html, /src="\/static\/app-center-panel\.js/);
 });
 test('Asisto navigation builds the queue statistics link without breaking login users', () => {
   const { getNavItemsForUser } = require('../auth_ui');
@@ -185,7 +185,7 @@ test('MCN kiosk exposes QR-only Autoservicio and focused display keeps other sec
 test('existing Android page renders cancellation, product discovery and a stable bottom menu', async () => {
   const app = express(); require('../customer_app_web').mountCustomerApp(app);
   const temp = app.listen(0, '127.0.0.1'); await new Promise(r => temp.once('listening', r));
-  try { const html = await (await fetch('http://127.0.0.1:' + temp.address().port + '/customer-app/TEST')).text(); new vm.Script(html.match(/<script>([\s\S]*)<\/script>/)[1]); assert.match(html, /Cancelar mi turno/); assert.match(html, /¿Querés saber más de un producto\?/); assert.match(html, /consultá al instante el precio, los detalles y toda la información disponible/); assert.match(html, /Escanear un producto/); assert.match(html, /padding:11px 14px;margin-top:12px;border-radius:14px;background:#eef7f2/); assert.match(html, /ticketNoticeAction/); assert.match(html, /\.number\{font-size:68px;line-height:1/); assert.match(html, /\.ticketView #my \.number\{font-size:64px;line-height:1\}/); assert.match(html, /\.exploreStore\{[^}]*padding:21px 19px/); assert.match(html, /\.exploreStore button\{[^}]*min-height:56px/); assert.match(html, /body\.ticketView \.brandFooter\{display:none\}/); assert.match(html, /document\.body\.classList\.toggle\('ticketView',id==='my'\)/); assert.match(html, /activeTicketDialog/); assert.match(html, /id="ticketPicker"/); assert.match(html, /asistoTicketIds/); assert.match(html, /ticket\.sectorId===sectorId/); assert.match(html, /\.nav button\{display:flex;flex:1 1 0;min-width:0;flex-direction:column;align-items:center;justify-content:center\}/); assert.match(html, /\.nav \.uiIcon\{display:block;width:22px;height:22px/); assert.doesNotMatch(html, /Encontralo al instante/); assert.doesNotMatch(html, />Consultas'/); assert.doesNotMatch(html, /Hacer una consulta/); }
+  try { const html = await (await fetch('http://127.0.0.1:' + temp.address().port + '/customer-app/TEST')).text(); for (const script of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) new vm.Script(script[1]); assert.match(html, /Cancelar mi turno/); assert.match(html, /¿Querés saber más de un producto\?/); assert.match(html, /consultá al instante el precio, los detalles y toda la información disponible/); assert.match(html, /Escanear un producto/); assert.match(html, /padding:11px 14px;margin-top:12px;border-radius:14px;background:#eef7f2/); assert.match(html, /ticketNoticeAction/); assert.match(html, /\.number\{font-size:68px;line-height:1/); assert.match(html, /\.ticketView #my \.number\{font-size:64px;line-height:1\}/); assert.match(html, /\.exploreStore\{[^}]*padding:21px 19px/); assert.match(html, /\.exploreStore button\{[^}]*min-height:56px/); assert.match(html, /body\.ticketView \.brandFooter\{display:none\}/); assert.match(html, /document\.body\.classList\.toggle\('ticketView',id==='my'\)/); assert.match(html, /activeTicketDialog/); assert.match(html, /id="ticketPicker"/); assert.match(html, /asistoTicketIds/); assert.match(html, /ticket\.sectorId===sectorId/); assert.match(html, /\.nav button\{display:flex;flex:1 1 0;min-width:0;flex-direction:column;align-items:center;justify-content:center\}/); assert.match(html, /\.nav \.uiIcon\{display:block;width:22px;height:22px/); assert.doesNotMatch(html, /Encontralo al instante/); assert.doesNotMatch(html, />Consultas'/); assert.doesNotMatch(html, /Hacer una consulta/); }
   finally { await new Promise(r => temp.close(r)); }
 });
 test('customer schedule reports open, closed and unconfigured without guessing', () => {
