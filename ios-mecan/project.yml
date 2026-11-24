@@ -19,6 +19,9 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_NSCameraUsageDescription: Escaneá códigos de productos y turnos de Mecan.
         CODE_SIGN_ENTITLEMENTS: Mecan.entitlements
         MECAN_APS_ENVIRONMENT: development
