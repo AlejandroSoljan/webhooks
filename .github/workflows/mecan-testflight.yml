@@ -12,7 +12,9 @@ concurrency: mecan-testflight
 
 jobs:
   upload:
-    runs-on: macos-26
+    runs-on: macos-15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     timeout-minutes: 35
     defaults:
       run:
@@ -62,11 +64,20 @@ jobs:
               -passout env:CERTIFICATE_PASSWORD -out "$signing/apple-distribution.p12"
           security import "$signing/apple-distribution.p12" -k "$keychain" -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
-          sed -i '' "/        DEVELOPMENT_TEAM:/a\
-                  CODE_SIGN_STYLE: Manual\
-                  CODE_SIGN_IDENTITY: Apple Distribution\
-                  PROVISIONING_PROFILE_SPECIFIER: $profile_uuid
-          " project.yml
+          python3 - "$profile_uuid" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path("project.yml")
+          team_setting = "        DEVELOPMENT_TEAM: 6TJ9WJ9766\n"
+          spec = path.read_text()
+          assert spec.count(team_setting) == 1
+          settings = (
+              "        CODE_SIGN_STYLE: Manual\n"
+              "        CODE_SIGN_IDENTITY: Apple Distribution\n"
+              f"        PROVISIONING_PROFILE_SPECIFIER: {sys.argv[1]}\n"
+          )
+          path.write_text(spec.replace(team_setting, team_setting + settings))
+          PY
           xcodegen generate
           xcodebuild -project Mecan.xcodeproj -scheme Mecan -configuration Release \
             -destination 'generic/platform=iOS' -archivePath "$signing/Mecan.xcarchive" \
