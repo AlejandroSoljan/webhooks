@@ -27,3 +27,9 @@
 ## Publicación desde cualquiera de las dos PC
 
 Usar la misma secuencia documentada en [Acceso a staging y producción](docs/ACCESO_STAGING_MANAGER_GO.md). Partir de origin/main actualizado, preservar ramas y cambios pendientes, probar el commit en staging y abrir un PR a main. Verificar la revisión integrada y el release activo antes y después de publicar. Si hay cambios directos en AWS, incorporarlos primero al repositorio.
+## Revisión e integración de PR para todo Asisto
+
+- En cualquier PC, antes de revisar un PR, registrar la rama, el SHA y el estado del árbol de trabajo. Si hace falta ejecutar o modificar el código del PR, usar un worktree separado para preservar los archivos pendientes del operador.
+- Staging es compartido. Cuando se deba preservar un desarrollo activo, registrar el destino de `/opt/asisto-staging/current` y comprobar su `/healthz` antes y después de la integración. Revisar o integrar un PR por sí solo no autoriza a activar otro release en staging ni a ejecutar el publicador de producción.
+- Verificar el repositorio, la rama destino y el SHA exacto de la cabecera del PR. Revisar el contenido con la cuenta habilitada del revisor y exigir el control obligatorio `build (24.x)` exitoso para ese SHA. Si la cabecera cambia, revisar la nueva revisión y sus controles antes de integrar.
+- Integrar mediante el PR protegido de GitHub. Ante un conflicto, una revisión pendiente o permisos insuficientes, informar el bloqueo y conservar las protecciones de la rama. Al terminar, verificar el estado integrado en GitHub e informar el SHA resultante, el estado del trabajo local y las comprobaciones de staging que correspondan.
