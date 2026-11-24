@@ -77,4 +77,3 @@ test('only a confirmed UNREGISTERED response retires a token, never transient er
   if(h.retired.length)assert.equal(h.retired[0].update.$set.notificationInvalidTokenHash.length,64);
  }
 });
-

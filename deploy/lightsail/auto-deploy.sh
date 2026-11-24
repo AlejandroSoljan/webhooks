@@ -20,7 +20,7 @@ short=${sha:0:12}
 previous=$(readlink -f "$current_link")
 
 # Each release gets a root-owned record outside its writable application tree.
-state_dir=/var/lib/asisto/release-checks
+state_dir=/var/lib/asisto-release-checks
 release_digest() (
   cd "$1"
   find . -maxdepth 1 -type f \( -name '*.js' -o -name '*.html' -o -name '*.json' -o -name '*.png' -o -name '*.jpg' -o -name '*.ico' \) -print0
