@@ -25,7 +25,6 @@ jobs:
             -destination "id=$device" -derivedDataPath "$RUNNER_TEMP/mecan-derived" \
             CODE_SIGNING_ALLOWED=NO build
           xcrun simctl bootstatus "$device" -b
-          xcrun simctl status_bar "$device" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState unplugged --batteryLevel 100
           xcrun simctl install "$device" "$RUNNER_TEMP/mecan-derived/Build/Products/Release-iphonesimulator/Mecan.app"
           xcrun simctl launch "$device" ar.com.asisto.mecan
           sleep 18
