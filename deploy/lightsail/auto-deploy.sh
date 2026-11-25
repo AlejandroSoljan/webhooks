@@ -88,6 +88,7 @@ git -C "$source_dir" archive "$sha" -- "${paths[@]}" | tar -xf - -C "$candidate"
 chown -R asisto:asisto "$candidate"
 install -d -o asisto -g asisto -m 0750 /var/lib/asisto/npm-cache
 install -d -o asisto -g asisto -m 0750 /var/lib/asisto/mongodb-binaries
+cd "$candidate"
 if ! runuser -u asisto -- npm --cache /var/lib/asisto/npm-cache --prefix "$candidate" ci --no-audit --no-fund \
   || ! runuser -u asisto -- env TZ=America/Argentina/Buenos_Aires MONGOMS_DOWNLOAD_DIR=/var/lib/asisto/mongodb-binaries npm --cache /var/lib/asisto/npm-cache --prefix "$candidate" test; then
   printf '%s\n' "$sha" > "$failed_sha_file"

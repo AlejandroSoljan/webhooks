@@ -58,7 +58,7 @@ Se validó el permiso mediante `sudo -l` con el usuario de despliegue y la sinta
 
 ## Coordinar las dos PC
 
-Cada cambio tiene una rama y un PR. Con trabajo de Gabriel en curso, incorporá origin/main en esa rama y resolvé diferencias antes de probar. Staging es compartido: verificá su release antes de activarlo y registrá en el PR el commit probado, la prueba funcional y el resultado. Para integrar se necesita la revisión de otra persona y el CI de Node 24. Al publicar, compará el prefijo del release activo con el SHA integrado en main y verificá la función además de /healthz.
+Cada cambio tiene una rama y un PR. Con trabajo de Gabriel en curso, incorporá origin/main en esa rama y resolvé diferencias antes de probar. Staging es compartido: verificá su release antes de activarlo y registrá en el PR el commit probado, la prueba funcional y el resultado. GitHub exige el CI de Node 24 y permite que el autor integre su propio PR cuando los controles estén en verde. Al publicar, compará el prefijo del release activo con el SHA integrado en main y verificá la función además de /healthz.
 
 ## Manifiesto de producción
 
