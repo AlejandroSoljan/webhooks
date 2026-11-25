@@ -8,6 +8,7 @@
 
 const crypto = require('crypto');
 const express = require('express');
+const { mountHelpPlaylists } = require('./help_playlists');
 const OpenAI = require('openai');
 
 const { getDb } = require('./db');
@@ -2320,6 +2321,8 @@ function mountHelpTool(app) {
   });
 
   // Alias inglés y español para facilitar integración con Manager.
+  mountHelpPlaylists(app, { json, requireAccess: requireHelpExternalAccess,
+    resolveOwner: resolveHelpDomainByAgent, getDb });
   app.get('/api/ext/help', requireHelpExternalAccess, handleHelpQuery);
   app.post('/api/ext/help', json, requireHelpExternalAccess, handleHelpQuery);
   app.get('/api/ext/ayuda', requireHelpExternalAccess, handleHelpQuery);
