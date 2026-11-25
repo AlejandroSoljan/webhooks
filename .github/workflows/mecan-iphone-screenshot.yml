@@ -1,0 +1,36 @@
+name: Mecan iPhone screenshot
+on:
+  push:
+    tags: ['mecan-iphone-screenshot-*']
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and capture Mecan
+        working-directory: ios-mecan
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          xcodegen generate
+          device=$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.name == "iPhone 17 Pro")][0].udid // empty')
+          test -n "$device"
+          xcrun simctl boot "$device"
+          xcodebuild -project Mecan.xcodeproj -scheme Mecan -configuration Release \
+            -destination "id=$device" -derivedDataPath "$RUNNER_TEMP/mecan-derived" \
+            CODE_SIGNING_ALLOWED=NO build
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl status_bar "$device" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState unplugged --batteryLevel 100
+          xcrun simctl install "$device" "$RUNNER_TEMP/mecan-derived/Build/Products/Release-iphonesimulator/Mecan.app"
+          xcrun simctl launch "$device" ar.com.asisto.mecan
+          sleep 18
+          xcrun simctl io "$device" screenshot "$RUNNER_TEMP/Mecan-iPhone.png"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mecan-iphone-screenshot
+          path: ${{ runner.temp }}/Mecan-iPhone.png
