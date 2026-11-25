@@ -27,7 +27,8 @@ jobs:
           xcrun simctl bootstatus "$device" -b
           xcrun simctl install "$device" "$RUNNER_TEMP/mecan-derived/Build/Products/Release-iphonesimulator/Mecan.app"
           xcrun simctl launch "$device" ar.com.asisto.mecan
-          sleep 18
+          sleep 35
+          xcrun simctl spawn "$device" log show --last 1m --predicate 'process == "Mecan" AND eventMessage CONTAINS "Mecan web navigation failed"'
           xcrun simctl io "$device" screenshot "$RUNNER_TEMP/Mecan-iPhone.png"
       - uses: actions/upload-artifact@v4
         with:
