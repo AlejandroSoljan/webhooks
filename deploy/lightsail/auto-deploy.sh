@@ -26,11 +26,32 @@ release_digest() (
   find . -maxdepth 1 -type f \( -name '*.js' -o -name '*.html' -o -name '*.json' -o -name '*.png' -o -name '*.jpg' -o -name '*.ico' \) -print0
   find src static desktop scripts extensions tests data -type f -print0
 )
-fingerprint() (
+file_hashes() (
   set -o pipefail
   cd "$1"
-  release_digest "$PWD" | LC_ALL=C sort -z | xargs -0 -r sha256sum -- | sha256sum | cut -d' ' -f1
+  release_digest "$PWD" | LC_ALL=C sort -z | xargs -0 -r sha256sum --
 )
+fingerprint() {
+  file_hashes "$1" | sha256sum | cut -d' ' -f1
+}
+
+review_dir=/var/lib/asisto-review
+pending_manifest=
+trap 'if [[ -n "$pending_manifest" ]]; then rm -f -- "$pending_manifest"; fi' EXIT
+prepare_manifest() {
+  local release="$1"
+  install -d -o root -g manager-go-dev -m 0750 "$review_dir"
+  pending_manifest=$(mktemp "$review_dir/.production.XXXXXXXX")
+  printf '# Release %s\n# UTC %s\n' "$release" "$(date -u +%FT%TZ)" > "$pending_manifest"
+  file_hashes "$release" >> "$pending_manifest"
+  chown root:manager-go-dev "$pending_manifest"
+  chmod 0440 "$pending_manifest"
+}
+publish_manifest() {
+  [[ "$(readlink -f "$current_link")" == "$1" ]]
+  mv -Tf -- "$pending_manifest" "$review_dir/production.sha256"
+  pending_manifest=
+}
 check_active() {
   local record="$state_dir/$(basename "$previous").sha256"
   if [[ "$(readlink -f "$current_link")" != "$previous" || ! -f "$record" || "$(fingerprint "$previous")" != "$(<"$record")" ]]; then
@@ -43,6 +64,8 @@ for template in app_center_panel.html mecan_account.html; do
   git -C "$source_dir" cat-file -e "$sha:$template" || { echo "Missing production template: $template" >&2; exit 1; }
 done
 if [[ "$(basename "$previous")" == "$short"-* ]]; then
+  prepare_manifest "$previous"
+  publish_manifest "$previous"
   echo "Already deployed: $sha"
   exit 0
 fi
@@ -65,6 +88,7 @@ git -C "$source_dir" archive "$sha" -- "${paths[@]}" | tar -xf - -C "$candidate"
 chown -R asisto:asisto "$candidate"
 install -d -o asisto -g asisto -m 0750 /var/lib/asisto/npm-cache
 install -d -o asisto -g asisto -m 0750 /var/lib/asisto/mongodb-binaries
+cd "$candidate"
 if ! runuser -u asisto -- npm --cache /var/lib/asisto/npm-cache --prefix "$candidate" ci --no-audit --no-fund \
   || ! runuser -u asisto -- env TZ=America/Argentina/Buenos_Aires MONGOMS_DOWNLOAD_DIR=/var/lib/asisto/mongodb-binaries npm --cache /var/lib/asisto/npm-cache --prefix "$candidate" test; then
   printf '%s\n' "$sha" > "$failed_sha_file"
@@ -73,7 +97,8 @@ if ! runuser -u asisto -- npm --cache /var/lib/asisto/npm-cache --prefix "$candi
 fi
 
 check_active
-fingerprint "$candidate" > "$state_dir/$(basename "$candidate").sha256"
+prepare_manifest "$candidate"
+tail -n +3 "$pending_manifest" | sha256sum | cut -d' ' -f1 > "$state_dir/$(basename "$candidate").sha256"
 ln -s "$candidate" "$current_link.next"
 mv -Tf "$current_link.next" "$current_link"
 systemctl restart asisto-production
@@ -95,5 +120,6 @@ if [[ "$healthy" != true ]]; then
   exit 1
 fi
 
+publish_manifest "$candidate"
 rm -f "$failed_sha_file"
 echo "Deployed $sha; /healthz is healthy"
