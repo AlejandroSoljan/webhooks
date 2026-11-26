@@ -1,4 +1,5 @@
 const { randomUUID } = require('node:crypto');
+const MAX_LIST_LIMIT = 100;
 
 function publicPlaylist(playlist) {
   return {
@@ -19,16 +20,16 @@ function mountHelpPlaylists(app, { json, requireAccess, resolveOwner, getDb }) {
     }
     const agente = agent.toUpperCase();
     const list = !create && req.params.id === undefined;
-    let limit = 50, offset = 0;
+    let limit = MAX_LIST_LIMIT, offset = 0;
     if (list) {
-      for (const [key, max] of [['limit', 100], ['offset', 10000]]) {
+      for (const [key, max] of [['limit', MAX_LIST_LIMIT], ['offset', 10000]]) {
         const value = input[key];
         if (value !== undefined && (typeof value !== 'string' || !/^\d{1,5}$/.test(value) ||
             Number(value) > max || (key === 'limit' && Number(value) < 1))) {
           return res.status(400).json({ ok: false, error: `${key}_invalid` });
         }
       }
-      limit = Number(input.limit ?? 50);
+      limit = Number(input.limit ?? MAX_LIST_LIMIT);
       offset = Number(input.offset ?? 0);
     }
     if (create) {
