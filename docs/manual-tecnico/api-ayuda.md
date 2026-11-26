@@ -10,7 +10,7 @@ La integración permite crear, recuperar y listar playlists sin IA ni lectura de
 |---|---|---|
 | POST | `/api/ext/ayuda/playlists` | Alta; HTTP 201 con `id` UUID y datos guardados |
 | GET | `/api/ext/ayuda/playlists/:id?agente=MANAGER` | Consulta individual; HTTP 200 |
-| GET | `/api/ext/ayuda/playlists?agente=MANAGER&limit=50&offset=0` | Listado del servicio; HTTP 200 |
+| GET | `/api/ext/ayuda/playlists?agente=MANAGER&offset=0` | Listado del servicio; HTTP 200 |
 
 Las tres rutas también admiten el prefijo `/api/ext/help/playlists`.
 
@@ -41,7 +41,7 @@ Alta y consulta individual devuelven:
 }
 ```
 
-Listado: `{ "ok": true, "playlists": [...], "limit": 50, "offset": 0, "has_more": false }`. Cada elemento contiene los mismos campos de playlist sin `ok`. Orden: creación descendente y, en empates, ID descendente. `limit`: 1–100 (default 50); `offset`: 0–10000 (default 0). Si `has_more` es true, sumar `limit` a `offset`. Un servicio habilitado sin playlists devuelve una lista vacía. La paginación no es una fotografía: altas concurrentes pueden desplazar posiciones.
+Listado: `{ "ok": true, "playlists": [...], "limit": 100, "offset": 0, "has_more": false }`. Cada elemento contiene los mismos campos de playlist sin `ok`. Orden: creación descendente y, en empates, ID descendente. `limit`: 1–100 (default 100); `offset`: 0–10000 (default 0). Si `has_more` es true, sumar `limit` a `offset`. Un servicio habilitado sin playlists devuelve una lista vacía. La paginación no es una fotografía: altas concurrentes pueden desplazar posiciones.
 
 Errores JSON: 400 (`agente_invalid`, `nombre_invalid`, `descripcion_invalid`, `vimeo_ids_invalid`, `playlist_id_invalid`, `limit_invalid`, `offset_invalid`), 401 (`unauthorized`), 403 (`help_disabled`), 404 (`playlist_not_found`), 500 (`playlist_internal_error`, sin detalles internos). JSON malformado y cuerpos excesivos usan los errores 400/413 del parser Express. Respuestas del handler con `Cache-Control: no-store`.
 

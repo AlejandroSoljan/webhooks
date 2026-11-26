@@ -92,6 +92,9 @@ test('HTTP playlists: persistencia, orden, validaciones y aislamiento', async t 
   assert.equal(second.status, 201);
   assert.notEqual(second.body.id, created.body.id);
   const list = await call(`${path}?limit=1`);
+  const defaultList = await call(path);
+  assert.equal(defaultList.status, 200);
+  assert.equal(defaultList.body.limit, 100);
   assert.equal(list.status, 200);
   assert.equal(list.body.playlists.length, 1);
   assert.equal(list.body.has_more, true);
