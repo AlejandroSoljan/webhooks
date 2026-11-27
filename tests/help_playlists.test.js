@@ -36,6 +36,14 @@ test('HTTP playlists: persistencia, orden, validaciones y aislamiento', async t 
           async findOne(query) {
             const row = rows.get(query._id);
             return row && row.tenantId === query.tenantId && row.agente === query.agente ? row : null;
+          },
+          async findOneAndUpdate(query, update) {
+            const row = await this.findOne(query);
+            return row ? Object.assign(row, update.$set) : null;
+          },
+          async deleteOne(query) {
+            const row = await this.findOne(query);
+            return { deletedCount: row && rows.delete(query._id) ? 1 : 0 };
           }
         };
       } };
@@ -46,9 +54,9 @@ test('HTTP playlists: persistencia, orden, validaciones y aislamiento', async t 
   await new Promise(resolve => server.once('listening', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const base = `http://127.0.0.1:${server.address().port}`;
-  async function call(path, body, key = 'synthetic-key') {
+  async function call(path, body, key = 'synthetic-key', method = body === undefined ? 'GET' : 'POST') {
     const response = await fetch(base + path, {
-      method: body === undefined ? 'GET' : 'POST',
+      method,
       headers: { 'Content-Type': 'application/json', 'X-API-Key': key },
       ...(body === undefined ? {} : { body: JSON.stringify(body) })
     });
@@ -109,6 +117,22 @@ test('HTTP playlists: persistencia, orden, validaciones y aislamiento', async t 
     assert.equal((await call(`${path}?${query}`)).status, 400);
   }
   assert.equal((await call(path, undefined, '')).status, 401);
+  const item = path + '/' + created.body.id;
+  assert.equal((await call(item, { agente: 'OTHER', nombre: 'Ajena' }, undefined, 'PATCH')).status, 404);
+  assert.equal((await call(item + '?agente=OTHER', undefined, undefined, 'DELETE')).status, 404);
+  assert.equal((await call(item, { nombre: 'Editada' }, '', 'PATCH')).status, 401);
+  assert.equal((await call(item, undefined, '', 'DELETE')).status, 401);
+  assert.equal((await call(item, {}, undefined, 'PATCH')).status, 400);
+  assert.equal((await call(item, { vimeo_ids: [] }, undefined, 'PATCH')).status, 400);
+  const changed = await call(item, { nombre: 'Editada', vimeo_ids: ['100', '300'] }, undefined, 'PATCH');
+  assert.equal(changed.status, 200);
+  assert.equal(changed.body.descripcion, data.descripcion);
+  assert.equal(changed.body.creada_en, created.body.creada_en);
+  assert.deepEqual(changed.body.vimeo_ids, ['100', '300']);
+  assert.deepEqual((await call(item)).body, changed.body);
+  assert.equal((await call(item, undefined, undefined, 'DELETE')).status, 204);
+  assert.equal((await call(item)).status, 404);
+  assert.equal((await call(item, undefined, undefined, 'DELETE')).status, 404);
   enabled = false;
   assert.equal((await call(path)).status, 403);
 });

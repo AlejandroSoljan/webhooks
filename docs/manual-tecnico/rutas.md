@@ -8,6 +8,8 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 
 | Método | Ruta declarada | Implementación | Inicio de registro / middleware |
 |---|---|---|---|
+| DELETE | `/api/ext/ayuda/playlists/:id` | [help_playlists.js:99](../../help_playlists.js#L99) | `, requireAccess, (req, res) => handle(req, res, false, 'delete'));` |
+| DELETE | `/api/ext/help/playlists/:id` | [help_playlists.js:104](../../help_playlists.js#L104) | `, requireAccess, (req, res) => handle(req, res, false, 'delete'));` |
 | DELETE | `/api/leads/:id` | [auth_ui.js:3509](../../auth_ui.js#L3509) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | DELETE | `/api/leads/:id` | [auth_ui.js:5450](../../auth_ui.js#L5450) | `, requireAuth, requireAdmin, async (req, res) => {` |
 | DELETE | `/api/products/:id` | [endpoint.js:7916](../../endpoint.js#L7916) | `, async (req, res) => {` |
@@ -76,12 +78,12 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/api/customer-notifications/:tenant/center` | [app_center.js:29](../../app_center.js#L29) | `,guard,access,wrap(async(req,res)=>{` |
 | GET | `/api/customer-notifications/:tenant` | [customer_notifications.js:15](../../customer_notifications.js#L15) | `,requireAuth,async(req,res)=>{try{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,t))return res` |
 | GET | `/api/customer-notifications/:tenant` | [deploy/patch-notification-devices.cjs:7](../../deploy/patch-notification-devices.cjs#L7) | `,", "app.post('/api/customer-notifications/:tenant',",'async function firebaseSender(){']){` |
-| GET | `/api/ext/ayuda/playlists/:id` | [help_playlists.js:81](../../help_playlists.js#L81) | `, requireAccess, (req, res) => handle(req, res, false));` |
-| GET | `/api/ext/ayuda/playlists` | [help_playlists.js:80](../../help_playlists.js#L80) | `, requireAccess, (req, res) => handle(req, res, false));` |
+| GET | `/api/ext/ayuda/playlists/:id` | [help_playlists.js:97](../../help_playlists.js#L97) | `, requireAccess, (req, res) => handle(req, res, false));` |
+| GET | `/api/ext/ayuda/playlists` | [help_playlists.js:96](../../help_playlists.js#L96) | `, requireAccess, (req, res) => handle(req, res, false));` |
 | GET | `/api/ext/ayuda` | [help_tool.js:2328](../../help_tool.js#L2328) | `, requireHelpExternalAccess, handleHelpQuery);` |
 | GET | `/api/ext/domain-status` | [endpoint.js:1514](../../endpoint.js#L1514) | `, requireDomainStatusAccess, async (req, res) => {` |
-| GET | `/api/ext/help/playlists/:id` | [help_playlists.js:84](../../help_playlists.js#L84) | `, requireAccess, (req, res) => handle(req, res, false));` |
-| GET | `/api/ext/help/playlists` | [help_playlists.js:83](../../help_playlists.js#L83) | `, requireAccess, (req, res) => handle(req, res, false));` |
+| GET | `/api/ext/help/playlists/:id` | [help_playlists.js:102](../../help_playlists.js#L102) | `, requireAccess, (req, res) => handle(req, res, false));` |
+| GET | `/api/ext/help/playlists` | [help_playlists.js:101](../../help_playlists.js#L101) | `, requireAccess, (req, res) => handle(req, res, false));` |
 | GET | `/api/ext/help/status` | [help_tool.js:2332](../../help_tool.js#L2332) | `, requireHelpExternalAccess, async (req, res) => {` |
 | GET | `/api/ext/help` | [help_tool.js:2326](../../help_tool.js#L2326) | `, requireHelpExternalAccess, handleHelpQuery);` |
 | GET | `/api/ext/qr/alternatives` | [qr_product_web.js:1617](../../qr_product_web.js#L1617) | `, async (req, res) => {` |
@@ -224,6 +226,8 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | GET | `/whatsapp/session` | [src/support/extension.js:53](../../src/support/extension.js#L53) | `, route((req, s, scope) => whatsappSession(s, scope)));` |
 | PATCH | `/api/customer-notifications/:tenant/center/devices/:id` | [app_center.js:45](../../app_center.js#L45) | `,guard,access,json,wrap(async(req,res)=>{` |
 | PATCH | `/api/customer-notifications/:tenant/devices/:installId` | [customer_notifications.js:16](../../customer_notifications.js#L16) | `,requireAuth,notificationJson,async(req,res)=>{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,` |
+| PATCH | `/api/ext/ayuda/playlists/:id` | [help_playlists.js:98](../../help_playlists.js#L98) | `, requireAccess, json, (req, res) => handle(req, res, false, 'edit'));` |
+| PATCH | `/api/ext/help/playlists/:id` | [help_playlists.js:103](../../help_playlists.js#L103) | `, requireAccess, json, (req, res) => handle(req, res, false, 'edit'));` |
 | PATCH | `/api/resto/events/:id` | [restaurant.js:265](../../restaurant.js#L265) | `, json, async (req, res) => {` |
 | PATCH | `/drafts/:id` | [src/support/routes.js:63](../../src/support/routes.js#L63) | `, route((req, s, scope) => s.editDraft(scope, req.params.id, req.body.revision, req.body.fields)));` |
 | POST | `/admin/leads/delete` | [auth_ui.js:5406](../../auth_ui.js#L5406) | `, requireAuth, requireAdmin, async (req, res) => {` |
@@ -273,9 +277,9 @@ Este índice estático no es un contrato OpenAPI: incluye rutas internas, posibl
 | POST | `/api/customer-notifications/:tenant` | [customer_notifications.js:17](../../customer_notifications.js#L17) | `,requireAuth,notificationJson,async(req,res)=>{const t=tenant(req.params.tenant);if(!t&#124;&#124;!canUse(req,` |
 | POST | `/api/customer-notifications/:tenant` | [deploy/patch-notification-devices.cjs:7](../../deploy/patch-notification-devices.cjs#L7) | `,",'async function firebaseSender(){']){` |
 | POST | `/api/ext/ayuda/chat-web` | [help_tool.js:2306](../../help_tool.js#L2306) | `, json, async (req, res) => {` |
-| POST | `/api/ext/ayuda/playlists` | [help_playlists.js:79](../../help_playlists.js#L79) | `, requireAccess, json, (req, res) => handle(req, res, true));` |
+| POST | `/api/ext/ayuda/playlists` | [help_playlists.js:95](../../help_playlists.js#L95) | `, requireAccess, json, (req, res) => handle(req, res, true));` |
 | POST | `/api/ext/ayuda` | [help_tool.js:2329](../../help_tool.js#L2329) | `, json, requireHelpExternalAccess, handleHelpQuery);` |
-| POST | `/api/ext/help/playlists` | [help_playlists.js:82](../../help_playlists.js#L82) | `, requireAccess, json, (req, res) => handle(req, res, true));` |
+| POST | `/api/ext/help/playlists` | [help_playlists.js:100](../../help_playlists.js#L100) | `, requireAccess, json, (req, res) => handle(req, res, true));` |
 | POST | `/api/ext/help` | [help_tool.js:2327](../../help_tool.js#L2327) | `, json, requireHelpExternalAccess, handleHelpQuery);` |
 | POST | `/api/ext/qr/chat` | [qr_product_web.js:1701](../../qr_product_web.js#L1701) | `, qrJson, async (req, res) => {` |
 | POST | `/api/ext/qr/photo` | [qr_product_web.js:1535](../../qr_product_web.js#L1535) | `, qrPhotoJson, async (req, res) => {` |

@@ -11,8 +11,14 @@ La integración permite crear, recuperar y listar playlists sin IA ni lectura de
 | POST | `/api/ext/ayuda/playlists` | Alta; HTTP 201 con `id` UUID y datos guardados |
 | GET | `/api/ext/ayuda/playlists/:id?agente=MANAGER` | Consulta individual; HTTP 200 |
 | GET | `/api/ext/ayuda/playlists?agente=MANAGER&offset=0` | Listado del servicio; HTTP 200 |
+| PATCH | `/api/ext/ayuda/playlists/:id` | Edita parcialmente; HTTP 200 con la playlist actualizada |
+| DELETE | `/api/ext/ayuda/playlists/:id?agente=MANAGER` | Borra la playlist de Asisto; HTTP 204 sin cuerpo |
 
-Las tres rutas también admiten el prefijo `/api/ext/help/playlists`.
+Para editar, enviar JSON con al menos uno de `nombre`, `descripcion` o `vimeo_ids`, y opcionalmente `agente` (default `MANAGER`). Por ejemplo, `{"nombre":"Primeros pasos actualizados","vimeo_ids":["300","100"]}`. Los campos omitidos se conservan. Si se envía `vimeo_ids`, reemplaza la lista completa en el orden enviado. No se cambia el ID, el dueño, el agente ni la fecha de creación. Un PATCH sin campos editables devuelve 400 (`playlist_fields_required`).
+
+El DELETE es definitivo para la playlist de Asisto. Los videos de Vimeo se conservan. Una playlist inexistente, ya borrada o fuera del dominio y agente resueltos devuelve 404 tanto para PATCH como para DELETE. Para ambas operaciones usar `X-API-Key`.
+
+Todas las rutas también admiten el prefijo `/api/ext/help/playlists`.
 
 Ejemplo de cuerpo de alta (IDs sintéticos):
 
@@ -45,7 +51,7 @@ Listado: `{ "ok": true, "playlists": [...], "limit": 100, "offset": 0, "has_more
 
 Errores JSON: 400 (`agente_invalid`, `nombre_invalid`, `descripcion_invalid`, `vimeo_ids_invalid`, `playlist_id_invalid`, `limit_invalid`, `offset_invalid`), 401 (`unauthorized`), 403 (`help_disabled`), 404 (`playlist_not_found`), 500 (`playlist_internal_error`, sin detalles internos). JSON malformado y cuerpos excesivos usan los errores 400/413 del parser Express. Respuestas del handler con `Cache-Control: no-store`.
 
-Persistencia: colección `help_playlists`, UUID en `_id`, `tenantId` del dueño, agente, datos y fecha UTC. Mongo garantiza unicidad por `_id`; el primer alta crea el índice `{tenantId:1, agente:1, creada_en:-1, _id:-1}` para el listado. No hay caducidad automática, migración de documentos ni variables nuevas. Incorporar la colección al alcance habitual de respaldo. Requiere desplegar el backend; no modifica playlists de Vimeo. Cada POST crea una playlist nueva, incluso con el mismo contenido: ante un timeout no reintentar ciegamente; consultar el listado. No incluye modificación ni eliminación.
+Persistencia: colección `help_playlists`, UUID en `_id`, `tenantId` del dueño, agente, datos y fecha UTC. Mongo garantiza unicidad por `_id`; el primer alta crea el índice `{tenantId:1, agente:1, creada_en:-1, _id:-1}` para el listado. No hay caducidad automática, migración de documentos ni variables nuevas. Incorporar la colección al alcance habitual de respaldo. Requiere desplegar el backend; no modifica playlists de Vimeo. Cada POST crea una playlist nueva, incluso con el mismo contenido: ante un timeout no reintentar ciegamente; consultar el listado.
 
 Verificación: `node --test tests/help_playlists.test.js tests/help_tool.test.js` (10 pruebas aprobadas con Node 24 y almacenamiento simulado, sin datos productivos). Cubre alta/consulta, orden/repetidos, IDs únicos, listado/paginación, campos inválidos, autenticación real del montaje, servicio deshabilitado, aislamiento de dueño/agente y errores de persistencia. Pendiente: integración y despliegue; no se verificó MongoDB ni AWS productivos.
 
