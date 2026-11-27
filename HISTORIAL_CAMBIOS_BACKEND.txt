@@ -1,3 +1,5 @@
+2026-11-27 | v5.00.359 + playlists de Ayuda | PATCH parcial y DELETE definitivo por ID, dominio y agente. Conserva el orden de Vimeo y los datos omitidos en PATCH. Sin migracion ni cambios en Vimeo. Pruebas HTTP de Ayuda Node 24. Referencia: codex/ayuda-playlists-edit-delete. Publicacion AWS pendiente.
+
 2026-11-26 | v5.00.359 + playlists de Ayuda | El listado sin limit devuelve hasta 100 playlists por página en lugar de 50. Los límites explícitos de 1 a 100 y offset mantienen su contrato. Sin migración. Validación: pruebas HTTP de Ayuda y playlists con Node 24. Referencia: codex/ayuda-playlists-limit-100. Publicación AWS pendiente.
 
 2026-11-25 | v5.00.359 + playlists de Ayuda | Alta, consulta por ID y listado paginado; conserva el orden de Vimeo y aísla por dominio y agente. Nueva colección MongoDB, sin migración ni IA. Pruebas HTTP focalizadas con Node 24. Referencia: codex/ayuda-playlists-api. Publicación AWS pendiente.
